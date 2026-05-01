@@ -369,6 +369,8 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_benchmark_evaluation_report(repo_root)
     if probe.probe_impl == "closure_audit":
         return _probe_closure_audit(repo_root)
+    if probe.probe_impl == "deterministic_rerank_query_context_reuse":
+        return _probe_deterministic_rerank_query_context_reuse(repo_root)
     if probe.probe_impl == "evaluation_sample_probe_aggregation":
         return _probe_evaluation_sample_probe_aggregation(repo_root)
     if probe.probe_impl == "evaluation_job_id":
@@ -473,6 +475,73 @@ def _probe_closure_audit(repo_root: Path) -> dict[str, float]:
         "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 3),
         "probe_file_reads_mean": round(sum(read_samples) / len(read_samples), 3),
         "finding_count": finding_count,
+    }
+
+
+def _probe_deterministic_rerank_query_context_reuse(repo_root: Path) -> dict[str, float]:
+    del repo_root
+    from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
+    from worker.runtime.rerank_backends import DeterministicRerankBackend, JinaV3RerankFamilyAdapter
+
+    document_count = 2048
+    iteration_count = 8
+    sample_count = 5
+    query = "swift control plane runtime"
+    documents = [
+        f"swift runtime document {index} control plane" if index % 2 == 0 else f"python worker document {index} packaging"
+        for index in range(document_count)
+    ]
+
+    class CountingBackend(DeterministicRerankBackend):
+        def __init__(self) -> None:
+            self.tokenize_calls = 0
+
+        def tokenize(self, text: str) -> list[str]:
+            self.tokenize_calls += 1
+            return super().tokenize(text)
+
+    class TrackingFamily(JinaV3RerankFamilyAdapter):
+        def __init__(self) -> None:
+            self.query_context_builds = 0
+
+        def build_query_context(self, backend: DeterministicRerankBackend, query: str, **kwargs: object):
+            self.query_context_builds += 1
+            return super().build_query_context(backend, query, **kwargs)
+
+    elapsed_samples: list[float] = []
+    query_context_build_samples: list[float] = []
+    tokenize_call_samples: list[float] = []
+
+    runtime = DeterministicRerankRuntime()
+    for _ in range(sample_count):
+        backend = CountingBackend()
+        family = TrackingFamily()
+        started = time.perf_counter()
+        for _ in range(iteration_count):
+            scores = runtime.score_documents(
+                {
+                    "rerank_backend": backend,
+                    "rerank_family_adapter": family,
+                },
+                query,
+                documents,
+            )
+            if len(scores) != document_count:
+                raise ValueError(f"expected {document_count} scores, got {len(scores)}")
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        query_context_build_samples.append(float(family.query_context_builds) / float(iteration_count))
+        tokenize_call_samples.append(float(backend.tokenize_calls) / float(iteration_count))
+
+    return {
+        "document_count": float(document_count),
+        "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
+        "iteration_count": float(iteration_count),
+        "query_context_builds_mean": round(
+            sum(query_context_build_samples) / len(query_context_build_samples),
+            6,
+        ),
+        "sample_count": float(sample_count),
+        "tokenize_calls_mean": round(sum(tokenize_call_samples) / len(tokenize_call_samples), 6),
     }
 
 

@@ -44,6 +44,14 @@ class RerankFamilyDescriptor:
     scoring_mode: str
 
 
+@dataclass(frozen=True)
+class RerankQueryContext:
+    query: str
+    query_tokens: tuple[str, ...]
+    query_token_set: frozenset[str]
+    ordered_pairs: frozenset[tuple[str, str]]
+
+
 class RerankFamilyAdapter:
     descriptor: RerankFamilyDescriptor
 
@@ -54,16 +62,44 @@ class RerankFamilyAdapter:
             "rerank_family_adapter": self,
         }
 
+    def build_query_context(
+        self,
+        backend: DeterministicRerankBackend,
+        query: str,
+        *,
+        query_tokens: list[str] | None = None,
+        query_token_set: set[str] | None = None,
+    ) -> RerankQueryContext:
+        if query_tokens is None:
+            query_tokens = backend.tokenize(query)
+        if query_token_set is None:
+            query_token_set = set(query_tokens)
+        normalized_query_tokens = tuple(query_tokens)
+        return RerankQueryContext(
+            query=query,
+            query_tokens=normalized_query_tokens,
+            query_token_set=frozenset(query_token_set),
+            ordered_pairs=frozenset(_build_adjacent_pairs(normalized_query_tokens)),
+        )
+
     def score(
         self,
         backend: DeterministicRerankBackend,
         query: str,
         document: str,
         *,
+        query_context: RerankQueryContext | None = None,
         query_tokens: list[str] | None = None,
         query_token_set: set[str] | None = None,
     ) -> float:
         raise NotImplementedError
+
+
+def _build_adjacent_pairs(tokens: tuple[str, ...] | list[str]) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (tokens[index], tokens[index + 1])
+        for index in range(len(tokens) - 1)
+    )
 
 
 class BasicRerankFamilyAdapter(RerankFamilyAdapter):
@@ -78,13 +114,18 @@ class BasicRerankFamilyAdapter(RerankFamilyAdapter):
         query: str,
         document: str,
         *,
+        query_context: RerankQueryContext | None = None,
         query_tokens: list[str] | None = None,
         query_token_set: set[str] | None = None,
     ) -> float:
-        if query_tokens is None:
-            query_tokens = backend.tokenize(query)
-        if query_token_set is None:
-            query_token_set = set(query_tokens)
+        if query_context is None:
+            query_context = self.build_query_context(
+                backend,
+                query,
+                query_tokens=query_tokens,
+                query_token_set=query_token_set,
+            )
+        query_token_set = set(query_context.query_token_set)
         document_tokens = set(backend.tokenize(document))
         if not query_token_set and not document_tokens:
             overlap_score = 1.0
@@ -106,14 +147,20 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         query: str,
         document: str,
         *,
+        query_context: RerankQueryContext | None = None,
         query_tokens: list[str] | None = None,
         query_token_set: set[str] | None = None,
     ) -> float:
-        if query_tokens is None:
-            query_tokens = backend.tokenize(query)
+        if query_context is None:
+            query_context = self.build_query_context(
+                backend,
+                query,
+                query_tokens=query_tokens,
+                query_token_set=query_token_set,
+            )
+        query_tokens = list(query_context.query_tokens)
         document_tokens = backend.tokenize(document)
-        if query_token_set is None:
-            query_token_set = set(query_tokens)
+        query_token_set = set(query_context.query_token_set)
         document_token_set = set(document_tokens)
 
         if not query_token_set and not document_token_set:
@@ -122,7 +169,7 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
             union = len(query_token_set | document_token_set) or 1
             overlap_score = len(query_token_set & document_token_set) / union
 
-        pair_bonus = self._ordered_pair_bonus(query_tokens, document_tokens)
+        pair_bonus = self._ordered_pair_bonus(query_tokens, document_tokens, query_pairs=query_context.ordered_pairs)
         exact_order_bonus = 0.1 if self._contains_contiguous_query(document_tokens, query_tokens) else 0.0
         prefix_bonus = 0.05 if query_tokens and document_tokens[: len(query_tokens)] == query_tokens else 0.0
 
@@ -132,14 +179,17 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         )
 
     @staticmethod
-    def _ordered_pair_bonus(query_tokens: list[str], document_tokens: list[str]) -> float:
+    def _ordered_pair_bonus(
+        query_tokens: list[str],
+        document_tokens: list[str],
+        *,
+        query_pairs: frozenset[tuple[str, str]] | None = None,
+    ) -> float:
         if len(query_tokens) < 2 or len(document_tokens) < 2:
             return 0.0
 
-        query_pairs = {
-            (query_tokens[index], query_tokens[index + 1])
-            for index in range(len(query_tokens) - 1)
-        }
+        if query_pairs is None:
+            query_pairs = frozenset(_build_adjacent_pairs(query_tokens))
         document_pairs = {
             (document_tokens[index], document_tokens[index + 1])
             for index in range(len(document_tokens) - 1)
@@ -174,17 +224,27 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
         query: str,
         document: str,
         *,
+        query_context: RerankQueryContext | None = None,
         query_tokens: list[str] | None = None,
         query_token_set: set[str] | None = None,
     ) -> float:
-        if query_tokens is None:
-            query_tokens = backend.tokenize(query)
+        if query_context is None:
+            query_context = self.build_query_context(
+                backend,
+                query,
+                query_tokens=query_tokens,
+                query_token_set=query_token_set,
+            )
+        query_tokens = list(query_context.query_tokens)
         document_tokens = backend.tokenize(document)
-        if query_token_set is None:
-            query_token_set = set(query_tokens)
+        query_token_set = set(query_context.query_token_set)
         document_token_set = set(document_tokens)
         overlap = len(query_token_set & document_token_set) / (len(query_token_set) or 1)
-        pair_bonus = JinaV3RerankFamilyAdapter._ordered_pair_bonus(query_tokens, document_tokens)
+        pair_bonus = JinaV3RerankFamilyAdapter._ordered_pair_bonus(
+            query_tokens,
+            document_tokens,
+            query_pairs=query_context.ordered_pairs,
+        )
         exact_order = JinaV3RerankFamilyAdapter._contains_contiguous_query(document_tokens, query_tokens)
         prefix_match = bool(query_tokens) and document_tokens[: len(query_tokens)] == query_tokens
 
