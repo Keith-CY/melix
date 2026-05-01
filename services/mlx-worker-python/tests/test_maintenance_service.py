@@ -1725,6 +1725,28 @@ def test_upload_receipt_pipeline_collect_published_file_list_filters_and_sorts(t
     ]
 
 
+def test_upload_receipt_pipeline_collect_published_file_list_uses_scandir_stack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "model"
+    source_root.mkdir()
+    (source_root / "weights.bin").write_text("weights", encoding="utf-8")
+    nested_root = source_root / "nested"
+    nested_root.mkdir()
+    (nested_root / "config.json").write_text("{}", encoding="utf-8")
+
+    def fail_os_walk(*args, **kwargs):
+        raise AssertionError("published file collection should avoid os.walk")  # pragma: no cover
+
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.os.walk", fail_os_walk)
+
+    assert UploadReceiptPipeline._collect_published_file_list(source_root) == [
+        "nested/config.json",
+        "weights.bin",
+    ]
+
+
 def test_upload_receipt_pipeline_collect_published_file_list_preserves_symlink_rules(
     tmp_path: Path,
 ) -> None:

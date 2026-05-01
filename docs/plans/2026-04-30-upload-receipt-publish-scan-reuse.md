@@ -50,3 +50,18 @@ Probe outputs:
 - Changed executable scope coverage is at least 95%.
 - The performance probe shows a measurable reduction in repeated publish-path wall time for large directory trees.
 - `git diff --check` passes.
+
+## Follow-up Slice: Published File List Traversal
+
+A later inspection found `_collect_published_file_list()` still used `os.walk()`
+for the directory traversal that prepares the reusable `published_files` list.
+This follow-up slice keeps the publish semantics unchanged, registers a
+PR-scoped probe for the upload-receipt published-file collector, and replaces
+the `os.walk()` traversal with an explicit `os.scandir()` stack to reduce path
+joining and relpath work on large publish bundles.
+
+Additional probe outputs:
+
+- mean wall time over repeated published-file collection runs
+- synthetic directory and file counts
+- identical published file counts, including existing symlink-rule coverage

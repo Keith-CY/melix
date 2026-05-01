@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import tracemalloc
+import types
 from typing import Any
 
 _COMMENT_MARKER = "<!-- melix-pr-scoped-performance-report -->"
@@ -374,6 +375,8 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_evaluation_job_id(repo_root)
     if probe.probe_impl == "training_dataset_token_percentiles":
         return _probe_training_dataset_token_percentiles(repo_root)
+    if probe.probe_impl == "upload_receipt_published_files":
+        return _probe_upload_receipt_published_files(repo_root)
     if probe.probe_impl == "command_json":
         return _probe_command_json(probe=probe, repo_root=repo_root)
     raise ValueError(f"unsupported probe implementation: {probe.probe_impl}")
@@ -653,6 +656,108 @@ def _probe_training_dataset_token_percentiles(repo_root: Path) -> dict[str, floa
         "duplicate_count": duplicate_count,
         "dirty_count": dirty_count,
     }
+
+
+def _probe_upload_receipt_published_files(repo_root: Path) -> dict[str, float]:
+    module = _load_upload_receipt_pipeline_module(
+        repo_root / "services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py",
+    )
+    directory_count = 180
+    files_per_directory = 40
+    sample_count = 5
+    elapsed_samples: list[float] = []
+    published_file_count = 0.0
+    with tempfile.TemporaryDirectory(prefix="melix-pr-perf-upload-receipt-") as temp_dir:
+        source_root = Path(temp_dir) / "publish-bundle"
+        expected_file_count = 0
+        for directory_index in range(directory_count):
+            directory = source_root / f"shard-{directory_index:04d}"
+            directory.mkdir(parents=True, exist_ok=True)
+            for file_index in range(files_per_directory):
+                (directory / f"part-{file_index:04d}.safetensors").write_bytes(b"melix")
+                expected_file_count += 1
+        (source_root / "README.md").write_text("# Melix synthetic publish bundle\n", encoding="utf-8")
+        expected_file_count += 1
+        for _ in range(sample_count):
+            started = time.perf_counter()
+            published_files = module.UploadReceiptPipeline._collect_published_file_list(source_root)
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            published_file_count = float(len(published_files))
+            if len(published_files) != expected_file_count:
+                raise ValueError(
+                    f"expected {expected_file_count} published files, got {len(published_files)}"
+                )
+    return {
+        "directory_count": float(directory_count),
+        "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
+        "elapsed_ms_min": round(min(elapsed_samples), 6),
+        "files_per_directory": float(files_per_directory),
+        "published_file_count": published_file_count,
+        "sample_count": float(sample_count),
+    }
+
+
+def _load_upload_receipt_pipeline_module(path: Path) -> Any:
+    module_names = (
+        "packages",
+        "packages.protocol",
+        "packages.protocol.python",
+        "packages.protocol.python.worker",
+        "packages.protocol.python.worker.v1",
+        "packages.protocol.python.worker.v1.maintenance_pb2",
+        "worker",
+        "worker.model_ops",
+        "worker.model_ops.errors",
+    )
+    missing = object()
+    previous_modules = {name: sys.modules.get(name, missing) for name in module_names}
+
+    packages_module = types.ModuleType("packages")
+    protocol_module = types.ModuleType("packages.protocol")
+    python_module = types.ModuleType("packages.protocol.python")
+    worker_protocol_module = types.ModuleType("packages.protocol.python.worker")
+    worker_v1_module = types.ModuleType("packages.protocol.python.worker.v1")
+    maintenance_module = types.ModuleType("packages.protocol.python.worker.v1.maintenance_pb2")
+    worker_module = types.ModuleType("worker")
+    model_ops_module = types.ModuleType("worker.model_ops")
+    errors_module = types.ModuleType("worker.model_ops.errors")
+
+    class ModelOperationError(Exception):
+        pass
+
+    errors_module.ModelOperationError = ModelOperationError
+    worker_v1_module.maintenance_pb2 = maintenance_module
+    worker_protocol_module.v1 = worker_v1_module
+    python_module.worker = worker_protocol_module
+    protocol_module.python = python_module
+    packages_module.protocol = protocol_module
+    model_ops_module.errors = errors_module
+    worker_module.model_ops = model_ops_module
+
+    sys.modules.update(
+        {
+            "packages": packages_module,
+            "packages.protocol": protocol_module,
+            "packages.protocol.python": python_module,
+            "packages.protocol.python.worker": worker_protocol_module,
+            "packages.protocol.python.worker.v1": worker_v1_module,
+            "packages.protocol.python.worker.v1.maintenance_pb2": maintenance_module,
+            "worker": worker_module,
+            "worker.model_ops": model_ops_module,
+            "worker.model_ops.errors": errors_module,
+        }
+    )
+    try:
+        return _load_repo_module(
+            path,
+            unique_name="melix_probe_upload_receipt_pipeline",
+        )
+    finally:
+        for name, previous in previous_modules.items():
+            if previous is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
 
 
 def _load_repo_module(path: Path, *, unique_name: str) -> Any:
