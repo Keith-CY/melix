@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import worker.productization.benchmark_evaluation_report as benchmark_evaluation_report
 from worker.productization.benchmark_evaluation_report import (
     _METRIC_DIRECTION_BY_KEY,
     _aggregate_probe_values,
@@ -328,6 +329,93 @@ def test_aggregate_probe_values_handles_empty_inputs() -> None:
     assert _aggregate_probe_values("prefill_ms", []) == ("mean", 0.0)
     assert _aggregate_probe_values("cache_hit", []) == ("rate", 0.0)
     assert _aggregate_probe_values("speculative_fallback_count", []) == ("sum", 0.0)
+
+
+def test_benchmark_probe_label_cache_reuses_identical_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = benchmark_evaluation_report._build_benchmark_label
+    built_keys: list[tuple[str, str, str, str, str, str]] = []
+
+    def tracked(key: tuple[str, str, str, str, str, str]) -> str:
+        built_keys.append(key)
+        return original(key)
+
+    monkeypatch.setattr(benchmark_evaluation_report, "_build_benchmark_label", tracked)
+
+    cache: dict[tuple[str, str, str, str, str, str], str] = {}
+    context_row = {
+        "suite": "smoke suite",
+        "context_length": 128,
+        "generation_length": 32,
+        "batch_size": 1,
+    }
+    matrix_row = {
+        "suite_id": "smoke suite",
+        "context_length": 128,
+        "generation_length": 32,
+        "batch_size": 1,
+        "concurrency_level": 2,
+    }
+
+    assert (
+        benchmark_evaluation_report._benchmark_probe_label(context_row, label_cache=cache)
+        == "smoke_suite.ctx128.gen32.b1"
+    )
+    assert (
+        benchmark_evaluation_report._benchmark_probe_label(
+            {**context_row, "prefill_ms": 7.0},
+            label_cache=cache,
+        )
+        == "smoke_suite.ctx128.gen32.b1"
+    )
+    assert benchmark_evaluation_report._matrix_label(matrix_row, label_cache=cache) == (
+        "smoke_suite.ctx128.gen32.b1.c2"
+    )
+    assert (
+        benchmark_evaluation_report._benchmark_probe_label(
+            {**matrix_row, "prefill_ms": 9.0},
+            label_cache=cache,
+        )
+        == "smoke_suite.ctx128.gen32.b1.c2"
+    )
+
+    assert built_keys == [
+        ("bench", "smoke suite", "128", "32", "1", ""),
+        ("matrix", "smoke suite", "128", "32", "1", "2"),
+    ]
+
+
+def test_benchmark_probe_label_cache_preserves_stringified_shape_boundaries() -> None:
+    cache: dict[tuple[str, str, str, str, str, str], str] = {}
+
+    numeric_row = {
+        "suite": "shape",
+        "context_length": 1,
+        "generation_length": 2,
+        "batch_size": True,
+    }
+    float_row = {
+        "suite": "shape",
+        "context_length": 1.0,
+        "generation_length": 2,
+        "batch_size": 1,
+    }
+    unhashable_row = {
+        "suite": ["shape", "list"],
+        "context_length": {"nested": "value"},
+        "generation_length": 2,
+        "batch_size": 1,
+    }
+
+    assert benchmark_evaluation_report._benchmark_probe_label(numeric_row, label_cache=cache) == (
+        "shape.ctx1.gen2.bTrue"
+    )
+    assert benchmark_evaluation_report._benchmark_probe_label(float_row) == "shape.ctx1.0.gen2.b1"
+    assert benchmark_evaluation_report._benchmark_probe_label(float_row, label_cache=cache) == (
+        "shape.ctx1.0.gen2.b1"
+    )
+    assert benchmark_evaluation_report._benchmark_probe_label(unhashable_row, label_cache=cache) == (
+        "['shape',_'list'].ctx{'nested':_'value'}.gen2.b1"
+    )
 
 
 def test_row_iterators_filter_invalid_entries_without_materializing_copies() -> None:

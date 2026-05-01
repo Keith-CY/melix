@@ -126,6 +126,7 @@ _METRIC_DIRECTION_BY_KEY = {
 }
 
 _NumericAggregate = tuple[float, int]
+_BenchmarkLabelCacheKey = tuple[str, str, str, str, str, str]
 
 
 def load_report_input(path: str | Path) -> dict[str, object]:
@@ -271,6 +272,7 @@ def write_report_outputs(
 
 def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
     metrics: dict[str, object] = {}
+    label_cache: dict[_BenchmarkLabelCacheKey, str] = {}
     _collect_runtime_metadata(
         metrics,
         bundle.get("benchmark_jobs", []),
@@ -296,14 +298,16 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
         metrics,
         bundle.get("benchmark_context_rows", []),
         prefix="bench.context",
+        label_cache=label_cache,
     )
     _collect_benchmark_probe_metrics(
         metrics,
         bundle.get("benchmark_batch_rows", []),
         prefix="bench.batch",
+        label_cache=label_cache,
     )
     for row in _dict_rows(bundle.get("benchmark_matrix_summary_rows", [])):
-        label = _matrix_label(row)
+        label = _matrix_label(row, label_cache=label_cache)
         for key in (
             "request_latency_mean_ms",
             "request_latency_p95_ms",
@@ -320,6 +324,7 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
         metrics,
         bundle.get("benchmark_matrix_request_rows", []),
         prefix="bench.matrix.request",
+        label_cache=label_cache,
     )
     for row in _dict_rows(bundle.get("evaluation_summary_rows", [])):
         suite_id = str(row.get("suite_id", "")).strip() or "suite"
@@ -430,9 +435,9 @@ def _collect_benchmark_probe_metrics(
     rows: object,
     *,
     prefix: str,
+    label_cache: dict[_BenchmarkLabelCacheKey, str] | None = None,
 ) -> None:
     aggregates_by_label: dict[str, dict[str, _NumericAggregate]] = {}
-    matrix_label_cache: dict[tuple[object, object, object, object, object], str] = {}
     for row in _dict_rows(rows):
         label = ""
         for key, raw_value in row.items():
@@ -444,7 +449,7 @@ def _collect_benchmark_probe_metrics(
                 value = _float_or_none(raw_value)
             if value is not None:
                 if not label:
-                    label = _benchmark_probe_label(row, matrix_label_cache=matrix_label_cache)
+                    label = _benchmark_probe_label(row, label_cache=label_cache)
                 _update_probe_aggregates_by_label(
                     aggregates_by_label,
                     label=label,
@@ -540,6 +545,7 @@ def _aggregate_probe_values(key: str, values: list[float]) -> tuple[str, float]:
 
 def _benchmark_probe_label(
     row: dict[str, object],
+    label_cache: dict[_BenchmarkLabelCacheKey, str] | None = None,
     *,
     matrix_label_cache: dict[tuple[object, object, object, object, object], str] | None = None,
 ) -> str:
@@ -555,26 +561,64 @@ def _benchmark_probe_label(
             try:
                 return matrix_label_cache[cache_key]
             except KeyError:
-                label = _matrix_label(row)
+                label = _matrix_label(row, label_cache=label_cache)
                 matrix_label_cache[cache_key] = label
                 return label
             except TypeError:
                 pass
-        return _matrix_label(row)
-    suite = _label_part(row.get("suite", row.get("suite_id", "suite")))
-    context_length = _label_part(row.get("context_length", 0))
-    generation_length = _label_part(row.get("generation_length", 0))
-    batch_size = _label_part(row.get("batch_size", 0))
-    return f"{suite}.ctx{context_length}.gen{generation_length}.b{batch_size}"
+        return _matrix_label(row, label_cache=label_cache)
+    key = (
+        "bench",
+        str(row.get("suite", row.get("suite_id", "suite"))),
+        str(row.get("context_length", 0)),
+        str(row.get("generation_length", 0)),
+        str(row.get("batch_size", 0)),
+        "",
+    )
+    return _cached_benchmark_label(key, label_cache=label_cache)
 
 
-def _matrix_label(row: dict[str, object]) -> str:
-    suite_id = _label_part(row.get("suite_id", "suite"))
-    context_length = _label_part(row.get("context_length", 0))
-    generation_length = _label_part(row.get("generation_length", 0))
-    batch_size = _label_part(row.get("batch_size", 0))
-    concurrency_level = _label_part(row.get("concurrency_level", 0))
-    return f"{suite_id}.ctx{context_length}.gen{generation_length}.b{batch_size}.c{concurrency_level}"
+def _matrix_label(
+    row: dict[str, object],
+    label_cache: dict[_BenchmarkLabelCacheKey, str] | None = None,
+) -> str:
+    key = (
+        "matrix",
+        str(row.get("suite_id", "suite")),
+        str(row.get("context_length", 0)),
+        str(row.get("generation_length", 0)),
+        str(row.get("batch_size", 0)),
+        str(row.get("concurrency_level", 0)),
+    )
+    return _cached_benchmark_label(key, label_cache=label_cache)
+
+
+def _cached_benchmark_label(
+    key: _BenchmarkLabelCacheKey,
+    *,
+    label_cache: dict[_BenchmarkLabelCacheKey, str] | None,
+) -> str:
+    if label_cache is None:
+        return _build_benchmark_label(key)
+    cached = label_cache.get(key)
+    if cached is not None:
+        return cached
+    label = _build_benchmark_label(key)
+    label_cache[key] = label
+    return label
+
+
+def _build_benchmark_label(key: _BenchmarkLabelCacheKey) -> str:
+    kind, suite, context_length, generation_length, batch_size, concurrency_level = key
+    parts = [
+        suite.replace(" ", "_"),
+        f"ctx{_label_part(context_length)}",
+        f"gen{_label_part(generation_length)}",
+        f"b{_label_part(batch_size)}",
+    ]
+    if kind == "matrix":
+        parts.append(f"c{_label_part(concurrency_level)}")
+    return ".".join(parts)
 
 
 def _label_part(value: object) -> str:
