@@ -8,6 +8,7 @@ import pytest
 from worker.productization.benchmark_evaluation_report import (
     _METRIC_DIRECTION_BY_KEY,
     _aggregate_probe_values,
+    _benchmark_probe_label,
     _dict_rows,
     _finalize_numeric_aggregate,
     _label_part,
@@ -519,6 +520,24 @@ def test_label_part_preserves_numeric_labels_and_normalizes_text_spaces() -> Non
     assert _label_part(1.5) == "1.5"
     assert _label_part(True) == "True"
     assert _label_part("long suite") == "long_suite"
+
+
+def test_benchmark_probe_label_reuses_cached_matrix_labels() -> None:
+    cache: dict[tuple[object, object, object, object, object], str] = {}
+    row = {
+        "suite_id": "smoke",
+        "context_length": 128,
+        "generation_length": 32,
+        "batch_size": 1,
+        "concurrency_level": 2,
+    }
+
+    first = _benchmark_probe_label(row, matrix_label_cache=cache)
+    second = _benchmark_probe_label(dict(row), matrix_label_cache=cache)
+
+    assert first == "smoke.ctx128.gen32.b1.c2"
+    assert second == first
+    assert cache == {("smoke", 128, 32, 1, 2): first}
 
 
 def test_report_builder_uses_sparse_benchmark_probe_rows_without_fixed_key_scans() -> None:
