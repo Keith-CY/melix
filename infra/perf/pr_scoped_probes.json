@@ -33,10 +33,13 @@
     "runner": "ubuntu-latest",
     "watch_globs": [
       "services/mlx-worker-python/worker/productization/closure_audit.py",
-      "services/mlx-worker-python/tests/test_closure_audit.py"
+      "services/mlx-worker-python/tests/test_closure_audit.py",
+      "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/changed_scope_coverage.py"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_closure_audit.py",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_closure_audit.py && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage report -m services/mlx-worker-python/worker/productization/closure_audit.py services/mlx-worker-python/tests/test_closure_audit.py",
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_closure_audit.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_only_matching_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_evaluation_job_id_probe",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_closure_audit.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_only_matching_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_evaluation_job_id_probe && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/closure_audit.py services/mlx-worker-python/worker/productization/pr_scoped_performance.py services/mlx-worker-python/tests/test_closure_audit.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
     "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 -c \"import json; from pathlib import Path; from worker.productization.pr_scoped_performance import _probe_closure_audit as probe; print(json.dumps(probe(Path.cwd()), sort_keys=True))\"",
     "probe_impl": "closure_audit",
     "metrics": [

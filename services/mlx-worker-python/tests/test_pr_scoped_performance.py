@@ -105,7 +105,8 @@ def test_registered_probes_expose_focused_commands() -> None:
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
-        assert probe.probe_command
+        if probe.probe_impl == "command_json":
+            assert probe.probe_command
 
 
 def test_scope_report_with_no_matching_probe_returns_empty_selection() -> None:
@@ -177,6 +178,7 @@ def test_dispatch_probe_impl_supports_evaluation_job_id_probe() -> None:
         test_command="true",
         coverage_command="true",
         probe_impl="evaluation_job_id",
+        probe_command="",
         metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
     )
 
