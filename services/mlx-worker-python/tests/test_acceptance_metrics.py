@@ -81,6 +81,23 @@ def _passing_m9_report() -> dict[str, object]:
     }
 
 
+def _passing_lora_path_report() -> dict[str, object]:
+    return {
+        "stages": {
+            "dataset_build": {"success": 1.0, "duration_ms": 0.5},
+            "train": {"success": 1.0, "duration_ms": 1420.0},
+            "activate": {"success": 1.0, "duration_ms": 1.0},
+            "compare": {"success": 1.0, "duration_ms": 0.5},
+            "publish": {"success": 1.0, "duration_ms": 118.0},
+        },
+        "summary": {
+            "stages_success_count": 5.0,
+            "stages_failure_count": 0.0,
+            "full_path_success": 1.0,
+        },
+    }
+
+
 def _passing_real_workload_report() -> dict[str, object]:
     return {
         "summary": {
@@ -649,12 +666,13 @@ def test_compute_release_smoke_pass_rate_uses_all_gate_sections() -> None:
         },
         "real_workload": _passing_real_workload_report(),
         "m9": _passing_m9_report(),
+        "lora_path": _passing_lora_path_report(),
     }
 
     assert compute_release_smoke_pass_rate(report, policy) == 100.0
 
     report["recovery"]["restart_recovery_success_rate"] = 0.0
-    assert compute_release_smoke_pass_rate(report, policy) == 87.5
+    assert compute_release_smoke_pass_rate(report, policy) == 88.89
 
 
 def test_compute_release_smoke_pass_rate_fails_non_dict_runtime_core() -> None:
@@ -708,9 +726,10 @@ def test_compute_release_smoke_pass_rate_fails_non_dict_runtime_core() -> None:
         "runtime_core": "invalid",
         "real_workload": _passing_real_workload_report(),
         "m9": _passing_m9_report(),
+        "lora_path": _passing_lora_path_report(),
     }
 
-    assert compute_release_smoke_pass_rate(report, policy) == 87.5
+    assert compute_release_smoke_pass_rate(report, policy) == 88.89
 
 
 def test_compute_release_smoke_pass_rate_fails_non_dict_real_workload() -> None:
@@ -769,9 +788,10 @@ def test_compute_release_smoke_pass_rate_fails_non_dict_real_workload() -> None:
         },
         "real_workload": "invalid",
         "m9": _passing_m9_report(),
+        "lora_path": _passing_lora_path_report(),
     }
 
-    assert compute_release_smoke_pass_rate(report, policy) == 87.5
+    assert compute_release_smoke_pass_rate(report, policy) == 88.89
 
 
 def test_compute_release_smoke_pass_rate_fails_non_dict_m9() -> None:
@@ -830,9 +850,10 @@ def test_compute_release_smoke_pass_rate_fails_non_dict_m9() -> None:
         },
         "real_workload": _passing_real_workload_report(),
         "m9": "invalid",
+        "lora_path": _passing_lora_path_report(),
     }
 
-    assert compute_release_smoke_pass_rate(report, policy) == 87.5
+    assert compute_release_smoke_pass_rate(report, policy) == 88.89
 
 
 def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
@@ -925,6 +946,7 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
             },
             "real_workload": _passing_real_workload_report(),
             "m9": _passing_m9_report(),
+            "lora_path": _passing_lora_path_report(),
             "passed": True,
             "failures": [],
         },

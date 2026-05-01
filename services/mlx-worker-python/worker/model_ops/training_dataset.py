@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from itertools import chain
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -71,6 +70,7 @@ class MaterializedTrainingDatasetPackage:
     cache_hit: bool
     dataset_uri: str
     reference: HFDatasetReference
+    package: TrainingDatasetPackage | None = None
 
 
 @dataclass(frozen=True)
@@ -114,32 +114,44 @@ def _write_duplicate_jsonl_rows(paths: tuple[Path, ...], rows: list[dict[str, An
                 handle.write("\n")
 
 
-def load_training_dataset_package(
-    dataset_uri: str,
+def _iter_dataset_package_jsonl_rows(
+    path: Path,
     *,
+    invalid_json_message: str,
+    sample_limit: int = 0,
+) -> Iterable[dict[str, Any]]:
+    yielded = 0
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ModelOperationError(
+                    code="invalid_dataset_package",
+                    message=invalid_json_message,
+                    details={"line": str(line_number)},
+                ) from exc
+            yield payload
+            yielded += 1
+            if sample_limit > 0 and yielded >= sample_limit:
+                break
+
+
+def _build_training_dataset_package(
+    *,
+    dataset_uri: str,
+    package_path: Path,
+    manifest_path: Path,
+    samples_path: Path,
+    manifest: dict[str, Any],
+    serialized_samples: Iterable[dict[str, Any]],
+    serialized_validation_samples: Iterable[dict[str, Any]],
     sample_limit: int = 0,
     max_characters_per_sample: int = 0,
 ) -> TrainingDatasetPackage:
-    package_path = Path(dataset_uri).expanduser().resolve()
-    manifest_path = package_path / "manifest.json"
-    samples_path = package_path / "samples.jsonl"
-
-    if not manifest_path.is_file() or not samples_path.is_file():
-        raise ModelOperationError(
-            code="invalid_dataset_package",
-            message="Training dataset package must contain manifest.json and samples.jsonl.",
-            details={"dataset_uri": dataset_uri},
-        )
-
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ModelOperationError(
-            code="invalid_dataset_package",
-            message="Training dataset manifest is not valid JSON.",
-            details={"dataset_uri": dataset_uri},
-        ) from exc
-
     if not isinstance(manifest, dict):
         raise ModelOperationError(
             code="invalid_dataset_package",
@@ -168,28 +180,16 @@ def load_training_dataset_package(
         )
 
     normalized_samples: list[dict[str, Any]] = []
-    with samples_path.open("r", encoding="utf-8") as handle:
-        for line_number, raw_line in enumerate(handle, start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                sample = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ModelOperationError(
-                    code="invalid_dataset_package",
-                    message="Training dataset sample is not valid JSON.",
-                    details={"line": str(line_number)},
-                ) from exc
-
-            normalized = _normalize_sample(
+    for sample in serialized_samples:
+        normalized_samples.append(
+            _normalize_sample(
                 sample,
                 format_name=format_name,
                 max_characters_per_sample=max_characters_per_sample,
             )
-            normalized_samples.append(normalized)
-            if sample_limit > 0 and len(normalized_samples) >= sample_limit:
-                break
+        )
+        if sample_limit > 0 and len(normalized_samples) >= sample_limit:
+            break
 
     if not normalized_samples:
         raise ModelOperationError(
@@ -209,29 +209,14 @@ def load_training_dataset_package(
             },
         )
 
-    validation_samples_path = package_path / "valid.jsonl"
-    normalized_validation_samples: list[dict[str, Any]] = []
-    if validation_samples_path.is_file():
-        with validation_samples_path.open("r", encoding="utf-8") as handle:
-            for line_number, raw_line in enumerate(handle, start=1):
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    sample = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise ModelOperationError(
-                        code="invalid_dataset_package",
-                        message="Training dataset validation sample is not valid JSON.",
-                        details={"line": str(line_number)},
-                    ) from exc
-                normalized_validation_samples.append(
-                    _normalize_sample(
-                        sample,
-                        format_name=format_name,
-                        max_characters_per_sample=max_characters_per_sample,
-                    )
-                )
+    normalized_validation_samples = [
+        _normalize_sample(
+            sample,
+            format_name=format_name,
+            max_characters_per_sample=max_characters_per_sample,
+        )
+        for sample in serialized_validation_samples
+    ]
 
     return TrainingDatasetPackage(
         package_path=package_path,
@@ -246,6 +231,57 @@ def load_training_dataset_package(
         normalized_validation_samples=normalized_validation_samples,
         validation_sample_count=len(normalized_validation_samples),
         response_only_supported=format_name in {"chat_messages", "prompt_completion"},
+    )
+
+
+def load_training_dataset_package(
+    dataset_uri: str,
+    *,
+    sample_limit: int = 0,
+    max_characters_per_sample: int = 0,
+) -> TrainingDatasetPackage:
+    package_path = Path(dataset_uri).expanduser().resolve()
+    manifest_path = package_path / "manifest.json"
+    samples_path = package_path / "samples.jsonl"
+
+    if not manifest_path.is_file() or not samples_path.is_file():
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset package must contain manifest.json and samples.jsonl.",
+            details={"dataset_uri": dataset_uri},
+        )
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset manifest is not valid JSON.",
+            details={"dataset_uri": dataset_uri},
+        ) from exc
+
+    validation_samples_path = package_path / "valid.jsonl"
+    serialized_validation_samples: Iterable[dict[str, Any]] = ()
+    if validation_samples_path.is_file():
+        serialized_validation_samples = _iter_dataset_package_jsonl_rows(
+            validation_samples_path,
+            invalid_json_message="Training dataset validation sample is not valid JSON.",
+        )
+
+    return _build_training_dataset_package(
+        dataset_uri=dataset_uri,
+        package_path=package_path,
+        manifest_path=manifest_path,
+        samples_path=samples_path,
+        manifest=manifest,
+        serialized_samples=_iter_dataset_package_jsonl_rows(
+            samples_path,
+            invalid_json_message="Training dataset sample is not valid JSON.",
+            sample_limit=sample_limit,
+        ),
+        serialized_validation_samples=serialized_validation_samples,
+        sample_limit=sample_limit,
+        max_characters_per_sample=max_characters_per_sample,
     )
 
 
@@ -310,11 +346,13 @@ def resolve_training_dataset_package(
         cache_root=jobs_root / "datasets",
         fetch_json=hf_dataset_fetcher,
     )
-    package = load_training_dataset_package(
-        str(materialized.package_path),
-        sample_limit=sample_limit,
-        max_characters_per_sample=max_characters_per_sample,
-    )
+    package = materialized.package
+    if package is None or materialized.cache_hit or sample_limit > 0 or max_characters_per_sample > 0:
+        package = load_training_dataset_package(
+            str(materialized.package_path),
+            sample_limit=sample_limit,
+            max_characters_per_sample=max_characters_per_sample,
+        )
     return ResolvedTrainingDatasetPackage(
         package=package,
         source_kind="hf_dataset",
@@ -388,8 +426,7 @@ def build_training_dataset_artifact(
         )
         validation_strategy = "deterministic_ratio"
 
-    quality = _build_quality_report(chain(source_train_samples, source_validation_samples))
-    token_stats = _build_token_stats(
+    quality, token_stats = _build_quality_and_token_stats(
         chain(source_train_samples, source_validation_samples),
         source["format"],
     )
@@ -496,6 +533,8 @@ def write_normalized_dataset_snapshot(
     if dataset.normalized_validation_samples:
         _write_jsonl_rows(valid_path, dataset.normalized_validation_samples)
     else:
+        if valid_path.exists():
+            valid_path.unlink()
         valid_path = None
 
     return NormalizedDatasetSnapshot(
@@ -604,6 +643,15 @@ def materialize_hf_training_dataset_package(
         cache_hit=False,
         dataset_uri=dataset_uri,
         reference=resolved_reference,
+        package=_build_training_dataset_package(
+            dataset_uri=dataset_uri,
+            package_path=package_path,
+            manifest_path=manifest_path,
+            samples_path=samples_path,
+            manifest=manifest_payload,
+            serialized_samples=serialized_samples,
+            serialized_validation_samples=serialized_validation_samples,
+        ),
     )
 
 
@@ -1236,10 +1284,23 @@ def _deterministic_validation_split(
 
 
 def _build_quality_report(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    quality, _ = _build_quality_and_token_stats(samples, "")
+    return quality
+
+
+def _build_quality_and_token_stats(
+    samples: Iterable[dict[str, Any]],
+    format_name: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     seen: set[bytes] = set()
     duplicate_indices: list[int] = []
     dirty_samples: list[dict[str, Any]] = []
+    prompt_tokens: list[int] = []
+    completion_tokens: list[int] = []
+    total_tokens: list[int] = []
+    sample_count = 0
     for index, sample in enumerate(samples):
+        sample_count += 1
         sample_digest = _canonical_sample_digest(sample)
         if sample_digest in seen:
             duplicate_indices.append(index)
@@ -1248,41 +1309,96 @@ def _build_quality_report(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
         reasons = _dirty_sample_reasons(sample)
         if reasons:
             dirty_samples.append({"index": index, "reasons": reasons})
-    return {
-        "duplicate_count": len(duplicate_indices),
-        "duplicate_sample_indices": duplicate_indices[:10],
-        "dirty_count": len(dirty_samples),
-        "dirty_samples": dirty_samples[:10],
-    }
-
-
-def _build_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
-    prompt_tokens: list[int] = []
-    completion_tokens: list[int] = []
-    total_tokens: list[int] = []
-    sample_count = 0
-    for sample in samples:
-        sample_count += 1
         prompt_count, completion_count = _sample_token_counts(sample, format_name)
         prompt_tokens.append(prompt_count)
         completion_tokens.append(completion_count)
         total_tokens.append(prompt_count + completion_count)
 
+    prompt_summary = _summarize_token_values(prompt_tokens)
+    completion_summary = _summarize_token_values(completion_tokens)
+    total_summary = _summarize_token_values(total_tokens)
+
+    return (
+        {
+            "duplicate_count": len(duplicate_indices),
+            "duplicate_sample_indices": duplicate_indices[:10],
+            "dirty_count": len(dirty_samples),
+            "dirty_samples": dirty_samples[:10],
+        },
+        {
+            "estimator": "whitespace_v1",
+            "sample_count": sample_count,
+            "prompt_tokens_mean": prompt_summary["mean"],
+            "prompt_tokens_p50": prompt_summary["p50"],
+            "prompt_tokens_p95": prompt_summary["p95"],
+            "prompt_tokens_max": prompt_summary["max"],
+            "completion_tokens_mean": completion_summary["mean"],
+            "completion_tokens_p50": completion_summary["p50"],
+            "completion_tokens_p95": completion_summary["p95"],
+            "completion_tokens_max": completion_summary["max"],
+            "total_tokens_mean": total_summary["mean"],
+            "total_tokens_p50": total_summary["p50"],
+            "total_tokens_p95": total_summary["p95"],
+            "total_tokens_max": total_summary["max"],
+        },
+    )
+
+
+def _build_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
+    return _collect_token_stats(samples, format_name)
+
+
+def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
+    prompt_tokens: list[int] = []
+    completion_tokens: list[int] = []
+    total_tokens: list[int] = []
+    sample_count = 0
+    if format_name == "prompt_completion":
+        materialized_samples = samples if isinstance(samples, list) else list(samples)
+        sample_count = len(materialized_samples)
+        prompt_tokens = [
+            len(str(sample.get("prompt", "")).split())
+            for sample in materialized_samples
+        ]
+        completion_tokens = [
+            len(str(sample.get("completion", "")).split())
+            for sample in materialized_samples
+        ]
+        total_tokens = [
+            prompt_count + completion_count
+            for prompt_count, completion_count in zip(prompt_tokens, completion_tokens)
+        ]
+    else:
+        prompt_tokens_append = prompt_tokens.append
+        completion_tokens_append = completion_tokens.append
+        total_tokens_append = total_tokens.append
+        sample_token_counts = _sample_token_counts
+        for sample in samples:
+            sample_count += 1
+            prompt_count, completion_count = sample_token_counts(sample, format_name)
+            prompt_tokens_append(prompt_count)
+            completion_tokens_append(completion_count)
+            total_tokens_append(prompt_count + completion_count)
+
+    prompt_summary = _summarize_token_values(prompt_tokens)
+    completion_summary = _summarize_token_values(completion_tokens)
+    total_summary = _summarize_token_values(total_tokens)
+
     return {
         "estimator": "whitespace_v1",
         "sample_count": sample_count,
-        "prompt_tokens_mean": _mean_value(prompt_tokens),
-        "prompt_tokens_p50": _percentile_value(prompt_tokens, 0.50),
-        "prompt_tokens_p95": _percentile_value(prompt_tokens, 0.95),
-        "prompt_tokens_max": max(prompt_tokens, default=0),
-        "completion_tokens_mean": _mean_value(completion_tokens),
-        "completion_tokens_p50": _percentile_value(completion_tokens, 0.50),
-        "completion_tokens_p95": _percentile_value(completion_tokens, 0.95),
-        "completion_tokens_max": max(completion_tokens, default=0),
-        "total_tokens_mean": _mean_value(total_tokens),
-        "total_tokens_p50": _percentile_value(total_tokens, 0.50),
-        "total_tokens_p95": _percentile_value(total_tokens, 0.95),
-        "total_tokens_max": max(total_tokens, default=0),
+        "prompt_tokens_mean": prompt_summary["mean"],
+        "prompt_tokens_p50": prompt_summary["p50"],
+        "prompt_tokens_p95": prompt_summary["p95"],
+        "prompt_tokens_max": prompt_summary["max"],
+        "completion_tokens_mean": completion_summary["mean"],
+        "completion_tokens_p50": completion_summary["p50"],
+        "completion_tokens_p95": completion_summary["p95"],
+        "completion_tokens_max": completion_summary["max"],
+        "total_tokens_mean": total_summary["mean"],
+        "total_tokens_p50": total_summary["p50"],
+        "total_tokens_p95": total_summary["p95"],
+        "total_tokens_max": total_summary["max"],
     }
 
 
@@ -1375,12 +1491,25 @@ def _mean_value(values: list[int]) -> float:
     return round(sum(values) / len(values), 3)
 
 
-def _percentile_value(values: list[int], pct: float) -> int:
-    if not values:
-        return 0
+def _summarize_token_values(values: list[int]) -> dict[str, float | int]:
     ordered = sorted(values)
-    index = int((len(ordered) - 1) * pct)
-    return ordered[index]
+    return {
+        "mean": _mean_value(values),
+        "p50": _sorted_percentile_value(ordered, 0.50),
+        "p95": _sorted_percentile_value(ordered, 0.95),
+        "max": ordered[-1] if ordered else 0,
+    }
+
+
+def _sorted_percentile_value(ordered_values: list[int], pct: float) -> int:
+    if not ordered_values:
+        return 0
+    index = int((len(ordered_values) - 1) * pct)
+    return ordered_values[index]
+
+
+def _percentile_value(values: list[int], pct: float) -> int:
+    return _sorted_percentile_value(sorted(values), pct)
 
 
 def _truthy(raw_value: str) -> bool:

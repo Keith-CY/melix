@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,12 +35,19 @@ class BenchmarkQueueRecord:
 
     @staticmethod
     def from_dict(payload: dict[str, object]) -> BenchmarkQueueRecord:
+        raw_suite_ids = payload.get("suite_ids", ())
+        raw_parameters = payload.get("parameters", {})
+        parameter_items = (
+            raw_parameters.items()
+            if isinstance(raw_parameters, dict)
+            else dict(raw_parameters).items()
+        )
         return BenchmarkQueueRecord(
             queue_item_id=str(payload["queue_item_id"]),
             job_kind=str(payload["job_kind"]),
             model_id=str(payload["model_id"]),
-            suite_ids=tuple(str(item) for item in payload.get("suite_ids", [])),
-            parameters={str(key): str(value) for key, value in dict(payload.get("parameters", {})).items()},
+            suite_ids=tuple(map(str, raw_suite_ids)),
+            parameters={str(key): str(value) for key, value in parameter_items},
             status=str(payload["status"]),
             created_at_unix_ms=int(payload["created_at_unix_ms"]),
             updated_at_unix_ms=int(payload["updated_at_unix_ms"]),
@@ -62,11 +70,20 @@ class BenchmarkQueueStore:
         if not queue_root.is_dir():
             return []
 
-        records = [
-            self._load_record(path)
-            for path in queue_root.iterdir()
-            if path.suffix == ".json" and path.is_file()
-        ]
+        records = []
+        try:
+            with os.scandir(queue_root) as entries:
+                for entry in entries:
+                    if not entry.name.endswith(".json"):
+                        continue
+                    try:
+                        if not entry.is_file():
+                            continue
+                    except OSError:
+                        continue
+                    records.append(self._load_record(Path(entry.path)))
+        except OSError:
+            return []
         return sorted(records, key=lambda record: (record.created_at_unix_ms, record.queue_item_id))
 
     def transition(

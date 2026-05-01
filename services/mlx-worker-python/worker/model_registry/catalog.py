@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import threading
 import time
 from typing import Iterable, Mapping
@@ -71,6 +72,12 @@ class RegistrySnapshot:
     scanned_at_unix_ms: int
 
 
+@dataclass(frozen=True)
+class _PlainLocalModelScan:
+    model_dir: Path
+    has_model_weight_files: bool
+
+
 def _normalized(value: str | None) -> str:
     return (value or "").strip()
 
@@ -94,6 +101,11 @@ def _load_json_dict_file(
     try:
         stat_result = path.stat()
     except OSError:
+        if json_cache is not None:
+            json_cache.pop(path, None)
+        return {}
+
+    if not stat.S_ISREG(stat_result.st_mode):
         if json_cache is not None:
             json_cache.pop(path, None)
         return {}
@@ -175,34 +187,50 @@ def _has_model_weight_files(model_dir: Path) -> bool:
     return False
 
 
-def _read_text_prefix(path: Path, *, max_chars: int = 16_384) -> str:
-    if not path.is_file():
+def _read_text_prefix(
+    path: Path,
+    *,
+    max_chars: int = 16_384,
+    text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] | None = None,
+) -> str:
+    try:
+        stat_result = path.stat()
+    except OSError:
+        if text_prefix_cache is not None:
+            text_prefix_cache.pop(path, None)
         return ""
+
+    if not stat.S_ISREG(stat_result.st_mode):
+        if text_prefix_cache is not None:
+            text_prefix_cache.pop(path, None)
+        return ""
+
+    if text_prefix_cache is not None:
+        cached_entry = text_prefix_cache.get(path)
+        if cached_entry is not None:
+            cached_mtime_ns, cached_size, cached_mode, cached_max_chars, cached_payload = cached_entry
+            if (
+                cached_mtime_ns == stat_result.st_mtime_ns
+                and cached_size == stat_result.st_size
+                and cached_mode == stat_result.st_mode
+                and cached_max_chars >= max_chars
+            ):
+                return cached_payload[:max_chars]
+
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            return handle.read(max_chars)
+            payload = handle.read(max_chars)
     except OSError:
+        if text_prefix_cache is not None:
+            text_prefix_cache.pop(path, None)
         return ""
 
+    if text_prefix_cache is not None:
+        text_prefix_cache[path] = (stat_result.st_mtime_ns, stat_result.st_size, stat_result.st_mode, max_chars, payload)
+    return payload
 
-def _has_mlx_signal(*, model_dir: Path, repo_id: str = "") -> bool:
-    lowered_repo_id = repo_id.lower()
-    lowered_path = model_dir.name.lower()
-    if repo_id.startswith("mlx-community/") or "mlx" in lowered_repo_id or "mlx" in lowered_path:
-        return True
 
-    metadata_text = "\n".join(
-        filter(
-            None,
-            (
-                _read_text_prefix(model_dir / "README.md"),
-                _read_text_prefix(model_dir / "config.json"),
-                _read_text_prefix(model_dir / "model_index.json"),
-            ),
-        )
-    ).lower()
-    if not metadata_text:
-        return False
+def _metadata_text_has_mlx_signal(metadata_text: str) -> bool:
     return (
         "library_name: mlx" in metadata_text
         or '"library_name": "mlx"' in metadata_text
@@ -210,6 +238,40 @@ def _has_mlx_signal(*, model_dir: Path, repo_id: str = "") -> bool:
         or "\n  - mlx" in metadata_text
         or '"mlx"' in metadata_text and '"tags"' in metadata_text
     )
+
+
+def _metadata_payload_has_mlx_signal(metadata_payload: Mapping[str, object]) -> bool:
+    try:
+        metadata_text = json.dumps(metadata_payload, sort_keys=True).lower()
+    except (TypeError, ValueError):
+        return False
+    return _metadata_text_has_mlx_signal(metadata_text)
+
+
+def _has_mlx_signal(
+    *,
+    model_dir: Path,
+    repo_id: str = "",
+    text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] | None = None,
+    config_payload: Mapping[str, object] | None = None,
+) -> bool:
+    lowered_repo_id = repo_id.lower()
+    lowered_path = model_dir.name.lower()
+    if repo_id.startswith("mlx-community/") or "mlx" in lowered_repo_id or "mlx" in lowered_path:
+        return True
+
+    for metadata_filename in ("README.md", "config.json", "model_index.json"):
+        if metadata_filename == "config.json" and config_payload is not None:
+            if config_payload and _metadata_payload_has_mlx_signal(config_payload):
+                return True
+            continue
+        metadata_text = _read_text_prefix(
+            model_dir / metadata_filename,
+            text_prefix_cache=text_prefix_cache,
+        ).lower()
+        if metadata_text and _metadata_text_has_mlx_signal(metadata_text):
+            return True
+    return False
 
 
 def _hf_cache_repo_id(cache_repo_dir: Path) -> str | None:
@@ -308,7 +370,19 @@ def _is_hf_cache_snapshot_dir(root: Path, model_dir: Path) -> bool:
         relative_parts = model_dir.relative_to(root).parts
     except ValueError:
         return False
-    return len(relative_parts) >= 3 and relative_parts[0].startswith("models--") and relative_parts[1] == "snapshots"
+    if len(relative_parts) < 3 or relative_parts[1] != "snapshots":
+        return False
+    return _hf_cache_repo_id(root / relative_parts[0]) is not None
+
+
+def _is_hf_cache_pruned_subtree(root: Path, current: Path) -> bool:
+    try:
+        relative_parts = current.relative_to(root).parts
+    except ValueError:
+        return False
+    if len(relative_parts) < 2 or relative_parts[1] not in {"snapshots", "refs"}:
+        return False
+    return _hf_cache_repo_id(root / relative_parts[0]) is not None
 
 
 def _local_model_id(root: Path, model_dir: Path) -> str:
@@ -838,6 +912,7 @@ class WorkerModelCatalog:
         self._overlay_models: dict[str, common_pb2.ModelSpec] = {}
         self._registry_lock = threading.RLock()
         self._json_file_cache: dict[Path, tuple[int, int, dict[str, object]]] = {}
+        self._text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] = {}
         self._registry_snapshot_cache: dict[tuple[str, ...], RegistrySnapshot] = {}
         self._active_registry_roots = tuple(self._configured_registry_roots())
         self._last_registry_snapshot = self._refresh_registry_snapshot(self._active_registry_roots)
@@ -931,12 +1006,18 @@ class WorkerModelCatalog:
         }
 
     def _refresh_registry_snapshot(self, registry_roots: tuple[str, ...]) -> RegistrySnapshot:
+        self._prune_text_prefix_cache()
         roots, discovered_models = self._scan_registry_roots(registry_roots)
         return RegistrySnapshot(
             roots=tuple(roots),
             models=tuple(discovered_models[model_id] for model_id in sorted(discovered_models)),
             scanned_at_unix_ms=int(time.time() * 1000),
         )
+
+    def _prune_text_prefix_cache(self) -> None:
+        for path in tuple(self._text_prefix_cache):
+            if not path.exists():
+                self._text_prefix_cache.pop(path, None)
 
     def _scan_registry_roots(
         self,
@@ -962,7 +1043,7 @@ class WorkerModelCatalog:
                 continue
 
             accepted_model_ids: list[str] = []
-            manifest_paths, plain_local_model_dirs = self._scan_registry_root_tree(root)
+            manifest_paths, plain_local_model_dirs, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
             for manifest_path in manifest_paths:
                 parsed = self._parse_registry_manifest(manifest_path)
                 if parsed is None:
@@ -989,6 +1070,7 @@ class WorkerModelCatalog:
                 root_id=root_id,
                 root_order=index,
                 plain_local_model_dirs=plain_local_model_dirs,
+                hf_cache_repo_dirs=hf_cache_repo_dirs,
                 discovered_models=discovered_models,
                 accepted_model_ids=accepted_model_ids,
             )
@@ -1061,13 +1143,15 @@ class WorkerModelCatalog:
         root: Path,
         root_id: str,
         root_order: int,
-        plain_local_model_dirs: Iterable[Path],
+        plain_local_model_dirs: Iterable[_PlainLocalModelScan],
         discovered_models: dict[str, common_pb2.ModelSpec],
         accepted_model_ids: list[str],
+        hf_cache_repo_dirs: Iterable[Path] | None = None,
     ) -> None:
         root_resolved = root.resolve()
         seen_paths: set[Path] = set()
-        for model in self._scan_huggingface_cache_models(root=root):
+        json_cache = self._json_file_cache
+        for model in self._scan_huggingface_cache_models(root=root, cache_repo_dirs=hf_cache_repo_dirs):
             resolved_path = Path(model.model_path)
             seen_paths.add(resolved_path)
             if model.model_id in discovered_models or model.model_id in self._seed_models:
@@ -1082,8 +1166,8 @@ class WorkerModelCatalog:
             discovered_models[model.model_id] = model
             accepted_model_ids.append(model.model_id)
 
-        for model_dir in plain_local_model_dirs:
-            resolved_path = model_dir
+        for plain_local_model in plain_local_model_dirs:
+            resolved_path = plain_local_model.model_dir
             if resolved_path in seen_paths or _is_hf_cache_snapshot_dir(root_resolved, resolved_path):
                 continue
             if (resolved_path / "manifest.json").is_file():
@@ -1091,7 +1175,15 @@ class WorkerModelCatalog:
             model_id = _local_model_id(root_resolved, resolved_path)
             if model_id in discovered_models or model_id in self._seed_models:
                 continue
-            if not _has_model_weight_files(resolved_path) or not _has_mlx_signal(model_dir=resolved_path, repo_id=model_id):
+            if not plain_local_model.has_model_weight_files:
+                continue
+            config_payload = _load_model_config_payload(resolved_path, json_cache=json_cache)
+            if not _has_mlx_signal(
+                model_dir=resolved_path,
+                repo_id=model_id,
+                text_prefix_cache=self._text_prefix_cache,
+                config_payload=config_payload,
+            ):
                 continue
             model = self._raw_model_spec(
                 model_id=model_id,
@@ -1110,8 +1202,22 @@ class WorkerModelCatalog:
             discovered_models[model_id] = model
             accepted_model_ids.append(model_id)
 
-    def _scan_huggingface_cache_models(self, *, root: Path) -> Iterable[common_pb2.ModelSpec]:
-        for cache_repo_dir in _sorted_child_directories(root, name_prefix="models--"):
+    def _scan_huggingface_cache_models(
+        self,
+        *,
+        root: Path,
+        cache_repo_dirs: Iterable[Path] | None = None,
+    ) -> Iterable[common_pb2.ModelSpec]:
+        json_cache = getattr(self, "_json_file_cache", None)
+        if json_cache is None:
+            json_cache = {}
+            self._json_file_cache = json_cache
+        resolved_cache_repo_dirs = (
+            tuple(cache_repo_dirs)
+            if cache_repo_dirs is not None
+            else _sorted_child_directories(root, name_prefix="models--")
+        )
+        for cache_repo_dir in resolved_cache_repo_dirs:
             repo_id = _hf_cache_repo_id(cache_repo_dir)
             if repo_id is None:
                 continue
@@ -1126,7 +1232,13 @@ class WorkerModelCatalog:
             for snapshot_dir in snapshot_dirs:
                 if not (snapshot_dir / "config.json").is_file() or not _has_model_weight_files(snapshot_dir):
                     continue
-                if not _has_mlx_signal(model_dir=snapshot_dir, repo_id=repo_id):
+                config_payload = _load_model_config_payload(snapshot_dir, json_cache=json_cache)
+                if not _has_mlx_signal(
+                    model_dir=snapshot_dir,
+                    repo_id=repo_id,
+                    text_prefix_cache=self._text_prefix_cache,
+                    config_payload=config_payload,
+                ):
                     continue
                 revision = _hf_cache_revision(cache_repo_dir, snapshot_dir.name, revision_map=revision_map)
                 yield self._raw_model_spec(
@@ -1142,23 +1254,66 @@ class WorkerModelCatalog:
 
     @staticmethod
     def _scan_registry_root_tree(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+        manifest_paths, plain_local_model_dirs, _ = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
+        return manifest_paths, tuple(scan.model_dir for scan in plain_local_model_dirs)
+
+    @staticmethod
+    def _scan_registry_root_tree_with_hf_repos(root: Path) -> tuple[tuple[Path, ...], tuple[_PlainLocalModelScan, ...], tuple[Path, ...]]:
         manifest_paths: list[Path] = []
-        plain_local_model_dirs: list[Path] = []
-        stack = [root.resolve()]
+        plain_local_model_dirs: list[_PlainLocalModelScan] = []
+        hf_cache_repo_dirs: list[Path] = []
+        resolved_root = root.resolve()
+        stack = [resolved_root]
         while stack:
             current = stack.pop()
             if current.name in {"blobs", ".git", "__pycache__"}:
                 continue
-            manifest_path = current / "manifest.json"
-            if manifest_path.is_file():
-                manifest_paths.append(manifest_path)
+            if _is_hf_cache_pruned_subtree(resolved_root, current):
                 continue
-            if (current / "config.json").is_file():
-                plain_local_model_dirs.append(current)
+            try:
+                with os.scandir(os.fspath(current)) as entries:
+                    child_names: list[str] = []
+                    has_manifest = False
+                    has_config = False
+                    has_model_weight_files = False
+                    for entry in entries:
+                        try:
+                            if entry.name == "manifest.json" and entry.is_file():
+                                has_manifest = True
+                                continue
+                            if entry.name == "config.json" and entry.is_file():
+                                has_config = True
+                                continue
+                            if entry.name == "model.safetensors.index.json" and entry.is_file():
+                                has_model_weight_files = True
+                                continue
+                            if entry.name.endswith((".safetensors", ".npz")) and entry.is_file():
+                                has_model_weight_files = True
+                                continue
+                            if entry.is_dir():
+                                child_path = current / entry.name
+                                if current == resolved_root and entry.name.startswith("models--"):
+                                    if _hf_cache_repo_id(child_path) is not None:
+                                        hf_cache_repo_dirs.append(child_path)
+                                        continue
+                                child_names.append(entry.name)
+                        except OSError:
+                            continue
+            except OSError:
                 continue
-            children = _sorted_child_directories(current)
-            stack.extend(reversed(children))
-        return tuple(manifest_paths), tuple(plain_local_model_dirs)
+            if has_manifest:
+                manifest_paths.append(current / "manifest.json")
+                continue
+            if has_config:
+                plain_local_model_dirs.append(
+                    _PlainLocalModelScan(
+                        model_dir=current,
+                        has_model_weight_files=has_model_weight_files,
+                    )
+                )
+                continue
+            stack.extend(current / name for name in sorted(child_names, reverse=True))
+        return tuple(manifest_paths), tuple(plain_local_model_dirs), tuple(sorted(hf_cache_repo_dirs))
 
     @staticmethod
     def _iter_plain_local_model_dirs(root: Path) -> Iterable[Path]:

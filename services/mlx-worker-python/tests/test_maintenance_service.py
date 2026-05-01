@@ -16,6 +16,7 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
+from worker.model_ops.conversion_pipeline import ModelConversionPipeline
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.job_registry import (
     ModelOpsJob,
@@ -644,6 +645,40 @@ def test_convert_model_supports_convert_and_quantize_jobs(tmp_path: Path) -> Non
     assert quantize_payload["kv_quant"] == "q8"
 
 
+def test_convert_model_writes_manifest_once_after_in_memory_byte_convergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    write_calls = 0
+    original_write_manifest = ModelConversionPipeline._write_manifest
+
+    def counting_write_manifest(path: Path, payload: dict[str, object]) -> int:
+        nonlocal write_calls
+        write_calls += 1
+        return original_write_manifest(path, payload)
+
+    monkeypatch.setattr(ModelConversionPipeline, "_write_manifest", staticmethod(counting_write_manifest))
+
+    convert_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "convert"),
+                generate_manifest=True,
+            ),
+            context=None,
+        )
+    )
+    convert_manifest = next(event.manifest for event in convert_events if event.HasField("manifest"))
+    convert_payload = json.loads(convert_manifest.manifest_json)
+    manifest_path = Path(convert_events[-1].completed.output_path) / "manifest.json"
+
+    assert write_calls == 1
+    assert convert_payload["manifest_bytes"] == manifest_path.stat().st_size
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == convert_payload
+
+
 def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None:
     service = build_service(tmp_path)
     artifact_path = tmp_path / "artifact"
@@ -683,6 +718,44 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
     assert upload_payload["upload_backend"] == "huggingface_hub"
     assert upload_payload["published_url"] == "https://huggingface.co/melix/upload-target"
     assert upload_manifest.artifact.artifact_kind == "upload_receipt"
+
+
+def test_upload_job_writes_receipt_once_after_in_memory_byte_convergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    artifact_path = tmp_path / "artifact"
+    artifact_path.write_text("melix-upload", encoding="utf-8")
+    write_calls = 0
+    original_write_manifest = UploadReceiptPipeline._write_manifest
+
+    def counting_write_manifest(path: Path, payload: dict[str, object]) -> int:
+        nonlocal write_calls
+        write_calls += 1
+        return original_write_manifest(path, payload)
+
+    monkeypatch.setattr(UploadReceiptPipeline, "_write_manifest", staticmethod(counting_write_manifest))
+
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model=str(artifact_path),
+                output_dir=str(tmp_path / "upload"),
+                generate_manifest=True,
+                ext={"operation": "upload", "target_repo": "melix/upload-target"},
+            ),
+            context=None,
+        )
+    )
+    upload_manifest = next(event.manifest for event in upload_events if event.HasField("manifest"))
+    upload_payload = json.loads(upload_manifest.manifest_json)
+    receipt_path = Path(upload_events[-1].completed.output_path)
+
+    assert write_calls == 1
+    assert upload_payload["manifest_bytes"] == receipt_path.stat().st_size
+    assert upload_payload["artifact_bytes"] == receipt_path.stat().st_size
+    assert json.loads(receipt_path.read_text(encoding="utf-8")) == upload_payload
 
 
 def test_download_job_reports_managed_hub_snapshot_without_creating_descriptor(tmp_path: Path) -> None:
@@ -1649,6 +1722,30 @@ def test_upload_receipt_pipeline_collect_published_file_list_filters_and_sorts(t
         "aa.bin",
         "sub/aa.bin",
         "sub/zz.bin",
+    ]
+
+
+def test_upload_receipt_pipeline_collect_published_file_list_preserves_symlink_rules(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "model"
+    source_root.mkdir()
+    (source_root / "weights.bin").write_text("weights", encoding="utf-8")
+    target_file = source_root / "target.txt"
+    target_file.write_text("target", encoding="utf-8")
+    (source_root / "file-link.txt").symlink_to(target_file)
+    nested_root = source_root / "nested"
+    nested_root.mkdir()
+    (nested_root / "config.json").write_text("{}", encoding="utf-8")
+    (source_root / "dir-link").symlink_to(nested_root, target_is_directory=True)
+    (source_root / "broken-link").symlink_to(source_root / "missing.bin")
+
+    assert UploadReceiptPipeline._collect_published_file_list(source_root) == [
+        "broken-link",
+        "file-link.txt",
+        "nested/config.json",
+        "target.txt",
+        "weights.bin",
     ]
 
 
@@ -3936,6 +4033,45 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
     assert "runtime_name: fast-benchmark" in report
 
 
+def test_run_bench_persists_report_without_reading_report_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path, registry=registry)
+    service._core._benchmark_suite_catalog = BenchmarkSuiteCatalog(
+        hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+    )
+
+    original_read_text = Path.read_text
+
+    def guarded_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name == "bench-report.md" and self.parent.name == "model-ops-0001":
+            raise AssertionError("RunBench should reuse in-memory report markdown instead of rereading bench-report.md")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle=loaded.handle,
+                suites=["smoke"],
+                parameters={"require_live_model": "true"},
+            ),
+            context=None,
+        )
+    )
+
+    report_path = Path(events[-1].completed.report_path)
+    report = original_read_text(report_path, encoding="utf-8")
+
+    assert report_path.name == "bench-report.md"
+    assert "# Melix Bench" in report
+    assert "runtime_name: fast-benchmark" in report
+
+
 def test_run_bench_require_live_model_rejects_deterministic_runtime(tmp_path: Path) -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
@@ -4402,6 +4538,10 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Pa
     ) == (4, 8)
     assert core._benchmark_context_lengths(
         suite=suite,
+        parameters={"context_lengths": "8, 4, 8, 4"},
+    ) == (4, 8)
+    assert core._benchmark_context_lengths(
+        suite=suite,
         parameters={"context_lengths": "8, , 4"},
     ) == (4, 8)
     assert core._benchmark_context_lengths(
@@ -4409,6 +4549,7 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Pa
         parameters={"context_length": "oops"},
     ) == (32,)
     assert core._benchmark_batch_sizes({"batch_sizes": "1, bad, 2"}) == (1, 2)
+    assert core._benchmark_batch_sizes({"batch_sizes": "2, 1, 2, 1"}) == (1, 2)
     assert core._benchmark_batch_sizes({"batch_sizes": "1, , 2"}) == (1, 2)
     assert core._benchmark_batch_sizes({"batch_size": "oops"}) == (1,)
     assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"

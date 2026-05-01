@@ -117,6 +117,44 @@ def test_rebuild_index_prefers_runs_with_reported_loss_for_best_run(tmp_path: Pa
     assert payload["groups"][0]["best_known_adapter"]["latest_checkpoint_path"].endswith("checkpoint-1/adapters.safetensors")
 
 
+def test_build_group_payloads_evaluates_best_loss_once_per_run(monkeypatch) -> None:
+    runs = [
+        {
+            "run_id": "model-ops-0001",
+            "group_id": "nightly-qwen",
+            "updated_at_unix_ms": 1_000,
+            "loss_best": 0.42,
+        },
+        {
+            "run_id": "model-ops-0002",
+            "group_id": "nightly-qwen",
+            "updated_at_unix_ms": 2_000,
+            "loss_best": 0.37,
+        },
+        {
+            "run_id": "model-ops-0003",
+            "group_id": "nightly-qwen",
+            "updated_at_unix_ms": 3_000,
+        },
+    ]
+    call_count = 0
+    original_best_loss = lora_experiment_store_module._best_loss_value
+
+    def tracked_best_loss(item: dict[str, object]) -> float | None:
+        nonlocal call_count
+        call_count += 1
+        return original_best_loss(item)
+
+    monkeypatch.setattr(lora_experiment_store_module, "_best_loss_value", tracked_best_loss)
+
+    groups = LoraExperimentStore()._build_group_payloads(runs)
+
+    assert call_count == len(runs)
+    assert groups[0]["latest_run_id"] == "model-ops-0003"
+    assert groups[0]["best_run_id"] == "model-ops-0002"
+    assert groups[0]["best_loss"] == 0.37
+
+
 def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path: Path) -> None:
     jobs_root = tmp_path / "model-ops"
     _write_manifest(
@@ -165,6 +203,77 @@ def test_rebuild_index_skips_manifest_parse_when_run_record_exists(tmp_path: Pat
     payload = LoraExperimentStore().rebuild_index(jobs_root)
 
     assert [run["run_id"] for run in payload["runs"]] == ["model-ops-0001"]
+
+
+
+def test_rebuild_index_reuses_cached_run_and_manifest_payloads(tmp_path: Path, monkeypatch) -> None:
+    jobs_root = tmp_path / "model-ops"
+    store = LoraExperimentStore()
+    _write_run_record(
+        jobs_root,
+        run_id="model-ops-0001",
+        group_id="nightly-qwen",
+        manifest_path="/tmp/model-ops-0001/from-run-record.json",
+        updated_at_unix_ms=1_000,
+    )
+    manifest_path = _write_manifest(
+        jobs_root,
+        run_id="model-ops-0002",
+        adapter_name="manifest-only-adapter",
+        updated_at_unix_ms=2_000,
+    )
+
+    first_payload = store.rebuild_index(jobs_root)
+    run_path = jobs_root / "train_lora" / "model-ops-0001" / LoraExperimentStore.run_record_name
+    original_read_payload = LoraExperimentStore._read_payload
+
+    def _read_payload(path: Path) -> dict[str, object]:
+        if path in {run_path, manifest_path}:
+            raise AssertionError("rebuild_index should reuse cached unchanged payloads")
+        return original_read_payload(path)
+
+    monkeypatch.setattr(LoraExperimentStore, "_read_payload", staticmethod(_read_payload))
+
+    second_payload = store.rebuild_index(jobs_root)
+
+    assert second_payload == first_payload
+
+
+
+def test_rebuild_index_invalidates_cached_payload_when_run_record_changes(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "model-ops"
+    store = LoraExperimentStore()
+    _write_run_record(
+        jobs_root,
+        run_id="model-ops-0001",
+        group_id="nightly-qwen",
+        manifest_path="/tmp/model-ops-0001/train_lora.adapter.json",
+        updated_at_unix_ms=1_000,
+        checkpoint_count=1,
+    )
+
+    original_payload = store.rebuild_index(jobs_root)
+    run_path = jobs_root / "train_lora" / "model-ops-0001" / LoraExperimentStore.run_record_name
+    original_stat = run_path.stat()
+    run_record = json.loads(run_path.read_text(encoding="utf-8"))
+    run_record["checkpoint_count"] = 7
+    run_path.write_text(json.dumps(run_record, indent=2) + "\n", encoding="utf-8")
+    os.utime(run_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns + 1_000_000))
+
+    refreshed_payload = store.rebuild_index(jobs_root)
+
+    assert original_payload["runs"][0]["checkpoint_count"] == 1
+    assert refreshed_payload["runs"][0]["checkpoint_count"] == 7
+
+
+
+def test_cache_payload_drops_entries_for_missing_paths(tmp_path: Path) -> None:
+    store = LoraExperimentStore()
+    missing_path = tmp_path / "missing.json"
+
+    store._cache_payload(path=missing_path, payload={"run_id": "missing"})
+
+    assert missing_path not in store._cached_payloads
 
 
 
@@ -258,6 +367,20 @@ def test_load_index_invalidates_cached_index_when_index_file_changes(tmp_path: P
 
     assert refreshed_payload["runs"][0]["run_id"] == "mutated-run-id"
 
+
+def test_iter_lora_run_dirs_filters_before_sorting(tmp_path: Path) -> None:
+    train_root = tmp_path / "train_lora"
+    train_root.mkdir()
+    (train_root / "model-ops-0002").mkdir()
+    (train_root / "model-ops-0001").mkdir()
+    (train_root / "notes").mkdir()
+    (train_root / "model-ops-not-a-dir").write_text("ignore\n", encoding="utf-8")
+
+    assert [path.name for path in lora_experiment_store_module._iter_lora_run_dirs(train_root)] == [
+        "model-ops-0001",
+        "model-ops-0002",
+    ]
+    assert lora_experiment_store_module._iter_lora_run_dirs(train_root / "missing") == ()
 
 
 def test_rebuild_index_skips_non_directories_duplicate_manifests_and_non_train_lora_entries(tmp_path: Path) -> None:

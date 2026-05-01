@@ -1232,10 +1232,13 @@ class MaintenanceCore:
             reasoning_mode = parameters.get("reasoning_mode", "").strip()
             structured_output_mode = parameters.get("structured_output_mode", "").strip()
             report_path = output_dir / "bench-report.md"
-            report_path.write_text(
-                self._render_bench_report(request, metrics, task_kind=task_kind, parameters=parameters),
-                encoding="utf-8",
+            report_markdown = self._render_bench_report(
+                request,
+                metrics,
+                task_kind=task_kind,
+                parameters=parameters,
             )
+            report_path.write_text(report_markdown, encoding="utf-8")
             job_record = build_serving_benchmark_job(
                 job_id=job.job_id,
                 model_id=model_id,
@@ -1263,7 +1266,7 @@ class MaintenanceCore:
                 metrics={metric.name: metric.value for metric in metrics},
                 units={metric.name: metric.unit for metric in metrics},
                 report_path=str(report_path),
-                report_markdown=report_path.read_text(encoding="utf-8"),
+                report_markdown=report_markdown,
             )
             if self._benchmark_store is None:
                 self._benchmark_store = BenchmarkStore()
@@ -3323,7 +3326,7 @@ class MaintenanceCore:
             else:
                 default_prompt = suite.prompt_batches[0] if suite.prompt_batches else suite.title
                 values.append(max(1, len(default_prompt.split())))
-        return tuple(dict.fromkeys(sorted(values)))
+        return tuple(sorted(set(values)))
 
     @staticmethod
     def _benchmark_batch_sizes(parameters: dict[str, str]) -> tuple[int, ...]:
@@ -3347,7 +3350,7 @@ class MaintenanceCore:
                     values.append(1)
             else:
                 values.append(1)
-        return tuple(dict.fromkeys(sorted(values)))
+        return tuple(sorted(set(values)))
 
     def _suite_prompt_for_context(self, suite: ResolvedBenchmarkSuite, *, context_length: int) -> str:
         prompt = suite.prompt_batches[0] if suite.prompt_batches else suite.title

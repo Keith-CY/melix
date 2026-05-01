@@ -2,12 +2,32 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any
 
 
 _RUN_SCHEMA_VERSION = "melix.lora_experiment_run.v1"
 _INDEX_SCHEMA_VERSION = "melix.lora_experiment_index.v1"
+
+
+def _iter_lora_run_dirs(train_root: Path) -> tuple[Path, ...]:
+    try:
+        with os.scandir(train_root) as entries:
+            run_dir_entries = []
+            for entry in entries:
+                if not entry.name.startswith("model-ops-"):
+                    continue
+                try:
+                    if not entry.is_dir():
+                        continue
+                except OSError:
+                    continue
+                run_dir_entries.append(entry)
+    except OSError:
+        return ()
+
+    return tuple(Path(entry.path) for entry in sorted(run_dir_entries, key=lambda entry: entry.name))
 
 
 class LoraExperimentStore:
@@ -18,6 +38,7 @@ class LoraExperimentStore:
         self._cached_index_path: Path | None = None
         self._cached_index_signature: tuple[int, int] | None = None
         self._cached_index_payload: dict[str, Any] | None = None
+        self._cached_payloads: dict[Path, tuple[tuple[int, int], dict[str, Any]]] = {}
 
     def persist_training_run(
         self,
@@ -29,6 +50,7 @@ class LoraExperimentStore:
         run_payload = self._build_run_payload(manifest=manifest, manifest_path=manifest_path)
         run_path = manifest_path.parent / self.run_record_name
         run_path.write_text(json.dumps(_json_safe(run_payload), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        self._cache_payload(path=run_path, payload=run_payload)
         index_path = self._index_path(jobs_root)
         self.rebuild_index(jobs_root)
         return {"run": run_path, "index": index_path}
@@ -36,10 +58,10 @@ class LoraExperimentStore:
     def load_index(self, jobs_root: Path) -> dict[str, Any]:
         index_path = self._index_path(jobs_root)
         if self._cached_index_path == index_path:
-            signature = self._index_signature(index_path)
+            signature = self._path_signature(index_path)
             if signature is not None and signature == self._cached_index_signature and self._cached_index_payload is not None:
                 return self._cached_index_payload
-        payload = self._read_payload(index_path)
+        payload = self._load_payload(index_path)
         if payload:
             self._cache_index(index_path=index_path, payload=payload)
             return payload
@@ -48,25 +70,22 @@ class LoraExperimentStore:
     def rebuild_index(self, jobs_root: Path) -> dict[str, Any]:
         train_root = jobs_root / "train_lora"
         runs_by_id: dict[str, dict[str, Any]] = {}
-        if train_root.exists():
-            for run_dir in sorted(train_root.glob("model-ops-*")):
-                if run_dir.is_dir() is False:
-                    continue
-                run_path = run_dir / self.run_record_name
-                payload = self._read_payload(run_path)
-                run_id = str(payload.get("run_id", "")).strip()
-                if run_id:
-                    runs_by_id[run_id] = payload
-                    continue
+        for run_dir in _iter_lora_run_dirs(train_root):
+            run_path = run_dir / self.run_record_name
+            payload = self._load_payload(run_path)
+            run_id = str(payload.get("run_id", "")).strip()
+            if run_id:
+                runs_by_id[run_id] = payload
+                continue
 
-                manifest_path = run_dir / "train_lora.adapter.json"
-                payload = self._read_payload(manifest_path)
-                run_id = str(payload.get("job_id", "")).strip() or manifest_path.parent.name
-                if run_id in runs_by_id:
-                    continue
-                if str(payload.get("operation", "train_lora")).strip() != "train_lora":
-                    continue
-                runs_by_id[run_id] = self._build_run_payload(manifest=payload, manifest_path=manifest_path)
+            manifest_path = run_dir / "train_lora.adapter.json"
+            payload = self._load_payload(manifest_path)
+            run_id = str(payload.get("job_id", "")).strip() or manifest_path.parent.name
+            if run_id in runs_by_id:
+                continue
+            if str(payload.get("operation", "train_lora")).strip() != "train_lora":
+                continue
+            runs_by_id[run_id] = self._build_run_payload(manifest=payload, manifest_path=manifest_path)
 
         runs = sorted(
             runs_by_id.values(),
@@ -95,18 +114,32 @@ class LoraExperimentStore:
 
         groups: list[dict[str, Any]] = []
         for group_id, group_runs in grouped_runs.items():
-            latest_run = max(
-                group_runs,
-                key=lambda item: (int(item.get("updated_at_unix_ms", 0)), str(item.get("run_id", ""))),
+            latest_run = group_runs[0]
+            latest_key = (
+                int(latest_run.get("updated_at_unix_ms", 0)),
+                str(latest_run.get("run_id", "")),
             )
-            best_run = min(
-                group_runs,
-                key=lambda item: (
-                    _best_loss_value(item) if _best_loss_value(item) is not None else float("inf"),
-                    -int(item.get("updated_at_unix_ms", 0)),
-                ),
-            )
+            best_run = latest_run
             best_loss = _best_loss_value(best_run)
+            best_key = (
+                best_loss if best_loss is not None else float("inf"),
+                -latest_key[0],
+            )
+            for run in group_runs[1:]:
+                run_updated_at = int(run.get("updated_at_unix_ms", 0))
+                run_key_latest = (run_updated_at, str(run.get("run_id", "")))
+                if run_key_latest > latest_key:
+                    latest_run = run
+                    latest_key = run_key_latest
+                run_loss = _best_loss_value(run)
+                run_key = (
+                    run_loss if run_loss is not None else float("inf"),
+                    -run_updated_at,
+                )
+                if run_key < best_key:
+                    best_run = run
+                    best_loss = run_loss
+                    best_key = run_key
             groups.append(
                 {
                     "group_id": group_id,
@@ -225,11 +258,27 @@ class LoraExperimentStore:
             return {}
         return payload if isinstance(payload, dict) else {}
 
+    def _load_payload(self, path: Path) -> dict[str, Any]:
+        signature = self._path_signature(path)
+        if signature is None:
+            self._cached_payloads.pop(path, None)
+            return {}
+
+        cached_payload = self._cached_payloads.get(path)
+        if cached_payload is not None:
+            cached_signature, payload = cached_payload
+            if cached_signature == signature:
+                return payload
+
+        payload = self._read_payload(path)
+        self._cached_payloads[path] = (signature, payload)
+        return payload
+
     def _index_path(self, jobs_root: Path) -> Path:
         return jobs_root / "train_lora" / self.index_record_name
 
     @staticmethod
-    def _index_signature(path: Path) -> tuple[int, int] | None:
+    def _path_signature(path: Path) -> tuple[int, int] | None:
         try:
             stat_result = path.stat()
         except OSError:
@@ -238,8 +287,15 @@ class LoraExperimentStore:
 
     def _cache_index(self, *, index_path: Path, payload: dict[str, Any]) -> None:
         self._cached_index_path = index_path
-        self._cached_index_signature = self._index_signature(index_path)
+        self._cached_index_signature = self._path_signature(index_path)
         self._cached_index_payload = payload
+
+    def _cache_payload(self, *, path: Path, payload: dict[str, Any]) -> None:
+        signature = self._path_signature(path)
+        if signature is None:
+            self._cached_payloads.pop(path, None)
+            return
+        self._cached_payloads[path] = (signature, payload)
 
 
 

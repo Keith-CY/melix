@@ -6,10 +6,18 @@ from pathlib import Path
 import pytest
 
 from worker.productization.benchmark_evaluation_report import (
+    _METRIC_DIRECTION_BY_KEY,
     _aggregate_probe_values,
+    _benchmark_probe_label,
+    _collect_benchmark_probe_metrics,
+    _dict_rows,
     _finalize_numeric_aggregate,
+    _label_part,
     _markdown_cell,
+    _metric_direction,
+    _report_rows,
     _update_numeric_aggregate,
+    _update_probe_aggregates_by_label,
     build_benchmark_evaluation_report,
     build_sticky_comment_body,
     load_report_input,
@@ -17,6 +25,17 @@ from worker.productization.benchmark_evaluation_report import (
     render_terminal_report,
     write_report_outputs,
 )
+
+
+class _SparseProbeRow(dict[str, object]):
+    def __init__(self, *args: object, forbidden_keys: set[str], **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._forbidden_keys = forbidden_keys
+
+    def get(self, key: str, default: object = None) -> object:
+        if key in self._forbidden_keys:
+            raise AssertionError(f"unexpected fixed-key scan for {key}")
+        return super().get(key, default)
 
 
 def _bundle(*, ttft_ms: float, tokens_per_second: float, accuracy: float) -> dict[str, object]:
@@ -245,10 +264,83 @@ def test_numeric_aggregate_helpers_track_running_totals() -> None:
     assert _finalize_numeric_aggregate("speculative_fallback_count", aggregate) == ("sum", 8.0)
 
 
+def test_collect_benchmark_probe_metrics_groups_aggregates_by_label_and_preserves_metrics() -> None:
+    row_a = _SparseProbeRow(
+        {
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 1,
+            "concurrency_level": 1,
+            "prefill_ms": 10.0,
+            "decode_ms": 20.0,
+            "speculative_fallback_count": 1,
+        },
+        forbidden_keys={"prefill_ms", "decode_ms", "speculative_fallback_count"},
+    )
+    row_b = _SparseProbeRow(
+        {
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 1,
+            "concurrency_level": 1,
+            "prefill_ms": 14.0,
+            "decode_ms": 24.0,
+            "speculative_fallback_count": 3,
+        },
+        forbidden_keys={"prefill_ms", "decode_ms", "speculative_fallback_count"},
+    )
+
+    aggregates_by_label: dict[str, dict[str, tuple[float, int]]] = {}
+    _update_probe_aggregates_by_label(aggregates_by_label, label="shared", key="prefill_ms", value=10.0)
+    _update_probe_aggregates_by_label(aggregates_by_label, label="shared", key="prefill_ms", value=14.0)
+    _update_probe_aggregates_by_label(aggregates_by_label, label="shared", key="decode_ms", value=20.0)
+
+    assert aggregates_by_label == {
+        "shared": {
+            "prefill_ms": (24.0, 2),
+            "decode_ms": (20.0, 1),
+        }
+    }
+
+    metrics: dict[str, object] = {}
+    _collect_benchmark_probe_metrics(metrics, [row_a, row_b], prefix="bench")
+
+    label = "smoke.ctx1024.gen128.b1.c1"
+    assert metrics == {
+        f"bench.{label}.prefill_ms_mean": 12.0,
+        f"bench.{label}.decode_ms_mean": 22.0,
+        f"bench.{label}.speculative_fallback_count_sum": 4.0,
+    }
+
+
+def test_dict_rows_returns_lazy_iterable_of_dict_rows() -> None:
+    rows = [{"name": "first"}, "skip", {"name": "second"}]
+
+    filtered_rows = _dict_rows(rows)
+
+    assert not isinstance(filtered_rows, list)
+    assert list(filtered_rows) == [{"name": "first"}, {"name": "second"}]
+
+
 def test_aggregate_probe_values_handles_empty_inputs() -> None:
     assert _aggregate_probe_values("prefill_ms", []) == ("mean", 0.0)
     assert _aggregate_probe_values("cache_hit", []) == ("rate", 0.0)
     assert _aggregate_probe_values("speculative_fallback_count", []) == ("sum", 0.0)
+
+
+def test_row_iterators_filter_invalid_entries_without_materializing_copies() -> None:
+    report = {"rows": [{"metric": "bench.smoke.ttft_ms"}, "skip", {"metric": "eval.mmlu.score"}]}
+    payload = [{"suite_id": "mmlu"}, None, {"suite_id": "gsm8k"}]
+
+    assert tuple(_report_rows(report)) == (
+        {"metric": "bench.smoke.ttft_ms"},
+        {"metric": "eval.mmlu.score"},
+    )
+    assert tuple(_dict_rows(payload)) == ({"suite_id": "mmlu"}, {"suite_id": "gsm8k"})
+    assert tuple(_report_rows({"rows": "not-a-list"})) == ()
+    assert tuple(_dict_rows("not-a-list")) == ()
 
 
 def test_report_builder_reports_missing_metrics_and_non_numeric_status() -> None:
@@ -398,6 +490,168 @@ def test_report_builder_aggregates_evaluation_sample_probes() -> None:
     assert rows_by_metric["eval.sample.mmlu.failure_stage.scoring.failure_count"]["status"] == (
         "warning"
     )
+
+
+def test_metric_direction_fast_path_covers_report_probe_keys() -> None:
+    expected = {
+        "ttft_ms": "lower_is_better",
+        "tokens_per_second": "higher_is_better",
+        "request_latency_p95_ms": "lower_is_better",
+        "speculative_acceptance_rate_mean": "higher_is_better",
+        "dflash_rollback_count_sum": "lower_is_better",
+        "typed_score_mean": "higher_is_better",
+        "raw_response_chars_mean": "neutral",
+    }
+
+    for metric_key, direction in expected.items():
+        assert _METRIC_DIRECTION_BY_KEY[metric_key] == direction
+        assert _metric_direction(f"bench.synthetic.{metric_key}") == direction
+
+
+def test_report_builder_aggregates_numeric_probe_values_without_normalizing_all_values() -> None:
+    report = build_benchmark_evaluation_report(
+        baseline={
+            "benchmark_context_rows": [
+                {
+                    "suite": "mixed",
+                    "context_length": 128,
+                    "generation_length": 32,
+                    "batch_size": 1,
+                    "prefill_ms": 7,
+                    "cache_hit": True,
+                },
+                {
+                    "suite": "mixed",
+                    "context_length": 128,
+                    "generation_length": 32,
+                    "batch_size": 1,
+                    "prefill_ms": "9.0",
+                    "cache_hit": False,
+                },
+            ]
+        },
+        candidate={
+            "benchmark_context_rows": [
+                {
+                    "suite": "mixed",
+                    "context_length": 128,
+                    "generation_length": 32,
+                    "batch_size": 1,
+                    "prefill_ms": 8.0,
+                    "cache_hit": True,
+                },
+                {
+                    "suite": "mixed",
+                    "context_length": 128,
+                    "generation_length": 32,
+                    "batch_size": 1,
+                    "prefill_ms": "10.0",
+                    "cache_hit": True,
+                },
+            ]
+        },
+    )
+
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+
+    assert rows_by_metric["bench.context.mixed.ctx128.gen32.b1.prefill_ms_mean"]["baseline"] == (
+        pytest.approx(8.0)
+    )
+    assert rows_by_metric["bench.context.mixed.ctx128.gen32.b1.prefill_ms_mean"]["candidate"] == (
+        pytest.approx(9.0)
+    )
+    assert rows_by_metric["bench.context.mixed.ctx128.gen32.b1.cache_hit_rate"]["baseline"] == (
+        pytest.approx(0.5)
+    )
+    assert rows_by_metric["bench.context.mixed.ctx128.gen32.b1.cache_hit_rate"]["candidate"] == (
+        pytest.approx(1.0)
+    )
+
+
+def test_label_part_preserves_numeric_labels_and_normalizes_text_spaces() -> None:
+    assert _label_part(1024) == "1024"
+    assert _label_part(1.5) == "1.5"
+    assert _label_part(True) == "True"
+    assert _label_part("long suite") == "long_suite"
+
+
+def test_benchmark_probe_label_reuses_cached_matrix_labels() -> None:
+    cache: dict[tuple[object, object, object, object, object], str] = {}
+    row = {
+        "suite_id": "smoke",
+        "context_length": 128,
+        "generation_length": 32,
+        "batch_size": 1,
+        "concurrency_level": 2,
+    }
+
+    first = _benchmark_probe_label(row, matrix_label_cache=cache)
+    second = _benchmark_probe_label(dict(row), matrix_label_cache=cache)
+
+    assert first == "smoke.ctx128.gen32.b1.c2"
+    assert second == first
+    assert cache == {("smoke", 128, 32, 1, 2): first}
+
+
+def test_report_builder_uses_sparse_benchmark_probe_rows_without_fixed_key_scans() -> None:
+    sparse_row = _SparseProbeRow(
+        {
+            "suite": "smoke",
+            "context_length": 128,
+            "generation_length": 32,
+            "batch_size": 1,
+            "prefill_ms": 7.0,
+            "ignored": 999,
+            "prefill_ms_extra": 123,
+        },
+        forbidden_keys={"prefill_ms", "decode_ms", "tokens_in", "dflash_enabled"},
+    )
+
+    report = build_benchmark_evaluation_report(
+        baseline={"benchmark_context_rows": [sparse_row]},
+        candidate={"benchmark_context_rows": [dict(sparse_row)]},
+    )
+
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+
+    assert set(rows_by_metric) == {"bench.context.smoke.ctx128.gen32.b1.prefill_ms_mean"}
+    assert rows_by_metric["bench.context.smoke.ctx128.gen32.b1.prefill_ms_mean"]["baseline"] == (
+        pytest.approx(7.0)
+    )
+    assert rows_by_metric["bench.context.smoke.ctx128.gen32.b1.prefill_ms_mean"]["status"] == "ok"
+
+
+def test_report_builder_uses_sparse_evaluation_sample_rows_without_fixed_key_scans() -> None:
+    sparse_row = _SparseProbeRow(
+        {
+            "suite_id": "mmlu",
+            "sample_render_ms": 5.0,
+            "failure_stage": "validation",
+            "ignored": 42,
+            "sample_render_ms_extra": 77,
+        },
+        forbidden_keys={
+            "sample_render_ms",
+            "inference_ms",
+            "raw_response_chars",
+            "extracted_result_chars",
+        },
+    )
+
+    report = build_benchmark_evaluation_report(
+        baseline={"evaluation_samples": [sparse_row]},
+        candidate={"evaluation_samples": [dict(sparse_row)]},
+    )
+
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+
+    assert set(rows_by_metric) == {
+        "eval.sample.mmlu.failure_stage.validation.failure_count",
+        "eval.sample.mmlu.sample_render_ms_mean",
+    }
+    assert rows_by_metric["eval.sample.mmlu.sample_render_ms_mean"]["candidate"] == pytest.approx(5.0)
+    assert rows_by_metric["eval.sample.mmlu.sample_render_ms_mean"]["status"] == "ok"
+    assert rows_by_metric["eval.sample.mmlu.failure_stage.validation.failure_count"]["status"] == "ok"
 
 
 def test_report_renderers_are_stable_and_sticky_comment_is_marked() -> None:

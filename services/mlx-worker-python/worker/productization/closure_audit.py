@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,8 +56,16 @@ _REQUIRED_PROBES: dict[str, tuple[str, ...]] = {
         "disconnect.terminal_failure_count",
     ),
 }
+_PREFERRED_PROBE_TEXT_FILES = (
+    "docs/runbooks/security-and-stability-closure.md",
+    "docs/runbooks/shared-access.md",
+    "docs/runbooks/persistent-sessions.md",
+    "docs/runbooks/rich-output-sanitization.md",
+    "docs/runbooks/connection-lifecycle.md",
+    "progress.md",
+)
 _TEXT_SEARCH_ROOTS = ("docs", "scripts", "services", "tests", "README.md", "progress.md", "task_plan.md")
-_TEXT_FILE_SUFFIXES = {".md", ".py", ".swift", ".json", ".txt", ".yaml", ".yml"}
+_TEXT_FILE_SUFFIXES = (".md", ".py", ".swift", ".json", ".txt", ".yaml", ".yml")
 _FINDING_SEVERITY_PRIORITY = {
     "blocker": 0,
     "evidence_gap": 1,
@@ -368,39 +377,87 @@ def _collect_probe_sources(root: Path) -> dict[str, list[str]]:
         for probe_names in _REQUIRED_PROBES.values()
         for probe_name in probe_names
     }
-    candidate_files = sorted(_iter_probe_text_files(root))
-    for file_path in candidate_files:
-        if _probe_sources_complete(probe_sources):
+    pending_probe_names = list(probe_sources)
+    scanned_relative_paths: set[str] = set()
+    for file_path in _iter_preferred_probe_text_files(root):
+        _scan_probe_source_file(
+            file_path=file_path,
+            root=root,
+            probe_sources=probe_sources,
+            pending_probe_names=pending_probe_names,
+            scanned_relative_paths=scanned_relative_paths,
+        )
+        if not pending_probe_names:
+            return probe_sources
+    for file_path in _iter_probe_text_files(root):
+        _scan_probe_source_file(
+            file_path=file_path,
+            root=root,
+            probe_sources=probe_sources,
+            pending_probe_names=pending_probe_names,
+            scanned_relative_paths=scanned_relative_paths,
+        )
+        if not pending_probe_names:
             break
-        relative_path = file_path.relative_to(root).as_posix()
-        contents = file_path.read_text(encoding="utf-8", errors="ignore")
-        for probe_name, matches in probe_sources.items():
-            if len(matches) >= 3:
-                continue
-            if probe_name in contents:
-                matches.append(relative_path)
     return probe_sources
+
+
+def _scan_probe_source_file(
+    *,
+    file_path: Path,
+    root: Path,
+    probe_sources: dict[str, list[str]],
+    pending_probe_names: list[str],
+    scanned_relative_paths: set[str],
+) -> None:
+    relative_path = file_path.relative_to(root).as_posix()
+    if relative_path in scanned_relative_paths:
+        return
+    scanned_relative_paths.add(relative_path)
+    contents = file_path.read_text(encoding="utf-8", errors="ignore")
+    next_pending_probe_names: list[str] = []
+    for probe_name in pending_probe_names:
+        matches = probe_sources[probe_name]
+        if probe_name in contents:
+            matches.append(relative_path)
+        if len(matches) < 3:
+            next_pending_probe_names.append(probe_name)
+    pending_probe_names[:] = next_pending_probe_names
 
 
 def _probe_sources_complete(probe_sources: dict[str, list[str]]) -> bool:
     return all(len(matches) >= 3 for matches in probe_sources.values())
 
 
-def _iter_probe_text_files(root: Path) -> list[Path]:
-    files: list[Path] = []
+def _iter_preferred_probe_text_files(root: Path) -> Iterator[Path]:
+    for relative_path in _PREFERRED_PROBE_TEXT_FILES:
+        candidate = root / relative_path
+        if candidate.is_file() and candidate.suffix in _TEXT_FILE_SUFFIXES:
+            yield candidate
+
+
+def _iter_probe_text_files(root: Path) -> Iterator[Path]:
     for entry in _TEXT_SEARCH_ROOTS:
         candidate = root / entry
         if candidate.is_file():
             if candidate.suffix in _TEXT_FILE_SUFFIXES:
-                files.append(candidate)
+                yield candidate
             continue
         if not candidate.exists():
             continue
-        for current_root, _, filenames in os.walk(candidate):
-            for name in filenames:
-                if name.endswith(tuple(_TEXT_FILE_SUFFIXES)):
-                    files.append(Path(current_root) / name)
-    return sorted(files)
+        yield from _iter_text_files_sorted(candidate)
+
+
+def _iter_text_files_sorted(root: Path) -> Iterator[Path]:
+    with os.scandir(root) as scandir_entries:
+        entries = sorted(scandir_entries, key=lambda entry: entry.name)
+    for entry in entries:
+        entry_path = Path(entry.path)
+        if entry.is_dir(follow_symlinks=False):
+            yield from _iter_text_files_sorted(entry_path)
+            continue
+        if entry.is_file(follow_symlinks=False) and entry.name.endswith(_TEXT_FILE_SUFFIXES):
+            yield entry_path
 
 
 

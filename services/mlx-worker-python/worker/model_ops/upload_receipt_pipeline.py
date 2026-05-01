@@ -59,6 +59,24 @@ _PROCESSOR_CONFIG_FILENAMES = frozenset({
 })
 
 
+def _collect_published_file_list(source_dir: Path) -> list[str]:
+    source_dir_str = os.fspath(source_dir)
+    pending: list[tuple[str, str]] = [(source_dir_str, "")]
+    published_files: list[str] = []
+    while pending:
+        current_dir, relative_dir = pending.pop()
+        with os.scandir(current_dir) as entries:
+            for entry in entries:
+                relative_path = entry.name if not relative_dir else f"{relative_dir}/{entry.name}"
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append((entry.path, relative_path))
+                elif entry.is_file(follow_symlinks=False):
+                    published_files.append(relative_path)
+                elif not entry.is_dir(follow_symlinks=True):
+                    published_files.append(relative_path)
+    return sorted(published_files)
+
+
 class HuggingFacePublishBackend:
     def publish(
         self,
@@ -262,12 +280,15 @@ class UploadReceiptPipeline:
             manifest_payload["bundle_path"] = str(receipt_path)
             manifest_payload["manifest_bytes"] = manifest_bytes
             manifest_payload["artifact_bytes"] = artifact_bytes
-            next_manifest_bytes = self._write_manifest(receipt_path, manifest_payload)
+            next_manifest_bytes = self._manifest_size(manifest_payload)
             next_artifact_bytes = next_manifest_bytes
             if next_manifest_bytes == manifest_bytes and next_artifact_bytes == artifact_bytes:
                 break
             manifest_bytes = next_manifest_bytes
             artifact_bytes = next_artifact_bytes
+        manifest_payload["manifest_bytes"] = manifest_bytes
+        manifest_payload["artifact_bytes"] = artifact_bytes
+        self._write_manifest(receipt_path, manifest_payload)
 
         return UploadReceiptPipelineResult(
             receipt_path=receipt_path,
@@ -520,8 +541,16 @@ class UploadReceiptPipeline:
         return sorted(f for f in published_files if "/" not in f and f in _PROCESSOR_CONFIG_FILENAMES)
 
     @staticmethod
+    def _encode_manifest(payload: dict[str, Any]) -> bytes:
+        return json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+
+    @staticmethod
+    def _manifest_size(payload: dict[str, Any]) -> int:
+        return len(UploadReceiptPipeline._encode_manifest(payload))
+
+    @staticmethod
     def _write_manifest(path: Path, payload: dict[str, Any]) -> int:
-        encoded = json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+        encoded = UploadReceiptPipeline._encode_manifest(payload)
         path.write_bytes(encoded)
         return len(encoded)
 

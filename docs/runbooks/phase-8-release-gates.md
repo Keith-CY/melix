@@ -125,6 +125,53 @@ operator-facing summary for compare evidence. Verify:
 - both `bootstrap` and `analytical` intervals are present under `statistical_evidence`
 - `release_gate_summary` explains whether a compare was accepted or rejected
 
+## LoRA Workflow Closure Contract
+
+The checked-in policy includes a `lora_path` section that verifies the full
+`dataset → train → activate → compare → publish` path as a single product unit.
+
+The five stages are:
+
+| Stage | What It Proves |
+|---|---|
+| `dataset_build` | Training dataset fixture is available under `jobs_root/datasets/melix-dev` |
+| `train` | `train_lora` operation completes and produces an adapter artifact |
+| `activate` | `activate_adapter` operation completes against the trained artifact |
+| `compare` | A persisted evaluation compare record is present in `jobs_root/evaluation/` |
+| `publish` | `upload` operation completes against the trained artifact |
+
+The policy thresholds are:
+
+- `stages_success_count >= 4.0` — at least four of five stages must pass
+- `stages_failure_count <= 1.0` — at most one stage may fail
+
+The compare stage is allowed to fail when no persisted compare evidence exists (e.g. first-time
+local runs) without failing the gate, as long as all other four stages pass.
+
+The acceptance bundle captures a `lora_capability` section alongside the standard CLI receipt
+evidence. The section contains:
+
+- `adapter_artifact`: train job ID, weights path, adapter config path
+- `activation_artifact`: derived model ID, alias, manifest path
+- `compare_artifact`: evaluation job ID, model ID, suites
+- `publish_artifact`: publish mode, status, target repo
+- `runtime_mode`: activation mode used for the derived model
+
+To inspect the lora_path section from a release-gate JSON output:
+
+```bash
+cat <gate-output>.json | python3 -c "
+import json, sys
+report = json.load(sys.stdin)
+lp = report.get('lora_path', {})
+print('stages_success_count:', lp.get('summary', {}).get('stages_success_count'))
+print('stages_failure_count:', lp.get('summary', {}).get('stages_failure_count'))
+for name, stage in lp.get('stages', {}).items():
+    mark = 'ok' if stage.get('success') == 1.0 else 'FAIL'
+    print(f'  [{mark}] {name} ({stage.get(\"duration_ms\", 0):.0f} ms)')
+"
+```
+
 ## CI Workflow
 
 The repository workflow entrypoint for the same gate is:

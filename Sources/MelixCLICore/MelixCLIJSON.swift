@@ -8,6 +8,8 @@ func elapsedMilliseconds(since start: DispatchTime) -> Double {
 }
 
 enum MelixCLIJSONMetricPatch {
+    private static let metricLiteralLocale = Locale(identifier: "en_US_POSIX")
+
     struct Placeholder {
         let token: String
 
@@ -28,7 +30,7 @@ enum MelixCLIJSONMetricPatch {
         let finiteValue = value.isFinite ? max(value, 0) : 0
         return String(
             format: "%.16e",
-            locale: Locale(identifier: "en_US_POSIX"),
+            locale: metricLiteralLocale,
             finiteValue
         )
     }
@@ -108,6 +110,19 @@ enum MelixCLIJSON {
         }
         return value
     }
+
+    static func metricsObject(
+        from metrics: [String: Double],
+        adding metricName: String,
+        placeholder: MelixCLIJSONMetricPatch.Placeholder
+    ) -> [String: Any] {
+        var finalMetrics = [String: Any](minimumCapacity: metrics.count + 1)
+        for (key, value) in metrics {
+            finalMetrics[key] = value
+        }
+        finalMetrics[metricName] = placeholder.token
+        return finalMetrics
+    }
 }
 
 public enum MelixCLIJSONEnvelope {
@@ -121,10 +136,11 @@ public enum MelixCLIJSONEnvelope {
         status: String = "succeeded"
     ) throws -> String {
         let placeholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode_ms")
-        var finalMetrics = metrics.reduce(into: [String: Any]()) { partial, item in
-            partial[item.key] = item.value
-        }
-        finalMetrics["melix.cli.json_encode_ms"] = placeholder.token
+        let finalMetrics = MelixCLIJSON.metricsObject(
+            from: metrics,
+            adding: "melix.cli.json_encode_ms",
+            placeholder: placeholder
+        )
         let payload: [String: Any] = [
             "schema_version": "melix.cli.output.v1",
             "command_id": commandID,
@@ -167,10 +183,11 @@ public enum MelixCLIJSONEnvelope {
         metrics: [String: Double] = [:]
     ) throws -> String {
         let placeholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode_ms")
-        var finalMetrics = metrics.reduce(into: [String: Any]()) { partial, item in
-            partial[item.key] = item.value
-        }
-        finalMetrics["melix.cli.json_encode_ms"] = placeholder.token
+        let finalMetrics = MelixCLIJSON.metricsObject(
+            from: metrics,
+            adding: "melix.cli.json_encode_ms",
+            placeholder: placeholder
+        )
         let payload: [String: Any] = [
             "schema_version": "melix.cli.error.v1",
             "command_id": commandID,

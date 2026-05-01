@@ -736,6 +736,29 @@ def run_acceptance_bundle(
             "evaluation_samples_jsonl": str(evaluation_samples_jsonl),
         },
         "publish": publish_result,
+        "lora_capability": {
+            "adapter_artifact": {
+                "job_id": _require_string(lora_train_receipt, "job_id", context="lora train receipt"),
+                "weights_path": str(lora_train_receipt.get("weights_path", "")),
+                "adapter_config_path": str(lora_train_receipt.get("adapter_config_path", "")),
+            },
+            "activation_artifact": {
+                "derived_model_id": derived_model_id,
+                "derived_model_alias": derived_model_alias,
+                "manifest_path": str(lora_activate_receipt.get("manifest_path", "")),
+            },
+            "compare_artifact": {
+                "evaluation_job_id": evaluation_job_id,
+                "model_id": derived_model_id,
+                "suites": list(config.evaluation_suites),
+            },
+            "publish_artifact": {
+                "mode": publish_result.get("mode", "disabled"),
+                "status": publish_result.get("status", "disabled"),
+                "target_repo": publish_result.get("target_repo", ""),
+            },
+            "runtime_mode": config.activation_mode or "fused_derived_model",
+        },
         "chats": {
             "base": base_chat_receipt,
             "derived": derived_chat_receipt,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -89,3 +90,17 @@ def test_job_registry_restore_scans_manifest_directories_once(monkeypatch: pytes
     assert any(str(jobs_root / "activate_adapter") == call for call in scan_calls)
     assert any(str(jobs_root / "remove_derived_model") == call for call in scan_calls)
     assert len(scan_calls) <= 9
+
+
+def test_json_safe_reuses_clean_containers_and_copies_only_changed_branch() -> None:
+    clean = {"rows": [{"pct": 1.0, "label": "ready"}]}
+
+    assert ModelOpsJobRegistry._json_safe(clean) is clean
+
+    unsafe = {"rows": [{"pct": math.nan, "label": "bad"}], "other": {"pct": 1.0}}
+    safe = ModelOpsJobRegistry._json_safe(unsafe)
+
+    assert safe == {"rows": [{"pct": None, "label": "bad"}], "other": {"pct": 1.0}}
+    assert safe is not unsafe
+    assert safe["rows"] is not unsafe["rows"]
+    assert safe["other"] is unsafe["other"]

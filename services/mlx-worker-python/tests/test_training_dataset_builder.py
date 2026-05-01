@@ -117,12 +117,14 @@ def test_write_normalized_dataset_snapshot_writes_matching_train_and_samples_jso
     )
 
 
-def test_write_normalized_dataset_snapshot_streams_train_jsonl_without_copying(
+def test_write_normalized_dataset_snapshot_clears_stale_valid_jsonl_when_no_validation_samples(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     package_path = tmp_path / "dataset-package"
     package_path.mkdir(parents=True, exist_ok=True)
+    stale_valid_path = tmp_path / "exports" / "normalized_dataset" / "valid.jsonl"
+    stale_valid_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_valid_path.write_text("stale\n", encoding="utf-8")
 
     dataset = TrainingDatasetPackage(
         package_path=package_path,
@@ -142,11 +144,6 @@ def test_write_normalized_dataset_snapshot_streams_train_jsonl_without_copying(
         response_only_supported=False,
     )
 
-    def fail_copyfile(src: Path, dst: Path) -> None:
-        raise AssertionError(f"write_normalized_dataset_snapshot should not copy {src} to {dst}")
-
-    monkeypatch.setattr(training_dataset_module.shutil, "copyfile", fail_copyfile)
-
     snapshot = write_normalized_dataset_snapshot(dataset, output_dir=tmp_path / "exports")
 
     expected_payload = (
@@ -156,6 +153,141 @@ def test_write_normalized_dataset_snapshot_streams_train_jsonl_without_copying(
     assert snapshot.samples_path.read_text(encoding="utf-8") == expected_payload
     assert snapshot.train_path.read_text(encoding="utf-8") == expected_payload
     assert snapshot.valid_path is None
+    assert stale_valid_path.exists() is False
+
+
+
+def test_load_training_dataset_package_respects_sample_limit_after_skipping_blank_lines(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "limited-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "limited-package",
+                "format": "text_completion",
+                "sample_count": 2,
+                "version": "1",
+                "validation_sample_count": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        "\n"
+        '{"text": "alpha"}\n'
+        "\n"
+        '{"text": "beta"}\n',
+        encoding="utf-8",
+    )
+
+    package = load_training_dataset_package(str(package_path), sample_limit=1)
+
+    assert package.sample_count == 1
+    assert package.normalized_samples == [{"text": "alpha"}]
+
+
+
+def test_load_training_dataset_package_stops_reading_after_sample_limit(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "limited-invalid-tail"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "limited-invalid-tail",
+                "format": "text_completion",
+                "sample_count": 2,
+                "version": "1",
+                "validation_sample_count": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        '{"text": "alpha"}\n'
+        "{not-json\n",
+        encoding="utf-8",
+    )
+
+    package = load_training_dataset_package(str(package_path), sample_limit=1)
+
+    assert package.sample_count == 1
+    assert package.normalized_samples == [{"text": "alpha"}]
+
+
+
+def test_iter_dataset_package_jsonl_rows_enforces_sample_limit_before_invalid_tail(
+    tmp_path: Path,
+) -> None:
+    rows_path = tmp_path / "rows.jsonl"
+    rows_path.write_text(
+        '{"text": "alpha"}\n'
+        "\n"
+        '{"text": "beta"}\n'
+        "{not-json\n",
+        encoding="utf-8",
+    )
+
+    rows = list(
+        training_dataset_module._iter_dataset_package_jsonl_rows(
+            rows_path,
+            invalid_json_message="Training dataset sample is not valid JSON.",
+            sample_limit=2,
+        )
+    )
+
+    assert rows == [{"text": "alpha"}, {"text": "beta"}]
+
+
+
+def test_load_training_dataset_package_rejects_invalid_manifest_json(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "invalid-manifest"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text("{not-json", encoding="utf-8")
+    (package_path / "samples.jsonl").write_text('{"text": "alpha"}\n', encoding="utf-8")
+
+    with pytest.raises(ModelOperationError) as exc:
+        load_training_dataset_package(str(package_path))
+
+    assert exc.value.code == "invalid_dataset_package"
+
+
+
+def test_load_training_dataset_package_rejects_invalid_sample_json(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "invalid-sample"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "invalid-sample",
+                "format": "text_completion",
+                "sample_count": 1,
+                "version": "1",
+                "validation_sample_count": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text("{not-json\n", encoding="utf-8")
+
+    with pytest.raises(ModelOperationError) as exc:
+        load_training_dataset_package(str(package_path))
+
+    assert exc.value.code == "invalid_dataset_package"
+
 
 
 def test_build_training_dataset_artifact_converts_alpaca_rows_and_records_quality_signals(
@@ -462,8 +594,101 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
         {"text": "hello world"},
         "text_completion",
     ) == (0, 2)
+    sample_rows = [
+        {"prompt": "hello world", "completion": "hello world"},
+        {"prompt": "hello world", "completion": "hello world"},
+    ]
+    assert training_dataset_module._build_quality_report(sample_rows) == {
+        "duplicate_count": 1,
+        "duplicate_sample_indices": [1],
+        "dirty_count": 2,
+        "dirty_samples": [
+            {"index": 0, "reasons": ["duplicate_prompt_completion"]},
+            {"index": 1, "reasons": ["duplicate_prompt_completion"]},
+        ],
+    }
+    assert training_dataset_module._build_token_stats(sample_rows, "prompt_completion") == {
+        "estimator": "whitespace_v1",
+        "sample_count": 2,
+        "prompt_tokens_mean": 2.0,
+        "prompt_tokens_p50": 2,
+        "prompt_tokens_p95": 2,
+        "prompt_tokens_max": 2,
+        "completion_tokens_mean": 2.0,
+        "completion_tokens_p50": 2,
+        "completion_tokens_p95": 2,
+        "completion_tokens_max": 2,
+        "total_tokens_mean": 4.0,
+        "total_tokens_p50": 4,
+        "total_tokens_p95": 4,
+        "total_tokens_max": 4,
+    }
     assert training_dataset_module._mean_value([]) == 0.0
     assert training_dataset_module._percentile_value([], 0.95) == 0
+
+
+def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_percentile_value(values: list[int], pct: float) -> int:
+        raise AssertionError(f"legacy percentile helper should not run for optimized token stats ({pct=}, {values=})")
+
+    def fail_generic_token_counter(sample: dict[str, object], format_name: str) -> tuple[int, int]:
+        raise AssertionError(f"prompt_completion token stats should use the direct fast path ({format_name=})")
+
+    monkeypatch.setattr(training_dataset_module, "_percentile_value", fail_percentile_value)
+    monkeypatch.setattr(training_dataset_module, "_sample_token_counts", fail_generic_token_counter)
+
+    prompt_completion_samples = iter(
+        [
+            {"prompt": "a b c", "completion": "d e"},
+            {"prompt": "f", "completion": "g h i j"},
+            {"prompt": "k l", "completion": "m"},
+            {"prompt": "n o p q", "completion": "r s t"},
+        ]
+    )
+
+    assert training_dataset_module._build_token_stats(
+        prompt_completion_samples,
+        "prompt_completion",
+    ) == {
+        "estimator": "whitespace_v1",
+        "sample_count": 4,
+        "prompt_tokens_mean": 2.5,
+        "prompt_tokens_p50": 2,
+        "prompt_tokens_p95": 3,
+        "prompt_tokens_max": 4,
+        "completion_tokens_mean": 2.5,
+        "completion_tokens_p50": 2,
+        "completion_tokens_p95": 3,
+        "completion_tokens_max": 4,
+        "total_tokens_mean": 5.0,
+        "total_tokens_p50": 5,
+        "total_tokens_p95": 5,
+        "total_tokens_max": 7,
+    }
+
+    monkeypatch.undo()
+    assert training_dataset_module._build_token_stats(
+        [
+            {"text": "alpha beta gamma"},
+            {"text": "delta"},
+        ],
+        "text_completion",
+    ) == {
+        "estimator": "whitespace_v1",
+        "sample_count": 2,
+        "prompt_tokens_mean": 0.0,
+        "prompt_tokens_p50": 0,
+        "prompt_tokens_p95": 0,
+        "prompt_tokens_max": 0,
+        "completion_tokens_mean": 2.0,
+        "completion_tokens_p50": 1,
+        "completion_tokens_p95": 1,
+        "completion_tokens_max": 3,
+        "total_tokens_mean": 2.0,
+        "total_tokens_p50": 1,
+        "total_tokens_p95": 1,
+        "total_tokens_max": 3,
+    }
 
     with pytest.raises(ModelOperationError) as int_parse_exc:
         training_dataset_module._int_ext_value(
@@ -500,6 +725,40 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
             field_name="validation_ratio",
         )
     assert float_range_exc.value.code == "invalid_dataset_source"
+
+
+def test_build_token_stats_skips_quality_only_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_canonical_sample_digest(sample: dict[str, object]) -> bytes:
+        raise AssertionError(f"token stats should not compute canonical digests ({sample=})")
+
+    def fail_dirty_sample_reasons(sample: dict[str, object]) -> list[str]:
+        raise AssertionError(f"token stats should not inspect dirty-sample reasons ({sample=})")
+
+    monkeypatch.setattr(training_dataset_module, "_canonical_sample_digest", fail_canonical_sample_digest)
+    monkeypatch.setattr(training_dataset_module, "_dirty_sample_reasons", fail_dirty_sample_reasons)
+
+    assert training_dataset_module._build_token_stats(
+        [
+            {"prompt": "alpha beta", "completion": "gamma delta"},
+            {"prompt": "epsilon", "completion": "zeta eta theta"},
+        ],
+        "prompt_completion",
+    ) == {
+        "estimator": "whitespace_v1",
+        "sample_count": 2,
+        "prompt_tokens_mean": 1.5,
+        "prompt_tokens_p50": 1,
+        "prompt_tokens_p95": 1,
+        "prompt_tokens_max": 2,
+        "completion_tokens_mean": 2.5,
+        "completion_tokens_p50": 2,
+        "completion_tokens_p95": 2,
+        "completion_tokens_max": 3,
+        "total_tokens_mean": 4.0,
+        "total_tokens_p50": 4,
+        "total_tokens_p95": 4,
+        "total_tokens_max": 4,
+    }
 
 
 def test_resolve_dataset_build_source_reuses_existing_package_sample_lists(
@@ -603,6 +862,87 @@ def test_resolve_dataset_build_source_reuses_hf_package_sample_lists(
     assert resolved["samples"] is normalized_samples
     assert resolved["validation_samples"] is normalized_validation_samples
     assert resolved["hf_metadata"]["hf_valid_split"] == "validation"
+
+
+def test_build_training_dataset_artifact_inspects_samples_once_for_quality_and_token_stats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CountingSequence:
+        def __init__(self, rows: list[dict[str, object]]) -> None:
+            self._rows = rows
+            self.iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return iter(self._rows)
+
+        def __len__(self) -> int:
+            return len(self._rows)
+
+        def __getitem__(self, index: int | slice) -> object:
+            return self._rows[index]
+
+        def __bool__(self) -> bool:
+            return bool(self._rows)
+
+    train_samples = CountingSequence(
+        [
+            {"prompt": "alpha beta", "completion": "gamma"},
+            {"prompt": "delta", "completion": "delta"},
+        ]
+    )
+    validation_samples = CountingSequence(
+        [
+            {"prompt": "alpha beta", "completion": "gamma"},
+        ]
+    )
+
+    monkeypatch.setattr(
+        training_dataset_module,
+        "_resolve_dataset_build_source",
+        lambda *args, **kwargs: {
+            "dataset_id": "counted-source",
+            "format": "prompt_completion",
+            "version": "1",
+            "source_kind": "local_path",
+            "source_uri": "/tmp/counted-source.jsonl",
+            "source_manifest_path": "",
+            "source_samples_path": "/tmp/counted-source.jsonl",
+            "samples": train_samples,
+            "validation_samples": validation_samples,
+            "response_only_supported": True,
+            "conversion_template": "prompt_completion",
+            "hf_metadata": {},
+        },
+    )
+
+    built = build_training_dataset_artifact(
+        {
+            "inspect_only": "true",
+            "preview_count": "2",
+        },
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "inspect-once",
+        source_model_id="melix-dev-text",
+    )
+
+    assert train_samples.iterations == 1
+    assert validation_samples.iterations == 1
+    assert built.manifest_payload["quality"] == {
+        "duplicate_count": 1,
+        "duplicate_sample_indices": [2],
+        "dirty_count": 1,
+        "dirty_samples": [
+            {"index": 1, "reasons": ["duplicate_prompt_completion"]},
+        ],
+    }
+    assert built.manifest_payload["token_stats"]["estimator"] == "whitespace_v1"
+    assert built.manifest_payload["token_stats"]["sample_count"] == 3
+    assert built.manifest_payload["token_stats"]["prompt_tokens_max"] == 2
+    assert built.manifest_payload["token_stats"]["completion_tokens_max"] == 1
+    assert built.manifest_payload["token_stats"]["total_tokens_max"] == 3
+
 
 
 def test_build_training_dataset_artifact_streams_local_jsonl_without_bulk_row_helpers(

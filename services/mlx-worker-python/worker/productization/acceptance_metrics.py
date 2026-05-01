@@ -13,6 +13,7 @@ from worker.productization.release_gates import (
     _build_maintenance_core as _build_release_gate_maintenance_core,
     _ensure_training_dataset,
     _evaluate_section_metrics,
+    evaluate_lora_path_evidence,
     load_release_gate_policy,
 )
 
@@ -339,6 +340,9 @@ def build_phase8_metrics_report(
     m9_summary = dict(m9.get("summary", {}))
     closure_audit_evidence = dict(closure_audit or {})
     closure_audit_metrics = dict(closure_audit_evidence.get("metrics", {}))
+    lora_path = dict(release_gate_report.get("lora_path", {}))
+    lora_path_summary = dict(lora_path.get("summary", {}))
+    lora_path_stages = dict(lora_path.get("stages", {}))
 
     metrics = {
         "desktop.cold_boot_to_ready_ms": round(
@@ -557,6 +561,33 @@ def build_phase8_metrics_report(
             float(closure_audit_metrics.get("closure_audit.deferred_work_count", 0.0)),
             2,
         ),
+        "lora_path.stages_success_count": round(
+            float(lora_path_summary.get("stages_success_count", 0.0)), 2
+        ),
+        "lora_path.stages_failure_count": round(
+            float(lora_path_summary.get("stages_failure_count", 0.0)), 2
+        ),
+        "lora_path.full_path_success": round(
+            float(lora_path_summary.get("full_path_success", 0.0)), 2
+        ),
+        "lora_path.train.success": round(
+            float(lora_path_stages.get("train", {}).get("success", 0.0)), 2
+        ),
+        "lora_path.train.duration_ms": round(
+            float(lora_path_stages.get("train", {}).get("duration_ms", 0.0)), 2
+        ),
+        "lora_path.activate.success": round(
+            float(lora_path_stages.get("activate", {}).get("success", 0.0)), 2
+        ),
+        "lora_path.compare.success": round(
+            float(lora_path_stages.get("compare", {}).get("success", 0.0)), 2
+        ),
+        "lora_path.publish.success": round(
+            float(lora_path_stages.get("publish", {}).get("success", 0.0)), 2
+        ),
+        "lora_path.publish.duration_ms": round(
+            float(lora_path_stages.get("publish", {}).get("duration_ms", 0.0)), 2
+        ),
     }
 
     return {
@@ -571,6 +602,7 @@ def build_phase8_metrics_report(
         "real_workload": real_workload,
         "m9": m9,
         "closure_audit": closure_audit_evidence,
+        "lora_path": lora_path,
         "release_gate": release_gate_report,
     }
 
@@ -613,6 +645,7 @@ def compute_release_smoke_pass_rate(report: dict[str, Any], policy: dict[str, An
         _runtime_core_sane(report.get("runtime_core", {}), policy),
         _real_workload_sane(report.get("real_workload", {}), policy),
         _m9_sane(report.get("m9", {}), policy),
+        _lora_path_sane(report.get("lora_path", {}), policy),
     ]
     passed = sum(1 for section in sections if section)
     return round((passed / len(sections)) * 100.0, 2)
@@ -762,4 +795,11 @@ def _m9_sane(m9: dict[str, Any], policy: dict[str, Any]) -> bool:
     from worker.productization.release_gates import evaluate_m9_release_evidence
 
     failures, _ = evaluate_m9_release_evidence(m9, policy.get("m9", {}))
+    return not failures
+
+
+def _lora_path_sane(lora_path: dict[str, Any], policy: dict[str, Any]) -> bool:
+    if not isinstance(lora_path, dict):
+        return False
+    failures = evaluate_lora_path_evidence(lora_path, policy.get("lora_path", {}))
     return not failures

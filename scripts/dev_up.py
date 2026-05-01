@@ -92,10 +92,24 @@ def optional_parent_environment_exports(names: tuple[str, ...]) -> dict[str, str
 
 def resolve_built_swift_product_binary(repo_root: Path, *, package_path: str, product_name: str) -> Path:
     build_root = repo_root / package_path / ".build"
-    candidates = [build_root / "debug" / product_name]
-    candidates.extend(sorted(build_root.glob(f"*/debug/{product_name}")))
+    direct_candidate = build_root / "debug" / product_name
+    if direct_candidate.is_file() and os.access(direct_candidate, os.X_OK):
+        return direct_candidate
 
-    for candidate in candidates:
+    child_names: list[str] = []
+    try:
+        with os.scandir(os.fspath(build_root)) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir():
+                        child_names.append(entry.name)
+                except OSError:
+                    continue
+    except OSError:
+        child_names = []
+
+    for child_name in sorted(child_names):
+        candidate = build_root / child_name / "debug" / product_name
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
 
@@ -251,6 +265,24 @@ def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
     return None
 
 
+def iter_mlx_metallib_candidates(root: Path):
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                        elif entry.name == "mlx.metallib" and entry.is_file(follow_symlinks=False):
+                            yield Path(entry.path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+
 def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = None) -> Path | None:
     expected_mlx_metal_version = resolve_swift_mlx_package_version(repo_root)
     candidate_search_roots: list[Path] = []
@@ -271,17 +303,16 @@ def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = N
         if resolved_root in seen or not resolved_root.exists():
             continue
         seen.add(resolved_root)
-        for candidate in resolved_root.rglob("mlx.metallib"):
-            if candidate.is_file():
-                resolved_candidate = candidate.resolve()
-                if expected_mlx_metal_version is None:
-                    return resolved_candidate
+        for candidate in iter_mlx_metallib_candidates(resolved_root):
+            resolved_candidate = candidate.resolve()
+            if expected_mlx_metal_version is None:
+                return resolved_candidate
 
-                candidate_version = read_mlx_metal_dist_info_version(resolved_candidate)
-                if candidate_version == expected_mlx_metal_version:
-                    return resolved_candidate
+            candidate_version = read_mlx_metal_dist_info_version(resolved_candidate)
+            if candidate_version == expected_mlx_metal_version:
+                return resolved_candidate
 
-                rejected_versions.setdefault(candidate_version or "unknown", []).append(resolved_candidate)
+            rejected_versions.setdefault(candidate_version or "unknown", []).append(resolved_candidate)
 
     if expected_mlx_metal_version is not None and rejected_versions:
         observed = ", ".join(

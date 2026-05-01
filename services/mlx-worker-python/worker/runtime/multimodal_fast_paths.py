@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import logging
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
 
@@ -130,18 +130,19 @@ class MultimodalFastPathController:
 
         hits = 0
         misses = 0
+        adapter_hash = _adapter_hash(metadata)
+        cache_key_factory = self._cache_key_factory(
+            family_id=family_id,
+            adapter_hash=adapter_hash,
+            quant_profile_id=quant_profile_id,
+            metadata=metadata,
+        )
         with self._image_feature_cache_lock:
             for image in prepared_request.images:
                 if not image.sha256_hex:
                     misses += 1
                     continue
-                key = self._cache_key(
-                    image=image,
-                    family_id=family_id,
-                    adapter_hash=_adapter_hash(metadata),
-                    quant_profile_id=quant_profile_id,
-                    metadata=metadata,
-                )
+                key = cache_key_factory(image)
                 if key in self._image_feature_cache:
                     hits += 1
                     self._image_feature_cache.move_to_end(key)
@@ -171,6 +172,41 @@ class MultimodalFastPathController:
         )
 
     @staticmethod
+    def _cache_key_factory(
+        *,
+        family_id: str,
+        adapter_hash: str,
+        quant_profile_id: str,
+        metadata: dict[str, str],
+    ) -> Callable[[PreparedImageInput], ImageFeatureCacheKey]:
+        vision_prompt_profile_id = metadata.get("vision_prompt_profile_id", "")
+        vision_tokenization_mode = metadata.get("vision_tokenization_mode", "")
+        vision_max_images_per_prompt = metadata.get("vision_max_images_per_prompt", "")
+        preprocessing_fingerprints: dict[tuple[str, str], str] = {}
+
+        def build(image: PreparedImageInput) -> ImageFeatureCacheKey:
+            shape = (image.mime_type, image.format)
+            preprocessing_fingerprint = preprocessing_fingerprints.get(shape)
+            if preprocessing_fingerprint is None:
+                preprocessing_fingerprint = _preprocessing_fingerprint(
+                    image.mime_type,
+                    image.format,
+                    vision_prompt_profile_id,
+                    vision_tokenization_mode,
+                    vision_max_images_per_prompt,
+                )
+                preprocessing_fingerprints[shape] = preprocessing_fingerprint
+            return ImageFeatureCacheKey(
+                family_id=family_id,
+                adapter_hash=adapter_hash,
+                preprocessing_fingerprint=preprocessing_fingerprint,
+                quant_profile_id=quant_profile_id,
+                sha256_hex=image.sha256_hex,
+            )
+
+        return build
+
+    @staticmethod
     def _cache_key(
         *,
         image: PreparedImageInput,
@@ -179,19 +215,12 @@ class MultimodalFastPathController:
         quant_profile_id: str,
         metadata: dict[str, str],
     ) -> ImageFeatureCacheKey:
-        return ImageFeatureCacheKey(
+        return MultimodalFastPathController._cache_key_factory(
             family_id=family_id,
             adapter_hash=adapter_hash,
-            preprocessing_fingerprint=_preprocessing_fingerprint(
-                image.mime_type,
-                image.format,
-                metadata.get("vision_prompt_profile_id", ""),
-                metadata.get("vision_tokenization_mode", ""),
-                metadata.get("vision_max_images_per_prompt", ""),
-            ),
             quant_profile_id=quant_profile_id,
-            sha256_hex=image.sha256_hex,
-        )
+            metadata=metadata,
+        )(image)
 
     @staticmethod
     def _fallback_decision(

@@ -10,6 +10,7 @@ import worker.productization.benchmark_suites as benchmark_suites
 from worker.productization.benchmark_suites import (
     BenchmarkSuiteCatalog,
     BenchmarkSuiteDefinition,
+    _write_jsonl_rows,
 )
 
 
@@ -71,6 +72,21 @@ class FakeBenchmarkSuiteFetcher:
         raise AssertionError(f"Unexpected benchmark fetch: endpoint={endpoint} dataset={dataset}")
 
 
+class _RecordingWriter:
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+
+    def write(self, chunk: str) -> int:
+        self.writes.append(chunk)
+        return len(chunk)
+
+    def __enter__(self) -> "_RecordingWriter":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
 def test_benchmark_suite_catalog_materializes_curated_hf_suite_and_reuses_cache(
     tmp_path: Path,
 ) -> None:
@@ -123,6 +139,28 @@ def test_load_materialized_rows_streams_without_read_text(tmp_path: Path, monkey
     assert benchmark_suites._load_materialized_rows(rows_path) == [
         {"prompt": "Say hi."},
         {"prompt": "Say bye."},
+    ]
+
+
+def test_write_jsonl_rows_streams_one_row_at_a_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rows_path = tmp_path / "rows.jsonl"
+    recorder = _RecordingWriter()
+
+    def fake_open(self: Path, mode: str = "r", encoding: str | None = None):
+        assert self == rows_path
+        assert mode == "w"
+        assert encoding == "utf-8"
+        return recorder
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    _write_jsonl_rows(rows_path, [{"prompt": "Say hi."}, {"prompt": "Say bye."}])
+
+    assert recorder.writes == [
+        '{"prompt": "Say hi."}',
+        "\n",
+        '{"prompt": "Say bye."}',
+        "\n",
     ]
 
 

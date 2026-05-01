@@ -234,6 +234,51 @@ def test_list_records_returns_empty_when_queue_root_is_a_file(tmp_path: Path) ->
     assert records == []
 
 
+def test_list_records_skips_entries_when_is_file_raises_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store = BenchmarkQueueStore()
+    queue_root = tmp_path / "queue"
+    queue_root.mkdir()
+
+    class BrokenEntry:
+        name = "broken.json"
+
+        def is_file(self) -> bool:
+            raise OSError("transient stat failure")
+
+    class BrokenScandir:
+        def __enter__(self):
+            return iter([BrokenEntry()])
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+    monkeypatch.setattr("worker.productization.benchmark_queue.os.scandir", lambda path: BrokenScandir())
+
+    records = store.list_records(queue_root=queue_root)
+
+    assert records == []
+
+
+def test_list_records_returns_empty_when_scandir_raises_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store = BenchmarkQueueStore()
+    queue_root = tmp_path / "queue"
+    queue_root.mkdir()
+    monkeypatch.setattr(
+        "worker.productization.benchmark_queue.os.scandir",
+        lambda path: (_ for _ in ()).throw(OSError("directory unavailable")),
+    )
+
+    records = store.list_records(queue_root=queue_root)
+
+    assert records == []
+
+
 def test_benchmark_queue_record_from_dict_uses_zero_for_missing_optional_timestamps() -> None:
     payload = {
         "queue_item_id": "q-minimal",

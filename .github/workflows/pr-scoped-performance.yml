@@ -1,0 +1,238 @@
+name: pr-scoped-performance
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-scoped-performance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      selected_count: ${{ steps.scope_outputs.outputs.selected_count }}
+      matrix: ${{ steps.scope_outputs.outputs.matrix }}
+    steps:
+      - name: Checkout head
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Capture changed files
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            fs.mkdirSync('artifacts/scope', { recursive: true });
+            fs.writeFileSync(
+              'artifacts/scope/changed-files.json',
+              JSON.stringify(files.map((file) => file.filename), null, 2),
+            );
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Resolve selected probes
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/scope
+          python scripts/pr_scoped_performance_scope.py \
+            --registry infra/perf/pr_scoped_probes.json \
+            --changed-files-json artifacts/scope/changed-files.json \
+            --output artifacts/scope/scope.json > artifacts/scope/scope.stdout.json
+
+      - name: Export scope outputs
+        id: scope_outputs
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          scope = json.loads(Path('artifacts/scope/scope.json').read_text(encoding='utf-8'))
+          matrix = [
+              {
+                  'id': probe['id'],
+                  'name': probe['name'],
+                  'runner': probe.get('runner', 'ubuntu-latest'),
+              }
+              for probe in scope.get('selected_probes', [])
+          ]
+          with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output_file:
+              output_file.write(f"selected_count={scope.get('selected_count', 0)}\n")
+              output_file.write(f"matrix={json.dumps(matrix)}\n")
+          PY
+
+      - name: Upload scope artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-scoped-performance-scope
+          path: artifacts/scope
+
+  probes:
+    needs:
+      - scope
+    if: needs.scope.outputs.selected_count != '0'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.scope.outputs.matrix) }}
+    steps:
+      - name: Checkout base
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.base.repo.full_name }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Checkout head
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Run scoped performance probe
+        id: run_probe
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/probes
+          python head/scripts/pr_scoped_performance_run.py \
+            --registry head/infra/perf/pr_scoped_probes.json \
+            --probe-id "${{ matrix.id }}" \
+            --base-repo "$GITHUB_WORKSPACE/base" \
+            --head-repo "$GITHUB_WORKSPACE/head" \
+            --output "artifacts/probes/${{ matrix.id }}.json"
+
+      - name: Upload probe artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-scoped-performance-probe-${{ matrix.id }}
+          path: artifacts/probes/${{ matrix.id }}.json
+
+  report:
+    needs:
+      - scope
+      - probes
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout head
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Download scope artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: pr-scoped-performance-scope
+          path: artifacts/scope
+
+      - name: Download probe artifacts
+        if: needs.scope.outputs.selected_count != '0'
+        uses: actions/download-artifact@v5
+        with:
+          pattern: pr-scoped-performance-probe-*
+          path: artifacts/probes
+          merge-multiple: true
+
+      - name: Ensure probe artifact directory exists
+        run: mkdir -p artifacts/probes artifacts/report
+
+      - name: Build scoped performance report
+        run: |
+          set -euo pipefail
+          python head/scripts/pr_scoped_performance_report.py \
+            --scope artifacts/scope/scope.json \
+            --results-dir artifacts/probes \
+            --output-dir artifacts/report \
+            --format terminal | tee artifacts/report/report.txt
+          python head/scripts/pr_scoped_performance_report.py \
+            --scope artifacts/scope/scope.json \
+            --results-dir artifacts/probes \
+            --format markdown \
+            --sticky-comment > artifacts/report/pr-comment.md
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-scoped-performance-report
+          path: artifacts/report
+
+      - name: Update PR comment
+        if: github.event_name == 'pull_request' && (success() || failure())
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- melix-pr-scoped-performance-report -->';
+            let body;
+            try {
+              body = fs.readFileSync('artifacts/report/pr-comment.md', 'utf8');
+            } catch (error) {
+              body = [
+                marker,
+                '# Melix PR Scoped Performance Report',
+                '',
+                'Report generation did not complete. See the workflow logs and uploaded artifacts for the failing phase.',
+              ].join('\n');
+            }
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }

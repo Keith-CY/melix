@@ -388,9 +388,25 @@ class ModelOpsJobRegistry:
     @classmethod
     def _json_safe(cls, value: Any) -> Any:
         if isinstance(value, dict):
-            return {key: cls._json_safe(item) for key, item in value.items()}
+            updated: dict[Any, Any] | None = None
+            for key, item in value.items():
+                safe_item = cls._json_safe(item)
+                if updated is not None:
+                    updated[key] = safe_item
+                elif safe_item is not item:
+                    updated = dict(value)
+                    updated[key] = safe_item
+            return value if updated is None else updated
         if isinstance(value, list):
-            return [cls._json_safe(item) for item in value]
+            updated_list: list[Any] | None = None
+            for index, item in enumerate(value):
+                safe_item = cls._json_safe(item)
+                if updated_list is not None:
+                    updated_list.append(safe_item)
+                elif safe_item is not item:
+                    updated_list = value[:index]
+                    updated_list.append(safe_item)
+            return value if updated_list is None else updated_list
         if isinstance(value, float) and math.isfinite(value) is False:
             return None
         return value

@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 import random
@@ -134,6 +135,7 @@ class EvaluationCore:
         self._queue_store = queue_store or BenchmarkQueueStore()
         self._registry = registry
         self._job_id_lock = threading.Lock()
+        self._next_job_index: int | None = None
 
     @staticmethod
     def _load_dataset_samples(
@@ -581,10 +583,7 @@ class EvaluationCore:
         prompt_snapshot_path = output_root / "prompt_snapshot.json"
 
         rows = self._read_event_extraction_rows(Path(source_jsonl), sample_size=sample_size)
-        gold_subset_path.write_text(
-            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
-            encoding="utf-8",
-        )
+        self._write_jsonl_rows(gold_subset_path, rows)
         prompt_spec = self._event_extraction_prompt_spec(parameters)
         overlapping_examples = sorted(
             set(prompt_example_dialogue_ids(prompt_spec))
@@ -682,14 +681,8 @@ class EvaluationCore:
                     )
                 )
                 if should_abort:
-                    prediction_path.write_text(
-                        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in prediction_rows),
-                        encoding="utf-8",
-                    )
-                    failure_path.write_text(
-                        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in failures),
-                        encoding="utf-8",
-                    )
+                    self._write_jsonl_rows(prediction_path, prediction_rows)
+                    self._write_jsonl_rows(failure_path, failures)
                     self._write_jsonl_rows(trace_path, dialogue_traces)
                     error_payload = self._event_extraction_error_payload(
                         exc=exc,
@@ -765,14 +758,8 @@ class EvaluationCore:
             )
 
         self._write_jsonl_rows(trace_path, dialogue_traces)
-        prediction_path.write_text(
-            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in prediction_rows),
-            encoding="utf-8",
-        )
-        failure_path.write_text(
-            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in failures),
-            encoding="utf-8",
-        )
+        self._write_jsonl_rows(prediction_path, prediction_rows)
+        self._write_jsonl_rows(failure_path, failures)
         summary = evaluate_event_extraction(
             gold_jsonl=gold_subset_path,
             pred_jsonl=prediction_path,
@@ -950,10 +937,9 @@ class EvaluationCore:
 
     @staticmethod
     def _write_jsonl_rows(path: Path, rows: list[dict[str, object]]) -> None:
-        path.write_text(
-            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
-            encoding="utf-8",
-        )
+        with path.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     @staticmethod
     def _round_ms(value: float) -> float:
@@ -1690,14 +1676,31 @@ class EvaluationCore:
         runs_root = self._jobs_root / "runs"
         runs_root.mkdir(parents=True, exist_ok=True)
         with self._job_id_lock:
-            next_index = 1
+            next_index = self._prime_next_job_index(runs_root)
             while True:
                 job_id = f"eval-{next_index:04d}"
                 try:
                     (runs_root / job_id).mkdir(parents=False, exist_ok=False)
+                    self._next_job_index = next_index + 1
                     return job_id
                 except FileExistsError:
                     next_index += 1
+                    self._next_job_index = next_index
+
+    def _prime_next_job_index(self, runs_root: Path) -> int:
+        if self._next_job_index is not None:
+            return self._next_job_index
+        highest_index = 0
+        with os.scandir(os.fspath(runs_root)) as entries:
+            for entry in entries:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                match = re.fullmatch(r"eval-(\d{4})", entry.name)
+                if match is None:
+                    continue
+                highest_index = max(highest_index, int(match.group(1)))
+        self._next_job_index = highest_index + 1
+        return self._next_job_index
 
     def _run_root(self, job_id: str) -> Path:
         if self._jobs_root is None:
@@ -2650,8 +2653,9 @@ class EvaluationCore:
         if not normalized_response:
             return "", "empty_prediction"
 
-        answer_matches = list(_ANSWER_PREFIX_PATTERN.finditer(normalized_response))
-        answer_match = answer_matches[-1] if answer_matches else None
+        answer_match = None
+        for match in _ANSWER_PREFIX_PATTERN.finditer(normalized_response):
+            answer_match = match
         if answer_match is not None:
             candidate = answer_match.group(1).strip()
             parsed = EvaluationCore._parse_candidate_for_expected(candidate=candidate, expected=expected)

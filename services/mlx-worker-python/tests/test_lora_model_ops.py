@@ -13,7 +13,15 @@ from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 from worker.grpc_server import WorkerMaintenanceService
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
-from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
+from worker.model_ops.lora_training_pipeline import (
+    LoRATrainingPipeline,
+    _latest_checkpoint_from_directory,
+    _load_manifest_payload,
+    _resolve_resume_context,
+    _resolve_resume_path_from_manifest,
+    _validated_resume_path,
+)
+from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.mlx_lm_runner import (
     ActivationMetrics,
     ActivationRequest,
@@ -23,11 +31,15 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingMetrics,
     TrainingRequest,
     TrainingResult,
+    _checkpoint_order_key,
 )
+from worker.model_ops import lora_training_pipeline as lora_training_pipeline_module
 from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.training_dataset import (
     HFDatasetReference,
+    MaterializedTrainingDatasetPackage,
+    TrainingDatasetPackage,
     materialize_hf_training_dataset_package,
     resolve_training_dataset_package,
 )
@@ -35,6 +47,78 @@ from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
+
+
+def test_checkpoint_order_key_uses_last_numeric_token() -> None:
+    older = Path("/tmp/model-ops-999/adapter/checkpoint-2/adapters.safetensors")
+    newer = Path("/tmp/model-ops-001/adapter/checkpoint-10/adapters.safetensors")
+
+    assert max((older, newer), key=_checkpoint_order_key) == newer
+    assert _checkpoint_order_key(Path("/tmp/melix/no-number/adapters.safetensors")) == (
+        -1,
+        "/tmp/melix/no-number/adapters.safetensors",
+    )
+
+
+def test_latest_checkpoint_from_directory_prefers_last_numeric_token(tmp_path: Path) -> None:
+    older = (
+        tmp_path / "model-ops-999" / "adapter" / "checkpoint-2" / "adapters.safetensors"
+    )
+    newer = (
+        tmp_path / "model-ops-001" / "adapter" / "checkpoint-10" / "adapters.safetensors"
+    )
+    for checkpoint in (older, newer):
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint.write_bytes(b"weights")
+
+    assert _latest_checkpoint_from_directory(tmp_path) == newer.resolve()
+
+
+def test_latest_checkpoint_from_directory_uses_scandir_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    nested = tmp_path / "model-ops-001" / "adapter" / "checkpoint-3"
+    nested.mkdir(parents=True)
+    checkpoint = nested / "adapters.safetensors"
+    checkpoint.write_bytes(b"weights")
+
+    def fail_os_walk(path: Path):
+        raise AssertionError("expected explicit os.scandir stack, not os.walk")
+
+    monkeypatch.setattr(lora_training_pipeline_module.os, "walk", fail_os_walk)
+
+    assert _latest_checkpoint_from_directory(tmp_path) == checkpoint.resolve()
+
+
+def test_latest_checkpoint_from_directory_skips_non_weight_entries(tmp_path: Path) -> None:
+    (tmp_path / "checkpoint-99").mkdir()
+    (tmp_path / "checkpoint-99" / "adapter.txt").write_text("not weights", encoding="utf-8")
+
+    with pytest.raises(ModelOperationError, match="does not contain adapter weights"):
+        _latest_checkpoint_from_directory(tmp_path)
+
+
+def test_resume_helpers_reject_invalid_sources(tmp_path: Path) -> None:
+    missing_resume_path = tmp_path / "missing.safetensors"
+    with pytest.raises(ModelOperationError, match="Resume source does not exist"):
+        _resolve_resume_context({"resume_source_path": str(missing_resume_path)})
+
+    broken_manifest = tmp_path / "broken.json"
+    broken_manifest.write_text("not-json", encoding="utf-8")
+    with pytest.raises(ModelOperationError, match="Resume manifest is unreadable"):
+        _load_manifest_payload(broken_manifest)
+
+    with pytest.raises(ModelOperationError, match="does not expose a checkpoint"):
+        _resolve_resume_path_from_manifest(tmp_path / "manifest.json", {})
+
+    with pytest.raises(ModelOperationError, match="does not exist"):
+        _validated_resume_path(missing_resume_path, source_label="test")
+
+
+def test_validated_resume_path_selects_latest_checkpoint_from_directory(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint-7" / "adapters.safetensors"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"weights")
+
+    assert _validated_resume_path(tmp_path, source_label="test") == checkpoint.resolve()
 
 
 def _write_dataset_package(
@@ -1363,6 +1447,67 @@ def test_resolve_training_dataset_rejects_hf_valid_split_for_local_package(tmp_p
         )
 
     assert exc.value.code == "invalid_dataset_source"
+
+
+def test_resolve_training_dataset_package_reuses_materialized_hf_package_without_reloading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_path = tmp_path / "datasets" / "cached-hf"
+    package = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=package_path / "manifest.json",
+        samples_path=package_path / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="melix/demo-hf:default:train@main",
+        format="text_completion",
+        sample_count=1,
+        version="main",
+        normalized_samples=[{"text": "hello world"}],
+        normalized_validation_samples=[],
+        validation_sample_count=0,
+        response_only_supported=False,
+    )
+    reference = HFDatasetReference(
+        dataset_path="melix/demo-hf",
+        dataset_name="default",
+        dataset_revision="main",
+        train_split="train",
+        valid_split="",
+        chat_feature="",
+        prompt_feature="",
+        completion_feature="",
+        text_feature="text",
+    )
+
+    monkeypatch.setattr(
+        training_dataset_module,
+        "materialize_hf_training_dataset_package",
+        lambda *args, **kwargs: MaterializedTrainingDatasetPackage(
+            package_path=package_path,
+            cache_key="cached-hf",
+            cache_hit=False,
+            dataset_uri="hf://melix/demo-hf",
+            reference=reference,
+            package=package,
+        ),
+    )
+
+    def fail_load(*args, **kwargs):
+        raise AssertionError("resolve_training_dataset_package should reuse the freshly materialized package")
+
+    monkeypatch.setattr(training_dataset_module, "load_training_dataset_package", fail_load)
+
+    resolved = resolve_training_dataset_package(
+        {"dataset_source_kind": "hf_dataset", "hf_dataset_path": "melix/demo-hf"},
+        jobs_root=tmp_path / "jobs",
+    )
+
+    assert resolved.package is package
+    assert resolved.cache_hit is False
+    assert resolved.materialized_package_path == package_path
+    assert resolved.dataset_uri == "hf://melix/demo-hf"
+
 
 
 def test_materialize_hf_training_dataset_rejects_empty_row_payload(tmp_path: Path) -> None:

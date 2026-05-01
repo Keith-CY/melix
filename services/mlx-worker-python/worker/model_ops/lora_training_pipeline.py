@@ -23,6 +23,9 @@ from worker.model_ops.training_dataset import (
 from worker.productization.lora_experiment_store import LoraExperimentStore
 
 
+_NUMERIC_TOKEN_RE = re.compile(r"\d+")
+
+
 @dataclass(frozen=True)
 class LoRATrainingPipelineResult:
     manifest: dict[str, Any]
@@ -350,23 +353,31 @@ def _resolve_resume_path_from_manifest(path: Path, manifest: dict[str, Any]) -> 
 
 
 def _latest_checkpoint_from_directory(path: Path) -> Path:
-    checkpoint_candidates: list[str] = []
-    for root, _, files in os.walk(path):
-        for filename in files:
-            if filename.endswith(".safetensors"):
-                checkpoint_candidates.append(os.path.join(root, filename))
+    pending: list[str] = [os.fspath(path)]
+    latest_checkpoint_path = ""
+    latest_checkpoint_key: tuple[int, str] | None = None
+    while pending:
+        current_dir = pending.pop()
+        with os.scandir(current_dir) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(entry.path)
+                    continue
+                if not entry.name.endswith(".safetensors") or entry.is_dir(follow_symlinks=True):
+                    continue
+                numbers = _NUMERIC_TOKEN_RE.findall(entry.path)
+                checkpoint_key = (int(numbers[-1]) if numbers else -1, entry.path)
+                if latest_checkpoint_key is None or checkpoint_key > latest_checkpoint_key:
+                    latest_checkpoint_path = entry.path
+                    latest_checkpoint_key = checkpoint_key
 
-    if not checkpoint_candidates:
+    if latest_checkpoint_key is None:
         raise ModelOperationError(
             code="invalid_resume_source",
             message=f"Resume directory does not contain adapter weights: {path}",
         )
 
-    def order_key(candidate: str) -> tuple[int, str]:
-        numbers = [int(value) for value in re.findall(r"\d+", candidate)]
-        return (numbers[-1] if numbers else -1, candidate)
-
-    return Path(max(checkpoint_candidates, key=order_key)).resolve()
+    return Path(latest_checkpoint_path).resolve()
 
 
 def _validated_resume_path(path: Path, *, source_label: str) -> Path:

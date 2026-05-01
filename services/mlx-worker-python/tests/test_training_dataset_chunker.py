@@ -129,6 +129,22 @@ def test_passthrough_without_extractable_pairs_reuses_top_level_metadata_but_cop
     assert emitted["messages"][0] is not sample["messages"][0]
 
 
+def test_passthrough_without_extractable_pairs_skips_rendering() -> None:
+    tokenizer = _CountingTokenizer()
+    sample = {
+        "id": "no-pairs-no-render",
+        "messages": [
+            {"role": "assistant", "content": _words(200)},
+        ],
+    }
+
+    chunked, stats = chunk_long_samples([sample], chunk_size=1, tokenizer=tokenizer)
+
+    assert stats.chunk_count == len(chunked) == 1
+    assert chunked[0]["messages"] == sample["messages"]
+    assert tokenizer.render_calls == 0
+
+
 def test_long_single_turn_splits_into_multiple_chunks() -> None:
     tokenizer = _FakeTokenizer()  # 5 overhead/msg, 1 token/word
     # ~200 user words + 3-token assistant + overhead — full render ≈ 215 tokens.
@@ -156,6 +172,27 @@ def test_long_single_turn_splits_into_multiple_chunks() -> None:
         assert chunk["messages"][-1]["role"] == "assistant"
         assert chunk["messages"][-1]["content"] == "ack ack ack"
         assert chunk["id"] == f"long#chunk-{idx}"
+
+
+def test_single_turn_search_stops_candidate_rendering_after_first_oversized_segment() -> None:
+    tokenizer = _CountingTokenizer()
+    sample = {
+        "id": "early-exit",
+        "messages": [
+            {"role": "user", "content": _words(200)},
+            {"role": "assistant", "content": _words(50)},
+        ],
+    }
+
+    chunked, stats = chunk_long_samples([sample], chunk_size=80, tokenizer=tokenizer)
+
+    assert stats.chunk_count == len(chunked) == 10
+    assert tokenizer.render_calls <= 18
+    for idx, chunk in enumerate(chunked):
+        rendered = tokenizer.apply_chat_template(
+            chunk["messages"], add_generation_prompt=False, return_dict=False
+        )
+        assert len(rendered) <= 80, f"chunk {idx} over budget: {len(rendered)}"
 
 
 def test_multi_turn_within_chunk_size_passes_through_unchanged() -> None:

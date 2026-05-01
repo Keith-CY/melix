@@ -20,7 +20,9 @@ from worker.productization.release_gates import (
     collect_benchmark_evidence,
     collect_evaluation_evidence,
     collect_install_evidence,
+    collect_lora_path_evidence,
     collect_training_evidence,
+    evaluate_lora_path_evidence,
     evaluate_release_gate,
     load_release_gate_policy,
 )
@@ -207,6 +209,23 @@ def _passing_real_workload_evidence() -> dict[str, object]:
                     "peak_memory_gb": 9.8,
                 },
             },
+        },
+    }
+
+
+def _passing_lora_path_evidence() -> dict[str, object]:
+    return {
+        "stages": {
+            "dataset_build": {"success": 1.0, "duration_ms": 0.5},
+            "train": {"success": 1.0, "duration_ms": 1420.0},
+            "activate": {"success": 1.0, "duration_ms": 1.0},
+            "compare": {"success": 1.0, "duration_ms": 0.5},
+            "publish": {"success": 1.0, "duration_ms": 118.0},
+        },
+        "summary": {
+            "stages_success_count": 5.0,
+            "stages_failure_count": 0.0,
+            "full_path_success": 1.0,
         },
     }
 
@@ -1379,6 +1398,11 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
         "collect_real_workload_evidence",
         lambda jobs_root, policy=None: _passing_real_workload_evidence(),
     )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_lora_path_evidence",
+        lambda jobs_root: _passing_lora_path_evidence(),
+    )
 
     report = build_release_gate_report(
         repo_root,
@@ -2082,3 +2106,80 @@ def test_evaluate_release_gate_passes_with_sufficient_eval_primary_score() -> No
 
     eval_failures = [f for f in failures if "eval." in f]
     assert eval_failures == []
+
+
+def test_collect_lora_path_evidence_records_per_stage_metrics(tmp_path: Path) -> None:
+    evidence = collect_lora_path_evidence(tmp_path / "jobs")
+
+    assert "stages" in evidence
+    assert "summary" in evidence
+    stages = evidence["stages"]
+    assert set(stages.keys()) == {"dataset_build", "train", "activate", "compare", "publish"}
+    for stage_name, stage in stages.items():
+        assert "success" in stage, f"stage {stage_name!r} missing 'success'"
+        assert "duration_ms" in stage, f"stage {stage_name!r} missing 'duration_ms'"
+    summary = evidence["summary"]
+    assert "stages_success_count" in summary
+    assert "stages_failure_count" in summary
+    assert "full_path_success" in summary
+    assert isinstance(summary["stages_success_count"], float)
+    assert isinstance(summary["stages_failure_count"], float)
+
+
+def test_collect_lora_path_evidence_compare_stage_reflects_persisted_evidence(
+    tmp_path: Path,
+) -> None:
+    jobs_root = tmp_path / "jobs"
+    evidence_without_compare = collect_lora_path_evidence(jobs_root)
+    assert evidence_without_compare["stages"]["compare"]["success"] == 0.0
+
+    _write_persisted_evaluation_compare_evidence(jobs_root)
+    evidence_with_compare = collect_lora_path_evidence(jobs_root)
+    assert evidence_with_compare["stages"]["compare"]["success"] == 1.0
+
+
+def test_evaluate_lora_path_evidence_reports_policy_violations() -> None:
+    policy = {
+        "summary": {
+            "stages_success_count": {"min": 4.0},
+            "stages_failure_count": {"max": 1.0},
+        }
+    }
+
+    passing = evaluate_lora_path_evidence(
+        {
+            "summary": {
+                "stages_success_count": 4.0,
+                "stages_failure_count": 1.0,
+                "full_path_success": 0.0,
+            }
+        },
+        policy,
+    )
+    assert passing == []
+
+    failing = evaluate_lora_path_evidence(
+        {
+            "summary": {
+                "stages_success_count": 3.0,
+                "stages_failure_count": 2.0,
+                "full_path_success": 0.0,
+            }
+        },
+        policy,
+    )
+    assert any("stages_success_count" in f for f in failing)
+    assert any("stages_failure_count" in f for f in failing)
+
+    missing_summary = evaluate_lora_path_evidence({}, policy)
+    assert any("summary" in f for f in missing_summary)
+
+
+def test_default_release_gate_policy_includes_lora_path_section() -> None:
+    policy = load_release_gate_policy()
+
+    assert "lora_path" in policy
+    lora_path_policy = policy["lora_path"]
+    assert "summary" in lora_path_policy
+    assert lora_path_policy["summary"]["stages_success_count"]["min"] == 4.0
+    assert lora_path_policy["summary"]["stages_failure_count"]["max"] == 1.0

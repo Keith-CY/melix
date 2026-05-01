@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import hashlib
 import importlib.util
+import os
 import time
 from pathlib import Path
 from threading import Event
@@ -193,8 +194,13 @@ class AutoMLXVLMBackend:
         model_path = get_model_path(model_spec.model_path, revision=model_spec.revision or "main")
         config = load_config(model_path)
         weights: dict[str, Any] = {}
-        for weight_file in model_path.glob("*.safetensors"):
-            weights.update(mx.load(str(weight_file)))
+        for entry in os.scandir(model_path):
+            try:
+                if not entry.is_file() or not entry.name.endswith(".safetensors"):
+                    continue
+            except OSError:
+                continue
+            weights.update(mx.load(entry.path))
 
         has_vision_weights, has_audio_weights = _gemma4_multimodal_weight_presence(list(weights))
         if has_vision_weights:

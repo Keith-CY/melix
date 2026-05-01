@@ -26,6 +26,7 @@ from worker.model_ops.training_dataset_chunker import (
 )
 
 _RESULT_PREFIX = "__MELIX_MLX_RESULT__="
+_NUMERIC_TOKEN_RE = re.compile(r"\d+")
 
 
 @dataclass(frozen=True)
@@ -593,19 +594,29 @@ def _mlx_peak_memory_gb() -> float:
 
 def _checkpoint_summary(adapter_output_dir: Path) -> tuple[int, str]:
     checkpoint_candidates: dict[str, Path] = {}
-    root_weights_path = adapter_output_dir / "adapters.safetensors"
-    for root, _directories, filenames in os.walk(os.fspath(adapter_output_dir)):
-        for filename in filenames:
-            if not filename.endswith(".safetensors"):
-                continue
-            file_path = Path(root) / filename
-            if file_path == root_weights_path:
-                continue
-            relative_path = file_path.relative_to(adapter_output_dir)
-            if len(relative_path.parts) > 1:
-                checkpoint_candidates.setdefault(relative_path.parts[0], file_path)
-                continue
-            checkpoint_candidates.setdefault(file_path.stem, file_path)
+    root_path = os.fspath(adapter_output_dir)
+    root_weights_path = os.path.join(root_path, "adapters.safetensors")
+    stack = [root_path]
+    while stack:
+        current_root = stack.pop()
+        try:
+            with os.scandir(current_root) as entries:
+                for entry in entries:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+                        continue
+                    if not entry.name.endswith(".safetensors"):
+                        continue
+                    if entry.path == root_weights_path:
+                        continue
+                    relative_path = os.path.relpath(entry.path, root_path)
+                    first_part = relative_path.split(os.sep, 1)[0]
+                    if first_part != relative_path:
+                        checkpoint_candidates.setdefault(first_part, Path(entry.path))
+                        continue
+                    checkpoint_candidates.setdefault(os.path.splitext(entry.name)[0], Path(entry.path))
+        except FileNotFoundError:
+            continue
 
     if not checkpoint_candidates:
         return 0, ""
@@ -618,8 +629,9 @@ def _checkpoint_summary(adapter_output_dir: Path) -> tuple[int, str]:
 
 
 def _checkpoint_order_key(path: Path) -> tuple[int, str]:
-    numeric_tokens = [int(token) for token in re.findall(r"\d+", str(path))]
-    return (numeric_tokens[-1] if numeric_tokens else -1, str(path))
+    path_text = str(path)
+    numeric_tokens = _NUMERIC_TOKEN_RE.findall(path_text)
+    return (int(numeric_tokens[-1]) if numeric_tokens else -1, path_text)
 
 
 def _serialize_activation_request(request: ActivationRequest) -> dict:

@@ -44,6 +44,28 @@ def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
     assert assembler._next_structural_tag() == (RequestStreamAssembler._TOOL_OPEN, 0)
 
 
+def test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call() -> None:
+    class RecordingBuffer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, ...]] = []
+
+        def endswith(self, suffix: tuple[str, ...]) -> bool:
+            self.calls.append(suffix)
+            return "<thi" in suffix
+
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-suffix-fast-path",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    buffer = RecordingBuffer()
+    assembler._buffer = buffer  # type: ignore[assignment]
+
+    assert assembler._has_partial_structural_tag_suffix() is True
+    assert buffer.calls == [assembler._structural_tag_prefixes]
+
+
 def test_stream_assembler_instances_do_not_share_request_state() -> None:
     assemblers = [
         RequestStreamAssembler(
