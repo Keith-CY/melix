@@ -548,13 +548,13 @@ def _estimated_resident_bytes(
     parameter_count: int,
     tags: list[str],
 ) -> int:
-    overhead = RESIDENT_MEMORY_OVERHEAD_FACTOR
     if artifact_bytes > 0:
-        return math.ceil(artifact_bytes * overhead)
-    if parameter_count <= 0:
+        base_size = artifact_bytes
+    elif parameter_count > 0:
+        base_size = parameter_count * _bytes_per_parameter(tags)
+    else:
         return 0
-    parameter_bytes = parameter_count * _bytes_per_parameter(tags)
-    return math.ceil(parameter_bytes * overhead)
+    return math.ceil(base_size * RESIDENT_MEMORY_OVERHEAD_FACTOR)
 
 
 def _bytes_per_parameter(tags: list[str]) -> float:

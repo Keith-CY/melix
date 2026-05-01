@@ -395,6 +395,8 @@ public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendabl
     public let localFitStatus: String
     public let runSuitabilityText: String
     public let localFitReasons: [String]
+    public let estimatedArtifactBytes: UInt64
+    public let estimatedResidentBytes: UInt64
     public let estimatedArtifactBytesText: String
     public let estimatedResidentBytesText: String
     public let parameterCountText: String
@@ -413,6 +415,8 @@ public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendabl
         localFitStatus: String,
         runSuitabilityText: String,
         localFitReasons: [String],
+        estimatedArtifactBytes: UInt64,
+        estimatedResidentBytes: UInt64,
         estimatedArtifactBytesText: String,
         estimatedResidentBytesText: String,
         parameterCountText: String,
@@ -431,6 +435,8 @@ public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendabl
         self.localFitStatus = localFitStatus
         self.runSuitabilityText = runSuitabilityText
         self.localFitReasons = localFitReasons
+        self.estimatedArtifactBytes = estimatedArtifactBytes
+        self.estimatedResidentBytes = estimatedResidentBytes
         self.estimatedArtifactBytesText = estimatedArtifactBytesText
         self.estimatedResidentBytesText = estimatedResidentBytesText
         self.parameterCountText = parameterCountText
@@ -440,13 +446,13 @@ public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendabl
     }
 
     public var sizeText: String {
-        if estimatedArtifactBytesText == "0 B" && estimatedResidentBytesText == "0 B" {
+        if estimatedArtifactBytes == 0 && estimatedResidentBytes == 0 {
             return ""
         }
-        if estimatedResidentBytesText == "0 B" {
+        if estimatedResidentBytes == 0 {
             return "\(estimatedArtifactBytesText) artifact"
         }
-        if estimatedArtifactBytesText == "0 B" {
+        if estimatedArtifactBytes == 0 {
             return "\(estimatedResidentBytesText) resident"
         }
         return "\(estimatedArtifactBytesText) artifact • \(estimatedResidentBytesText) resident"
@@ -10269,6 +10275,8 @@ public final class RuntimeViewModel {
             localFitStatus: hubLocalFitStatus(model.localFitStatus),
             runSuitabilityText: hubLocalFitStatusText(model.localFitStatus),
             localFitReasons: model.localFitReasons,
+            estimatedArtifactBytes: model.estimatedArtifactBytes,
+            estimatedResidentBytes: model.estimatedResidentBytes,
             estimatedArtifactBytesText: formatBytes(model.estimatedArtifactBytes),
             estimatedResidentBytesText: formatBytes(model.estimatedResidentBytes),
             parameterCountText: hubParameterCountText(model.parameterCount),

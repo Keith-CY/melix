@@ -3012,6 +3012,54 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["hub.local_fit_estimated_resident_bytes"] == 70_200_000_000)
     }
 
+    @Test("hub search result size text uses raw byte values")
+    func hubSearchResultSizeTextUsesRawByteValues() {
+        let zeroSizedResult = RuntimeHubModelSearchResultState(
+            repoID: "mlx-community/unknown-size",
+            author: "mlx-community",
+            modelName: "unknown-size",
+            pipelineTag: "text-generation",
+            compatibilityText: "MLX",
+            downloadsText: "",
+            likesText: "",
+            localFitStatus: "unknown",
+            runSuitabilityText: "Unknown",
+            localFitReasons: [],
+            estimatedArtifactBytes: 0,
+            estimatedResidentBytes: 0,
+            estimatedArtifactBytesText: "zero artifact bytes",
+            estimatedResidentBytesText: "zero resident bytes",
+            parameterCountText: "",
+            quantizationSummary: "",
+            gated: false,
+            recommendedAction: ""
+        )
+
+        let artifactOnlyResult = RuntimeHubModelSearchResultState(
+            repoID: "mlx-community/artifact-only",
+            author: "mlx-community",
+            modelName: "artifact-only",
+            pipelineTag: "text-generation",
+            compatibilityText: "MLX",
+            downloadsText: "",
+            likesText: "",
+            localFitStatus: "good",
+            runSuitabilityText: "Good",
+            localFitReasons: [],
+            estimatedArtifactBytes: 4_096,
+            estimatedResidentBytes: 0,
+            estimatedArtifactBytesText: "4 KB",
+            estimatedResidentBytesText: "zero resident bytes",
+            parameterCountText: "",
+            quantizationSummary: "",
+            gated: false,
+            recommendedAction: ""
+        )
+
+        #expect(zeroSizedResult.sizeText == "")
+        #expect(artifactOnlyResult.sizeText == "4 KB artifact")
+    }
+
     @Test("model registry entries and non timing registry probes use cached value state")
     func modelRegistryEntriesAndNonTimingRegistryProbesUseCachedValueState() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
