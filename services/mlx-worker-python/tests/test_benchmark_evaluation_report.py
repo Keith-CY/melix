@@ -453,6 +453,66 @@ def test_metric_direction_fast_path_covers_report_probe_keys() -> None:
         assert _metric_direction(f"bench.synthetic.{metric_key}") == direction
 
 
+def test_report_builder_aggregates_numeric_probe_values_without_normalizing_all_values() -> None:
+    report = build_benchmark_evaluation_report(
+        baseline={
+            "benchmark_context_rows": [
+                {
+                    "suite": "mixed",
+                    "context_length": 128,
+                    "generation_length": 32,
+                    "batch_size": 1,
+                    "prefill_ms": 7,
+                    "cache_hit": True,
+                },
+                {
+                    "suite": "mixed",
+                    "context_length": 128,
+                    "generation_length": 32,
+                    "batch_size": 1,
+                    "prefill_ms": "9.0",
+                    "cache_hit": False,
+                },
+            ]
+        },
+        candidate={
+            "benchmark_context_rows": [
+                {
+                    "suite": "mixed",
+                    "context_length": 128,
+                    "generation_length": 32,
+                    "batch_size": 1,
+                    "prefill_ms": 8.0,
+                    "cache_hit": True,
+                },
+                {
+                    "suite": "mixed",
+                    "context_length": 128,
+                    "generation_length": 32,
+                    "batch_size": 1,
+                    "prefill_ms": "10.0",
+                    "cache_hit": True,
+                },
+            ]
+        },
+    )
+
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+
+    assert rows_by_metric["bench.context.mixed.ctx128.gen32.b1.prefill_ms_mean"]["baseline"] == (
+        pytest.approx(8.0)
+    )
+    assert rows_by_metric["bench.context.mixed.ctx128.gen32.b1.prefill_ms_mean"]["candidate"] == (
+        pytest.approx(9.0)
+    )
+    assert rows_by_metric["bench.context.mixed.ctx128.gen32.b1.cache_hit_rate"]["baseline"] == (
+        pytest.approx(0.5)
+    )
+    assert rows_by_metric["bench.context.mixed.ctx128.gen32.b1.cache_hit_rate"]["candidate"] == (
+        pytest.approx(1.0)
+    )
+
+
 def test_report_builder_uses_sparse_benchmark_probe_rows_without_fixed_key_scans() -> None:
     sparse_row = _SparseProbeRow(
         {

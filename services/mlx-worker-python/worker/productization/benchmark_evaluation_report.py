@@ -433,12 +433,17 @@ def _collect_benchmark_probe_metrics(
 ) -> None:
     aggregates_by_label_and_key: dict[tuple[str, str], _NumericAggregate] = {}
     for row in _dict_rows(rows):
-        label = _benchmark_probe_label(row)
+        label = ""
         for key, raw_value in row.items():
             if key not in _REQUEST_PROBE_KEY_SET:
                 continue
-            value = _float_or_none(raw_value)
+            if isinstance(raw_value, (int, float)):
+                value = float(raw_value)
+            else:
+                value = _float_or_none(raw_value)
             if value is not None:
+                if not label:
+                    label = _benchmark_probe_label(row)
                 aggregate_key = (label, key)
                 aggregates_by_label_and_key[aggregate_key] = _update_numeric_aggregate(
                     aggregates_by_label_and_key.get(aggregate_key),
@@ -460,7 +465,10 @@ def _collect_evaluation_sample_probe_metrics(
         for key, raw_value in row.items():
             if key not in _EVALUATION_SAMPLE_PROBE_KEY_SET:
                 continue
-            value = _float_or_none(raw_value)
+            if isinstance(raw_value, (int, float)):
+                value = float(raw_value)
+            else:
+                value = _float_or_none(raw_value)
             if value is not None:
                 aggregate_key = (suite_id, key)
                 aggregates_by_suite_and_key[aggregate_key] = _update_numeric_aggregate(
@@ -516,24 +524,20 @@ def _aggregate_probe_values(key: str, values: list[float]) -> tuple[str, float]:
 def _benchmark_probe_label(row: dict[str, object]) -> str:
     if "cell_id" in row or ("suite_id" in row and "concurrency_level" in row):
         return _matrix_label(row)
-    parts = [
-        str(row.get("suite", row.get("suite_id", "suite"))),
-        f"ctx{row.get('context_length', 0)}",
-        f"gen{row.get('generation_length', 0)}",
-        f"b{row.get('batch_size', 0)}",
-    ]
-    return ".".join(part.replace(" ", "_") for part in parts)
+    suite = str(row.get("suite", row.get("suite_id", "suite"))).replace(" ", "_")
+    context_length = str(row.get("context_length", 0)).replace(" ", "_")
+    generation_length = str(row.get("generation_length", 0)).replace(" ", "_")
+    batch_size = str(row.get("batch_size", 0)).replace(" ", "_")
+    return f"{suite}.ctx{context_length}.gen{generation_length}.b{batch_size}"
 
 
 def _matrix_label(row: dict[str, object]) -> str:
-    parts = [
-        str(row.get("suite_id", "suite")),
-        f"ctx{row.get('context_length', 0)}",
-        f"gen{row.get('generation_length', 0)}",
-        f"b{row.get('batch_size', 0)}",
-        f"c{row.get('concurrency_level', 0)}",
-    ]
-    return ".".join(part.replace(" ", "_") for part in parts)
+    suite_id = str(row.get("suite_id", "suite")).replace(" ", "_")
+    context_length = str(row.get("context_length", 0)).replace(" ", "_")
+    generation_length = str(row.get("generation_length", 0)).replace(" ", "_")
+    batch_size = str(row.get("batch_size", 0)).replace(" ", "_")
+    concurrency_level = str(row.get("concurrency_level", 0)).replace(" ", "_")
+    return f"{suite_id}.ctx{context_length}.gen{generation_length}.b{batch_size}.c{concurrency_level}"
 
 
 def _report_rows(report: dict[str, object]) -> Iterator[dict[str, object]]:
