@@ -644,6 +644,63 @@ def test_sample_probe_means_aggregate_multiple_fields_in_one_pass() -> None:
     }
 
 
+def test_summarize_sample_records_aggregates_core_metrics_in_one_pass() -> None:
+    class SinglePassSamples:
+        def __init__(self, values: tuple[object, ...]) -> None:
+            self._values = values
+            self.iteration_count = 0
+
+        def __iter__(self):
+            self.iteration_count += 1
+            return iter(self._values)
+
+    samples = SinglePassSamples(
+        (
+            SimpleNamespace(
+                typed_score=1.0,
+                extraction_status="extracted",
+                validation_status="validated",
+                code_test_status="passed",
+                code_runtime_status="ok",
+            ),
+            SimpleNamespace(
+                typed_score=0.5,
+                extraction_status="failed",
+                validation_status="failed",
+                code_test_status="failed",
+                code_runtime_status="error",
+            ),
+            SimpleNamespace(
+                typed_score=0.9,
+                extraction_status="extracted",
+                validation_status="validated",
+                code_test_status="passed",
+                code_runtime_status="ok",
+            ),
+        )
+    )
+
+    summary = EvaluationCore._summarize_sample_records(
+        samples,
+        threshold=0.75,
+        include_code_exec_metrics=True,
+    )
+
+    assert summary.sample_count == 3
+    assert summary.typed_score_mean == 0.8
+    assert summary.extraction_success_count == 2
+    assert summary.validation_success_count == 2
+    assert summary.threshold_pass_count == 2
+    assert summary.scored_sample_count == 2
+    assert summary.failure_count == 1
+    assert summary.extraction_success_rate == 0.6667
+    assert summary.validation_success_rate == 0.6667
+    assert summary.threshold_pass_rate == 0.6667
+    assert summary.code_exec_pass_count == 2
+    assert summary.code_exec_fail_count == 1
+    assert samples.iteration_count == 1
+
+
 def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,

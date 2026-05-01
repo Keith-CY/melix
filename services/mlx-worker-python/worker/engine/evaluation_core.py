@@ -130,6 +130,22 @@ class EvaluationRun:
         return self.results[0]
 
 
+@dataclass(frozen=True)
+class SampleSummary:
+    sample_count: int
+    typed_score_mean: float
+    extraction_success_count: int
+    validation_success_count: int
+    threshold_pass_count: int
+    scored_sample_count: int
+    failure_count: int
+    extraction_success_rate: float
+    validation_success_rate: float
+    threshold_pass_rate: float
+    code_exec_pass_count: int | None = None
+    code_exec_fail_count: int | None = None
+
+
 class EvaluationCore:
     def __init__(
         self,
@@ -388,43 +404,25 @@ class EvaluationCore:
             profile=profile,
         )
         duration_seconds = round(time.perf_counter() - started_at, 6)
-        typed_score_mean = round(
-            sum(sample.typed_score for sample in sample_records) / max(len(sample_records), 1),
-            4,
+        summary = self._summarize_sample_records(
+            sample_records,
+            threshold=profile.threshold,
+            include_code_exec_metrics=suite_id in _CODE_EVAL_SUITES,
         )
-        extraction_success_count = sum(
-            1 for sample in sample_records if sample.extraction_status == "extracted"
-        )
-        validation_success_count = sum(
-            1 for sample in sample_records if sample.validation_status == "validated"
-        )
-        scored_sample_count = validation_success_count
-        failure_count = len(sample_records) - validation_success_count
-        threshold_pass_rate = round(
-            sum(
-                1
-                for sample in sample_records
-                if sample.validation_status == "validated" and sample.typed_score >= profile.threshold
-            )
-            / max(len(sample_records), 1),
-            4,
-        )
-        extraction_success_rate = round(extraction_success_count / max(len(sample_records), 1), 4)
-        validation_success_rate = round(validation_success_count / max(len(sample_records), 1), 4)
-        job_parameters.setdefault("sample_size", str(len(sample_records)))
+        job_parameters.setdefault("sample_size", str(summary.sample_count))
         sample_probe_means = self._sample_probe_means(
             sample_records,
             tuple(field_name for _, field_name in _SAMPLE_PROBE_MEAN_FIELDS),
         )
         result_metrics = {
-            f"eval.{suite_id}.typed_score_mean": typed_score_mean,
-            f"eval.{suite_id}.threshold_pass_rate": threshold_pass_rate,
-            f"eval.{suite_id}.extraction_success_rate": extraction_success_rate,
-            f"eval.{suite_id}.validation_success_rate": validation_success_rate,
-            f"eval.{suite_id}.extraction_success_count": float(extraction_success_count),
-            f"eval.{suite_id}.validation_success_count": float(validation_success_count),
-            f"eval.{suite_id}.scored_sample_count": float(scored_sample_count),
-            f"eval.{suite_id}.failure_count": float(failure_count),
+            f"eval.{suite_id}.typed_score_mean": summary.typed_score_mean,
+            f"eval.{suite_id}.threshold_pass_rate": summary.threshold_pass_rate,
+            f"eval.{suite_id}.extraction_success_rate": summary.extraction_success_rate,
+            f"eval.{suite_id}.validation_success_rate": summary.validation_success_rate,
+            f"eval.{suite_id}.extraction_success_count": float(summary.extraction_success_count),
+            f"eval.{suite_id}.validation_success_count": float(summary.validation_success_count),
+            f"eval.{suite_id}.scored_sample_count": float(summary.scored_sample_count),
+            f"eval.{suite_id}.failure_count": float(summary.failure_count),
             f"eval.{suite_id}.duration_seconds": duration_seconds,
             **{
                 f"eval.{suite_id}.{metric_name}": sample_probe_means[field_name]
@@ -449,15 +447,9 @@ class EvaluationCore:
             f"eval.{suite_id}.raw_response_chars_mean": "chars",
             f"eval.{suite_id}.extracted_result_chars_mean": "chars",
         }
-        if suite_id in _CODE_EVAL_SUITES:
-            code_exec_pass_count = sum(
-                1
-                for sample in sample_records
-                if sample.code_test_status == "passed" and sample.code_runtime_status == "ok"
-            )
-            code_exec_fail_count = len(sample_records) - code_exec_pass_count
-            result_metrics[f"eval.{suite_id}.code_exec_pass_count"] = float(code_exec_pass_count)
-            result_metrics[f"eval.{suite_id}.code_exec_fail_count"] = float(code_exec_fail_count)
+        if summary.code_exec_pass_count is not None and summary.code_exec_fail_count is not None:
+            result_metrics[f"eval.{suite_id}.code_exec_pass_count"] = float(summary.code_exec_pass_count)
+            result_metrics[f"eval.{suite_id}.code_exec_fail_count"] = float(summary.code_exec_fail_count)
             result_units[f"eval.{suite_id}.code_exec_pass_count"] = "count"
             result_units[f"eval.{suite_id}.code_exec_fail_count"] = "count"
 
@@ -487,11 +479,11 @@ class EvaluationCore:
             dataset_id=manifest["dataset_id"],
             sample_size=len(sample_records),
             primary_score_name="typed_score_mean",
-            primary_score_value=typed_score_mean,
-            extraction_success_count=extraction_success_count,
-            validation_success_count=validation_success_count,
-            scored_sample_count=scored_sample_count,
-            failure_count=failure_count,
+            primary_score_value=summary.typed_score_mean,
+            extraction_success_count=summary.extraction_success_count,
+            validation_success_count=summary.validation_success_count,
+            scored_sample_count=summary.scored_sample_count,
+            failure_count=summary.failure_count,
             duration_seconds=duration_seconds,
             metrics=result_metrics,
             report_path=str(report_path),
@@ -1907,6 +1899,53 @@ class EvaluationCore:
             field_name: round(total / sample_count, 4)
             for field_name, total in totals.items()
         }
+
+    @staticmethod
+    def _summarize_sample_records(
+        samples: Any,
+        *,
+        threshold: float,
+        include_code_exec_metrics: bool,
+    ) -> SampleSummary:
+        sample_count = 0
+        typed_score_total = 0.0
+        extraction_success_count = 0
+        validation_success_count = 0
+        threshold_pass_count = 0
+        code_exec_pass_count = 0
+        for sample in samples:
+            sample_count += 1
+            typed_score = float(getattr(sample, "typed_score", 0.0) or 0.0)
+            typed_score_total += typed_score
+            extraction_status = str(getattr(sample, "extraction_status", "") or "")
+            validation_status = str(getattr(sample, "validation_status", "") or "")
+            if extraction_status == "extracted":
+                extraction_success_count += 1
+            if validation_status == "validated":
+                validation_success_count += 1
+                if typed_score >= threshold:
+                    threshold_pass_count += 1
+            if include_code_exec_metrics:
+                if (
+                    str(getattr(sample, "code_test_status", "") or "") == "passed"
+                    and str(getattr(sample, "code_runtime_status", "") or "") == "ok"
+                ):
+                    code_exec_pass_count += 1
+        denominator = max(sample_count, 1)
+        return SampleSummary(
+            sample_count=sample_count,
+            typed_score_mean=round(typed_score_total / denominator, 4),
+            extraction_success_count=extraction_success_count,
+            validation_success_count=validation_success_count,
+            threshold_pass_count=threshold_pass_count,
+            scored_sample_count=validation_success_count,
+            failure_count=sample_count - validation_success_count,
+            extraction_success_rate=round(extraction_success_count / denominator, 4),
+            validation_success_rate=round(validation_success_count / denominator, 4),
+            threshold_pass_rate=round(threshold_pass_count / denominator, 4),
+            code_exec_pass_count=(code_exec_pass_count if include_code_exec_metrics else None),
+            code_exec_fail_count=(sample_count - code_exec_pass_count if include_code_exec_metrics else None),
+        )
 
     @staticmethod
     def _sample_probe_mean(samples: tuple[EvaluationSample, ...], field_name: str) -> float:

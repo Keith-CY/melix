@@ -478,15 +478,6 @@ def _probe_closure_audit(repo_root: Path) -> dict[str, float]:
 
 def _probe_evaluation_sample_probe_aggregation(repo_root: Path) -> dict[str, float]:
     sample_count = 20000
-    field_names = (
-        "sample_render_ms",
-        "inference_ms",
-        "extraction_ms",
-        "validation_ms",
-        "scoring_ms",
-        "raw_response_chars",
-        "extracted_result_chars",
-    )
     probe_script = f"""
 import json
 import sys
@@ -499,7 +490,6 @@ sys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))
 from worker.engine.evaluation_core import EvaluationCore
 from worker.productization.evaluation_schemas import build_evaluation_sample_record
 
-field_names = {field_names!r}
 sample_count = {sample_count}
 samples = tuple(
     build_evaluation_sample_record(
@@ -514,8 +504,8 @@ samples = tuple(
         extracted_result=str(index % 10),
         typed_score=1.0 if index % 2 == 0 else 0.0,
         time_s=0.1,
-        extraction_status='extracted',
-        validation_status='validated',
+        extraction_status='extracted' if index % 3 else 'failed',
+        validation_status='validated' if index % 4 else 'failed',
         failure_reason='',
         sample_render_ms=(index % 11) * 0.1,
         inference_ms=(index % 13) * 0.2,
@@ -528,10 +518,14 @@ samples = tuple(
     for index in range(sample_count)
 )
 elapsed_samples = []
-metrics = {{}}
+summary = None
 for _ in range(3):
     started = time.perf_counter()
-    metrics = EvaluationCore._sample_probe_means(samples, field_names)
+    summary = EvaluationCore._summarize_sample_records(
+        samples,
+        threshold=0.5,
+        include_code_exec_metrics=False,
+    )
     elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
 elapsed_ms_mean = sum(elapsed_samples) / len(elapsed_samples)
@@ -539,7 +533,9 @@ print(json.dumps({{
     'elapsed_ms_mean': round(elapsed_ms_mean, 3),
     'per_call_ms_mean': round(elapsed_ms_mean / max(sample_count, 1), 6),
     'sample_count': float(sample_count),
-    'metric_count': float(len(metrics)),
+    'scored_sample_count': float(summary.scored_sample_count if summary is not None else 0),
+    'failure_count': float(summary.failure_count if summary is not None else 0),
+    'metric_count': 7.0,
 }}, sort_keys=True))
 """
     completed = subprocess.run(

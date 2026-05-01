@@ -416,6 +416,9 @@ def test_dispatch_probe_impl_supports_evaluation_sample_probe_aggregation_probe(
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["per_call_ms_mean"] > 0
     assert metrics["metric_count"] == 7.0
+    assert metrics["sample_count"] == 20000.0
+    assert metrics["scored_sample_count"] == 15000.0
+    assert metrics["failure_count"] == 5000.0
 
 
 def test_run_probe_job_executes_verification_and_probe_for_current_repo() -> None:
