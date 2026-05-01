@@ -312,6 +312,63 @@ def test_prepare_swift_worker_launch_cwd_symlinks_runtime_local_default_metallib
     assert default_metallib.resolve() == metallib_path.resolve()
 
 
+def test_resolve_local_mlx_metallib_uses_scandir_stack_without_path_rglob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    layout = make_layout(dev_up, tmp_path)
+    metallib_path = tmp_path / ".venv/lib/python3.13/site-packages/mlx/lib/mlx.metallib"
+    metallib_path.parent.mkdir(parents=True, exist_ok=True)
+    metallib_path.write_text("mlx", encoding="utf-8")
+
+    def fail_rglob(self: Path, pattern: str):
+        raise AssertionError("resolve_local_mlx_metallib() should not allocate a Path.rglob() tree")
+
+    monkeypatch.setattr(dev_up.Path, "rglob", fail_rglob)
+
+    assert dev_up.resolve_local_mlx_metallib(tmp_path, uv_cache_dir=layout.uv_cache_dir) == metallib_path.resolve()
+
+
+def test_iter_mlx_metallib_candidates_skips_scandir_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+
+    def fail_scandir(path: Path):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(dev_up.os, "scandir", fail_scandir)
+
+    assert list(dev_up.iter_mlx_metallib_candidates(tmp_path)) == []
+
+
+def test_iter_mlx_metallib_candidates_skips_entry_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+
+    class BrokenEntry:
+        name = "mlx.metallib"
+        path = os.fspath(tmp_path / "mlx.metallib")
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            raise OSError("stale dirent")
+
+    class FakeScandir:
+        def __enter__(self):
+            return iter((BrokenEntry(),))
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+    monkeypatch.setattr(dev_up.os, "scandir", lambda path: FakeScandir())
+
+    assert list(dev_up.iter_mlx_metallib_candidates(tmp_path)) == []
+
+
 def test_prepare_swift_worker_launch_cwd_uses_configured_uv_cache_dir_for_metallib(tmp_path: Path) -> None:
     dev_up = load_dev_up_module()
     layout = replace(make_layout(dev_up, tmp_path), uv_cache_dir=tmp_path / "custom-uv-cache")
