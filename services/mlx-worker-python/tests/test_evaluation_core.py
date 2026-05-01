@@ -652,6 +652,31 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert queue_payload["completed_at_unix_ms"] > 0
 
 
+@pytest.mark.parametrize(
+    ("name", "expected_index"),
+    [
+        ("eval-0000", 0),
+        ("eval-0421", 421),
+        ("eval-9999", 9999),
+        ("eval-10000", 10000),
+        ("eval-１２３４", 1234),
+        ("eval-١٢٣٤", 1234),
+        ("eval-123", None),
+        ("eval-²345", None),
+        ("eval-ⅫⅢⅣⅤ", None),
+        ("eval-12x4", None),
+        ("Eval-0001", None),
+        ("eval_0001", None),
+        ("notes", None),
+    ],
+)
+def test_parse_run_directory_index_accepts_melix_ids_and_python_decimal_suffixes(
+    name: str,
+    expected_index: int | None,
+) -> None:
+    assert EvaluationCore._parse_run_directory_index(name) == expected_index
+
+
 def test_next_job_id_primes_from_highest_existing_run_directory(tmp_path: Path) -> None:
     jobs_root = tmp_path / "runs" / "mmlu"
     runs_root = jobs_root / "runs"
@@ -660,13 +685,29 @@ def test_next_job_id_primes_from_highest_existing_run_directory(tmp_path: Path) 
     (runs_root / "notes").mkdir(parents=True)
     (runs_root / "README.txt").write_text("ignore me\n", encoding="utf-8")
     (runs_root / "eval-999x").mkdir(parents=True)
+    (runs_root / "eval-１２３４").mkdir(parents=True)
+    (runs_root / "eval-١٢٣٤").mkdir(parents=True)
 
     runner = EvaluationCore(jobs_root=jobs_root)
 
-    assert runner._next_job_id() == "eval-0004"
-    assert runner._next_job_id() == "eval-0005"
-    assert (runs_root / "eval-0004").is_dir()
-    assert (runs_root / "eval-0005").is_dir()
+    assert runner._next_job_id() == "eval-1235"
+    assert runner._next_job_id() == "eval-1236"
+    assert (runs_root / "eval-1235").is_dir()
+    assert (runs_root / "eval-1236").is_dir()
+
+
+def test_next_job_id_primes_from_rollover_run_directories(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "runs" / "mmlu"
+    runs_root = jobs_root / "runs"
+    (runs_root / "eval-9999").mkdir(parents=True)
+    (runs_root / "eval-10000").mkdir(parents=True)
+
+    runner = EvaluationCore(jobs_root=jobs_root)
+
+    assert runner._next_job_id() == "eval-10001"
+    assert runner._next_job_id() == "eval-10002"
+    assert (runs_root / "eval-10001").is_dir()
+    assert (runs_root / "eval-10002").is_dir()
 
 
 def test_next_job_id_only_scans_existing_runs_once_per_process(

@@ -1687,6 +1687,15 @@ class EvaluationCore:
                     next_index += 1
                     self._next_job_index = next_index
 
+    @staticmethod
+    def _parse_run_directory_index(name: str) -> int | None:
+        if not name.startswith("eval-"):
+            return None
+        suffix = name[5:]
+        if len(suffix) < 4 or not suffix.isdecimal():
+            return None
+        return int(suffix)
+
     def _prime_next_job_index(self, runs_root: Path) -> int:
         if self._next_job_index is not None:
             return self._next_job_index
@@ -1695,10 +1704,10 @@ class EvaluationCore:
             for entry in entries:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-                match = re.fullmatch(r"eval-(\d{4})", entry.name)
-                if match is None:
+                index = self._parse_run_directory_index(entry.name)
+                if index is None:
                     continue
-                highest_index = max(highest_index, int(match.group(1)))
+                highest_index = max(highest_index, index)
         self._next_job_index = highest_index + 1
         return self._next_job_index
 
