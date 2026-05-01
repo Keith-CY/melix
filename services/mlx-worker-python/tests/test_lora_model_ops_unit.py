@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 import types
@@ -73,6 +74,37 @@ def _text_model(*, model_path: str = "models/plain-llama", quant_profile_id: str
         model.ext["text_family_id"] = family_id
     model.ext["text_layer_count"] = "2"
     return model
+
+
+def test_checkpoint_summary_uses_scandir_stack_without_os_walk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    adapter_dir = tmp_path / "adapter"
+    checkpoint_one = adapter_dir / "checkpoint-1"
+    checkpoint_two = adapter_dir / "checkpoint-2"
+    checkpoint_one.mkdir(parents=True)
+    checkpoint_two.mkdir(parents=True)
+    (adapter_dir / "adapters.safetensors").write_text("root", encoding="utf-8")
+    (checkpoint_one / "adapters.safetensors").write_text("one", encoding="utf-8")
+    latest_path = checkpoint_two / "adapters.safetensors"
+    latest_path.write_text("two", encoding="utf-8")
+
+    def fail_os_walk(path: str):
+        raise AssertionError("expected explicit os.scandir stack, not os.walk")
+
+    monkeypatch.setattr(os, "walk", fail_os_walk)
+
+    assert mlx_lm_runner_module._checkpoint_summary(adapter_dir) == (2, str(latest_path))
+
+
+def test_checkpoint_summary_handles_empty_or_missing_directories(tmp_path: Path) -> None:
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+    (adapter_dir / "README.txt").write_text("no checkpoints", encoding="utf-8")
+
+    assert mlx_lm_runner_module._checkpoint_summary(adapter_dir) == (0, "")
+    assert mlx_lm_runner_module._checkpoint_summary(tmp_path / "missing") == (0, "")
 
 
 class _UnexpectedActivationRunner(MLXLMRunner):
