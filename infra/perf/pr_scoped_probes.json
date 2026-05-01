@@ -181,6 +181,32 @@
     ]
   },
   {
+    "id": "upload-receipt-published-files-scandir",
+    "name": "Upload receipt published-files scandir",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py",
+      "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+      "services/mlx-worker-python/tests/test_maintenance_service.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/upload_receipt_published_files_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_maintenance_service.py::test_upload_receipt_pipeline_collect_published_file_list_filters_and_sorts services/mlx-worker-python/tests/test_maintenance_service.py::test_upload_receipt_pipeline_collect_published_file_list_uses_scandir_stack services/mlx-worker-python/tests/test_maintenance_service.py::test_upload_receipt_pipeline_collect_published_file_list_preserves_symlink_rules services/mlx-worker-python/tests/test_maintenance_service.py::test_prepare_publish_source_uses_collected_file_list_for_directory services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_upload_receipt_published_files_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_upload_receipt_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_upload_receipt_published_files_probe",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_maintenance_service.py::test_upload_receipt_pipeline_collect_published_file_list_filters_and_sorts services/mlx-worker-python/tests/test_maintenance_service.py::test_upload_receipt_pipeline_collect_published_file_list_uses_scandir_stack services/mlx-worker-python/tests/test_maintenance_service.py::test_upload_receipt_pipeline_collect_published_file_list_preserves_symlink_rules services/mlx-worker-python/tests/test_maintenance_service.py::test_prepare_publish_source_uses_collected_file_list_for_directory services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_upload_receipt_published_files_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_upload_receipt_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_upload_receipt_published_files_probe && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py services/mlx-worker-python/worker/productization/pr_scoped_performance.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/upload_receipt_published_files_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 scripts/upload_receipt_published_files_probe.py",
+    "probe_impl": "upload_receipt_published_files",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "worker-registry-resident-bytes-accumulator",
     "name": "Worker registry resident-bytes accumulator",
     "runner": "ubuntu-latest",

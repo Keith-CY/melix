@@ -374,6 +374,8 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_evaluation_job_id(repo_root)
     if probe.probe_impl == "training_dataset_token_percentiles":
         return _probe_training_dataset_token_percentiles(repo_root)
+    if probe.probe_impl == "upload_receipt_published_files":
+        return _probe_upload_receipt_published_files(repo_root)
     if probe.probe_impl == "command_json":
         return _probe_command_json(probe=probe, repo_root=repo_root)
     raise ValueError(f"unsupported probe implementation: {probe.probe_impl}")
@@ -652,6 +654,46 @@ def _probe_training_dataset_token_percentiles(repo_root: Path) -> dict[str, floa
         "sample_count": sample_count,
         "duplicate_count": duplicate_count,
         "dirty_count": dirty_count,
+    }
+
+
+def _probe_upload_receipt_published_files(repo_root: Path) -> dict[str, float]:
+    module = _load_repo_module(
+        repo_root / "services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py",
+        unique_name="melix_probe_upload_receipt_pipeline",
+    )
+    directory_count = 180
+    files_per_directory = 40
+    sample_count = 5
+    elapsed_samples: list[float] = []
+    published_file_count = 0.0
+    with tempfile.TemporaryDirectory(prefix="melix-pr-perf-upload-receipt-") as temp_dir:
+        source_root = Path(temp_dir) / "publish-bundle"
+        expected_file_count = 0
+        for directory_index in range(directory_count):
+            directory = source_root / f"shard-{directory_index:04d}"
+            directory.mkdir(parents=True, exist_ok=True)
+            for file_index in range(files_per_directory):
+                (directory / f"part-{file_index:04d}.safetensors").write_bytes(b"melix")
+                expected_file_count += 1
+        (source_root / "README.md").write_text("# Melix synthetic publish bundle\n", encoding="utf-8")
+        expected_file_count += 1
+        for _ in range(sample_count):
+            started = time.perf_counter()
+            published_files = module.UploadReceiptPipeline._collect_published_file_list(source_root)
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            published_file_count = float(len(published_files))
+            if len(published_files) != expected_file_count:
+                raise ValueError(
+                    f"expected {expected_file_count} published files, got {len(published_files)}"
+                )
+    return {
+        "directory_count": float(directory_count),
+        "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
+        "elapsed_ms_min": round(min(elapsed_samples), 6),
+        "files_per_directory": float(files_per_directory),
+        "published_file_count": published_file_count,
+        "sample_count": float(sample_count),
     }
 
 

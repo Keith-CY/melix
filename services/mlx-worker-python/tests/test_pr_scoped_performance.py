@@ -119,6 +119,16 @@ def test_scope_report_selects_bench_report_probe() -> None:
     assert "maintenance-bench-report-readback" in probe_ids
 
 
+def test_scope_report_selects_upload_receipt_published_files_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "upload-receipt-published-files-scandir" in probe_ids
+
+
 def test_scope_report_force_selects_all_on_infra_change() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -138,6 +148,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
         "swift-cli-json-envelope-encoding",
+        "upload-receipt-published-files-scandir",
         "worker-registry-resident-bytes-accumulator",
     }
     for probe in load_probe_registry(REGISTRY_PATH):
@@ -297,6 +308,41 @@ def test_worker_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["loop_count"] == 250.0
     assert payload["resident_bytes_mean"] > 0
     assert payload["sample_count"] == 3.0
+
+
+def test_upload_receipt_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/upload_receipt_published_files_probe.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["elapsed_ms_mean"] > 0
+    assert payload["directory_count"] == 180.0
+    assert payload["files_per_directory"] == 40.0
+    assert payload["published_file_count"] == 7201.0
+    assert payload["sample_count"] == 5.0
+
+
+def test_dispatch_probe_impl_supports_upload_receipt_published_files_probe() -> None:
+    probe = ProbeDefinition(
+        probe_id="upload-receipt-published-files-scandir",
+        name="Upload receipt published-files scandir",
+        runner="ubuntu-latest",
+        watch_globs=("services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="upload_receipt_published_files",
+        probe_command="python3 scripts/upload_receipt_published_files_probe.py",
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["directory_count"] == 180.0
+    assert metrics["files_per_directory"] == 40.0
+    assert metrics["published_file_count"] == 7201.0
+    assert metrics["sample_count"] == 5.0
 
 
 def test_dispatch_probe_impl_supports_evaluation_job_id_probe() -> None:
