@@ -16,10 +16,11 @@ The affected path is covered by the registered PR-scoped probe `training-dataset
 ## Implementation plan
 
 1. Keep token count collection behavior unchanged.
-2. Add a direct `prompt_completion` branch in `_collect_token_stats()` so the common training-dataset path avoids dispatching through the generic format helper for every sample.
-3. Preserve the generic helper path for chat and text-completion formats.
-4. Add focused regression coverage that fails if the prompt/completion path falls back to the generic helper.
-5. Validate with the focused training dataset tests, changed-scope coverage, and the registered PR-scoped performance probe on Linux.
+2. Keep the direct `prompt_completion` branch in `_collect_token_stats()` so the common training-dataset path avoids dispatching through the generic format helper for every sample.
+3. Collect prompt/completion token series with list-comprehension fast paths and inline the unchanged whitespace split count for that hot branch, avoiding an extra list copy for already-materialized sample lists while preserving one-shot iterable support and percentile semantics.
+4. Preserve the generic helper path for chat and text-completion formats.
+5. Keep focused regression coverage that fails if the prompt/completion path falls back to the generic helper and now exercises a one-shot iterable input.
+6. Validate with the focused training dataset tests, changed-scope coverage, and the registered PR-scoped performance probe on Linux.
 
 ## Success criteria
 

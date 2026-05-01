@@ -637,13 +637,17 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
     monkeypatch.setattr(training_dataset_module, "_percentile_value", fail_percentile_value)
     monkeypatch.setattr(training_dataset_module, "_sample_token_counts", fail_generic_token_counter)
 
-    assert training_dataset_module._build_token_stats(
+    prompt_completion_samples = iter(
         [
             {"prompt": "a b c", "completion": "d e"},
             {"prompt": "f", "completion": "g h i j"},
             {"prompt": "k l", "completion": "m"},
             {"prompt": "n o p q", "completion": "r s t"},
-        ],
+        ]
+    )
+
+    assert training_dataset_module._build_token_stats(
+        prompt_completion_samples,
         "prompt_completion",
     ) == {
         "estimator": "whitespace_v1",

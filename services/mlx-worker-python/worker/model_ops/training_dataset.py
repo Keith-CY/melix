@@ -1354,21 +1354,31 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
     total_tokens: list[int] = []
     sample_count = 0
     if format_name == "prompt_completion":
-        count_tokens = _whitespace_token_count
-        for sample in samples:
-            sample_count += 1
-            prompt_count = count_tokens(str(sample.get("prompt", "")))
-            completion_count = count_tokens(str(sample.get("completion", "")))
-            prompt_tokens.append(prompt_count)
-            completion_tokens.append(completion_count)
-            total_tokens.append(prompt_count + completion_count)
+        materialized_samples = samples if isinstance(samples, list) else list(samples)
+        sample_count = len(materialized_samples)
+        prompt_tokens = [
+            len(str(sample.get("prompt", "")).split())
+            for sample in materialized_samples
+        ]
+        completion_tokens = [
+            len(str(sample.get("completion", "")).split())
+            for sample in materialized_samples
+        ]
+        total_tokens = [
+            prompt_count + completion_count
+            for prompt_count, completion_count in zip(prompt_tokens, completion_tokens)
+        ]
     else:
+        prompt_tokens_append = prompt_tokens.append
+        completion_tokens_append = completion_tokens.append
+        total_tokens_append = total_tokens.append
+        sample_token_counts = _sample_token_counts
         for sample in samples:
             sample_count += 1
-            prompt_count, completion_count = _sample_token_counts(sample, format_name)
-            prompt_tokens.append(prompt_count)
-            completion_tokens.append(completion_count)
-            total_tokens.append(prompt_count + completion_count)
+            prompt_count, completion_count = sample_token_counts(sample, format_name)
+            prompt_tokens_append(prompt_count)
+            completion_tokens_append(completion_count)
+            total_tokens_append(prompt_count + completion_count)
 
     prompt_summary = _summarize_token_values(prompt_tokens)
     completion_summary = _summarize_token_values(completion_tokens)
