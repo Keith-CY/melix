@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import threading
 import time
 from typing import Iterable, Mapping
@@ -94,6 +95,11 @@ def _load_json_dict_file(
     try:
         stat_result = path.stat()
     except OSError:
+        if json_cache is not None:
+            json_cache.pop(path, None)
+        return {}
+
+    if not stat.S_ISREG(stat_result.st_mode):
         if json_cache is not None:
             json_cache.pop(path, None)
         return {}
@@ -188,7 +194,7 @@ def _read_text_prefix(
             text_prefix_cache.pop(path, None)
         return ""
 
-    if not path.is_file():
+    if not stat.S_ISREG(stat_result.st_mode):
         if text_prefix_cache is not None:
             text_prefix_cache.pop(path, None)
         return ""
