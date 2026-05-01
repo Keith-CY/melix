@@ -21,6 +21,17 @@ from worker.productization.benchmark_evaluation_report import (
 )
 
 
+class _SparseProbeRow(dict[str, object]):
+    def __init__(self, *args: object, forbidden_keys: set[str], **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._forbidden_keys = forbidden_keys
+
+    def get(self, key: str, default: object = None) -> object:
+        if key in self._forbidden_keys:
+            raise AssertionError(f"unexpected fixed-key scan for {key}")
+        return super().get(key, default)
+
+
 def _bundle(*, ttft_ms: float, tokens_per_second: float, accuracy: float) -> dict[str, object]:
     return {
         "export_schema_version": "melix.benchmark_export.v1",
@@ -413,6 +424,67 @@ def test_report_builder_aggregates_evaluation_sample_probes() -> None:
     assert rows_by_metric["eval.sample.mmlu.failure_stage.scoring.failure_count"]["status"] == (
         "warning"
     )
+
+
+def test_report_builder_uses_sparse_benchmark_probe_rows_without_fixed_key_scans() -> None:
+    sparse_row = _SparseProbeRow(
+        {
+            "suite": "smoke",
+            "context_length": 128,
+            "generation_length": 32,
+            "batch_size": 1,
+            "prefill_ms": 7.0,
+            "ignored": 999,
+            "prefill_ms_extra": 123,
+        },
+        forbidden_keys={"prefill_ms", "decode_ms", "tokens_in", "dflash_enabled"},
+    )
+
+    report = build_benchmark_evaluation_report(
+        baseline={"benchmark_context_rows": [sparse_row]},
+        candidate={"benchmark_context_rows": [dict(sparse_row)]},
+    )
+
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+
+    assert set(rows_by_metric) == {"bench.context.smoke.ctx128.gen32.b1.prefill_ms_mean"}
+    assert rows_by_metric["bench.context.smoke.ctx128.gen32.b1.prefill_ms_mean"]["baseline"] == (
+        pytest.approx(7.0)
+    )
+    assert rows_by_metric["bench.context.smoke.ctx128.gen32.b1.prefill_ms_mean"]["status"] == "ok"
+
+
+def test_report_builder_uses_sparse_evaluation_sample_rows_without_fixed_key_scans() -> None:
+    sparse_row = _SparseProbeRow(
+        {
+            "suite_id": "mmlu",
+            "sample_render_ms": 5.0,
+            "failure_stage": "validation",
+            "ignored": 42,
+            "sample_render_ms_extra": 77,
+        },
+        forbidden_keys={
+            "sample_render_ms",
+            "inference_ms",
+            "raw_response_chars",
+            "extracted_result_chars",
+        },
+    )
+
+    report = build_benchmark_evaluation_report(
+        baseline={"evaluation_samples": [sparse_row]},
+        candidate={"evaluation_samples": [dict(sparse_row)]},
+    )
+
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+
+    assert set(rows_by_metric) == {
+        "eval.sample.mmlu.failure_stage.validation.failure_count",
+        "eval.sample.mmlu.sample_render_ms_mean",
+    }
+    assert rows_by_metric["eval.sample.mmlu.sample_render_ms_mean"]["candidate"] == pytest.approx(5.0)
+    assert rows_by_metric["eval.sample.mmlu.sample_render_ms_mean"]["status"] == "ok"
+    assert rows_by_metric["eval.sample.mmlu.failure_stage.validation.failure_count"]["status"] == "ok"
 
 
 def test_report_renderers_are_stable_and_sticky_comment_is_marked() -> None:
