@@ -509,7 +509,7 @@ print(json.dumps({{
             "run",
             "--project",
             str(repo_root / "services/mlx-worker-python"),
-            "python",
+            "python3",
             "-c",
             probe_script,
         ],

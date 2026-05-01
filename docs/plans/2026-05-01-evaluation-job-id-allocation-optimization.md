@@ -57,6 +57,16 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_pr_scoped_performance.py
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage report -m services/mlx-worker-python/worker/engine/evaluation_core.py services/mlx-worker-python/worker/productization/pr_scoped_performance.py services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_pr_scoped_performance.py
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage json -o coverage.json
-python scripts/pr_scoped_performance_run.py --registry infra/perf/pr_scoped_probes.json --probe-id evaluation-job-id-high-water-mark --base-repo . --head-repo . --output /tmp/evaluation-job-id-probe.json
+python3 scripts/pr_scoped_performance_run.py --registry infra/perf/pr_scoped_probes.json --probe-id evaluation-job-id-high-water-mark --base-repo . --head-repo . --output /tmp/evaluation-job-id-probe.json
 git diff --check
 ```
+
+## 2026-05-01 Probe Registry Follow-up
+
+The implementation slice is complete, but a follow-up registry-only slice tightened the PR-scoped evidence contract:
+
+- `evaluation-job-id-high-water-mark` now declares the required `probe_command` alongside its focused test and coverage commands.
+- The focused coverage command uses `python3 scripts/changed_scope_coverage.py` to match the repository automation constraint.
+- The local probe helper invokes `uv run ... python3` so all evaluation job-id probe paths avoid the unqualified `python` executable.
+
+No runtime allocation behavior changes are introduced by this follow-up; it only makes the registered CI probe runnable and auditable from the registry.
