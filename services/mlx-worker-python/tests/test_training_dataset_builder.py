@@ -795,6 +795,20 @@ def test_build_quality_and_token_stats_caps_retained_examples_but_preserves_tota
     assert token_stats["total_tokens_max"] == 4
 
 
+def test_prompt_completion_dirty_sample_reasons_match_generic_quality_rules() -> None:
+    samples = [
+        {"prompt": "hello", "completion": "world"},
+        {"prompt": "same text", "completion": " same text "},
+        {"prompt": "bad\x00prompt", "completion": "clean"},
+        {"prompt": "bad\x00same", "completion": "bad\x00same"},
+    ]
+
+    for sample in samples:
+        assert training_dataset_module._prompt_completion_dirty_sample_reasons(
+            sample
+        ) == training_dataset_module._dirty_sample_reasons(sample)
+
+
 def test_build_quality_and_token_stats_uses_prompt_completion_fast_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
