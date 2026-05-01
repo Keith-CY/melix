@@ -108,6 +108,33 @@
     ]
   },
   {
+    "id": "maintenance-bench-report-readback",
+    "name": "Maintenance bench report readback",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/engine/maintenance_core.py",
+      "services/mlx-worker-python/tests/test_maintenance_service.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_persists_report_without_reading_report_file services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_measures_runtime_behavior_from_loaded_backend services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_bench_report_probe",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_persists_report_without_reading_report_file services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_measures_runtime_behavior_from_loaded_backend services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_bench_report_probe && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/engine/maintenance_core.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python -c \"import json, sys, tempfile, time; from pathlib import Path; repo_root = Path.cwd(); sys.path.insert(0, str(repo_root)); sys.path.insert(0, str(repo_root / 'services/mlx-worker-python')); from tests.test_maintenance_service import FastBenchmarkBackend, FakeBenchmarkHFDatasetFetcher, build_service; from packages.protocol.python.worker.v1 import maintenance_pb2; from worker.model_registry.catalog import WorkerModelCatalog; from worker.productization.benchmark_suites import BenchmarkSuiteCatalog; from worker.registry import WorkerRegistry; from worker.runtime.mlx_text_runtime import MLXTextRuntime; elapsed_samples = []; read_samples = [];\nfor _ in range(3):\n    with tempfile.TemporaryDirectory(prefix='melix-pr-perf-bench-report-') as temp_dir:\n        registry = WorkerRegistry(runtime=MLXTextRuntime(backend=FastBenchmarkBackend()), model_catalog=WorkerModelCatalog())\n        loaded = registry.load_model(WorkerModelCatalog.dev_text_model())\n        service = build_service(Path(temp_dir), registry=registry)\n        service._core._benchmark_suite_catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher())\n        tracker = {'count': 0}\n        original_read_text = Path.read_text\n        def tracked_read_text(self, *args, **kwargs):\n            if self.name == 'bench-report.md' and self.parent.name.startswith('model-ops-'):\n                tracker['count'] += 1\n            return original_read_text(self, *args, **kwargs)\n        Path.read_text = tracked_read_text\n        try:\n            started = time.perf_counter()\n            list(service.RunBench(maintenance_pb2.RunBenchRequest(model_handle=loaded.handle, suites=['smoke'], parameters={'require_live_model': 'true'}), context=None))\n            elapsed_samples.append((time.perf_counter() - started) * 1000.0)\n        finally:\n            Path.read_text = original_read_text\n        read_samples.append(float(tracker['count']))\nprint(json.dumps({'elapsed_ms_mean': round(sum(elapsed_samples) / len(elapsed_samples), 3), 'bench_report_read_calls_mean': round(sum(read_samples) / len(read_samples), 3)}, sort_keys=True))\"",
+    "probe_impl": "command_json",
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "bench_report_read_calls_mean",
+        "unit": "reads",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "swift-cli-json-envelope-encoding",
     "name": "Swift CLI JSON envelope encoding",
     "runner": "macos-15",

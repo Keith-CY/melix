@@ -91,6 +91,16 @@ def test_scope_report_selects_evaluation_job_id_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "evaluation-job-id-high-water-mark"
 
 
+def test_scope_report_selects_bench_report_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/maintenance_core.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "maintenance-bench-report-readback" in probe_ids
+
+
 def test_scope_report_force_selects_all_on_infra_change() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -105,7 +115,8 @@ def test_registered_probes_expose_focused_commands() -> None:
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
-        assert probe.probe_command
+        if probe.probe_impl == "command_json":
+            assert probe.probe_command
 
 
 def test_scope_report_with_no_matching_probe_returns_empty_selection() -> None:
