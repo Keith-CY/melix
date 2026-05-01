@@ -184,6 +184,8 @@ struct MelixCLIRunnerTests {
         #expect(throws: MelixCLIError.runtime("Pipeline metrics placeholder is too short for the encoded metric.")) {
             try MelixCLIJSONMetricPatch.paddedLiteralData(for: 1, byteCount: 1)
         }
+        #expect(MelixCLIJSONMetricPatch.literal(for: 1.5) == "1.5000000000000000e+00")
+        #expect(MelixCLIJSONMetricPatch.literal(for: -1) == "0.0000000000000000e+00")
     }
 
     @Test("json metric patching preserves user artifact strings that look like the old sentinel")

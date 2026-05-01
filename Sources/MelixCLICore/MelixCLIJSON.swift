@@ -8,6 +8,8 @@ func elapsedMilliseconds(since start: DispatchTime) -> Double {
 }
 
 enum MelixCLIJSONMetricPatch {
+    private static let metricLiteralLocale = Locale(identifier: "en_US_POSIX")
+
     struct Placeholder {
         let token: String
 
@@ -28,7 +30,7 @@ enum MelixCLIJSONMetricPatch {
         let finiteValue = value.isFinite ? max(value, 0) : 0
         return String(
             format: "%.16e",
-            locale: Locale(identifier: "en_US_POSIX"),
+            locale: metricLiteralLocale,
             finiteValue
         )
     }

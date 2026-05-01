@@ -19,9 +19,11 @@ Optimize the Swift CLI JSON envelope metric-object assembly path and register a 
 
 ## Design
 
-`MelixCLIJSONEnvelope` currently converts `[String: Double]` into `[String: Any]` through `reduce(into:)` starting from an empty dictionary, then appends the measured JSON encode placeholder. The slice introduces a small helper that preallocates `metrics.count + 1` slots and is shared by success and error envelope construction.
+`MelixCLIJSONEnvelope` currently converts `[String: Double]` into `[String: Any]` through `reduce(into:)` starting from an empty dictionary, then appends the measured JSON encode placeholder. The first slice introduced a small helper that preallocates `metrics.count + 1` slots and is shared by success and error envelope construction.
 
-The PR-scoped performance registry gains a `command_json` probe mode so Swift probes can execute a shell command on a macOS runner and emit JSON metrics without requiring Python to import Swift code directly.
+The next slice keeps the same JSON literal formatting semantics but reuses the POSIX `Locale` object used by `String(format:locale:)` for metric placeholder replacement. This avoids constructing `Locale(identifier: "en_US_POSIX")` on every success/error envelope metric patch while preserving stable decimal formatting.
+
+The PR-scoped performance registry uses a `command_json` probe mode so Swift probes can execute a shell command on a macOS runner and emit JSON metrics without requiring Python to import Swift code directly.
 
 ## Success Metrics
 
