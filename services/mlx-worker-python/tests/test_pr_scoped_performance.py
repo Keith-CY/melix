@@ -177,6 +177,7 @@ def test_dispatch_probe_impl_supports_evaluation_job_id_probe() -> None:
         test_command="true",
         coverage_command="true",
         probe_impl="evaluation_job_id",
+        probe_command='python3 -c "{}"',
         metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
     )
 
