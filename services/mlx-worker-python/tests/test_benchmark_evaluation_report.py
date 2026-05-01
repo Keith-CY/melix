@@ -258,6 +258,15 @@ def test_numeric_aggregate_helpers_track_running_totals() -> None:
     assert _finalize_numeric_aggregate("speculative_fallback_count", aggregate) == ("sum", 8.0)
 
 
+def test_dict_rows_returns_lazy_iterable_of_dict_rows() -> None:
+    rows = [{"name": "first"}, "skip", {"name": "second"}]
+
+    filtered_rows = _dict_rows(rows)
+
+    assert not isinstance(filtered_rows, list)
+    assert list(filtered_rows) == [{"name": "first"}, {"name": "second"}]
+
+
 def test_aggregate_probe_values_handles_empty_inputs() -> None:
     assert _aggregate_probe_values("prefill_ms", []) == ("mean", 0.0)
     assert _aggregate_probe_values("cache_hit", []) == ("rate", 0.0)
