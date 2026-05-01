@@ -694,13 +694,6 @@ def _seed_closure_audit_repo(root: Path) -> Path:
     )
     _write(repo_root / "scripts/phase8_metrics_report.py", "print('phase8 metrics report')\n")
     _write(repo_root / "docs/runbooks/phase-8-release-gates.md", "# Phase 8 Release Gates\n")
-    for relative_path in (
-        "docs/runbooks/shared-access.md",
-        "docs/runbooks/persistent-sessions.md",
-        "docs/runbooks/rich-output-sanitization.md",
-        "docs/runbooks/connection-lifecycle.md",
-    ):
-        _write(repo_root / relative_path, f"# {relative_path}\n")
     probe_text = "\n".join(
         [
             "gateway.accepted_api_key_count",
@@ -717,11 +710,55 @@ def _seed_closure_audit_repo(root: Path) -> Path:
             "disconnect.terminal_failure_count",
         ]
     )
+    _write(repo_root / "docs/runbooks/security-and-stability-closure.md", probe_text + "\n")
+    _write(
+        repo_root / "docs/runbooks/shared-access.md",
+        "\n".join(
+            [
+                "gateway.accepted_api_key_count",
+                "shared_access.accepted_client_count",
+                "shared_access.rejected_request_count",
+                "",
+            ]
+        ),
+    )
+    _write(
+        repo_root / "docs/runbooks/persistent-sessions.md",
+        "\n".join(
+            [
+                "persistent_session.restore_success_rate",
+                "persistent_session.sign_out_latency_ms",
+                "",
+            ]
+        ),
+    )
+    _write(
+        repo_root / "docs/runbooks/rich-output-sanitization.md",
+        "\n".join(
+            [
+                "sanitized_output.enforcement_count",
+                "sanitized_output.blocked_html_fragment_count",
+                "sanitized_output.unsafe_uri_rejection_count",
+                "",
+            ]
+        ),
+    )
+    _write(
+        repo_root / "docs/runbooks/connection-lifecycle.md",
+        "\n".join(
+            [
+                "disconnect.keepalive_gap_ms",
+                "disconnect.recovery_latency_ms",
+                "disconnect.resume_success_rate",
+                "disconnect.terminal_failure_count",
+                "",
+            ]
+        ),
+    )
+    _write(repo_root / "progress.md", probe_text + "\n")
     docs_root = repo_root / "docs"
-    for index in range(3):
-        _write(docs_root / f"a-probe-{index}.md", probe_text + "\n")
     for index in range(250):
-        _write(docs_root / f"z-noise-{index:03d}.md", f"noise file {index}\n")
+        _write(docs_root / f"a-noise-{index:03d}.md", f"noise file {index}\n")
     services_root = repo_root / "services"
     for index in range(150):
         _write(services_root / f"module-{index:03d}.py", f"# module {index}\n")
