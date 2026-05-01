@@ -207,6 +207,36 @@
     ]
   },
   {
+    "id": "download-pipeline-directory-size-single-stat",
+    "name": "Download pipeline directory-size single stat",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_ops/download_pipeline.py",
+      "services/mlx-worker-python/tests/test_download_pipeline_unit.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_download_pipeline_unit.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_download_pipeline_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_download_pipeline_unit.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_download_pipeline_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/download_pipeline.py services/mlx-worker-python/tests/test_download_pipeline_unit.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 - <<'PY'\nimport json\nimport statistics\nimport tempfile\nimport time\nfrom pathlib import Path\nfrom worker.model_ops.download_pipeline import DownloadPipeline\n\ndirectory_count = 180\nfiles_per_directory = 40\nsample_count = 5\nelapsed_samples = []\ntotal_bytes = 0\nwith tempfile.TemporaryDirectory(prefix=\"melix-pr-perf-download-dirsize-\") as temp_dir:\n    source_root = Path(temp_dir) / \"managed-snapshot\"\n    for directory_index in range(directory_count):\n        directory = source_root / f\"shard-{directory_index:04d}\"\n        directory.mkdir(parents=True, exist_ok=True)\n        for file_index in range(files_per_directory):\n            (directory / f\"part-{file_index:04d}.safetensors\").write_bytes(b\"melix\")\n    for _ in range(sample_count):\n        started = time.perf_counter()\n        total_bytes = DownloadPipeline._directory_size(source_root)\n        elapsed_samples.append((time.perf_counter() - started) * 1000.0)\nprint(json.dumps({\n    \"directory_count\": float(directory_count),\n    \"elapsed_ms_mean\": round(statistics.fmean(elapsed_samples), 6),\n    \"elapsed_ms_min\": round(min(elapsed_samples), 6),\n    \"files_per_directory\": float(files_per_directory),\n    \"sample_count\": float(sample_count),\n    \"total_bytes\": float(total_bytes),\n}, sort_keys=True))\nPY",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "elapsed_ms_min",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "worker-registry-resident-bytes-accumulator",
     "name": "Worker registry resident-bytes accumulator",
     "runner": "ubuntu-latest",
