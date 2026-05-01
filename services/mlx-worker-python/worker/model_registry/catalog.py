@@ -175,17 +175,55 @@ def _has_model_weight_files(model_dir: Path) -> bool:
     return False
 
 
-def _read_text_prefix(path: Path, *, max_chars: int = 16_384) -> str:
-    if not path.is_file():
+def _read_text_prefix(
+    path: Path,
+    *,
+    max_chars: int = 16_384,
+    text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] | None = None,
+) -> str:
+    try:
+        stat_result = path.stat()
+    except OSError:
+        if text_prefix_cache is not None:
+            text_prefix_cache.pop(path, None)
         return ""
+
+    if not path.is_file():
+        if text_prefix_cache is not None:
+            text_prefix_cache.pop(path, None)
+        return ""
+
+    if text_prefix_cache is not None:
+        cached_entry = text_prefix_cache.get(path)
+        if cached_entry is not None:
+            cached_mtime_ns, cached_size, cached_mode, cached_max_chars, cached_payload = cached_entry
+            if (
+                cached_mtime_ns == stat_result.st_mtime_ns
+                and cached_size == stat_result.st_size
+                and cached_mode == stat_result.st_mode
+                and cached_max_chars >= max_chars
+            ):
+                return cached_payload[:max_chars]
+
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            return handle.read(max_chars)
+            payload = handle.read(max_chars)
     except OSError:
+        if text_prefix_cache is not None:
+            text_prefix_cache.pop(path, None)
         return ""
 
+    if text_prefix_cache is not None:
+        text_prefix_cache[path] = (stat_result.st_mtime_ns, stat_result.st_size, stat_result.st_mode, max_chars, payload)
+    return payload
 
-def _has_mlx_signal(*, model_dir: Path, repo_id: str = "") -> bool:
+
+def _has_mlx_signal(
+    *,
+    model_dir: Path,
+    repo_id: str = "",
+    text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] | None = None,
+) -> bool:
     lowered_repo_id = repo_id.lower()
     lowered_path = model_dir.name.lower()
     if repo_id.startswith("mlx-community/") or "mlx" in lowered_repo_id or "mlx" in lowered_path:
@@ -195,9 +233,9 @@ def _has_mlx_signal(*, model_dir: Path, repo_id: str = "") -> bool:
         filter(
             None,
             (
-                _read_text_prefix(model_dir / "README.md"),
-                _read_text_prefix(model_dir / "config.json"),
-                _read_text_prefix(model_dir / "model_index.json"),
+                _read_text_prefix(model_dir / "README.md", text_prefix_cache=text_prefix_cache),
+                _read_text_prefix(model_dir / "config.json", text_prefix_cache=text_prefix_cache),
+                _read_text_prefix(model_dir / "model_index.json", text_prefix_cache=text_prefix_cache),
             ),
         )
     ).lower()
@@ -850,6 +888,7 @@ class WorkerModelCatalog:
         self._overlay_models: dict[str, common_pb2.ModelSpec] = {}
         self._registry_lock = threading.RLock()
         self._json_file_cache: dict[Path, tuple[int, int, dict[str, object]]] = {}
+        self._text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] = {}
         self._registry_snapshot_cache: dict[tuple[str, ...], RegistrySnapshot] = {}
         self._active_registry_roots = tuple(self._configured_registry_roots())
         self._last_registry_snapshot = self._refresh_registry_snapshot(self._active_registry_roots)
@@ -943,12 +982,18 @@ class WorkerModelCatalog:
         }
 
     def _refresh_registry_snapshot(self, registry_roots: tuple[str, ...]) -> RegistrySnapshot:
+        self._prune_text_prefix_cache()
         roots, discovered_models = self._scan_registry_roots(registry_roots)
         return RegistrySnapshot(
             roots=tuple(roots),
             models=tuple(discovered_models[model_id] for model_id in sorted(discovered_models)),
             scanned_at_unix_ms=int(time.time() * 1000),
         )
+
+    def _prune_text_prefix_cache(self) -> None:
+        for path in tuple(self._text_prefix_cache):
+            if not path.exists():
+                self._text_prefix_cache.pop(path, None)
 
     def _scan_registry_roots(
         self,
@@ -1105,7 +1150,11 @@ class WorkerModelCatalog:
             model_id = _local_model_id(root_resolved, resolved_path)
             if model_id in discovered_models or model_id in self._seed_models:
                 continue
-            if not _has_model_weight_files(resolved_path) or not _has_mlx_signal(model_dir=resolved_path, repo_id=model_id):
+            if not _has_model_weight_files(resolved_path) or not _has_mlx_signal(
+                model_dir=resolved_path,
+                repo_id=model_id,
+                text_prefix_cache=self._text_prefix_cache,
+            ):
                 continue
             model = self._raw_model_spec(
                 model_id=model_id,
@@ -1150,7 +1199,11 @@ class WorkerModelCatalog:
             for snapshot_dir in snapshot_dirs:
                 if not (snapshot_dir / "config.json").is_file() or not _has_model_weight_files(snapshot_dir):
                     continue
-                if not _has_mlx_signal(model_dir=snapshot_dir, repo_id=repo_id):
+                if not _has_mlx_signal(
+                    model_dir=snapshot_dir,
+                    repo_id=repo_id,
+                    text_prefix_cache=self._text_prefix_cache,
+                ):
                     continue
                 revision = _hf_cache_revision(cache_repo_dir, snapshot_dir.name, revision_map=revision_map)
                 yield self._raw_model_spec(
