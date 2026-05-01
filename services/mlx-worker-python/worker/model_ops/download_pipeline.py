@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -459,8 +460,10 @@ class DownloadPipeline:
                 for entry in entries:
                     if entry.is_dir(follow_symlinks=False):
                         stack.append(entry.path)
-                    elif entry.is_file():
-                        total_bytes += entry.stat().st_size
+                        continue
+                    entry_stat = entry.stat(follow_symlinks=False)
+                    if stat.S_ISREG(entry_stat.st_mode):
+                        total_bytes += entry_stat.st_size
         return total_bytes
 
     @staticmethod

@@ -52,3 +52,17 @@ def test_directory_size_uses_scandir_stack_without_os_walk(
     monkeypatch.setattr(os, "walk", fail_os_walk)
 
     assert DownloadPipeline._directory_size(model_dir) == len(b"{}") + len(b"weights")
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink support unavailable")
+def test_directory_size_does_not_follow_symlinked_entries(tmp_path: Path) -> None:
+    model_dir = tmp_path / "managed-snapshot"
+    nested_dir = model_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (nested_dir / "weights.safetensors").write_bytes(b"weights")
+    outside_file = tmp_path / "outside.safetensors"
+    outside_file.write_bytes(b"outside")
+    os.symlink(outside_file, model_dir / "linked-file.safetensors")
+    os.symlink(nested_dir, model_dir / "linked-dir")
+
+    assert DownloadPipeline._directory_size(model_dir) == len(b"weights")
