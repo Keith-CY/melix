@@ -2038,9 +2038,14 @@ def _event_alignment(gold_event: dict[str, object], pred_event: dict[str, object
     field_scores: dict[str, float] = {}
     active_weight = 0.0
     weighted_score = 0.0
+    gold_actions: list[str] = []
+    pred_actions: list[str] = []
     for field_name in FIELD_NAMES:
         gold_values = _normalize_event_field(gold_event.get(field_name))
         pred_values = _normalize_event_field(pred_event.get(field_name))
+        if field_name == "action":
+            gold_actions = gold_values
+            pred_actions = pred_values
         field_score = _soft_field_f1(gold_values, pred_values)
         field_scores[field_name] = _round_metric(field_score)
         if gold_values or pred_values:
@@ -2048,8 +2053,6 @@ def _event_alignment(gold_event: dict[str, object], pred_event: dict[str, object
             active_weight += weight
             weighted_score += weight * field_score
     score = weighted_score / active_weight if active_weight else 0.0
-    gold_actions = _normalize_event_field(gold_event.get("action"))
-    pred_actions = _normalize_event_field(pred_event.get("action"))
     action_score = field_scores["action"]
     accepted = score >= EVENT_ALIGNMENT_SCORE_THRESHOLD
     if gold_actions and pred_actions and action_score < EVENT_ALIGNMENT_ACTION_THRESHOLD:

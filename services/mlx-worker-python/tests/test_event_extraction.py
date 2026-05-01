@@ -1653,6 +1653,27 @@ def test_event_alignment_uses_global_optimum_not_greedy() -> None:
     assert matches == [(0, 1, 0.80), (1, 0, 0.80)]
 
 
+def test_event_alignment_reuses_normalized_action_values(monkeypatch) -> None:
+    calls = 0
+    original = event_extraction_module._normalize_event_field
+
+    def counted_normalize(value: object) -> list[str]:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(event_extraction_module, "_normalize_event_field", counted_normalize)
+
+    alignment = event_extraction_module._event_alignment(
+        {"actor": ["A"], "time": ["Monday"], "location": ["Office"], "action": ["meet"]},
+        {"actor": ["A"], "time": ["Monday"], "location": ["Office"], "action": ["call"]},
+    )
+
+    assert calls == len(event_extraction_module.FIELD_NAMES) * 2
+    assert alignment["fields"]["action"] < event_extraction_module.EVENT_ALIGNMENT_ACTION_THRESHOLD
+    assert alignment["accepted"] is False
+
+
 def test_write_event_prediction_rows_preserves_input_order_and_records_failures(tmp_path: Path) -> None:
     output = tmp_path / "predictions.jsonl"
     failures = tmp_path / "failures.jsonl"
