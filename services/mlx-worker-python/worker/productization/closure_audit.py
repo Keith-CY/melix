@@ -368,7 +368,7 @@ def _collect_probe_sources(root: Path) -> dict[str, list[str]]:
         for probe_names in _REQUIRED_PROBES.values()
         for probe_name in probe_names
     }
-    candidate_files = sorted(_iter_probe_text_files(root))
+    candidate_files = _iter_probe_text_files(root)
     for file_path in candidate_files:
         if _probe_sources_complete(probe_sources):
             break

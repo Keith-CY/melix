@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 from pathlib import Path
 
@@ -146,6 +147,28 @@ def test_collect_probe_sources_stops_reading_after_all_probe_slots_are_filled(
             "docs/a-probe-1.md",
             "docs/a-probe-2.md",
         ]
+
+
+def test_collect_probe_sources_uses_iterator_order_without_resorting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(closure_audit_module, "_iter_probe_text_files", lambda root: [])
+
+    def fail_sorted(*args, **kwargs):
+        raise AssertionError("_collect_probe_sources should not sort an already-sorted iterator")
+
+    with pytest.raises(AssertionError, match="already-sorted iterator"):
+        fail_sorted()
+
+    monkeypatch.setattr(builtins, "sorted", fail_sorted)
+
+    probe_sources = closure_audit_module._collect_probe_sources(tmp_path)
+
+    assert probe_sources == {
+        probe_name: []
+        for probe_group in closure_audit_module._REQUIRED_PROBES.values()
+        for probe_name in probe_group
+    }
 
 
 def test_load_milestone_statuses_streams_execution_index_without_read_text(
