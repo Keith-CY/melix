@@ -352,6 +352,26 @@ def test_rerank_family_query_context_preserves_scoring_semantics(
     assert optimized_score == baseline_score
 
 
+def test_rerank_context_tuple_and_frozenset_collections_are_scored_directly() -> None:
+    backend = DeterministicRerankBackend()
+    family = JinaV3RerankFamilyAdapter()
+    query_context = family.build_query_context(backend, "swift runtime")
+
+    assert isinstance(query_context.query_tokens, tuple)
+    assert isinstance(query_context.query_token_set, frozenset)
+    assert family._ordered_pair_bonus(query_context.query_tokens, ("swift", "runtime")) > 0.0
+    assert family._contains_contiguous_query(
+        ("control", "swift", "runtime"),
+        query_context.query_tokens,
+    )
+    assert family.score(
+        backend,
+        "swift runtime",
+        "control swift runtime",
+        query_context=query_context,
+    ) == family.score(backend, "swift runtime", "control swift runtime")
+
+
 def test_rerank_rejects_missing_and_wrong_model_kinds() -> None:
     runtime_service, inference_service = build_services()
     text_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
