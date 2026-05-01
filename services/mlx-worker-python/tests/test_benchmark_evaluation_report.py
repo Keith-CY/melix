@@ -6,10 +6,12 @@ from pathlib import Path
 import pytest
 
 from worker.productization.benchmark_evaluation_report import (
+    _METRIC_DIRECTION_BY_KEY,
     _aggregate_probe_values,
     _dict_rows,
     _finalize_numeric_aggregate,
     _markdown_cell,
+    _metric_direction,
     _report_rows,
     _update_numeric_aggregate,
     build_benchmark_evaluation_report,
@@ -433,6 +435,22 @@ def test_report_builder_aggregates_evaluation_sample_probes() -> None:
     assert rows_by_metric["eval.sample.mmlu.failure_stage.scoring.failure_count"]["status"] == (
         "warning"
     )
+
+
+def test_metric_direction_fast_path_covers_report_probe_keys() -> None:
+    expected = {
+        "ttft_ms": "lower_is_better",
+        "tokens_per_second": "higher_is_better",
+        "request_latency_p95_ms": "lower_is_better",
+        "speculative_acceptance_rate_mean": "higher_is_better",
+        "dflash_rollback_count_sum": "lower_is_better",
+        "typed_score_mean": "higher_is_better",
+        "raw_response_chars_mean": "neutral",
+    }
+
+    for metric_key, direction in expected.items():
+        assert _METRIC_DIRECTION_BY_KEY[metric_key] == direction
+        assert _metric_direction(f"bench.synthetic.{metric_key}") == direction
 
 
 def test_report_builder_uses_sparse_benchmark_probe_rows_without_fixed_key_scans() -> None:
