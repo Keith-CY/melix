@@ -540,27 +540,32 @@ def _probe_training_dataset_token_percentiles(repo_root: Path) -> dict[str, floa
         repo_root / "services/mlx-worker-python/worker/model_ops/training_dataset.py",
         unique_name="melix_probe_training_dataset_token_percentiles",
     )
-    sample_rows = _build_large_training_dataset_samples()
+    samples = _build_large_training_dataset_quality_samples()
     elapsed_samples: list[float] = []
-    prompt_p95 = 0.0
-    total_p95 = 0.0
+    peak_samples: list[float] = []
     sample_count = 0.0
+    duplicate_count = 0.0
+    dirty_count = 0.0
     for _ in range(3):
         gc.collect()
-        started = time.perf_counter()
-        token_stats = module._build_token_stats(
-            _single_pass_sample_iterable(sample_rows),
-            "prompt_completion",
-        )
-        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
-        prompt_p95 = float(token_stats["prompt_tokens_p95"])
-        total_p95 = float(token_stats["total_tokens_p95"])
-        sample_count = float(token_stats["sample_count"])
+        tracemalloc.start()
+        try:
+            started = time.perf_counter()
+            quality, token_stats = module._build_quality_and_token_stats(samples, "prompt_completion")
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            _, peak_bytes = tracemalloc.get_traced_memory()
+            peak_samples.append(float(peak_bytes))
+            sample_count = float(token_stats["sample_count"])
+            duplicate_count = float(quality["duplicate_count"])
+            dirty_count = float(quality["dirty_count"])
+        finally:
+            tracemalloc.stop()
     return {
         "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 3),
+        "peak_bytes_mean": round(sum(peak_samples) / len(peak_samples), 3),
         "sample_count": sample_count,
-        "prompt_tokens_p95": prompt_p95,
-        "total_tokens_p95": total_p95,
+        "duplicate_count": duplicate_count,
+        "dirty_count": dirty_count,
     }
 
 
@@ -697,6 +702,16 @@ def _single_pass_sample_iterable(samples: list[dict[str, str]]) -> Iterable[dict
             return iter(self._rows)
 
     return _SinglePassIterable(samples)
+
+
+def _build_large_training_dataset_quality_samples() -> list[dict[str, str]]:
+    samples = _build_large_training_dataset_samples()
+    for index in range(0, len(samples), 17):
+        sample = dict(samples[index - 1] if index else samples[index])
+        if index % 51 == 0:
+            sample["completion"] = sample["prompt"]
+        samples[index] = sample
+    return samples
 
 
 def _seed_closure_audit_repo(root: Path) -> Path:

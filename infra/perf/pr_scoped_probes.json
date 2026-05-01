@@ -92,16 +92,17 @@
   },
   {
     "id": "training-dataset-token-percentiles-single-sort",
-    "name": "Training dataset token percentiles single sort",
+    "name": "Training dataset quality/token summary",
     "runner": "ubuntu-latest",
     "watch_globs": [
       "services/mlx-worker-python/worker/model_ops/training_dataset.py",
       "services/mlx-worker-python/tests/test_training_dataset_builder.py",
       "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
-      "services/mlx-worker-python/tests/test_pr_scoped_performance.py"
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/changed_scope_coverage.py"
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_pr_scoped_performance.py && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage report -m services/mlx-worker-python/worker/model_ops/training_dataset.py services/mlx-worker-python/worker/productization/pr_scoped_performance.py services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_pr_scoped_performance.py && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/training_dataset.py services/mlx-worker-python/worker/productization/pr_scoped_performance.py services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
     "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 -c \"import json; from pathlib import Path; from worker.productization.pr_scoped_performance import _probe_training_dataset_token_percentiles as probe; print(json.dumps(probe(Path.cwd()), sort_keys=True))\"",
     "probe_impl": "training_dataset_token_percentiles",
     "coverage_replays_tests": true,
@@ -109,6 +110,12 @@
       {
         "key": "elapsed_ms_mean",
         "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
         "direction": "lower_is_better",
         "warn_pct": 5.0
       }
