@@ -438,6 +438,7 @@ def _collect_benchmark_probe_metrics(
     label_cache: dict[_BenchmarkLabelCacheKey, str] | None = None,
 ) -> None:
     aggregates_by_label: dict[str, dict[str, _NumericAggregate]] = {}
+    matrix_label_cache: dict[tuple[object, object, object, object, object], str] = {}
     for row in _dict_rows(rows):
         label = ""
         for key, raw_value in row.items():
@@ -449,7 +450,11 @@ def _collect_benchmark_probe_metrics(
                 value = _float_or_none(raw_value)
             if value is not None:
                 if not label:
-                    label = _benchmark_probe_label(row, label_cache=label_cache)
+                    label = _benchmark_probe_label(
+                        row,
+                        label_cache=label_cache,
+                        matrix_label_cache=matrix_label_cache,
+                    )
                 _update_probe_aggregates_by_label(
                     aggregates_by_label,
                     label=label,
