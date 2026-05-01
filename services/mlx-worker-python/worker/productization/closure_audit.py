@@ -377,24 +377,27 @@ def _collect_probe_sources(root: Path) -> dict[str, list[str]]:
         for probe_names in _REQUIRED_PROBES.values()
         for probe_name in probe_names
     }
+    pending_probe_names = list(probe_sources)
     scanned_relative_paths: set[str] = set()
     for file_path in _iter_preferred_probe_text_files(root):
         _scan_probe_source_file(
             file_path=file_path,
             root=root,
             probe_sources=probe_sources,
+            pending_probe_names=pending_probe_names,
             scanned_relative_paths=scanned_relative_paths,
         )
-        if _probe_sources_complete(probe_sources):
+        if not pending_probe_names:
             return probe_sources
     for file_path in _iter_probe_text_files(root):
         _scan_probe_source_file(
             file_path=file_path,
             root=root,
             probe_sources=probe_sources,
+            pending_probe_names=pending_probe_names,
             scanned_relative_paths=scanned_relative_paths,
         )
-        if _probe_sources_complete(probe_sources):
+        if not pending_probe_names:
             break
     return probe_sources
 
@@ -404,6 +407,7 @@ def _scan_probe_source_file(
     file_path: Path,
     root: Path,
     probe_sources: dict[str, list[str]],
+    pending_probe_names: list[str],
     scanned_relative_paths: set[str],
 ) -> None:
     relative_path = file_path.relative_to(root).as_posix()
@@ -411,11 +415,14 @@ def _scan_probe_source_file(
         return
     scanned_relative_paths.add(relative_path)
     contents = file_path.read_text(encoding="utf-8", errors="ignore")
-    for probe_name, matches in probe_sources.items():
-        if len(matches) >= 3:
-            continue
+    next_pending_probe_names: list[str] = []
+    for probe_name in pending_probe_names:
+        matches = probe_sources[probe_name]
         if probe_name in contents:
             matches.append(relative_path)
+        if len(matches) < 3:
+            next_pending_probe_names.append(probe_name)
+    pending_probe_names[:] = next_pending_probe_names
 
 
 def _probe_sources_complete(probe_sources: dict[str, list[str]]) -> bool:

@@ -186,6 +186,64 @@ def test_collect_probe_sources_stops_discovering_files_after_probe_slots_are_fil
         ]
 
 
+def test_collect_probe_sources_stops_checking_saturated_probe_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = _seed_repo(tmp_path)
+    docs_root = repo_root / "docs"
+    probe_names = [
+        probe_name
+        for probe_group in closure_audit_module._REQUIRED_PROBES.values()
+        for probe_name in probe_group
+    ]
+    saturated_probe = probe_names[0]
+    remaining_probe_names = probe_names[1:]
+    for index in range(3):
+        (docs_root / f"a-saturated-{index}.md").write_text(f"{saturated_probe}\n", encoding="utf-8")
+    (docs_root / "b-fill-remaining.md").write_text(
+        "\n".join(remaining_probe_names) + "\n",
+        encoding="utf-8",
+    )
+
+    contains_checks: list[tuple[str, str]] = []
+    original_read_text = Path.read_text
+
+    class TrackingText(str):
+        def __new__(cls, value: str, *, relative_path: str):
+            instance = super().__new__(cls, value)
+            instance.relative_path = relative_path
+            return instance
+
+        def __contains__(self, item: object) -> bool:
+            if isinstance(item, str):
+                contains_checks.append((self.relative_path, item))
+            return super().__contains__(item)
+
+    def tracked_read_text(self: Path, *args, **kwargs) -> str:
+        return TrackingText(
+            original_read_text(self, *args, **kwargs),
+            relative_path=self.relative_to(repo_root).as_posix(),
+        )
+
+    monkeypatch.setattr(Path, "read_text", tracked_read_text)
+
+    probe_sources = closure_audit_module._collect_probe_sources(repo_root)
+
+    assert probe_sources[saturated_probe] == [
+        "docs/a-saturated-0.md",
+        "docs/a-saturated-1.md",
+        "docs/a-saturated-2.md",
+    ]
+    assert (
+        "docs/b-fill-remaining.md",
+        saturated_probe,
+    ) not in contains_checks
+    assert (
+        "docs/b-fill-remaining.md",
+        remaining_probe_names[0],
+    ) in contains_checks
+
+
 def test_collect_probe_sources_prefers_curated_evidence_files_before_full_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
