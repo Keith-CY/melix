@@ -1303,29 +1303,42 @@ def _build_quality_and_token_stats(
     total_tokens: list[int] = []
     sample_count = 0
     is_prompt_completion = format_name == "prompt_completion"
-    count_tokens = _whitespace_token_count if is_prompt_completion else None
+    prompt_tokens_append = prompt_tokens.append
+    completion_tokens_append = completion_tokens.append
+    total_tokens_append = total_tokens.append
+    duplicate_indices_append = duplicate_indices.append
+    dirty_samples_append = dirty_samples.append
+    canonical_sample_digest = _canonical_sample_digest
+    dirty_sample_reasons = (
+        _prompt_completion_dirty_sample_reasons
+        if is_prompt_completion
+        else _dirty_sample_reasons
+    )
+    sample_token_counts = _sample_token_counts
+    whitespace_token_count = _whitespace_token_count
+    quality_report_sample_limit = _QUALITY_REPORT_SAMPLE_LIMIT
     for index, sample in enumerate(samples):
         sample_count += 1
-        sample_digest = _canonical_sample_digest(sample)
+        sample_digest = canonical_sample_digest(sample)
         if sample_digest in seen:
             duplicate_count += 1
-            if len(duplicate_indices) < _QUALITY_REPORT_SAMPLE_LIMIT:
-                duplicate_indices.append(index)
+            if len(duplicate_indices) < quality_report_sample_limit:
+                duplicate_indices_append(index)
         else:
             seen.add(sample_digest)
-        reasons = _dirty_sample_reasons(sample)
+        reasons = dirty_sample_reasons(sample)
         if reasons:
             dirty_count += 1
-            if len(dirty_samples) < _QUALITY_REPORT_SAMPLE_LIMIT:
-                dirty_samples.append({"index": index, "reasons": reasons})
+            if len(dirty_samples) < quality_report_sample_limit:
+                dirty_samples_append({"index": index, "reasons": reasons})
         if is_prompt_completion:
-            prompt_count = count_tokens(str(sample.get("prompt", "")))
-            completion_count = count_tokens(str(sample.get("completion", "")))
+            prompt_count = whitespace_token_count(str(sample.get("prompt", "")))
+            completion_count = whitespace_token_count(str(sample.get("completion", "")))
         else:
-            prompt_count, completion_count = _sample_token_counts(sample, format_name)
-        prompt_tokens.append(prompt_count)
-        completion_tokens.append(completion_count)
-        total_tokens.append(prompt_count + completion_count)
+            prompt_count, completion_count = sample_token_counts(sample, format_name)
+        prompt_tokens_append(prompt_count)
+        completion_tokens_append(completion_count)
+        total_tokens_append(prompt_count + completion_count)
 
     finalized_prompt_summary = _summarize_token_values(prompt_tokens)
     finalized_completion_summary = _summarize_token_values(completion_tokens)
@@ -1477,6 +1490,26 @@ def _dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:
         if reason not in unique_reasons:
             unique_reasons.append(reason)
     return unique_reasons
+
+
+def _prompt_completion_dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:
+    prompt = str(sample.get("prompt", ""))
+    completion = str(sample.get("completion", ""))
+    has_control_characters = _contains_problematic_control_characters(
+        prompt
+    ) or _contains_problematic_control_characters(completion)
+    stripped_prompt = prompt.strip()
+    stripped_completion = completion.strip()
+    has_duplicate_prompt_completion = bool(
+        stripped_prompt and stripped_completion and stripped_prompt == stripped_completion
+    )
+    if has_control_characters:
+        if has_duplicate_prompt_completion:
+            return ["control_characters", "duplicate_prompt_completion"]
+        return ["control_characters"]
+    if has_duplicate_prompt_completion:
+        return ["duplicate_prompt_completion"]
+    return []
 
 
 def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
