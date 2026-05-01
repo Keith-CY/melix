@@ -34,13 +34,27 @@ class DeterministicRerankBackend:
         return TOKEN_RE.findall(text.lower())
 
     @staticmethod
-    def tie_breaker(query: str, document: str) -> float:
-        return DeterministicRerankBackend.tie_breaker_from_prefix(f"{query}\0".encode("utf-8"), document)
+    def build_tie_breaker_seed(query: str):
+        return hashlib.sha256(f"{query}\0".encode("utf-8"))
+
+    @staticmethod
+    def tie_breaker_from_seed(seed, document: str) -> float:
+        digest_builder = seed.copy()
+        digest_builder.update(document.encode("utf-8"))
+        digest = digest_builder.digest()
+        return int.from_bytes(digest[:4], "little") / 0xFFFFFFFF * 0.0001
 
     @staticmethod
     def tie_breaker_from_prefix(query_prefix: bytes, document: str) -> float:
         digest = hashlib.sha256(query_prefix + document.encode("utf-8")).digest()
         return int.from_bytes(digest[:4], "little") / 0xFFFFFFFF * 0.0001
+
+    @staticmethod
+    def tie_breaker(query: str, document: str) -> float:
+        return DeterministicRerankBackend.tie_breaker_from_seed(
+            DeterministicRerankBackend.build_tie_breaker_seed(query),
+            document,
+        )
 
 
 @dataclass(frozen=True)
@@ -55,7 +69,7 @@ class RerankQueryContext:
     query_tokens: tuple[str, ...]
     query_token_set: frozenset[str]
     ordered_pairs: frozenset[tuple[str, str]]
-    tie_breaker_prefix: bytes
+    tie_breaker_seed: object
 
 
 class RerankFamilyAdapter:
@@ -86,7 +100,7 @@ class RerankFamilyAdapter:
             query_tokens=normalized_query_tokens,
             query_token_set=frozenset(query_token_set),
             ordered_pairs=frozenset(_build_adjacent_pairs(normalized_query_tokens)),
-            tie_breaker_prefix=f"{query}\0".encode("utf-8"),
+            tie_breaker_seed=backend.build_tie_breaker_seed(query),
         )
 
     def score(
@@ -107,6 +121,14 @@ def _build_adjacent_pairs(tokens: Sequence[str]) -> tuple[tuple[str, str], ...]:
         (tokens[index], tokens[index + 1])
         for index in range(len(tokens) - 1)
     )
+
+
+def _sequence_matches_at(
+    haystack: Sequence[str],
+    needle: Sequence[str],
+    start: int,
+) -> bool:
+    return all(haystack[start + offset] == token for offset, token in enumerate(needle))
 
 
 class BasicRerankFamilyAdapter(RerankFamilyAdapter):
@@ -132,15 +154,20 @@ class BasicRerankFamilyAdapter(RerankFamilyAdapter):
                 query_tokens=query_tokens,
                 query_token_set=query_token_set,
             )
-        query_token_set = query_context.query_token_set
+        reusable_query_token_set = query_token_set
+        if reusable_query_token_set is None:
+            reusable_query_token_set = query_context.query_token_set
         document_tokens = set(backend.tokenize(document))
-        if not query_token_set and not document_tokens:
+        if not reusable_query_token_set and not document_tokens:
             overlap_score = 1.0
         else:
-            overlap_count = len(query_token_set & document_tokens)
-            union = (len(query_token_set) + len(document_tokens) - overlap_count) or 1
+            overlap_count = len(reusable_query_token_set & document_tokens)
+            union = (len(reusable_query_token_set) + len(document_tokens) - overlap_count) or 1
             overlap_score = overlap_count / union
-        return round(overlap_score + backend.tie_breaker_from_prefix(query_context.tie_breaker_prefix, document), 6)
+        return round(
+            overlap_score + backend.tie_breaker_from_seed(query_context.tie_breaker_seed, document),
+            6,
+        )
 
 
 class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
@@ -166,35 +193,43 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
                 query_tokens=query_tokens,
                 query_token_set=query_token_set,
             )
-        query_tokens = query_context.query_tokens
+        reusable_query_tokens = query_tokens
+        if reusable_query_tokens is None:
+            reusable_query_tokens = query_context.query_tokens
+        reusable_query_token_set = query_token_set
+        if reusable_query_token_set is None:
+            reusable_query_token_set = query_context.query_token_set
         document_tokens = backend.tokenize(document)
-        query_token_set = query_context.query_token_set
         document_token_set = set(document_tokens)
 
-        if not query_token_set and not document_token_set:
+        if not reusable_query_token_set and not document_token_set:
             overlap_count = 0
             overlap_score = 1.0
         else:
-            overlap_count = len(query_token_set & document_token_set)
-            union = (len(query_token_set) + len(document_token_set) - overlap_count) or 1
+            overlap_count = len(reusable_query_token_set & document_token_set)
+            union = (len(reusable_query_token_set) + len(document_token_set) - overlap_count) or 1
             overlap_score = overlap_count / union
 
         if overlap_count == 0:
             pair_bonus = 0.0
         else:
-            pair_bonus = self._ordered_pair_bonus(query_tokens, document_tokens, query_pairs=query_context.ordered_pairs)
-        has_all_query_terms = overlap_count >= len(query_token_set)
+            pair_bonus = self._ordered_pair_bonus(
+                reusable_query_tokens,
+                document_tokens,
+                query_pairs=query_context.ordered_pairs,
+            )
+        has_all_query_terms = overlap_count >= len(reusable_query_token_set)
         exact_order_bonus = (
-            0.1 if has_all_query_terms and self._contains_contiguous_query(document_tokens, query_tokens) else 0.0
+            0.1 if has_all_query_terms and self._contains_contiguous_query(document_tokens, reusable_query_tokens) else 0.0
         )
-        prefix_bonus = 0.05 if has_all_query_terms and document_tokens[: len(query_tokens)] == query_tokens else 0.0
+        prefix_bonus = 0.05 if has_all_query_terms and self._has_query_prefix(document_tokens, reusable_query_tokens) else 0.0
 
         return round(
             overlap_score
             + pair_bonus
             + exact_order_bonus
             + prefix_bonus
-            + backend.tie_breaker_from_prefix(query_context.tie_breaker_prefix, document),
+            + backend.tie_breaker_from_seed(query_context.tie_breaker_seed, document),
             6,
         )
 
@@ -222,24 +257,31 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         return (len(matched_pairs) / query_pair_count) * 0.15
 
     @staticmethod
-    def _contains_contiguous_query(document_tokens: Sequence[str], query_tokens: Sequence[str]) -> bool:
-        query_length = len(query_tokens)
-        if query_length == 0 or query_length > len(document_tokens):
+    def _has_query_prefix(document_tokens: Sequence[str], query_tokens: Sequence[str]) -> bool:
+        if not query_tokens or len(query_tokens) > len(document_tokens):
             return False
-        if query_length == 1:
-            query_token = query_tokens[0]
-            return any(document_token == query_token for document_token in document_tokens)
+        return _sequence_matches_at(document_tokens, query_tokens, 0)
+
+    @staticmethod
+    def _contains_contiguous_query(document_tokens: Sequence[str], query_tokens: Sequence[str]) -> bool:
+        if not query_tokens or len(query_tokens) > len(document_tokens):
+            return False
+        query_length = len(query_tokens)
         last_start = len(document_tokens) - query_length
-        first_query_token = query_tokens[0]
         for start in range(last_start + 1):
-            if document_tokens[start] != first_query_token:
-                continue
-            if all(
-                document_tokens[start + offset] == query_tokens[offset]
-                for offset in range(1, query_length)
-            ):
+            if _sequence_matches_at(document_tokens, query_tokens, start):
                 return True
         return False
+
+    @staticmethod
+    def _query_order_matches(
+        document_tokens: Sequence[str],
+        query_tokens: Sequence[str],
+    ) -> tuple[bool, bool]:
+        prefix_match = JinaV3RerankFamilyAdapter._has_query_prefix(document_tokens, query_tokens)
+        if prefix_match:
+            return True, True
+        return JinaV3RerankFamilyAdapter._contains_contiguous_query(document_tokens, query_tokens), False
 
 
 class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
@@ -270,26 +312,33 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
                 query_tokens=query_tokens,
                 query_token_set=query_token_set,
             )
-        query_tokens = query_context.query_tokens
+        reusable_query_tokens = query_tokens
+        if reusable_query_tokens is None:
+            reusable_query_tokens = query_context.query_tokens
+        reusable_query_token_set = query_token_set
+        if reusable_query_token_set is None:
+            reusable_query_token_set = query_context.query_token_set
         document_tokens = backend.tokenize(document)
-        query_token_set = query_context.query_token_set
         document_token_set = set(document_tokens)
-        overlap_count = len(query_token_set & document_token_set)
-        overlap = overlap_count / (len(query_token_set) or 1)
+        overlap_count = len(reusable_query_token_set & document_token_set)
+        overlap = overlap_count / (len(reusable_query_token_set) or 1)
         if overlap_count == 0:
             pair_bonus = 0.0
         else:
             pair_bonus = JinaV3RerankFamilyAdapter._ordered_pair_bonus(
-                query_tokens,
+                reusable_query_tokens,
                 document_tokens,
                 query_pairs=query_context.ordered_pairs,
             )
         exact_order = (
-            JinaV3RerankFamilyAdapter._contains_contiguous_query(document_tokens, query_tokens)
-            if overlap_count >= len(query_token_set)
+            JinaV3RerankFamilyAdapter._contains_contiguous_query(document_tokens, reusable_query_tokens)
+            if overlap_count >= len(reusable_query_token_set)
             else False
         )
-        prefix_match = overlap_count >= len(query_token_set) and document_tokens[: len(query_tokens)] == query_tokens
+        prefix_match = (
+            overlap_count >= len(reusable_query_token_set)
+            and JinaV3RerankFamilyAdapter._has_query_prefix(document_tokens, reusable_query_tokens)
+        )
 
         yes_logit = overlap * 6.0
         yes_logit += pair_bonus * 3.0
@@ -301,7 +350,10 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
         if overlap_count == 0:
             no_logit += 0.3
 
-        return round(yes_logit - no_logit + backend.tie_breaker_from_prefix(query_context.tie_breaker_prefix, document), 6)
+        return round(
+            yes_logit - no_logit + backend.tie_breaker_from_seed(query_context.tie_breaker_seed, document),
+            6,
+        )
 
 
 def resolve_rerank_backend(backend_id: str) -> DeterministicRerankBackend:
