@@ -316,6 +316,39 @@ def test_collect_benchmark_probe_metrics_groups_aggregates_by_label_and_preserve
     }
 
 
+def test_collect_benchmark_probe_metrics_reuses_matrix_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = benchmark_evaluation_report._matrix_label
+    matrix_label_calls = 0
+
+    def tracked_matrix_label(
+        row: dict[str, object],
+        *,
+        label_cache: dict[tuple[str, str, str, str, str, str], str] | None = None,
+    ) -> str:
+        nonlocal matrix_label_calls
+        matrix_label_calls += 1
+        return original(row, label_cache=label_cache)
+
+    monkeypatch.setattr(benchmark_evaluation_report, "_matrix_label", tracked_matrix_label)
+    rows = [
+        {
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 1,
+            "concurrency_level": 4,
+            "prefill_ms": float(index),
+        }
+        for index in range(5)
+    ]
+
+    metrics: dict[str, object] = {}
+    _collect_benchmark_probe_metrics(metrics, rows, prefix="bench")
+
+    assert matrix_label_calls == 1
+    assert metrics["bench.smoke.ctx1024.gen128.b1.c4.prefill_ms_mean"] == 2.0
+
+
 def test_dict_rows_returns_lazy_iterable_of_dict_rows() -> None:
     rows = [{"name": "first"}, "skip", {"name": "second"}]
 
