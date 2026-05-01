@@ -360,6 +360,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     vision_state = registry.start_request("req-vision", runtime_kind="ocr")
     transcription_state = registry.start_request("req-transcription", runtime_kind="transcription")
     speech_state = registry.start_request("req-speech", runtime_kind="speech")
+    registry.set_request_phase("req-vision", "prefill")
+    registry.set_request_phase("req-transcription", "decode")
+    registry.set_request_phase("missing", "prefill")
     assert vision_state.runtime_kind == "ocr"
     assert transcription_state.runtime_kind == "transcription"
     assert speech_state.runtime_kind == "speech"
@@ -378,6 +381,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
         ),
     )
     vision_stats = registry.runtime_stats()
+    assert vision_stats.active_requests == 3
+    assert vision_stats.active_prefills == 1
+    assert vision_stats.active_decodes == 1
     assert vision_stats.active_multimodal_requests == 3
     assert vision_stats.last_probe_kind == "ocr"
     assert vision_stats.last_preprocess_latency_ms == 12.0

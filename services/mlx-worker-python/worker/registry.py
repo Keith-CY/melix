@@ -368,11 +368,16 @@ class WorkerRegistry:
         cache_stats = self.cache_stats_response().stats
         with self._lock:
             active_requests = len(self._requests)
-            active_prefills = sum(1 for state in self._requests.values() if state.phase == "prefill")
-            active_decodes = sum(1 for state in self._requests.values() if state.phase == "decode")
-            active_multimodal_requests = sum(
-                1 for state in self._requests.values() if state.runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}
-            )
+            active_prefills = 0
+            active_decodes = 0
+            active_multimodal_requests = 0
+            for state in self._requests.values():
+                if state.phase == "prefill":
+                    active_prefills += 1
+                elif state.phase == "decode":
+                    active_decodes += 1
+                if state.runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}:
+                    active_multimodal_requests += 1
             model_resident_bytes = self._loaded_model_resident_bytes
             cache_resident_bytes = cache_stats.l1_bytes + cache_stats.l2_bytes
             kv_cache_bytes = 0
