@@ -23,6 +23,7 @@ from worker.model_registry.catalog import (
     _infer_embedding_identity,
     _is_hf_cache_pruned_subtree,
     _is_hf_cache_snapshot_dir,
+    _load_json_dict_file,
     _local_model_id,
     _read_text_prefix,
     _text_lora_support_metadata,
@@ -130,6 +131,37 @@ def test_read_text_prefix_returns_empty_string_and_clears_cache_for_non_file_pat
 
     assert _read_text_prefix(target, text_prefix_cache=text_prefix_cache) == ""
     assert text_prefix_cache == {}
+
+
+
+def test_read_text_prefix_uses_stat_result_without_path_is_file_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "README.md"
+    target.write_text("library_name: mlx\n", encoding="utf-8")
+    original_is_file = Path.is_file
+
+    def fail_is_file(self: Path) -> bool:
+        if self == target:
+            raise AssertionError("expected file-type detection from stat_result")
+        return original_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", fail_is_file)
+
+    assert _read_text_prefix(target) == "library_name: mlx\n"
+
+
+
+def test_load_json_dict_file_returns_empty_and_clears_cache_for_non_file_path(tmp_path: Path) -> None:
+    target = tmp_path / "config.json"
+    target.mkdir()
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] = {
+        target: (1, 2, {"stale": True})
+    }
+
+    assert _load_json_dict_file(target, json_cache=json_cache) == {}
+    assert json_cache == {}
 
 
 
