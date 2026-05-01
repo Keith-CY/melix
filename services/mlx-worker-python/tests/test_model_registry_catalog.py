@@ -25,6 +25,7 @@ from worker.model_registry.catalog import (
     _is_hf_cache_snapshot_dir,
     _load_json_dict_file,
     _local_model_id,
+    _metadata_payload_has_mlx_signal,
     _read_text_prefix,
     _text_lora_support_metadata,
 )
@@ -289,6 +290,12 @@ def test_has_mlx_signal_stops_after_first_matching_metadata_file(
 
     assert _has_mlx_signal(model_dir=model_dir, repo_id="google/bert-base") is True
     assert calls == ["README.md"]
+
+
+
+def test_metadata_payload_has_mlx_signal_returns_false_for_unserializable_payload() -> None:
+    assert _metadata_payload_has_mlx_signal({"tags": {"mlx"}}) is False
+
 
 
 def test_has_model_weight_files_uses_os_scandir_single_pass_without_path_glob_or_iterdir(
@@ -811,6 +818,85 @@ def test_registry_root_tree_detects_descriptors_during_single_scandir_pass(
 
 
 
+def test_registry_root_tree_records_plain_local_weight_presence_during_single_scandir_pass(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    config_dir = root / "plain-model"
+    _write_model_config(config_dir, {"model_type": "qwen3"})
+    _write_weights(config_dir)
+
+    manifest_paths, plain_scans, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
+
+    assert manifest_paths == ()
+    assert hf_cache_repo_dirs == ()
+    assert [(scan.model_dir, scan.has_model_weight_files) for scan in plain_scans] == [
+        (config_dir.resolve(), True)
+    ]
+
+
+
+def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    model_dir = root / "plain-model"
+    config_path = model_dir / "config.json"
+    _write_model_config(
+        model_dir,
+        {
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+            "library_name": "mlx",
+        },
+    )
+    _write_weights(model_dir)
+
+    original_scandir = os.scandir
+    scandir_calls: list[str] = []
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    original_read_text = Path.read_text
+    config_read_count = 0
+
+    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        nonlocal config_read_count
+        if self.resolve() == config_path.resolve():
+            config_read_count += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
+    snapshot = catalog.registry_snapshot()
+
+    assert [model.model_id for model in snapshot.models] == ["plain-model"]
+    assert scandir_calls.count(os.fspath(model_dir.resolve())) == 1
+    assert config_read_count == 1
+
+
+
+def test_registry_snapshot_skips_plain_local_config_dirs_without_weights(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    model_dir = root / "plain-model"
+    _write_model_config(
+        model_dir,
+        {
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+            "library_name": "mlx",
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
+
+    assert catalog.registry_snapshot().models == ()
+
+
+
 def test_registry_root_tree_prunes_hf_cache_snapshot_and_refs_subtrees(tmp_path: Path) -> None:
     root = tmp_path / "root"
     snapshot_dir = root / "models--mlx-community--Tiny" / "snapshots" / "abc123"
@@ -1108,20 +1194,28 @@ def test_registry_snapshot_rescan_invalidates_cached_text_prefix_for_changed_hf_
     catalog = WorkerModelCatalog(environment={"HOME": str(home)})
     assert all(model.model_id != "google/bert-base" for model in catalog.registry_snapshot().models)
 
-    metadata_paths = {
+    metadata_open_counts = {
         snapshot_dir / "README.md": 0,
-        snapshot_dir / "config.json": 0,
         snapshot_dir / "model_index.json": 0,
     }
+    config_read_count = 0
     original_open = Path.open
+    original_read_text = Path.read_text
 
     def tracking_open(self: Path, *args: object, **kwargs: object):
         mode = args[0] if args else kwargs.get("mode", "r")
-        if self in metadata_paths and isinstance(mode, str) and mode.startswith("r"):
-            metadata_paths[self] += 1
+        if self in metadata_open_counts and isinstance(mode, str) and mode.startswith("r"):
+            metadata_open_counts[self] += 1
         return original_open(self, *args, **kwargs)
 
+    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        nonlocal config_read_count
+        if self == snapshot_dir / "config.json":
+            config_read_count += 1
+        return original_read_text(self, *args, **kwargs)
+
     monkeypatch.setattr(Path, "open", tracking_open)
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
 
     (snapshot_dir / "README.md").write_text("---\nlibrary_name: mlx\n---\n", encoding="utf-8")
 
@@ -1130,9 +1224,9 @@ def test_registry_snapshot_rescan_invalidates_cached_text_prefix_for_changed_hf_
 
     assert discovered["google/bert-base"].model_path == str(snapshot_dir.resolve())
     assert discovered["google/bert-base"].ext["melix.source_kind"] == "hf_cache_snapshot"
-    assert metadata_paths[snapshot_dir / "README.md"] == 1
-    assert metadata_paths[snapshot_dir / "config.json"] == 1
-    assert metadata_paths[snapshot_dir / "model_index.json"] == 0
+    assert metadata_open_counts[snapshot_dir / "README.md"] == 1
+    assert config_read_count == 0
+    assert metadata_open_counts[snapshot_dir / "model_index.json"] == 0
 
 
 
