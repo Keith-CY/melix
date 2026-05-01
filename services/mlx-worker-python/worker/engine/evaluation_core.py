@@ -134,6 +134,7 @@ class EvaluationCore:
         self._queue_store = queue_store or BenchmarkQueueStore()
         self._registry = registry
         self._job_id_lock = threading.Lock()
+        self._next_job_index: int | None = None
 
     @staticmethod
     def _load_dataset_samples(
@@ -1674,14 +1675,30 @@ class EvaluationCore:
         runs_root = self._jobs_root / "runs"
         runs_root.mkdir(parents=True, exist_ok=True)
         with self._job_id_lock:
-            next_index = 1
+            next_index = self._prime_next_job_index(runs_root)
             while True:
                 job_id = f"eval-{next_index:04d}"
                 try:
                     (runs_root / job_id).mkdir(parents=False, exist_ok=False)
+                    self._next_job_index = next_index + 1
                     return job_id
                 except FileExistsError:
                     next_index += 1
+                    self._next_job_index = next_index
+
+    def _prime_next_job_index(self, runs_root: Path) -> int:
+        if self._next_job_index is not None:
+            return self._next_job_index
+        highest_index = 0
+        for child in runs_root.iterdir():
+            if not child.is_dir():
+                continue
+            match = re.fullmatch(r"eval-(\d{4})", child.name)
+            if match is None:
+                continue
+            highest_index = max(highest_index, int(match.group(1)))
+        self._next_job_index = highest_index + 1
+        return self._next_job_index
 
     def _run_root(self, job_id: str) -> Path:
         if self._jobs_root is None:

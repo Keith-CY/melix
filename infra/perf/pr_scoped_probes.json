@@ -53,6 +53,35 @@
     ]
   },
   {
+    "id": "evaluation-job-id-high-water-mark",
+    "name": "Evaluation job-id high-water mark",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/engine/evaluation_core.py",
+      "services/mlx-worker-python/tests/test_evaluation_core.py",
+      "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_evaluation_core.py::test_run_local_suite_executes_packaged_dataset_and_persists_result services/mlx-worker-python/tests/test_evaluation_core.py::test_next_job_id_primes_from_highest_existing_run_directory services/mlx-worker-python/tests/test_evaluation_core.py::test_next_job_id_only_scans_existing_runs_once_per_process services/mlx-worker-python/tests/test_evaluation_core.py::test_next_job_id_skips_conflicting_cached_index_and_non_directory_entries services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_job_id_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_evaluation_job_id_probe",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_evaluation_core.py::test_run_local_suite_executes_packaged_dataset_and_persists_result services/mlx-worker-python/tests/test_evaluation_core.py::test_next_job_id_primes_from_highest_existing_run_directory services/mlx-worker-python/tests/test_evaluation_core.py::test_next_job_id_only_scans_existing_runs_once_per_process services/mlx-worker-python/tests/test_evaluation_core.py::test_next_job_id_skips_conflicting_cached_index_and_non_directory_entries services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_job_id_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_evaluation_job_id_probe && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/engine/evaluation_core.py services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+    "probe_impl": "evaluation_job_id",
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "per_call_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "training-dataset-token-percentiles-single-sort",
     "name": "Training dataset token percentiles single sort",
     "runner": "ubuntu-latest",
