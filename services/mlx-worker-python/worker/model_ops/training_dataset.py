@@ -18,6 +18,7 @@ from worker.model_ops.errors import ModelOperationError
 _SUPPORTED_FORMATS = {"chat_messages", "prompt_completion", "text_completion"}
 _SUPPORTED_ROLES = {"system", "user", "assistant", "tool"}
 _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
+_QUALITY_REPORT_SAMPLE_LIMIT = 10
 
 HFDatasetFetcher = Callable[[str, dict[str, str]], dict[str, Any]]
 
@@ -1295,51 +1296,63 @@ def _build_quality_and_token_stats(
     seen: set[bytes] = set()
     duplicate_indices: list[int] = []
     dirty_samples: list[dict[str, Any]] = []
+    duplicate_count = 0
+    dirty_count = 0
     prompt_tokens: list[int] = []
     completion_tokens: list[int] = []
     total_tokens: list[int] = []
     sample_count = 0
+    is_prompt_completion = format_name == "prompt_completion"
+    count_tokens = _whitespace_token_count if is_prompt_completion else None
     for index, sample in enumerate(samples):
         sample_count += 1
         sample_digest = _canonical_sample_digest(sample)
         if sample_digest in seen:
-            duplicate_indices.append(index)
+            duplicate_count += 1
+            if len(duplicate_indices) < _QUALITY_REPORT_SAMPLE_LIMIT:
+                duplicate_indices.append(index)
         else:
             seen.add(sample_digest)
         reasons = _dirty_sample_reasons(sample)
         if reasons:
-            dirty_samples.append({"index": index, "reasons": reasons})
-        prompt_count, completion_count = _sample_token_counts(sample, format_name)
+            dirty_count += 1
+            if len(dirty_samples) < _QUALITY_REPORT_SAMPLE_LIMIT:
+                dirty_samples.append({"index": index, "reasons": reasons})
+        if is_prompt_completion:
+            prompt_count = count_tokens(str(sample.get("prompt", "")))
+            completion_count = count_tokens(str(sample.get("completion", "")))
+        else:
+            prompt_count, completion_count = _sample_token_counts(sample, format_name)
         prompt_tokens.append(prompt_count)
         completion_tokens.append(completion_count)
         total_tokens.append(prompt_count + completion_count)
 
-    prompt_summary = _summarize_token_values(prompt_tokens)
-    completion_summary = _summarize_token_values(completion_tokens)
-    total_summary = _summarize_token_values(total_tokens)
+    finalized_prompt_summary = _summarize_token_values(prompt_tokens)
+    finalized_completion_summary = _summarize_token_values(completion_tokens)
+    finalized_total_summary = _summarize_token_values(total_tokens)
 
     return (
         {
-            "duplicate_count": len(duplicate_indices),
-            "duplicate_sample_indices": duplicate_indices[:10],
-            "dirty_count": len(dirty_samples),
-            "dirty_samples": dirty_samples[:10],
+            "duplicate_count": duplicate_count,
+            "duplicate_sample_indices": duplicate_indices,
+            "dirty_count": dirty_count,
+            "dirty_samples": dirty_samples,
         },
         {
             "estimator": "whitespace_v1",
             "sample_count": sample_count,
-            "prompt_tokens_mean": prompt_summary["mean"],
-            "prompt_tokens_p50": prompt_summary["p50"],
-            "prompt_tokens_p95": prompt_summary["p95"],
-            "prompt_tokens_max": prompt_summary["max"],
-            "completion_tokens_mean": completion_summary["mean"],
-            "completion_tokens_p50": completion_summary["p50"],
-            "completion_tokens_p95": completion_summary["p95"],
-            "completion_tokens_max": completion_summary["max"],
-            "total_tokens_mean": total_summary["mean"],
-            "total_tokens_p50": total_summary["p50"],
-            "total_tokens_p95": total_summary["p95"],
-            "total_tokens_max": total_summary["max"],
+            "prompt_tokens_mean": finalized_prompt_summary["mean"],
+            "prompt_tokens_p50": finalized_prompt_summary["p50"],
+            "prompt_tokens_p95": finalized_prompt_summary["p95"],
+            "prompt_tokens_max": finalized_prompt_summary["max"],
+            "completion_tokens_mean": finalized_completion_summary["mean"],
+            "completion_tokens_p50": finalized_completion_summary["p50"],
+            "completion_tokens_p95": finalized_completion_summary["p95"],
+            "completion_tokens_max": finalized_completion_summary["max"],
+            "total_tokens_mean": finalized_total_summary["mean"],
+            "total_tokens_p50": finalized_total_summary["p50"],
+            "total_tokens_p95": finalized_total_summary["p95"],
+            "total_tokens_max": finalized_total_summary["max"],
         },
     )
 

@@ -10,6 +10,7 @@ import worker.productization.pr_scoped_performance as pr_scoped_performance_modu
 
 from worker.productization.pr_scoped_performance import (
     _build_large_benchmark_bundle,
+    _build_large_training_dataset_quality_samples,
     _build_large_training_dataset_samples,
     _build_metric_row,
     _single_pass_sample_iterable,
@@ -176,27 +177,44 @@ def test_single_pass_sample_iterable_rejects_repeated_iteration() -> None:
         list(iterable)
 
 
-def test_probe_training_dataset_token_percentiles_uses_single_pass_non_list_iterables(
+def test_probe_training_dataset_token_percentiles_reports_quality_and_tracing_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sample_rows = _build_large_training_dataset_samples()[:4]
+    sample_rows = _build_large_training_dataset_quality_samples()[:4]
     calls = 0
 
     class FakeTrainingDatasetModule:
         @staticmethod
-        def _build_token_stats(samples: object, format_name: str) -> dict[str, float]:
+        def _build_quality_and_token_stats(samples: object, format_name: str) -> tuple[dict[str, float], dict[str, float]]:
             nonlocal calls
             calls += 1
             assert format_name == "prompt_completion"
-            assert not isinstance(samples, list)
-            assert list(samples) == sample_rows
-            with pytest.raises(RuntimeError, match="consumed more than once"):
-                list(samples)
-            return {
-                "prompt_tokens_p95": 9.0,
-                "total_tokens_p95": 16.0,
-                "sample_count": float(len(sample_rows)),
-            }
+            assert samples is sample_rows
+            return (
+                {
+                    "duplicate_count": 2.0,
+                    "dirty_count": 1.0,
+                },
+                {
+                    "sample_count": float(len(sample_rows)),
+                },
+            )
+
+    class FakeTraceMalloc:
+        def __init__(self) -> None:
+            self.started = 0
+            self.stopped = 0
+
+        def start(self) -> None:
+            self.started += 1
+
+        def get_traced_memory(self) -> tuple[int, int]:
+            return (111, 222)
+
+        def stop(self) -> None:
+            self.stopped += 1
+
+    fake_tracemalloc = FakeTraceMalloc()
 
     monkeypatch.setattr(
         pr_scoped_performance_module,
@@ -205,16 +223,20 @@ def test_probe_training_dataset_token_percentiles_uses_single_pass_non_list_iter
     )
     monkeypatch.setattr(
         pr_scoped_performance_module,
-        "_build_large_training_dataset_samples",
+        "_build_large_training_dataset_quality_samples",
         lambda: sample_rows,
     )
+    monkeypatch.setattr(pr_scoped_performance_module, "tracemalloc", fake_tracemalloc)
 
     metrics = _probe_training_dataset_token_percentiles(REPO_ROOT)
 
     assert calls == 3
+    assert fake_tracemalloc.started == 3
+    assert fake_tracemalloc.stopped == 3
     assert metrics["sample_count"] == float(len(sample_rows))
-    assert metrics["prompt_tokens_p95"] == 9.0
-    assert metrics["total_tokens_p95"] == 16.0
+    assert metrics["duplicate_count"] == 2.0
+    assert metrics["dirty_count"] == 1.0
+    assert metrics["peak_bytes_mean"] == 222.0
     assert metrics["elapsed_ms_mean"] >= 0
 
 
@@ -236,9 +258,10 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert evaluation_job_id_metrics["first_job_id_numeric"] == 2001.0
     assert evaluation_job_id_metrics["last_job_id_numeric"] == 2200.0
     assert training_dataset_metrics["elapsed_ms_mean"] > 0
+    assert training_dataset_metrics["peak_bytes_mean"] > 0
     assert training_dataset_metrics["sample_count"] == 20000.0
-    assert training_dataset_metrics["prompt_tokens_p95"] > 0
-    assert training_dataset_metrics["total_tokens_p95"] > 0
+    assert training_dataset_metrics["duplicate_count"] > 0
+    assert training_dataset_metrics["dirty_count"] > 0
 
 
 def test_dispatch_probe_impl_supports_evaluation_job_id_probe() -> None:

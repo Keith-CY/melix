@@ -772,6 +772,92 @@ def test_build_token_stats_skips_quality_only_work(monkeypatch: pytest.MonkeyPat
     }
 
 
+def test_build_quality_and_token_stats_caps_retained_examples_but_preserves_total_counts() -> None:
+    repeated_sample = {"prompt": "same text", "completion": "same text"}
+
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        [dict(repeated_sample) for _ in range(12)],
+        "prompt_completion",
+    )
+
+    assert quality == {
+        "duplicate_count": 11,
+        "duplicate_sample_indices": list(range(1, 11)),
+        "dirty_count": 12,
+        "dirty_samples": [
+            {"index": index, "reasons": ["duplicate_prompt_completion"]}
+            for index in range(10)
+        ],
+    }
+    assert token_stats["sample_count"] == 12
+    assert token_stats["prompt_tokens_mean"] == 2.0
+    assert token_stats["prompt_tokens_p95"] == 2
+    assert token_stats["total_tokens_max"] == 4
+
+
+def test_build_quality_and_token_stats_uses_prompt_completion_fast_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_generic_token_counter(sample: dict[str, object], format_name: str) -> tuple[int, int]:
+        raise AssertionError(f"prompt_completion quality stats should use the direct fast path ({format_name=}, {sample=})")
+
+    monkeypatch.setattr(training_dataset_module, "_sample_token_counts", fail_generic_token_counter)
+
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        [
+            {"prompt": "a b c", "completion": "d e"},
+            {"prompt": "f", "completion": "g h i j"},
+            {"prompt": "k l", "completion": "m"},
+            {"prompt": "n o p q", "completion": "r s t"},
+        ],
+        "prompt_completion",
+    )
+
+    assert quality == {
+        "duplicate_count": 0,
+        "duplicate_sample_indices": [],
+        "dirty_count": 0,
+        "dirty_samples": [],
+    }
+    assert token_stats == {
+        "estimator": "whitespace_v1",
+        "sample_count": 4,
+        "prompt_tokens_mean": 2.5,
+        "prompt_tokens_p50": 2,
+        "prompt_tokens_p95": 3,
+        "prompt_tokens_max": 4,
+        "completion_tokens_mean": 2.5,
+        "completion_tokens_p50": 2,
+        "completion_tokens_p95": 3,
+        "completion_tokens_max": 4,
+        "total_tokens_mean": 5.0,
+        "total_tokens_p50": 5,
+        "total_tokens_p95": 5,
+        "total_tokens_max": 7,
+    }
+
+    monkeypatch.undo()
+    assert training_dataset_module._build_quality_and_token_stats(
+        [{"text": "alpha beta gamma"}, {"text": "delta"}],
+        "text_completion",
+    )[1] == {
+        "estimator": "whitespace_v1",
+        "sample_count": 2,
+        "prompt_tokens_mean": 0.0,
+        "prompt_tokens_p50": 0,
+        "prompt_tokens_p95": 0,
+        "prompt_tokens_max": 0,
+        "completion_tokens_mean": 2.0,
+        "completion_tokens_p50": 1,
+        "completion_tokens_p95": 1,
+        "completion_tokens_max": 3,
+        "total_tokens_mean": 2.0,
+        "total_tokens_p50": 1,
+        "total_tokens_p95": 1,
+        "total_tokens_max": 3,
+    }
+
+
 def test_resolve_dataset_build_source_reuses_existing_package_sample_lists(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
