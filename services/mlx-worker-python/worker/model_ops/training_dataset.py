@@ -1314,6 +1314,10 @@ def _build_quality_and_token_stats(
         completion_tokens.append(completion_count)
         total_tokens.append(prompt_count + completion_count)
 
+    prompt_summary = _summarize_token_values(prompt_tokens)
+    completion_summary = _summarize_token_values(completion_tokens)
+    total_summary = _summarize_token_values(total_tokens)
+
     return (
         {
             "duplicate_count": len(duplicate_indices),
@@ -1324,18 +1328,18 @@ def _build_quality_and_token_stats(
         {
             "estimator": "whitespace_v1",
             "sample_count": sample_count,
-            "prompt_tokens_mean": _mean_value(prompt_tokens),
-            "prompt_tokens_p50": _percentile_value(prompt_tokens, 0.50),
-            "prompt_tokens_p95": _percentile_value(prompt_tokens, 0.95),
-            "prompt_tokens_max": max(prompt_tokens, default=0),
-            "completion_tokens_mean": _mean_value(completion_tokens),
-            "completion_tokens_p50": _percentile_value(completion_tokens, 0.50),
-            "completion_tokens_p95": _percentile_value(completion_tokens, 0.95),
-            "completion_tokens_max": max(completion_tokens, default=0),
-            "total_tokens_mean": _mean_value(total_tokens),
-            "total_tokens_p50": _percentile_value(total_tokens, 0.50),
-            "total_tokens_p95": _percentile_value(total_tokens, 0.95),
-            "total_tokens_max": max(total_tokens, default=0),
+            "prompt_tokens_mean": prompt_summary["mean"],
+            "prompt_tokens_p50": prompt_summary["p50"],
+            "prompt_tokens_p95": prompt_summary["p95"],
+            "prompt_tokens_max": prompt_summary["max"],
+            "completion_tokens_mean": completion_summary["mean"],
+            "completion_tokens_p50": completion_summary["p50"],
+            "completion_tokens_p95": completion_summary["p95"],
+            "completion_tokens_max": completion_summary["max"],
+            "total_tokens_mean": total_summary["mean"],
+            "total_tokens_p50": total_summary["p50"],
+            "total_tokens_p95": total_summary["p95"],
+            "total_tokens_max": total_summary["max"],
         },
     )
 
@@ -1434,12 +1438,25 @@ def _mean_value(values: list[int]) -> float:
     return round(sum(values) / len(values), 3)
 
 
-def _percentile_value(values: list[int], pct: float) -> int:
-    if not values:
-        return 0
+def _summarize_token_values(values: list[int]) -> dict[str, float | int]:
     ordered = sorted(values)
-    index = int((len(ordered) - 1) * pct)
-    return ordered[index]
+    return {
+        "mean": _mean_value(values),
+        "p50": _sorted_percentile_value(ordered, 0.50),
+        "p95": _sorted_percentile_value(ordered, 0.95),
+        "max": ordered[-1] if ordered else 0,
+    }
+
+
+def _sorted_percentile_value(ordered_values: list[int], pct: float) -> int:
+    if not ordered_values:
+        return 0
+    index = int((len(ordered_values) - 1) * pct)
+    return ordered_values[index]
+
+
+def _percentile_value(values: list[int], pct: float) -> int:
+    return _sorted_percentile_value(sorted(values), pct)
 
 
 def _truthy(raw_value: str) -> bool:

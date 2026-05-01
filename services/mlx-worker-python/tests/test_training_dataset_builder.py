@@ -626,6 +626,38 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
     assert training_dataset_module._mean_value([]) == 0.0
     assert training_dataset_module._percentile_value([], 0.95) == 0
 
+
+def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_percentile_value(values: list[int], pct: float) -> int:
+        raise AssertionError(f"legacy percentile helper should not run for optimized token stats ({pct=}, {values=})")
+
+    monkeypatch.setattr(training_dataset_module, "_percentile_value", fail_percentile_value)
+
+    assert training_dataset_module._build_token_stats(
+        [
+            {"prompt": "a b c", "completion": "d e"},
+            {"prompt": "f", "completion": "g h i j"},
+            {"prompt": "k l", "completion": "m"},
+            {"prompt": "n o p q", "completion": "r s t"},
+        ],
+        "prompt_completion",
+    ) == {
+        "estimator": "whitespace_v1",
+        "sample_count": 4,
+        "prompt_tokens_mean": 2.5,
+        "prompt_tokens_p50": 2,
+        "prompt_tokens_p95": 3,
+        "prompt_tokens_max": 4,
+        "completion_tokens_mean": 2.5,
+        "completion_tokens_p50": 2,
+        "completion_tokens_p95": 3,
+        "completion_tokens_max": 4,
+        "total_tokens_mean": 5.0,
+        "total_tokens_p50": 5,
+        "total_tokens_p95": 5,
+        "total_tokens_max": 7,
+    }
+
     with pytest.raises(ModelOperationError) as int_parse_exc:
         training_dataset_module._int_ext_value(
             "bad",
