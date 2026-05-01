@@ -432,6 +432,7 @@ def _collect_benchmark_probe_metrics(
     prefix: str,
 ) -> None:
     aggregates_by_label_and_key: dict[tuple[str, str], _NumericAggregate] = {}
+    matrix_label_cache: dict[tuple[object, object, object, object, object], str] = {}
     for row in _dict_rows(rows):
         label = ""
         for key, raw_value in row.items():
@@ -443,7 +444,7 @@ def _collect_benchmark_probe_metrics(
                 value = _float_or_none(raw_value)
             if value is not None:
                 if not label:
-                    label = _benchmark_probe_label(row)
+                    label = _benchmark_probe_label(row, matrix_label_cache=matrix_label_cache)
                 aggregate_key = (label, key)
                 aggregates_by_label_and_key[aggregate_key] = _update_numeric_aggregate(
                     aggregates_by_label_and_key.get(aggregate_key),
@@ -521,8 +522,28 @@ def _aggregate_probe_values(key: str, values: list[float]) -> tuple[str, float]:
     return _finalize_numeric_aggregate(key, aggregate)
 
 
-def _benchmark_probe_label(row: dict[str, object]) -> str:
+def _benchmark_probe_label(
+    row: dict[str, object],
+    *,
+    matrix_label_cache: dict[tuple[object, object, object, object, object], str] | None = None,
+) -> str:
     if "cell_id" in row or ("suite_id" in row and "concurrency_level" in row):
+        if matrix_label_cache is not None:
+            cache_key = (
+                row.get("suite_id", "suite"),
+                row.get("context_length", 0),
+                row.get("generation_length", 0),
+                row.get("batch_size", 0),
+                row.get("concurrency_level", 0),
+            )
+            try:
+                return matrix_label_cache[cache_key]
+            except KeyError:
+                label = _matrix_label(row)
+                matrix_label_cache[cache_key] = label
+                return label
+            except TypeError:
+                pass
         return _matrix_label(row)
     suite = _label_part(row.get("suite", row.get("suite_id", "suite")))
     context_length = _label_part(row.get("context_length", 0))
