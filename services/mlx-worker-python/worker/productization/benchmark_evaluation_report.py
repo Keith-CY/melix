@@ -96,6 +96,34 @@ _HIGHER_IS_BETTER_METRIC_FRAGMENTS = (
     "speedup",
     "cache_hit",
 )
+_METRIC_DIRECTION_BY_KEY = {
+    "cache_hit_rate": "higher_is_better",
+    "decode_ms_mean": "lower_is_better",
+    "dflash_enabled_rate": "higher_is_better",
+    "dflash_rollback_count_sum": "lower_is_better",
+    "duration_seconds": "lower_is_better",
+    "extracted_result_chars_mean": "neutral",
+    "failed_count": "lower_is_better",
+    "failure_count": "lower_is_better",
+    "inference_ms_mean": "lower_is_better",
+    "prefill_ms_mean": "lower_is_better",
+    "raw_response_chars_mean": "neutral",
+    "request_latency_mean_ms": "lower_is_better",
+    "request_latency_p95_ms": "lower_is_better",
+    "sample_render_ms_mean": "lower_is_better",
+    "scoring_ms_mean": "lower_is_better",
+    "speculative_acceptance_rate_mean": "higher_is_better",
+    "speculative_fallback_count_sum": "lower_is_better",
+    "speculative_rejected_tokens_sum": "lower_is_better",
+    "success_rate": "higher_is_better",
+    "throughput_tokens_per_second": "higher_is_better",
+    "tokens_per_second": "higher_is_better",
+    "ttft_mean_ms": "lower_is_better",
+    "ttft_ms": "lower_is_better",
+    "ttft_p95_ms": "lower_is_better",
+    "typed_score_mean": "higher_is_better",
+    "validation_ms_mean": "lower_is_better",
+}
 
 _NumericAggregate = tuple[float, int]
 
@@ -365,6 +393,9 @@ def _build_metric_row(
 
 def _metric_direction(metric_name: str) -> str:
     metric_key = metric_name.rsplit(".", maxsplit=1)[-1]
+    known_direction = _METRIC_DIRECTION_BY_KEY.get(metric_key)
+    if known_direction is not None:
+        return known_direction
     for fragment in _LOWER_IS_BETTER_METRIC_FRAGMENTS:
         if fragment in metric_key:
             return "lower_is_better"

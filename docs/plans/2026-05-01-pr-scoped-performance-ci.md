@@ -103,7 +103,7 @@ Planned initial entries:
 
 - Scope: `services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py`.
 - Probe: `benchmark-evaluation-report-running-aggregates` remains the registered CI and local probe for this path.
-- Slice boundary: hoist the metric-direction fragment tables out of `_metric_direction` and use direct loops so the large synthetic report path does not rebuild identical tuples or allocate generator objects once per metric row.
+- Slice boundary: use a precomputed exact-key direction map for the registered report probe's common metric suffixes before falling back to the fragment scans, so the large synthetic report path avoids repeated substring scans for known keys while preserving fallback semantics.
 - Verification target: focused benchmark-evaluation report tests, changed-scope coverage, and the registered PR-scoped performance probe.
 
 ## Known Constraints
