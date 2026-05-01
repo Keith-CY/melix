@@ -54,6 +54,7 @@ class ProbeDefinition:
     test_command: str
     coverage_command: str
     probe_impl: str
+    probe_command: str
     metrics: tuple[MetricDefinition, ...]
 
     def to_scope_dict(self) -> dict[str, object]:
@@ -96,6 +97,7 @@ def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
                 test_command=str(raw_probe.get("test_command", "")).strip(),
                 coverage_command=str(raw_probe.get("coverage_command", "")).strip(),
                 probe_impl=str(raw_probe["probe_impl"]),
+                probe_command=str(raw_probe.get("probe_command", "")).strip(),
                 metrics=metrics,
             )
         )
@@ -351,7 +353,39 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_closure_audit(repo_root)
     if probe.probe_impl == "training_dataset_token_percentiles":
         return _probe_training_dataset_token_percentiles(repo_root)
+    if probe.probe_impl == "command_json":
+        return _probe_command_json(probe=probe, repo_root=repo_root)
     raise ValueError(f"unsupported probe implementation: {probe.probe_impl}")
+
+
+def _probe_command_json(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, float]:
+    if not probe.probe_command:
+        raise ValueError("command_json probes require a non-empty probe_command")
+    completed = subprocess.run(
+        probe.probe_command,
+        shell=True,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "probe_command failed "
+            f"with exit {completed.returncode}: {(completed.stderr or completed.stdout).strip()}"
+        )
+    stdout = completed.stdout.strip()
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"probe_command must emit JSON object metrics: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("probe_command must emit a JSON object")
+    metrics: dict[str, float] = {}
+    for key, value in payload.items():
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError(f"probe_command metric {key} must be numeric")
+        metrics[str(key)] = float(value)
+    return metrics
 
 
 def _probe_benchmark_evaluation_report(repo_root: Path) -> dict[str, float]:
