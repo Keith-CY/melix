@@ -451,6 +451,37 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert registry.runtime_stats().active_multimodal_requests == 0
 
 
+def test_runtime_stats_request_counters_stay_consistent_without_request_scan() -> None:
+    registry = build_registry()
+
+    registry.start_request("req-reused", runtime_kind="ocr")
+    registry.set_request_phase("req-reused", "prefill")
+    registry.start_request("req-reused", runtime_kind="text")
+    registry.set_request_phase("req-reused", "decode")
+    registry.start_request("req-image", runtime_kind="image")
+
+    stats = registry.runtime_stats()
+    assert stats.active_requests == 2
+    assert stats.active_prefills == 0
+    assert stats.active_decodes == 1
+    assert stats.active_multimodal_requests == 1
+
+    registry.finish_request("req-reused")
+    registry.finish_request("missing")
+    stats = registry.runtime_stats()
+    assert stats.active_requests == 1
+    assert stats.active_prefills == 0
+    assert stats.active_decodes == 0
+    assert stats.active_multimodal_requests == 1
+
+    registry.finish_request("req-image")
+    stats = registry.runtime_stats()
+    assert stats.active_requests == 0
+    assert stats.active_prefills == 0
+    assert stats.active_decodes == 0
+    assert stats.active_multimodal_requests == 0
+
+
 def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backend_configuration() -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=FakeBackend()),
