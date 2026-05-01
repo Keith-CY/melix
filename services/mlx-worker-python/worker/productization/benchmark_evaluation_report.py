@@ -431,7 +431,7 @@ def _collect_benchmark_probe_metrics(
     *,
     prefix: str,
 ) -> None:
-    aggregates_by_label_and_key: dict[tuple[str, str], _NumericAggregate] = {}
+    aggregates_by_label: dict[str, dict[str, _NumericAggregate]] = {}
     matrix_label_cache: dict[tuple[object, object, object, object, object], str] = {}
     for row in _dict_rows(rows):
         label = ""
@@ -445,14 +445,16 @@ def _collect_benchmark_probe_metrics(
             if value is not None:
                 if not label:
                     label = _benchmark_probe_label(row, matrix_label_cache=matrix_label_cache)
-                aggregate_key = (label, key)
-                aggregates_by_label_and_key[aggregate_key] = _update_numeric_aggregate(
-                    aggregates_by_label_and_key.get(aggregate_key),
-                    value,
+                _update_probe_aggregates_by_label(
+                    aggregates_by_label,
+                    label=label,
+                    key=key,
+                    value=value,
                 )
-    for (label, key), aggregate in aggregates_by_label_and_key.items():
-        suffix, value = _finalize_numeric_aggregate(key, aggregate)
-        metrics[f"{prefix}.{label}.{key}_{suffix}"] = value
+    for label, aggregates_by_key in aggregates_by_label.items():
+        for key, aggregate in aggregates_by_key.items():
+            suffix, value = _finalize_numeric_aggregate(key, aggregate)
+            metrics[f"{prefix}.{label}.{key}_{suffix}"] = value
 
 
 def _collect_evaluation_sample_probe_metrics(
@@ -495,6 +497,20 @@ def _update_numeric_aggregate(
     if aggregate is None:
         return (value, 1)
     return (aggregate[0] + value, aggregate[1] + 1)
+
+
+def _update_probe_aggregates_by_label(
+    aggregates_by_label: dict[str, dict[str, _NumericAggregate]],
+    *,
+    label: str,
+    key: str,
+    value: float,
+) -> None:
+    aggregates_by_key = aggregates_by_label.get(label)
+    if aggregates_by_key is None:
+        aggregates_by_key = {}
+        aggregates_by_label[label] = aggregates_by_key
+    aggregates_by_key[key] = _update_numeric_aggregate(aggregates_by_key.get(key), value)
 
 
 def _finalize_numeric_aggregate(
