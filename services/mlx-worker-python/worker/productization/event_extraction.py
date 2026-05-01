@@ -2711,12 +2711,16 @@ def _coerce_string_list(value: object) -> list[str]:
 def _parse_response_json(response_text: str) -> dict[str, object]:
     stripped = response_text.strip()
     if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        stripped = "\n".join(lines).strip()
+        newline_index = stripped.find("\n")
+        if newline_index >= 0 and stripped.endswith("```"):
+            stripped = stripped[newline_index + 1 : -3].strip()
+        else:
+            lines = stripped.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            stripped = "\n".join(lines).strip()
     parsed = json.loads(stripped)
     if not isinstance(parsed, dict):
         raise ValueError("LLM response must be a JSON object")
