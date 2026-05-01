@@ -524,20 +524,26 @@ def _aggregate_probe_values(key: str, values: list[float]) -> tuple[str, float]:
 def _benchmark_probe_label(row: dict[str, object]) -> str:
     if "cell_id" in row or ("suite_id" in row and "concurrency_level" in row):
         return _matrix_label(row)
-    suite = str(row.get("suite", row.get("suite_id", "suite"))).replace(" ", "_")
-    context_length = str(row.get("context_length", 0)).replace(" ", "_")
-    generation_length = str(row.get("generation_length", 0)).replace(" ", "_")
-    batch_size = str(row.get("batch_size", 0)).replace(" ", "_")
+    suite = _label_part(row.get("suite", row.get("suite_id", "suite")))
+    context_length = _label_part(row.get("context_length", 0))
+    generation_length = _label_part(row.get("generation_length", 0))
+    batch_size = _label_part(row.get("batch_size", 0))
     return f"{suite}.ctx{context_length}.gen{generation_length}.b{batch_size}"
 
 
 def _matrix_label(row: dict[str, object]) -> str:
-    suite_id = str(row.get("suite_id", "suite")).replace(" ", "_")
-    context_length = str(row.get("context_length", 0)).replace(" ", "_")
-    generation_length = str(row.get("generation_length", 0)).replace(" ", "_")
-    batch_size = str(row.get("batch_size", 0)).replace(" ", "_")
-    concurrency_level = str(row.get("concurrency_level", 0)).replace(" ", "_")
+    suite_id = _label_part(row.get("suite_id", "suite"))
+    context_length = _label_part(row.get("context_length", 0))
+    generation_length = _label_part(row.get("generation_length", 0))
+    batch_size = _label_part(row.get("batch_size", 0))
+    concurrency_level = _label_part(row.get("concurrency_level", 0))
     return f"{suite_id}.ctx{context_length}.gen{generation_length}.b{batch_size}.c{concurrency_level}"
+
+
+def _label_part(value: object) -> str:
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return str(value).replace(" ", "_")
 
 
 def _report_rows(report: dict[str, object]) -> Iterator[dict[str, object]]:

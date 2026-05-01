@@ -10,6 +10,7 @@ from worker.productization.benchmark_evaluation_report import (
     _aggregate_probe_values,
     _dict_rows,
     _finalize_numeric_aggregate,
+    _label_part,
     _markdown_cell,
     _metric_direction,
     _report_rows,
@@ -511,6 +512,13 @@ def test_report_builder_aggregates_numeric_probe_values_without_normalizing_all_
     assert rows_by_metric["bench.context.mixed.ctx128.gen32.b1.cache_hit_rate"]["candidate"] == (
         pytest.approx(1.0)
     )
+
+
+def test_label_part_preserves_numeric_labels_and_normalizes_text_spaces() -> None:
+    assert _label_part(1024) == "1024"
+    assert _label_part(1.5) == "1.5"
+    assert _label_part(True) == "True"
+    assert _label_part("long suite") == "long_suite"
 
 
 def test_report_builder_uses_sparse_benchmark_probe_rows_without_fixed_key_scans() -> None:
