@@ -421,40 +421,67 @@ def _probe_closure_audit(repo_root: Path) -> dict[str, float]:
 
 
 def _probe_evaluation_job_id(repo_root: Path) -> dict[str, float]:
-    module = _load_repo_module(
-        repo_root / "services/mlx-worker-python/worker/engine/evaluation_core.py",
-        unique_name="melix_probe_evaluation_job_id",
-    )
-    elapsed_samples: list[float] = []
-    allocation_count = 0.0
-    first_job_id = ""
-    last_job_id = ""
     seeded_run_count = 2000
     per_sample_allocations = 200
-    for _ in range(3):
-        gc.collect()
-        with tempfile.TemporaryDirectory(prefix="melix-pr-perf-eval-job-id-") as temp_dir:
-            jobs_root = Path(temp_dir) / "jobs"
-            runs_root = jobs_root / "runs"
-            runs_root.mkdir(parents=True, exist_ok=True)
-            for index in range(1, seeded_run_count + 1):
-                (runs_root / f"eval-{index:04d}").mkdir()
-            runner = module.EvaluationCore(jobs_root=jobs_root)
-            started = time.perf_counter()
-            allocated_job_ids = [runner._next_job_id() for _ in range(per_sample_allocations)]
-            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
-            allocation_count = float(len(allocated_job_ids))
-            first_job_id = allocated_job_ids[0]
-            last_job_id = allocated_job_ids[-1]
-    elapsed_ms_mean = sum(elapsed_samples) / len(elapsed_samples)
-    return {
-        "elapsed_ms_mean": round(elapsed_ms_mean, 3),
-        "per_call_ms_mean": round(elapsed_ms_mean / max(allocation_count, 1.0), 6),
-        "allocation_count": allocation_count,
-        "seeded_run_count": float(seeded_run_count),
-        "first_job_id_numeric": float(first_job_id.removeprefix("eval-") or 0),
-        "last_job_id_numeric": float(last_job_id.removeprefix("eval-") or 0),
-    }
+    probe_script = f"""
+import json
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+repo_root = Path({str(repo_root)!r})
+sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))
+from worker.engine.evaluation_core import EvaluationCore
+
+elapsed_samples = []
+allocation_count = 0
+first_job_id = ''
+last_job_id = ''
+seeded_run_count = {seeded_run_count}
+per_sample_allocations = {per_sample_allocations}
+for _ in range(3):
+    with tempfile.TemporaryDirectory(prefix='melix-pr-perf-eval-job-id-') as temp_dir:
+        jobs_root = Path(temp_dir) / 'jobs'
+        runs_root = jobs_root / 'runs'
+        runs_root.mkdir(parents=True, exist_ok=True)
+        for index in range(1, seeded_run_count + 1):
+            (runs_root / f'eval-{{index:04d}}').mkdir()
+        runner = EvaluationCore(jobs_root=jobs_root)
+        started = time.perf_counter()
+        allocated_job_ids = [runner._next_job_id() for _ in range(per_sample_allocations)]
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        allocation_count = len(allocated_job_ids)
+        first_job_id = allocated_job_ids[0]
+        last_job_id = allocated_job_ids[-1]
+
+elapsed_ms_mean = sum(elapsed_samples) / len(elapsed_samples)
+print(json.dumps({{
+    'elapsed_ms_mean': round(elapsed_ms_mean, 3),
+    'per_call_ms_mean': round(elapsed_ms_mean / max(allocation_count, 1), 6),
+    'allocation_count': float(allocation_count),
+    'seeded_run_count': float(seeded_run_count),
+    'first_job_id_numeric': float(first_job_id.removeprefix('eval-') or 0),
+    'last_job_id_numeric': float(last_job_id.removeprefix('eval-') or 0),
+}}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(repo_root / "services/mlx-worker-python"),
+            "python",
+            "-c",
+            probe_script,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads((completed.stdout or "").strip())
 
 
 def _probe_training_dataset_token_percentiles(repo_root: Path) -> dict[str, float]:
