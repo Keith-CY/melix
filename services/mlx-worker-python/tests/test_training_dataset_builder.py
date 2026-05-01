@@ -631,7 +631,11 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
     def fail_percentile_value(values: list[int], pct: float) -> int:
         raise AssertionError(f"legacy percentile helper should not run for optimized token stats ({pct=}, {values=})")
 
+    def fail_generic_token_counter(sample: dict[str, object], format_name: str) -> tuple[int, int]:
+        raise AssertionError(f"prompt_completion token stats should use the direct fast path ({format_name=})")
+
     monkeypatch.setattr(training_dataset_module, "_percentile_value", fail_percentile_value)
+    monkeypatch.setattr(training_dataset_module, "_sample_token_counts", fail_generic_token_counter)
 
     assert training_dataset_module._build_token_stats(
         [
@@ -658,6 +662,29 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
         "total_tokens_max": 7,
     }
 
+    monkeypatch.undo()
+    assert training_dataset_module._build_token_stats(
+        [
+            {"text": "alpha beta gamma"},
+            {"text": "delta"},
+        ],
+        "text_completion",
+    ) == {
+        "estimator": "whitespace_v1",
+        "sample_count": 2,
+        "prompt_tokens_mean": 0.0,
+        "prompt_tokens_p50": 0,
+        "prompt_tokens_p95": 0,
+        "prompt_tokens_max": 0,
+        "completion_tokens_mean": 2.0,
+        "completion_tokens_p50": 1,
+        "completion_tokens_p95": 1,
+        "completion_tokens_max": 3,
+        "total_tokens_mean": 2.0,
+        "total_tokens_p50": 1,
+        "total_tokens_p95": 1,
+        "total_tokens_max": 3,
+    }
 
     with pytest.raises(ModelOperationError) as int_parse_exc:
         training_dataset_module._int_ext_value(

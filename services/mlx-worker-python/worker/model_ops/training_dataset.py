@@ -1353,12 +1353,22 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
     completion_tokens: list[int] = []
     total_tokens: list[int] = []
     sample_count = 0
-    for sample in samples:
-        sample_count += 1
-        prompt_count, completion_count = _sample_token_counts(sample, format_name)
-        prompt_tokens.append(prompt_count)
-        completion_tokens.append(completion_count)
-        total_tokens.append(prompt_count + completion_count)
+    if format_name == "prompt_completion":
+        count_tokens = _whitespace_token_count
+        for sample in samples:
+            sample_count += 1
+            prompt_count = count_tokens(str(sample.get("prompt", "")))
+            completion_count = count_tokens(str(sample.get("completion", "")))
+            prompt_tokens.append(prompt_count)
+            completion_tokens.append(completion_count)
+            total_tokens.append(prompt_count + completion_count)
+    else:
+        for sample in samples:
+            sample_count += 1
+            prompt_count, completion_count = _sample_token_counts(sample, format_name)
+            prompt_tokens.append(prompt_count)
+            completion_tokens.append(completion_count)
+            total_tokens.append(prompt_count + completion_count)
 
     prompt_summary = _summarize_token_values(prompt_tokens)
     completion_summary = _summarize_token_values(completion_tokens)
