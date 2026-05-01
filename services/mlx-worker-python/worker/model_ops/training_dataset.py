@@ -70,6 +70,7 @@ class MaterializedTrainingDatasetPackage:
     cache_hit: bool
     dataset_uri: str
     reference: HFDatasetReference
+    package: TrainingDatasetPackage | None = None
 
 
 @dataclass(frozen=True)
@@ -113,32 +114,18 @@ def _write_duplicate_jsonl_rows(paths: tuple[Path, ...], rows: list[dict[str, An
                 handle.write("\n")
 
 
-def load_training_dataset_package(
-    dataset_uri: str,
+def _build_training_dataset_package(
     *,
+    dataset_uri: str,
+    package_path: Path,
+    manifest_path: Path,
+    samples_path: Path,
+    manifest: dict[str, Any],
+    serialized_samples: list[dict[str, Any]],
+    serialized_validation_samples: list[dict[str, Any]],
     sample_limit: int = 0,
     max_characters_per_sample: int = 0,
 ) -> TrainingDatasetPackage:
-    package_path = Path(dataset_uri).expanduser().resolve()
-    manifest_path = package_path / "manifest.json"
-    samples_path = package_path / "samples.jsonl"
-
-    if not manifest_path.is_file() or not samples_path.is_file():
-        raise ModelOperationError(
-            code="invalid_dataset_package",
-            message="Training dataset package must contain manifest.json and samples.jsonl.",
-            details={"dataset_uri": dataset_uri},
-        )
-
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ModelOperationError(
-            code="invalid_dataset_package",
-            message="Training dataset manifest is not valid JSON.",
-            details={"dataset_uri": dataset_uri},
-        ) from exc
-
     if not isinstance(manifest, dict):
         raise ModelOperationError(
             code="invalid_dataset_package",
@@ -167,28 +154,16 @@ def load_training_dataset_package(
         )
 
     normalized_samples: list[dict[str, Any]] = []
-    with samples_path.open("r", encoding="utf-8") as handle:
-        for line_number, raw_line in enumerate(handle, start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                sample = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ModelOperationError(
-                    code="invalid_dataset_package",
-                    message="Training dataset sample is not valid JSON.",
-                    details={"line": str(line_number)},
-                ) from exc
-
-            normalized = _normalize_sample(
+    for sample in serialized_samples:
+        normalized_samples.append(
+            _normalize_sample(
                 sample,
                 format_name=format_name,
                 max_characters_per_sample=max_characters_per_sample,
             )
-            normalized_samples.append(normalized)
-            if sample_limit > 0 and len(normalized_samples) >= sample_limit:
-                break
+        )
+        if sample_limit > 0 and len(normalized_samples) >= sample_limit:
+            break
 
     if not normalized_samples:
         raise ModelOperationError(
@@ -208,29 +183,14 @@ def load_training_dataset_package(
             },
         )
 
-    validation_samples_path = package_path / "valid.jsonl"
-    normalized_validation_samples: list[dict[str, Any]] = []
-    if validation_samples_path.is_file():
-        with validation_samples_path.open("r", encoding="utf-8") as handle:
-            for line_number, raw_line in enumerate(handle, start=1):
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    sample = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise ModelOperationError(
-                        code="invalid_dataset_package",
-                        message="Training dataset validation sample is not valid JSON.",
-                        details={"line": str(line_number)},
-                    ) from exc
-                normalized_validation_samples.append(
-                    _normalize_sample(
-                        sample,
-                        format_name=format_name,
-                        max_characters_per_sample=max_characters_per_sample,
-                    )
-                )
+    normalized_validation_samples = [
+        _normalize_sample(
+            sample,
+            format_name=format_name,
+            max_characters_per_sample=max_characters_per_sample,
+        )
+        for sample in serialized_validation_samples
+    ]
 
     return TrainingDatasetPackage(
         package_path=package_path,
@@ -245,6 +205,79 @@ def load_training_dataset_package(
         normalized_validation_samples=normalized_validation_samples,
         validation_sample_count=len(normalized_validation_samples),
         response_only_supported=format_name in {"chat_messages", "prompt_completion"},
+    )
+
+
+def load_training_dataset_package(
+    dataset_uri: str,
+    *,
+    sample_limit: int = 0,
+    max_characters_per_sample: int = 0,
+) -> TrainingDatasetPackage:
+    package_path = Path(dataset_uri).expanduser().resolve()
+    manifest_path = package_path / "manifest.json"
+    samples_path = package_path / "samples.jsonl"
+
+    if not manifest_path.is_file() or not samples_path.is_file():
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset package must contain manifest.json and samples.jsonl.",
+            details={"dataset_uri": dataset_uri},
+        )
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset manifest is not valid JSON.",
+            details={"dataset_uri": dataset_uri},
+        ) from exc
+
+    serialized_samples: list[dict[str, Any]] = []
+    with samples_path.open("r", encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                sample = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ModelOperationError(
+                    code="invalid_dataset_package",
+                    message="Training dataset sample is not valid JSON.",
+                    details={"line": str(line_number)},
+                ) from exc
+            serialized_samples.append(sample)
+
+    validation_samples_path = package_path / "valid.jsonl"
+    serialized_validation_samples: list[dict[str, Any]] = []
+    if validation_samples_path.is_file():
+        with validation_samples_path.open("r", encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    sample = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ModelOperationError(
+                        code="invalid_dataset_package",
+                        message="Training dataset validation sample is not valid JSON.",
+                        details={"line": str(line_number)},
+                    ) from exc
+                serialized_validation_samples.append(sample)
+
+    return _build_training_dataset_package(
+        dataset_uri=dataset_uri,
+        package_path=package_path,
+        manifest_path=manifest_path,
+        samples_path=samples_path,
+        manifest=manifest,
+        serialized_samples=serialized_samples,
+        serialized_validation_samples=serialized_validation_samples,
+        sample_limit=sample_limit,
+        max_characters_per_sample=max_characters_per_sample,
     )
 
 
@@ -309,11 +342,13 @@ def resolve_training_dataset_package(
         cache_root=jobs_root / "datasets",
         fetch_json=hf_dataset_fetcher,
     )
-    package = load_training_dataset_package(
-        str(materialized.package_path),
-        sample_limit=sample_limit,
-        max_characters_per_sample=max_characters_per_sample,
-    )
+    package = materialized.package
+    if package is None or materialized.cache_hit or sample_limit > 0 or max_characters_per_sample > 0:
+        package = load_training_dataset_package(
+            str(materialized.package_path),
+            sample_limit=sample_limit,
+            max_characters_per_sample=max_characters_per_sample,
+        )
     return ResolvedTrainingDatasetPackage(
         package=package,
         source_kind="hf_dataset",
@@ -604,6 +639,15 @@ def materialize_hf_training_dataset_package(
         cache_hit=False,
         dataset_uri=dataset_uri,
         reference=resolved_reference,
+        package=_build_training_dataset_package(
+            dataset_uri=dataset_uri,
+            package_path=package_path,
+            manifest_path=manifest_path,
+            samples_path=samples_path,
+            manifest=manifest_payload,
+            serialized_samples=serialized_samples,
+            serialized_validation_samples=serialized_validation_samples,
+        ),
     )
 
 
