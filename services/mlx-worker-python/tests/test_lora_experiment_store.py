@@ -297,6 +297,20 @@ def test_load_index_invalidates_cached_index_when_index_file_changes(tmp_path: P
     assert refreshed_payload["runs"][0]["run_id"] == "mutated-run-id"
 
 
+def test_iter_lora_run_dirs_filters_before_sorting(tmp_path: Path) -> None:
+    train_root = tmp_path / "train_lora"
+    train_root.mkdir()
+    (train_root / "model-ops-0002").mkdir()
+    (train_root / "model-ops-0001").mkdir()
+    (train_root / "notes").mkdir()
+    (train_root / "model-ops-not-a-dir").write_text("ignore\n", encoding="utf-8")
+
+    assert [path.name for path in lora_experiment_store_module._iter_lora_run_dirs(train_root)] == [
+        "model-ops-0001",
+        "model-ops-0002",
+    ]
+    assert lora_experiment_store_module._iter_lora_run_dirs(train_root / "missing") == ()
+
 
 def test_rebuild_index_skips_non_directories_duplicate_manifests_and_non_train_lora_entries(tmp_path: Path) -> None:
     jobs_root = tmp_path / "model-ops"
