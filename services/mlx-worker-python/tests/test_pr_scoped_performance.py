@@ -27,6 +27,7 @@ from worker.productization.pr_scoped_performance import (
     _probe_benchmark_evaluation_report,
     _probe_closure_audit,
     _probe_training_dataset_token_percentiles,
+    _probe_command_json,
     _run_command,
     _run_head_verification,
     _run_probe_impl,
@@ -283,12 +284,64 @@ def test_command_and_verification_helpers_cover_skip_and_failure_paths(tmp_path:
         test_command="python -c \"raise SystemExit(1)\"",
         coverage_command="python -c \"print('should not run')\"",
         probe_impl="benchmark_evaluation_report",
+        probe_command="",
         metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
     )
     verification = _run_head_verification(probe=probe, repo_root=tmp_path)
 
     assert verification["test"]["ok"] is False
     assert verification["coverage"]["stderr"].startswith("Skipped because")
+
+
+def test_command_json_probe_executes_probe_command_and_parses_metrics(tmp_path: Path) -> None:
+    probe = ProbeDefinition(
+        probe_id="command-json",
+        name="Command JSON",
+        runner="macos-15",
+        watch_globs=("Sources/**/*.swift",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="command_json",
+        probe_command=(
+            "python3 -c \"import json; "
+            "print(json.dumps({'elapsed_ms_mean': 12.5, 'iteration_count': 3}))\""
+        ),
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=tmp_path)
+
+    assert metrics == {"elapsed_ms_mean": 12.5, "iteration_count": 3.0}
+
+
+def test_command_json_probe_rejects_missing_command_and_non_numeric_metrics(tmp_path: Path) -> None:
+    missing = ProbeDefinition(
+        probe_id="missing",
+        name="Missing",
+        runner="ubuntu-latest",
+        watch_globs=(),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="command_json",
+        probe_command="",
+        metrics=(MetricDefinition(key="x", unit="ms", direction="lower_is_better"),),
+    )
+    with pytest.raises(ValueError, match="probe_command"):
+        _probe_command_json(probe=missing, repo_root=tmp_path)
+
+    non_numeric = ProbeDefinition(
+        probe_id="bad-json",
+        name="Bad JSON",
+        runner="ubuntu-latest",
+        watch_globs=(),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="command_json",
+        probe_command="python3 -c \"print('{\\\"elapsed_ms_mean\\\": \\\"slow\\\"}')\"",
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+    with pytest.raises(ValueError, match="numeric"):
+        _probe_command_json(probe=non_numeric, repo_root=tmp_path)
 
 
 def test_dispatch_and_module_loading_helpers_cover_failure_paths(tmp_path: Path) -> None:
@@ -302,6 +355,7 @@ def test_dispatch_and_module_loading_helpers_cover_failure_paths(tmp_path: Path)
                 test_command="true",
                 coverage_command="true",
                 probe_impl="unsupported",
+                probe_command="",
                 metrics=(MetricDefinition(key="x", unit="ms", direction="lower_is_better"),),
             ),
             repo_root=tmp_path,
@@ -316,6 +370,7 @@ def test_dispatch_and_module_loading_helpers_cover_failure_paths(tmp_path: Path)
             test_command="true",
             coverage_command="true",
             probe_impl="unsupported",
+            probe_command="",
             metrics=(MetricDefinition(key="x", unit="ms", direction="lower_is_better"),),
         ),
         repo_root=tmp_path,
