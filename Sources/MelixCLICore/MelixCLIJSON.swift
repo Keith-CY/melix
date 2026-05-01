@@ -12,9 +12,13 @@ enum MelixCLIJSONMetricPatch {
 
     struct Placeholder {
         let token: String
+        let jsonLiteral: String
+        let jsonLiteralData: Data
 
-        var jsonLiteral: String {
-            "\"\(token)\""
+        init(token: String) {
+            self.token = token
+            self.jsonLiteral = "\"\(token)\""
+            self.jsonLiteralData = Data(jsonLiteral.utf8)
         }
     }
 
@@ -71,7 +75,7 @@ enum MelixCLIJSONMetricPatch {
         in data: Data,
         placeholder: Placeholder
     ) throws -> Range<Data.Index> {
-        let placeholderData = Data(placeholder.jsonLiteral.utf8)
+        let placeholderData = placeholder.jsonLiteralData
         guard let range = data.range(of: placeholderData) else {
             throw MelixCLIError.runtime("Failed to locate pipeline metrics placeholder.")
         }
