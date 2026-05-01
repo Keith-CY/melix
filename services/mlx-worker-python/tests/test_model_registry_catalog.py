@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2
+from worker.model_registry import catalog as catalog_module
 from worker.model_registry.catalog import (
     WorkerModelCatalog,
     _apply_registry_identity_metadata,
@@ -231,6 +232,31 @@ def test_has_mlx_signal_detects_metadata_signal_from_readme(tmp_path: Path) -> N
 
     assert _has_mlx_signal(model_dir=model_dir, repo_id="google/bert-base") is True
 
+
+
+def test_has_mlx_signal_stops_after_first_matching_metadata_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "plain-transformers-model"
+    model_dir.mkdir()
+    calls: list[str] = []
+
+    def fake_read_text_prefix(
+        path: Path,
+        *,
+        max_chars: int = 16_384,
+        text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] | None = None,
+    ) -> str:
+        calls.append(path.name)
+        if path.name == "README.md":
+            return "---\nlibrary_name: mlx\n---\n"
+        raise AssertionError("metadata scan should short-circuit after README.md")
+
+    monkeypatch.setattr(catalog_module, "_read_text_prefix", fake_read_text_prefix)
+
+    assert _has_mlx_signal(model_dir=model_dir, repo_id="google/bert-base") is True
+    assert calls == ["README.md"]
 
 
 def test_has_model_weight_files_uses_os_scandir_single_pass_without_path_glob_or_iterdir(
