@@ -6,6 +6,7 @@ import runpy
 import sys
 
 import pytest
+import worker.productization.pr_scoped_performance as pr_scoped_performance_module
 
 from worker.productization.pr_scoped_performance import (
     _build_large_benchmark_bundle,
@@ -112,9 +113,17 @@ def test_scope_report_force_selects_all_on_infra_change() -> None:
 
 
 def test_registered_probes_expose_focused_commands() -> None:
+    replaying_probe_ids = {
+        "benchmark-evaluation-report-running-aggregates",
+        "closure-audit-probe-source-short-circuit",
+        "evaluation-job-id-high-water-mark",
+        "training-dataset-token-percentiles-single-sort",
+        "maintenance-bench-report-readback",
+    }
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
+        assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
         if probe.probe_impl == "command_json":
             assert probe.probe_command
 
@@ -210,6 +219,46 @@ def test_run_probe_job_executes_verification_and_probe_for_current_repo() -> Non
     assert result["head_verification"]["test"]["ok"] is True
     assert result["head_verification"]["coverage"]["coverage_pct"] >= 95.0
     assert result["base_probe"]["metrics"]["elapsed_ms_mean"] > 0
+
+
+def test_run_head_verification_skips_standalone_test_when_coverage_replays_tests(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    commands: list[str] = []
+
+    def fake_run_command(command: str, *, cwd: Path) -> dict[str, object]:
+        commands.append(command)
+        assert cwd == tmp_path
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "stdout": "TOTAL 1 0 100%\n",
+            "stderr": "",
+            "coverage_pct": 100.0,
+        }
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_run_command", fake_run_command)
+    probe = ProbeDefinition(
+        probe_id="demo",
+        name="Demo",
+        runner="ubuntu-latest",
+        watch_globs=("demo.py",),
+        test_command="pytest -q demo",
+        coverage_command="coverage run -m pytest -q demo",
+        probe_impl="benchmark_evaluation_report",
+        probe_command="",
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        coverage_replays_tests=True,
+    )
+
+    result = _run_head_verification(probe=probe, repo_root=tmp_path)
+
+    assert commands == ["coverage run -m pytest -q demo"]
+    assert result["test"]["ok"] is True
+    assert "Skipped standalone test command" in result["test"]["stdout"]
+    assert result["coverage"]["coverage_pct"] == 100.0
 
 
 def test_report_rendering_marks_regressions_and_builds_sticky_comment(
