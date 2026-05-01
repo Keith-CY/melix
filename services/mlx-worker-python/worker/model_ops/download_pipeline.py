@@ -297,9 +297,10 @@ class DownloadPipeline:
         explicit = ext.get("mirror_url", "").strip()
         if explicit:
             return explicit
-        mirrors = [part.strip() for part in ext.get("mirror_urls", "").split(",") if part.strip()]
-        if mirrors:
-            return mirrors[0]
+        for mirror in ext.get("mirror_urls", "").split(","):
+            mirror = mirror.strip()
+            if mirror:
+                return mirror
         return "https://huggingface.co"
 
     @staticmethod
