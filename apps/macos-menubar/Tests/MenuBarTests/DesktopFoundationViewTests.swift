@@ -4465,7 +4465,7 @@ struct DesktopFoundationViewTests {
             }
             .joined(separator: ";")
         print(
-            "M16_CHAT_MARKDOWN_PERF=samples=[\(sampleMetrics)] eviction_count=\(stats.evictionCount) latest_parse_ms=\(String(format: "%.3f", stats.latestParseDurationMS))"
+            "M16_CHAT_MARKDOWN_PERF=samples=[\(sampleMetrics)] eviction_count=\(stats.evictionCount) latest_build_ms=\(String(format: "%.3f", stats.latestBuildDurationMS))"
         )
 
         DesktopChatMarkdownRenderer.resetCacheForTesting()
@@ -4553,7 +4553,7 @@ struct DesktopFoundationViewTests {
         #expect(third.evictionCount == 1)
         // Misses are cumulative since reset: A, B, C, then A again after eviction.
         #expect(fourth.parseMissCount == 4)
-        #expect(fourth.latestParseDurationMS >= 0)
+        #expect(fourth.latestBuildDurationMS >= 0)
     }
 
     @Test("chat markdown renderer caches inline attributed strings and evicts old entries")
@@ -4569,7 +4569,7 @@ struct DesktopFoundationViewTests {
         let third = DesktopChatMarkdownRenderer.cacheStatsForTesting()
 
         #expect(first.inlineMissCount == 1)
-        #expect(first.latestParseDurationMS > 0)
+        #expect(first.latestBuildDurationMS > 0)
         #expect(second.inlineHitCount == 1)
         #expect(third.evictionCount == 1)
 

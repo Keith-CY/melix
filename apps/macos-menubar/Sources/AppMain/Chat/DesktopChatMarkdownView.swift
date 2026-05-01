@@ -65,7 +65,7 @@ struct DesktopChatMarkdownCacheStats: Equatable, Sendable {
     let chunkMissCount: Int
     let stableChunkReuseCount: Int
     let evictionCount: Int
-    let latestParseDurationMS: Double
+    let latestBuildDurationMS: Double
 }
 
 enum DesktopChatMarkdownRenderPlanMode: Equatable, Sendable {
@@ -134,6 +134,7 @@ struct DesktopChatMarkdownTableLayout: Equatable, Sendable {
         self.columnWidths = (0..<columnCount).map { column in
             let cells = [header[safe: column] ?? ""] + rows.map { $0[safe: column] ?? "" }
             let longest = cells.map(\.count).max() ?? 0
+            // Calibrated as a compact menu-bar estimate; min/max bounds handle font and content variance.
             let rawWidth = CGFloat(longest * 7) + (DesktopChatMarkdownLayoutMetrics.tableCellHorizontalPadding * 2)
             return min(
                 max(rawWidth, DesktopChatMarkdownLayoutMetrics.tableColumnMinWidth),
@@ -717,7 +718,7 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
     private var chunkMissCount: Int
     private var stableChunkReuseCount: Int
     private var evictionCount: Int
-    private var latestParseDurationMS: Double
+    private var latestBuildDurationMS: Double
 
     init(capacity: Int = 128) {
         // Capacity is per sub-cache; parsed blocks, chunks, and inline strings are evicted independently.
@@ -736,7 +737,7 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
         self.chunkMissCount = 0
         self.stableChunkReuseCount = 0
         self.evictionCount = 0
-        self.latestParseDurationMS = 0
+        self.latestBuildDurationMS = 0
     }
 
     func blocks(
@@ -758,7 +759,7 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
 
         lock.lock()
         parseMissCount += 1
-        latestParseDurationMS = duration
+        latestBuildDurationMS = duration
         parsedBlocks[key] = rendered
         touch(key, in: &parsedBlockOrder)
         evictIfNeeded()
@@ -790,7 +791,7 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
 
         lock.lock()
         chunkMissCount += 1
-        latestParseDurationMS = duration
+        latestBuildDurationMS = duration
         if isStable {
             parsedChunkBlocks[key] = rendered
             touch(key, in: &parsedChunkBlockOrder)
@@ -820,7 +821,7 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
 
         lock.lock()
         inlineMissCount += 1
-        latestParseDurationMS = duration
+        latestBuildDurationMS = duration
         inlineAttributedStrings[key] = rendered
         touch(key, in: &inlineAttributedStringOrder)
         evictIfNeeded()
@@ -846,7 +847,7 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
         chunkMissCount = 0
         stableChunkReuseCount = 0
         evictionCount = 0
-        latestParseDurationMS = 0
+        latestBuildDurationMS = 0
         lock.unlock()
     }
 
@@ -861,7 +862,7 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
             chunkMissCount: chunkMissCount,
             stableChunkReuseCount: stableChunkReuseCount,
             evictionCount: evictionCount,
-            latestParseDurationMS: latestParseDurationMS
+            latestBuildDurationMS: latestBuildDurationMS
         )
         lock.unlock()
         return snapshot
