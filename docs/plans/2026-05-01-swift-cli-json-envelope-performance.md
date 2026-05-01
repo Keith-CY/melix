@@ -29,7 +29,7 @@ The PR-scoped performance registry uses a `command_json` probe mode so Swift pro
 
 - Existing `MelixCLIRunnerTests` continue to pass on macOS CI.
 - Registered probe `swift-cli-json-envelope-encoding` runs in PR-scoped performance CI.
-- CI reports no probe regression beyond the configured 5% warning threshold.
+- CI reports no probe regression beyond the configured 5% warning threshold. The Swift command-json probe runs the focused debug `swift test` command once per base/head checkout and uses the same command as the pass/fail coverage gate, with `coverage_replays_tests` enabled to avoid a duplicate head verification invocation.
 
 ## Known Constraints
 

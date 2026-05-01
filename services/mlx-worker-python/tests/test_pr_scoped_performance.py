@@ -120,6 +120,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-job-id-high-water-mark",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
+        "swift-cli-json-envelope-encoding",
     }
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command

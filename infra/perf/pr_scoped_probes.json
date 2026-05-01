@@ -152,17 +152,12 @@
     ],
     "test_command": "swift test --filter MelixCLITests/MelixCLIRunnerTests",
     "coverage_command": "swift test --filter MelixCLITests/MelixCLIRunnerTests",
+    "coverage_replays_tests": true,
     "probe_impl": "command_json",
-    "probe_command": "python3 - <<'PY'\nimport json\nimport statistics\nimport subprocess\nimport sys\nimport time\n\nsamples = []\nfor _ in range(2):\n    started = time.perf_counter()\n    completed = subprocess.run(\n        ['swift', 'test', '-c', 'release', '--filter', 'MelixCLITests/MelixCLIRunnerTests'],\n        capture_output=True,\n        text=True,\n    )\n    elapsed_ms = (time.perf_counter() - started) * 1000.0\n    sys.stderr.write(completed.stdout)\n    sys.stderr.write(completed.stderr)\n    if completed.returncode != 0:\n        raise SystemExit(completed.returncode)\n    samples.append(elapsed_ms)\n\nprint(json.dumps({\n    'elapsed_ms_mean': round(statistics.fmean(samples), 3),\n    'elapsed_ms_min': round(min(samples), 3),\n    'sample_count': float(len(samples)),\n}, sort_keys=True))\nPY",
+    "probe_command": "python3 - <<'PY'\nimport json\nimport subprocess\nimport sys\nimport time\n\nstarted = time.perf_counter()\ncompleted = subprocess.run(\n    ['swift', 'test', '--filter', 'MelixCLITests/MelixCLIRunnerTests'],\n    capture_output=True,\n    text=True,\n    timeout=600,\n)\nelapsed_ms = (time.perf_counter() - started) * 1000.0\nsys.stderr.write(completed.stdout)\nsys.stderr.write(completed.stderr)\nif completed.returncode != 0:\n    raise SystemExit(completed.returncode)\n\nprint(json.dumps({\n    'elapsed_ms_mean': round(elapsed_ms, 3),\n    'sample_count': 1.0,\n}, sort_keys=True))\nPY",
     "metrics": [
       {
         "key": "elapsed_ms_mean",
-        "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
-      },
-      {
-        "key": "elapsed_ms_min",
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_pct": 5.0
