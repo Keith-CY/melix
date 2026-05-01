@@ -114,6 +114,32 @@ def _write_duplicate_jsonl_rows(paths: tuple[Path, ...], rows: list[dict[str, An
                 handle.write("\n")
 
 
+def _iter_dataset_package_jsonl_rows(
+    path: Path,
+    *,
+    invalid_json_message: str,
+    sample_limit: int = 0,
+) -> Iterable[dict[str, Any]]:
+    yielded = 0
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ModelOperationError(
+                    code="invalid_dataset_package",
+                    message=invalid_json_message,
+                    details={"line": str(line_number)},
+                ) from exc
+            yield payload
+            yielded += 1
+            if sample_limit > 0 and yielded >= sample_limit:
+                break
+
+
 def _build_training_dataset_package(
     *,
     dataset_uri: str,
@@ -121,8 +147,8 @@ def _build_training_dataset_package(
     manifest_path: Path,
     samples_path: Path,
     manifest: dict[str, Any],
-    serialized_samples: list[dict[str, Any]],
-    serialized_validation_samples: list[dict[str, Any]],
+    serialized_samples: Iterable[dict[str, Any]],
+    serialized_validation_samples: Iterable[dict[str, Any]],
     sample_limit: int = 0,
     max_characters_per_sample: int = 0,
 ) -> TrainingDatasetPackage:
@@ -234,39 +260,13 @@ def load_training_dataset_package(
             details={"dataset_uri": dataset_uri},
         ) from exc
 
-    serialized_samples: list[dict[str, Any]] = []
-    with samples_path.open("r", encoding="utf-8") as handle:
-        for line_number, raw_line in enumerate(handle, start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                sample = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ModelOperationError(
-                    code="invalid_dataset_package",
-                    message="Training dataset sample is not valid JSON.",
-                    details={"line": str(line_number)},
-                ) from exc
-            serialized_samples.append(sample)
-
     validation_samples_path = package_path / "valid.jsonl"
-    serialized_validation_samples: list[dict[str, Any]] = []
+    serialized_validation_samples: Iterable[dict[str, Any]] = ()
     if validation_samples_path.is_file():
-        with validation_samples_path.open("r", encoding="utf-8") as handle:
-            for line_number, raw_line in enumerate(handle, start=1):
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    sample = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise ModelOperationError(
-                        code="invalid_dataset_package",
-                        message="Training dataset validation sample is not valid JSON.",
-                        details={"line": str(line_number)},
-                    ) from exc
-                serialized_validation_samples.append(sample)
+        serialized_validation_samples = _iter_dataset_package_jsonl_rows(
+            validation_samples_path,
+            invalid_json_message="Training dataset validation sample is not valid JSON.",
+        )
 
     return _build_training_dataset_package(
         dataset_uri=dataset_uri,
@@ -274,7 +274,11 @@ def load_training_dataset_package(
         manifest_path=manifest_path,
         samples_path=samples_path,
         manifest=manifest,
-        serialized_samples=serialized_samples,
+        serialized_samples=_iter_dataset_package_jsonl_rows(
+            samples_path,
+            invalid_json_message="Training dataset sample is not valid JSON.",
+            sample_limit=sample_limit,
+        ),
         serialized_validation_samples=serialized_validation_samples,
         sample_limit=sample_limit,
         max_characters_per_sample=max_characters_per_sample,
