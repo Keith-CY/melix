@@ -38,6 +38,7 @@ class LoraExperimentStore:
         self._cached_index_path: Path | None = None
         self._cached_index_signature: tuple[int, int] | None = None
         self._cached_index_payload: dict[str, Any] | None = None
+        self._cached_payloads: dict[Path, tuple[tuple[int, int], dict[str, Any]]] = {}
 
     def persist_training_run(
         self,
@@ -49,6 +50,7 @@ class LoraExperimentStore:
         run_payload = self._build_run_payload(manifest=manifest, manifest_path=manifest_path)
         run_path = manifest_path.parent / self.run_record_name
         run_path.write_text(json.dumps(_json_safe(run_payload), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        self._cache_payload(path=run_path, payload=run_payload)
         index_path = self._index_path(jobs_root)
         self.rebuild_index(jobs_root)
         return {"run": run_path, "index": index_path}
@@ -56,10 +58,10 @@ class LoraExperimentStore:
     def load_index(self, jobs_root: Path) -> dict[str, Any]:
         index_path = self._index_path(jobs_root)
         if self._cached_index_path == index_path:
-            signature = self._index_signature(index_path)
+            signature = self._path_signature(index_path)
             if signature is not None and signature == self._cached_index_signature and self._cached_index_payload is not None:
                 return self._cached_index_payload
-        payload = self._read_payload(index_path)
+        payload = self._load_payload(index_path)
         if payload:
             self._cache_index(index_path=index_path, payload=payload)
             return payload
@@ -70,14 +72,14 @@ class LoraExperimentStore:
         runs_by_id: dict[str, dict[str, Any]] = {}
         for run_dir in _iter_lora_run_dirs(train_root):
             run_path = run_dir / self.run_record_name
-            payload = self._read_payload(run_path)
+            payload = self._load_payload(run_path)
             run_id = str(payload.get("run_id", "")).strip()
             if run_id:
                 runs_by_id[run_id] = payload
                 continue
 
             manifest_path = run_dir / "train_lora.adapter.json"
-            payload = self._read_payload(manifest_path)
+            payload = self._load_payload(manifest_path)
             run_id = str(payload.get("job_id", "")).strip() or manifest_path.parent.name
             if run_id in runs_by_id:
                 continue
@@ -256,11 +258,27 @@ class LoraExperimentStore:
             return {}
         return payload if isinstance(payload, dict) else {}
 
+    def _load_payload(self, path: Path) -> dict[str, Any]:
+        signature = self._path_signature(path)
+        if signature is None:
+            self._cached_payloads.pop(path, None)
+            return {}
+
+        cached_payload = self._cached_payloads.get(path)
+        if cached_payload is not None:
+            cached_signature, payload = cached_payload
+            if cached_signature == signature:
+                return payload
+
+        payload = self._read_payload(path)
+        self._cached_payloads[path] = (signature, payload)
+        return payload
+
     def _index_path(self, jobs_root: Path) -> Path:
         return jobs_root / "train_lora" / self.index_record_name
 
     @staticmethod
-    def _index_signature(path: Path) -> tuple[int, int] | None:
+    def _path_signature(path: Path) -> tuple[int, int] | None:
         try:
             stat_result = path.stat()
         except OSError:
@@ -269,8 +287,15 @@ class LoraExperimentStore:
 
     def _cache_index(self, *, index_path: Path, payload: dict[str, Any]) -> None:
         self._cached_index_path = index_path
-        self._cached_index_signature = self._index_signature(index_path)
+        self._cached_index_signature = self._path_signature(index_path)
         self._cached_index_payload = payload
+
+    def _cache_payload(self, *, path: Path, payload: dict[str, Any]) -> None:
+        signature = self._path_signature(path)
+        if signature is None:
+            self._cached_payloads.pop(path, None)
+            return
+        self._cached_payloads[path] = (signature, payload)
 
 
 
