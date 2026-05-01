@@ -23,6 +23,7 @@ from worker.productization.pr_scoped_performance import (
     _format_delta,
     _format_value,
     _is_relative_to,
+    _load_upload_receipt_pipeline_module,
     _load_repo_module,
     _markdown_cell,
     _matches_any_glob,
@@ -343,6 +344,36 @@ def test_dispatch_probe_impl_supports_upload_receipt_published_files_probe() -> 
     assert metrics["files_per_directory"] == 40.0
     assert metrics["published_file_count"] == 7201.0
     assert metrics["sample_count"] == 5.0
+
+
+def test_upload_receipt_probe_loader_stubs_external_imports(tmp_path: Path) -> None:
+    module_path = tmp_path / "services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py"
+    module_path.parent.mkdir(parents=True)
+    module_path.write_text(
+        "from __future__ import annotations\n"
+        "from packages.protocol.python.worker.v1 import maintenance_pb2\n"
+        "from worker.model_ops.errors import ModelOperationError\n"
+        "class UploadReceiptPipeline:\n"
+        "    @staticmethod\n"
+        "    def _collect_published_file_list(source_dir):\n"
+        "        return [maintenance_pb2.__name__, ModelOperationError.__name__]\n",
+        encoding="utf-8",
+    )
+
+    module_names = (
+        "packages.protocol.python.worker.v1.maintenance_pb2",
+        "worker.model_ops.errors",
+    )
+    previous_modules = {name: sys.modules.get(name) for name in module_names}
+
+    module = _load_upload_receipt_pipeline_module(module_path)
+
+    assert module.UploadReceiptPipeline._collect_published_file_list(tmp_path) == [
+        "packages.protocol.python.worker.v1.maintenance_pb2",
+        "ModelOperationError",
+    ]
+    for name, previous in previous_modules.items():
+        assert sys.modules.get(name) is previous
 
 
 def test_dispatch_probe_impl_supports_evaluation_job_id_probe() -> None:

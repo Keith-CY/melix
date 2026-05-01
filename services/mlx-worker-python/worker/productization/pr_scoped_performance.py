@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import tracemalloc
+import types
 from typing import Any
 
 _COMMENT_MARKER = "<!-- melix-pr-scoped-performance-report -->"
@@ -658,9 +659,8 @@ def _probe_training_dataset_token_percentiles(repo_root: Path) -> dict[str, floa
 
 
 def _probe_upload_receipt_published_files(repo_root: Path) -> dict[str, float]:
-    module = _load_repo_module(
+    module = _load_upload_receipt_pipeline_module(
         repo_root / "services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py",
-        unique_name="melix_probe_upload_receipt_pipeline",
     )
     directory_count = 180
     files_per_directory = 40
@@ -695,6 +695,69 @@ def _probe_upload_receipt_published_files(repo_root: Path) -> dict[str, float]:
         "published_file_count": published_file_count,
         "sample_count": float(sample_count),
     }
+
+
+def _load_upload_receipt_pipeline_module(path: Path) -> Any:
+    module_names = (
+        "packages",
+        "packages.protocol",
+        "packages.protocol.python",
+        "packages.protocol.python.worker",
+        "packages.protocol.python.worker.v1",
+        "packages.protocol.python.worker.v1.maintenance_pb2",
+        "worker",
+        "worker.model_ops",
+        "worker.model_ops.errors",
+    )
+    missing = object()
+    previous_modules = {name: sys.modules.get(name, missing) for name in module_names}
+
+    packages_module = types.ModuleType("packages")
+    protocol_module = types.ModuleType("packages.protocol")
+    python_module = types.ModuleType("packages.protocol.python")
+    worker_protocol_module = types.ModuleType("packages.protocol.python.worker")
+    worker_v1_module = types.ModuleType("packages.protocol.python.worker.v1")
+    maintenance_module = types.ModuleType("packages.protocol.python.worker.v1.maintenance_pb2")
+    worker_module = types.ModuleType("worker")
+    model_ops_module = types.ModuleType("worker.model_ops")
+    errors_module = types.ModuleType("worker.model_ops.errors")
+
+    class ModelOperationError(Exception):
+        pass
+
+    errors_module.ModelOperationError = ModelOperationError
+    worker_v1_module.maintenance_pb2 = maintenance_module
+    worker_protocol_module.v1 = worker_v1_module
+    python_module.worker = worker_protocol_module
+    protocol_module.python = python_module
+    packages_module.protocol = protocol_module
+    model_ops_module.errors = errors_module
+    worker_module.model_ops = model_ops_module
+
+    sys.modules.update(
+        {
+            "packages": packages_module,
+            "packages.protocol": protocol_module,
+            "packages.protocol.python": python_module,
+            "packages.protocol.python.worker": worker_protocol_module,
+            "packages.protocol.python.worker.v1": worker_v1_module,
+            "packages.protocol.python.worker.v1.maintenance_pb2": maintenance_module,
+            "worker": worker_module,
+            "worker.model_ops": model_ops_module,
+            "worker.model_ops.errors": errors_module,
+        }
+    )
+    try:
+        return _load_repo_module(
+            path,
+            unique_name="melix_probe_upload_receipt_pipeline",
+        )
+    finally:
+        for name, previous in previous_modules.items():
+            if previous is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
 
 
 def _load_repo_module(path: Path, *, unique_name: str) -> Any:
