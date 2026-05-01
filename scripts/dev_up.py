@@ -251,6 +251,24 @@ def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
     return None
 
 
+def iter_mlx_metallib_candidates(root: Path):
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                        elif entry.name == "mlx.metallib" and entry.is_file(follow_symlinks=False):
+                            yield Path(entry.path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+
 def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = None) -> Path | None:
     expected_mlx_metal_version = resolve_swift_mlx_package_version(repo_root)
     candidate_search_roots: list[Path] = []
@@ -271,17 +289,16 @@ def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = N
         if resolved_root in seen or not resolved_root.exists():
             continue
         seen.add(resolved_root)
-        for candidate in resolved_root.rglob("mlx.metallib"):
-            if candidate.is_file():
-                resolved_candidate = candidate.resolve()
-                if expected_mlx_metal_version is None:
-                    return resolved_candidate
+        for candidate in iter_mlx_metallib_candidates(resolved_root):
+            resolved_candidate = candidate.resolve()
+            if expected_mlx_metal_version is None:
+                return resolved_candidate
 
-                candidate_version = read_mlx_metal_dist_info_version(resolved_candidate)
-                if candidate_version == expected_mlx_metal_version:
-                    return resolved_candidate
+            candidate_version = read_mlx_metal_dist_info_version(resolved_candidate)
+            if candidate_version == expected_mlx_metal_version:
+                return resolved_candidate
 
-                rejected_versions.setdefault(candidate_version or "unknown", []).append(resolved_candidate)
+            rejected_versions.setdefault(candidate_version or "unknown", []).append(resolved_candidate)
 
     if expected_mlx_metal_version is not None and rejected_versions:
         observed = ", ".join(
