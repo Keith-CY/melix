@@ -59,7 +59,14 @@ def run_python_code_evaluation(
     memory_limit_mb: int = 256,
     stdout_limit_bytes: int = _DEFAULT_STDIO_LIMIT_BYTES,
 ) -> CodeEvaluationResult:
-    tests_total = _count_tests(test_code)
+    tests_total: int | None = None
+
+    def _resolved_tests_total() -> int:
+        nonlocal tests_total
+        if tests_total is None:
+            tests_total = _count_tests(test_code)
+        return tests_total
+
     try:
         compile(candidate_code, "<candidate>", "exec")
     except SyntaxError as exc:
@@ -69,7 +76,7 @@ def run_python_code_evaluation(
             timeout_status="ok",
             test_status="not_run",
             tests_passed=0,
-            tests_total=tests_total,
+            tests_total=_resolved_tests_total(),
             failure_detail=str(exc),
         )
 
@@ -81,7 +88,7 @@ def run_python_code_evaluation(
             timeout_status="ok",
             test_status="failed",
             tests_passed=0,
-            tests_total=tests_total,
+            tests_total=_resolved_tests_total(),
             failure_detail="sandbox-exec is unavailable on this host.",
         )
 
@@ -148,7 +155,7 @@ def run_python_code_evaluation(
                     timeout_status="timed_out",
                     test_status="not_run",
                     tests_passed=0,
-                    tests_total=tests_total,
+                    tests_total=_resolved_tests_total(),
                     failure_detail=detail,
                 )
 
@@ -165,7 +172,7 @@ def run_python_code_evaluation(
                 timeout_status="ok",
                 test_status="failed",
                 tests_passed=0,
-                tests_total=tests_total,
+                tests_total=_resolved_tests_total(),
                 failure_detail=_output_limit_failure_detail(
                     stdio_limit_bytes=stdout_limit_bytes,
                     stdout_tail=stdout_tail,
@@ -186,17 +193,21 @@ def run_python_code_evaluation(
                 timeout_status="ok",
                 test_status="failed",
                 tests_passed=0,
-                tests_total=tests_total,
+                tests_total=_resolved_tests_total(),
                 failure_detail=detail,
             )
 
+        payload_tests_total = payload.get("tests_total")
+        resolved_payload_tests_total = (
+            int(payload_tests_total) if payload_tests_total else _resolved_tests_total()
+        )
         return CodeEvaluationResult(
             compile_status=str(payload.get("compile_status", "compiled")),
             runtime_status=str(payload.get("runtime_status", "error")),
             timeout_status=str(payload.get("timeout_status", "ok")),
             test_status=str(payload.get("test_status", "failed")),
             tests_passed=int(payload.get("tests_passed", 0) or 0),
-            tests_total=int(payload.get("tests_total", tests_total) or tests_total),
+            tests_total=resolved_payload_tests_total,
             failure_detail=str(payload.get("failure_detail", "")),
         )
 

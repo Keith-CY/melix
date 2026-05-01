@@ -274,6 +274,53 @@ def test_run_python_code_evaluation_uses_stderr_when_payload_is_missing(monkeypa
     assert result.failure_detail == "runtime exploded"
 
 
+def test_run_python_code_evaluation_skips_parent_test_counting_after_successful_payload(monkeypatch) -> None:
+    monkeypatch.setattr(code_eval_runner.shutil, "which", lambda _: "/usr/bin/sandbox-exec")
+
+    def fail_if_counted(test_code: str) -> int:
+        raise AssertionError("_count_tests should not run on the successful payload path")
+
+    try:
+        fail_if_counted("assert identity(0) == 0")
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("fail_if_counted should raise when invoked")
+
+    def fake_run(*args, **kwargs):
+        config_path = Path(args[0][-1])
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        payload_path = Path(config["payload_path"])
+        payload_path.write_text(
+            json.dumps(
+                {
+                    "compile_status": "compiled",
+                    "runtime_status": "ok",
+                    "timeout_status": "ok",
+                    "test_status": "passed",
+                    "tests_passed": 1,
+                    "tests_total": 1,
+                    "failure_detail": "",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args=args[0], returncode=0)
+
+    monkeypatch.setattr(code_eval_runner, "_count_tests", fail_if_counted)
+    monkeypatch.setattr(code_eval_runner.subprocess, "run", fake_run)
+
+    result = run_python_code_evaluation(
+        candidate_code="def identity(value):\n    return value",
+        entry_point="identity",
+        test_code="assert identity(1) == 1",
+    )
+
+    assert result.passed is True
+    assert result.tests_passed == 1
+    assert result.tests_total == 1
+
+
 def test_count_tests_falls_back_for_syntax_error_input() -> None:
     assert code_eval_runner._count_tests("assert True\n  assert False") == 2
 
