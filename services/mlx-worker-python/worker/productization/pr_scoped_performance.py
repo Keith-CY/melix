@@ -368,6 +368,8 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_benchmark_evaluation_report(repo_root)
     if probe.probe_impl == "closure_audit":
         return _probe_closure_audit(repo_root)
+    if probe.probe_impl == "evaluation_sample_probe_aggregation":
+        return _probe_evaluation_sample_probe_aggregation(repo_root)
     if probe.probe_impl == "evaluation_job_id":
         return _probe_evaluation_job_id(repo_root)
     if probe.probe_impl == "training_dataset_token_percentiles":
@@ -469,6 +471,90 @@ def _probe_closure_audit(repo_root: Path) -> dict[str, float]:
         "probe_file_reads_mean": round(sum(read_samples) / len(read_samples), 3),
         "finding_count": finding_count,
     }
+
+
+def _probe_evaluation_sample_probe_aggregation(repo_root: Path) -> dict[str, float]:
+    sample_count = 20000
+    field_names = (
+        "sample_render_ms",
+        "inference_ms",
+        "extraction_ms",
+        "validation_ms",
+        "scoring_ms",
+        "raw_response_chars",
+        "extracted_result_chars",
+    )
+    probe_script = f"""
+import json
+import sys
+import time
+from pathlib import Path
+
+repo_root = Path({str(repo_root)!r})
+sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))
+from worker.engine.evaluation_core import EvaluationCore
+from worker.productization.evaluation_schemas import build_evaluation_sample_record
+
+field_names = {field_names!r}
+sample_count = {sample_count}
+samples = tuple(
+    build_evaluation_sample_record(
+        job_id='eval-probe',
+        suite_id='mmlu',
+        dataset_id='mmlu-dev',
+        sample_id=str(index),
+        system='',
+        input_text=f'prompt {{index}}',
+        target='answer',
+        raw_response=f'Answer: {{index % 10}}',
+        extracted_result=str(index % 10),
+        typed_score=1.0 if index % 2 == 0 else 0.0,
+        time_s=0.1,
+        extraction_status='extracted',
+        validation_status='validated',
+        failure_reason='',
+        sample_render_ms=(index % 11) * 0.1,
+        inference_ms=(index % 13) * 0.2,
+        extraction_ms=(index % 7) * 0.3,
+        validation_ms=(index % 5) * 0.4,
+        scoring_ms=(index % 3) * 0.5,
+        raw_response_chars=0 if index % 17 == 0 else len(f'Answer: {{index % 10}}'),
+        extracted_result_chars=0 if index % 19 == 0 else len(str(index % 10)),
+    )
+    for index in range(sample_count)
+)
+elapsed_samples = []
+metrics = {{}}
+for _ in range(3):
+    started = time.perf_counter()
+    metrics = EvaluationCore._sample_probe_means(samples, field_names)
+    elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+elapsed_ms_mean = sum(elapsed_samples) / len(elapsed_samples)
+print(json.dumps({{
+    'elapsed_ms_mean': round(elapsed_ms_mean, 3),
+    'per_call_ms_mean': round(elapsed_ms_mean / max(sample_count, 1), 6),
+    'sample_count': float(sample_count),
+    'metric_count': float(len(metrics)),
+}}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(repo_root / "services/mlx-worker-python"),
+            "python3",
+            "-c",
+            probe_script,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads((completed.stdout or "").strip())
 
 
 def _probe_evaluation_job_id(repo_root: Path) -> dict[str, float]:
