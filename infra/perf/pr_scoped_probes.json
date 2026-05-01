@@ -160,12 +160,6 @@
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_pct": 5.0
-      },
-      {
-        "key": "elapsed_ms_min",
-        "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
       }
     ]
   }
