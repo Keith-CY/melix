@@ -349,6 +349,8 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_benchmark_evaluation_report(repo_root)
     if probe.probe_impl == "closure_audit":
         return _probe_closure_audit(repo_root)
+    if probe.probe_impl == "training_dataset_token_percentiles":
+        return _probe_training_dataset_token_percentiles(repo_root)
     raise ValueError(f"unsupported probe implementation: {probe.probe_impl}")
 
 
@@ -413,6 +415,32 @@ def _probe_closure_audit(repo_root: Path) -> dict[str, float]:
         "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 3),
         "probe_file_reads_mean": round(sum(read_samples) / len(read_samples), 3),
         "finding_count": finding_count,
+    }
+
+
+def _probe_training_dataset_token_percentiles(repo_root: Path) -> dict[str, float]:
+    module = _load_repo_module(
+        repo_root / "services/mlx-worker-python/worker/model_ops/training_dataset.py",
+        unique_name="melix_probe_training_dataset_token_percentiles",
+    )
+    samples = _build_large_training_dataset_samples()
+    elapsed_samples: list[float] = []
+    prompt_p95 = 0.0
+    total_p95 = 0.0
+    sample_count = 0.0
+    for _ in range(3):
+        gc.collect()
+        started = time.perf_counter()
+        token_stats = module._build_token_stats(samples, "prompt_completion")
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        prompt_p95 = float(token_stats["prompt_tokens_p95"])
+        total_p95 = float(token_stats["total_tokens_p95"])
+        sample_count = float(token_stats["sample_count"])
+    return {
+        "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 3),
+        "sample_count": sample_count,
+        "prompt_tokens_p95": prompt_p95,
+        "total_tokens_p95": total_p95,
     }
 
 
@@ -524,6 +552,16 @@ def _build_large_benchmark_bundle(*, base_value: float) -> dict[str, object]:
         "evaluation_summary_rows": evaluation_summary_rows,
         "evaluation_sample_rows": evaluation_sample_rows,
     }
+
+
+def _build_large_training_dataset_samples() -> list[dict[str, str]]:
+    return [
+        {
+            "prompt": " ".join(f"prompt{index}_{token}" for token in range(1 + (index % 9))),
+            "completion": " ".join(f"completion{index}_{token}" for token in range(1 + ((index * 3) % 7))),
+        }
+        for index in range(20000)
+    ]
 
 
 def _seed_closure_audit_repo(root: Path) -> Path:

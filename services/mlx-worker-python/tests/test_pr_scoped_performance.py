@@ -9,6 +9,7 @@ import pytest
 
 from worker.productization.pr_scoped_performance import (
     _build_large_benchmark_bundle,
+    _build_large_training_dataset_samples,
     _build_metric_row,
     _build_probe_report_row,
     _build_probe_details,
@@ -25,6 +26,7 @@ from worker.productization.pr_scoped_performance import (
     _parse_coverage_percent,
     _probe_benchmark_evaluation_report,
     _probe_closure_audit,
+    _probe_training_dataset_token_percentiles,
     _run_command,
     _run_head_verification,
     _run_probe_impl,
@@ -65,6 +67,16 @@ def test_scope_report_selects_only_matching_probe() -> None:
     selected_probe = scope["selected_probes"][0]
     assert selected_probe["id"] == "closure-audit-probe-source-short-circuit"
     assert scope["force_all"] is False
+
+
+def test_scope_report_selects_training_dataset_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/training_dataset.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "training-dataset-token-percentiles-single-sort"
 
 
 def test_scope_report_force_selects_all_on_infra_change() -> None:
@@ -117,6 +129,7 @@ def test_load_probe_registry_rejects_invalid_payloads(tmp_path: Path) -> None:
 def test_probe_smokes_return_metrics_against_current_repo() -> None:
     benchmark_metrics = _probe_benchmark_evaluation_report(REPO_ROOT)
     closure_metrics = _probe_closure_audit(REPO_ROOT)
+    training_dataset_metrics = _probe_training_dataset_token_percentiles(REPO_ROOT)
 
     assert benchmark_metrics["elapsed_ms_mean"] > 0
     assert benchmark_metrics["peak_bytes_mean"] > 0
@@ -124,6 +137,10 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert closure_metrics["elapsed_ms_mean"] > 0
     assert closure_metrics["probe_file_reads_mean"] > 0
     assert closure_metrics["finding_count"] > 0
+    assert training_dataset_metrics["elapsed_ms_mean"] > 0
+    assert training_dataset_metrics["sample_count"] == 20000.0
+    assert training_dataset_metrics["prompt_tokens_p95"] > 0
+    assert training_dataset_metrics["total_tokens_p95"] > 0
 
 
 def test_run_probe_job_executes_verification_and_probe_for_current_repo() -> None:
@@ -318,9 +335,12 @@ def test_dispatch_and_module_loading_helpers_cover_failure_paths(tmp_path: Path)
 
 def test_data_generation_and_formatting_helpers_cover_misc_branches(tmp_path: Path) -> None:
     bundle = _build_large_benchmark_bundle(base_value=42.0)
+    training_samples = _build_large_training_dataset_samples()
     assert len(bundle["benchmark_results"]) == 250
     assert len(bundle["benchmark_context_rows"]) == 900
     assert len(bundle["benchmark_matrix_request_rows"]) == 1200
+    assert len(training_samples) == 20000
+    assert all("prompt" in sample and "completion" in sample for sample in training_samples[:3])
 
     seeded_root = _seed_closure_audit_repo(tmp_path)
     assert (seeded_root / "docs/plans/2026-03-30-full-capability-roadmap-execution-index.md").is_file()
