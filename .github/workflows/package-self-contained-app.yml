@@ -61,6 +61,12 @@ jobs:
       - name: Packaging smoke checks
         run: make package-smoke
 
+      - name: Prepare packaging Python runtime
+        run: |
+          UV_PROJECT_ENVIRONMENT="$GITHUB_WORKSPACE/.venv-package" \
+          UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
+          uv sync --project services/mlx-worker-python --extra mlx --no-dev --frozen
+
       - name: Compute build metadata
         id: compute-build-metadata
         run: |
@@ -78,13 +84,16 @@ jobs:
       - name: Package self-contained Melix.app
         id: package-app
         run: |
+          PACKAGE_PYTHON="$GITHUB_WORKSPACE/.venv-package/bin/python"
+          PYTHON_RUNTIME_ROOT="$(dirname "$(dirname "$(realpath "$PACKAGE_PYTHON")")")"
+          PYTHON_SITE_PACKAGES="$("$PACKAGE_PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
           PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
-          UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
-          uv run --project services/mlx-worker-python \
-          python scripts/package_macos_menubar_app.py \
+          "$PACKAGE_PYTHON" scripts/package_macos_menubar_app.py \
             --repo-root "$GITHUB_WORKSPACE" \
             --output-path "$RUNNER_TEMP/Melix.app" \
             --archive-path "$RUNNER_TEMP/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip" \
+            --python-runtime-root "$PYTHON_RUNTIME_ROOT" \
+            --python-site-packages-path "$PYTHON_SITE_PACKAGES" \
             --version "${{ steps.compute-build-metadata.outputs.version }}" \
             --json
 

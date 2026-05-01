@@ -120,6 +120,22 @@ def test_resolve_site_packages_root_requires_virtualenv_site_packages(tmp_path: 
         raise AssertionError("expected resolve_site_packages_root() to fail without site-packages")
 
 
+def test_resolve_site_packages_root_skips_non_site_package_entries(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    lib_root = repo_root / ".venv/lib"
+    lib_root.mkdir(parents=True)
+    (lib_root / "not-python").mkdir()
+    (lib_root / "python-not-a-directory").write_text("", encoding="utf-8")
+    (lib_root / "python3.12").mkdir()
+
+    try:
+        resolve_site_packages_root(repo_root)
+    except FileNotFoundError as error:
+        assert str(lib_root) in str(error)
+    else:
+        raise AssertionError("expected resolve_site_packages_root() to fail without site-packages")
+
+
 def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     (repo_root / "services/mlx-worker-python/worker").mkdir(parents=True)
@@ -184,6 +200,20 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     target_payload = json.loads(Path(manifest["packaging_target_manifest_path"]).read_text(encoding="utf-8"))
     assert target_payload["packaging_target_id"] == "macos_app_bundle_preview"
     assert target_payload["logical_product_identity"] == "io.melix"
+    timings = manifest["timings"]
+    for key in (
+        "copy_app_binary_seconds",
+        "copy_swift_worker_binary_seconds",
+        "copy_icon_seconds",
+        "copy_python_runtime_seconds",
+        "copy_python_site_packages_seconds",
+        "copy_repo_subset_seconds",
+        "write_metadata_seconds",
+        "chmod_seconds",
+        "write_total_seconds",
+    ):
+        assert isinstance(timings[key], float)
+        assert timings[key] >= 0.0
 
 
 def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -> None:
