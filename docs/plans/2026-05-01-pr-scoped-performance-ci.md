@@ -97,6 +97,15 @@ Planned initial entries:
 - Local execution of seeded probe runners on the current checkout.
 - Local YAML validation for the new workflow.
 
+## Iterative Optimization Slices
+
+### Benchmark evaluation metric-direction constants
+
+- Scope: `services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py`.
+- Probe: `benchmark-evaluation-report-running-aggregates` remains the registered CI and local probe for this path.
+- Slice boundary: hoist the metric-direction fragment tables out of `_metric_direction` and use direct loops so the large synthetic report path does not rebuild identical tuples or allocate generator objects once per metric row.
+- Verification target: focused benchmark-evaluation report tests, changed-scope coverage, and the registered PR-scoped performance probe.
+
 ## Known Constraints
 
 - Only code paths with registered probes participate in this CI.

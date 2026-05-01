@@ -63,6 +63,39 @@ _EVALUATION_SAMPLE_PROBE_KEYS = (
     "extracted_result_chars",
 )
 _EVALUATION_SAMPLE_PROBE_KEY_SET = frozenset(_EVALUATION_SAMPLE_PROBE_KEYS)
+_LOWER_IS_BETTER_METRIC_FRAGMENTS = (
+    "latency",
+    "ttft",
+    "_ms",
+    "duration_seconds",
+    "memory",
+    "bytes",
+    "failure_count",
+    "failed_count",
+    "queue_wait",
+    "warmup",
+    "prefill_ms",
+    "decode_ms",
+    "rollback_rate",
+    "rejected_tokens",
+    "fallback_count",
+    "draft_propose_ms",
+    "target_verify_ms",
+    "dflash_rollback_count",
+)
+_HIGHER_IS_BETTER_METRIC_FRAGMENTS = (
+    "tokens_per_second",
+    "throughput",
+    "success_rate",
+    "accuracy",
+    "typed_score",
+    "pass_rate",
+    "win_count",
+    "acceptance_rate",
+    "accepted_tokens",
+    "speedup",
+    "cache_hit",
+)
 
 _NumericAggregate = tuple[float, int]
 
@@ -332,43 +365,12 @@ def _build_metric_row(
 
 def _metric_direction(metric_name: str) -> str:
     metric_key = metric_name.rsplit(".", maxsplit=1)[-1]
-    lower_fragments = (
-        "latency",
-        "ttft",
-        "_ms",
-        "duration_seconds",
-        "memory",
-        "bytes",
-        "failure_count",
-        "failed_count",
-        "queue_wait",
-        "warmup",
-        "prefill_ms",
-        "decode_ms",
-        "rollback_rate",
-        "rejected_tokens",
-        "fallback_count",
-        "draft_propose_ms",
-        "target_verify_ms",
-        "dflash_rollback_count",
-    )
-    higher_fragments = (
-        "tokens_per_second",
-        "throughput",
-        "success_rate",
-        "accuracy",
-        "typed_score",
-        "pass_rate",
-        "win_count",
-        "acceptance_rate",
-        "accepted_tokens",
-        "speedup",
-        "cache_hit",
-    )
-    if any(fragment in metric_key for fragment in lower_fragments):
-        return "lower_is_better"
-    if any(fragment in metric_key for fragment in higher_fragments):
-        return "higher_is_better"
+    for fragment in _LOWER_IS_BETTER_METRIC_FRAGMENTS:
+        if fragment in metric_key:
+            return "lower_is_better"
+    for fragment in _HIGHER_IS_BETTER_METRIC_FRAGMENTS:
+        if fragment in metric_key:
+            return "higher_is_better"
     return "neutral"
 
 
