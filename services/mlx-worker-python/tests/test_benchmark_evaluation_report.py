@@ -7,6 +7,7 @@ import pytest
 
 from worker.productization.benchmark_evaluation_report import (
     _METRIC_DIRECTION_BY_KEY,
+    _METRIC_DIRECTION_CACHE,
     _aggregate_probe_values,
     _dict_rows,
     _finalize_numeric_aggregate,
@@ -452,6 +453,15 @@ def test_metric_direction_fast_path_covers_report_probe_keys() -> None:
     for metric_key, direction in expected.items():
         assert _METRIC_DIRECTION_BY_KEY[metric_key] == direction
         assert _metric_direction(f"bench.synthetic.{metric_key}") == direction
+
+
+def test_metric_direction_caches_by_metric_key() -> None:
+    _METRIC_DIRECTION_CACHE.clear()
+
+    assert _metric_direction("bench.fast.ctx1.ttft_ms") == "lower_is_better"
+    assert _METRIC_DIRECTION_CACHE == {"ttft_ms": "lower_is_better"}
+    assert _metric_direction("bench.slow.ctx8192.ttft_ms") == "lower_is_better"
+    assert _METRIC_DIRECTION_CACHE == {"ttft_ms": "lower_is_better"}
 
 
 def test_report_builder_aggregates_numeric_probe_values_without_normalizing_all_values() -> None:

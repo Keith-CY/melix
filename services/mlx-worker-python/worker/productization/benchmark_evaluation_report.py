@@ -124,6 +124,7 @@ _METRIC_DIRECTION_BY_KEY = {
     "typed_score_mean": "higher_is_better",
     "validation_ms_mean": "lower_is_better",
 }
+_METRIC_DIRECTION_CACHE: dict[str, str] = {}
 
 _NumericAggregate = tuple[float, int]
 
@@ -393,16 +394,24 @@ def _build_metric_row(
 
 def _metric_direction(metric_name: str) -> str:
     metric_key = metric_name.rsplit(".", maxsplit=1)[-1]
+    cached_direction = _METRIC_DIRECTION_CACHE.get(metric_key)
+    if cached_direction is not None:
+        return cached_direction
     known_direction = _METRIC_DIRECTION_BY_KEY.get(metric_key)
-    if known_direction is not None:
-        return known_direction
-    for fragment in _LOWER_IS_BETTER_METRIC_FRAGMENTS:
-        if fragment in metric_key:
-            return "lower_is_better"
-    for fragment in _HIGHER_IS_BETTER_METRIC_FRAGMENTS:
-        if fragment in metric_key:
-            return "higher_is_better"
-    return "neutral"
+    if known_direction is None:
+        for fragment in _LOWER_IS_BETTER_METRIC_FRAGMENTS:
+            if fragment in metric_key:
+                known_direction = "lower_is_better"
+                break
+    if known_direction is None:
+        for fragment in _HIGHER_IS_BETTER_METRIC_FRAGMENTS:
+            if fragment in metric_key:
+                known_direction = "higher_is_better"
+                break
+    if known_direction is None:
+        known_direction = "neutral"
+    _METRIC_DIRECTION_CACHE[metric_key] = known_direction
+    return known_direction
 
 
 def _collect_runtime_metadata(
