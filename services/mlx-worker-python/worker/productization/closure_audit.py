@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,7 +57,7 @@ _REQUIRED_PROBES: dict[str, tuple[str, ...]] = {
     ),
 }
 _TEXT_SEARCH_ROOTS = ("docs", "scripts", "services", "tests", "README.md", "progress.md", "task_plan.md")
-_TEXT_FILE_SUFFIXES = {".md", ".py", ".swift", ".json", ".txt", ".yaml", ".yml"}
+_TEXT_FILE_SUFFIXES = (".md", ".py", ".swift", ".json", ".txt", ".yaml", ".yml")
 _FINDING_SEVERITY_PRIORITY = {
     "blocker": 0,
     "evidence_gap": 1,
@@ -386,21 +387,28 @@ def _probe_sources_complete(probe_sources: dict[str, list[str]]) -> bool:
     return all(len(matches) >= 3 for matches in probe_sources.values())
 
 
-def _iter_probe_text_files(root: Path) -> list[Path]:
-    files: list[Path] = []
+def _iter_probe_text_files(root: Path) -> Iterator[Path]:
     for entry in _TEXT_SEARCH_ROOTS:
         candidate = root / entry
         if candidate.is_file():
             if candidate.suffix in _TEXT_FILE_SUFFIXES:
-                files.append(candidate)
+                yield candidate
             continue
         if not candidate.exists():
             continue
-        for current_root, _, filenames in os.walk(candidate):
-            for name in filenames:
-                if name.endswith(tuple(_TEXT_FILE_SUFFIXES)):
-                    files.append(Path(current_root) / name)
-    return sorted(files)
+        yield from _iter_text_files_sorted(candidate)
+
+
+def _iter_text_files_sorted(root: Path) -> Iterator[Path]:
+    with os.scandir(root) as scandir_entries:
+        entries = sorted(scandir_entries, key=lambda entry: entry.name)
+    for entry in entries:
+        entry_path = Path(entry.path)
+        if entry.is_dir(follow_symlinks=False):
+            yield from _iter_text_files_sorted(entry_path)
+            continue
+        if entry.is_file(follow_symlinks=False) and entry.name.endswith(_TEXT_FILE_SUFFIXES):
+            yield entry_path
 
 
 

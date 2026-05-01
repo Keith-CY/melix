@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -149,6 +150,42 @@ def test_collect_probe_sources_stops_reading_after_all_probe_slots_are_filled(
         ]
 
 
+def test_collect_probe_sources_stops_discovering_files_after_probe_slots_are_filled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = _seed_repo(tmp_path)
+    docs_root = repo_root / "docs"
+    probe_names = [
+        probe_name
+        for probe_group in closure_audit_module._REQUIRED_PROBES.values()
+        for probe_name in probe_group
+    ]
+    repeated_probe_text = "\n".join(probe_names) + "\n"
+    for index in range(3):
+        (docs_root / f"a-probe-{index}.md").write_text(repeated_probe_text, encoding="utf-8")
+    services_root = repo_root / "services"
+    services_root.mkdir(exist_ok=True)
+    (services_root / "after-saturation.py").write_text("should not be scanned\n", encoding="utf-8")
+
+    original_scandir = os.scandir
+
+    def tracked_scandir(path: Path | str):
+        if Path(path) == services_root:
+            raise AssertionError("probe file discovery should stop before scanning later roots")
+        return original_scandir(path)
+
+    monkeypatch.setattr(closure_audit_module.os, "scandir", tracked_scandir)
+
+    probe_sources = closure_audit_module._collect_probe_sources(repo_root)
+
+    for probe_name in probe_names:
+        assert probe_sources[probe_name] == [
+            "docs/a-probe-0.md",
+            "docs/a-probe-1.md",
+            "docs/a-probe-2.md",
+        ]
+
+
 def test_collect_probe_sources_uses_iterator_order_without_resorting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -229,7 +266,7 @@ def test_closure_audit_helper_fallbacks_cover_policy_and_probe_edge_cases(tmp_pa
     (services_dir / "ignored.bin").write_bytes(b"ignored")
     expected_text_file = services_dir / "kept.md"
     expected_text_file.write_text("kept\n", encoding="utf-8")
-    assert closure_audit_module._iter_probe_text_files(helper_root) == [expected_text_file]
+    assert list(closure_audit_module._iter_probe_text_files(helper_root)) == [expected_text_file]
 
     first_probe_name = next(iter(closure_audit_module._REQUIRED_PROBES.values()))[0]
     partial_sources = {probe_name: [] for probe_group in closure_audit_module._REQUIRED_PROBES.values() for probe_name in probe_group}
