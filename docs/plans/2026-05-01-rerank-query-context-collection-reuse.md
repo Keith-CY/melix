@@ -2,7 +2,7 @@
 
 ## Scope
 
-This slice keeps the existing deterministic rerank semantics and narrows the hot path inside `worker/runtime/rerank_backends.py`. The default Jina v3 and causal-lm rerank families already build one `RerankQueryContext` per request; this slice reuses the context's immutable tuple/frozenset collections directly while scoring each document instead of rebuilding per-document list/set copies.
+This slice keeps the existing deterministic rerank semantics and narrows the hot path inside `worker/runtime/rerank_backends.py`. The default Jina v3 and causal-lm rerank families already build one `RerankQueryContext` per request; this slice reuses the context's immutable tuple/frozenset collections directly while scoring each document instead of rebuilding per-document query list/set copies. It also derives Jaccard union counts from set sizes plus the already-computed overlap count so scoring does not allocate an additional union set per document.
 
 ## Registered probe
 

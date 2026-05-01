@@ -131,8 +131,9 @@ class BasicRerankFamilyAdapter(RerankFamilyAdapter):
         if not query_token_set and not document_tokens:
             overlap_score = 1.0
         else:
-            union = len(query_token_set | document_tokens) or 1
-            overlap_score = len(query_token_set & document_tokens) / union
+            overlap_count = len(query_token_set & document_tokens)
+            union = (len(query_token_set) + len(document_tokens) - overlap_count) or 1
+            overlap_score = overlap_count / union
         return round(overlap_score + backend.tie_breaker(query, document), 6)
 
 
@@ -167,8 +168,9 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         if not query_token_set and not document_token_set:
             overlap_score = 1.0
         else:
-            union = len(query_token_set | document_token_set) or 1
-            overlap_score = len(query_token_set & document_token_set) / union
+            overlap_count = len(query_token_set & document_token_set)
+            union = (len(query_token_set) + len(document_token_set) - overlap_count) or 1
+            overlap_score = overlap_count / union
 
         pair_bonus = self._ordered_pair_bonus(query_tokens, document_tokens, query_pairs=query_context.ordered_pairs)
         exact_order_bonus = 0.1 if self._contains_contiguous_query(document_tokens, query_tokens) else 0.0
@@ -240,7 +242,8 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
         document_tokens = backend.tokenize(document)
         query_token_set = query_context.query_token_set
         document_token_set = set(document_tokens)
-        overlap = len(query_token_set & document_token_set) / (len(query_token_set) or 1)
+        overlap_count = len(query_token_set & document_token_set)
+        overlap = overlap_count / (len(query_token_set) or 1)
         pair_bonus = JinaV3RerankFamilyAdapter._ordered_pair_bonus(
             query_tokens,
             document_tokens,
@@ -256,7 +259,7 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
 
         no_logit = 1.5
         no_logit -= overlap * 3.0
-        if not (query_token_set & document_token_set):
+        if overlap_count == 0:
             no_logit += 0.3
 
         return round(yes_logit - no_logit + backend.tie_breaker(query, document), 6)
