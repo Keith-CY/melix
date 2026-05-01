@@ -668,11 +668,19 @@ def collect_lora_path_evidence(jobs_root: str | Path) -> dict[str, Any]:
                 )
             )
         )
-        artifact_path = train_events[-1].completed.output_path
-        stages["train"] = {
-            "success": 1.0,
-            "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
-        }
+        last_event = train_events[-1] if train_events else None
+        if last_event and last_event.HasField("completed") and last_event.completed.output_path:
+            artifact_path = last_event.completed.output_path
+            stages["train"] = {
+                "success": 1.0,
+                "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+            }
+        else:
+            stages["train"] = {
+                "success": 0.0,
+                "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+                "failure_reason": "train stage did not produce an artifact",
+            }
     except Exception as exc:
         stages["train"] = {
             "success": 0.0,
