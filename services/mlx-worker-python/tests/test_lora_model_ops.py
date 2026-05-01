@@ -38,6 +38,8 @@ from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.training_dataset import (
     HFDatasetReference,
+    MaterializedTrainingDatasetPackage,
+    TrainingDatasetPackage,
     materialize_hf_training_dataset_package,
     resolve_training_dataset_package,
 )
@@ -1445,6 +1447,67 @@ def test_resolve_training_dataset_rejects_hf_valid_split_for_local_package(tmp_p
         )
 
     assert exc.value.code == "invalid_dataset_source"
+
+
+def test_resolve_training_dataset_package_reuses_materialized_hf_package_without_reloading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_path = tmp_path / "datasets" / "cached-hf"
+    package = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=package_path / "manifest.json",
+        samples_path=package_path / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="melix/demo-hf:default:train@main",
+        format="text_completion",
+        sample_count=1,
+        version="main",
+        normalized_samples=[{"text": "hello world"}],
+        normalized_validation_samples=[],
+        validation_sample_count=0,
+        response_only_supported=False,
+    )
+    reference = HFDatasetReference(
+        dataset_path="melix/demo-hf",
+        dataset_name="default",
+        dataset_revision="main",
+        train_split="train",
+        valid_split="",
+        chat_feature="",
+        prompt_feature="",
+        completion_feature="",
+        text_feature="text",
+    )
+
+    monkeypatch.setattr(
+        training_dataset_module,
+        "materialize_hf_training_dataset_package",
+        lambda *args, **kwargs: MaterializedTrainingDatasetPackage(
+            package_path=package_path,
+            cache_key="cached-hf",
+            cache_hit=False,
+            dataset_uri="hf://melix/demo-hf",
+            reference=reference,
+            package=package,
+        ),
+    )
+
+    def fail_load(*args, **kwargs):
+        raise AssertionError("resolve_training_dataset_package should reuse the freshly materialized package")
+
+    monkeypatch.setattr(training_dataset_module, "load_training_dataset_package", fail_load)
+
+    resolved = resolve_training_dataset_package(
+        {"dataset_source_kind": "hf_dataset", "hf_dataset_path": "melix/demo-hf"},
+        jobs_root=tmp_path / "jobs",
+    )
+
+    assert resolved.package is package
+    assert resolved.cache_hit is False
+    assert resolved.materialized_package_path == package_path
+    assert resolved.dataset_uri == "hf://melix/demo-hf"
+
 
 
 def test_materialize_hf_training_dataset_rejects_empty_row_payload(tmp_path: Path) -> None:

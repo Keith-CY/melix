@@ -156,6 +156,84 @@ def test_write_normalized_dataset_snapshot_clears_stale_valid_jsonl_when_no_vali
     assert stale_valid_path.exists() is False
 
 
+
+def test_load_training_dataset_package_respects_sample_limit_after_skipping_blank_lines(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "limited-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "limited-package",
+                "format": "text_completion",
+                "sample_count": 2,
+                "version": "1",
+                "validation_sample_count": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        "\n"
+        '{"text": "alpha"}\n'
+        "\n"
+        '{"text": "beta"}\n',
+        encoding="utf-8",
+    )
+
+    package = load_training_dataset_package(str(package_path), sample_limit=1)
+
+    assert package.sample_count == 1
+    assert package.normalized_samples == [{"text": "alpha"}]
+
+
+
+def test_load_training_dataset_package_rejects_invalid_manifest_json(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "invalid-manifest"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text("{not-json", encoding="utf-8")
+    (package_path / "samples.jsonl").write_text('{"text": "alpha"}\n', encoding="utf-8")
+
+    with pytest.raises(ModelOperationError) as exc:
+        load_training_dataset_package(str(package_path))
+
+    assert exc.value.code == "invalid_dataset_package"
+
+
+
+def test_load_training_dataset_package_rejects_invalid_sample_json(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "invalid-sample"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "invalid-sample",
+                "format": "text_completion",
+                "sample_count": 1,
+                "version": "1",
+                "validation_sample_count": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text("{not-json\n", encoding="utf-8")
+
+    with pytest.raises(ModelOperationError) as exc:
+        load_training_dataset_package(str(package_path))
+
+    assert exc.value.code == "invalid_dataset_package"
+
+
+
 def test_build_training_dataset_artifact_converts_alpaca_rows_and_records_quality_signals(
     tmp_path: Path,
 ) -> None:
