@@ -7951,6 +7951,52 @@ struct ControlPlaneServiceTests {
         #expect(model?.state == .modelWarm)
     }
 
+    @Test("startChat lazily loads text-capable VLM models before streaming")
+    func startChatLazilyLoadsTextCapableVLMModel() async throws {
+        let modelCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devVLMModel()])
+        let textClient = ScriptedChatWorkerClient(events: [])
+        let vlmClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-vlm-lazy"),
+            makeTokenExecuteEvent(requestID: "chat-vlm-lazy", text: "vlm"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-vlm-lazy",
+                finishReason: "stop",
+                assistant: "vlm",
+                reasoning: ""
+            )
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: vlmClient,
+                modelCatalog: modelCatalog
+            ),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-vlm-lazy" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-vlm",
+                messages: [.init(role: "user", content: "hello")]
+            )
+        )
+
+        _ = try await Array(execution.stream)
+
+        let loadRequest = try #require(await vlmClient.lastLoadModelRequest)
+        let generated = try #require(await vlmClient.lastGenerateRequest)
+        let model = await modelCatalog.model(id: "melix-dev-vlm")
+
+        #expect(loadRequest.model.modelID == "melix-dev-vlm")
+        #expect(loadRequest.model.modelKind == "vlm")
+        #expect(loadRequest.model.ext["melix.capability.route_kind"] == "python_vlm")
+        // ScriptedChatWorkerClient echoes the loaded handle; loader tests cover suffixed Python handles.
+        #expect(generated.execution.modelHandle == "melix-dev-vlm")
+        #expect(model?.state == .modelWarm)
+        #expect(await textClient.lastGenerateRequest == nil)
+    }
+
     @Test("startChat lazy text loads preserve adapter-set hash in worker requests")
     func startChatLazyTextLoadsPreserveAdapterSetHashInWorkerRequests() async throws {
         var seeded = ModelCatalog.devTextModel()

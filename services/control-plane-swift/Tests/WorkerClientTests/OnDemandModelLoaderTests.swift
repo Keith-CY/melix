@@ -166,6 +166,80 @@ struct OnDemandModelLoaderTests {
         #expect(await swiftClient.loadRequestCount == 0)
     }
 
+    @Test("text-capable VLM models lazy-load through the Python VLM route")
+    func textCapableVLMModelsLazyLoadThroughThePythonVLMRoute() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        let swiftClient = LoaderTestingWorkerClient()
+        await swiftClient.setLoadResponse(
+            ok: true,
+            handle: "melix-dev-vlm::swift",
+            estimatedResidentBytes: 4_096
+        )
+        let pythonClient = LoaderTestingWorkerClient()
+        await pythonClient.setLoadResponse(
+            ok: true,
+            handle: "melix-dev-vlm::python",
+            estimatedResidentBytes: 8_192
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: swiftClient,
+            pythonCompatibilityClient: pythonClient,
+            modelCatalog: catalog
+        )
+        let metricsStore = MetricsStore()
+
+        let handle = try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: "melix-dev-vlm",
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+
+        let loadRequest = try #require(await pythonClient.lastLoadModelRequest)
+        #expect(handle == "melix-dev-vlm::python")
+        #expect(loadRequest.model.modelKind == "vlm")
+        #expect(loadRequest.model.ext["melix.capability.route_kind"] == "python_vlm")
+        #expect(await pythonClient.loadRequestCount == 1)
+        #expect(await swiftClient.loadRequestCount == 0)
+    }
+
+    @Test("VLM text loading falls back to ext when structured capability fields are empty")
+    func vlmTextLoadingFallsBackToExtWhenStructuredCapabilityFieldsAreEmpty() async throws {
+        var model = ModelCatalog.devVLMModel()
+        model.modelID = "melix-dev-vlm-ext-only"
+        model.supportedModalities = []
+        model.supportedTasks = []
+        model.settings.ext["melix.capability.supported_modalities"] = "text,image"
+        model.settings.ext["melix.capability.supported_tasks"] = "vlm,generate"
+        model.settings.ext["melix.model_path"] = "/tmp/melix-dev-vlm-ext-only"
+
+        let catalog = ModelCatalog(seedModels: [model])
+        let swiftClient = LoaderTestingWorkerClient()
+        let pythonClient = LoaderTestingWorkerClient()
+        await pythonClient.setLoadResponse(
+            ok: true,
+            handle: "melix-dev-vlm-ext-only::python",
+            estimatedResidentBytes: 4_096
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: swiftClient,
+            pythonCompatibilityClient: pythonClient,
+            modelCatalog: catalog
+        )
+        let metricsStore = MetricsStore()
+
+        let handle = try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: "melix-dev-vlm-ext-only",
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+
+        #expect(handle == "melix-dev-vlm-ext-only::python")
+        #expect(await pythonClient.loadRequestCount == 1)
+        #expect(await swiftClient.loadRequestCount == 0)
+    }
+
     @Test("lazy load falls back to estimated resident bytes when runtime stats are unavailable")
     func lazyLoadFallsBackToEstimatedResidentBytesWhenRuntimeStatsAreUnavailable() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
@@ -198,6 +272,7 @@ struct OnDemandModelLoaderTests {
         let registry = WorkerRegistry(defaultTextClient: workerClient)
         let missingCatalog = ModelCatalog(seedModels: [])
         let nonTextCatalog = ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()])
+        let imageCatalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
         let metricsStore = MetricsStore()
 
         await #expect(throws: OnDemandModelLoadError.modelNotReady) {
@@ -218,7 +293,70 @@ struct OnDemandModelLoaderTests {
             )
         }
 
+        await #expect(throws: OnDemandModelLoadError.modelNotReady) {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "melix-dev-image",
+                modelCatalog: imageCatalog,
+                workerRegistry: registry,
+                metricsStore: metricsStore
+            )
+        }
+
         #expect(await workerClient.loadRequestCount == 0)
+    }
+
+    @Test("VLM text loading honors structured capability fields before ext fallbacks")
+    func vlmTextLoadingHonorsStructuredCapabilityFieldsBeforeExtFallbacks() async throws {
+        var imageOnlyVLM = ModelCatalog.devVLMModel()
+        imageOnlyVLM.modelID = "melix-dev-vlm-image-only"
+        imageOnlyVLM.supportedModalities = ["image"]
+        imageOnlyVLM.supportedTasks = ["vlm", "generate"]
+        imageOnlyVLM.settings.ext["melix.capability.supported_modalities"] = "text,image"
+        imageOnlyVLM.settings.ext["melix.capability.supported_tasks"] = "vlm,generate"
+        imageOnlyVLM.settings.ext["melix.model_path"] = "/tmp/melix-dev-vlm-image-only"
+
+        var noGenerateVLM = ModelCatalog.devVLMModel()
+        noGenerateVLM.modelID = "melix-dev-vlm-no-generate"
+        noGenerateVLM.supportedModalities = ["text", "image"]
+        noGenerateVLM.supportedTasks = ["vlm"]
+        noGenerateVLM.settings.ext["melix.capability.supported_modalities"] = "text,image"
+        noGenerateVLM.settings.ext["melix.capability.supported_tasks"] = "vlm,generate"
+        noGenerateVLM.settings.ext["melix.model_path"] = "/tmp/melix-dev-vlm-no-generate"
+
+        let catalog = ModelCatalog(seedModels: [imageOnlyVLM, noGenerateVLM])
+        let swiftClient = LoaderTestingWorkerClient()
+        let pythonClient = LoaderTestingWorkerClient()
+        await pythonClient.setLoadResponse(
+            ok: true,
+            handle: "unexpected-vlm::python",
+            estimatedResidentBytes: 4_096
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: swiftClient,
+            pythonCompatibilityClient: pythonClient,
+            modelCatalog: catalog
+        )
+        let metricsStore = MetricsStore()
+
+        await #expect(throws: OnDemandModelLoadError.modelNotReady) {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "melix-dev-vlm-image-only",
+                modelCatalog: catalog,
+                workerRegistry: registry,
+                metricsStore: metricsStore
+            )
+        }
+        await #expect(throws: OnDemandModelLoadError.modelNotReady) {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "melix-dev-vlm-no-generate",
+                modelCatalog: catalog,
+                workerRegistry: registry,
+                metricsStore: metricsStore
+            )
+        }
+
+        #expect(await pythonClient.loadRequestCount == 0)
+        #expect(await swiftClient.loadRequestCount == 0)
     }
 
     @Test("worker unavailability and failed lazy loads record failed model state")

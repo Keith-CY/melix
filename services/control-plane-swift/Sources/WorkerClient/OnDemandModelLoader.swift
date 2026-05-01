@@ -61,7 +61,7 @@ enum OnDemandModelLoader {
             return handle
         }
         if requiresTextCapability,
-           !(model.kind == "text" || model.capabilityClass == .modelCapabilityText) {
+           !supportsTextServing(model) {
             throw OnDemandModelLoadError.modelNotReady
         }
         let effectiveMemoryBudgetBytes = requestedMemoryBudgetBytes(
@@ -143,6 +143,56 @@ enum OnDemandModelLoader {
         )
 
         return response.modelHandle
+    }
+
+    private static func supportsTextServing(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        let modelKind = normalizedIdentifier(model.kind)
+        if modelKind == "text" || model.capabilityClass == .modelCapabilityText {
+            return true
+        }
+
+        let capabilityClass = normalizedIdentifier(model.settings.ext["melix.capability.class"])
+        // Model summaries can come from built-ins, registry scans, or workers; each path
+        // may populate a different VLM identity field.
+        let isVLM = modelKind == "vlm"
+            || capabilityClass == "vlm"
+            || model.capabilityClass == .modelCapabilityVlm
+        guard isVLM else {
+            return false
+        }
+
+        let modalities = normalizedIdentifierSet(
+            model.supportedModalities,
+            fallback: model.settings.ext["melix.capability.supported_modalities"]
+        )
+        let tasks = normalizedIdentifierSet(
+            model.supportedTasks,
+            fallback: model.settings.ext["melix.capability.supported_tasks"]
+        )
+        return modalities.contains("text") && tasks.contains("generate")
+    }
+
+    private static func normalizedIdentifierSet(
+        _ values: [String],
+        fallback: String?
+    ) -> Set<String> {
+        let identifiers = Set(values.map(normalizedIdentifier).filter { !$0.isEmpty })
+        guard identifiers.isEmpty, let fallback else {
+            return identifiers
+        }
+        // Capability ext values use unquoted comma-separated identifier tokens.
+        return Set(
+            fallback
+                .split(separator: ",")
+                .map { normalizedIdentifier(String($0)) }
+                .filter { !$0.isEmpty }
+        )
+    }
+
+    private static func normalizedIdentifier(_ value: String?) -> String {
+        (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private static func requestedMemoryBudgetBytes(
