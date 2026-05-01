@@ -63,6 +63,9 @@ class ProbeDefinition:
             "name": self.name,
             "runner": self.runner,
             "watch_globs": list(self.watch_globs),
+            "test_command": self.test_command,
+            "coverage_command": self.coverage_command,
+            "probe_command": self.probe_command,
             "metrics": [metric.to_dict() for metric in self.metrics],
         }
 

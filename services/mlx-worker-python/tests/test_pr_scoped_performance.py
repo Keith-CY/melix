@@ -90,6 +90,13 @@ def test_scope_report_force_selects_all_on_infra_change() -> None:
     assert scope["selected_count"] == len(load_probe_registry(REGISTRY_PATH))
 
 
+def test_registered_probes_expose_focused_commands() -> None:
+    for probe in load_probe_registry(REGISTRY_PATH):
+        assert probe.test_command
+        assert probe.coverage_command
+        assert probe.probe_command
+
+
 def test_scope_report_with_no_matching_probe_returns_empty_selection() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
