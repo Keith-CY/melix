@@ -117,6 +117,68 @@ def test_build_swift_launch_command_prefers_built_binary_when_requested(tmp_path
     ) == [str(binary_path)]
 
 
+def test_build_swift_launch_command_uses_direct_debug_binary_without_glob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    binary_path = tmp_path / "services/mlx-text-worker-swift/.build/debug/melix-text-worker-swift"
+    make_executable(binary_path)
+
+    def fail_glob(self: Path, pattern: str):
+        raise AssertionError("resolve_built_swift_product_binary() should not glob when .build/debug has the product")
+
+    monkeypatch.setattr(dev_up.Path, "glob", fail_glob)
+
+    assert dev_up.build_swift_launch_command(
+        tmp_path,
+        package_path="services/mlx-text-worker-swift",
+        product_name="melix-text-worker-swift",
+        prefer_built=True,
+    ) == [str(binary_path)]
+
+
+def test_resolve_built_swift_product_binary_skips_broken_scandir_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    build_root = tmp_path / "services/mlx-text-worker-swift/.build"
+    binary_path = build_root / "arm64-apple-macosx/debug/melix-text-worker-swift"
+    make_executable(binary_path)
+
+    class BrokenEntry:
+        name = "stale"
+
+        def is_dir(self) -> bool:
+            raise OSError("stale dirent")
+
+    class GoodEntry:
+        name = "arm64-apple-macosx"
+
+        def is_dir(self) -> bool:
+            return True
+
+    class FakeScandir:
+        def __enter__(self):
+            return iter((BrokenEntry(), GoodEntry()))
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+    def fake_scandir(path: str):
+        assert path == os.fspath(build_root)
+        return FakeScandir()
+
+    monkeypatch.setattr(dev_up.os, "scandir", fake_scandir)
+
+    assert dev_up.resolve_built_swift_product_binary(
+        tmp_path,
+        package_path="services/mlx-text-worker-swift",
+        product_name="melix-text-worker-swift",
+    ) == binary_path
+
+
 def test_build_swift_launch_command_reports_missing_built_binary(tmp_path: Path) -> None:
     dev_up = load_dev_up_module()
 

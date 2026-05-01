@@ -92,10 +92,24 @@ def optional_parent_environment_exports(names: tuple[str, ...]) -> dict[str, str
 
 def resolve_built_swift_product_binary(repo_root: Path, *, package_path: str, product_name: str) -> Path:
     build_root = repo_root / package_path / ".build"
-    candidates = [build_root / "debug" / product_name]
-    candidates.extend(sorted(build_root.glob(f"*/debug/{product_name}")))
+    direct_candidate = build_root / "debug" / product_name
+    if direct_candidate.is_file() and os.access(direct_candidate, os.X_OK):
+        return direct_candidate
 
-    for candidate in candidates:
+    child_names: list[str] = []
+    try:
+        with os.scandir(os.fspath(build_root)) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir():
+                        child_names.append(entry.name)
+                except OSError:
+                    continue
+    except OSError:
+        child_names = []
+
+    for child_name in sorted(child_names):
+        candidate = build_root / child_name / "debug" / product_name
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
 
