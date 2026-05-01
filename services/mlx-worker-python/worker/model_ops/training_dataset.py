@@ -1345,8 +1345,41 @@ def _build_quality_and_token_stats(
 
 
 def _build_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
-    _, token_stats = _build_quality_and_token_stats(samples, format_name)
-    return token_stats
+    return _collect_token_stats(samples, format_name)
+
+
+def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
+    prompt_tokens: list[int] = []
+    completion_tokens: list[int] = []
+    total_tokens: list[int] = []
+    sample_count = 0
+    for sample in samples:
+        sample_count += 1
+        prompt_count, completion_count = _sample_token_counts(sample, format_name)
+        prompt_tokens.append(prompt_count)
+        completion_tokens.append(completion_count)
+        total_tokens.append(prompt_count + completion_count)
+
+    prompt_summary = _summarize_token_values(prompt_tokens)
+    completion_summary = _summarize_token_values(completion_tokens)
+    total_summary = _summarize_token_values(total_tokens)
+
+    return {
+        "estimator": "whitespace_v1",
+        "sample_count": sample_count,
+        "prompt_tokens_mean": prompt_summary["mean"],
+        "prompt_tokens_p50": prompt_summary["p50"],
+        "prompt_tokens_p95": prompt_summary["p95"],
+        "prompt_tokens_max": prompt_summary["max"],
+        "completion_tokens_mean": completion_summary["mean"],
+        "completion_tokens_p50": completion_summary["p50"],
+        "completion_tokens_p95": completion_summary["p95"],
+        "completion_tokens_max": completion_summary["max"],
+        "total_tokens_mean": total_summary["mean"],
+        "total_tokens_p50": total_summary["p50"],
+        "total_tokens_p95": total_summary["p95"],
+        "total_tokens_max": total_summary["max"],
+    }
 
 
 def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int, int]:
