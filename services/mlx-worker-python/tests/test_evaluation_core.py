@@ -1855,6 +1855,7 @@ def test_parse_prediction_prefers_answer_prefix_and_equation_results_for_numeric
         expected="9",
         raw_response=(
             "Thinking Process:\n"
+            "Answer: 8.\n"
             "6 + 3 = 9.\n"
             "Final Answer: 9.\n"
             "Constraint Checklist:\n"

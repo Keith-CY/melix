@@ -2634,8 +2634,9 @@ class EvaluationCore:
         if not normalized_response:
             return "", "empty_prediction"
 
-        answer_matches = list(_ANSWER_PREFIX_PATTERN.finditer(normalized_response))
-        answer_match = answer_matches[-1] if answer_matches else None
+        answer_match = None
+        for match in _ANSWER_PREFIX_PATTERN.finditer(normalized_response):
+            answer_match = match
         if answer_match is not None:
             candidate = answer_match.group(1).strip()
             parsed = EvaluationCore._parse_candidate_for_expected(candidate=candidate, expected=expected)
