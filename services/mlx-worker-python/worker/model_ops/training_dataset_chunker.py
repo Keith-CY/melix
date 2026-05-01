@@ -310,14 +310,14 @@ def _chunk_sample(
 
     tools = _extract_tools(sample)
     messages = _extract_messages(sample)
-    full_len = _render_len(messages, tokenizer, tools=tools)
-    if full_len <= chunk_size:
-        return [_passthrough_sample(sample)]
-
     sample_id = str(sample.get("id", ""))
     system_prefix, pairs = _split_messages_into_turns(messages)
 
     if not pairs:
+        return [_passthrough_sample(sample)]
+
+    full_len = _render_len(messages, tokenizer, tools=tools)
+    if full_len <= chunk_size:
         return [_passthrough_sample(sample)]
 
     # Multi-turn: emit each (user, assistant) pair as its own chunk first.
