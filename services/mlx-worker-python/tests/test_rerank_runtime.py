@@ -9,6 +9,7 @@ from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRunti
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.rerank_backends import (
     BasicRerankFamilyAdapter,
+    CausalLMRerankFamilyAdapter,
     DeterministicRerankBackend,
     JinaV3RerankFamilyAdapter,
     RerankFamilyAdapter,
@@ -290,6 +291,65 @@ def test_score_documents_tokenizes_the_query_once_for_multiple_documents() -> No
         "runtime swift uses reversed order",
         "python packaging release",
     ]
+
+
+def test_score_documents_builds_query_context_once_for_multiple_documents() -> None:
+    class TrackingFamilyAdapter(JinaV3RerankFamilyAdapter):
+        def __init__(self) -> None:
+            self.query_contexts: list[object] = []
+            self.query_context_builds = 0
+
+        def build_query_context(self, backend: DeterministicRerankBackend, query: str, **kwargs: object):
+            self.query_context_builds += 1
+            return super().build_query_context(backend, query, **kwargs)
+
+        def score(self, backend: DeterministicRerankBackend, query: str, document: str, **kwargs: object) -> float:
+            self.query_contexts.append(kwargs["query_context"])
+            return super().score(backend, query, document, **kwargs)
+
+    runtime = DeterministicRerankRuntime()
+    backend = DeterministicRerankBackend()
+    family = TrackingFamilyAdapter()
+
+    scores = runtime.score_documents(
+        {
+            "rerank_backend": backend,
+            "rerank_family_adapter": family,
+        },
+        "swift runtime",
+        [
+            "swift runtime is available",
+            "runtime swift uses reversed order",
+            "python packaging release",
+        ],
+    )
+
+    assert len(scores) == 3
+    assert family.query_context_builds == 1
+    assert len(family.query_contexts) == 3
+    assert family.query_contexts[0] is family.query_contexts[1] is family.query_contexts[2]
+
+
+@pytest.mark.parametrize(
+    ("family", "query", "document"),
+    [
+        (BasicRerankFamilyAdapter(), "swift runtime", "swift runtime is available"),
+        (JinaV3RerankFamilyAdapter(), "swift runtime", "swift runtime is available"),
+        (CausalLMRerankFamilyAdapter(), "swift runtime", "swift runtime is available"),
+    ],
+)
+def test_rerank_family_query_context_preserves_scoring_semantics(
+    family: RerankFamilyAdapter,
+    query: str,
+    document: str,
+) -> None:
+    backend = DeterministicRerankBackend()
+
+    baseline_score = family.score(backend, query, document)
+    query_context = family.build_query_context(backend, query)
+    optimized_score = family.score(backend, query, document, query_context=query_context)
+
+    assert optimized_score == baseline_score
 
 
 def test_rerank_rejects_missing_and_wrong_model_kinds() -> None:

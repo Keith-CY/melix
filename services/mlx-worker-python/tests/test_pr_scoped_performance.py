@@ -30,6 +30,7 @@ from worker.productization.pr_scoped_performance import (
     _parse_coverage_percent,
     _probe_benchmark_evaluation_report,
     _probe_closure_audit,
+    _probe_deterministic_rerank_query_context_reuse,
     _probe_evaluation_job_id,
     _probe_evaluation_sample_probe_aggregation,
     _probe_training_dataset_token_percentiles,
@@ -110,6 +111,16 @@ def test_scope_report_selects_worker_registry_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "worker-registry-resident-bytes-accumulator"
 
 
+def test_scope_report_selects_deterministic_rerank_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/deterministic_rerank_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "deterministic-rerank-query-context-reuse"
+
+
 def test_scope_report_selects_bench_report_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -144,6 +155,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "benchmark-evaluation-report-running-aggregates",
         "closure-audit-probe-source-short-circuit",
+        "deterministic-rerank-query-context-reuse",
         "evaluation-job-id-high-water-mark",
         "evaluation-sample-probe-aggregation",
         "training-dataset-token-percentiles-single-sort",
@@ -272,6 +284,7 @@ def test_probe_training_dataset_token_percentiles_reports_quality_and_tracing_me
 def test_probe_smokes_return_metrics_against_current_repo() -> None:
     benchmark_metrics = _probe_benchmark_evaluation_report(REPO_ROOT)
     closure_metrics = _probe_closure_audit(REPO_ROOT)
+    rerank_metrics = _probe_deterministic_rerank_query_context_reuse(REPO_ROOT)
     evaluation_job_id_metrics = _probe_evaluation_job_id(REPO_ROOT)
     evaluation_sample_probe_metrics = _probe_evaluation_sample_probe_aggregation(REPO_ROOT)
     training_dataset_metrics = _probe_training_dataset_token_percentiles(REPO_ROOT)
@@ -282,6 +295,11 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert closure_metrics["elapsed_ms_mean"] > 0
     assert closure_metrics["probe_file_reads_mean"] > 0
     assert closure_metrics["finding_count"] > 0
+    assert rerank_metrics["elapsed_ms_mean"] > 0
+    assert rerank_metrics["query_context_builds_mean"] == 1.0
+    assert rerank_metrics["document_count"] == 2048.0
+    assert rerank_metrics["iteration_count"] == 8.0
+    assert rerank_metrics["tokenize_calls_mean"] == 2049.0
     assert evaluation_job_id_metrics["elapsed_ms_mean"] > 0
     assert evaluation_job_id_metrics["per_call_ms_mean"] > 0
     assert evaluation_job_id_metrics["allocation_count"] == 200.0
@@ -296,6 +314,28 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert training_dataset_metrics["sample_count"] == 20000.0
     assert training_dataset_metrics["duplicate_count"] > 0
     assert training_dataset_metrics["dirty_count"] > 0
+
+
+def test_dispatch_probe_impl_supports_deterministic_rerank_probe() -> None:
+    probe = ProbeDefinition(
+        probe_id="deterministic-rerank-query-context-reuse",
+        name="Deterministic rerank query-context reuse",
+        runner="ubuntu-latest",
+        watch_globs=("services/mlx-worker-python/worker/runtime/deterministic_rerank_runtime.py",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="deterministic_rerank_query_context_reuse",
+        probe_command='python3 -c "{}"',
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["query_context_builds_mean"] == 1.0
+    assert metrics["document_count"] == 2048.0
+    assert metrics["iteration_count"] == 8.0
+    assert metrics["tokenize_calls_mean"] == 2049.0
 
 
 def test_worker_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
