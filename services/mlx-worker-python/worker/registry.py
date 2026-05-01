@@ -122,6 +122,10 @@ class WorkerRegistry:
         self._loaded_model_resident_bytes = 0
         self._reserved_model_resident_bytes = 0
         self._requests: dict[str, RequestState] = {}
+        self._active_request_count = 0
+        self._active_prefill_count = 0
+        self._active_decode_count = 0
+        self._active_multimodal_request_count = 0
         self._draining = False
         self._last_probe_kind = ""
         self._last_preprocess_latency_ms = 0.0
@@ -339,7 +343,11 @@ class WorkerRegistry:
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
         state = RequestState(request_id=request_id, runtime_kind=runtime_kind)
         with self._lock:
+            existing = self._requests.get(request_id)
+            if existing is not None:
+                self._remove_request_from_counters(existing)
             self._requests[request_id] = state
+            self._add_request_to_counters(state)
         return state
 
     def get_request(self, request_id: str) -> RequestState | None:
@@ -350,11 +358,15 @@ class WorkerRegistry:
         with self._lock:
             state = self._requests.get(request_id)
             if state is not None:
+                self._remove_request_from_counters(state)
                 state.phase = phase
+                self._add_request_to_counters(state)
 
     def finish_request(self, request_id: str) -> None:
         with self._lock:
-            self._requests.pop(request_id, None)
+            state = self._requests.pop(request_id, None)
+            if state is not None:
+                self._remove_request_from_counters(state)
 
     def abort_request(self, request_id: str) -> bool:
         with self._lock:
@@ -367,17 +379,10 @@ class WorkerRegistry:
     def runtime_stats(self) -> runtime_pb2.RuntimeStats:
         cache_stats = self.cache_stats_response().stats
         with self._lock:
-            active_requests = len(self._requests)
-            active_prefills = 0
-            active_decodes = 0
-            active_multimodal_requests = 0
-            for state in self._requests.values():
-                if state.phase == "prefill":
-                    active_prefills += 1
-                elif state.phase == "decode":
-                    active_decodes += 1
-                if state.runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}:
-                    active_multimodal_requests += 1
+            active_requests = self._active_request_count
+            active_prefills = self._active_prefill_count
+            active_decodes = self._active_decode_count
+            active_multimodal_requests = self._active_multimodal_request_count
             model_resident_bytes = self._loaded_model_resident_bytes
             cache_resident_bytes = cache_stats.l1_bytes + cache_stats.l2_bytes
             kv_cache_bytes = 0
@@ -456,6 +461,28 @@ class WorkerRegistry:
         stats.peak_allocation_bytes = peak_allocation_bytes
         stats.memory_headroom_bytes = memory_headroom_bytes
         return stats
+
+    @staticmethod
+    def _is_multimodal_request_kind(runtime_kind: str) -> bool:
+        return runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}
+
+    def _add_request_to_counters(self, state: RequestState) -> None:
+        self._active_request_count += 1
+        if state.phase == "prefill":
+            self._active_prefill_count += 1
+        elif state.phase == "decode":
+            self._active_decode_count += 1
+        if self._is_multimodal_request_kind(state.runtime_kind):
+            self._active_multimodal_request_count += 1
+
+    def _remove_request_from_counters(self, state: RequestState) -> None:
+        self._active_request_count = max(0, self._active_request_count - 1)
+        if state.phase == "prefill":
+            self._active_prefill_count = max(0, self._active_prefill_count - 1)
+        elif state.phase == "decode":
+            self._active_decode_count = max(0, self._active_decode_count - 1)
+        if self._is_multimodal_request_kind(state.runtime_kind):
+            self._active_multimodal_request_count = max(0, self._active_multimodal_request_count - 1)
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
         response = cache_pb2.GetCacheStatsResponse()
