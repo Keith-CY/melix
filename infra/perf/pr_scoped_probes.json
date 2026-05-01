@@ -268,6 +268,37 @@
     ]
   },
   {
+    "id": "job-registry-derived-model-single-pass",
+    "name": "Job registry derived-model single pass",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_ops/job_registry.py",
+      "services/mlx-worker-python/tests/test_model_ops_job_registry.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/job_registry_derived_model_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_model_ops_job_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_job_registry_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_job_registry_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_model_ops_job_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_job_registry_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_job_registry_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/job_registry.py services/mlx-worker-python/tests/test_model_ops_job_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/job_registry_derived_model_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -lc 'if [ -f scripts/job_registry_derived_model_probe.py ]; then python3 scripts/job_registry_derived_model_probe.py; else python3 - <<\"PY\"\nimport json\nimport statistics\nimport sys\nimport time\nfrom pathlib import Path\n\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\nfrom worker.model_ops.job_registry import ModelOpsJobRegistry\n\ndef seed_registry(job_count):\n    registry = ModelOpsJobRegistry()\n    removed_count = 0\n    for index in range(job_count):\n        model_id = f\"melix-dev-derived-{index:04d}\"\n        adapter_manifest_path = f\"/runtime/train/{model_id}/train_lora.adapter.json\"\n        train_job = registry.start(\"train_lora\", \"melix-dev-text\", f\"/runtime/train/{model_id}\")\n        registry.attach_manifest(train_job.job_id, json.dumps({\"adapter_name\": f\"adapter-{index:04d}\", \"adapter_set_hash\": f\"hash-{index:04d}\"}))\n        registry.complete(train_job.job_id, adapter_manifest_path)\n        activation_job = registry.start(\"activate_adapter\", \"melix-dev-text\", f\"/runtime/activate/{model_id}\")\n        activation_manifest_path = f\"/runtime/activate/{model_id}/manifest.json\"\n        registry.attach_manifest(activation_job.job_id, json.dumps({\"adapter_manifest_path\": adapter_manifest_path, \"adapter_weights_path\": f\"/runtime/train/{model_id}/adapters.safetensors\", \"adapter_set_hash\": f\"hash-{index:04d}\", \"derived_model_id\": model_id, \"derived_model_path\": f\"/runtime/activate/{model_id}\", \"derived_model_alias\": f\"alias-{index:04d}\", \"source_model\": \"melix-dev-text\", \"activation_mode\": \"fused_derived_model\"}))\n        registry.complete(activation_job.job_id, activation_manifest_path)\n        if index % 5 == 0:\n            removal_job = registry.start(\"remove_derived_model\", \"melix-dev-text\", f\"/runtime/remove/{model_id}\")\n            registry.attach_manifest(removal_job.job_id, json.dumps({\"derived_model_id\": model_id, \"activation_job_id\": activation_job.job_id, \"activation_manifest_path\": activation_manifest_path, \"adapter_manifest_path\": adapter_manifest_path}))\n            registry.complete(removal_job.job_id, f\"/runtime/remove/{model_id}/remove_derived_model.lifecycle.json\")\n            removed_count += 1\n    return registry, job_count - removed_count\n\njob_count = 1200\nsample_count = 6\nregistry, active_count = seed_registry(job_count)\ntarget_model_id = \"melix-dev-derived-1199\"\nactive_elapsed_ms = []\nresolve_elapsed_ms = []\nfor _ in range(sample_count):\n    started = time.perf_counter()\n    manifests = registry.active_derived_model_manifests()\n    active_elapsed_ms.append((time.perf_counter() - started) * 1000.0)\n    if len(manifests) != active_count:\n        raise RuntimeError(f\"expected {active_count} active manifests, got {len(manifests)}\")\n    started = time.perf_counter()\n    target = registry.resolve_derived_model_target(derived_model_id=target_model_id)\n    resolve_elapsed_ms.append((time.perf_counter() - started) * 1000.0)\n    if not target or target.get(\"derived_model_id\") != target_model_id:\n        raise RuntimeError(\"derived-model lookup returned the wrong target\")\nprint(json.dumps({\n    \"active_manifest_count\": float(active_count),\n    \"active_manifest_elapsed_ms_mean\": round(statistics.fmean(active_elapsed_ms), 6),\n    \"elapsed_ms_mean\": round(statistics.fmean(active_elapsed_ms) + statistics.fmean(resolve_elapsed_ms), 6),\n    \"job_count\": float(job_count),\n    \"removed_count\": float(job_count - active_count),\n    \"resolve_target_elapsed_ms_mean\": round(statistics.fmean(resolve_elapsed_ms), 6),\n    \"sample_count\": float(sample_count),\n}, sort_keys=True))\nPY\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "active_manifest_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "resolve_target_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "deterministic-rerank-query-context-reuse",
     "name": "Deterministic rerank query-context reuse",
     "runner": "ubuntu-latest",

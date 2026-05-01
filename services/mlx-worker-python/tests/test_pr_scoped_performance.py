@@ -111,6 +111,16 @@ def test_scope_report_selects_worker_registry_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "worker-registry-resident-bytes-accumulator"
 
 
+def test_scope_report_selects_job_registry_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/job_registry.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "job-registry-derived-model-single-pass"
+
+
 def test_scope_report_selects_deterministic_rerank_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -168,6 +178,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "evaluation-job-id-high-water-mark",
         "evaluation-sample-probe-aggregation",
+        "job-registry-derived-model-single-pass",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
         "swift-cli-json-envelope-encoding",
@@ -362,6 +373,21 @@ def test_worker_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["request_stats_elapsed_ms_mean"] > 0
     assert payload["resident_bytes_mean"] > 0
     assert payload["sample_count"] == 3.0
+
+
+def test_job_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/job_registry_derived_model_probe.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["elapsed_ms_mean"] > 0
+    assert payload["active_manifest_elapsed_ms_mean"] > 0
+    assert payload["resolve_target_elapsed_ms_mean"] > 0
+    assert payload["job_count"] == 1200.0
+    assert payload["active_manifest_count"] == 960.0
+    assert payload["removed_count"] == 240.0
+    assert payload["sample_count"] == 6.0
 
 
 def test_upload_receipt_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
