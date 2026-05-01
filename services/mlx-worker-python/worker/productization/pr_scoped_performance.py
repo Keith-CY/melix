@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import fnmatch
 import gc
+import os
 import importlib.util
 import json
 from pathlib import Path
@@ -425,6 +426,8 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_upload_receipt_published_files(repo_root)
     if probe.probe_impl == "pr_scoped_scope_matcher":
         return _probe_pr_scoped_scope_matcher(repo_root)
+    if probe.probe_impl == "model_ops_bundle_artifact_bytes":
+        return _probe_model_ops_bundle_artifact_bytes(repo_root)
     if probe.probe_impl == "command_json":
         return _probe_command_json(probe=probe, repo_root=repo_root)
     raise ValueError(f"unsupported probe implementation: {probe.probe_impl}")
@@ -1307,6 +1310,89 @@ def _load_upload_receipt_pipeline_module(path: Path) -> Any:
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = previous
+
+
+def _probe_model_ops_bundle_artifact_bytes(repo_root: Path) -> dict[str, float]:
+    probe_script = """
+import json
+import os
+import tempfile
+import time
+from pathlib import Path
+
+from packages.protocol.python.worker.v1 import maintenance_pb2
+from worker.grpc_server import WorkerMaintenanceService
+from worker.model_registry.catalog import WorkerModelCatalog
+from worker.registry import WorkerRegistry
+
+elapsed_samples = []
+scandir_samples = []
+sample_count = 0.0
+
+for _ in range(3):
+    with tempfile.TemporaryDirectory(prefix='melix-pr-perf-model-ops-bundle-') as temp_dir:
+        temp_root = Path(temp_dir)
+        service = WorkerMaintenanceService(
+            WorkerRegistry(model_catalog=WorkerModelCatalog()),
+            jobs_root=temp_root / 'model-ops',
+        )
+        original_scandir = os.scandir
+        bundle_scandir_calls = [0]
+
+        def tracked_scandir(path):
+            bundle_scandir_calls[0] += int(Path(path).name.endswith('.artifact'))
+            return original_scandir(path)
+
+        os.scandir = tracked_scandir
+        try:
+            started = time.perf_counter()
+            convert_events = list(
+                service.ConvertModel(
+                    maintenance_pb2.ConvertModelRequest(
+                        source_model='melix-dev-text',
+                        output_dir=str(temp_root / 'convert'),
+                        generate_manifest=True,
+                    ),
+                    context=None,
+                )
+            )
+            quantize_events = list(
+                service.ConvertModel(
+                    maintenance_pb2.ConvertModelRequest(
+                        source_model='melix-dev-text',
+                        output_dir=str(temp_root / 'quantize'),
+                        weight_quant='q4',
+                        kv_quant='q8',
+                        generate_manifest=True,
+                        ext={'operation': 'quantize'},
+                    ),
+                    context=None,
+                )
+            )
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        finally:
+            os.scandir = original_scandir
+
+        sample_count = float(len(convert_events) + len(quantize_events))
+        scandir_samples.append(float(bundle_scandir_calls[0]))
+
+print(json.dumps({
+    'elapsed_ms_mean': round(sum(elapsed_samples) / len(elapsed_samples), 3),
+    'bundle_scandir_calls_mean': round(sum(scandir_samples) / len(scandir_samples), 3),
+    'sample_count': sample_count,
+}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 - <<'PY'\n"
+        f"{probe_script}"
+        "\nPY",
+        shell=True,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads((completed.stdout or "").strip())
 
 
 def _load_repo_module(path: Path, *, unique_name: str) -> Any:
