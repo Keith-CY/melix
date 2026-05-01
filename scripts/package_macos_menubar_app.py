@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -13,6 +15,7 @@ sys.path.insert(0, str(ROOT / "services/mlx-worker-python"))
 
 from worker.productization.macos_app_bundle import (
     archive_macos_app_bundle,
+    elapsed_seconds,
     resolve_python_runtime_root,
     resolve_site_packages_root,
     write_unsigned_macos_app_bundle,
@@ -43,6 +46,16 @@ def resolve_built_swift_text_worker_binary(repo_root: Path) -> Path:
     raise FileNotFoundError(
         "Unable to find built `melix-text-worker-swift`. Run `swift test --package-path services/mlx-text-worker-swift` first."
     )
+
+
+def _manifest_timings(manifest: dict[str, Any]) -> dict[str, float]:
+    """Return mutable manifest timings for tests that stub bundle writing."""
+    timings = manifest.get("timings")
+    if isinstance(timings, dict):
+        return timings
+    timings = {}
+    manifest["timings"] = timings
+    return timings
 
 
 def main() -> int:
@@ -95,9 +108,23 @@ def main() -> int:
         icon_source_path=args.icon_source_path,
     )
     if args.archive_path:
+        started_at = time.perf_counter()
         manifest["archive_path"] = str(
             archive_macos_app_bundle(manifest["app_path"], args.archive_path)
         )
+        timings = _manifest_timings(manifest)
+        timings["archive_seconds"] = elapsed_seconds(started_at)
+        write_seconds = timings.get("write_total_seconds")
+        if write_seconds is None:
+            raise KeyError("write_total_seconds missing from bundle manifest timings")
+        timings["total_seconds"] = round(
+            float(write_seconds) + timings["archive_seconds"],
+            6,
+        )
+    else:
+        timings = _manifest_timings(manifest)
+        if "write_total_seconds" in timings:
+            timings["total_seconds"] = float(timings["write_total_seconds"])
 
     if args.json:
         print(json.dumps(manifest, indent=2, sort_keys=True))

@@ -139,6 +139,7 @@ def _build_fixture_report(
         "evaluation_compare": _build_passing_evaluation_compare_report(),
         "real_workload": _build_passing_real_workload_report(),
         "m9": m9,
+        "lora_path": _build_passing_lora_path_report(),
     }
     if fixture_mode == "passing" and m9_failures:
         raise RuntimeError(f"Passing M9 fixture unexpectedly failed: {m9_failures}")
@@ -301,6 +302,24 @@ def _build_passing_real_workload_report() -> dict[str, object]:
                     "peak_memory_gb": 9.8,
                 },
             },
+        },
+    }
+
+
+def _build_passing_lora_path_report() -> dict[str, object]:
+    stage_names = ("dataset_build", "train", "activate", "compare", "publish")
+    return {
+        "stages": {
+            stage_name: {
+                "success": 1.0,
+                "duration_ms": 1.0,
+            }
+            for stage_name in stage_names
+        },
+        "summary": {
+            "stages_success_count": float(len(stage_names)),
+            "stages_failure_count": 0.0,
+            "full_path_success": 1.0,
         },
     }
 
