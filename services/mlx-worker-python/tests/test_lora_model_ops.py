@@ -16,7 +16,12 @@ from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeli
 from worker.model_ops.lora_training_pipeline import (
     LoRATrainingPipeline,
     _latest_checkpoint_from_directory,
+    _load_manifest_payload,
+    _resolve_resume_context,
+    _resolve_resume_path_from_manifest,
+    _validated_resume_path,
 )
+from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.mlx_lm_runner import (
     ActivationMetrics,
     ActivationRequest,
@@ -28,6 +33,7 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingResult,
     _checkpoint_order_key,
 )
+from worker.model_ops import lora_training_pipeline as lora_training_pipeline_module
 from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.training_dataset import (
@@ -64,6 +70,53 @@ def test_latest_checkpoint_from_directory_prefers_last_numeric_token(tmp_path: P
         checkpoint.write_bytes(b"weights")
 
     assert _latest_checkpoint_from_directory(tmp_path) == newer.resolve()
+
+
+def test_latest_checkpoint_from_directory_uses_scandir_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    nested = tmp_path / "model-ops-001" / "adapter" / "checkpoint-3"
+    nested.mkdir(parents=True)
+    checkpoint = nested / "adapters.safetensors"
+    checkpoint.write_bytes(b"weights")
+
+    def fail_os_walk(path: Path):
+        raise AssertionError("expected explicit os.scandir stack, not os.walk")
+
+    monkeypatch.setattr(lora_training_pipeline_module.os, "walk", fail_os_walk)
+
+    assert _latest_checkpoint_from_directory(tmp_path) == checkpoint.resolve()
+
+
+def test_latest_checkpoint_from_directory_skips_non_weight_entries(tmp_path: Path) -> None:
+    (tmp_path / "checkpoint-99").mkdir()
+    (tmp_path / "checkpoint-99" / "adapter.txt").write_text("not weights", encoding="utf-8")
+
+    with pytest.raises(ModelOperationError, match="does not contain adapter weights"):
+        _latest_checkpoint_from_directory(tmp_path)
+
+
+def test_resume_helpers_reject_invalid_sources(tmp_path: Path) -> None:
+    missing_resume_path = tmp_path / "missing.safetensors"
+    with pytest.raises(ModelOperationError, match="Resume source does not exist"):
+        _resolve_resume_context({"resume_source_path": str(missing_resume_path)})
+
+    broken_manifest = tmp_path / "broken.json"
+    broken_manifest.write_text("not-json", encoding="utf-8")
+    with pytest.raises(ModelOperationError, match="Resume manifest is unreadable"):
+        _load_manifest_payload(broken_manifest)
+
+    with pytest.raises(ModelOperationError, match="does not expose a checkpoint"):
+        _resolve_resume_path_from_manifest(tmp_path / "manifest.json", {})
+
+    with pytest.raises(ModelOperationError, match="does not exist"):
+        _validated_resume_path(missing_resume_path, source_label="test")
+
+
+def test_validated_resume_path_selects_latest_checkpoint_from_directory(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint-7" / "adapters.safetensors"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"weights")
+
+    assert _validated_resume_path(tmp_path, source_label="test") == checkpoint.resolve()
 
 
 def _write_dataset_package(
