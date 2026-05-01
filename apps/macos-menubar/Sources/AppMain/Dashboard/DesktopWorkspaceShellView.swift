@@ -1327,13 +1327,7 @@ private struct DesktopToolsWorkspaceView: View {
 
                     switch viewModel.selectedToolSection {
                     case .modelsLibrary:
-                        VStack(alignment: .leading, spacing: 18) {
-                            DesktopToolsTabView(viewModel: viewModel)
-                            DisclosureGroup("Models Library") {
-                                DesktopModelsTabView(foundation: foundation, viewModel: viewModel)
-                                    .padding(.top, 10)
-                            }
-                        }
+                        DesktopModelsTabView(foundation: foundation, viewModel: viewModel)
                     case .downloads:
                         DesktopDownloadsToolSectionView(viewModel: viewModel)
                     case .training:

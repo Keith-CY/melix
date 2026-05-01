@@ -152,6 +152,20 @@ def _resolve_hf_cli_command() -> str:
     return "hf"
 
 
+def _collect_published_file_list(source_dir: Path) -> list[str]:
+    published_files: list[str] = []
+    for root, _dirs, files in os.walk(source_dir):
+        files.sort()
+        for filename in files:
+            published_files.append(
+                os.path.relpath(
+                    os.path.join(root, filename),
+                    start=str(source_dir),
+                )
+            )
+    return sorted(published_files)
+
+
 class UploadReceiptPipeline:
     @staticmethod
     def _collect_published_file_list(source_dir: Path) -> list[str]:

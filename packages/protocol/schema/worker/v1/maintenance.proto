@@ -397,6 +397,14 @@ message HubModelSummary {
   string library_name = 10;
   repeated string sibling_files = 11;
   string last_modified = 12;
+  string local_fit_status = 13;
+  repeated string local_fit_reasons = 14;
+  uint64 estimated_artifact_bytes = 15;
+  uint64 estimated_resident_bytes = 16;
+  uint64 parameter_count = 17;
+  string quantization_summary = 18;
+  bool gated = 19;
+  string recommended_action = 20;
 }
 
 message SearchHubModelsResponse {
@@ -425,6 +433,14 @@ message HubModelCard {
   repeated string sibling_files = 12;
   repeated string base_models = 13;
   string last_modified = 14;
+  string local_fit_status = 15;
+  repeated string local_fit_reasons = 16;
+  uint64 estimated_artifact_bytes = 17;
+  uint64 estimated_resident_bytes = 18;
+  uint64 parameter_count = 19;
+  string quantization_summary = 20;
+  bool gated = 21;
+  string recommended_action = 22;
 }
 
 message GetHubModelCardResponse {

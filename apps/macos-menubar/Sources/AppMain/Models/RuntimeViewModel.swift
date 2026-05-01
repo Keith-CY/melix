@@ -10,8 +10,12 @@ public actor MenuBarMetricsStore {
 
     public init() {}
 
+    public func record(name: String, value: Double) {
+        values[name] = value
+    }
+
     public func record(name: String, valueMs: Double) {
-        values[name] = valueMs
+        record(name: name, value: valueMs)
     }
 
     public func snapshot() -> [String: Double] {
@@ -369,7 +373,17 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     }
 }
 
-public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendable {
+public protocol RuntimeHubModelFitProviding {
+    var localFitStatus: String { get }
+}
+
+public extension RuntimeHubModelFitProviding {
+    var canDownload: Bool {
+        localFitStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "blocked"
+    }
+}
+
+public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendable, RuntimeHubModelFitProviding {
     public let id: String
     public let repoID: String
     public let author: String
@@ -378,6 +392,17 @@ public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendabl
     public let compatibilityText: String
     public let downloadsText: String
     public let likesText: String
+    public let localFitStatus: String
+    public let runSuitabilityText: String
+    public let localFitReasons: [String]
+    public let estimatedArtifactBytes: UInt64
+    public let estimatedResidentBytes: UInt64
+    public let estimatedArtifactBytesText: String
+    public let estimatedResidentBytesText: String
+    public let parameterCountText: String
+    public let quantizationSummary: String
+    public let gated: Bool
+    public let recommendedAction: String
 
     public init(
         repoID: String,
@@ -386,7 +411,18 @@ public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendabl
         pipelineTag: String,
         compatibilityText: String,
         downloadsText: String,
-        likesText: String
+        likesText: String,
+        localFitStatus: String,
+        runSuitabilityText: String,
+        localFitReasons: [String],
+        estimatedArtifactBytes: UInt64,
+        estimatedResidentBytes: UInt64,
+        estimatedArtifactBytesText: String,
+        estimatedResidentBytesText: String,
+        parameterCountText: String,
+        quantizationSummary: String,
+        gated: Bool,
+        recommendedAction: String
     ) {
         self.id = repoID
         self.repoID = repoID
@@ -396,10 +432,34 @@ public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendabl
         self.compatibilityText = compatibilityText
         self.downloadsText = downloadsText
         self.likesText = likesText
+        self.localFitStatus = localFitStatus
+        self.runSuitabilityText = runSuitabilityText
+        self.localFitReasons = localFitReasons
+        self.estimatedArtifactBytes = estimatedArtifactBytes
+        self.estimatedResidentBytes = estimatedResidentBytes
+        self.estimatedArtifactBytesText = estimatedArtifactBytesText
+        self.estimatedResidentBytesText = estimatedResidentBytesText
+        self.parameterCountText = parameterCountText
+        self.quantizationSummary = quantizationSummary
+        self.gated = gated
+        self.recommendedAction = recommendedAction
+    }
+
+    public var sizeText: String {
+        if estimatedArtifactBytes == 0 && estimatedResidentBytes == 0 {
+            return ""
+        }
+        if estimatedResidentBytes == 0 {
+            return "\(estimatedArtifactBytesText) artifact"
+        }
+        if estimatedArtifactBytes == 0 {
+            return "\(estimatedResidentBytesText) resident"
+        }
+        return "\(estimatedArtifactBytesText) artifact • \(estimatedResidentBytesText) resident"
     }
 }
 
-public struct RuntimeHubModelCardState: Equatable, Sendable {
+public struct RuntimeHubModelCardState: Equatable, Sendable, RuntimeHubModelFitProviding {
     public let repoID: String
     public let author: String
     public let modelName: String
@@ -408,6 +468,15 @@ public struct RuntimeHubModelCardState: Equatable, Sendable {
     public let compatibilityText: String
     public let tags: [String]
     public let baseModels: [String]
+    public let localFitStatus: String
+    public let runSuitabilityText: String
+    public let localFitReasons: [String]
+    public let estimatedArtifactBytesText: String
+    public let estimatedResidentBytesText: String
+    public let parameterCountText: String
+    public let quantizationSummary: String
+    public let gated: Bool
+    public let recommendedAction: String
 
     public init(
         repoID: String,
@@ -417,7 +486,16 @@ public struct RuntimeHubModelCardState: Equatable, Sendable {
         pipelineTag: String,
         compatibilityText: String,
         tags: [String],
-        baseModels: [String]
+        baseModels: [String],
+        localFitStatus: String,
+        runSuitabilityText: String,
+        localFitReasons: [String],
+        estimatedArtifactBytesText: String,
+        estimatedResidentBytesText: String,
+        parameterCountText: String,
+        quantizationSummary: String,
+        gated: Bool,
+        recommendedAction: String
     ) {
         self.repoID = repoID
         self.author = author
@@ -427,6 +505,56 @@ public struct RuntimeHubModelCardState: Equatable, Sendable {
         self.compatibilityText = compatibilityText
         self.tags = tags
         self.baseModels = baseModels
+        self.localFitStatus = localFitStatus
+        self.runSuitabilityText = runSuitabilityText
+        self.localFitReasons = localFitReasons
+        self.estimatedArtifactBytesText = estimatedArtifactBytesText
+        self.estimatedResidentBytesText = estimatedResidentBytesText
+        self.parameterCountText = parameterCountText
+        self.quantizationSummary = quantizationSummary
+        self.gated = gated
+        self.recommendedAction = recommendedAction
+    }
+
+}
+
+public struct RuntimeRegistryEntryState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let subtitleText: String
+    public let sourceText: String
+    public let statusText: String
+    public let runSuitabilityText: String
+    public let sizeText: String
+    public let taskText: String
+    public let repoID: String
+    public let canInspect: Bool
+    public let canDownload: Bool
+
+    public init(
+        id: String,
+        title: String,
+        subtitleText: String,
+        sourceText: String,
+        statusText: String,
+        runSuitabilityText: String,
+        sizeText: String,
+        taskText: String,
+        repoID: String = "",
+        canInspect: Bool = false,
+        canDownload: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.subtitleText = subtitleText
+        self.sourceText = sourceText
+        self.statusText = statusText
+        self.runSuitabilityText = runSuitabilityText
+        self.sizeText = sizeText
+        self.taskText = taskText
+        self.repoID = repoID
+        self.canInspect = canInspect
+        self.canDownload = canDownload
     }
 }
 
@@ -1481,7 +1609,9 @@ public final class RuntimeViewModel {
     public var selectedSurface: DesktopSurface = .chat
     public var selectedToolSection: DesktopToolSection = .modelsLibrary
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
-    public private(set) var models: [RuntimeModelRow] = []
+    public private(set) var models: [RuntimeModelRow] = [] {
+        didSet { refreshModelRegistryEntries() }
+    }
     public private(set) var serverSessions: [DesktopServerSessionState] = []
     public private(set) var remoteServers: [RemoteServer] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
@@ -1496,13 +1626,18 @@ public final class RuntimeViewModel {
     public private(set) var daemonInstanceID = ""
     public private(set) var features: [String] = []
     public private(set) var selectedModelInfo: RuntimeModelInfoState?
-    public private(set) var modelHubSearchResults: [RuntimeHubModelSearchResultState] = []
+    public private(set) var modelHubSearchResults: [RuntimeHubModelSearchResultState] = [] {
+        didSet { refreshModelRegistryEntries() }
+    }
     public private(set) var selectedHubModelCard: RuntimeHubModelCardState?
     public private(set) var modelHubNextCursor = ""
     public private(set) var modelHubTokenHint = ""
     public private(set) var lastModelOperation: RuntimeModelOperationState?
     public private(set) var loraWorkflowStatus: RuntimeLoraWorkflowStatusState?
-    public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = []
+    public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = [] {
+        didSet { refreshModelRegistryEntries() }
+    }
+    public private(set) var modelRegistryEntries: [RuntimeRegistryEntryState] = []
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
     public private(set) var lastBenchReport: RuntimeBenchReportState?
     public private(set) var benchmarkHistory: [RuntimeBenchmarkHistoryEntryState] = []
@@ -4691,9 +4826,14 @@ public final class RuntimeViewModel {
             }
             modelHubSearchResults = result.models.map { Self.makeHubModelSearchResultState(from: $0) }
             modelHubNextCursor = result.nextCursor
+            let elapsedMs = Date().timeIntervalSince(startedAt) * 1_000
             await metrics.record(
                 name: "menu.model_hub_search_ms",
-                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                valueMs: elapsedMs
+            )
+            await metrics.record(name: "hub.metadata_enrichment_latency_ms", valueMs: elapsedMs)
+            await recordRegistryProbeMetrics(
+                maxHubResidentBytes: result.models.map(\.estimatedResidentBytes).max() ?? 0
             )
         } catch {
             recordLocalError(String(describing: error))
@@ -4715,10 +4855,18 @@ public final class RuntimeViewModel {
                 card = try await client.getHubModelCard(repoID: normalizedRepoID)
             }
             selectedHubModelCard = Self.makeHubModelCardState(from: card)
+            let elapsedMs = Date().timeIntervalSince(startedAt) * 1_000
             await metrics.record(
                 name: "menu.model_hub_show_ms",
-                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                valueMs: elapsedMs
             )
+            await metrics.record(name: "hub.metadata_enrichment_latency_ms", valueMs: elapsedMs)
+            if card.estimatedResidentBytes > 0 {
+                await metrics.record(
+                    name: "hub.local_fit_estimated_resident_bytes",
+                    value: Double(card.estimatedResidentBytes)
+                )
+            }
         } catch {
             recordLocalError(String(describing: error))
         }
@@ -4745,6 +4893,13 @@ public final class RuntimeViewModel {
     private func downloadHubModel(repoID: String, revision requestedRevision: String) async {
         let normalizedRepoID = repoID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedRepoID.isEmpty == false else {
+            return
+        }
+        if let blockedReasons = blockedHubFitReasons(repoID: normalizedRepoID) {
+            let reasonText = blockedReasons.isEmpty ? "" : " \(blockedReasons.joined(separator: " "))"
+            recordLocalError("Download blocked: \(normalizedRepoID) is not suitable for local Melix runtime.\(reasonText)")
+            await metrics.record(name: "registry.blocked_download_attempt_count", value: 1)
+            notifyStateChanged()
             return
         }
         let revision = Self.normalizedOptionalString(requestedRevision) ?? "main"
@@ -4834,6 +4989,30 @@ public final class RuntimeViewModel {
             recordLocalError(String(describing: error))
             notifyStateChanged()
         }
+    }
+
+    private func recordRegistryProbeMetrics(maxHubResidentBytes: UInt64) async {
+        await metrics.record(
+            name: "registry.unified_entry_count",
+            value: Double(modelRegistryEntries.count)
+        )
+        if maxHubResidentBytes > 0 {
+            await metrics.record(
+                name: "hub.local_fit_estimated_resident_bytes",
+                value: Double(maxHubResidentBytes)
+            )
+        }
+    }
+
+    private func blockedHubFitReasons(repoID: String) -> [String]? {
+        if let card = selectedHubModelCard, card.repoID == repoID, card.localFitStatus == "blocked" {
+            return card.localFitReasons
+        }
+        if let result = modelHubSearchResults.first(where: { $0.repoID == repoID }),
+           result.localFitStatus == "blocked" {
+            return result.localFitReasons
+        }
+        return nil
     }
 
     public func inspectPrimaryModel() async {
@@ -10092,7 +10271,18 @@ public final class RuntimeViewModel {
             pipelineTag: model.pipelineTag.isEmpty ? "unknown" : model.pipelineTag,
             compatibilityText: hubCompatibilityText(model.mlxCompatible),
             downloadsText: hubMetricText(model.downloads, suffix: "downloads"),
-            likesText: hubMetricText(model.likes, suffix: "likes")
+            likesText: hubMetricText(model.likes, suffix: "likes"),
+            localFitStatus: hubLocalFitStatus(model.localFitStatus),
+            runSuitabilityText: hubLocalFitStatusText(model.localFitStatus),
+            localFitReasons: model.localFitReasons,
+            estimatedArtifactBytes: model.estimatedArtifactBytes,
+            estimatedResidentBytes: model.estimatedResidentBytes,
+            estimatedArtifactBytesText: formatBytes(model.estimatedArtifactBytes),
+            estimatedResidentBytesText: formatBytes(model.estimatedResidentBytes),
+            parameterCountText: hubParameterCountText(model.parameterCount),
+            quantizationSummary: model.quantizationSummary,
+            gated: model.gated,
+            recommendedAction: model.recommendedAction
         )
     }
 
@@ -10107,8 +10297,76 @@ public final class RuntimeViewModel {
             pipelineTag: card.pipelineTag.isEmpty ? "unknown" : card.pipelineTag,
             compatibilityText: hubCompatibilityText(card.mlxCompatible),
             tags: card.tags,
-            baseModels: card.baseModels
+            baseModels: card.baseModels,
+            localFitStatus: hubLocalFitStatus(card.localFitStatus),
+            runSuitabilityText: hubLocalFitStatusText(card.localFitStatus),
+            localFitReasons: card.localFitReasons,
+            estimatedArtifactBytesText: formatBytes(card.estimatedArtifactBytes),
+            estimatedResidentBytesText: formatBytes(card.estimatedResidentBytes),
+            parameterCountText: hubParameterCountText(card.parameterCount),
+            quantizationSummary: card.quantizationSummary,
+            gated: card.gated,
+            recommendedAction: card.recommendedAction
         )
+    }
+
+    private func refreshModelRegistryEntries() {
+        modelRegistryEntries = Self.makeModelRegistryEntries(
+            models: models,
+            downloadQueue: downloadQueue,
+            hubResults: modelHubSearchResults
+        )
+    }
+
+    private static func makeModelRegistryEntries(
+        models: [RuntimeModelRow],
+        downloadQueue: [RuntimeDownloadQueueEntryState],
+        hubResults: [RuntimeHubModelSearchResultState]
+    ) -> [RuntimeRegistryEntryState] {
+        let localEntries = models.map { model in
+            RuntimeRegistryEntryState(
+                id: "local:\(model.modelID)",
+                title: model.modelID,
+                subtitleText: model.alias.isEmpty ? model.kind : model.alias,
+                sourceText: "Local",
+                statusText: model.stateText,
+                runSuitabilityText: "Installed",
+                sizeText: model.memoryText,
+                taskText: model.supportedTasks.first ?? model.kind,
+                canInspect: false,
+                canDownload: false
+            )
+        }
+        let downloadEntries = downloadQueue.map { item in
+            RuntimeRegistryEntryState(
+                id: "managed-download:\(item.jobID)",
+                title: item.sourceModel,
+                subtitleText: item.stage.isEmpty ? item.outputDir : item.stage,
+                sourceText: "Managed Download",
+                statusText: item.statusText,
+                runSuitabilityText: "Pending",
+                sizeText: item.progressText,
+                taskText: item.stage.isEmpty ? "download" : item.stage,
+                canInspect: false,
+                canDownload: false
+            )
+        }
+        let hubEntries = hubResults.map { result in
+            RuntimeRegistryEntryState(
+                id: "hub:\(result.repoID)",
+                title: result.repoID,
+                subtitleText: "\(result.author) • \(result.compatibilityText)",
+                sourceText: "Hugging Face",
+                statusText: result.recommendedAction.isEmpty ? result.compatibilityText : result.recommendedAction,
+                runSuitabilityText: result.runSuitabilityText,
+                sizeText: result.sizeText,
+                taskText: result.pipelineTag,
+                repoID: result.repoID,
+                canInspect: true,
+                canDownload: result.canDownload
+            )
+        }
+        return localEntries + downloadEntries + hubEntries
     }
 
     private static func stringValue(_ key: String, from payload: [String: Any]) -> String {
@@ -10293,6 +10551,38 @@ public final class RuntimeViewModel {
         formatter.countStyle = .memory
         formatter.includesUnit = true
         return formatter.string(fromByteCount: Int64(bytes))
+    }
+
+    private static func hubLocalFitStatus(_ status: String) -> String {
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? "unknown" : normalized
+    }
+
+    private static func hubLocalFitStatusText(_ status: String) -> String {
+        switch hubLocalFitStatus(status) {
+        case "good":
+            return "Good"
+        case "heavy":
+            return "Heavy"
+        case "blocked":
+            return "Blocked"
+        default:
+            return "Unknown"
+        }
+    }
+
+    private static func hubParameterCountText(_ count: UInt64) -> String {
+        guard count > 0 else {
+            return ""
+        }
+        let value = Double(count)
+        if value >= 1_000_000_000 {
+            return String(format: "%.1fB params", value / 1_000_000_000)
+        }
+        if value >= 1_000_000 {
+            return String(format: "%.1fM params", value / 1_000_000)
+        }
+        return "\(count) params"
     }
 
     private static func hubAuthorText(author: String, repoID: String) -> String {

@@ -1329,38 +1329,116 @@ public struct Melix_Worker_V1_SearchHubModelsRequest: Sendable {
   public init() {}
 }
 
-public struct Melix_Worker_V1_HubModelSummary: Sendable {
+public struct Melix_Worker_V1_HubModelSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var repoID: String = String()
+  public var repoID: String {
+    get {_storage._repoID}
+    set {_uniqueStorage()._repoID = newValue}
+  }
 
-  public var author: String = String()
+  public var author: String {
+    get {_storage._author}
+    set {_uniqueStorage()._author = newValue}
+  }
 
-  public var modelName: String = String()
+  public var modelName: String {
+    get {_storage._modelName}
+    set {_uniqueStorage()._modelName = newValue}
+  }
 
-  public var summary: String = String()
+  public var summary: String {
+    get {_storage._summary}
+    set {_uniqueStorage()._summary = newValue}
+  }
 
-  public var pipelineTag: String = String()
+  public var pipelineTag: String {
+    get {_storage._pipelineTag}
+    set {_uniqueStorage()._pipelineTag = newValue}
+  }
 
-  public var tags: [String] = []
+  public var tags: [String] {
+    get {_storage._tags}
+    set {_uniqueStorage()._tags = newValue}
+  }
 
-  public var downloads: UInt64 = 0
+  public var downloads: UInt64 {
+    get {_storage._downloads}
+    set {_uniqueStorage()._downloads = newValue}
+  }
 
-  public var likes: UInt64 = 0
+  public var likes: UInt64 {
+    get {_storage._likes}
+    set {_uniqueStorage()._likes = newValue}
+  }
 
-  public var mlxCompatible: Bool = false
+  public var mlxCompatible: Bool {
+    get {_storage._mlxCompatible}
+    set {_uniqueStorage()._mlxCompatible = newValue}
+  }
 
-  public var libraryName: String = String()
+  public var libraryName: String {
+    get {_storage._libraryName}
+    set {_uniqueStorage()._libraryName = newValue}
+  }
 
-  public var siblingFiles: [String] = []
+  public var siblingFiles: [String] {
+    get {_storage._siblingFiles}
+    set {_uniqueStorage()._siblingFiles = newValue}
+  }
 
-  public var lastModified: String = String()
+  public var lastModified: String {
+    get {_storage._lastModified}
+    set {_uniqueStorage()._lastModified = newValue}
+  }
+
+  public var localFitStatus: String {
+    get {_storage._localFitStatus}
+    set {_uniqueStorage()._localFitStatus = newValue}
+  }
+
+  public var localFitReasons: [String] {
+    get {_storage._localFitReasons}
+    set {_uniqueStorage()._localFitReasons = newValue}
+  }
+
+  public var estimatedArtifactBytes: UInt64 {
+    get {_storage._estimatedArtifactBytes}
+    set {_uniqueStorage()._estimatedArtifactBytes = newValue}
+  }
+
+  public var estimatedResidentBytes: UInt64 {
+    get {_storage._estimatedResidentBytes}
+    set {_uniqueStorage()._estimatedResidentBytes = newValue}
+  }
+
+  public var parameterCount: UInt64 {
+    get {_storage._parameterCount}
+    set {_uniqueStorage()._parameterCount = newValue}
+  }
+
+  public var quantizationSummary: String {
+    get {_storage._quantizationSummary}
+    set {_uniqueStorage()._quantizationSummary = newValue}
+  }
+
+  public var gated: Bool {
+    get {_storage._gated}
+    set {_uniqueStorage()._gated = newValue}
+  }
+
+  public var recommendedAction: String {
+    get {_storage._recommendedAction}
+    set {_uniqueStorage()._recommendedAction = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_SearchHubModelsResponse: Sendable {
@@ -1402,77 +1480,159 @@ public struct Melix_Worker_V1_GetHubModelCardRequest: Sendable {
   public init() {}
 }
 
-public struct Melix_Worker_V1_HubModelCard: Sendable {
+public struct Melix_Worker_V1_HubModelCard: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var repoID: String = String()
-
-  public var author: String = String()
-
-  public var modelName: String = String()
-
-  public var summary: String = String()
-
-  public var license: String = String()
-
-  public var pipelineTag: String = String()
-
-  public var tags: [String] = []
-
-  public var downloads: UInt64 = 0
-
-  public var likes: UInt64 = 0
-
-  public var mlxCompatible: Bool = false
-
-  public var libraryName: String = String()
-
-  public var siblingFiles: [String] = []
-
-  public var baseModels: [String] = []
-
-  public var lastModified: String = String()
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
-public struct Melix_Worker_V1_GetHubModelCardResponse: @unchecked Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var ok: Bool {
-    get {_storage._ok}
-    set {_uniqueStorage()._ok = newValue}
+  public var repoID: String {
+    get {_storage._repoID}
+    set {_uniqueStorage()._repoID = newValue}
   }
 
-  public var error: Melix_Worker_V1_ErrorStatus {
-    get {_storage._error ?? Melix_Worker_V1_ErrorStatus()}
-    set {_uniqueStorage()._error = newValue}
+  public var author: String {
+    get {_storage._author}
+    set {_uniqueStorage()._author = newValue}
   }
-  /// Returns true if `error` has been explicitly set.
-  public var hasError: Bool {_storage._error != nil}
-  /// Clears the value of `error`. Subsequent reads from it will return its default value.
-  public mutating func clearError() {_uniqueStorage()._error = nil}
 
-  public var card: Melix_Worker_V1_HubModelCard {
-    get {_storage._card ?? Melix_Worker_V1_HubModelCard()}
-    set {_uniqueStorage()._card = newValue}
+  public var modelName: String {
+    get {_storage._modelName}
+    set {_uniqueStorage()._modelName = newValue}
   }
-  /// Returns true if `card` has been explicitly set.
-  public var hasCard: Bool {_storage._card != nil}
-  /// Clears the value of `card`. Subsequent reads from it will return its default value.
-  public mutating func clearCard() {_uniqueStorage()._card = nil}
+
+  public var summary: String {
+    get {_storage._summary}
+    set {_uniqueStorage()._summary = newValue}
+  }
+
+  public var license: String {
+    get {_storage._license}
+    set {_uniqueStorage()._license = newValue}
+  }
+
+  public var pipelineTag: String {
+    get {_storage._pipelineTag}
+    set {_uniqueStorage()._pipelineTag = newValue}
+  }
+
+  public var tags: [String] {
+    get {_storage._tags}
+    set {_uniqueStorage()._tags = newValue}
+  }
+
+  public var downloads: UInt64 {
+    get {_storage._downloads}
+    set {_uniqueStorage()._downloads = newValue}
+  }
+
+  public var likes: UInt64 {
+    get {_storage._likes}
+    set {_uniqueStorage()._likes = newValue}
+  }
+
+  public var mlxCompatible: Bool {
+    get {_storage._mlxCompatible}
+    set {_uniqueStorage()._mlxCompatible = newValue}
+  }
+
+  public var libraryName: String {
+    get {_storage._libraryName}
+    set {_uniqueStorage()._libraryName = newValue}
+  }
+
+  public var siblingFiles: [String] {
+    get {_storage._siblingFiles}
+    set {_uniqueStorage()._siblingFiles = newValue}
+  }
+
+  public var baseModels: [String] {
+    get {_storage._baseModels}
+    set {_uniqueStorage()._baseModels = newValue}
+  }
+
+  public var lastModified: String {
+    get {_storage._lastModified}
+    set {_uniqueStorage()._lastModified = newValue}
+  }
+
+  public var localFitStatus: String {
+    get {_storage._localFitStatus}
+    set {_uniqueStorage()._localFitStatus = newValue}
+  }
+
+  public var localFitReasons: [String] {
+    get {_storage._localFitReasons}
+    set {_uniqueStorage()._localFitReasons = newValue}
+  }
+
+  public var estimatedArtifactBytes: UInt64 {
+    get {_storage._estimatedArtifactBytes}
+    set {_uniqueStorage()._estimatedArtifactBytes = newValue}
+  }
+
+  public var estimatedResidentBytes: UInt64 {
+    get {_storage._estimatedResidentBytes}
+    set {_uniqueStorage()._estimatedResidentBytes = newValue}
+  }
+
+  public var parameterCount: UInt64 {
+    get {_storage._parameterCount}
+    set {_uniqueStorage()._parameterCount = newValue}
+  }
+
+  public var quantizationSummary: String {
+    get {_storage._quantizationSummary}
+    set {_uniqueStorage()._quantizationSummary = newValue}
+  }
+
+  public var gated: Bool {
+    get {_storage._gated}
+    set {_uniqueStorage()._gated = newValue}
+  }
+
+  public var recommendedAction: String {
+    get {_storage._recommendedAction}
+    set {_uniqueStorage()._recommendedAction = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public struct Melix_Worker_V1_GetHubModelCardResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var ok: Bool = false
+
+  public var error: Melix_Worker_V1_ErrorStatus {
+    get {_error ?? Melix_Worker_V1_ErrorStatus()}
+    set {_error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {self._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {self._error = nil}
+
+  public var card: Melix_Worker_V1_HubModelCard {
+    get {_card ?? Melix_Worker_V1_HubModelCard()}
+    set {_card = newValue}
+  }
+  /// Returns true if `card` has been explicitly set.
+  public var hasCard: Bool {self._card != nil}
+  /// Clears the value of `card`. Subsequent reads from it will return its default value.
+  public mutating func clearCard() {self._card = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
+  fileprivate var _card: Melix_Worker_V1_HubModelCard? = nil
 }
 
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
@@ -4166,84 +4326,198 @@ extension Melix_Worker_V1_SearchHubModelsRequest: SwiftProtobuf.Message, SwiftPr
 
 extension Melix_Worker_V1_HubModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HubModelSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}repo_id\0\u{1}author\0\u{3}model_name\0\u{1}summary\0\u{3}pipeline_tag\0\u{1}tags\0\u{1}downloads\0\u{1}likes\0\u{3}mlx_compatible\0\u{3}library_name\0\u{3}sibling_files\0\u{3}last_modified\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}repo_id\0\u{1}author\0\u{3}model_name\0\u{1}summary\0\u{3}pipeline_tag\0\u{1}tags\0\u{1}downloads\0\u{1}likes\0\u{3}mlx_compatible\0\u{3}library_name\0\u{3}sibling_files\0\u{3}last_modified\0\u{3}local_fit_status\0\u{3}local_fit_reasons\0\u{3}estimated_artifact_bytes\0\u{3}estimated_resident_bytes\0\u{3}parameter_count\0\u{3}quantization_summary\0\u{1}gated\0\u{3}recommended_action\0")
+
+  fileprivate class _StorageClass {
+    var _repoID: String = String()
+    var _author: String = String()
+    var _modelName: String = String()
+    var _summary: String = String()
+    var _pipelineTag: String = String()
+    var _tags: [String] = []
+    var _downloads: UInt64 = 0
+    var _likes: UInt64 = 0
+    var _mlxCompatible: Bool = false
+    var _libraryName: String = String()
+    var _siblingFiles: [String] = []
+    var _lastModified: String = String()
+    var _localFitStatus: String = String()
+    var _localFitReasons: [String] = []
+    var _estimatedArtifactBytes: UInt64 = 0
+    var _estimatedResidentBytes: UInt64 = 0
+    var _parameterCount: UInt64 = 0
+    var _quantizationSummary: String = String()
+    var _gated: Bool = false
+    var _recommendedAction: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _repoID = source._repoID
+      _author = source._author
+      _modelName = source._modelName
+      _summary = source._summary
+      _pipelineTag = source._pipelineTag
+      _tags = source._tags
+      _downloads = source._downloads
+      _likes = source._likes
+      _mlxCompatible = source._mlxCompatible
+      _libraryName = source._libraryName
+      _siblingFiles = source._siblingFiles
+      _lastModified = source._lastModified
+      _localFitStatus = source._localFitStatus
+      _localFitReasons = source._localFitReasons
+      _estimatedArtifactBytes = source._estimatedArtifactBytes
+      _estimatedResidentBytes = source._estimatedResidentBytes
+      _parameterCount = source._parameterCount
+      _quantizationSummary = source._quantizationSummary
+      _gated = source._gated
+      _recommendedAction = source._recommendedAction
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.repoID) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.author) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.modelName) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.summary) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.pipelineTag) }()
-      case 6: try { try decoder.decodeRepeatedStringField(value: &self.tags) }()
-      case 7: try { try decoder.decodeSingularUInt64Field(value: &self.downloads) }()
-      case 8: try { try decoder.decodeSingularUInt64Field(value: &self.likes) }()
-      case 9: try { try decoder.decodeSingularBoolField(value: &self.mlxCompatible) }()
-      case 10: try { try decoder.decodeSingularStringField(value: &self.libraryName) }()
-      case 11: try { try decoder.decodeRepeatedStringField(value: &self.siblingFiles) }()
-      case 12: try { try decoder.decodeSingularStringField(value: &self.lastModified) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._repoID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._author) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._modelName) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._summary) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._pipelineTag) }()
+        case 6: try { try decoder.decodeRepeatedStringField(value: &_storage._tags) }()
+        case 7: try { try decoder.decodeSingularUInt64Field(value: &_storage._downloads) }()
+        case 8: try { try decoder.decodeSingularUInt64Field(value: &_storage._likes) }()
+        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._mlxCompatible) }()
+        case 10: try { try decoder.decodeSingularStringField(value: &_storage._libraryName) }()
+        case 11: try { try decoder.decodeRepeatedStringField(value: &_storage._siblingFiles) }()
+        case 12: try { try decoder.decodeSingularStringField(value: &_storage._lastModified) }()
+        case 13: try { try decoder.decodeSingularStringField(value: &_storage._localFitStatus) }()
+        case 14: try { try decoder.decodeRepeatedStringField(value: &_storage._localFitReasons) }()
+        case 15: try { try decoder.decodeSingularUInt64Field(value: &_storage._estimatedArtifactBytes) }()
+        case 16: try { try decoder.decodeSingularUInt64Field(value: &_storage._estimatedResidentBytes) }()
+        case 17: try { try decoder.decodeSingularUInt64Field(value: &_storage._parameterCount) }()
+        case 18: try { try decoder.decodeSingularStringField(value: &_storage._quantizationSummary) }()
+        case 19: try { try decoder.decodeSingularBoolField(value: &_storage._gated) }()
+        case 20: try { try decoder.decodeSingularStringField(value: &_storage._recommendedAction) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.repoID.isEmpty {
-      try visitor.visitSingularStringField(value: self.repoID, fieldNumber: 1)
-    }
-    if !self.author.isEmpty {
-      try visitor.visitSingularStringField(value: self.author, fieldNumber: 2)
-    }
-    if !self.modelName.isEmpty {
-      try visitor.visitSingularStringField(value: self.modelName, fieldNumber: 3)
-    }
-    if !self.summary.isEmpty {
-      try visitor.visitSingularStringField(value: self.summary, fieldNumber: 4)
-    }
-    if !self.pipelineTag.isEmpty {
-      try visitor.visitSingularStringField(value: self.pipelineTag, fieldNumber: 5)
-    }
-    if !self.tags.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.tags, fieldNumber: 6)
-    }
-    if self.downloads != 0 {
-      try visitor.visitSingularUInt64Field(value: self.downloads, fieldNumber: 7)
-    }
-    if self.likes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.likes, fieldNumber: 8)
-    }
-    if self.mlxCompatible != false {
-      try visitor.visitSingularBoolField(value: self.mlxCompatible, fieldNumber: 9)
-    }
-    if !self.libraryName.isEmpty {
-      try visitor.visitSingularStringField(value: self.libraryName, fieldNumber: 10)
-    }
-    if !self.siblingFiles.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.siblingFiles, fieldNumber: 11)
-    }
-    if !self.lastModified.isEmpty {
-      try visitor.visitSingularStringField(value: self.lastModified, fieldNumber: 12)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      if !_storage._repoID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._repoID, fieldNumber: 1)
+      }
+      if !_storage._author.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._author, fieldNumber: 2)
+      }
+      if !_storage._modelName.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._modelName, fieldNumber: 3)
+      }
+      if !_storage._summary.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._summary, fieldNumber: 4)
+      }
+      if !_storage._pipelineTag.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._pipelineTag, fieldNumber: 5)
+      }
+      if !_storage._tags.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._tags, fieldNumber: 6)
+      }
+      if _storage._downloads != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._downloads, fieldNumber: 7)
+      }
+      if _storage._likes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._likes, fieldNumber: 8)
+      }
+      if _storage._mlxCompatible != false {
+        try visitor.visitSingularBoolField(value: _storage._mlxCompatible, fieldNumber: 9)
+      }
+      if !_storage._libraryName.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._libraryName, fieldNumber: 10)
+      }
+      if !_storage._siblingFiles.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._siblingFiles, fieldNumber: 11)
+      }
+      if !_storage._lastModified.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lastModified, fieldNumber: 12)
+      }
+      if !_storage._localFitStatus.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._localFitStatus, fieldNumber: 13)
+      }
+      if !_storage._localFitReasons.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._localFitReasons, fieldNumber: 14)
+      }
+      if _storage._estimatedArtifactBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._estimatedArtifactBytes, fieldNumber: 15)
+      }
+      if _storage._estimatedResidentBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._estimatedResidentBytes, fieldNumber: 16)
+      }
+      if _storage._parameterCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._parameterCount, fieldNumber: 17)
+      }
+      if !_storage._quantizationSummary.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._quantizationSummary, fieldNumber: 18)
+      }
+      if _storage._gated != false {
+        try visitor.visitSingularBoolField(value: _storage._gated, fieldNumber: 19)
+      }
+      if !_storage._recommendedAction.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._recommendedAction, fieldNumber: 20)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_HubModelSummary, rhs: Melix_Worker_V1_HubModelSummary) -> Bool {
-    if lhs.repoID != rhs.repoID {return false}
-    if lhs.author != rhs.author {return false}
-    if lhs.modelName != rhs.modelName {return false}
-    if lhs.summary != rhs.summary {return false}
-    if lhs.pipelineTag != rhs.pipelineTag {return false}
-    if lhs.tags != rhs.tags {return false}
-    if lhs.downloads != rhs.downloads {return false}
-    if lhs.likes != rhs.likes {return false}
-    if lhs.mlxCompatible != rhs.mlxCompatible {return false}
-    if lhs.libraryName != rhs.libraryName {return false}
-    if lhs.siblingFiles != rhs.siblingFiles {return false}
-    if lhs.lastModified != rhs.lastModified {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._repoID != rhs_storage._repoID {return false}
+        if _storage._author != rhs_storage._author {return false}
+        if _storage._modelName != rhs_storage._modelName {return false}
+        if _storage._summary != rhs_storage._summary {return false}
+        if _storage._pipelineTag != rhs_storage._pipelineTag {return false}
+        if _storage._tags != rhs_storage._tags {return false}
+        if _storage._downloads != rhs_storage._downloads {return false}
+        if _storage._likes != rhs_storage._likes {return false}
+        if _storage._mlxCompatible != rhs_storage._mlxCompatible {return false}
+        if _storage._libraryName != rhs_storage._libraryName {return false}
+        if _storage._siblingFiles != rhs_storage._siblingFiles {return false}
+        if _storage._lastModified != rhs_storage._lastModified {return false}
+        if _storage._localFitStatus != rhs_storage._localFitStatus {return false}
+        if _storage._localFitReasons != rhs_storage._localFitReasons {return false}
+        if _storage._estimatedArtifactBytes != rhs_storage._estimatedArtifactBytes {return false}
+        if _storage._estimatedResidentBytes != rhs_storage._estimatedResidentBytes {return false}
+        if _storage._parameterCount != rhs_storage._parameterCount {return false}
+        if _storage._quantizationSummary != rhs_storage._quantizationSummary {return false}
+        if _storage._gated != rhs_storage._gated {return false}
+        if _storage._recommendedAction != rhs_storage._recommendedAction {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4330,107 +4604,31 @@ extension Melix_Worker_V1_GetHubModelCardRequest: SwiftProtobuf.Message, SwiftPr
 
 extension Melix_Worker_V1_HubModelCard: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HubModelCard"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}repo_id\0\u{1}author\0\u{3}model_name\0\u{1}summary\0\u{1}license\0\u{3}pipeline_tag\0\u{1}tags\0\u{1}downloads\0\u{1}likes\0\u{3}mlx_compatible\0\u{3}library_name\0\u{3}sibling_files\0\u{3}base_models\0\u{3}last_modified\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.repoID) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.author) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.modelName) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.summary) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.license) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.pipelineTag) }()
-      case 7: try { try decoder.decodeRepeatedStringField(value: &self.tags) }()
-      case 8: try { try decoder.decodeSingularUInt64Field(value: &self.downloads) }()
-      case 9: try { try decoder.decodeSingularUInt64Field(value: &self.likes) }()
-      case 10: try { try decoder.decodeSingularBoolField(value: &self.mlxCompatible) }()
-      case 11: try { try decoder.decodeSingularStringField(value: &self.libraryName) }()
-      case 12: try { try decoder.decodeRepeatedStringField(value: &self.siblingFiles) }()
-      case 13: try { try decoder.decodeRepeatedStringField(value: &self.baseModels) }()
-      case 14: try { try decoder.decodeSingularStringField(value: &self.lastModified) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.repoID.isEmpty {
-      try visitor.visitSingularStringField(value: self.repoID, fieldNumber: 1)
-    }
-    if !self.author.isEmpty {
-      try visitor.visitSingularStringField(value: self.author, fieldNumber: 2)
-    }
-    if !self.modelName.isEmpty {
-      try visitor.visitSingularStringField(value: self.modelName, fieldNumber: 3)
-    }
-    if !self.summary.isEmpty {
-      try visitor.visitSingularStringField(value: self.summary, fieldNumber: 4)
-    }
-    if !self.license.isEmpty {
-      try visitor.visitSingularStringField(value: self.license, fieldNumber: 5)
-    }
-    if !self.pipelineTag.isEmpty {
-      try visitor.visitSingularStringField(value: self.pipelineTag, fieldNumber: 6)
-    }
-    if !self.tags.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.tags, fieldNumber: 7)
-    }
-    if self.downloads != 0 {
-      try visitor.visitSingularUInt64Field(value: self.downloads, fieldNumber: 8)
-    }
-    if self.likes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.likes, fieldNumber: 9)
-    }
-    if self.mlxCompatible != false {
-      try visitor.visitSingularBoolField(value: self.mlxCompatible, fieldNumber: 10)
-    }
-    if !self.libraryName.isEmpty {
-      try visitor.visitSingularStringField(value: self.libraryName, fieldNumber: 11)
-    }
-    if !self.siblingFiles.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.siblingFiles, fieldNumber: 12)
-    }
-    if !self.baseModels.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.baseModels, fieldNumber: 13)
-    }
-    if !self.lastModified.isEmpty {
-      try visitor.visitSingularStringField(value: self.lastModified, fieldNumber: 14)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Melix_Worker_V1_HubModelCard, rhs: Melix_Worker_V1_HubModelCard) -> Bool {
-    if lhs.repoID != rhs.repoID {return false}
-    if lhs.author != rhs.author {return false}
-    if lhs.modelName != rhs.modelName {return false}
-    if lhs.summary != rhs.summary {return false}
-    if lhs.license != rhs.license {return false}
-    if lhs.pipelineTag != rhs.pipelineTag {return false}
-    if lhs.tags != rhs.tags {return false}
-    if lhs.downloads != rhs.downloads {return false}
-    if lhs.likes != rhs.likes {return false}
-    if lhs.mlxCompatible != rhs.mlxCompatible {return false}
-    if lhs.libraryName != rhs.libraryName {return false}
-    if lhs.siblingFiles != rhs.siblingFiles {return false}
-    if lhs.baseModels != rhs.baseModels {return false}
-    if lhs.lastModified != rhs.lastModified {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-extension Melix_Worker_V1_GetHubModelCardResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".GetHubModelCardResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{1}card\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}repo_id\0\u{1}author\0\u{3}model_name\0\u{1}summary\0\u{1}license\0\u{3}pipeline_tag\0\u{1}tags\0\u{1}downloads\0\u{1}likes\0\u{3}mlx_compatible\0\u{3}library_name\0\u{3}sibling_files\0\u{3}base_models\0\u{3}last_modified\0\u{3}local_fit_status\0\u{3}local_fit_reasons\0\u{3}estimated_artifact_bytes\0\u{3}estimated_resident_bytes\0\u{3}parameter_count\0\u{3}quantization_summary\0\u{1}gated\0\u{3}recommended_action\0")
 
   fileprivate class _StorageClass {
-    var _ok: Bool = false
-    var _error: Melix_Worker_V1_ErrorStatus? = nil
-    var _card: Melix_Worker_V1_HubModelCard? = nil
+    var _repoID: String = String()
+    var _author: String = String()
+    var _modelName: String = String()
+    var _summary: String = String()
+    var _license: String = String()
+    var _pipelineTag: String = String()
+    var _tags: [String] = []
+    var _downloads: UInt64 = 0
+    var _likes: UInt64 = 0
+    var _mlxCompatible: Bool = false
+    var _libraryName: String = String()
+    var _siblingFiles: [String] = []
+    var _baseModels: [String] = []
+    var _lastModified: String = String()
+    var _localFitStatus: String = String()
+    var _localFitReasons: [String] = []
+    var _estimatedArtifactBytes: UInt64 = 0
+    var _estimatedResidentBytes: UInt64 = 0
+    var _parameterCount: UInt64 = 0
+    var _quantizationSummary: String = String()
+    var _gated: Bool = false
+    var _recommendedAction: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -4441,9 +4639,28 @@ extension Melix_Worker_V1_GetHubModelCardResponse: SwiftProtobuf.Message, SwiftP
     private init() {}
 
     init(copying source: _StorageClass) {
-      _ok = source._ok
-      _error = source._error
-      _card = source._card
+      _repoID = source._repoID
+      _author = source._author
+      _modelName = source._modelName
+      _summary = source._summary
+      _license = source._license
+      _pipelineTag = source._pipelineTag
+      _tags = source._tags
+      _downloads = source._downloads
+      _likes = source._likes
+      _mlxCompatible = source._mlxCompatible
+      _libraryName = source._libraryName
+      _siblingFiles = source._siblingFiles
+      _baseModels = source._baseModels
+      _lastModified = source._lastModified
+      _localFitStatus = source._localFitStatus
+      _localFitReasons = source._localFitReasons
+      _estimatedArtifactBytes = source._estimatedArtifactBytes
+      _estimatedResidentBytes = source._estimatedResidentBytes
+      _parameterCount = source._parameterCount
+      _quantizationSummary = source._quantizationSummary
+      _gated = source._gated
+      _recommendedAction = source._recommendedAction
     }
   }
 
@@ -4462,9 +4679,28 @@ extension Melix_Worker_V1_GetHubModelCardResponse: SwiftProtobuf.Message, SwiftP
         // allocates stack space for every case branch when no optimizations are
         // enabled. https://github.com/apple/swift-protobuf/issues/1034
         switch fieldNumber {
-        case 1: try { try decoder.decodeSingularBoolField(value: &_storage._ok) }()
-        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
-        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._card) }()
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._repoID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._author) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._modelName) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._summary) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._license) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._pipelineTag) }()
+        case 7: try { try decoder.decodeRepeatedStringField(value: &_storage._tags) }()
+        case 8: try { try decoder.decodeSingularUInt64Field(value: &_storage._downloads) }()
+        case 9: try { try decoder.decodeSingularUInt64Field(value: &_storage._likes) }()
+        case 10: try { try decoder.decodeSingularBoolField(value: &_storage._mlxCompatible) }()
+        case 11: try { try decoder.decodeSingularStringField(value: &_storage._libraryName) }()
+        case 12: try { try decoder.decodeRepeatedStringField(value: &_storage._siblingFiles) }()
+        case 13: try { try decoder.decodeRepeatedStringField(value: &_storage._baseModels) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._lastModified) }()
+        case 15: try { try decoder.decodeSingularStringField(value: &_storage._localFitStatus) }()
+        case 16: try { try decoder.decodeRepeatedStringField(value: &_storage._localFitReasons) }()
+        case 17: try { try decoder.decodeSingularUInt64Field(value: &_storage._estimatedArtifactBytes) }()
+        case 18: try { try decoder.decodeSingularUInt64Field(value: &_storage._estimatedResidentBytes) }()
+        case 19: try { try decoder.decodeSingularUInt64Field(value: &_storage._parameterCount) }()
+        case 20: try { try decoder.decodeSingularStringField(value: &_storage._quantizationSummary) }()
+        case 21: try { try decoder.decodeSingularBoolField(value: &_storage._gated) }()
+        case 22: try { try decoder.decodeSingularStringField(value: &_storage._recommendedAction) }()
         default: break
         }
       }
@@ -4473,35 +4709,151 @@ extension Melix_Worker_V1_GetHubModelCardResponse: SwiftProtobuf.Message, SwiftP
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
     try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every if/case branch local when no optimizations
-      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-      // https://github.com/apple/swift-protobuf/issues/1182
-      if _storage._ok != false {
-        try visitor.visitSingularBoolField(value: _storage._ok, fieldNumber: 1)
+      if !_storage._repoID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._repoID, fieldNumber: 1)
       }
-      try { if let v = _storage._error {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-      } }()
-      try { if let v = _storage._card {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
-      } }()
+      if !_storage._author.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._author, fieldNumber: 2)
+      }
+      if !_storage._modelName.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._modelName, fieldNumber: 3)
+      }
+      if !_storage._summary.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._summary, fieldNumber: 4)
+      }
+      if !_storage._license.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._license, fieldNumber: 5)
+      }
+      if !_storage._pipelineTag.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._pipelineTag, fieldNumber: 6)
+      }
+      if !_storage._tags.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._tags, fieldNumber: 7)
+      }
+      if _storage._downloads != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._downloads, fieldNumber: 8)
+      }
+      if _storage._likes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._likes, fieldNumber: 9)
+      }
+      if _storage._mlxCompatible != false {
+        try visitor.visitSingularBoolField(value: _storage._mlxCompatible, fieldNumber: 10)
+      }
+      if !_storage._libraryName.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._libraryName, fieldNumber: 11)
+      }
+      if !_storage._siblingFiles.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._siblingFiles, fieldNumber: 12)
+      }
+      if !_storage._baseModels.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._baseModels, fieldNumber: 13)
+      }
+      if !_storage._lastModified.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lastModified, fieldNumber: 14)
+      }
+      if !_storage._localFitStatus.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._localFitStatus, fieldNumber: 15)
+      }
+      if !_storage._localFitReasons.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._localFitReasons, fieldNumber: 16)
+      }
+      if _storage._estimatedArtifactBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._estimatedArtifactBytes, fieldNumber: 17)
+      }
+      if _storage._estimatedResidentBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._estimatedResidentBytes, fieldNumber: 18)
+      }
+      if _storage._parameterCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._parameterCount, fieldNumber: 19)
+      }
+      if !_storage._quantizationSummary.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._quantizationSummary, fieldNumber: 20)
+      }
+      if _storage._gated != false {
+        try visitor.visitSingularBoolField(value: _storage._gated, fieldNumber: 21)
+      }
+      if !_storage._recommendedAction.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._recommendedAction, fieldNumber: 22)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Melix_Worker_V1_GetHubModelCardResponse, rhs: Melix_Worker_V1_GetHubModelCardResponse) -> Bool {
+  public static func ==(lhs: Melix_Worker_V1_HubModelCard, rhs: Melix_Worker_V1_HubModelCard) -> Bool {
     if lhs._storage !== rhs._storage {
       let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
         let _storage = _args.0
         let rhs_storage = _args.1
-        if _storage._ok != rhs_storage._ok {return false}
-        if _storage._error != rhs_storage._error {return false}
-        if _storage._card != rhs_storage._card {return false}
+        if _storage._repoID != rhs_storage._repoID {return false}
+        if _storage._author != rhs_storage._author {return false}
+        if _storage._modelName != rhs_storage._modelName {return false}
+        if _storage._summary != rhs_storage._summary {return false}
+        if _storage._license != rhs_storage._license {return false}
+        if _storage._pipelineTag != rhs_storage._pipelineTag {return false}
+        if _storage._tags != rhs_storage._tags {return false}
+        if _storage._downloads != rhs_storage._downloads {return false}
+        if _storage._likes != rhs_storage._likes {return false}
+        if _storage._mlxCompatible != rhs_storage._mlxCompatible {return false}
+        if _storage._libraryName != rhs_storage._libraryName {return false}
+        if _storage._siblingFiles != rhs_storage._siblingFiles {return false}
+        if _storage._baseModels != rhs_storage._baseModels {return false}
+        if _storage._lastModified != rhs_storage._lastModified {return false}
+        if _storage._localFitStatus != rhs_storage._localFitStatus {return false}
+        if _storage._localFitReasons != rhs_storage._localFitReasons {return false}
+        if _storage._estimatedArtifactBytes != rhs_storage._estimatedArtifactBytes {return false}
+        if _storage._estimatedResidentBytes != rhs_storage._estimatedResidentBytes {return false}
+        if _storage._parameterCount != rhs_storage._parameterCount {return false}
+        if _storage._quantizationSummary != rhs_storage._quantizationSummary {return false}
+        if _storage._gated != rhs_storage._gated {return false}
+        if _storage._recommendedAction != rhs_storage._recommendedAction {return false}
         return true
       }
       if !storagesAreEqual {return false}
     }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_GetHubModelCardResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetHubModelCardResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{1}card\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.ok) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._card) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.ok != false {
+      try visitor.visitSingularBoolField(value: self.ok, fieldNumber: 1)
+    }
+    try { if let v = self._error {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try { if let v = self._card {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_GetHubModelCardResponse, rhs: Melix_Worker_V1_GetHubModelCardResponse) -> Bool {
+    if lhs.ok != rhs.ok {return false}
+    if lhs._error != rhs._error {return false}
+    if lhs._card != rhs._card {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

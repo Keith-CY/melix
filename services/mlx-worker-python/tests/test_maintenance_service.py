@@ -313,6 +313,17 @@ class FakeHubCatalog:
                     library_name="transformers",
                     sibling_files=["README.md", "config.json"],
                     last_modified="2025-01-26T19:49:28Z",
+                    local_fit_status="good",
+                    local_fit_reasons=[
+                        "MLX-compatible Hub metadata found.",
+                        "Estimated resident bytes are within the memory comfort budget.",
+                    ],
+                    estimated_artifact_bytes=4_200_000_000,
+                    estimated_resident_bytes=5_670_000_000,
+                    parameter_count=7_000_000_000,
+                    quantization_summary="4-bit",
+                    gated=False,
+                    recommended_action="download",
                 ),
                 HubModelSummaryRecord(
                     repo_id="openai/example-non-mlx",
@@ -327,6 +338,14 @@ class FakeHubCatalog:
                     library_name="transformers",
                     sibling_files=["README.md"],
                     last_modified="2025-01-25T08:00:00Z",
+                    local_fit_status="blocked",
+                    local_fit_reasons=["No MLX compatibility signal"],
+                    estimated_artifact_bytes=2_000_000_000,
+                    estimated_resident_bytes=2_700_000_000,
+                    parameter_count=0,
+                    quantization_summary="",
+                    gated=False,
+                    recommended_action="unavailable",
                 ),
             ],
             next_cursor="cursor:page-2",
@@ -349,6 +368,17 @@ class FakeHubCatalog:
             sibling_files=["README.md", "config.json", "model.safetensors"],
             base_models=["Qwen/Qwen2.5-7B-Instruct"],
             last_modified="2025-01-26T19:49:28Z",
+            local_fit_status="heavy",
+            local_fit_reasons=[
+                "MLX-compatible Hub metadata found.",
+                "Estimated resident bytes exceed the memory comfort budget.",
+            ],
+            estimated_artifact_bytes=52_000_000_000,
+            estimated_resident_bytes=70_200_000_000,
+            parameter_count=72_000_000_000,
+            quantization_summary="4-bit",
+            gated=False,
+            recommended_action="review_risk",
         )
 
 
@@ -4737,6 +4767,17 @@ def test_search_hub_models_passes_cursor_and_filters_to_mlx_results(tmp_path: Pa
     assert response.models[0].downloads == 321
     assert response.models[0].likes == 12
     assert response.models[0].mlx_compatible is True
+    assert response.models[0].local_fit_status == "good"
+    assert response.models[0].local_fit_reasons == [
+        "MLX-compatible Hub metadata found.",
+        "Estimated resident bytes are within the memory comfort budget.",
+    ]
+    assert response.models[0].estimated_artifact_bytes == 4_200_000_000
+    assert response.models[0].estimated_resident_bytes == 5_670_000_000
+    assert response.models[0].parameter_count == 7_000_000_000
+    assert response.models[0].quantization_summary == "4-bit"
+    assert response.models[0].gated is False
+    assert response.models[0].recommended_action == "download"
 
 
 def test_get_hub_model_card_returns_normalized_payload(tmp_path: Path) -> None:
@@ -4766,6 +4807,17 @@ def test_get_hub_model_card_returns_normalized_payload(tmp_path: Path) -> None:
     assert response.card.sibling_files == ["README.md", "config.json", "model.safetensors"]
     assert response.card.base_models == ["Qwen/Qwen2.5-7B-Instruct"]
     assert response.card.last_modified == "2025-01-26T19:49:28Z"
+    assert response.card.local_fit_status == "heavy"
+    assert response.card.local_fit_reasons == [
+        "MLX-compatible Hub metadata found.",
+        "Estimated resident bytes exceed the memory comfort budget.",
+    ]
+    assert response.card.estimated_artifact_bytes == 52_000_000_000
+    assert response.card.estimated_resident_bytes == 70_200_000_000
+    assert response.card.parameter_count == 72_000_000_000
+    assert response.card.quantization_summary == "4-bit"
+    assert response.card.gated is False
+    assert response.card.recommended_action == "review_risk"
 
 
 def test_search_hub_models_returns_hub_catalog_errors(tmp_path: Path) -> None:

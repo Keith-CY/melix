@@ -3438,6 +3438,14 @@ public actor ControlPlaneService {
         summary.libraryName = model.libraryName
         summary.siblingFiles = model.siblingFiles
         summary.lastModified = model.lastModified
+        summary.localFitStatus = model.localFitStatus
+        summary.localFitReasons = model.localFitReasons
+        summary.estimatedArtifactBytes = model.estimatedArtifactBytes
+        summary.estimatedResidentBytes = model.estimatedResidentBytes
+        summary.parameterCount = model.parameterCount
+        summary.quantizationSummary = model.quantizationSummary
+        summary.gated = model.gated
+        summary.recommendedAction = model.recommendedAction
         return summary
     }
 
@@ -3459,6 +3467,14 @@ public actor ControlPlaneService {
         result.siblingFiles = card.siblingFiles
         result.baseModels = card.baseModels
         result.lastModified = card.lastModified
+        result.localFitStatus = card.localFitStatus
+        result.localFitReasons = card.localFitReasons
+        result.estimatedArtifactBytes = card.estimatedArtifactBytes
+        result.estimatedResidentBytes = card.estimatedResidentBytes
+        result.parameterCount = card.parameterCount
+        result.quantizationSummary = card.quantizationSummary
+        result.gated = card.gated
+        result.recommendedAction = card.recommendedAction
         return result
     }
 

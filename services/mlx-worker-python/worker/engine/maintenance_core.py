@@ -293,6 +293,14 @@ class MaintenanceCore:
             library_name=record.library_name,
             sibling_files=record.sibling_files,
             last_modified=record.last_modified,
+            local_fit_status=record.local_fit_status,
+            local_fit_reasons=record.local_fit_reasons,
+            estimated_artifact_bytes=record.estimated_artifact_bytes,
+            estimated_resident_bytes=record.estimated_resident_bytes,
+            parameter_count=record.parameter_count,
+            quantization_summary=record.quantization_summary,
+            gated=record.gated,
+            recommended_action=record.recommended_action,
         )
 
     @staticmethod
@@ -312,6 +320,14 @@ class MaintenanceCore:
             sibling_files=record.sibling_files,
             base_models=record.base_models,
             last_modified=record.last_modified,
+            local_fit_status=record.local_fit_status,
+            local_fit_reasons=record.local_fit_reasons,
+            estimated_artifact_bytes=record.estimated_artifact_bytes,
+            estimated_resident_bytes=record.estimated_resident_bytes,
+            parameter_count=record.parameter_count,
+            quantization_summary=record.quantization_summary,
+            gated=record.gated,
+            recommended_action=record.recommended_action,
         )
 
     def convert_model(

@@ -208,3 +208,295 @@ def test_search_models_with_mlx_only_false_returns_all_results() -> None:
     assert len(page.items) == 2
     assert page.items[0].mlx_compatible is True
     assert page.items[1].mlx_compatible is False
+
+
+def test_search_models_marks_small_mlx_model_as_good_local_fit() -> None:
+    payload = [
+        {
+            "id": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "safetensors", "4-bit", "optiq", "apple-silicon"],
+            "library_name": "mlx",
+            "usedStorage": 2_811_000_000,
+            "siblings": [
+                {"rfilename": "config.json", "size": 4096},
+                {"rfilename": "model.safetensors", "size": 2_811_000_000},
+            ],
+            "safetensors": {
+                "parameters": {"F32": 10_000, "BF16": 1_000_000},
+            },
+            "cardData": {
+                "base_model": "Qwen/Qwen3.5-4B",
+            },
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="qwen", page_size=10, cursor="", mlx_only=True)
+
+    assert len(page.items) == 1
+    model = page.items[0]
+    assert model.local_fit_status == "good"
+    assert model.estimated_artifact_bytes == 2_811_000_000
+    assert model.estimated_resident_bytes > model.estimated_artifact_bytes
+    assert model.parameter_count == 1_010_000
+    assert model.quantization_summary == "4-bit, optiq"
+    assert model.gated is False
+    assert model.recommended_action == "download"
+    assert any("MLX-compatible" in reason for reason in model.local_fit_reasons)
+
+
+def test_search_models_marks_non_mlx_results_blocked_for_local_run() -> None:
+    payload = [
+        {
+            "id": "plain/standard-llm",
+            "author": "plain",
+            "pipeline_tag": "text-generation",
+            "tags": ["transformers"],
+            "library_name": "transformers",
+            "siblings": [{"rfilename": "model.safetensors", "size": 2_000_000_000}],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="llm", page_size=10, cursor="", mlx_only=False)
+
+    model = page.items[0]
+    assert model.local_fit_status == "blocked"
+    assert model.recommended_action == "unavailable"
+    assert model.estimated_artifact_bytes == 2_000_000_000
+    assert "No MLX compatibility signal" in model.local_fit_reasons
+
+
+def test_search_models_marks_missing_size_mlx_model_as_unknown() -> None:
+    payload = [
+        {
+            "id": "mlx-community/missing-size",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "README.md"}],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="missing", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.local_fit_status == "unknown"
+    assert model.recommended_action == "inspect_metadata"
+    assert model.estimated_artifact_bytes == 0
+    assert "No artifact size metadata" in model.local_fit_reasons
+
+
+def test_search_models_marks_large_mlx_model_as_heavy_not_blocked() -> None:
+    payload = [
+        {
+            "id": "mlx-community/huge-4bit",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "4-bit"],
+            "library_name": "mlx",
+            "usedStorage": 48 * 1024 * 1024 * 1024,
+            "siblings": [{"rfilename": "model.safetensors", "size": 48 * 1024 * 1024 * 1024}],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="huge", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.local_fit_status == "heavy"
+    assert model.recommended_action == "review_risk"
+    assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
+    assert any("memory comfort budget" in reason for reason in model.local_fit_reasons)
+
+
+def test_search_models_ignores_sibling_sizes_without_weight_or_config_filenames() -> None:
+    payload = [
+        {
+            "id": "mlx-community/malformed-siblings",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx"],
+            "library_name": "mlx",
+            "siblings": [
+                {"size": 9 * 1024 * 1024 * 1024},
+                {"rfilename": "", "size": 7 * 1024 * 1024 * 1024},
+                {"rfilename": "README.md", "size": 3 * 1024 * 1024 * 1024},
+                {"rfilename": "model.safetensors", "size": 1024 * 1024 * 1024},
+            ],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="malformed", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.estimated_artifact_bytes == 1024 * 1024 * 1024
+    assert model.local_fit_status == "good"
+
+
+def test_search_models_counts_fp32_parameters_as_four_bytes_for_local_fit() -> None:
+    payload = [
+        {
+            "id": "mlx-community/fp32-large",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "fp32"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "config.json"}],
+            "safetensors": {"total": 10_000_000_000},
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="fp32", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.local_fit_status == "heavy"
+    assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
+
+
+def test_search_models_treats_gated_auto_as_soft_access_not_blocked() -> None:
+    payload = [
+        {
+            "id": "mlx-community/auto-gated",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "4-bit"],
+            "library_name": "mlx",
+            "gated": "auto",
+            "siblings": [{"rfilename": "model.safetensors", "size": 1024 * 1024 * 1024}],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="auto-gated", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.gated is False
+    assert model.local_fit_status == "good"
+    assert model.recommended_action == "download"
+
+
+def test_search_models_ignores_non_model_size_hints_in_readme_text() -> None:
+    payload = [
+        {
+            "id": "mlx-community/context-size-only",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "README.md"}],
+            "description": "Recommended batch size: 4 GB. Context size: 128 KB.",
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="context-size", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.estimated_artifact_bytes == 0
+    assert model.local_fit_status == "unknown"
+
+
+def test_search_models_marks_gated_true_and_unsupported_pipeline_as_blocked() -> None:
+    payload = [
+        {
+            "id": "mlx-community/hard-gated",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx"],
+            "library_name": "mlx",
+            "gated": True,
+            "siblings": [{"rfilename": "model.safetensors", "size": 1024 * 1024 * 1024}],
+            "cardData": {},
+        },
+        {
+            "id": "mlx-community/audio-only",
+            "author": "mlx-community",
+            "pipeline_tag": "automatic-speech-recognition",
+            "tags": ["mlx"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "model.safetensors", "size": 1024 * 1024 * 1024}],
+            "cardData": {},
+        },
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="blocked", page_size=10, cursor="", mlx_only=True)
+
+    hard_gated, unsupported = page.items
+    assert hard_gated.local_fit_status == "blocked"
+    assert hard_gated.recommended_action == "request_access"
+    assert hard_gated.gated is True
+    assert unsupported.local_fit_status == "blocked"
+    assert unsupported.recommended_action == "unavailable"
+    assert any("Unsupported Melix pipeline tag" in reason for reason in unsupported.local_fit_reasons)
+
+
+def test_get_model_card_includes_local_fit_evidence_from_readme_size_hint() -> None:
+    payload = [
+        {
+            "id": "mlx-community/readme-size",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "4bit", "optiq"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "README.md"}],
+            "cardData": {
+                "model_name": "Readme Size",
+                "base_model": "base/model",
+                "description": "Model size 570 MB",
+            },
+            "description": "This MLX model has Model size 570 MB in the card.",
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    card = catalog.get_model_card(repo_id="mlx-community/readme-size")
+
+    assert card.local_fit_status == "good"
+    assert card.estimated_artifact_bytes == 570 * 1024 * 1024
+    assert card.quantization_summary == "4-bit, optiq"
+    assert card.base_models == ["base/model"]
