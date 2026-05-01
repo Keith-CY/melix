@@ -6,7 +6,7 @@ This Linux-only optimization slice targets `services/mlx-worker-python` and avoi
 
 ## Goal
 
-Reduce redundant memory use in `worker/productization/benchmark_evaluation_report.py` by replacing per-metric `list[float]` accumulation with running sum/count aggregation for benchmark probe metrics and evaluation sample probe metrics while preserving all output keys and values.
+Reduce redundant memory use and per-row overhead in `worker/productization/benchmark_evaluation_report.py` by replacing per-metric `list[float]` accumulation with running sum/count aggregation, then fast-pathing numeric probe rows and label formatting before falling back to generic handling, while preserving all output keys and values.
 
 ## Touched Files
 
@@ -27,5 +27,5 @@ Create a self-contained Python measurement script that builds a large synthetic 
 
 - Focused pytest for `test_benchmark_evaluation_report.py` passes.
 - Changed executable scope coverage is at least 95%.
-- Performance probe shows reduced peak traced allocation for `build_benchmark_evaluation_report(...)` while preserving identical rows/summary output.
+- Performance probe shows reduced elapsed time and/or peak traced allocation for `build_benchmark_evaluation_report(...)` while preserving identical rows/summary output.
 - `git diff --check` passes.
