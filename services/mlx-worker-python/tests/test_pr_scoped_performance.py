@@ -130,6 +130,16 @@ def test_scope_report_selects_upload_receipt_published_files_probe() -> None:
     assert "upload-receipt-published-files-scandir" in probe_ids
 
 
+def test_scope_report_selects_model_registry_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_registry/catalog.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "model-registry-config-payload-reuse" in probe_ids
+
+
 def test_scope_report_force_selects_all_on_infra_change() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -148,6 +158,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-sample-probe-aggregation",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
+        "model-registry-config-payload-reuse",
         "swift-cli-json-envelope-encoding",
         "upload-receipt-published-files-scandir",
         "worker-registry-resident-bytes-accumulator",

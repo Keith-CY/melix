@@ -879,6 +879,77 @@ def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
 
 
 
+def test_registry_snapshot_plain_local_models_pass_config_payload_into_raw_model_spec(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    model_dir = (root / "plain-model").resolve()
+    _write_model_config(model_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"], "library_name": "mlx"})
+    _write_weights(model_dir)
+
+    original_load_model_config_payload = catalog_module._load_model_config_payload
+    config_load_calls = 0
+
+    def tracking_load_model_config_payload(
+        target_model_dir: Path,
+        *,
+        json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    ) -> dict[str, object]:
+        nonlocal config_load_calls
+        if target_model_dir.resolve() == model_dir:
+            config_load_calls += 1
+        return original_load_model_config_payload(target_model_dir, json_cache=json_cache)
+
+    monkeypatch.setattr(catalog_module, "_load_model_config_payload", tracking_load_model_config_payload)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
+    config_load_calls = 0
+    snapshot = catalog.registry_snapshot(rescan=True)
+
+    assert [model.model_id for model in snapshot.models] == ["plain-model"]
+    assert config_load_calls == 1
+
+
+
+def test_raw_model_spec_loads_config_payload_when_not_provided(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = (tmp_path / "plain-model").resolve()
+    _write_model_config(model_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"], "library_name": "mlx"})
+    _write_weights(model_dir)
+
+    original_load_model_config_payload = catalog_module._load_model_config_payload
+    config_load_calls = 0
+
+    def tracking_load_model_config_payload(
+        target_model_dir: Path,
+        *,
+        json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    ) -> dict[str, object]:
+        nonlocal config_load_calls
+        if target_model_dir.resolve() == model_dir:
+            config_load_calls += 1
+        return original_load_model_config_payload(target_model_dir, json_cache=json_cache)
+
+    monkeypatch.setattr(catalog_module, "_load_model_config_payload", tracking_load_model_config_payload)
+
+    catalog = WorkerModelCatalog(environment={"HOME": str(tmp_path / "home")})
+    config_load_calls = 0
+    model = catalog._raw_model_spec(
+        model_id="plain-model",
+        model_dir=model_dir,
+        revision="local",
+        source_kind="local_mlx_directory",
+        metadata={},
+    )
+
+    assert model.model_id == "plain-model"
+    assert config_load_calls == 1
+
+
+
 def test_registry_snapshot_skips_plain_local_config_dirs_without_weights(tmp_path: Path) -> None:
     root = tmp_path / "root"
     model_dir = root / "plain-model"
@@ -1053,6 +1124,44 @@ def test_registry_snapshot_discovers_mlx_models_from_default_huggingface_cache(t
     assert model.ext["melix.hf_revision"] == "main"
     assert model.ext["melix.model_path"] == str(snapshot_dir.resolve())
     assert "melix.registry_descriptor_path" not in model.ext
+
+
+
+def test_scan_huggingface_cache_models_passes_config_payload_into_raw_model_spec(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    hf_cache = home / ".cache" / "huggingface" / "hub"
+    snapshot_dir = (hf_cache / "models--mlx-community--Qwen3-0.6B-4bit" / "snapshots" / "abc123").resolve()
+    refs_dir = hf_cache / "models--mlx-community--Qwen3-0.6B-4bit" / "refs"
+    _write_model_config(snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(snapshot_dir)
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "main").write_text("abc123\n", encoding="utf-8")
+
+    original_load_model_config_payload = catalog_module._load_model_config_payload
+    config_load_calls = 0
+
+    def tracking_load_model_config_payload(
+        target_model_dir: Path,
+        *,
+        json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    ) -> dict[str, object]:
+        nonlocal config_load_calls
+        if target_model_dir.resolve() == snapshot_dir:
+            config_load_calls += 1
+        return original_load_model_config_payload(target_model_dir, json_cache=json_cache)
+
+    monkeypatch.setattr(catalog_module, "_load_model_config_payload", tracking_load_model_config_payload)
+
+    catalog = WorkerModelCatalog(environment={"HOME": str(home)})
+    config_load_calls = 0
+    snapshot = catalog.registry_snapshot(rescan=True)
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    assert discovered["mlx-community/Qwen3-0.6B-4bit"].model_path == str(snapshot_dir)
+    assert config_load_calls == 1
 
 
 def test_registry_snapshot_rescan_reuses_cached_text_prefixes_for_unchanged_mlx_metadata(

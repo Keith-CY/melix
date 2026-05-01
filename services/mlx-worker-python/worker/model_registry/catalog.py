@@ -1191,6 +1191,7 @@ class WorkerModelCatalog:
                 revision="local",
                 source_kind="local_mlx_directory",
                 metadata={},
+                config_payload=config_payload,
             )
             self._apply_root_metadata(
                 model,
@@ -1250,6 +1251,7 @@ class WorkerModelCatalog:
                         "melix.hf_repo_id": repo_id,
                         "melix.hf_revision": revision,
                     },
+                    config_payload=config_payload,
                 )
 
     @staticmethod
@@ -1347,6 +1349,7 @@ class WorkerModelCatalog:
         revision: str,
         source_kind: str,
         metadata: dict[str, str],
+        config_payload: dict[str, object] | None = None,
     ) -> common_pb2.ModelSpec:
         json_cache = getattr(self, "_json_file_cache", None)
         if json_cache is None:
@@ -1358,7 +1361,8 @@ class WorkerModelCatalog:
             "melix.source_kind": source_kind,
             "melix.model_path": runtime_model_path,
         }
-        config_payload = _load_model_config_payload(model_dir, json_cache=json_cache)
+        if config_payload is None:
+            config_payload = _load_model_config_payload(model_dir, json_cache=json_cache)
         ext.update(dflash_draft_metadata(config_payload))
         model_kind = "vlm" if _is_gemma4_vlm_config(config_payload) else "text"
         if model_kind == "text":
