@@ -56,6 +56,7 @@ class ProbeDefinition:
     probe_impl: str
     probe_command: str
     metrics: tuple[MetricDefinition, ...]
+    coverage_replays_tests: bool = False
 
     def to_scope_dict(self) -> dict[str, object]:
         return {
@@ -66,6 +67,7 @@ class ProbeDefinition:
             "test_command": self.test_command,
             "coverage_command": self.coverage_command,
             "probe_command": self.probe_command,
+            "coverage_replays_tests": self.coverage_replays_tests,
             "metrics": [metric.to_dict() for metric in self.metrics],
         }
 
@@ -102,6 +104,7 @@ def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
                 probe_impl=str(raw_probe["probe_impl"]),
                 probe_command=str(raw_probe.get("probe_command", "")).strip(),
                 metrics=metrics,
+                coverage_replays_tests=bool(raw_probe.get("coverage_replays_tests", False)),
             )
         )
     return tuple(probes)
@@ -293,6 +296,17 @@ def write_report_outputs(report: dict[str, object], output_dir: str | Path) -> d
 
 
 def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, object]:
+    if probe.coverage_replays_tests:
+        coverage_result = _run_command(probe.coverage_command, cwd=repo_root)
+        test_result = {
+            "command": probe.test_command,
+            "ok": coverage_result["ok"],
+            "returncode": coverage_result["returncode"],
+            "stdout": "Skipped standalone test command because coverage_command reruns the focused pytest selection.\n",
+            "stderr": "",
+            "coverage_pct": None,
+        }
+        return {"test": test_result, "coverage": coverage_result}
     test_result = _run_command(probe.test_command, cwd=repo_root)
     coverage_result = (
         _run_command(probe.coverage_command, cwd=repo_root)
