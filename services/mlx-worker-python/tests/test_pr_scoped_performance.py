@@ -94,6 +94,16 @@ def test_scope_report_selects_evaluation_job_id_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "evaluation-job-id-high-water-mark"
 
 
+def test_scope_report_selects_worker_registry_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/registry.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "worker-registry-resident-bytes-accumulator"
+
+
 def test_scope_report_selects_bench_report_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -122,6 +132,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
         "swift-cli-json-envelope-encoding",
+        "worker-registry-resident-bytes-accumulator",
     }
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
@@ -262,6 +273,19 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert training_dataset_metrics["sample_count"] == 20000.0
     assert training_dataset_metrics["duplicate_count"] > 0
     assert training_dataset_metrics["dirty_count"] > 0
+
+
+def test_worker_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/worker_registry_resident_probe.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["elapsed_ms_mean"] > 0
+    assert payload["preloaded_model_count"] == 2000.0
+    assert payload["loop_count"] == 250.0
+    assert payload["resident_bytes_mean"] > 0
+    assert payload["sample_count"] == 3.0
 
 
 def test_dispatch_probe_impl_supports_evaluation_job_id_probe() -> None:

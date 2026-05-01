@@ -150,6 +150,31 @@
     ]
   },
   {
+    "id": "worker-registry-resident-bytes-accumulator",
+    "name": "Worker registry resident-bytes accumulator",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/registry.py",
+      "services/mlx-worker-python/tests/test_runtime_edges.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/changed_scope_coverage.py",
+      "scripts/worker_registry_resident_probe.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_runtime_edges.py::test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes services/mlx-worker-python/tests/test_runtime_edges.py::test_runtime_service_handles_failures_and_state_transitions services/mlx-worker-python/tests/test_runtime_edges.py::test_runtime_service_rejects_model_loads_that_exceed_process_budget_and_reports_headroom services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_worker_registry_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_worker_registry_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_runtime_edges.py::test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes services/mlx-worker-python/tests/test_runtime_edges.py::test_runtime_service_handles_failures_and_state_transitions services/mlx-worker-python/tests/test_runtime_edges.py::test_runtime_service_rejects_model_loads_that_exceed_process_budget_and_reports_headroom services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_worker_registry_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_worker_registry_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/registry.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/worker_registry_resident_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -lc 'if [ -f scripts/worker_registry_resident_probe.py ]; then python3 scripts/worker_registry_resident_probe.py; else python3 - <<\"PY\"\nimport json\nimport statistics\nfrom pathlib import Path\nimport sys\nimport time\n\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\n\nfrom tests.test_runtime_edges import build_registry\nfrom worker.model_registry.catalog import WorkerModelCatalog\n\nspec = WorkerModelCatalog.dev_text_model()\nelapsed_samples = []\nresident_samples = []\npreloaded_count = 2000\nloop_count = 250\n\nfor _ in range(3):\n    registry = build_registry()\n    for _ in range(preloaded_count):\n        registry.load_model(spec)\n    started = time.perf_counter()\n    for _ in range(loop_count):\n        loaded = registry.load_model(spec)\n        resident_samples.append(float(registry.runtime_stats().model_resident_bytes))\n        registry.unload_model(loaded.handle)\n    elapsed_samples.append((time.perf_counter() - started) * 1000.0 / loop_count)\n\nprint(json.dumps({\n    \"elapsed_ms_mean\": round(statistics.fmean(elapsed_samples), 6),\n    \"loop_count\": float(loop_count),\n    \"preloaded_model_count\": float(preloaded_count),\n    \"resident_bytes_mean\": round(statistics.fmean(resident_samples), 3),\n    \"sample_count\": float(len(elapsed_samples)),\n}, sort_keys=True))\nPY\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "swift-cli-json-envelope-encoding",
     "name": "Swift CLI JSON envelope encoding",
     "runner": "macos-15",

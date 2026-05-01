@@ -119,6 +119,8 @@ class WorkerRegistry:
         self._lock = Lock()
         self._next_model_handle = 1
         self._loaded_models: dict[str, LoadedModel] = {}
+        self._loaded_model_resident_bytes = 0
+        self._reserved_model_resident_bytes = 0
         self._requests: dict[str, RequestState] = {}
         self._draining = False
         self._last_probe_kind = ""
@@ -197,21 +199,23 @@ class WorkerRegistry:
         runtime_kind, runtime = self._runtime_for_model(resolved)
         estimated = runtime.estimate_resident_bytes(resolved)
         with self._lock:
-            existing_resident_bytes = sum(item.estimated_resident_bytes for item in self._loaded_models.values())
-
-        projected_resident_bytes = existing_resident_bytes + estimated
-        required_process_bytes = projected_resident_bytes + self._memory_headroom_bytes
-        if self._process_memory_budget_bytes > 0 and required_process_bytes > self._process_memory_budget_bytes:
-            raise MemoryBudgetExceeded(
-                budget_bytes=self._process_memory_budget_bytes,
-                headroom_bytes=self._memory_headroom_bytes,
-                projected_resident_bytes=projected_resident_bytes,
-                required_bytes=required_process_bytes,
-            )
+            existing_resident_bytes = self._loaded_model_resident_bytes + self._reserved_model_resident_bytes
+            projected_resident_bytes = existing_resident_bytes + estimated
+            required_process_bytes = projected_resident_bytes + self._memory_headroom_bytes
+            if self._process_memory_budget_bytes > 0 and required_process_bytes > self._process_memory_budget_bytes:
+                raise MemoryBudgetExceeded(
+                    budget_bytes=self._process_memory_budget_bytes,
+                    headroom_bytes=self._memory_headroom_bytes,
+                    projected_resident_bytes=projected_resident_bytes,
+                    required_bytes=required_process_bytes,
+                )
+            self._reserved_model_resident_bytes += estimated
 
         effective_request_budget_bytes = max(0, memory_budget_bytes)
         required_request_bytes = estimated + self._memory_headroom_bytes
         if effective_request_budget_bytes > 0 and required_request_bytes > effective_request_budget_bytes:
+            with self._lock:
+                self._reserved_model_resident_bytes = max(0, self._reserved_model_resident_bytes - estimated)
             raise MemoryBudgetExceeded(
                 budget_bytes=effective_request_budget_bytes,
                 headroom_bytes=self._memory_headroom_bytes,
@@ -219,14 +223,20 @@ class WorkerRegistry:
                 required_bytes=required_request_bytes,
             )
 
-        runtime_model = runtime.load_model(resolved)
-        residency = self._loaded_residency(
-            resolved,
-            pin_on_load=pin_on_load,
-            effective_disk_streaming_mode=requested_disk_streaming_mode,
-        )
+        try:
+            runtime_model = runtime.load_model(resolved)
+            residency = self._loaded_residency(
+                resolved,
+                pin_on_load=pin_on_load,
+                effective_disk_streaming_mode=requested_disk_streaming_mode,
+            )
+        except Exception:
+            with self._lock:
+                self._reserved_model_resident_bytes = max(0, self._reserved_model_resident_bytes - estimated)
+            raise
 
         with self._lock:
+            self._reserved_model_resident_bytes = max(0, self._reserved_model_resident_bytes - estimated)
             handle = f"{resolved.model_id}::{self._next_model_handle}"
             self._next_model_handle += 1
             loaded = LoadedModel(
@@ -239,6 +249,7 @@ class WorkerRegistry:
                 residency=residency,
             )
             self._loaded_models[handle] = loaded
+            self._loaded_model_resident_bytes += estimated
             if runtime_kind in {"transcription", "speech"}:
                 self._last_audio_model_load_latency_ms = float(getattr(runtime_model, "load_latency_ms", 0.0))
             return loaded
@@ -258,7 +269,11 @@ class WorkerRegistry:
 
     def unload_model(self, handle: str) -> bool:
         with self._lock:
-            return self._loaded_models.pop(handle, None) is not None
+            loaded = self._loaded_models.pop(handle, None)
+            if loaded is None:
+                return False
+            self._loaded_model_resident_bytes = max(0, self._loaded_model_resident_bytes - loaded.estimated_resident_bytes)
+            return True
 
     def warmup_model(self, handle: str, synthetic_messages=None) -> int | None:
         loaded = self.get_loaded_model(handle)
@@ -358,7 +373,7 @@ class WorkerRegistry:
             active_multimodal_requests = sum(
                 1 for state in self._requests.values() if state.runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}
             )
-            model_resident_bytes = sum(item.estimated_resident_bytes for item in self._loaded_models.values())
+            model_resident_bytes = self._loaded_model_resident_bytes
             cache_resident_bytes = cache_stats.l1_bytes + cache_stats.l2_bytes
             kv_cache_bytes = 0
             peak_allocation_bytes = 0
