@@ -204,7 +204,15 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
     },
     "real_workload": copy.deepcopy(DEFAULT_REAL_WORKLOAD_GATE_POLICY),
     "m9": copy.deepcopy(DEFAULT_M9_RELEASE_GATE_POLICY),
+    "lora_path": {
+        "summary": {
+            "stages_success_count": {"min": 4.0},
+            "stages_failure_count": {"max": 1.0},
+        },
+    },
 }
+
+_LORA_PATH_STAGE_NAMES = ("dataset_build", "train", "activate", "compare", "publish")
 
 
 class _SyntheticProductizationRunner(MLXLMRunner):
@@ -622,6 +630,179 @@ def collect_training_evidence(jobs_root: str | Path) -> dict[str, Any]:
     }
 
 
+def collect_lora_path_evidence(jobs_root: str | Path) -> dict[str, Any]:
+    """Collect per-stage success/failure metrics for the full LoRA workflow path."""
+    jobs_root = Path(jobs_root)
+    core = _build_maintenance_core(jobs_root)
+    stages: dict[str, dict[str, Any]] = {}
+
+    t0 = time.perf_counter()
+    try:
+        dataset_root = _ensure_training_dataset(jobs_root)
+        stages["dataset_build"] = {
+            "success": 1.0,
+            "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+        }
+    except Exception as exc:
+        stages["dataset_build"] = {
+            "success": 0.0,
+            "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+            "failure_reason": str(exc)[:200],
+        }
+        return _build_lora_path_evidence(stages)
+
+    artifact_path = ""
+    t0 = time.perf_counter()
+    try:
+        train_events = list(
+            core.convert_model(
+                maintenance_pb2.ConvertModelRequest(
+                    source_model="melix-dev-text",
+                    output_dir=str(jobs_root / "lora-path" / "train"),
+                    generate_manifest=True,
+                    ext={
+                        "operation": "train_lora",
+                        "adapter_name": "melix-lora-path-adapter",
+                        "dataset_uri": str(dataset_root),
+                    },
+                )
+            )
+        )
+        last_event = train_events[-1] if train_events else None
+        if last_event and last_event.HasField("completed") and last_event.completed.output_path:
+            artifact_path = last_event.completed.output_path
+            stages["train"] = {
+                "success": 1.0,
+                "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+            }
+        else:
+            stages["train"] = {
+                "success": 0.0,
+                "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+                "failure_reason": "train stage did not produce an artifact",
+            }
+    except Exception as exc:
+        stages["train"] = {
+            "success": 0.0,
+            "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+            "failure_reason": str(exc)[:200],
+        }
+
+    t0 = time.perf_counter()
+    if artifact_path:
+        try:
+            list(
+                core.convert_model(
+                    maintenance_pb2.ConvertModelRequest(
+                        source_model="melix-dev-text",
+                        output_dir=str(jobs_root / "lora-path" / "activate"),
+                        generate_manifest=True,
+                        ext={
+                            "operation": "activate_adapter",
+                            "artifact_path": artifact_path,
+                            "derived_model_alias": "melix-lora-path-derived",
+                        },
+                    )
+                )
+            )
+            stages["activate"] = {
+                "success": 1.0,
+                "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+            }
+        except Exception as exc:
+            stages["activate"] = {
+                "success": 0.0,
+                "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+                "failure_reason": str(exc)[:200],
+            }
+    else:
+        stages["activate"] = {
+            "success": 0.0,
+            "duration_ms": 0.0,
+            "failure_reason": "train stage did not produce an artifact",
+        }
+
+    t0 = time.perf_counter()
+    suite_id = _preferred_evaluation_compare_suite_id(
+        DEFAULT_RELEASE_GATE_POLICY.get("evaluation_compare")
+    )
+    compare_evidence, compare_reason = _load_persisted_evaluation_compare_evidence(
+        jobs_root, suite_id=suite_id
+    )
+    stages["compare"] = {
+        "success": 1.0 if compare_evidence is not None else 0.0,
+        "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+    }
+    if compare_evidence is None:
+        stages["compare"]["failure_reason"] = compare_reason
+
+    t0 = time.perf_counter()
+    if artifact_path:
+        try:
+            list(
+                core.convert_model(
+                    maintenance_pb2.ConvertModelRequest(
+                        source_model=artifact_path,
+                        output_dir=str(jobs_root / "lora-path" / "publish"),
+                        generate_manifest=True,
+                        ext={
+                            "operation": "upload",
+                            "artifact_kind": "adapter",
+                            "artifact_path": artifact_path,
+                            "adapter_name": "melix-lora-path-adapter",
+                            "target_repo": "melix/adapters/melix-lora-path-adapter",
+                        },
+                    )
+                )
+            )
+            stages["publish"] = {
+                "success": 1.0,
+                "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+            }
+        except Exception as exc:
+            stages["publish"] = {
+                "success": 0.0,
+                "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
+                "failure_reason": str(exc)[:200],
+            }
+    else:
+        stages["publish"] = {
+            "success": 0.0,
+            "duration_ms": 0.0,
+            "failure_reason": "train stage did not produce an artifact",
+        }
+
+    return _build_lora_path_evidence(stages)
+
+
+def _build_lora_path_evidence(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    stages_success_count = sum(
+        float(stages.get(name, {}).get("success", 0.0))
+        for name in _LORA_PATH_STAGE_NAMES
+    )
+    stages_failure_count = float(
+        sum(
+            1
+            for name in _LORA_PATH_STAGE_NAMES
+            if float(stages.get(name, {}).get("success", 0.0)) < 1.0
+        )
+    )
+    return {
+        "stages": {
+            name: stages.get(
+                name,
+                {"success": 0.0, "duration_ms": 0.0, "failure_reason": "not_run"},
+            )
+            for name in _LORA_PATH_STAGE_NAMES
+        },
+        "summary": {
+            "stages_success_count": stages_success_count,
+            "stages_failure_count": stages_failure_count,
+            "full_path_success": 1.0 if stages_failure_count == 0.0 else 0.0,
+        },
+    }
+
+
 def collect_real_workload_evidence(
     jobs_root: str | Path,
     *,
@@ -720,6 +901,7 @@ def build_release_gate_report(
             policy=active_policy.get("real_workload", {}),
         ),
         "m9": collect_m9_evidence(repo_root, policy=active_policy.get("m9", {})),
+        "lora_path": collect_lora_path_evidence(jobs_root),
     }
     if recovery is not None:
         report["recovery"] = recovery
@@ -821,6 +1003,12 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
     else:
         m9_failures, _ = evaluate_m9_release_evidence(m9, policy.get("m9", {}))
         failures.extend(m9_failures)
+
+    lora_path = report.get("lora_path")
+    if not isinstance(lora_path, dict):
+        failures.append("lora_path evidence is missing")
+    else:
+        failures.extend(evaluate_lora_path_evidence(lora_path, policy.get("lora_path", {})))
 
     return failures
 
@@ -1261,6 +1449,22 @@ def evaluate_real_workload_evidence(
                 f"real_workload.summary.{key}={float(reported_value):.2f} did not match computed {computed_value:.2f}"
             )
 
+    return failures
+
+
+def evaluate_lora_path_evidence(
+    report: dict[str, Any],
+    policy: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    summary = report.get("summary")
+    if not isinstance(summary, dict):
+        failures.append("lora_path.summary is missing")
+        return failures
+    summary_rules = policy.get("summary", {}) if isinstance(policy, dict) else {}
+    failures.extend(
+        _evaluate_section_metrics(summary, summary_rules, prefix="lora_path.summary.")
+    )
     return failures
 
 

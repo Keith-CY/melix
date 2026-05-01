@@ -72,6 +72,7 @@ The repository records product-level evidence for:
 - Phase 8 CLI acceptance bundle capture
 - Phase 8 native Window UI acceptance bundle and screenshot capture
 - Release-gate automation through the GitHub Actions workflow
+- Full LoRA workflow path evidence (`dataset → train → activate → compare → publish`) captured as per-stage success/failure counters in the release gate `lora_path` section and as a `lora_capability` section in the Phase 8 acceptance bundle
 
 The default verification contract is: `make proto` → `make py-test` → `make swift-test` → `make integration-test`. Check [`progress.md`](../progress.md) for any current local caveats before treating the full gate as clean.
 
