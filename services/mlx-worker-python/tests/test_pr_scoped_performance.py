@@ -6,6 +6,7 @@ import runpy
 import sys
 
 import pytest
+import worker.productization.pr_scoped_performance as pr_scoped_performance_module
 
 from worker.productization.pr_scoped_performance import (
     _build_large_benchmark_bundle,
@@ -26,7 +27,9 @@ from worker.productization.pr_scoped_performance import (
     _parse_coverage_percent,
     _probe_benchmark_evaluation_report,
     _probe_closure_audit,
+    _probe_evaluation_job_id,
     _probe_training_dataset_token_percentiles,
+    _probe_command_json,
     _run_command,
     _run_head_verification,
     _run_probe_impl,
@@ -79,6 +82,26 @@ def test_scope_report_selects_training_dataset_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "training-dataset-token-percentiles-single-sort"
 
 
+def test_scope_report_selects_evaluation_job_id_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/evaluation_core.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "evaluation-job-id-high-water-mark"
+
+
+def test_scope_report_selects_bench_report_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/maintenance_core.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "maintenance-bench-report-readback" in probe_ids
+
+
 def test_scope_report_force_selects_all_on_infra_change() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -87,6 +110,22 @@ def test_scope_report_force_selects_all_on_infra_change() -> None:
 
     assert scope["force_all"] is True
     assert scope["selected_count"] == len(load_probe_registry(REGISTRY_PATH))
+
+
+def test_registered_probes_expose_focused_commands() -> None:
+    replaying_probe_ids = {
+        "benchmark-evaluation-report-running-aggregates",
+        "closure-audit-probe-source-short-circuit",
+        "evaluation-job-id-high-water-mark",
+        "training-dataset-token-percentiles-single-sort",
+        "maintenance-bench-report-readback",
+    }
+    for probe in load_probe_registry(REGISTRY_PATH):
+        assert probe.test_command
+        assert probe.coverage_command
+        assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
+        if probe.probe_impl == "command_json":
+            assert probe.probe_command
 
 
 def test_scope_report_with_no_matching_probe_returns_empty_selection() -> None:
@@ -129,6 +168,7 @@ def test_load_probe_registry_rejects_invalid_payloads(tmp_path: Path) -> None:
 def test_probe_smokes_return_metrics_against_current_repo() -> None:
     benchmark_metrics = _probe_benchmark_evaluation_report(REPO_ROOT)
     closure_metrics = _probe_closure_audit(REPO_ROOT)
+    evaluation_job_id_metrics = _probe_evaluation_job_id(REPO_ROOT)
     training_dataset_metrics = _probe_training_dataset_token_percentiles(REPO_ROOT)
 
     assert benchmark_metrics["elapsed_ms_mean"] > 0
@@ -137,10 +177,34 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert closure_metrics["elapsed_ms_mean"] > 0
     assert closure_metrics["probe_file_reads_mean"] > 0
     assert closure_metrics["finding_count"] > 0
+    assert evaluation_job_id_metrics["elapsed_ms_mean"] > 0
+    assert evaluation_job_id_metrics["per_call_ms_mean"] > 0
+    assert evaluation_job_id_metrics["allocation_count"] == 200.0
+    assert evaluation_job_id_metrics["first_job_id_numeric"] == 2001.0
+    assert evaluation_job_id_metrics["last_job_id_numeric"] == 2200.0
     assert training_dataset_metrics["elapsed_ms_mean"] > 0
     assert training_dataset_metrics["sample_count"] == 20000.0
     assert training_dataset_metrics["prompt_tokens_p95"] > 0
     assert training_dataset_metrics["total_tokens_p95"] > 0
+
+
+def test_dispatch_probe_impl_supports_evaluation_job_id_probe() -> None:
+    probe = ProbeDefinition(
+        probe_id="evaluation-job-id-high-water-mark",
+        name="Evaluation job-id high-water mark",
+        runner="ubuntu-latest",
+        watch_globs=("services/mlx-worker-python/worker/engine/evaluation_core.py",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="evaluation_job_id",
+        probe_command='python3 -c "{}"',
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["per_call_ms_mean"] > 0
 
 
 def test_run_probe_job_executes_verification_and_probe_for_current_repo() -> None:
@@ -155,6 +219,46 @@ def test_run_probe_job_executes_verification_and_probe_for_current_repo() -> Non
     assert result["head_verification"]["test"]["ok"] is True
     assert result["head_verification"]["coverage"]["coverage_pct"] >= 95.0
     assert result["base_probe"]["metrics"]["elapsed_ms_mean"] > 0
+
+
+def test_run_head_verification_skips_standalone_test_when_coverage_replays_tests(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    commands: list[str] = []
+
+    def fake_run_command(command: str, *, cwd: Path) -> dict[str, object]:
+        commands.append(command)
+        assert cwd == tmp_path
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "stdout": "TOTAL 1 0 100%\n",
+            "stderr": "",
+            "coverage_pct": 100.0,
+        }
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_run_command", fake_run_command)
+    probe = ProbeDefinition(
+        probe_id="demo",
+        name="Demo",
+        runner="ubuntu-latest",
+        watch_globs=("demo.py",),
+        test_command="pytest -q demo",
+        coverage_command="coverage run -m pytest -q demo",
+        probe_impl="benchmark_evaluation_report",
+        probe_command="",
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        coverage_replays_tests=True,
+    )
+
+    result = _run_head_verification(probe=probe, repo_root=tmp_path)
+
+    assert commands == ["coverage run -m pytest -q demo"]
+    assert result["test"]["ok"] is True
+    assert "Skipped standalone test command" in result["test"]["stdout"]
+    assert result["coverage"]["coverage_pct"] == 100.0
 
 
 def test_report_rendering_marks_regressions_and_builds_sticky_comment(
@@ -283,12 +387,64 @@ def test_command_and_verification_helpers_cover_skip_and_failure_paths(tmp_path:
         test_command="python -c \"raise SystemExit(1)\"",
         coverage_command="python -c \"print('should not run')\"",
         probe_impl="benchmark_evaluation_report",
+        probe_command="",
         metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
     )
     verification = _run_head_verification(probe=probe, repo_root=tmp_path)
 
     assert verification["test"]["ok"] is False
     assert verification["coverage"]["stderr"].startswith("Skipped because")
+
+
+def test_command_json_probe_executes_probe_command_and_parses_metrics(tmp_path: Path) -> None:
+    probe = ProbeDefinition(
+        probe_id="command-json",
+        name="Command JSON",
+        runner="macos-15",
+        watch_globs=("Sources/**/*.swift",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="command_json",
+        probe_command=(
+            "python3 -c \"import json; "
+            "print(json.dumps({'elapsed_ms_mean': 12.5, 'iteration_count': 3}))\""
+        ),
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=tmp_path)
+
+    assert metrics == {"elapsed_ms_mean": 12.5, "iteration_count": 3.0}
+
+
+def test_command_json_probe_rejects_missing_command_and_non_numeric_metrics(tmp_path: Path) -> None:
+    missing = ProbeDefinition(
+        probe_id="missing",
+        name="Missing",
+        runner="ubuntu-latest",
+        watch_globs=(),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="command_json",
+        probe_command="",
+        metrics=(MetricDefinition(key="x", unit="ms", direction="lower_is_better"),),
+    )
+    with pytest.raises(ValueError, match="probe_command"):
+        _probe_command_json(probe=missing, repo_root=tmp_path)
+
+    non_numeric = ProbeDefinition(
+        probe_id="bad-json",
+        name="Bad JSON",
+        runner="ubuntu-latest",
+        watch_globs=(),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="command_json",
+        probe_command="python3 -c \"print('{\\\"elapsed_ms_mean\\\": \\\"slow\\\"}')\"",
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+    with pytest.raises(ValueError, match="numeric"):
+        _probe_command_json(probe=non_numeric, repo_root=tmp_path)
 
 
 def test_dispatch_and_module_loading_helpers_cover_failure_paths(tmp_path: Path) -> None:
@@ -302,6 +458,7 @@ def test_dispatch_and_module_loading_helpers_cover_failure_paths(tmp_path: Path)
                 test_command="true",
                 coverage_command="true",
                 probe_impl="unsupported",
+                probe_command="",
                 metrics=(MetricDefinition(key="x", unit="ms", direction="lower_is_better"),),
             ),
             repo_root=tmp_path,
@@ -316,6 +473,7 @@ def test_dispatch_and_module_loading_helpers_cover_failure_paths(tmp_path: Path)
             test_command="true",
             coverage_command="true",
             probe_impl="unsupported",
+            probe_command="",
             metrics=(MetricDefinition(key="x", unit="ms", direction="lower_is_better"),),
         ),
         repo_root=tmp_path,

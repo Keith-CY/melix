@@ -63,6 +63,67 @@ _EVALUATION_SAMPLE_PROBE_KEYS = (
     "extracted_result_chars",
 )
 _EVALUATION_SAMPLE_PROBE_KEY_SET = frozenset(_EVALUATION_SAMPLE_PROBE_KEYS)
+_LOWER_IS_BETTER_METRIC_FRAGMENTS = (
+    "latency",
+    "ttft",
+    "_ms",
+    "duration_seconds",
+    "memory",
+    "bytes",
+    "failure_count",
+    "failed_count",
+    "queue_wait",
+    "warmup",
+    "prefill_ms",
+    "decode_ms",
+    "rollback_rate",
+    "rejected_tokens",
+    "fallback_count",
+    "draft_propose_ms",
+    "target_verify_ms",
+    "dflash_rollback_count",
+)
+_HIGHER_IS_BETTER_METRIC_FRAGMENTS = (
+    "tokens_per_second",
+    "throughput",
+    "success_rate",
+    "accuracy",
+    "typed_score",
+    "pass_rate",
+    "win_count",
+    "acceptance_rate",
+    "accepted_tokens",
+    "speedup",
+    "cache_hit",
+)
+_METRIC_DIRECTION_BY_KEY = {
+    "cache_hit_rate": "higher_is_better",
+    "decode_ms_mean": "lower_is_better",
+    "dflash_enabled_rate": "higher_is_better",
+    "dflash_rollback_count_sum": "lower_is_better",
+    "duration_seconds": "lower_is_better",
+    "extracted_result_chars_mean": "neutral",
+    "failed_count": "lower_is_better",
+    "failure_count": "lower_is_better",
+    "inference_ms_mean": "lower_is_better",
+    "prefill_ms_mean": "lower_is_better",
+    "raw_response_chars_mean": "neutral",
+    "request_latency_mean_ms": "lower_is_better",
+    "request_latency_p95_ms": "lower_is_better",
+    "sample_render_ms_mean": "lower_is_better",
+    "scoring_ms_mean": "lower_is_better",
+    "speculative_acceptance_rate_mean": "higher_is_better",
+    "speculative_fallback_count_sum": "lower_is_better",
+    "speculative_rejected_tokens_sum": "lower_is_better",
+    "success_rate": "higher_is_better",
+    "throughput_tokens_per_second": "higher_is_better",
+    "tokens_per_second": "higher_is_better",
+    "ttft_mean_ms": "lower_is_better",
+    "ttft_ms": "lower_is_better",
+    "ttft_p95_ms": "lower_is_better",
+    "typed_score_mean": "higher_is_better",
+    "validation_ms_mean": "lower_is_better",
+}
 
 _NumericAggregate = tuple[float, int]
 
@@ -332,43 +393,15 @@ def _build_metric_row(
 
 def _metric_direction(metric_name: str) -> str:
     metric_key = metric_name.rsplit(".", maxsplit=1)[-1]
-    lower_fragments = (
-        "latency",
-        "ttft",
-        "_ms",
-        "duration_seconds",
-        "memory",
-        "bytes",
-        "failure_count",
-        "failed_count",
-        "queue_wait",
-        "warmup",
-        "prefill_ms",
-        "decode_ms",
-        "rollback_rate",
-        "rejected_tokens",
-        "fallback_count",
-        "draft_propose_ms",
-        "target_verify_ms",
-        "dflash_rollback_count",
-    )
-    higher_fragments = (
-        "tokens_per_second",
-        "throughput",
-        "success_rate",
-        "accuracy",
-        "typed_score",
-        "pass_rate",
-        "win_count",
-        "acceptance_rate",
-        "accepted_tokens",
-        "speedup",
-        "cache_hit",
-    )
-    if any(fragment in metric_key for fragment in lower_fragments):
-        return "lower_is_better"
-    if any(fragment in metric_key for fragment in higher_fragments):
-        return "higher_is_better"
+    known_direction = _METRIC_DIRECTION_BY_KEY.get(metric_key)
+    if known_direction is not None:
+        return known_direction
+    for fragment in _LOWER_IS_BETTER_METRIC_FRAGMENTS:
+        if fragment in metric_key:
+            return "lower_is_better"
+    for fragment in _HIGHER_IS_BETTER_METRIC_FRAGMENTS:
+        if fragment in metric_key:
+            return "higher_is_better"
     return "neutral"
 
 
@@ -398,22 +431,30 @@ def _collect_benchmark_probe_metrics(
     *,
     prefix: str,
 ) -> None:
-    aggregates_by_label_and_key: dict[tuple[str, str], _NumericAggregate] = {}
+    aggregates_by_label: dict[str, dict[str, _NumericAggregate]] = {}
+    matrix_label_cache: dict[tuple[object, object, object, object, object], str] = {}
     for row in _dict_rows(rows):
-        label = _benchmark_probe_label(row)
+        label = ""
         for key, raw_value in row.items():
             if key not in _REQUEST_PROBE_KEY_SET:
                 continue
-            value = _float_or_none(raw_value)
+            if isinstance(raw_value, (int, float)):
+                value = float(raw_value)
+            else:
+                value = _float_or_none(raw_value)
             if value is not None:
-                aggregate_key = (label, key)
-                aggregates_by_label_and_key[aggregate_key] = _update_numeric_aggregate(
-                    aggregates_by_label_and_key.get(aggregate_key),
-                    value,
+                if not label:
+                    label = _benchmark_probe_label(row, matrix_label_cache=matrix_label_cache)
+                _update_probe_aggregates_by_label(
+                    aggregates_by_label,
+                    label=label,
+                    key=key,
+                    value=value,
                 )
-    for (label, key), aggregate in aggregates_by_label_and_key.items():
-        suffix, value = _finalize_numeric_aggregate(key, aggregate)
-        metrics[f"{prefix}.{label}.{key}_{suffix}"] = value
+    for label, aggregates_by_key in aggregates_by_label.items():
+        for key, aggregate in aggregates_by_key.items():
+            suffix, value = _finalize_numeric_aggregate(key, aggregate)
+            metrics[f"{prefix}.{label}.{key}_{suffix}"] = value
 
 
 def _collect_evaluation_sample_probe_metrics(
@@ -427,7 +468,10 @@ def _collect_evaluation_sample_probe_metrics(
         for key, raw_value in row.items():
             if key not in _EVALUATION_SAMPLE_PROBE_KEY_SET:
                 continue
-            value = _float_or_none(raw_value)
+            if isinstance(raw_value, (int, float)):
+                value = float(raw_value)
+            else:
+                value = _float_or_none(raw_value)
             if value is not None:
                 aggregate_key = (suite_id, key)
                 aggregates_by_suite_and_key[aggregate_key] = _update_numeric_aggregate(
@@ -455,6 +499,20 @@ def _update_numeric_aggregate(
     return (aggregate[0] + value, aggregate[1] + 1)
 
 
+def _update_probe_aggregates_by_label(
+    aggregates_by_label: dict[str, dict[str, _NumericAggregate]],
+    *,
+    label: str,
+    key: str,
+    value: float,
+) -> None:
+    aggregates_by_key = aggregates_by_label.get(label)
+    if aggregates_by_key is None:
+        aggregates_by_key = {}
+        aggregates_by_label[label] = aggregates_by_key
+    aggregates_by_key[key] = _update_numeric_aggregate(aggregates_by_key.get(key), value)
+
+
 def _finalize_numeric_aggregate(
     key: str,
     aggregate: _NumericAggregate | None,
@@ -480,27 +538,49 @@ def _aggregate_probe_values(key: str, values: list[float]) -> tuple[str, float]:
     return _finalize_numeric_aggregate(key, aggregate)
 
 
-def _benchmark_probe_label(row: dict[str, object]) -> str:
+def _benchmark_probe_label(
+    row: dict[str, object],
+    *,
+    matrix_label_cache: dict[tuple[object, object, object, object, object], str] | None = None,
+) -> str:
     if "cell_id" in row or ("suite_id" in row and "concurrency_level" in row):
+        if matrix_label_cache is not None:
+            cache_key = (
+                row.get("suite_id", "suite"),
+                row.get("context_length", 0),
+                row.get("generation_length", 0),
+                row.get("batch_size", 0),
+                row.get("concurrency_level", 0),
+            )
+            try:
+                return matrix_label_cache[cache_key]
+            except KeyError:
+                label = _matrix_label(row)
+                matrix_label_cache[cache_key] = label
+                return label
+            except TypeError:
+                pass
         return _matrix_label(row)
-    parts = [
-        str(row.get("suite", row.get("suite_id", "suite"))),
-        f"ctx{row.get('context_length', 0)}",
-        f"gen{row.get('generation_length', 0)}",
-        f"b{row.get('batch_size', 0)}",
-    ]
-    return ".".join(part.replace(" ", "_") for part in parts)
+    suite = _label_part(row.get("suite", row.get("suite_id", "suite")))
+    context_length = _label_part(row.get("context_length", 0))
+    generation_length = _label_part(row.get("generation_length", 0))
+    batch_size = _label_part(row.get("batch_size", 0))
+    return f"{suite}.ctx{context_length}.gen{generation_length}.b{batch_size}"
 
 
 def _matrix_label(row: dict[str, object]) -> str:
-    parts = [
-        str(row.get("suite_id", "suite")),
-        f"ctx{row.get('context_length', 0)}",
-        f"gen{row.get('generation_length', 0)}",
-        f"b{row.get('batch_size', 0)}",
-        f"c{row.get('concurrency_level', 0)}",
-    ]
-    return ".".join(part.replace(" ", "_") for part in parts)
+    suite_id = _label_part(row.get("suite_id", "suite"))
+    context_length = _label_part(row.get("context_length", 0))
+    generation_length = _label_part(row.get("generation_length", 0))
+    batch_size = _label_part(row.get("batch_size", 0))
+    concurrency_level = _label_part(row.get("concurrency_level", 0))
+    return f"{suite_id}.ctx{context_length}.gen{generation_length}.b{batch_size}.c{concurrency_level}"
+
+
+def _label_part(value: object) -> str:
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return str(value).replace(" ", "_")
 
 
 def _report_rows(report: dict[str, object]) -> Iterator[dict[str, object]]:
@@ -514,10 +594,8 @@ def _report_rows(report: dict[str, object]) -> Iterator[dict[str, object]]:
 
 def _dict_rows(value: object) -> Iterator[dict[str, object]]:
     if not isinstance(value, list):
-        return
-    for row in value:
-        if isinstance(row, dict):
-            yield row
+        return iter(())
+    return (row for row in value if isinstance(row, dict))
 
 
 def _float_or_none(value: object) -> float | None:

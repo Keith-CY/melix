@@ -54,7 +54,9 @@ class ProbeDefinition:
     test_command: str
     coverage_command: str
     probe_impl: str
+    probe_command: str
     metrics: tuple[MetricDefinition, ...]
+    coverage_replays_tests: bool = False
 
     def to_scope_dict(self) -> dict[str, object]:
         return {
@@ -62,6 +64,10 @@ class ProbeDefinition:
             "name": self.name,
             "runner": self.runner,
             "watch_globs": list(self.watch_globs),
+            "test_command": self.test_command,
+            "coverage_command": self.coverage_command,
+            "probe_command": self.probe_command,
+            "coverage_replays_tests": self.coverage_replays_tests,
             "metrics": [metric.to_dict() for metric in self.metrics],
         }
 
@@ -96,7 +102,9 @@ def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
                 test_command=str(raw_probe.get("test_command", "")).strip(),
                 coverage_command=str(raw_probe.get("coverage_command", "")).strip(),
                 probe_impl=str(raw_probe["probe_impl"]),
+                probe_command=str(raw_probe.get("probe_command", "")).strip(),
                 metrics=metrics,
+                coverage_replays_tests=bool(raw_probe.get("coverage_replays_tests", False)),
             )
         )
     return tuple(probes)
@@ -288,6 +296,17 @@ def write_report_outputs(report: dict[str, object], output_dir: str | Path) -> d
 
 
 def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, object]:
+    if probe.coverage_replays_tests:
+        coverage_result = _run_command(probe.coverage_command, cwd=repo_root)
+        test_result = {
+            "command": probe.test_command,
+            "ok": coverage_result["ok"],
+            "returncode": coverage_result["returncode"],
+            "stdout": "Skipped standalone test command because coverage_command reruns the focused pytest selection.\n",
+            "stderr": "",
+            "coverage_pct": None,
+        }
+        return {"test": test_result, "coverage": coverage_result}
     test_result = _run_command(probe.test_command, cwd=repo_root)
     coverage_result = (
         _run_command(probe.coverage_command, cwd=repo_root)
@@ -349,9 +368,43 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_benchmark_evaluation_report(repo_root)
     if probe.probe_impl == "closure_audit":
         return _probe_closure_audit(repo_root)
+    if probe.probe_impl == "evaluation_job_id":
+        return _probe_evaluation_job_id(repo_root)
     if probe.probe_impl == "training_dataset_token_percentiles":
         return _probe_training_dataset_token_percentiles(repo_root)
+    if probe.probe_impl == "command_json":
+        return _probe_command_json(probe=probe, repo_root=repo_root)
     raise ValueError(f"unsupported probe implementation: {probe.probe_impl}")
+
+
+def _probe_command_json(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, float]:
+    if not probe.probe_command:
+        raise ValueError("command_json probes require a non-empty probe_command")
+    completed = subprocess.run(
+        probe.probe_command,
+        shell=True,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "probe_command failed "
+            f"with exit {completed.returncode}: {(completed.stderr or completed.stdout).strip()}"
+        )
+    stdout = completed.stdout.strip()
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"probe_command must emit JSON object metrics: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("probe_command must emit a JSON object")
+    metrics: dict[str, float] = {}
+    for key, value in payload.items():
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError(f"probe_command metric {key} must be numeric")
+        metrics[str(key)] = float(value)
+    return metrics
 
 
 def _probe_benchmark_evaluation_report(repo_root: Path) -> dict[str, float]:
@@ -416,6 +469,70 @@ def _probe_closure_audit(repo_root: Path) -> dict[str, float]:
         "probe_file_reads_mean": round(sum(read_samples) / len(read_samples), 3),
         "finding_count": finding_count,
     }
+
+
+def _probe_evaluation_job_id(repo_root: Path) -> dict[str, float]:
+    seeded_run_count = 2000
+    per_sample_allocations = 200
+    probe_script = f"""
+import json
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+repo_root = Path({str(repo_root)!r})
+sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))
+from worker.engine.evaluation_core import EvaluationCore
+
+elapsed_samples = []
+allocation_count = 0
+first_job_id = ''
+last_job_id = ''
+seeded_run_count = {seeded_run_count}
+per_sample_allocations = {per_sample_allocations}
+for _ in range(3):
+    with tempfile.TemporaryDirectory(prefix='melix-pr-perf-eval-job-id-') as temp_dir:
+        jobs_root = Path(temp_dir) / 'jobs'
+        runs_root = jobs_root / 'runs'
+        runs_root.mkdir(parents=True, exist_ok=True)
+        for index in range(1, seeded_run_count + 1):
+            (runs_root / f'eval-{{index:04d}}').mkdir()
+        runner = EvaluationCore(jobs_root=jobs_root)
+        started = time.perf_counter()
+        allocated_job_ids = [runner._next_job_id() for _ in range(per_sample_allocations)]
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        allocation_count = len(allocated_job_ids)
+        first_job_id = allocated_job_ids[0]
+        last_job_id = allocated_job_ids[-1]
+
+elapsed_ms_mean = sum(elapsed_samples) / len(elapsed_samples)
+print(json.dumps({{
+    'elapsed_ms_mean': round(elapsed_ms_mean, 3),
+    'per_call_ms_mean': round(elapsed_ms_mean / max(allocation_count, 1), 6),
+    'allocation_count': float(allocation_count),
+    'seeded_run_count': float(seeded_run_count),
+    'first_job_id_numeric': float(first_job_id.removeprefix('eval-') or 0),
+    'last_job_id_numeric': float(last_job_id.removeprefix('eval-') or 0),
+}}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(repo_root / "services/mlx-worker-python"),
+            "python3",
+            "-c",
+            probe_script,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads((completed.stdout or "").strip())
 
 
 def _probe_training_dataset_token_percentiles(repo_root: Path) -> dict[str, float]:
@@ -591,13 +708,6 @@ def _seed_closure_audit_repo(root: Path) -> Path:
     )
     _write(repo_root / "scripts/phase8_metrics_report.py", "print('phase8 metrics report')\n")
     _write(repo_root / "docs/runbooks/phase-8-release-gates.md", "# Phase 8 Release Gates\n")
-    for relative_path in (
-        "docs/runbooks/shared-access.md",
-        "docs/runbooks/persistent-sessions.md",
-        "docs/runbooks/rich-output-sanitization.md",
-        "docs/runbooks/connection-lifecycle.md",
-    ):
-        _write(repo_root / relative_path, f"# {relative_path}\n")
     probe_text = "\n".join(
         [
             "gateway.accepted_api_key_count",
@@ -614,11 +724,55 @@ def _seed_closure_audit_repo(root: Path) -> Path:
             "disconnect.terminal_failure_count",
         ]
     )
+    _write(repo_root / "docs/runbooks/security-and-stability-closure.md", probe_text + "\n")
+    _write(
+        repo_root / "docs/runbooks/shared-access.md",
+        "\n".join(
+            [
+                "gateway.accepted_api_key_count",
+                "shared_access.accepted_client_count",
+                "shared_access.rejected_request_count",
+                "",
+            ]
+        ),
+    )
+    _write(
+        repo_root / "docs/runbooks/persistent-sessions.md",
+        "\n".join(
+            [
+                "persistent_session.restore_success_rate",
+                "persistent_session.sign_out_latency_ms",
+                "",
+            ]
+        ),
+    )
+    _write(
+        repo_root / "docs/runbooks/rich-output-sanitization.md",
+        "\n".join(
+            [
+                "sanitized_output.enforcement_count",
+                "sanitized_output.blocked_html_fragment_count",
+                "sanitized_output.unsafe_uri_rejection_count",
+                "",
+            ]
+        ),
+    )
+    _write(
+        repo_root / "docs/runbooks/connection-lifecycle.md",
+        "\n".join(
+            [
+                "disconnect.keepalive_gap_ms",
+                "disconnect.recovery_latency_ms",
+                "disconnect.resume_success_rate",
+                "disconnect.terminal_failure_count",
+                "",
+            ]
+        ),
+    )
+    _write(repo_root / "progress.md", probe_text + "\n")
     docs_root = repo_root / "docs"
-    for index in range(3):
-        _write(docs_root / f"a-probe-{index}.md", probe_text + "\n")
     for index in range(250):
-        _write(docs_root / f"z-noise-{index:03d}.md", f"noise file {index}\n")
+        _write(docs_root / f"a-noise-{index:03d}.md", f"noise file {index}\n")
     services_root = repo_root / "services"
     for index in range(150):
         _write(services_root / f"module-{index:03d}.py", f"# module {index}\n")

@@ -652,6 +652,66 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert queue_payload["completed_at_unix_ms"] > 0
 
 
+def test_next_job_id_primes_from_highest_existing_run_directory(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "runs" / "mmlu"
+    runs_root = jobs_root / "runs"
+    (runs_root / "eval-0001").mkdir(parents=True)
+    (runs_root / "eval-0003").mkdir(parents=True)
+    (runs_root / "notes").mkdir(parents=True)
+    (runs_root / "README.txt").write_text("ignore me\n", encoding="utf-8")
+    (runs_root / "eval-999x").mkdir(parents=True)
+
+    runner = EvaluationCore(jobs_root=jobs_root)
+
+    assert runner._next_job_id() == "eval-0004"
+    assert runner._next_job_id() == "eval-0005"
+    assert (runs_root / "eval-0004").is_dir()
+    assert (runs_root / "eval-0005").is_dir()
+
+
+def test_next_job_id_only_scans_existing_runs_once_per_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jobs_root = tmp_path / "runs" / "mmlu"
+    runs_root = jobs_root / "runs"
+    (runs_root / "eval-0002").mkdir(parents=True)
+    runner = EvaluationCore(jobs_root=jobs_root)
+    original_scandir = evaluation_core_module.os.scandir
+    scan_count = 0
+
+    def tracked_scandir(path: str | bytes | Path):
+        nonlocal scan_count
+        if Path(path) == runs_root:
+            scan_count += 1
+        return original_scandir(path)
+
+    def fail_iterdir(path: Path):
+        raise AssertionError("_prime_next_job_index should use os.scandir instead of Path.iterdir")
+
+    monkeypatch.setattr(evaluation_core_module.os, "scandir", tracked_scandir)
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    assert runner._next_job_id() == "eval-0003"
+    assert runner._next_job_id() == "eval-0004"
+    assert scan_count == 1
+
+
+def test_next_job_id_skips_conflicting_cached_index_and_non_directory_entries(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "runs" / "mmlu"
+    runs_root = jobs_root / "runs"
+    runs_root.mkdir(parents=True)
+    (runs_root / "eval-0002").mkdir()
+    (runs_root / "eval-0003").write_text("not a directory\n", encoding="utf-8")
+
+    runner = EvaluationCore(jobs_root=jobs_root)
+    runner._next_job_index = 3
+
+    assert runner._next_job_id() == "eval-0004"
+    assert runner._next_job_index == 5
+    assert (runs_root / "eval-0004").is_dir()
+
+
 def test_run_local_suite_marks_offline_execution_as_non_evidence(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,

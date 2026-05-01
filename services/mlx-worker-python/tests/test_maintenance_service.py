@@ -4003,6 +4003,45 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
     assert "runtime_name: fast-benchmark" in report
 
 
+def test_run_bench_persists_report_without_reading_report_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path, registry=registry)
+    service._core._benchmark_suite_catalog = BenchmarkSuiteCatalog(
+        hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+    )
+
+    original_read_text = Path.read_text
+
+    def guarded_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name == "bench-report.md" and self.parent.name == "model-ops-0001":
+            raise AssertionError("RunBench should reuse in-memory report markdown instead of rereading bench-report.md")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle=loaded.handle,
+                suites=["smoke"],
+                parameters={"require_live_model": "true"},
+            ),
+            context=None,
+        )
+    )
+
+    report_path = Path(events[-1].completed.report_path)
+    report = original_read_text(report_path, encoding="utf-8")
+
+    assert report_path.name == "bench-report.md"
+    assert "# Melix Bench" in report
+    assert "runtime_name: fast-benchmark" in report
+
+
 def test_run_bench_require_live_model_rejects_deterministic_runtime(tmp_path: Path) -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=DeterministicTextBackend()),

@@ -631,15 +631,23 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
     def fail_percentile_value(values: list[int], pct: float) -> int:
         raise AssertionError(f"legacy percentile helper should not run for optimized token stats ({pct=}, {values=})")
 
-    monkeypatch.setattr(training_dataset_module, "_percentile_value", fail_percentile_value)
+    def fail_generic_token_counter(sample: dict[str, object], format_name: str) -> tuple[int, int]:
+        raise AssertionError(f"prompt_completion token stats should use the direct fast path ({format_name=})")
 
-    assert training_dataset_module._build_token_stats(
+    monkeypatch.setattr(training_dataset_module, "_percentile_value", fail_percentile_value)
+    monkeypatch.setattr(training_dataset_module, "_sample_token_counts", fail_generic_token_counter)
+
+    prompt_completion_samples = iter(
         [
             {"prompt": "a b c", "completion": "d e"},
             {"prompt": "f", "completion": "g h i j"},
             {"prompt": "k l", "completion": "m"},
             {"prompt": "n o p q", "completion": "r s t"},
-        ],
+        ]
+    )
+
+    assert training_dataset_module._build_token_stats(
+        prompt_completion_samples,
         "prompt_completion",
     ) == {
         "estimator": "whitespace_v1",
@@ -656,6 +664,30 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
         "total_tokens_p50": 5,
         "total_tokens_p95": 5,
         "total_tokens_max": 7,
+    }
+
+    monkeypatch.undo()
+    assert training_dataset_module._build_token_stats(
+        [
+            {"text": "alpha beta gamma"},
+            {"text": "delta"},
+        ],
+        "text_completion",
+    ) == {
+        "estimator": "whitespace_v1",
+        "sample_count": 2,
+        "prompt_tokens_mean": 0.0,
+        "prompt_tokens_p50": 0,
+        "prompt_tokens_p95": 0,
+        "prompt_tokens_max": 0,
+        "completion_tokens_mean": 2.0,
+        "completion_tokens_p50": 1,
+        "completion_tokens_p95": 1,
+        "completion_tokens_max": 3,
+        "total_tokens_mean": 2.0,
+        "total_tokens_p50": 1,
+        "total_tokens_p95": 1,
+        "total_tokens_max": 3,
     }
 
     with pytest.raises(ModelOperationError) as int_parse_exc:
@@ -693,6 +725,40 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
             field_name="validation_ratio",
         )
     assert float_range_exc.value.code == "invalid_dataset_source"
+
+
+def test_build_token_stats_skips_quality_only_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_canonical_sample_digest(sample: dict[str, object]) -> bytes:
+        raise AssertionError(f"token stats should not compute canonical digests ({sample=})")
+
+    def fail_dirty_sample_reasons(sample: dict[str, object]) -> list[str]:
+        raise AssertionError(f"token stats should not inspect dirty-sample reasons ({sample=})")
+
+    monkeypatch.setattr(training_dataset_module, "_canonical_sample_digest", fail_canonical_sample_digest)
+    monkeypatch.setattr(training_dataset_module, "_dirty_sample_reasons", fail_dirty_sample_reasons)
+
+    assert training_dataset_module._build_token_stats(
+        [
+            {"prompt": "alpha beta", "completion": "gamma delta"},
+            {"prompt": "epsilon", "completion": "zeta eta theta"},
+        ],
+        "prompt_completion",
+    ) == {
+        "estimator": "whitespace_v1",
+        "sample_count": 2,
+        "prompt_tokens_mean": 1.5,
+        "prompt_tokens_p50": 1,
+        "prompt_tokens_p95": 1,
+        "prompt_tokens_max": 2,
+        "completion_tokens_mean": 2.5,
+        "completion_tokens_p50": 2,
+        "completion_tokens_p95": 2,
+        "completion_tokens_max": 3,
+        "total_tokens_mean": 4.0,
+        "total_tokens_p50": 4,
+        "total_tokens_p95": 4,
+        "total_tokens_max": 4,
+    }
 
 
 def test_resolve_dataset_build_source_reuses_existing_package_sample_lists(
