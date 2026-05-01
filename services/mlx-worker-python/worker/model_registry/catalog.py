@@ -218,6 +218,16 @@ def _read_text_prefix(
     return payload
 
 
+def _metadata_text_has_mlx_signal(metadata_text: str) -> bool:
+    return (
+        "library_name: mlx" in metadata_text
+        or '"library_name": "mlx"' in metadata_text
+        or "\n- mlx" in metadata_text
+        or "\n  - mlx" in metadata_text
+        or '"mlx"' in metadata_text and '"tags"' in metadata_text
+    )
+
+
 def _has_mlx_signal(
     *,
     model_dir: Path,
@@ -229,25 +239,14 @@ def _has_mlx_signal(
     if repo_id.startswith("mlx-community/") or "mlx" in lowered_repo_id or "mlx" in lowered_path:
         return True
 
-    metadata_text = "\n".join(
-        filter(
-            None,
-            (
-                _read_text_prefix(model_dir / "README.md", text_prefix_cache=text_prefix_cache),
-                _read_text_prefix(model_dir / "config.json", text_prefix_cache=text_prefix_cache),
-                _read_text_prefix(model_dir / "model_index.json", text_prefix_cache=text_prefix_cache),
-            ),
-        )
-    ).lower()
-    if not metadata_text:
-        return False
-    return (
-        "library_name: mlx" in metadata_text
-        or '"library_name": "mlx"' in metadata_text
-        or "\n- mlx" in metadata_text
-        or "\n  - mlx" in metadata_text
-        or '"mlx"' in metadata_text and '"tags"' in metadata_text
-    )
+    for metadata_filename in ("README.md", "config.json", "model_index.json"):
+        metadata_text = _read_text_prefix(
+            model_dir / metadata_filename,
+            text_prefix_cache=text_prefix_cache,
+        ).lower()
+        if metadata_text and _metadata_text_has_mlx_signal(metadata_text):
+            return True
+    return False
 
 
 def _hf_cache_repo_id(cache_repo_dir: Path) -> str | None:
