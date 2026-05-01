@@ -677,16 +677,20 @@ def test_next_job_id_only_scans_existing_runs_once_per_process(
     runs_root = jobs_root / "runs"
     (runs_root / "eval-0002").mkdir(parents=True)
     runner = EvaluationCore(jobs_root=jobs_root)
-    original_iterdir = Path.iterdir
+    original_scandir = evaluation_core_module.os.scandir
     scan_count = 0
 
-    def tracked_iterdir(path: Path):
+    def tracked_scandir(path: str | bytes | Path):
         nonlocal scan_count
-        if path == runs_root:
+        if Path(path) == runs_root:
             scan_count += 1
-        return original_iterdir(path)
+        return original_scandir(path)
 
-    monkeypatch.setattr(Path, "iterdir", tracked_iterdir)
+    def fail_iterdir(path: Path):
+        raise AssertionError("_prime_next_job_index should use os.scandir instead of Path.iterdir")
+
+    monkeypatch.setattr(evaluation_core_module.os, "scandir", tracked_scandir)
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
 
     assert runner._next_job_id() == "eval-0003"
     assert runner._next_job_id() == "eval-0004"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 import random
@@ -1690,13 +1691,14 @@ class EvaluationCore:
         if self._next_job_index is not None:
             return self._next_job_index
         highest_index = 0
-        for child in runs_root.iterdir():
-            if not child.is_dir():
-                continue
-            match = re.fullmatch(r"eval-(\d{4})", child.name)
-            if match is None:
-                continue
-            highest_index = max(highest_index, int(match.group(1)))
+        with os.scandir(os.fspath(runs_root)) as entries:
+            for entry in entries:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                match = re.fullmatch(r"eval-(\d{4})", entry.name)
+                if match is None:
+                    continue
+                highest_index = max(highest_index, int(match.group(1)))
         self._next_job_index = highest_index + 1
         return self._next_job_index
 
