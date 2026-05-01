@@ -1401,3 +1401,46 @@ def test_helper_functions_cover_success_and_error_paths(tmp_path: Path) -> None:
         )
     with pytest.raises(phase8_acceptance_bundle.AcceptanceBundleError, match="did not include job_id"):
         phase8_acceptance_bundle._require_string({}, "job_id", context="job")
+
+
+def test_run_acceptance_bundle_captures_lora_capability_evidence(tmp_path: Path) -> None:
+    fixture_model = tmp_path / "fixture-model"
+    fixture_model.mkdir(parents=True)
+    executor = _FakeExecutor(
+        _successful_acceptance_responses(
+            tmp_path,
+            source_kind="local_path",
+            source_locator=str(fixture_model),
+            model_id="melix-dev-qwen-local",
+        )
+    )
+
+    _, bundle = phase8_acceptance_bundle.run_acceptance_bundle(
+        _bundle_config(tmp_path, live=False),
+        executor=executor,
+    )
+
+    assert "lora_capability" in bundle
+    lora_cap = bundle["lora_capability"]
+
+    adapter_artifact = lora_cap["adapter_artifact"]
+    assert adapter_artifact["job_id"] == "model-ops-0001"
+    assert "weights_path" in adapter_artifact
+    assert "adapter_config_path" in adapter_artifact
+
+    activation_artifact = lora_cap["activation_artifact"]
+    assert activation_artifact["derived_model_id"] == "melix-dev-qwen-local-lora-phase8"
+    assert activation_artifact["derived_model_alias"] == "phase8-acceptance-derived"
+    assert "manifest_path" in activation_artifact
+
+    compare_artifact = lora_cap["compare_artifact"]
+    assert compare_artifact["evaluation_job_id"] == "eval-1"
+    assert compare_artifact["model_id"] == "melix-dev-qwen-local-lora-phase8"
+    assert compare_artifact["suites"] == ["mmlu"]
+
+    publish_artifact = lora_cap["publish_artifact"]
+    assert "mode" in publish_artifact
+    assert "status" in publish_artifact
+    assert "target_repo" in publish_artifact
+
+    assert lora_cap["runtime_mode"] == "fused_derived_model"
