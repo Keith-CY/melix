@@ -15,6 +15,13 @@ def test_selected_mirror_uses_first_configured_mirror() -> None:
     )
 
 
+def test_selected_mirror_uses_default_when_configured_mirrors_are_blank() -> None:
+    assert (
+        DownloadPipeline._selected_mirror({"mirror_urls": " , , "})
+        == "https://huggingface.co"
+    )
+
+
 def test_load_model_config_payload_returns_empty_for_non_object_json(tmp_path: Path) -> None:
     model_dir = tmp_path / "model"
     model_dir.mkdir()
