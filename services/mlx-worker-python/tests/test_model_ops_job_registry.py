@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from worker.model_ops.job_registry import ModelOpsJobRegistry
+from worker.model_ops.job_registry import ModelOpsJob, ModelOpsJobRegistry
 
 
 def test_collect_restore_manifest_paths_scans_expected_operations_once(tmp_path: Path) -> None:
@@ -104,3 +104,179 @@ def test_json_safe_reuses_clean_containers_and_copies_only_changed_branch() -> N
     assert safe is not unsafe
     assert safe["rows"] is not unsafe["rows"]
     assert safe["other"] is unsafe["other"]
+
+
+def test_job_manifest_handles_empty_registry_snapshot_and_uncached_json() -> None:
+    registry_snapshot_job = ModelOpsJobRegistry._job_manifest(
+        ModelOpsJob(
+            job_id="model-ops-0001",
+            operation="registry_snapshot",
+            source_model="melix-dev-text",
+            output_dir="/runtime/snapshot",
+        )
+    )
+    uncached_manifest = ModelOpsJobRegistry._job_manifest(
+        ModelOpsJob(
+            job_id="model-ops-0002",
+            operation="activate_adapter",
+            source_model="melix-dev-text",
+            output_dir="/runtime/activate",
+            manifest_json=json.dumps({"derived_model_id": "melix-dev-active"}),
+            manifest_cached=False,
+        )
+    )
+
+    assert registry_snapshot_job == {}
+    assert uncached_manifest == {"derived_model_id": "melix-dev-active"}
+
+
+def test_active_derived_model_manifests_avoids_full_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps({"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"}),
+    )
+    registry.complete(train_job.job_id, adapter_manifest_path)
+
+    active_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    active_manifest = {
+        "adapter_manifest_path": adapter_manifest_path,
+        "adapter_set_hash": "hash-a",
+        "derived_model_id": "melix-dev-active",
+        "derived_model_path": "/runtime/activate/melix-dev-active",
+        "activation_mode": "fused_derived_model",
+    }
+    registry.attach_manifest(active_job.job_id, json.dumps(active_manifest))
+    registry.complete(active_job.job_id, "/runtime/activate/melix-dev-active/manifest.json")
+
+    removed_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    removed_manifest = {
+        "adapter_manifest_path": adapter_manifest_path,
+        "adapter_set_hash": "hash-a",
+        "derived_model_id": "melix-dev-removed",
+        "derived_model_path": "/runtime/activate/melix-dev-removed",
+        "activation_mode": "fused_derived_model",
+    }
+    registry.attach_manifest(removed_job.job_id, json.dumps(removed_manifest))
+    registry.complete(removed_job.job_id, "/runtime/activate/melix-dev-removed/manifest.json")
+
+    removal_job = registry.start("remove_derived_model", "melix-dev-text", "/runtime/remove")
+    registry.attach_manifest(
+        removal_job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-removed",
+                "activation_job_id": removed_job.job_id,
+                "activation_manifest_path": "/runtime/activate/melix-dev-removed/manifest.json",
+                "adapter_manifest_path": adapter_manifest_path,
+            }
+        ),
+    )
+    registry.complete(removal_job.job_id, "/runtime/remove/remove_derived_model.lifecycle.json")
+
+    monkeypatch.setattr(
+        registry,
+        "snapshot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("snapshot should not be used")),
+    )
+
+    assert registry.active_derived_model_manifests() == (active_manifest,)
+
+
+
+def test_active_derived_model_manifests_skips_removed_manifest_path_without_job_id() -> None:
+    registry = ModelOpsJobRegistry()
+
+    activation_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    activation_manifest_path = "/runtime/activate/melix-dev-active/manifest.json"
+    registry.attach_manifest(
+        activation_job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": "/runtime/activate/melix-dev-active",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(activation_job.job_id, activation_manifest_path)
+
+    removal_job = registry.start("remove_derived_model", "melix-dev-text", "/runtime/remove")
+    registry.attach_manifest(
+        removal_job.job_id,
+        json.dumps({"activation_manifest_path": activation_manifest_path}),
+    )
+    registry.complete(removal_job.job_id, "/runtime/remove/remove_derived_model.lifecycle.json")
+
+    assert registry.active_derived_model_manifests() == ()
+
+
+
+def test_resolve_derived_model_target_avoids_snapshot_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps({"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"}),
+    )
+    registry.complete(train_job.job_id, adapter_manifest_path)
+
+    active_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    active_output_path = "/runtime/activate/melix-dev-active/manifest.json"
+    registry.attach_manifest(
+        active_job.job_id,
+        json.dumps(
+            {
+                "adapter_manifest_path": adapter_manifest_path,
+                "adapter_weights_path": "/runtime/train/adapters.safetensors",
+                "adapter_set_hash": "hash-a",
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": "/runtime/activate/melix-dev-active",
+                "derived_model_alias": "active-alias",
+                "source_model": "melix-dev-text",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(active_job.job_id, active_output_path)
+
+    removed_job = registry.start("remove_derived_model", "melix-dev-text", "/runtime/remove")
+    registry.attach_manifest(
+        removed_job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-removed",
+                "activation_job_id": "model-ops-9999",
+                "activation_manifest_path": "/runtime/activate/melix-dev-removed/manifest.json",
+                "adapter_manifest_path": adapter_manifest_path,
+            }
+        ),
+    )
+    registry.complete(removed_job.job_id, "/runtime/remove/remove_derived_model.lifecycle.json")
+
+    monkeypatch.setattr(
+        ModelOpsJobRegistry,
+        "_snapshot_job",
+        staticmethod(lambda job: (_ for _ in ()).throw(AssertionError("_snapshot_job should not be used"))),
+    )
+
+    target = registry.resolve_derived_model_target(derived_model_id="melix-dev-active")
+
+    assert target == {
+        "activation_job_id": active_job.job_id,
+        "activation_manifest_path": active_output_path,
+        "output_dir": "/runtime/activate",
+        "source_model": "melix-dev-text",
+        "derived_model_id": "melix-dev-active",
+        "derived_model_path": "/runtime/activate/melix-dev-active",
+        "derived_model_alias": "active-alias",
+        "activation_mode": "fused_derived_model",
+        "runtime_mode": 1,
+        "adapter_manifest_path": adapter_manifest_path,
+        "adapter_weights_path": "/runtime/train/adapters.safetensors",
+    }
