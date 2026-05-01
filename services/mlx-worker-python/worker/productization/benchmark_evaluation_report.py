@@ -653,15 +653,18 @@ def _dict_rows(value: object) -> Iterator[dict[str, object]]:
 
 
 def _float_or_none(value: object) -> float | None:
-    if isinstance(value, bool):
+    value_type = type(value)
+    if value_type is float:
+        return value
+    if value_type is int or value_type is bool:
         return float(value)
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str) and value.strip():
-        try:
-            return float(value)
-        except ValueError:
-            return None
+    if isinstance(value, str):
+        stripped_value = value.strip()
+        if stripped_value:
+            try:
+                return float(stripped_value)
+            except ValueError:
+                return None
     return None
 
 
