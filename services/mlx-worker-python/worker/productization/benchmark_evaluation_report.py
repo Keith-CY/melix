@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from functools import lru_cache
 import json
 from pathlib import Path
 from typing import Any
@@ -397,7 +398,11 @@ def _build_metric_row(
 
 
 def _metric_direction(metric_name: str) -> str:
-    metric_key = metric_name.rsplit(".", maxsplit=1)[-1]
+    return _metric_key_direction(metric_name.rsplit(".", maxsplit=1)[-1])
+
+
+@lru_cache(maxsize=None)
+def _metric_key_direction(metric_key: str) -> str:
     known_direction = _METRIC_DIRECTION_BY_KEY.get(metric_key)
     if known_direction is not None:
         return known_direction

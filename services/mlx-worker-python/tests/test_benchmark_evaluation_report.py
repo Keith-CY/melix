@@ -16,6 +16,7 @@ from worker.productization.benchmark_evaluation_report import (
     _label_part,
     _markdown_cell,
     _metric_direction,
+    _metric_key_direction,
     _report_rows,
     _update_numeric_aggregate,
     _update_probe_aggregates_by_label,
@@ -108,6 +109,17 @@ def test_report_builder_computes_direction_aware_deltas() -> None:
     )
     assert report["summary"]["warning_count"] == 4
     assert report["summary"]["status"] == "warning"
+
+
+def test_metric_direction_reuses_metric_key_cache_for_repeated_suffixes() -> None:
+    _metric_key_direction.cache_clear()
+
+    assert _metric_direction("bench.context.ctx1024.prefill_ms_mean") == "lower_is_better"
+    assert _metric_direction("bench.context.ctx2048.prefill_ms_mean") == "lower_is_better"
+
+    cache_info = _metric_key_direction.cache_info()
+    assert cache_info.misses == 1
+    assert cache_info.hits == 1
 
 
 def test_report_builder_warns_on_zero_baseline_regressions() -> None:
