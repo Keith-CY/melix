@@ -26,6 +26,7 @@ from worker.productization.pr_scoped_performance import (
     _parse_coverage_percent,
     _probe_benchmark_evaluation_report,
     _probe_closure_audit,
+    _probe_evaluation_job_id,
     _probe_training_dataset_token_percentiles,
     _probe_command_json,
     _run_command,
@@ -80,6 +81,16 @@ def test_scope_report_selects_training_dataset_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "training-dataset-token-percentiles-single-sort"
 
 
+def test_scope_report_selects_evaluation_job_id_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/evaluation_core.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "evaluation-job-id-high-water-mark"
+
+
 def test_scope_report_force_selects_all_on_infra_change() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -130,6 +141,7 @@ def test_load_probe_registry_rejects_invalid_payloads(tmp_path: Path) -> None:
 def test_probe_smokes_return_metrics_against_current_repo() -> None:
     benchmark_metrics = _probe_benchmark_evaluation_report(REPO_ROOT)
     closure_metrics = _probe_closure_audit(REPO_ROOT)
+    evaluation_job_id_metrics = _probe_evaluation_job_id(REPO_ROOT)
     training_dataset_metrics = _probe_training_dataset_token_percentiles(REPO_ROOT)
 
     assert benchmark_metrics["elapsed_ms_mean"] > 0
@@ -138,10 +150,33 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert closure_metrics["elapsed_ms_mean"] > 0
     assert closure_metrics["probe_file_reads_mean"] > 0
     assert closure_metrics["finding_count"] > 0
+    assert evaluation_job_id_metrics["elapsed_ms_mean"] > 0
+    assert evaluation_job_id_metrics["per_call_ms_mean"] > 0
+    assert evaluation_job_id_metrics["allocation_count"] == 200.0
+    assert evaluation_job_id_metrics["first_job_id_numeric"] == 2001.0
+    assert evaluation_job_id_metrics["last_job_id_numeric"] == 2200.0
     assert training_dataset_metrics["elapsed_ms_mean"] > 0
     assert training_dataset_metrics["sample_count"] == 20000.0
     assert training_dataset_metrics["prompt_tokens_p95"] > 0
     assert training_dataset_metrics["total_tokens_p95"] > 0
+
+
+def test_dispatch_probe_impl_supports_evaluation_job_id_probe() -> None:
+    probe = ProbeDefinition(
+        probe_id="evaluation-job-id-high-water-mark",
+        name="Evaluation job-id high-water mark",
+        runner="ubuntu-latest",
+        watch_globs=("services/mlx-worker-python/worker/engine/evaluation_core.py",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="evaluation_job_id",
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["per_call_ms_mean"] > 0
 
 
 def test_run_probe_job_executes_verification_and_probe_for_current_repo() -> None:
