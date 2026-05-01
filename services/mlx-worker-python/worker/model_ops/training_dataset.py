@@ -1354,20 +1354,9 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
     total_tokens: list[int] = []
     sample_count = 0
     if format_name == "prompt_completion":
-        materialized_samples = samples if isinstance(samples, list) else list(samples)
-        sample_count = len(materialized_samples)
-        prompt_tokens = [
-            len(str(sample.get("prompt", "")).split())
-            for sample in materialized_samples
-        ]
-        completion_tokens = [
-            len(str(sample.get("completion", "")).split())
-            for sample in materialized_samples
-        ]
-        total_tokens = [
-            prompt_count + completion_count
-            for prompt_count, completion_count in zip(prompt_tokens, completion_tokens)
-        ]
+        sample_count, prompt_tokens, completion_tokens, total_tokens = _collect_prompt_completion_token_counts(
+            samples
+        )
     else:
         prompt_tokens_append = prompt_tokens.append
         completion_tokens_append = completion_tokens.append
@@ -1400,6 +1389,28 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
         "total_tokens_p95": total_summary["p95"],
         "total_tokens_max": total_summary["max"],
     }
+
+
+def _collect_prompt_completion_token_counts(
+    samples: Iterable[dict[str, Any]],
+) -> tuple[int, list[int], list[int], list[int]]:
+    prompt_tokens: list[int] = []
+    completion_tokens: list[int] = []
+    total_tokens: list[int] = []
+    prompt_tokens_append = prompt_tokens.append
+    completion_tokens_append = completion_tokens.append
+    total_tokens_append = total_tokens.append
+    sample_count = 0
+
+    for sample in samples:
+        sample_count += 1
+        prompt_count = len(str(sample.get("prompt", "")).split())
+        completion_count = len(str(sample.get("completion", "")).split())
+        prompt_tokens_append(prompt_count)
+        completion_tokens_append(completion_count)
+        total_tokens_append(prompt_count + completion_count)
+
+    return sample_count, prompt_tokens, completion_tokens, total_tokens
 
 
 def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int, int]:

@@ -12,6 +12,7 @@ from worker.productization.pr_scoped_performance import (
     _build_large_benchmark_bundle,
     _build_large_training_dataset_samples,
     _build_metric_row,
+    _single_pass_sample_iterable,
     _build_probe_report_row,
     _build_probe_details,
     _closure_index_text,
@@ -163,6 +164,57 @@ def test_load_probe_registry_rejects_invalid_payloads(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="non-empty list"):
         load_probe_registry(invalid_metrics)
+
+
+def test_single_pass_sample_iterable_rejects_repeated_iteration() -> None:
+    samples = _build_large_training_dataset_samples()[:2]
+    iterable = _single_pass_sample_iterable(samples)
+
+    assert list(iterable) == samples
+    with pytest.raises(RuntimeError, match="consumed more than once"):
+        list(iterable)
+
+
+def test_probe_training_dataset_token_percentiles_uses_single_pass_non_list_iterables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sample_rows = _build_large_training_dataset_samples()[:4]
+    calls = 0
+
+    class FakeTrainingDatasetModule:
+        @staticmethod
+        def _build_token_stats(samples: object, format_name: str) -> dict[str, float]:
+            nonlocal calls
+            calls += 1
+            assert format_name == "prompt_completion"
+            assert not isinstance(samples, list)
+            assert list(samples) == sample_rows
+            with pytest.raises(RuntimeError, match="consumed more than once"):
+                list(samples)
+            return {
+                "prompt_tokens_p95": 9.0,
+                "total_tokens_p95": 16.0,
+                "sample_count": float(len(sample_rows)),
+            }
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_load_repo_module",
+        lambda path, *, unique_name: FakeTrainingDatasetModule(),
+    )
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_build_large_training_dataset_samples",
+        lambda: sample_rows,
+    )
+
+    metrics = _probe_training_dataset_token_percentiles(REPO_ROOT)
+
+    assert calls == 3
+    assert metrics["sample_count"] == float(len(sample_rows))
+    assert metrics["prompt_tokens_p95"] == 9.0
+    assert metrics["total_tokens_p95"] == 16.0
+    assert metrics["elapsed_ms_mean"] >= 0
 
 
 def test_probe_smokes_return_metrics_against_current_repo() -> None:
