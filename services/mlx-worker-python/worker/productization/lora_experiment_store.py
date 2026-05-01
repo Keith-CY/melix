@@ -11,6 +11,25 @@ _RUN_SCHEMA_VERSION = "melix.lora_experiment_run.v1"
 _INDEX_SCHEMA_VERSION = "melix.lora_experiment_index.v1"
 
 
+def _iter_lora_run_dirs(train_root: Path) -> tuple[Path, ...]:
+    try:
+        with os.scandir(train_root) as entries:
+            run_dir_entries = []
+            for entry in entries:
+                if not entry.name.startswith("model-ops-"):
+                    continue
+                try:
+                    if not entry.is_dir():
+                        continue
+                except OSError:
+                    continue
+                run_dir_entries.append(entry)
+    except OSError:
+        return ()
+
+    return tuple(Path(entry.path) for entry in sorted(run_dir_entries, key=lambda entry: entry.name))
+
+
 class LoraExperimentStore:
     run_record_name = "lora-experiment-run.json"
     index_record_name = "lora-experiments.index.json"
@@ -49,30 +68,22 @@ class LoraExperimentStore:
     def rebuild_index(self, jobs_root: Path) -> dict[str, Any]:
         train_root = jobs_root / "train_lora"
         runs_by_id: dict[str, dict[str, Any]] = {}
-        if train_root.exists():
-            for entry in sorted((entry for entry in os.scandir(train_root) if entry.name.startswith("model-ops-")), key=lambda entry: entry.name):
-                try:
-                    is_dir = entry.is_dir()
-                except OSError:
-                    continue
-                if is_dir is False:
-                    continue
-                run_dir = Path(entry.path)
-                run_path = run_dir / self.run_record_name
-                payload = self._read_payload(run_path)
-                run_id = str(payload.get("run_id", "")).strip()
-                if run_id:
-                    runs_by_id[run_id] = payload
-                    continue
+        for run_dir in _iter_lora_run_dirs(train_root):
+            run_path = run_dir / self.run_record_name
+            payload = self._read_payload(run_path)
+            run_id = str(payload.get("run_id", "")).strip()
+            if run_id:
+                runs_by_id[run_id] = payload
+                continue
 
-                manifest_path = run_dir / "train_lora.adapter.json"
-                payload = self._read_payload(manifest_path)
-                run_id = str(payload.get("job_id", "")).strip() or manifest_path.parent.name
-                if run_id in runs_by_id:
-                    continue
-                if str(payload.get("operation", "train_lora")).strip() != "train_lora":
-                    continue
-                runs_by_id[run_id] = self._build_run_payload(manifest=payload, manifest_path=manifest_path)
+            manifest_path = run_dir / "train_lora.adapter.json"
+            payload = self._read_payload(manifest_path)
+            run_id = str(payload.get("job_id", "")).strip() or manifest_path.parent.name
+            if run_id in runs_by_id:
+                continue
+            if str(payload.get("operation", "train_lora")).strip() != "train_lora":
+                continue
+            runs_by_id[run_id] = self._build_run_payload(manifest=payload, manifest_path=manifest_path)
 
         runs = sorted(
             runs_by_id.values(),
