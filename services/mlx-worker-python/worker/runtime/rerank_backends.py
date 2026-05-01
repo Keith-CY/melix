@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import hashlib
 import re
@@ -95,7 +96,7 @@ class RerankFamilyAdapter:
         raise NotImplementedError
 
 
-def _build_adjacent_pairs(tokens: tuple[str, ...] | list[str]) -> tuple[tuple[str, str], ...]:
+def _build_adjacent_pairs(tokens: Sequence[str]) -> tuple[tuple[str, str], ...]:
     return tuple(
         (tokens[index], tokens[index + 1])
         for index in range(len(tokens) - 1)
@@ -125,7 +126,7 @@ class BasicRerankFamilyAdapter(RerankFamilyAdapter):
                 query_tokens=query_tokens,
                 query_token_set=query_token_set,
             )
-        query_token_set = set(query_context.query_token_set)
+        query_token_set = query_context.query_token_set
         document_tokens = set(backend.tokenize(document))
         if not query_token_set and not document_tokens:
             overlap_score = 1.0
@@ -158,9 +159,9 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
                 query_tokens=query_tokens,
                 query_token_set=query_token_set,
             )
-        query_tokens = list(query_context.query_tokens)
+        query_tokens = query_context.query_tokens
         document_tokens = backend.tokenize(document)
-        query_token_set = set(query_context.query_token_set)
+        query_token_set = query_context.query_token_set
         document_token_set = set(document_tokens)
 
         if not query_token_set and not document_token_set:
@@ -180,8 +181,8 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
 
     @staticmethod
     def _ordered_pair_bonus(
-        query_tokens: list[str],
-        document_tokens: list[str],
+        query_tokens: Sequence[str],
+        document_tokens: Sequence[str],
         *,
         query_pairs: frozenset[tuple[str, str]] | None = None,
     ) -> float:
@@ -197,7 +198,7 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         return (len(query_pairs & document_pairs) / len(query_pairs)) * 0.15
 
     @staticmethod
-    def _contains_contiguous_query(document_tokens: list[str], query_tokens: list[str]) -> bool:
+    def _contains_contiguous_query(document_tokens: Sequence[str], query_tokens: Sequence[str]) -> bool:
         if not query_tokens or len(query_tokens) > len(document_tokens):
             return False
         last_start = len(document_tokens) - len(query_tokens)
@@ -235,9 +236,9 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
                 query_tokens=query_tokens,
                 query_token_set=query_token_set,
             )
-        query_tokens = list(query_context.query_tokens)
+        query_tokens = query_context.query_tokens
         document_tokens = backend.tokenize(document)
-        query_token_set = set(query_context.query_token_set)
+        query_token_set = query_context.query_token_set
         document_token_set = set(document_tokens)
         overlap = len(query_token_set & document_token_set) / (len(query_token_set) or 1)
         pair_bonus = JinaV3RerankFamilyAdapter._ordered_pair_bonus(
