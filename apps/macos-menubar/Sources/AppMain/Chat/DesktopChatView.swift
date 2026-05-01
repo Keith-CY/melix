@@ -312,6 +312,7 @@ struct DesktopChatSessionWorkspace: View {
                                 DesktopChatTranscriptRowView(
                                     entry: entry,
                                     isPending: viewModel.isPendingAssistantTranscriptEntry(entry),
+                                    isStreaming: viewModel.isStreamingAssistantTranscriptEntry(entry),
                                     pendingStatusText: viewModel.chatStatusText
                                 )
                                 .id(entry.id)
@@ -838,15 +839,18 @@ final class DesktopChatComposerCommandSubmitTextView: NSTextView {
 struct DesktopChatTranscriptRowView: View {
     let entry: DesktopChatTranscriptEntry
     let isPending: Bool
+    let isStreaming: Bool
     let pendingStatusText: String
 
     init(
         entry: DesktopChatTranscriptEntry,
         isPending: Bool = false,
+        isStreaming: Bool = false,
         pendingStatusText: String = ""
     ) {
         self.entry = entry
         self.isPending = isPending
+        self.isStreaming = isStreaming
         self.pendingStatusText = pendingStatusText
     }
 
@@ -868,7 +872,10 @@ struct DesktopChatTranscriptRowView: View {
             if isPending {
                 pendingAssistantView
             } else if DesktopChatMarkdownRenderer.usesMarkdown(for: entry.kind) {
-                DesktopChatMarkdownBodyView(rawText: sanitizedBody.isEmpty ? "…" : sanitizedBody)
+                DesktopChatMarkdownBodyView(
+                    rawText: sanitizedBody.isEmpty ? "…" : sanitizedBody,
+                    isStreaming: isStreaming
+                )
             } else {
                 Text(sanitizedBody.isEmpty ? "…" : sanitizedBody)
                     .font(entry.kind == .tool ? .caption.monospaced() : .body)

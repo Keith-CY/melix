@@ -1,0 +1,19 @@
+heading1: Release Notes
+quote:
+  paragraph: Stable renderer output for **assistant** rows\.
+unordered:
+  - Parse Markdown through the AST
+    unordered:
+      - Keep nested list shape
+  - Keep transcript storage raw
+ordered(2):
+  - Preserve ordered starts
+  - Keep numbering readable
+code[swift]:
+  let value = 42\nprint(value)
+table[leading,trailing,center]: Metric | Value | Note
+  row: TTFT | 12 ms | cached
+  row: TPS | 41 | steady
+thematic-break
+paragraph: Diagram alt
+paragraph: Unsafe label
