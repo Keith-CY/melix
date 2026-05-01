@@ -9,6 +9,7 @@ from worker.productization.benchmark_evaluation_report import (
     _METRIC_DIRECTION_BY_KEY,
     _aggregate_probe_values,
     _benchmark_probe_label,
+    _collect_benchmark_probe_metrics,
     _dict_rows,
     _finalize_numeric_aggregate,
     _label_part,
@@ -16,6 +17,7 @@ from worker.productization.benchmark_evaluation_report import (
     _metric_direction,
     _report_rows,
     _update_numeric_aggregate,
+    _update_probe_aggregates_by_label,
     build_benchmark_evaluation_report,
     build_sticky_comment_body,
     load_report_input,
@@ -260,6 +262,57 @@ def test_numeric_aggregate_helpers_track_running_totals() -> None:
     assert _finalize_numeric_aggregate("prefill_ms", aggregate) == ("mean", 4.0)
     assert _finalize_numeric_aggregate("cache_hit", aggregate) == ("rate", 4.0)
     assert _finalize_numeric_aggregate("speculative_fallback_count", aggregate) == ("sum", 8.0)
+
+
+def test_collect_benchmark_probe_metrics_groups_aggregates_by_label_and_preserves_metrics() -> None:
+    row_a = _SparseProbeRow(
+        {
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 1,
+            "concurrency_level": 1,
+            "prefill_ms": 10.0,
+            "decode_ms": 20.0,
+            "speculative_fallback_count": 1,
+        },
+        forbidden_keys={"prefill_ms", "decode_ms", "speculative_fallback_count"},
+    )
+    row_b = _SparseProbeRow(
+        {
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 1,
+            "concurrency_level": 1,
+            "prefill_ms": 14.0,
+            "decode_ms": 24.0,
+            "speculative_fallback_count": 3,
+        },
+        forbidden_keys={"prefill_ms", "decode_ms", "speculative_fallback_count"},
+    )
+
+    aggregates_by_label: dict[str, dict[str, tuple[float, int]]] = {}
+    _update_probe_aggregates_by_label(aggregates_by_label, label="shared", key="prefill_ms", value=10.0)
+    _update_probe_aggregates_by_label(aggregates_by_label, label="shared", key="prefill_ms", value=14.0)
+    _update_probe_aggregates_by_label(aggregates_by_label, label="shared", key="decode_ms", value=20.0)
+
+    assert aggregates_by_label == {
+        "shared": {
+            "prefill_ms": (24.0, 2),
+            "decode_ms": (20.0, 1),
+        }
+    }
+
+    metrics: dict[str, object] = {}
+    _collect_benchmark_probe_metrics(metrics, [row_a, row_b], prefix="bench")
+
+    label = "smoke.ctx1024.gen128.b1.c1"
+    assert metrics == {
+        f"bench.{label}.prefill_ms_mean": 12.0,
+        f"bench.{label}.decode_ms_mean": 22.0,
+        f"bench.{label}.speculative_fallback_count_sum": 4.0,
+    }
 
 
 def test_dict_rows_returns_lazy_iterable_of_dict_rows() -> None:
