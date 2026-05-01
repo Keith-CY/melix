@@ -540,7 +540,7 @@ def _probe_training_dataset_token_percentiles(repo_root: Path) -> dict[str, floa
         repo_root / "services/mlx-worker-python/worker/model_ops/training_dataset.py",
         unique_name="melix_probe_training_dataset_token_percentiles",
     )
-    samples = _build_large_training_dataset_samples()
+    sample_rows = _build_large_training_dataset_samples()
     elapsed_samples: list[float] = []
     prompt_p95 = 0.0
     total_p95 = 0.0
@@ -548,7 +548,10 @@ def _probe_training_dataset_token_percentiles(repo_root: Path) -> dict[str, floa
     for _ in range(3):
         gc.collect()
         started = time.perf_counter()
-        token_stats = module._build_token_stats(samples, "prompt_completion")
+        token_stats = module._build_token_stats(
+            _single_pass_sample_iterable(sample_rows),
+            "prompt_completion",
+        )
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
         prompt_p95 = float(token_stats["prompt_tokens_p95"])
         total_p95 = float(token_stats["total_tokens_p95"])
@@ -679,6 +682,21 @@ def _build_large_training_dataset_samples() -> list[dict[str, str]]:
         }
         for index in range(20000)
     ]
+
+
+def _single_pass_sample_iterable(samples: list[dict[str, str]]) -> Iterable[dict[str, str]]:
+    class _SinglePassIterable:
+        def __init__(self, rows: list[dict[str, str]]) -> None:
+            self._rows = rows
+            self._iterated = False
+
+        def __iter__(self) -> Iterable[dict[str, str]]:
+            if self._iterated:
+                raise RuntimeError("training dataset sample iterable was consumed more than once")
+            self._iterated = True
+            return iter(self._rows)
+
+    return _SinglePassIterable(samples)
 
 
 def _seed_closure_audit_repo(root: Path) -> Path:

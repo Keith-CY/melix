@@ -634,17 +634,27 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
     def fail_generic_token_counter(sample: dict[str, object], format_name: str) -> tuple[int, int]:
         raise AssertionError(f"prompt_completion token stats should use the direct fast path ({format_name=})")
 
+    class SinglePassPromptCompletionSamples:
+        def __init__(self) -> None:
+            self.iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            if self.iterations > 1:
+                raise AssertionError("prompt_completion token stats should consume the iterable only once")
+            return iter(
+                [
+                    {"prompt": "a b c", "completion": "d e"},
+                    {"prompt": "f", "completion": "g h i j"},
+                    {"prompt": "k l", "completion": "m"},
+                    {"prompt": "n o p q", "completion": "r s t"},
+                ]
+            )
+
     monkeypatch.setattr(training_dataset_module, "_percentile_value", fail_percentile_value)
     monkeypatch.setattr(training_dataset_module, "_sample_token_counts", fail_generic_token_counter)
 
-    prompt_completion_samples = iter(
-        [
-            {"prompt": "a b c", "completion": "d e"},
-            {"prompt": "f", "completion": "g h i j"},
-            {"prompt": "k l", "completion": "m"},
-            {"prompt": "n o p q", "completion": "r s t"},
-        ]
-    )
+    prompt_completion_samples = SinglePassPromptCompletionSamples()
 
     assert training_dataset_module._build_token_stats(
         prompt_completion_samples,
@@ -665,6 +675,7 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
         "total_tokens_p95": 5,
         "total_tokens_max": 7,
     }
+    assert prompt_completion_samples.iterations == 1
 
     monkeypatch.undo()
     assert training_dataset_module._build_token_stats(
