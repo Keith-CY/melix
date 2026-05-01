@@ -223,7 +223,7 @@ class RequestStreamAssembler:
         return (self._TOOL_OPEN, tool_index)
 
     def _has_partial_structural_tag_suffix(self) -> bool:
-        return any(self._buffer.endswith(prefix) for prefix in self._structural_tag_prefixes)
+        return self._buffer.endswith(self._structural_tag_prefixes)
 
     def _content_delta(self, content: str) -> AssemblyDelta:
         self._assistant_parts.append(content)
