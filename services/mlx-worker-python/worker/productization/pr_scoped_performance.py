@@ -373,6 +373,8 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_closure_audit(repo_root)
     if probe.probe_impl == "deterministic_rerank_query_context_reuse":
         return _probe_deterministic_rerank_query_context_reuse(repo_root)
+    if probe.probe_impl == "evaluation_store_samples_csv_streaming":
+        return _probe_evaluation_store_samples_csv_streaming(repo_root)
     if probe.probe_impl == "evaluation_sample_probe_aggregation":
         return _probe_evaluation_sample_probe_aggregation(repo_root)
     if probe.probe_impl == "evaluation_job_id":
@@ -622,6 +624,134 @@ def _probe_deterministic_rerank_query_context_reuse(repo_root: Path) -> dict[str
         "sample_count": float(sample_count),
         "tokenize_calls_mean": round(sum(tokenize_call_samples) / len(tokenize_call_samples), 6),
     }
+
+
+def _probe_evaluation_store_samples_csv_streaming(repo_root: Path) -> dict[str, float]:
+    sample_count = 10000
+    probe_script = f"""
+import gc
+import json
+import sys
+import tempfile
+import time
+import tracemalloc
+from pathlib import Path
+
+repo_root = Path({str(repo_root)!r})
+sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))
+from worker.productization.evaluation_schemas import (
+    build_evaluation_job_record,
+    build_evaluation_result_record,
+    build_evaluation_sample_record,
+)
+from worker.productization.evaluation_store import EvaluationStore
+
+sample_count = {sample_count}
+samples = tuple(
+    build_evaluation_sample_record(
+        job_id='eval-perf',
+        suite_id='mmlu',
+        dataset_id='mmlu.synthetic',
+        sample_id=f'sample-{{index:05d}}',
+        system='',
+        input_text=f'Question {{index}}?',
+        target=str(index % 5),
+        raw_response=f'Answer {{index % 5}}',
+        extracted_result=str(index % 5),
+        typed_score=1.0 if index % 2 == 0 else 0.0,
+        time_s=0.01,
+        extraction_status='extracted',
+        validation_status='validated',
+        failure_reason='',
+        task_kind='text-generation',
+        input_modalities=('text',),
+        media_references=(),
+        raw_response_chars=0 if index % 19 == 0 else len(f'Answer {{index % 5}}'),
+        extracted_result_chars=0 if index % 23 == 0 else len(str(index % 5)),
+    )
+    for index in range(sample_count)
+)
+job = build_evaluation_job_record(
+    job_id='eval-perf',
+    model_id='melix-dev-text',
+    task_kind='text-generation',
+    source_repo='synthetic',
+    suite_id='mmlu',
+    dataset_id='mmlu.synthetic',
+    sample_size=sample_count,
+    scoring_mode='deterministic_accuracy',
+    few_shot=0,
+    seed=7,
+    code_exec_policy='sandboxed',
+    parameters={{}},
+    status='completed',
+    output_dir='',
+    created_at_unix_ms=101,
+    updated_at_unix_ms=202,
+)
+result = build_evaluation_result_record(
+    job_id='eval-perf',
+    suite_id='mmlu',
+    dataset_id='mmlu.synthetic',
+    sample_size=sample_count,
+    primary_score_name='normalized_exact_match',
+    primary_score_value=0.5,
+    extraction_success_count=sample_count,
+    validation_success_count=sample_count,
+    scored_sample_count=sample_count,
+    failure_count=0,
+    duration_seconds=0.25,
+    metrics={{'eval.mmlu.accuracy': 0.5}},
+    report_path='',
+    units={{'eval.mmlu.accuracy': 'ratio'}},
+)
+store = EvaluationStore()
+elapsed_samples = []
+peak_samples = []
+csv_line_count = 0
+for _ in range(3):
+    with tempfile.TemporaryDirectory(prefix='melix-pr-perf-eval-store-') as temp_dir:
+        jobs_root = Path(temp_dir) / 'evaluation'
+        gc.collect()
+        tracemalloc.start()
+        started = time.perf_counter()
+        persisted = store.persist_result(
+            jobs_root=jobs_root,
+            job=job,
+            result=result,
+            samples=samples,
+        )
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        peak_samples.append(float(peak_bytes))
+        tracemalloc.stop()
+        csv_line_count = float(len(persisted['samples_csv'].read_text(encoding='utf-8').splitlines()))
+        if csv_line_count != float(sample_count + 1):
+            raise ValueError(f'unexpected evaluation samples CSV line count: {{csv_line_count}}')
+print(json.dumps({{
+    'elapsed_ms_mean': round(sum(elapsed_samples) / len(elapsed_samples), 6),
+    'peak_bytes_mean': round(sum(peak_samples) / len(peak_samples), 1),
+    'sample_count': float(sample_count),
+    'csv_line_count': float(csv_line_count),
+}}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(repo_root / "services/mlx-worker-python"),
+            "python3",
+            "-c",
+            probe_script,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads((completed.stdout or "").strip())
 
 
 def _probe_evaluation_sample_probe_aggregation(repo_root: Path) -> dict[str, float]:
