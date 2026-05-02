@@ -11,6 +11,7 @@ import worker.productization.pr_scoped_performance as pr_scoped_performance_modu
 
 from worker.productization.pr_scoped_performance import (
     _build_large_benchmark_bundle,
+    _build_large_scope_probe_changed_files,
     _build_large_training_dataset_quality_samples,
     _build_large_training_dataset_samples,
     _build_metric_row,
@@ -18,6 +19,7 @@ from worker.productization.pr_scoped_performance import (
     _build_probe_report_row,
     _build_probe_details,
     _closure_index_text,
+    _compiled_glob_pattern,
     _dict_list,
     _dispatch_probe_impl,
     _float_or_none,
@@ -28,6 +30,7 @@ from worker.productization.pr_scoped_performance import (
     _load_repo_module,
     _markdown_cell,
     _matches_any_glob,
+    _match_probe_indexes,
     _parse_coverage_percent,
     _probe_benchmark_evaluation_report,
     _probe_benchmark_export_run_scan,
@@ -37,6 +40,7 @@ from worker.productization.pr_scoped_performance import (
     _probe_evaluation_sample_probe_aggregation,
     _probe_evaluation_store_compare_summary_csv_streaming,
     _probe_evaluation_store_samples_csv_streaming,
+    _probe_pr_scoped_scope_matcher,
     _probe_training_dataset_token_percentiles,
     _probe_command_json,
     _run_command,
@@ -227,6 +231,88 @@ def test_scope_report_force_selects_all_on_infra_change() -> None:
 
     assert scope["force_all"] is True
     assert scope["selected_count"] == len(load_probe_registry(REGISTRY_PATH))
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "pr-scoped-performance-scope-matcher" in probe_ids
+
+
+def test_scope_report_large_changed_set_preserves_exact_selection_semantics() -> None:
+    changed_files = _build_large_scope_probe_changed_files() + [
+        "services/mlx-worker-python/worker/engine/evaluation_core.py",
+        "",
+        "README.md",
+    ]
+
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=changed_files,
+    )
+
+    assert scope["force_all"] is False
+    assert scope["changed_files"] == sorted({path for path in changed_files if path})
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "benchmark-export-run-scan-single-pass",
+        "evaluation-job-id-high-water-mark",
+        "evaluation-sample-probe-aggregation",
+        "download-pipeline-directory-size-single-stat",
+    ]
+    assert scope["selected_count"] == 4
+
+
+def test_match_probe_indexes_deduplicates_repeated_watch_globs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/a.py", "shared.py"),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+        ProbeDefinition(
+            probe_id="beta",
+            name="Beta",
+            runner="ubuntu-latest",
+            watch_globs=("shared.py", "services/b.py"),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+        ProbeDefinition(
+            probe_id="gamma",
+            name="Gamma",
+            runner="ubuntu-latest",
+            watch_globs=("shared.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    calls: list[tuple[str, str]] = []
+
+    def fake_glob_matches_path(path: str, glob: str) -> bool:
+        calls.append((path, glob))
+        return path == glob
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_glob_matches_path", fake_glob_matches_path)
+
+    matched = _match_probe_indexes(changed_paths=("shared.py", "unmatched.py"), probes=probes)
+
+    assert matched == {0, 1, 2}
+    assert len(calls) == 6
+    assert calls.count(("shared.py", "shared.py")) == 1
+
+
+def test_compiled_glob_pattern_reuses_cached_regex() -> None:
+    assert _compiled_glob_pattern("services/*.py") is _compiled_glob_pattern("services/*.py")
 
 
 def test_registered_probes_expose_focused_commands() -> None:
@@ -242,6 +328,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
         "package-macos-resolve-fallback-scandir",
+        "pr-scoped-performance-scope-matcher",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
         "swift-cli-json-envelope-encoding",
@@ -376,6 +463,7 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     evaluation_sample_probe_metrics = _probe_evaluation_sample_probe_aggregation(REPO_ROOT)
     evaluation_store_compare_summary_metrics = _probe_evaluation_store_compare_summary_csv_streaming(REPO_ROOT)
     evaluation_store_metrics = _probe_evaluation_store_samples_csv_streaming(REPO_ROOT)
+    scope_matcher_metrics = _probe_pr_scoped_scope_matcher(REPO_ROOT)
     training_dataset_metrics = _probe_training_dataset_token_percentiles(REPO_ROOT)
 
     assert benchmark_metrics["elapsed_ms_mean"] > 0
@@ -411,6 +499,10 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert evaluation_store_metrics["peak_bytes_mean"] > 0
     assert evaluation_store_metrics["sample_count"] == 10000.0
     assert evaluation_store_metrics["csv_line_count"] == 10001.0
+    assert scope_matcher_metrics["build_scope_report_ms_mean"] > 0
+    assert scope_matcher_metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
+    assert scope_matcher_metrics["selected_probe_count_mean"] == 4.0
+    assert scope_matcher_metrics["force_all_selected_mean"] == 0.0
     assert training_dataset_metrics["elapsed_ms_mean"] > 0
     assert training_dataset_metrics["peak_bytes_mean"] > 0
     assert training_dataset_metrics["sample_count"] == 20000.0
@@ -605,6 +697,27 @@ def test_dispatch_probe_impl_supports_upload_receipt_published_files_probe() -> 
     assert metrics["files_per_directory"] == 40.0
     assert metrics["published_file_count"] == 7201.0
     assert metrics["sample_count"] == 5.0
+
+
+def test_dispatch_probe_impl_supports_pr_scoped_scope_matcher_probe() -> None:
+    probe = ProbeDefinition(
+        probe_id="pr-scoped-performance-scope-matcher",
+        name="PR-scoped performance scope matcher",
+        runner="ubuntu-latest",
+        watch_globs=("services/mlx-worker-python/worker/productization/pr_scoped_performance.py",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="pr_scoped_scope_matcher",
+        probe_command='python3 -c "{}"',
+        metrics=(MetricDefinition(key="build_scope_report_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["build_scope_report_ms_mean"] > 0
+    assert metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
+    assert metrics["selected_probe_count_mean"] == 4.0
+    assert metrics["force_all_selected_mean"] == 0.0
 
 
 def test_upload_receipt_probe_loader_stubs_external_imports(tmp_path: Path) -> None:
