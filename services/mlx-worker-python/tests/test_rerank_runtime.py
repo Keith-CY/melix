@@ -1,4 +1,5 @@
-from unittest.mock import Mock
+import builtins
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -388,6 +389,72 @@ def test_score_documents_builds_query_context_once_for_multiple_documents() -> N
     assert family.query_contexts[0] is family.query_contexts[1] is family.query_contexts[2]
 
 
+def test_basic_rerank_family_reuses_query_context_token_set_without_copying() -> None:
+    adapter = BasicRerankFamilyAdapter()
+    backend = DeterministicRerankBackend()
+    query_context = adapter.build_query_context(backend, "swift runtime")
+    original_set = builtins.set
+    copied_query_token_sets = 0
+
+    def tracking_set(values=()):
+        nonlocal copied_query_token_sets
+        copied_query_token_sets += int(values is query_context.query_token_set)
+        return original_set(values)
+
+    with patch("builtins.set", tracking_set):
+        score = adapter.score(
+            backend,
+            query_context.query,
+            "swift runtime is available",
+            query_context=query_context,
+        )
+
+    assert score > 0.0
+    assert copied_query_token_sets == 0
+
+
+@pytest.mark.parametrize(
+    ("family", "query", "document"),
+    [
+        (JinaV3RerankFamilyAdapter(), "swift runtime", "swift runtime is available"),
+        (CausalLMRerankFamilyAdapter(), "swift runtime", "swift runtime is available"),
+    ],
+)
+def test_order_aware_rerank_families_reuse_query_context_sequences_without_copying(
+    family: RerankFamilyAdapter,
+    query: str,
+    document: str,
+) -> None:
+    backend = DeterministicRerankBackend()
+    query_context = family.build_query_context(backend, query)
+    original_list = builtins.list
+    original_set = builtins.set
+    copied_query_tokens = 0
+    copied_query_token_sets = 0
+
+    def tracking_list(values=()):
+        nonlocal copied_query_tokens
+        copied_query_tokens += int(values is query_context.query_tokens)
+        return original_list(values)
+
+    def tracking_set(values=()):
+        nonlocal copied_query_token_sets
+        copied_query_token_sets += int(values is query_context.query_token_set)
+        return original_set(values)
+
+    with patch("builtins.list", tracking_list), patch("builtins.set", tracking_set):
+        score = family.score(
+            backend,
+            query,
+            document,
+            query_context=query_context,
+        )
+
+    assert score > 0.0
+    assert copied_query_tokens == 0
+    assert copied_query_token_sets == 0
+
+
 @pytest.mark.parametrize(
     ("family", "query", "document"),
     [
@@ -417,9 +484,8 @@ def test_rerank_context_tuple_and_frozenset_collections_are_scored_directly() ->
 
     assert isinstance(query_context.query_tokens, tuple)
     assert isinstance(query_context.query_token_set, frozenset)
-    assert query_context.tie_breaker_prefix == b"swift runtime\0"
-    assert backend.tie_breaker_from_prefix(
-        query_context.tie_breaker_prefix,
+    assert backend.tie_breaker_from_seed(
+        query_context.tie_breaker_seed,
         "control swift runtime",
     ) == backend.tie_breaker("swift runtime", "control swift runtime")
     assert family._ordered_pair_bonus(query_context.query_tokens, ("swift", "runtime")) > 0.0
@@ -501,6 +567,40 @@ def test_contiguous_query_scan_does_not_allocate_document_slices() -> None:
     with pytest.raises(AssertionError, match="without slicing"):
         NoSliceTokens(("swift", "runtime"))[0:1]
 
+
+@pytest.mark.parametrize(
+    ("family", "expected_exact_order_bonus", "expected_prefix_bonus", "expected_pair_bonus"),
+    [
+        (JinaV3RerankFamilyAdapter(), 0.1, 0.05, 0.15),
+        (CausalLMRerankFamilyAdapter(), 0.75, 0.5, 0.45),
+    ],
+)
+def test_order_aware_query_context_preserves_exact_order_and_prefix_bonuses(
+    family: RerankFamilyAdapter,
+    expected_exact_order_bonus: float,
+    expected_prefix_bonus: float,
+    expected_pair_bonus: float,
+) -> None:
+    backend = DeterministicRerankBackend()
+    query = "swift runtime"
+    prefix_document = "swift runtime adapters"
+    exact_order_document = "adapters swift runtime"
+    shuffled_document = "runtime swift adapters"
+    query_context = family.build_query_context(backend, query)
+
+    prefix_score = family.score(backend, query, prefix_document, query_context=query_context)
+    exact_order_score = family.score(backend, query, exact_order_document, query_context=query_context)
+    shuffled_score = family.score(backend, query, shuffled_document, query_context=query_context)
+
+    normalized_prefix_score = prefix_score - backend.tie_breaker(query, prefix_document)
+    normalized_exact_order_score = exact_order_score - backend.tie_breaker(query, exact_order_document)
+    normalized_shuffled_score = shuffled_score - backend.tie_breaker(query, shuffled_document)
+
+    assert normalized_prefix_score - normalized_exact_order_score == pytest.approx(expected_prefix_bonus, abs=1e-6)
+    assert normalized_exact_order_score - normalized_shuffled_score == pytest.approx(
+        expected_exact_order_bonus + expected_pair_bonus,
+        abs=1e-6,
+    )
 
 def test_rerank_rejects_missing_and_wrong_model_kinds() -> None:
     runtime_service, inference_service = build_services()
