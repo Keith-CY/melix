@@ -938,6 +938,24 @@ def test_build_quality_and_token_stats_falls_back_to_generic_digest_for_non_norm
     assert token_stats["sample_count"] == 2
 
 
+def test_summarize_token_values_preserves_input_order_by_default() -> None:
+    values = [4, 1, 3, 2]
+
+    summary = training_dataset_module._summarize_token_values(values, total=10)
+
+    assert summary == {"mean": 2.5, "p50": 2, "p95": 3, "max": 4}
+    assert values == [4, 1, 3, 2]
+
+
+def test_summarize_token_values_can_sort_temporary_lists_in_place() -> None:
+    values = [4, 1, 3, 2]
+
+    summary = training_dataset_module._summarize_token_values(values, total=10, sort_in_place=True)
+
+    assert summary == {"mean": 2.5, "p50": 2, "p95": 3, "max": 4}
+    assert values == [1, 2, 3, 4]
+
+
 def test_resolve_dataset_build_source_reuses_existing_package_sample_lists(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
