@@ -310,6 +310,38 @@ def test_resolve_derived_model_target_uses_cached_model_id_lookup(
     assert row_iterations == 0
 
 
+def test_resolve_derived_model_target_model_id_uses_cached_resolved_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ModelOpsJobRegistry()
+    job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    manifest_path = "/runtime/activate/melix-dev-active/manifest.json"
+    registry.attach_manifest(
+        job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": "/runtime/activate/melix-dev-active",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(job.job_id, manifest_path)
+
+    first_target = registry.resolve_derived_model_target(derived_model_id="melix-dev-active")
+    assert first_target is not None
+    assert first_target["activation_manifest_path"] == manifest_path
+
+    def fail_resolve(self: Path, *args: Any, **kwargs: Any) -> Path:
+        raise AssertionError("resolved activation manifest path should be cached")  # pragma: no cover
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+
+    second_target = registry.resolve_derived_model_target(derived_model_id="melix-dev-active")
+    assert second_target is not None
+    assert second_target["activation_manifest_path"] == manifest_path
+
+
 def test_resolve_derived_model_target_id_lookup_negative_paths() -> None:
     registry = ModelOpsJobRegistry()
     job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
