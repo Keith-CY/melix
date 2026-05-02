@@ -1,6 +1,7 @@
 // Copyright © 2025 Apple Inc.
 
 import CoreGraphics
+import Dispatch
 import Foundation
 import MLX
 
@@ -15,10 +16,10 @@ import MLX
 /// print(try await session.respond(to: "How about a great place to eat?"))
 /// ```
 ///
-/// - Note: `ChatSession` is not thread-safe. Each session should be used from a single
-///   task/thread at a time. The underlying `ModelContainer` handles thread safety for
-///   model operations.
-public final class ChatSession {
+/// - Note: Concurrent response calls are serialized so the session history and KV cache
+///   remain consistent. The underlying `ModelContainer` handles thread safety for model
+///   operations.
+public final class ChatSession: @unchecked Sendable {
 
     private enum Model {
         case container(ModelContainer)
@@ -31,6 +32,7 @@ public final class ChatSession {
     private let processing: UserInput.Processing
     private let generateParameters: GenerateParameters
     private let additionalContext: [String: any Sendable]?
+    private let sessionAccess = SerialAccessContainer(())
 
     /// Initialize the `ChatSession`.
     ///
@@ -90,20 +92,26 @@ public final class ChatSession {
         images: [UserInput.Image],
         videos: [UserInput.Video]
     ) async throws -> String {
-        messages.append(.user(prompt, images: images, videos: videos))
+        let images = SendableBox(images)
+        let videos = SendableBox(videos)
+        return try await sessionAccess.update { _ in
+            let images = images.consume()
+            let videos = videos.consume()
+            self.messages.append(.user(prompt, images: images, videos: videos))
 
-        let output: String
-        switch model {
-        case .container(let container):
-            output = try await container.perform(values: self) { context, session in
-                try await session.generateResponse(context: context)
+            let output: String
+            switch self.model {
+            case .container(let container):
+                output = try await container.perform(values: self) { context, session in
+                    try await session.generateResponse(context: context)
+                }
+            case .context(let context):
+                output = try await self.generateResponse(context: context)
             }
-        case .context(let context):
-            output = try await generateResponse(context: context)
-        }
 
-        messages.append(.assistant(output))
-        return output
+            self.messages.append(.assistant(output))
+            return output
+        }
     }
 
     /// Produces a response to a prompt.
@@ -137,14 +145,19 @@ public final class ChatSession {
         images: [UserInput.Image],
         videos: [UserInput.Video]
     ) -> AsyncThrowingStream<String, Error> {
-        messages.append(.user(prompt, images: images, videos: videos))
-
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
-        let session = SendableBox(self)
+        let sessionAccess = self.sessionAccess
+        let images = SendableBox(images)
+        let videos = SendableBox(videos)
         let task = Task {
             do {
-                try await session.consume().performStreaming(continuation: continuation)
+                try await sessionAccess.update { _ in
+                    let images = images.consume()
+                    let videos = videos.consume()
+                    self.messages.append(.user(prompt, images: images, videos: videos))
+                    try await self.performStreaming(continuation: continuation)
+                }
             } catch {
                 continuation.finish(throwing: error)
             }
@@ -178,8 +191,16 @@ public final class ChatSession {
 
     /// Clear the session history and cache, preserving system instructions.
     public func clear() {
-        messages = messages.filter { $0.role == .system }
-        cache = []
+        let semaphore = DispatchSemaphore(value: 0)
+        let sessionAccess = self.sessionAccess
+        Task.detached {
+            await sessionAccess.update { _ in
+                self.messages = self.messages.filter { $0.role == .system }
+                self.cache = []
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
     }
 
     // MARK: - Private

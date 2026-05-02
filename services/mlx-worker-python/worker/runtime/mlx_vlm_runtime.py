@@ -5,6 +5,7 @@ import hashlib
 import importlib.metadata
 import inspect
 import importlib.util
+import logging
 import os
 import time
 from pathlib import Path
@@ -18,6 +19,8 @@ from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, f
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeUnavailableError(RuntimeError):
@@ -458,11 +461,20 @@ class MLXVLMRuntime:
                     "top_k": int(getattr(sampling, "top_k", 0)),
                     "verbose": False,
                 }
-                if media_paths.video_paths and _callable_accepts_kwarg(
-                    self._backend.stream_generate_fn,
-                    "video",
-                ):
-                    stream_kwargs["video"] = media_paths.video_paths
+                if media_paths.video_paths:
+                    if _callable_accepts_kwarg(self._backend.stream_generate_fn, "video"):
+                        stream_kwargs["video"] = media_paths.video_paths
+                    else:
+                        logger.warning(
+                            "mlx-vlm stream_generate does not accept video=; "
+                            "falling back to prompt/image-only routing for %d video artifact(s)",
+                            len(media_paths.video_paths),
+                        )
+                        self._last_probe = replace(
+                            self._last_probe,
+                            multimodal_decode_mode="fallback",
+                            multimodal_fallback_reason="backend_video_kwarg_unsupported",
+                        )
 
                 started_at = time.perf_counter()
                 first_token_at: float | None = None

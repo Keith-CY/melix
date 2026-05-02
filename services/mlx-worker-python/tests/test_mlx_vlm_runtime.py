@@ -314,6 +314,127 @@ def test_mlx_vlm_runtime_passes_video_when_backend_accepts_video_argument() -> N
     assert not Path(video_paths[0]).exists()
 
 
+def test_mlx_vlm_runtime_records_video_fallback_when_backend_omits_video_argument(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stream_calls: list[dict[str, object]] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="qwen2_vl"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0):
+        _ = processor
+        _ = config
+        _ = num_images
+        return f"formatted::{prompt}"
+
+    def fake_stream_generate(
+        model,
+        processor,
+        prompt: str,
+        image=None,
+        max_tokens: int = 64,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+        top_k: int = 0,
+        verbose: bool = False,
+    ):
+        _ = model
+        _ = processor
+        stream_calls.append(
+            {
+                "prompt": prompt,
+                "image": image,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+                "top_k": top_k,
+                "verbose": verbose,
+            }
+        )
+        yield SimpleNamespace(text="fallback summary", generation_tokens=1)
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = PreparedVisionRequest(
+        prompt_text="Describe the video.",
+        images=[],
+        videos=[
+            PreparedVideoInput(
+                source_kind="inline",
+                reference="inline:video",
+                bytes_data=b"fake-video-payload",
+                mime_type="video/mp4",
+                format="mp4",
+                filename="sample.mp4",
+                byte_length=len(b"fake-video-payload"),
+                duration_ms=1000,
+                frame_budget=4,
+                start_ms=0,
+                end_ms=1000,
+                sha256_hex="beef",
+            )
+        ],
+        video_frame_policies=[
+            PreparedVideoFramePolicy(
+                reference="inline:video",
+                sampling_strategy="uniform",
+                requested_frame_budget=4,
+                effective_frame_count=4,
+                clip_start_ms=0,
+                clip_end_ms=1000,
+                clip_duration_ms=1000,
+            )
+        ],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(b"fake-video-payload"),
+        preprocess_peak_memory_bytes=len(b"fake-video-payload"),
+        prompt_hash_hex="11" * 32,
+        multimodal_hash_hex="22" * 32,
+    )
+
+    caplog.set_level("WARNING", logger=mlx_vlm_runtime_module.__name__)
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+        )
+    )
+
+    assert [event.text for event in events] == ["fallback summary"]
+    assert stream_calls == [
+        {
+            "prompt": "formatted::Describe the video.",
+            "image": None,
+            "max_tokens": 8,
+            "temperature": 0.0,
+            "top_p": 0.0,
+            "top_k": 0,
+            "verbose": False,
+        }
+    ]
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == "fallback"
+    assert probe.multimodal_fallback_reason == "backend_video_kwarg_unsupported"
+    assert "does not accept video=" in caplog.text
+
+
 def test_mlx_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
     def fake_load(model_path: str, revision: str = "main"):
         _ = model_path

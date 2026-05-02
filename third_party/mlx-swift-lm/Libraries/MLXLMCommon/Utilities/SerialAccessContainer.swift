@@ -8,6 +8,7 @@
 private actor AsyncMutex {
     private var isLocked = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiterHead = 0
 
     private func lock() async {
         if !isLocked {
@@ -21,10 +22,17 @@ private actor AsyncMutex {
     }
 
     private func unlock() {
-        if let next = waiters.first {
-            waiters.removeFirst()
+        if waiterHead < waiters.count {
+            let next = waiters[waiterHead]
+            waiterHead += 1
+            if waiterHead > 32 && waiterHead * 2 >= waiters.count {
+                waiters.removeFirst(waiterHead)
+                waiterHead = 0
+            }
             next.resume()
         } else {
+            waiters.removeAll(keepingCapacity: true)
+            waiterHead = 0
             isLocked = false
         }
     }
