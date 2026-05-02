@@ -1379,10 +1379,19 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
     completion_tokens: list[int] = []
     total_tokens: list[int] = []
     sample_count = 0
+    prompt_token_sum: int | None = None
+    completion_token_sum: int | None = None
+    total_token_sum: int | None = None
     if format_name == "prompt_completion":
-        sample_count, prompt_tokens, completion_tokens, total_tokens = _collect_prompt_completion_token_counts(
-            samples
-        )
+        (
+            sample_count,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            prompt_token_sum,
+            completion_token_sum,
+            total_token_sum,
+        ) = _collect_prompt_completion_token_counts(samples)
     else:
         prompt_tokens_append = prompt_tokens.append
         completion_tokens_append = completion_tokens.append
@@ -1395,9 +1404,9 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
             completion_tokens_append(completion_count)
             total_tokens_append(prompt_count + completion_count)
 
-    prompt_summary = _summarize_token_values(prompt_tokens)
-    completion_summary = _summarize_token_values(completion_tokens)
-    total_summary = _summarize_token_values(total_tokens)
+    prompt_summary = _summarize_token_values(prompt_tokens, total=prompt_token_sum)
+    completion_summary = _summarize_token_values(completion_tokens, total=completion_token_sum)
+    total_summary = _summarize_token_values(total_tokens, total=total_token_sum)
 
     return {
         "estimator": "whitespace_v1",
@@ -1419,7 +1428,7 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
 
 def _collect_prompt_completion_token_counts(
     samples: Iterable[dict[str, Any]],
-) -> tuple[int, list[int], list[int], list[int]]:
+) -> tuple[int, list[int], list[int], list[int], int, int, int]:
     prompt_tokens: list[int] = []
     completion_tokens: list[int] = []
     total_tokens: list[int] = []
@@ -1427,16 +1436,31 @@ def _collect_prompt_completion_token_counts(
     completion_tokens_append = completion_tokens.append
     total_tokens_append = total_tokens.append
     sample_count = 0
+    prompt_token_sum = 0
+    completion_token_sum = 0
+    total_token_sum = 0
 
     for sample in samples:
         sample_count += 1
         prompt_count = len(str(sample.get("prompt", "")).split())
         completion_count = len(str(sample.get("completion", "")).split())
+        total_count = prompt_count + completion_count
+        prompt_token_sum += prompt_count
+        completion_token_sum += completion_count
+        total_token_sum += total_count
         prompt_tokens_append(prompt_count)
         completion_tokens_append(completion_count)
-        total_tokens_append(prompt_count + completion_count)
+        total_tokens_append(total_count)
 
-    return sample_count, prompt_tokens, completion_tokens, total_tokens
+    return (
+        sample_count,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        prompt_token_sum,
+        completion_token_sum,
+        total_token_sum,
+    )
 
 
 def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int, int]:
@@ -1548,14 +1572,20 @@ def _mean_value(values: list[int]) -> float:
     return round(sum(values) / len(values), 3)
 
 
-def _summarize_token_values(values: list[int]) -> dict[str, float | int]:
+def _summarize_token_values(values: list[int], *, total: int | None = None) -> dict[str, float | int]:
     ordered = sorted(values)
     return {
-        "mean": _mean_value(values),
+        "mean": _mean_value_from_total(total if total is not None else sum(values), len(values)),
         "p50": _sorted_percentile_value(ordered, 0.50),
         "p95": _sorted_percentile_value(ordered, 0.95),
         "max": ordered[-1] if ordered else 0,
     }
+
+
+def _mean_value_from_total(total: int, count: int) -> float:
+    if count == 0:
+        return 0.0
+    return round(total / count, 3)
 
 
 def _sorted_percentile_value(ordered_values: list[int], pct: float) -> int:
