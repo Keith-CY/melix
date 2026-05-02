@@ -35,7 +35,11 @@ class DeterministicRerankBackend:
 
     @staticmethod
     def tie_breaker(query: str, document: str) -> float:
-        digest = hashlib.sha256(f"{query}\0{document}".encode("utf-8")).digest()
+        return DeterministicRerankBackend.tie_breaker_from_prefix(f"{query}\0".encode("utf-8"), document)
+
+    @staticmethod
+    def tie_breaker_from_prefix(query_prefix: bytes, document: str) -> float:
+        digest = hashlib.sha256(query_prefix + document.encode("utf-8")).digest()
         return int.from_bytes(digest[:4], "little") / 0xFFFFFFFF * 0.0001
 
 
@@ -51,6 +55,7 @@ class RerankQueryContext:
     query_tokens: tuple[str, ...]
     query_token_set: frozenset[str]
     ordered_pairs: frozenset[tuple[str, str]]
+    tie_breaker_prefix: bytes
 
 
 class RerankFamilyAdapter:
@@ -81,6 +86,7 @@ class RerankFamilyAdapter:
             query_tokens=normalized_query_tokens,
             query_token_set=frozenset(query_token_set),
             ordered_pairs=frozenset(_build_adjacent_pairs(normalized_query_tokens)),
+            tie_breaker_prefix=f"{query}\0".encode("utf-8"),
         )
 
     def score(
@@ -134,7 +140,7 @@ class BasicRerankFamilyAdapter(RerankFamilyAdapter):
             overlap_count = len(query_token_set & document_tokens)
             union = (len(query_token_set) + len(document_tokens) - overlap_count) or 1
             overlap_score = overlap_count / union
-        return round(overlap_score + backend.tie_breaker(query, document), 6)
+        return round(overlap_score + backend.tie_breaker_from_prefix(query_context.tie_breaker_prefix, document), 6)
 
 
 class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
@@ -181,7 +187,11 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         prefix_bonus = 0.05 if has_all_query_terms and document_tokens[: len(query_tokens)] == query_tokens else 0.0
 
         return round(
-            overlap_score + pair_bonus + exact_order_bonus + prefix_bonus + backend.tie_breaker(query, document),
+            overlap_score
+            + pair_bonus
+            + exact_order_bonus
+            + prefix_bonus
+            + backend.tie_breaker_from_prefix(query_context.tie_breaker_prefix, document),
             6,
         )
 
@@ -285,7 +295,7 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
         if overlap_count == 0:
             no_logit += 0.3
 
-        return round(yes_logit - no_logit + backend.tie_breaker(query, document), 6)
+        return round(yes_logit - no_logit + backend.tie_breaker_from_prefix(query_context.tie_breaker_prefix, document), 6)
 
 
 def resolve_rerank_backend(backend_id: str) -> DeterministicRerankBackend:
