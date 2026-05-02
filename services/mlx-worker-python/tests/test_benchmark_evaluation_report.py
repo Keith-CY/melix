@@ -13,6 +13,7 @@ from worker.productization.benchmark_evaluation_report import (
     _build_metric_row,
     _collect_benchmark_probe_metrics,
     _collect_evaluation_sample_probe_metrics,
+    _collect_runtime_metadata,
     _dict_rows,
     _finalize_numeric_aggregate,
     _label_part,
@@ -190,6 +191,37 @@ def test_report_builder_treats_cache_hit_rate_as_higher_is_better() -> None:
 
     assert row["direction"] == "higher_is_better"
     assert row["status"] == "warning"
+
+
+def test_collect_runtime_metadata_preserves_key_order_with_sparse_values() -> None:
+    metrics: dict[str, object] = {}
+
+    _collect_runtime_metadata(
+        metrics,
+        [
+            {
+                "parameters": {
+                    "runtime_model_id": "target/head",
+                    "runtime_kind": "swift-text",
+                }
+            },
+            {
+                "parameters": {
+                    "runtime_kind": "python-worker",
+                    "runtime_model_id": "target/base",
+                    "unused_runtime_value": "ignored",
+                }
+            },
+            {"parameters": {"runtime_model_id": ""}},
+            {"parameters": "invalid"},
+        ],
+        prefix="bench.runtime",
+    )
+
+    assert metrics == {
+        "bench.runtime.runtime_kind": "python-worker,swift-text",
+        "bench.runtime.runtime_model_id": "target/base,target/head",
+    }
 
 
 def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
