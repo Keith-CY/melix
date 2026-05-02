@@ -45,12 +45,20 @@ class ModelOpsJob:
     error_message: str = ""
 
 
+@dataclass(frozen=True)
+class _ActiveDerivedModelLookup:
+    job: ModelOpsJob
+    manifest: dict[str, Any]
+    activation_manifest_path: str
+
+
 class ModelOpsJobRegistry:
     def __init__(self, jobs_root: str | Path | None = None) -> None:
         self._lock = Lock()
         self._next_id = 1
         self._jobs: dict[str, ModelOpsJob] = {}
         self._active_derived_model_rows_cache: tuple[tuple[ModelOpsJob, dict[str, Any], str], ...] | None = None
+        self._active_derived_model_by_id_cache: dict[str, _ActiveDerivedModelLookup] | None = None
         self._jobs_root = Path(jobs_root).expanduser().resolve() if jobs_root is not None else None
         self._lora_experiment_store = LoraExperimentStore()
         if self._jobs_root is not None:
@@ -314,6 +322,7 @@ class ModelOpsJobRegistry:
 
     def _invalidate_active_derived_model_rows_cache(self) -> None:
         self._active_derived_model_rows_cache = None
+        self._active_derived_model_by_id_cache = None
 
     def _cached_active_derived_model_job_rows(
         self,
@@ -323,6 +332,46 @@ class ModelOpsJobRegistry:
             cached_rows = self._active_derived_model_job_rows(self._ordered_jobs())
             self._active_derived_model_rows_cache = cached_rows
         return cached_rows
+
+    def _cached_active_derived_model_by_id(self) -> dict[str, _ActiveDerivedModelLookup]:
+        cached_by_id = self._active_derived_model_by_id_cache
+        if cached_by_id is None:
+            cached_by_id = {}
+            for job, manifest, activation_manifest_path in self._cached_active_derived_model_job_rows():
+                candidate_model_id = str(manifest.get("derived_model_id", "")).strip()
+                if candidate_model_id and candidate_model_id not in cached_by_id:
+                    cached_by_id[candidate_model_id] = _ActiveDerivedModelLookup(
+                        job=job,
+                        manifest=manifest,
+                        activation_manifest_path=activation_manifest_path,
+                    )
+            self._active_derived_model_by_id_cache = cached_by_id
+        return cached_by_id
+
+    @staticmethod
+    def _derived_model_target_payload(
+        job: ModelOpsJob,
+        manifest: dict[str, Any],
+        activation_manifest_path: str,
+        *,
+        resolved_activation_manifest_path: str | None = None,
+    ) -> dict[str, Any]:
+        if resolved_activation_manifest_path is None:
+            resolved_activation_manifest_path = str(Path(activation_manifest_path).expanduser().resolve())
+        candidate_model_id = str(manifest.get("derived_model_id", "")).strip()
+        return {
+            "activation_job_id": job.job_id,
+            "activation_manifest_path": resolved_activation_manifest_path,
+            "output_dir": job.output_dir,
+            "source_model": str(manifest.get("source_model", "")),
+            "derived_model_id": candidate_model_id,
+            "derived_model_path": str(manifest.get("derived_model_path", "")),
+            "derived_model_alias": str(manifest.get("derived_model_alias", "")),
+            "activation_mode": str(manifest.get("activation_mode", "")),
+            "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
+            "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
+            "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
+        }
 
     @classmethod
     def _job_manifest(cls, job: ModelOpsJob) -> dict[str, Any]:
@@ -400,28 +449,34 @@ class ModelOpsJobRegistry:
         if not normalized_model_id and not normalized_manifest_path:
             return None
 
+        if normalized_model_id:
+            lookup = self._cached_active_derived_model_by_id().get(normalized_model_id)
+            if lookup is None:
+                return None
+            resolved_activation_manifest_path = str(
+                Path(lookup.activation_manifest_path).expanduser().resolve()
+            )
+            if normalized_manifest_path and resolved_activation_manifest_path != normalized_manifest_path:
+                return None
+            return self._derived_model_target_payload(
+                lookup.job,
+                lookup.manifest,
+                lookup.activation_manifest_path,
+                resolved_activation_manifest_path=resolved_activation_manifest_path,
+            )
+
         for job, manifest, activation_manifest_path in self._cached_active_derived_model_job_rows():
-            candidate_model_id = str(manifest.get("derived_model_id", "")).strip()
-            if normalized_model_id and candidate_model_id != normalized_model_id:
-                continue
             resolved_activation_manifest_path = str(
                 Path(activation_manifest_path).expanduser().resolve()
             )
             if normalized_manifest_path and resolved_activation_manifest_path != normalized_manifest_path:
                 continue
-            return {
-                "activation_job_id": job.job_id,
-                "activation_manifest_path": resolved_activation_manifest_path,
-                "output_dir": job.output_dir,
-                "source_model": str(manifest.get("source_model", "")),
-                "derived_model_id": candidate_model_id,
-                "derived_model_path": str(manifest.get("derived_model_path", "")),
-                "derived_model_alias": str(manifest.get("derived_model_alias", "")),
-                "activation_mode": str(manifest.get("activation_mode", "")),
-                "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
-                "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
-                "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
-            }
+            return self._derived_model_target_payload(
+                job,
+                manifest,
+                activation_manifest_path,
+                resolved_activation_manifest_path=resolved_activation_manifest_path,
+            )
         return None
 
     def active_derived_model_manifests(self) -> tuple[dict[str, Any], ...]:
