@@ -116,18 +116,19 @@ class EvaluationStore:
     @staticmethod
     def _write_jsonl(path: Path, rows: Iterable[object]) -> None:
         with path.open("w", encoding="utf-8") as handle:
+            write = handle.write
+            dumps = json.dumps
             for row in rows:
-                handle.write(json.dumps(row))
-                handle.write("\n")
+                write(dumps(row) + "\n")
 
     @staticmethod
     def _write_samples_csv(path: Path, samples: tuple[EvaluationSample, ...]) -> None:
         with path.open("w", encoding="utf-8") as handle:
-            handle.write(",".join(EvaluationStore._samples_csv_header()))
-            handle.write("\n")
+            write = handle.write
+            sample_csv_row = EvaluationStore._sample_csv_row
+            write(",".join(EvaluationStore._samples_csv_header()) + "\n")
             for sample in samples:
-                handle.write(EvaluationStore._sample_csv_row(sample))
-                handle.write("\n")
+                write(sample_csv_row(sample) + "\n")
 
     @staticmethod
     def _summary_payload(*, job: EvaluationJob, result: EvaluationResult) -> dict[str, object]:
@@ -333,40 +334,41 @@ class EvaluationStore:
 
     @staticmethod
     def _sample_csv_row(sample: EvaluationSample) -> str:
+        csv_field = EvaluationStore._csv_field
         return ",".join(
             [
-                EvaluationStore._csv_field(sample.sample_id),
-                EvaluationStore._csv_field(sample.task_kind),
-                EvaluationStore._csv_field(sample.target),
-                EvaluationStore._csv_field(sample.extracted_result),
-                EvaluationStore._csv_field(sample.input_text),
-                EvaluationStore._csv_field(sample.raw_response),
-                EvaluationStore._csv_field(str(sample.typed_score)),
-                EvaluationStore._csv_field(str(sample.time_s)),
-                EvaluationStore._csv_field(sample.extraction_status),
-                EvaluationStore._csv_field(sample.validation_status),
-                EvaluationStore._csv_field(sample.failure_reason),
-                EvaluationStore._csv_field(",".join(sample.input_modalities)),
-                EvaluationStore._csv_field(",".join(sample.media_references)),
-                EvaluationStore._csv_field(sample.code_language),
-                EvaluationStore._csv_field(sample.code_entry_point),
-                EvaluationStore._csv_field(sample.code_compile_status),
-                EvaluationStore._csv_field(sample.code_runtime_status),
-                EvaluationStore._csv_field(sample.code_timeout_status),
-                EvaluationStore._csv_field(sample.code_test_status),
-                EvaluationStore._csv_field(str(sample.code_tests_passed)),
-                EvaluationStore._csv_field(str(sample.code_tests_total)),
-                EvaluationStore._csv_field(sample.code_failure_detail),
-                EvaluationStore._csv_field(sample.category_label),
-                EvaluationStore._csv_field(sample.subject_label),
-                EvaluationStore._csv_field(str(sample.sample_render_ms)),
-                EvaluationStore._csv_field(str(sample.inference_ms)),
-                EvaluationStore._csv_field(str(sample.extraction_ms)),
-                EvaluationStore._csv_field(str(sample.validation_ms)),
-                EvaluationStore._csv_field(str(sample.scoring_ms)),
-                EvaluationStore._csv_field(str(sample.raw_response_chars)),
-                EvaluationStore._csv_field(str(sample.extracted_result_chars)),
-                EvaluationStore._csv_field(sample.failure_stage),
+                csv_field(sample.sample_id),
+                csv_field(sample.task_kind),
+                csv_field(sample.target),
+                csv_field(sample.extracted_result),
+                csv_field(sample.input_text),
+                csv_field(sample.raw_response),
+                csv_field(str(sample.typed_score)),
+                csv_field(str(sample.time_s)),
+                csv_field(sample.extraction_status),
+                csv_field(sample.validation_status),
+                csv_field(sample.failure_reason),
+                csv_field(",".join(sample.input_modalities)),
+                csv_field(",".join(sample.media_references)),
+                csv_field(sample.code_language),
+                csv_field(sample.code_entry_point),
+                csv_field(sample.code_compile_status),
+                csv_field(sample.code_runtime_status),
+                csv_field(sample.code_timeout_status),
+                csv_field(sample.code_test_status),
+                csv_field(str(sample.code_tests_passed)),
+                csv_field(str(sample.code_tests_total)),
+                csv_field(sample.code_failure_detail),
+                csv_field(sample.category_label),
+                csv_field(sample.subject_label),
+                csv_field(str(sample.sample_render_ms)),
+                csv_field(str(sample.inference_ms)),
+                csv_field(str(sample.extraction_ms)),
+                csv_field(str(sample.validation_ms)),
+                csv_field(str(sample.scoring_ms)),
+                csv_field(str(sample.raw_response_chars)),
+                csv_field(str(sample.extracted_result_chars)),
+                csv_field(sample.failure_stage),
             ]
         )
 

@@ -52,7 +52,7 @@ def test_write_jsonl_streams_rows_without_building_one_giant_payload(monkeypatch
 
     expected_payload = "".join(json.dumps(row) + "\n" for row in rows)
     assert "".join(writes) == expected_payload
-    assert writes == [json.dumps(rows[0]), "\n", json.dumps(rows[1]), "\n"]
+    assert writes == [json.dumps(rows[0]) + "\n", json.dumps(rows[1]) + "\n"]
 
 
 def test_write_samples_csv_streams_rows_without_building_one_giant_payload(monkeypatch) -> None:
@@ -100,10 +100,11 @@ def test_write_samples_csv_streams_rows_without_building_one_giant_payload(monke
 
     expected_payload = EvaluationStore._samples_csv((sample,))
     assert "".join(writes) == expected_payload
+    assert len(writes) == 2
     assert writes[0].startswith("id,task_kind,target,extracted_result")
-    assert writes[1] == "\n"
-    assert writes[2].startswith("sample-1,text-generation,Answer,result,Question?,response,1.0,0.01")
-    assert writes[3] == "\n"
+    assert writes[0].endswith("\n")
+    assert writes[1].startswith("sample-1,text-generation,Answer,result,Question?,response,1.0,0.01")
+    assert writes[1].endswith("\n")
 
 
 def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Path) -> None:
