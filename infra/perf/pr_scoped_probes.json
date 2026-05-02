@@ -153,6 +153,43 @@
     ]
   },
   {
+    "id": "phase8-metrics-closure-audit-reuse",
+    "name": "Phase8 metrics closure-audit reuse",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "scripts/phase8_metrics_report.py",
+      "services/mlx-worker-python/tests/test_phase8_runtime_probes.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "infra/perf/pr_scoped_probes.json",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_phase8_runtime_probes.py::test_phase8_metrics_report_main_emits_split_bootstrap_metrics services/mlx-worker-python/tests/test_phase8_runtime_probes.py::test_phase8_metrics_report_main_reuses_embedded_closure_audit services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_phase8_metrics_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_phase8_runtime_probes.py::test_phase8_metrics_report_main_emits_split_bootstrap_metrics services/mlx-worker-python/tests/test_phase8_runtime_probes.py::test_phase8_metrics_report_main_reuses_embedded_closure_audit services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_phase8_metrics_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json scripts/phase8_metrics_report.py services/mlx-worker-python/tests/test_phase8_runtime_probes.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python:$PWD/scripts\" uv run --project services/mlx-worker-python python3 - <<'PY'\nimport contextlib\nimport io\nimport json\nimport statistics\nimport sys\nimport time\nfrom pathlib import Path\n\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))\nsys.path.insert(0, str(repo_root / 'scripts'))\n\nimport phase8_metrics_report\n\nembedded_closure_audit = {\n    'metrics': {\n        'closure_audit.blocker_count': 0.0,\n        'closure_audit.accepted_risk_count': 1.0,\n        'closure_audit.evidence_gap_count': 0.0,\n        'closure_audit.deferred_work_count': 1.0,\n    },\n    'summary': {\n        'top_unresolved_findings': ['Synthetic embedded closure-audit evidence'],\n    },\n}\n\nelapsed_samples = []\nclosure_audit_call_samples = []\nsample_count = 5\n\nfor _ in range(sample_count):\n    calls = {'closure_audit': 0}\n\n    phase8_metrics_report.measure_cold_boot_to_ready = lambda repo_root: {'cold_boot_to_ready_ms': 801.2}\n    phase8_metrics_report.collect_restart_recovery_evidence = lambda repo_root: {'restart_recovery_ms': 710.7, 'restart_recovery_success_rate': 100.0}\n    phase8_metrics_report.collect_runtime_core_evidence = lambda repo_root: {'multi_model_ready_count': 3, 'multi_model_request_success_rate': 100.0}\n    phase8_metrics_report.load_release_gate_policy = lambda path: {}\n    phase8_metrics_report.collect_operator_action_evidence = lambda jobs_root: {'operator_action_latency_ms': 0.5, 'registry_job_count': 2, 'registry_adapter_count': 1}\n    phase8_metrics_report.build_release_gate_report = lambda repo_root, policy, recovery, runtime_core: {\n        'install': {'checks': {'manifest_exists': True, 'environment_script_exists': True, 'all_plists_exist': True}},\n        'benchmarks': {'report_exists': True, 'metrics': {}},\n        'training': {'training_duration_ms': 1420.0, 'adapter_publish_ms': 118.0},\n        'recovery': recovery,\n        'runtime_core': runtime_core,\n        'm9': {\n            'summary': {\n                'required_probe_count': 23.0,\n                'missing_probe_count': 0.0,\n                'failed_threshold_count': 0.0,\n            },\n            'closure_audit': phase8_metrics_report.build_closure_audit(repo_root).to_dict(),\n        },\n        'passed': True,\n        'failures': [],\n    }\n\n    class FakeClosureAudit:\n        def to_dict(self):\n            return embedded_closure_audit\n\n    def tracked_build_closure_audit(repo_root):\n        calls['closure_audit'] += 1\n        return FakeClosureAudit()\n\n    phase8_metrics_report.build_closure_audit = tracked_build_closure_audit\n\n    started = time.perf_counter()\n    original_argv = sys.argv\n    try:\n        sys.argv = ['phase8_metrics_report.py', '--repo-root', str(repo_root), '--json']\n        with contextlib.redirect_stdout(io.StringIO()) as buffer:\n            exit_code = phase8_metrics_report.main()\n        payload = json.loads(buffer.getvalue())\n    finally:\n        sys.argv = original_argv\n\n    elapsed_samples.append((time.perf_counter() - started) * 1000.0)\n    closure_audit_call_samples.append(float(calls['closure_audit']))\n    if exit_code != 0:\n        raise SystemExit(f'expected zero exit code, got {exit_code}')\n    if payload['closure_audit'] != embedded_closure_audit:\n        raise SystemExit('phase8 metrics report did not reuse embedded closure audit payload')\n\nprint(json.dumps({\n    'elapsed_ms_mean': round(statistics.fmean(elapsed_samples), 6),\n    'closure_audit_calls_mean': round(statistics.fmean(closure_audit_call_samples), 6),\n    'sample_count': float(sample_count),\n}, sort_keys=True))\nPY",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "closure_audit_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "sample_count",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "evaluation-job-id-high-water-mark",
     "name": "Evaluation job-id high-water mark",
     "runner": "ubuntu-latest",
