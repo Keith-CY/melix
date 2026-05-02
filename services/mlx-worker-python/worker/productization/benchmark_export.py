@@ -456,11 +456,11 @@ def _try_load_json_object(path: Path) -> dict[str, object] | None:
         return None
 
 
-def _try_iter_jsonl_dict_rows(path: Path) -> tuple[dict[str, object], ...]:
+def _try_iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
     try:
-        return tuple(_iter_jsonl_dict_rows(path))
+        yield from _iter_jsonl_dict_rows(path)
     except OSError:
-        return ()
+        return
 
 
 def _collect_benchmark_run(
@@ -812,43 +812,74 @@ def _collect_evaluation_run(
     compare_summary_rows: list[dict[str, object]],
     compare_samples: list[dict[str, object]],
 ) -> None:
-    job_path = run_root / "evaluation-job.json"
-    if job_path.is_file():
-        jobs.append(_load_json_object(job_path))
+    job_path: Path | None = None
+    result_path: Path | None = None
+    summary_path: Path | None = None
+    samples_path: Path | None = None
+    compare_job_path: Path | None = None
+    compare_summary_path: Path | None = None
+    compare_samples_path: Path | None = None
 
-    result_path = run_root / "evaluation-result.json"
-    if result_path.is_file():
+    try:
+        with os.scandir(run_root) as entries:
+            for entry in entries:
+                name = entry.name
+                try:
+                    if not entry.is_file():
+                        continue
+                except OSError:
+                    continue
+                path = run_root / name
+                if name == "evaluation-job.json":
+                    job_path = path
+                elif name == "evaluation-result.json":
+                    result_path = path
+                elif name == "evaluation-summary.json":
+                    summary_path = path
+                elif name == "evaluation-samples.jsonl":
+                    samples_path = path
+                elif name == "evaluation-compare-job.json":
+                    compare_job_path = path
+                elif name == "evaluation-compare-summary.json":
+                    compare_summary_path = path
+                elif name == "evaluation-compare-samples.jsonl":
+                    compare_samples_path = path
+    except OSError:
+        return
+
+    job: dict[str, object] | None = None
+    if job_path is not None:
+        job = _load_json_object(job_path)
+        jobs.append(job)
+
+    result: dict[str, object] | None = None
+    if result_path is not None:
         result = _load_json_object(result_path)
         results.append(result)
 
-    summary_path = run_root / "evaluation-summary.json"
-    if summary_path.is_file():
+    if summary_path is not None:
         summaries.append(_load_json_object(summary_path))
-    elif job_path.is_file() and result_path.is_file():
-        summaries.append(_build_evaluation_summary_row(jobs[-1], results[-1]))
+    elif job is not None and result is not None:
+        summaries.append(_build_evaluation_summary_row(job, result))
 
-    samples_path = run_root / "evaluation-samples.jsonl"
-    if samples_path.is_file():
+    if samples_path is not None:
         samples.extend(_iter_jsonl_dict_rows(samples_path))
 
-    compare_job_path = run_root / "evaluation-compare-job.json"
-    if not compare_job_path.is_file():
+    if compare_job_path is None:
         return
 
     compare_job = _load_json_object(compare_job_path)
     compare_jobs.append(compare_job)
     jobs.append(_normalize_evaluation_compare_job(compare_job))
 
-    compare_summary_path = run_root / "evaluation-compare-summary.json"
-    if compare_summary_path.is_file():
+    if compare_summary_path is not None:
         compare_summary_payload = _load_json_object(compare_summary_path)
         for summary in _compare_target_summaries(compare_summary_payload):
             results.append(_normalize_evaluation_compare_result(summary))
             summaries.append(_normalize_evaluation_compare_summary_row(compare_job, summary))
             compare_summary_rows.append(summary)
 
-    compare_samples_path = run_root / "evaluation-compare-samples.jsonl"
-    if compare_samples_path.is_file():
+    if compare_samples_path is not None:
         for sample in _iter_jsonl_dict_rows(compare_samples_path):
             compare_samples.append(sample)
             samples.append(
