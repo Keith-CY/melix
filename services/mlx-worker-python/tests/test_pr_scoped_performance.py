@@ -432,9 +432,41 @@ def test_registered_probes_expose_focused_commands() -> None:
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
+        assert probe.probe_command
         assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
-        if probe.probe_impl == "command_json":
-            assert probe.probe_command
+
+
+def test_load_probe_registry_uses_absolute_cache_key_without_resolving(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registry_path = tmp_path / "probe-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "demo",
+                    "name": "Demo",
+                    "probe_impl": "command_json",
+                    "probe_command": "python3 -c \"import json; print(json.dumps({'elapsed_ms_mean': 1.0}))\"",
+                    "metrics": [{"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_resolve(self: Path, *args: object, **kwargs: object) -> Path:  # pragma: no cover
+        raise AssertionError("load_probe_registry should avoid Path.resolve on the cache hot path")
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+
+    first = load_probe_registry(registry_path)
+    second = load_probe_registry(registry_path)
+    scope = build_scope_report(registry_path=registry_path, changed_files=["worker.py"])
+
+    assert second is first
+    assert scope["selected_count"] == 0
 
 
 def test_scope_report_with_no_matching_probe_returns_empty_selection() -> None:
