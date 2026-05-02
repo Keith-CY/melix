@@ -535,6 +535,36 @@
     ]
   },
   {
+    "id": "pr-scoped-performance-registry-cache",
+    "name": "PR-scoped performance registry cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "infra/perf/pr_scoped_probes.json",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_registry_cache_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_load_probe_registry_reuses_cached_payload_when_file_is_unchanged services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_load_probe_registry_refreshes_cache_when_file_changes services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_registry_cache_probe",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_registry_cache_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_load_probe_registry_reuses_cached_payload_when_file_is_unchanged services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_load_probe_registry_refreshes_cache_when_file_changes services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_registry_cache_probe && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/pr_scoped_performance.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "",
+    "probe_impl": "pr_scoped_performance_registry_cache",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "load_probe_registry_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "build_scope_report_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "pr-scoped-performance-scope-matcher",
     "name": "PR-scoped performance scope matcher",
     "runner": "ubuntu-latest",
