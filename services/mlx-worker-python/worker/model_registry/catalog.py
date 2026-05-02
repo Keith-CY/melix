@@ -241,6 +241,16 @@ def _metadata_text_has_mlx_signal(metadata_text: str) -> bool:
 
 
 def _metadata_payload_has_mlx_signal(metadata_payload: Mapping[str, object]) -> bool:
+    library_name = metadata_payload.get("library_name")
+    if isinstance(library_name, str) and library_name.strip().lower() == "mlx":
+        return True
+
+    tags = metadata_payload.get("tags")
+    if isinstance(tags, (list, tuple)):
+        for tag in tags:
+            if isinstance(tag, str) and tag.strip().lower() == "mlx":
+                return True
+
     try:
         metadata_text = json.dumps(metadata_payload, sort_keys=True).lower()
     except (TypeError, ValueError):

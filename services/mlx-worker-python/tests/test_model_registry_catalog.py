@@ -293,6 +293,28 @@ def test_has_mlx_signal_stops_after_first_matching_metadata_file(
 
 
 
+def test_metadata_payload_has_mlx_signal_fast_paths_without_json_roundtrip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    original_json_dumps = json.dumps
+
+    def tracked_json_dumps(*args: object, **kwargs: object) -> str:
+        calls.append(args[0] if args else None)
+        return original_json_dumps(*args, **kwargs)
+
+    monkeypatch.setattr(json, "dumps", tracked_json_dumps)
+
+    assert _metadata_payload_has_mlx_signal({"library_name": " MLX "}) is True
+    assert _metadata_payload_has_mlx_signal({"tags": ["text", "mlx"]}) is True
+    assert _metadata_payload_has_mlx_signal({"tags": ("mlx",)}) is True
+    assert calls == []
+
+    assert _metadata_payload_has_mlx_signal({"license": "apache-2.0"}) is False
+    assert calls == [{"license": "apache-2.0"}]
+
+
+
 def test_metadata_payload_has_mlx_signal_returns_false_for_unserializable_payload() -> None:
     assert _metadata_payload_has_mlx_signal({"tags": {"mlx"}}) is False
 
