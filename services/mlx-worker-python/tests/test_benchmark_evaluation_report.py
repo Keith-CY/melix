@@ -10,7 +10,9 @@ from worker.productization.benchmark_evaluation_report import (
     _METRIC_DIRECTION_BY_KEY,
     _aggregate_probe_values,
     _benchmark_probe_label,
+    _build_metric_row,
     _collect_benchmark_probe_metrics,
+    _collect_evaluation_sample_probe_metrics,
     _dict_rows,
     _finalize_numeric_aggregate,
     _label_part,
@@ -326,6 +328,79 @@ def test_collect_benchmark_probe_metrics_groups_aggregates_by_label_and_preserve
         f"bench.{label}.decode_ms_mean": 22.0,
         f"bench.{label}.speculative_fallback_count_sum": 4.0,
     }
+
+
+def test_metric_row_fast_paths_exact_numeric_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    parsed_values: list[object] = []
+    original = benchmark_evaluation_report._float_or_none
+
+    def tracked_float_or_none(value: object) -> float | None:
+        parsed_values.append(value)
+        return original(value)
+
+    monkeypatch.setattr(benchmark_evaluation_report, "_float_or_none", tracked_float_or_none)
+
+    numeric_row = _build_metric_row(metric_name="bench.smoke.prefill_ms", baseline=10.0, candidate=12)
+    bool_row = _build_metric_row(metric_name="bench.smoke.cache_hit", baseline=True, candidate=False)
+    metadata_row = _build_metric_row(metric_name="bench.smoke.runtime_kind", baseline="mlx", candidate="mlx")
+
+    assert parsed_values == ["mlx", "mlx"]
+    assert numeric_row["delta"] == 2.0
+    assert numeric_row["direction"] == "lower_is_better"
+    assert bool_row["baseline"] == 1.0
+    assert bool_row["candidate"] == 0.0
+    assert metadata_row["status"] == "ok"
+
+
+def test_probe_collectors_fast_path_exact_numeric_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    parsed_values: list[object] = []
+    original = benchmark_evaluation_report._float_or_none
+
+    def tracked_float_or_none(value: object) -> float | None:
+        parsed_values.append(value)
+        return original(value)
+
+    monkeypatch.setattr(benchmark_evaluation_report, "_float_or_none", tracked_float_or_none)
+
+    benchmark_metrics: dict[str, object] = {}
+    _collect_benchmark_probe_metrics(
+        benchmark_metrics,
+        [
+            {
+                "suite_id": "smoke",
+                "context_length": 1024,
+                "generation_length": 128,
+                "batch_size": 1,
+                "concurrency_level": 1,
+                "prefill_ms": 10.0,
+                "decode_ms": 20,
+                "cache_hit": True,
+                "warmup_ms": "2.5",
+            }
+        ],
+        prefix="bench",
+    )
+    evaluation_metrics: dict[str, object] = {}
+    _collect_evaluation_sample_probe_metrics(
+        evaluation_metrics,
+        [
+            {
+                "suite_id": "smoke",
+                "sample_render_ms": 3.0,
+                "inference_ms": 4,
+                "validation_ms": False,
+                "scoring_ms": "5.5",
+            }
+        ],
+    )
+
+    assert parsed_values == ["2.5", "5.5"]
+    assert benchmark_metrics["bench.smoke.ctx1024.gen128.b1.c1.prefill_ms_mean"] == 10.0
+    assert benchmark_metrics["bench.smoke.ctx1024.gen128.b1.c1.decode_ms_mean"] == 20.0
+    assert benchmark_metrics["bench.smoke.ctx1024.gen128.b1.c1.cache_hit_rate"] == 1.0
+    assert evaluation_metrics["eval.sample.smoke.sample_render_ms_mean"] == 3.0
+    assert evaluation_metrics["eval.sample.smoke.inference_ms_mean"] == 4.0
+    assert evaluation_metrics["eval.sample.smoke.validation_ms_mean"] == 0.0
 
 
 def test_collect_benchmark_probe_metrics_reuses_matrix_labels(monkeypatch: pytest.MonkeyPatch) -> None:

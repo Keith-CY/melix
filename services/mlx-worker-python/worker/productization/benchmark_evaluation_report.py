@@ -358,8 +358,20 @@ def _build_metric_row(
             "direction": direction,
             "status": "missing",
         }
-    baseline_number = _float_or_none(baseline)
-    candidate_number = _float_or_none(candidate)
+    baseline_type = type(baseline)
+    if baseline_type is float:
+        baseline_number = baseline
+    elif baseline_type is int or baseline_type is bool:
+        baseline_number = float(baseline)
+    else:
+        baseline_number = _float_or_none(baseline)
+    candidate_type = type(candidate)
+    if candidate_type is float:
+        candidate_number = candidate
+    elif candidate_type is int or candidate_type is bool:
+        candidate_number = float(candidate)
+    else:
+        candidate_number = _float_or_none(candidate)
     if baseline_number is None or candidate_number is None:
         return {
             "metric": metric_name,
@@ -449,7 +461,10 @@ def _collect_benchmark_probe_metrics(
         for key, raw_value in row.items():
             if key not in _REQUEST_PROBE_KEY_SET:
                 continue
-            if isinstance(raw_value, (int, float)):
+            raw_value_type = type(raw_value)
+            if raw_value_type is float:
+                value = raw_value
+            elif raw_value_type is int or raw_value_type is bool:
                 value = float(raw_value)
             else:
                 value = _float_or_none(raw_value)
@@ -483,7 +498,10 @@ def _collect_evaluation_sample_probe_metrics(
         for key, raw_value in row.items():
             if key not in _EVALUATION_SAMPLE_PROBE_KEY_SET:
                 continue
-            if isinstance(raw_value, (int, float)):
+            raw_value_type = type(raw_value)
+            if raw_value_type is float:
+                value = raw_value
+            elif raw_value_type is int or raw_value_type is bool:
                 value = float(raw_value)
             else:
                 value = _float_or_none(raw_value)
