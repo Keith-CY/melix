@@ -34,6 +34,7 @@ from worker.productization.pr_scoped_performance import (
     _parse_coverage_percent,
     _probe_benchmark_evaluation_report,
     _probe_benchmark_export_run_scan,
+    _probe_benchmark_queue_cache,
     _probe_closure_audit,
     _probe_deterministic_rerank_query_context_reuse,
     _probe_evaluation_job_id,
@@ -171,6 +172,16 @@ def test_scope_report_selects_benchmark_store_probe() -> None:
 
     assert scope["selected_count"] == 1
     assert scope["selected_probes"][0]["id"] == "benchmark-store-matrix-streaming"
+
+
+def test_scope_report_selects_benchmark_queue_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/benchmark_queue.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "benchmark-queue-decoded-record-cache"
 
 
 def test_scope_report_selects_bench_report_probe() -> None:
@@ -332,6 +343,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "benchmark-evaluation-report-running-aggregates",
         "benchmark-export-run-scan-single-pass",
+        "benchmark-queue-decoded-record-cache",
         "benchmark-store-matrix-streaming",
         "closure-audit-probe-source-short-circuit",
         "deterministic-rerank-query-context-reuse",
@@ -471,6 +483,7 @@ def test_probe_training_dataset_token_percentiles_reports_quality_and_tracing_me
 def test_probe_smokes_return_metrics_against_current_repo() -> None:
     benchmark_metrics = _probe_benchmark_evaluation_report(REPO_ROOT)
     benchmark_export_metrics = _probe_benchmark_export_run_scan(REPO_ROOT)
+    benchmark_queue_metrics = _probe_benchmark_queue_cache(REPO_ROOT)
     closure_metrics = _probe_closure_audit(REPO_ROOT)
     rerank_metrics = _probe_deterministic_rerank_query_context_reuse(REPO_ROOT)
     evaluation_job_id_metrics = _probe_evaluation_job_id(REPO_ROOT)
@@ -487,6 +500,10 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert benchmark_export_metrics["per_run_ms_mean"] > 0
     assert benchmark_export_metrics["run_directory_count"] == 240.0
     assert benchmark_export_metrics["result_file_count"] == 720.0
+    assert benchmark_queue_metrics["cold_json_loads"] == 128.0
+    assert benchmark_queue_metrics["record_count"] == 128.0
+    assert benchmark_queue_metrics["warm_json_loads_mean"] == 0.0
+    assert benchmark_queue_metrics["warm_elapsed_ms_mean"] >= 0
     assert closure_metrics["elapsed_ms_mean"] > 0
     assert closure_metrics["probe_file_reads_mean"] > 0
     assert closure_metrics["finding_count"] > 0
@@ -634,6 +651,49 @@ def test_probe_benchmark_export_run_scan_rejects_unexpected_result_count(monkeyp
 
     with pytest.raises(ValueError, match="unexpected benchmark result count"):
         _probe_benchmark_export_run_scan(REPO_ROOT)
+
+
+def test_dispatch_probe_impl_supports_benchmark_queue_probe() -> None:
+    probe = ProbeDefinition(
+        probe_id="benchmark-queue-decoded-record-cache",
+        name="Benchmark queue decoded-record cache",
+        runner="ubuntu-latest",
+        watch_globs=("services/mlx-worker-python/worker/productization/benchmark_queue.py",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="benchmark_queue_cache",
+        probe_command='python3 -c "{}"',
+        metrics=(MetricDefinition(key="warm_elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["cold_json_loads"] == 128.0
+    assert metrics["record_count"] == 128.0
+    assert metrics["warm_json_loads_mean"] == 0.0
+    assert metrics["warm_elapsed_ms_mean"] >= 0
+
+
+def test_probe_benchmark_queue_cache_rejects_unexpected_record_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeBenchmarkQueueModule:
+        json = json
+
+        class BenchmarkQueueStore:
+            def list_records(self, *, queue_root: Path) -> list[object]:
+                del queue_root
+                return []
+
+        class BenchmarkQueueRecord:
+            def __init__(self, **kwargs: object) -> None:
+                self._payload = kwargs
+
+            def to_dict(self) -> dict[str, object]:
+                return dict(self._payload)
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_load_repo_module", lambda path, unique_name: FakeBenchmarkQueueModule)
+
+    with pytest.raises(ValueError, match="unexpected benchmark queue record count"):
+        _probe_benchmark_queue_cache(REPO_ROOT)
 
 
 def test_worker_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
