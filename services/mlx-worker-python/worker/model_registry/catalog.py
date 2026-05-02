@@ -118,7 +118,7 @@ def _load_json_dict_file(
                 return cached_payload
 
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_bytes())
     except (OSError, json.JSONDecodeError):
         payload = {}
 
