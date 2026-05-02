@@ -55,6 +55,57 @@ def test_write_jsonl_streams_rows_without_building_one_giant_payload(monkeypatch
     assert writes == [json.dumps(rows[0]), "\n", json.dumps(rows[1]), "\n"]
 
 
+def test_write_samples_csv_streams_rows_without_building_one_giant_payload(monkeypatch) -> None:
+    writes: list[str] = []
+
+    class FakeFile:
+        def write(self, chunk: str) -> int:
+            writes.append(chunk)
+            return len(chunk)
+
+        def __enter__(self) -> FakeFile:
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+    target_path = Path("/tmp/evaluation-samples.csv")
+
+    def fake_open(self: Path, mode: str = "r", encoding: str | None = None) -> FakeFile:
+        assert self == target_path
+        assert mode == "w"
+        assert encoding == "utf-8"
+        return FakeFile()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+    sample = build_evaluation_sample_record(
+        job_id="eval-local",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="sample-1",
+        system="",
+        input_text="Question?",
+        target="Answer",
+        raw_response="response",
+        extracted_result="result",
+        typed_score=1.0,
+        time_s=0.01,
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
+        task_kind="text-generation",
+    )
+
+    EvaluationStore._write_samples_csv(target_path, (sample,))
+
+    expected_payload = EvaluationStore._samples_csv((sample,))
+    assert "".join(writes) == expected_payload
+    assert writes[0].startswith("id,task_kind,target,extracted_result")
+    assert writes[1] == "\n"
+    assert writes[2].startswith("sample-1,text-generation,Answer,result,Question?,response,1.0,0.01")
+    assert writes[3] == "\n"
+
+
 def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Path) -> None:
     store = EvaluationStore()
     jobs_root = tmp_path / "evaluation"
@@ -155,6 +206,81 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         "sample_render_ms,inference_ms,extraction_ms,validation_ms,scoring_ms,raw_response_chars,extracted_result_chars,failure_stage"
         in export_samples_header
     )
+
+
+def test_persist_result_streams_samples_csv_without_calling_samples_csv_builder(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = EvaluationStore()
+    jobs_root = tmp_path / "evaluation"
+    run_root = jobs_root / "runs" / "eval-local"
+    job = build_evaluation_job_record(
+        job_id="eval-local",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=1,
+        scoring_mode="deterministic_accuracy",
+        few_shot=4,
+        seed=7,
+        code_exec_policy="sandboxed",
+        parameters={"dataset_root": str(tmp_path / "datasets" / "mmlu-dev")},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=101,
+        updated_at_unix_ms=202,
+    )
+    result = build_evaluation_result_record(
+        job_id="eval-local",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=1,
+        primary_score_name="normalized_exact_match",
+        primary_score_value=1.0,
+        extraction_success_count=1,
+        validation_success_count=1,
+        scored_sample_count=1,
+        failure_count=0,
+        duration_seconds=0.25,
+        metrics={"eval.mmlu.accuracy": 1.0},
+        report_path=str(run_root / "evaluation-result.json"),
+        units={"eval.mmlu.accuracy": "ratio"},
+    )
+    sample = build_evaluation_sample_record(
+        job_id="eval-local",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="sample-1",
+        system="",
+        input_text="2+2?",
+        target="4",
+        raw_response="4",
+        extracted_result="4",
+        typed_score=1.0,
+        time_s=0.01,
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
+        task_kind="text-generation",
+    )
+    expected_csv = EvaluationStore._samples_csv((sample,))
+
+    def fail_samples_csv(_: tuple[object, ...]) -> str:
+        raise AssertionError("persist_result should stream samples CSV instead of calling _samples_csv")
+
+    monkeypatch.setattr(EvaluationStore, "_samples_csv", staticmethod(fail_samples_csv))
+
+    persisted = store.persist_result(
+        jobs_root=jobs_root,
+        job=job,
+        result=result,
+        samples=(sample,),
+    )
+
+    assert persisted["samples_csv"].read_text(encoding="utf-8") == expected_csv
 
 
 def test_samples_csv_quotes_fields_with_commas_newlines_and_quotes() -> None:

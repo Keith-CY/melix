@@ -34,6 +34,7 @@ from worker.productization.pr_scoped_performance import (
     _probe_deterministic_rerank_query_context_reuse,
     _probe_evaluation_job_id,
     _probe_evaluation_sample_probe_aggregation,
+    _probe_evaluation_store_samples_csv_streaming,
     _probe_training_dataset_token_percentiles,
     _probe_command_json,
     _run_command,
@@ -100,6 +101,16 @@ def test_scope_report_selects_evaluation_probes() -> None:
         "evaluation-job-id-high-water-mark",
         "evaluation-sample-probe-aggregation",
     }
+
+
+def test_scope_report_selects_evaluation_store_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/evaluation_store.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "evaluation-store-samples-csv-streaming"
 
 
 def test_scope_report_selects_worker_registry_probe() -> None:
@@ -190,6 +201,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "evaluation-job-id-high-water-mark",
         "evaluation-sample-probe-aggregation",
+        "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
@@ -322,6 +334,7 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     rerank_metrics = _probe_deterministic_rerank_query_context_reuse(REPO_ROOT)
     evaluation_job_id_metrics = _probe_evaluation_job_id(REPO_ROOT)
     evaluation_sample_probe_metrics = _probe_evaluation_sample_probe_aggregation(REPO_ROOT)
+    evaluation_store_metrics = _probe_evaluation_store_samples_csv_streaming(REPO_ROOT)
     training_dataset_metrics = _probe_training_dataset_token_percentiles(REPO_ROOT)
 
     assert benchmark_metrics["elapsed_ms_mean"] > 0
@@ -348,6 +361,10 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert evaluation_sample_probe_metrics["per_call_ms_mean"] > 0
     assert evaluation_sample_probe_metrics["sample_count"] == 20000.0
     assert evaluation_sample_probe_metrics["metric_count"] == 7.0
+    assert evaluation_store_metrics["elapsed_ms_mean"] > 0
+    assert evaluation_store_metrics["peak_bytes_mean"] > 0
+    assert evaluation_store_metrics["sample_count"] == 10000.0
+    assert evaluation_store_metrics["csv_line_count"] == 10001.0
     assert training_dataset_metrics["elapsed_ms_mean"] > 0
     assert training_dataset_metrics["peak_bytes_mean"] > 0
     assert training_dataset_metrics["sample_count"] == 20000.0
@@ -537,6 +554,27 @@ def test_dispatch_probe_impl_supports_evaluation_job_id_probe() -> None:
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["per_call_ms_mean"] > 0
     assert metrics["allocation_count"] == 200.0
+
+
+def test_dispatch_probe_impl_supports_evaluation_store_probe() -> None:
+    probe = ProbeDefinition(
+        probe_id="evaluation-store-samples-csv-streaming",
+        name="Evaluation store samples CSV streaming",
+        runner="ubuntu-latest",
+        watch_globs=("services/mlx-worker-python/worker/productization/evaluation_store.py",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="evaluation_store_samples_csv_streaming",
+        probe_command='python3 -c "{}"',
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["sample_count"] == 10000.0
+    assert metrics["csv_line_count"] == 10001.0
 
 
 def test_dispatch_probe_impl_supports_evaluation_sample_probe_aggregation_probe() -> None:
