@@ -31,6 +31,11 @@ This slice keeps the existing registry and probe shape intact. The affected path
 - Cache the derived watch-glob index and the scope-report registry load by path, mtime, and size for repeated scope computations in the same process.
 - Keep the public `load_probe_registry(...)` parser uncached so direct validation callers still observe file contents immediately.
 
+## Slice update: force-all wildcard matcher reuse
+- Cache the compiled force-all wildcard matcher table once per process instead of re-deriving the literal prefix and regex lookup on every changed path.
+- Keep exact-path force-all matching first so common exact infra/script paths still return without invoking wildcard matching.
+- Keep selection semantics unchanged; this only changes matcher setup reuse in the scope-report hot path.
+
 ## Performance probe
 - Probe target: `build_scope_report(...)` on a synthetic large changed-file set and current probe registry.
 - Primary metrics:
