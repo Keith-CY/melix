@@ -25,6 +25,7 @@ from worker.productization.pr_scoped_performance import (
     _float_or_none,
     _format_delta,
     _format_value,
+    _glob_literal_prefix,
     _is_relative_to,
     _load_upload_receipt_pipeline_module,
     _load_repo_module,
@@ -1222,10 +1223,36 @@ def test_data_generation_and_formatting_helpers_cover_misc_branches(tmp_path: Pa
     assert _float_or_none(True) == 1.0
     assert _float_or_none(False) == 0.0
     assert _float_or_none("x") is None
+    assert _glob_literal_prefix("services/*.py") == "services/"
+    assert _glob_literal_prefix("docs/plans/file.md") == "docs/plans/file.md"
+    assert _glob_literal_prefix("tests/test_[ab].py") == "tests/test_"
     assert _matches_any_glob("services/a.py", ("services/*.py",)) is True
     assert _matches_any_glob("docs/a.md", ("services/*.py",)) is False
     assert _is_relative_to(nested_path, tmp_path) is True
     assert _is_relative_to(Path("/tmp/not-child"), tmp_path) is False
+
+
+def test_glob_matching_skips_regex_when_literal_prefix_misses(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_compile(glob: str):  # pragma: no cover - sentinel
+        raise AssertionError(f"regex should not be compiled for prefix miss: {glob}")
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_compiled_glob_pattern", fail_compile)
+
+    assert pr_scoped_performance_module._glob_matches_path(
+        "docs/plans/scope.md",
+        "services/mlx-worker-python/*.py",
+    ) is False
+
+
+def test_glob_matching_preserves_wildcard_semantics() -> None:
+    assert pr_scoped_performance_module._glob_matches_path(
+        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        "services/mlx-worker-python/worker/productization/*.py",
+    ) is True
+    assert pr_scoped_performance_module._glob_matches_path(
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    ) is True
 
 
 def test_report_results_loader_uses_scandir_and_binary_json_reads(

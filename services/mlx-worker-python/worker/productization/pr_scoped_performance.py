@@ -1828,7 +1828,22 @@ def _compiled_glob_pattern(glob: str) -> re.Pattern[str]:
     return re.compile(fnmatch.translate(glob))
 
 
+@lru_cache(maxsize=None)
+def _glob_literal_prefix(glob: str) -> str:
+    special_indexes = [
+        index
+        for token in ("*", "?", "[")
+        if (index := glob.find(token)) != -1
+    ]
+    if not special_indexes:
+        return glob
+    return glob[: min(special_indexes)]
+
+
 def _glob_matches_path(path: str, glob: str) -> bool:
+    prefix = _glob_literal_prefix(glob)
+    if prefix and not path.startswith(prefix):
+        return False
     return _compiled_glob_pattern(glob).match(path) is not None
 
 

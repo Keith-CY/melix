@@ -15,13 +15,16 @@ This cron run executes on Linux and cannot validate the macOS/Swift app directly
 - `infra/perf/pr_scoped_probes.json`
 
 ## Proposed implementation
-1. Introduce a small internal fast path for scope selection that avoids repeating equivalent glob translation/matching work across every path × glob comparison.
+1. Introduce a small internal literal-prefix fast path for glob matching so paths that cannot match a probe glob avoid regex lookup/matching entirely.
 2. Preserve existing scope-selection semantics exactly, including:
    - force-all behavior
    - watch glob matching behavior
    - selected probe IDs and ordering
 3. Add focused regression tests for the optimized matcher path and the dedicated probe selection.
-4. Register/update a dedicated PR-scoped performance probe for the harness so CI measures the optimized scope-selection path directly.
+4. Use the registered `pr-scoped-performance-scope-matcher` probe so CI measures the optimized scope-selection path directly.
+
+## Slice update: literal-prefix miss short-circuit
+This slice keeps the existing registry and probe shape intact. The affected path already has the registered `pr-scoped-performance-scope-matcher` probe with focused `test_command`, `coverage_command`, and `probe_command` entries. The code change is limited to `_glob_matches_path(...)`: derive and cache the literal prefix before the first glob metacharacter (`*`, `?`, or `[`) and return `False` without touching the compiled regex cache when the changed path does not start with that prefix. Globs without metacharacters still use the full literal path as their prefix, preserving exact-match semantics through the existing regex matcher.
 
 ## Implemented slice
 - Split force-all and watch-glob matching into exact-path and wildcard paths so exact changed files avoid regex glob checks.
