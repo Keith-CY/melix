@@ -27,23 +27,22 @@ def main() -> int:
     elapsed_samples: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-pr-perf-package-resolve-") as temp_dir:
         synthetic_repo = Path(temp_dir) / "repo"
-        direct_candidate = synthetic_repo / "apps/macos-menubar/.build/debug/melix-menubar"
-        direct_candidate.parent.mkdir(parents=True, exist_ok=True)
-        direct_candidate.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
         build_root = synthetic_repo / "apps/macos-menubar/.build"
+        expected = build_root / "arch-0000" / "debug" / "melix-menubar"
         for index in range(triple_count):
-            other_product_dir = build_root / f"arch-{index:04d}" / "debug"
-            other_product_dir.mkdir(parents=True, exist_ok=True)
-            (other_product_dir / "other-product").write_text("x", encoding="utf-8")
+            product_dir = build_root / f"arch-{index:04d}" / "debug"
+            product_dir.mkdir(parents=True, exist_ok=True)
+            product_name = "melix-menubar" if index == 0 else "other-product"
+            (product_dir / product_name).write_text("x", encoding="utf-8")
 
-        resolved = direct_candidate
+        resolved = expected
         for _ in range(sample_count):
             started = time.perf_counter()
             resolved = module.resolve_built_binary(synthetic_repo)
             elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
-    if resolved != direct_candidate:
-        raise AssertionError(f"expected {direct_candidate}, got {resolved}")
+    if resolved != expected:
+        raise AssertionError(f"expected {expected}, got {resolved}")
     print(
         json.dumps(
             {

@@ -101,6 +101,7 @@ def test_resolve_built_products_use_direct_debug_candidate_before_glob(
 
 
 def test_resolve_built_product_falls_back_to_sorted_triple_debug_candidates(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = load_package_macos_app_module()
@@ -111,8 +112,17 @@ def test_resolve_built_product_falls_back_to_sorted_triple_debug_candidates(
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
+    monkeypatch.setattr(
+        Path,
+        "glob",
+        lambda self, pattern: (_ for _ in ()).throw(
+            AssertionError("fallback build-product resolution should use os.scandir instead of Path.glob")
+        ),
+    )
+
     assert module._resolve_built_product(build_root, "melix-menubar") == expected
     assert module._resolve_built_product(build_root, "missing-product") is None
+    assert module._resolve_built_product(tmp_path / "missing-build-root", "melix-menubar") is None
 
 
 def test_package_workflow_uses_runtime_only_python_environment_for_bundle() -> None:
