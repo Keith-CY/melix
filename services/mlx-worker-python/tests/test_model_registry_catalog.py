@@ -323,6 +323,41 @@ def test_has_mlx_signal_stops_after_first_matching_metadata_file(
 
 
 
+def test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload(tmp_path: Path) -> None:
+    model_dir = tmp_path / "plain-transformers-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"library_name": "mlx"\n', encoding="utf-8")
+
+    assert _has_mlx_signal(model_dir=model_dir, repo_id="google/bert-base", config_payload={}) is True
+
+
+
+def test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal(tmp_path: Path) -> None:
+    model_dir = tmp_path / "plain-transformers-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"library_name": "mlx"\n', encoding="utf-8")
+
+    assert _has_mlx_signal(
+        model_dir=model_dir,
+        repo_id="google/bert-base",
+        config_payload={"model_type": "bert"},
+    ) is False
+
+
+
+def test_has_mlx_signal_falls_back_to_config_text_for_unserializable_nonempty_payload(tmp_path: Path) -> None:
+    model_dir = tmp_path / "plain-transformers-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"library_name": "mlx"\n', encoding="utf-8")
+
+    assert _has_mlx_signal(
+        model_dir=model_dir,
+        repo_id="google/bert-base",
+        config_payload={"tags": {"mlx"}},
+    ) is True
+
+
+
 def test_metadata_payload_has_mlx_signal_returns_false_for_unserializable_payload() -> None:
     assert _metadata_payload_has_mlx_signal({"tags": {"mlx"}}) is False
 
@@ -870,7 +905,6 @@ def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
 ) -> None:
     root = tmp_path / "root"
     model_dir = root / "plain-model"
-    config_path = model_dir / "config.json"
     _write_model_config(
         model_dir,
         {
@@ -888,24 +922,116 @@ def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
         scandir_calls.append(path)
         return original_scandir(path)
 
-    original_read_bytes = Path.read_bytes
-    config_read_count = 0
+    original_load_model_config_payload = catalog_module._load_model_config_payload
+    config_load_count = 0
 
-    def tracking_read_bytes(self: Path) -> bytes:
-        nonlocal config_read_count
-        if self.resolve() == config_path.resolve():
-            config_read_count += 1
-        return original_read_bytes(self)
+    def tracking_load_model_config_payload(
+        model_dir_path: Path,
+        *,
+        json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    ) -> dict[str, object]:
+        nonlocal config_load_count
+        if model_dir_path.resolve() == model_dir.resolve():
+            config_load_count += 1
+        return original_load_model_config_payload(model_dir_path, json_cache=json_cache)
 
     monkeypatch.setattr(os, "scandir", tracking_scandir)
-    monkeypatch.setattr(Path, "read_bytes", tracking_read_bytes)
+    monkeypatch.setattr(catalog_module, "_load_model_config_payload", tracking_load_model_config_payload)
 
     catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
     snapshot = catalog.registry_snapshot()
 
     assert [model.model_id for model in snapshot.models] == ["plain-model"]
     assert scandir_calls.count(os.fspath(model_dir.resolve())) == 1
-    assert config_read_count == 1
+    assert config_load_count == 1
+
+
+
+def test_registry_snapshot_reuses_hf_cache_config_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    snapshot_dir = root / "models--mlx-community--Tiny" / "snapshots" / "abc123"
+    _write_model_config(
+        snapshot_dir,
+        {
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+            "library_name": "mlx",
+        },
+    )
+    _write_weights(snapshot_dir)
+    refs_dir = snapshot_dir.parent.parent / "refs"
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "main").write_text("abc123\n", encoding="utf-8")
+
+    original_load_model_config_payload = catalog_module._load_model_config_payload
+    config_load_count = 0
+
+    def tracking_load_model_config_payload(
+        model_dir_path: Path,
+        *,
+        json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    ) -> dict[str, object]:
+        nonlocal config_load_count
+        if model_dir_path.resolve() == snapshot_dir.resolve():
+            config_load_count += 1
+        return original_load_model_config_payload(model_dir_path, json_cache=json_cache)
+
+    monkeypatch.setattr(catalog_module, "_load_model_config_payload", tracking_load_model_config_payload)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
+    snapshot = catalog.registry_snapshot()
+
+    assert [model.model_id for model in snapshot.models] == ["mlx-community/Tiny"]
+    assert config_load_count == 1
+
+
+
+def test_raw_model_spec_loads_config_payload_when_not_supplied(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "plain-model"
+    _write_model_config(
+        model_dir,
+        {
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+            "library_name": "mlx",
+        },
+    )
+    _write_weights(model_dir)
+
+    original_load_model_config_payload = catalog_module._load_model_config_payload
+    config_load_count = 0
+
+    def tracking_load_model_config_payload(
+        model_dir_path: Path,
+        *,
+        json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    ) -> dict[str, object]:
+        nonlocal config_load_count
+        if model_dir_path.resolve() == model_dir.resolve():
+            config_load_count += 1
+        return original_load_model_config_payload(model_dir_path, json_cache=json_cache)
+
+    monkeypatch.setattr(catalog_module, "_load_model_config_payload", tracking_load_model_config_payload)
+
+    catalog = WorkerModelCatalog(environment={"HOME": str(tmp_path / "home")})
+    model = catalog._raw_model_spec(
+        model_id="plain-model",
+        model_dir=model_dir.resolve(),
+        revision="local",
+        source_kind="local_mlx_directory",
+        metadata={},
+    )
+
+    assert model.model_id == "plain-model"
+    assert model.model_kind == "text"
+    assert model.ext["melix.model_path"] == str(model_dir.resolve())
+    assert config_load_count == 1
 
 
 

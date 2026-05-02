@@ -440,11 +440,26 @@ def test_registered_probes_expose_focused_commands() -> None:
         "pr-scoped-performance-report-results-scandir",
         "model-ops-bundle-artifact-byte-accounting",
     }
+    registry_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
         assert probe.probe_command
         assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
+        if probe.probe_id == "model-registry-plain-local-manifest-stat-elision":
+            registry_probe = probe
+
+    assert registry_probe is not None
+    assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.test_command
+    assert "test_raw_model_spec_loads_config_payload_when_not_supplied" in registry_probe.test_command
+    assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.test_command
+    assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.test_command
+    assert "scripts/changed_scope_coverage.py" in registry_probe.watch_globs
+    assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.coverage_command
+    assert "test_raw_model_spec_loads_config_payload_when_not_supplied" in registry_probe.coverage_command
+    assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.coverage_command
+    assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.coverage_command
+    assert "scripts/changed_scope_coverage.py" in registry_probe.coverage_command
 
 
 def test_load_probe_registry_uses_absolute_cache_key_without_resolving(
@@ -1392,6 +1407,7 @@ def test_model_registry_catalog_probe_command_emits_metrics() -> None:
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["manifest_is_file_calls_mean"] == 0.0
+    assert metrics["config_load_calls_mean"] == 800.0
     assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 800.0
     assert metrics["sample_count"] == 3.0
 
