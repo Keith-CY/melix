@@ -85,11 +85,15 @@ class ProbeDefinition:
 _PROBE_REGISTRY_CACHE: dict[str, tuple[int, int, tuple[ProbeDefinition, ...]]] = {}
 
 
+def _probe_registry_cache_key(path: str | Path) -> str:
+    return os.path.abspath(os.fspath(path))
+
+
 def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
     path_obj = Path(path)
-    resolved_path = str(path_obj.resolve())
+    cache_key = _probe_registry_cache_key(path_obj)
     stat_result = path_obj.stat()
-    cached = _PROBE_REGISTRY_CACHE.get(resolved_path)
+    cached = _PROBE_REGISTRY_CACHE.get(cache_key)
     if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
         return cached[2]
 
@@ -128,15 +132,16 @@ def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
             )
         )
     probe_tuple = tuple(probes)
-    _PROBE_REGISTRY_CACHE[resolved_path] = (stat_result.st_mtime_ns, stat_result.st_size, probe_tuple)
+    _PROBE_REGISTRY_CACHE[cache_key] = (stat_result.st_mtime_ns, stat_result.st_size, probe_tuple)
     return probe_tuple
 
 
 def load_probe_registry_for_scope(path: str | Path) -> tuple[ProbeDefinition, ...]:
-    registry_path = Path(path).resolve()
+    registry_path = Path(path)
+    cache_key = _probe_registry_cache_key(registry_path)
     stat_result = registry_path.stat()
     return _load_probe_registry_for_scope_cached(
-        registry_path.as_posix(),
+        cache_key,
         stat_result.st_mtime_ns,
         stat_result.st_size,
     )
