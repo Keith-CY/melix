@@ -60,6 +60,37 @@
     ]
   },
   {
+    "id": "benchmark-queue-decoded-record-cache",
+    "name": "Benchmark queue decoded-record cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/benchmark_queue.py",
+      "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+      "services/mlx-worker-python/tests/test_benchmark_queue.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_benchmark_queue.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_benchmark_queue_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_benchmark_queue_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_benchmark_queue_cache_rejects_unexpected_record_count",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_benchmark_queue.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_benchmark_queue_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_benchmark_queue_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_benchmark_queue_cache_rejects_unexpected_record_count && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/benchmark_queue.py services/mlx-worker-python/worker/productization/pr_scoped_performance.py services/mlx-worker-python/tests/test_benchmark_queue.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 -c \"import json; from pathlib import Path; from worker.productization.pr_scoped_performance import _probe_benchmark_queue_cache as probe; print(json.dumps(probe(Path.cwd()), sort_keys=True))\"",
+    "probe_impl": "benchmark_queue_cache",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "warm_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "warm_json_loads_mean",
+        "unit": "loads",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "benchmark-store-matrix-streaming",
     "name": "Benchmark store matrix streaming",
     "runner": "ubuntu-latest",

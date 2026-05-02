@@ -379,6 +379,8 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_benchmark_evaluation_report(repo_root)
     if probe.probe_impl == "benchmark_export_run_scan":
         return _probe_benchmark_export_run_scan(repo_root)
+    if probe.probe_impl == "benchmark_queue_cache":
+        return _probe_benchmark_queue_cache(repo_root)
     if probe.probe_impl == "closure_audit":
         return _probe_closure_audit(repo_root)
     if probe.probe_impl == "deterministic_rerank_query_context_reuse":
@@ -533,6 +535,67 @@ def _probe_benchmark_export_run_scan(repo_root: Path) -> dict[str, float]:
         "result_file_count": result_file_count,
         "run_directory_count": float(run_directory_count),
         "sample_count": float(sample_count),
+    }
+
+
+def _probe_benchmark_queue_cache(repo_root: Path) -> dict[str, float]:
+    module = _load_repo_module(
+        repo_root / "services/mlx-worker-python/worker/productization/benchmark_queue.py",
+        unique_name="melix_probe_benchmark_queue",
+    )
+    record_count = 128
+    warm_sample_count = 5
+    with tempfile.TemporaryDirectory(prefix="melix-pr-perf-benchmark-queue-") as temp_dir:
+        queue_root = Path(temp_dir) / "queue"
+        queue_root.mkdir(parents=True, exist_ok=True)
+        for index in range(record_count):
+            record = module.BenchmarkQueueRecord(
+                queue_item_id=f"queue-{index:04d}",
+                job_kind="benchmark",
+                model_id="melix-dev-text",
+                suite_ids=("smoke", "latency"),
+                parameters={"sample_size": str(16 + (index % 4))},
+                status="queued",
+                created_at_unix_ms=1_000 + index,
+                updated_at_unix_ms=1_000 + index,
+            )
+            (queue_root / f"queue-{index:04d}.json").write_text(
+                json.dumps(record.to_dict(), indent=2) + "\n",
+                encoding="utf-8",
+            )
+        store = module.BenchmarkQueueStore()
+        tracked_loads = 0
+        original_loads = module.json.loads
+
+        def counting_loads(raw: str, *args: object, **kwargs: object) -> object:
+            nonlocal tracked_loads
+            tracked_loads += 1
+            return original_loads(raw, *args, **kwargs)
+
+        module.json.loads = counting_loads
+        try:
+            cold_records = store.list_records(queue_root=queue_root)
+            if len(cold_records) != record_count:
+                raise ValueError("benchmark queue probe produced an unexpected benchmark queue record count")
+            cold_json_loads = tracked_loads
+            warm_elapsed_samples: list[float] = []
+            warm_json_load_samples: list[float] = []
+            for _ in range(warm_sample_count):
+                before_loads = tracked_loads
+                started = time.perf_counter()
+                warm_records = store.list_records(queue_root=queue_root)
+                warm_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+                if len(warm_records) != record_count:
+                    raise ValueError("benchmark queue probe produced an unexpected benchmark queue record count")
+                warm_json_load_samples.append(float(tracked_loads - before_loads))
+        finally:
+            module.json.loads = original_loads
+    return {
+        "cold_json_loads": float(cold_json_loads),
+        "record_count": float(record_count),
+        "warm_elapsed_ms_mean": round(sum(warm_elapsed_samples) / len(warm_elapsed_samples), 6),
+        "warm_json_loads_mean": round(sum(warm_json_load_samples) / len(warm_json_load_samples), 6),
+        "warm_sample_count": float(warm_sample_count),
     }
 
 

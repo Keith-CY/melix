@@ -372,3 +372,124 @@ def test_queue_snapshot_returns_empty_for_empty_directory(tmp_path: Path) -> Non
     assert snapshot["total"] == 0
     assert snapshot["by_status"] == {}
     assert snapshot["records"] == []
+
+
+def test_list_records_reuses_cached_decoded_records_for_unchanged_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / "queue"
+    queue_root.mkdir()
+    payload = BenchmarkQueueRecord(
+        queue_item_id="queue-1",
+        job_kind="benchmark",
+        model_id="melix-dev-text",
+        suite_ids=("smoke",),
+        parameters={"sample_size": "32"},
+        status="queued",
+        created_at_unix_ms=100,
+        updated_at_unix_ms=100,
+    ).to_dict()
+    (queue_root / "queue-1.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    store = BenchmarkQueueStore()
+    loads = 0
+    original_loads = json.loads
+
+    def tracked_loads(raw: str, *args: object, **kwargs: object) -> object:
+        nonlocal loads
+        loads += 1
+        return original_loads(raw, *args, **kwargs)
+
+    monkeypatch.setattr("worker.productization.benchmark_queue.json.loads", tracked_loads)
+
+    first = store.list_records(queue_root=queue_root)
+    second = store.list_records(queue_root=queue_root)
+
+    assert [record.queue_item_id for record in first] == ["queue-1"]
+    assert [record.queue_item_id for record in second] == ["queue-1"]
+    assert loads == 1
+
+
+def test_list_records_reload_changed_files_and_transition_refreshes_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / "queue"
+    queue_root.mkdir()
+    path = queue_root / "queue-1.json"
+    initial_payload = BenchmarkQueueRecord(
+        queue_item_id="queue-1",
+        job_kind="benchmark",
+        model_id="melix-dev-text",
+        suite_ids=("smoke",),
+        parameters={"sample_size": "32"},
+        status="queued",
+        created_at_unix_ms=100,
+        updated_at_unix_ms=100,
+    ).to_dict()
+    path.write_text(json.dumps(initial_payload) + "\n", encoding="utf-8")
+    store = BenchmarkQueueStore()
+    loads = 0
+    original_loads = json.loads
+
+    def tracked_loads(raw: str, *args: object, **kwargs: object) -> object:
+        nonlocal loads
+        loads += 1
+        return original_loads(raw, *args, **kwargs)
+
+    monkeypatch.setattr("worker.productization.benchmark_queue.json.loads", tracked_loads)
+
+    first = store.list_records(queue_root=queue_root)
+    updated_payload = dict(initial_payload)
+    updated_payload["status"] = "running"
+    updated_payload["updated_at_unix_ms"] = 150
+    path.write_text(json.dumps(updated_payload, indent=2) + "\n", encoding="utf-8")
+    reloaded = store.list_records(queue_root=queue_root)
+    transitioned = store.transition(
+        queue_root=queue_root,
+        queue_item_id="queue-1",
+        status="completed",
+        updated_at_unix_ms=200,
+    )
+    cached_after_transition = store.list_records(queue_root=queue_root)
+
+    assert first[0].status == "queued"
+    assert reloaded[0].status == "running"
+    assert transitioned.status == "completed"
+    assert cached_after_transition[0].status == "completed"
+    assert loads == 2
+
+
+def test_list_records_and_transition_do_not_observe_mutated_returned_parameters(tmp_path: Path) -> None:
+    store = BenchmarkQueueStore()
+    queue_root = tmp_path / "queue"
+    enqueued = store.enqueue(
+        queue_root=queue_root,
+        record=BenchmarkQueueRecord(
+            queue_item_id="queue-1",
+            job_kind="benchmark",
+            model_id="melix-dev-text",
+            suite_ids=("smoke",),
+            parameters={"sample_size": "32"},
+            status="queued",
+            created_at_unix_ms=100,
+            updated_at_unix_ms=100,
+        ),
+    )
+
+    enqueued.parameters["sample_size"] = "999"
+    first_read = store.list_records(queue_root=queue_root)
+    first_read[0].parameters["batch_factor"] = "4"
+    second_read = store.list_records(queue_root=queue_root)
+    transitioned = store.transition(
+        queue_root=queue_root,
+        queue_item_id="queue-1",
+        status="running",
+        updated_at_unix_ms=150,
+    )
+    persisted = json.loads((queue_root / "queue-1.json").read_text(encoding="utf-8"))
+
+    assert first_read[0].parameters == {"sample_size": "32", "batch_factor": "4"}
+    assert second_read[0].parameters == {"sample_size": "32"}
+    assert transitioned.parameters == {"sample_size": "32"}
+    assert persisted["parameters"] == {"sample_size": "32"}
