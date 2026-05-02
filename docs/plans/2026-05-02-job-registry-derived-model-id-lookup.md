@@ -12,9 +12,9 @@ Reduce repeated derived-model target resolution cost in `ModelOpsJobRegistry` wh
 
 ## Implementation
 
-The existing active-derived-model row cache avoids rebuilding the active row list, but each repeated `resolve_derived_model_target(derived_model_id=...)` call still scans the cached rows. This slice adds a cache-derived `derived_model_id -> active row` lookup that is invalidated together with the row cache. Manifest-path-only lookups keep the existing row scan semantics.
+The existing active-derived-model row cache avoids rebuilding the active row list, and the first derived-model ID slice added a cache-derived `derived_model_id -> active row` lookup. This follow-up slice keeps the resolved activation manifest path inside the cached lookup row so repeated `resolve_derived_model_target(derived_model_id=...)` calls do not re-run `Path(...).expanduser().resolve()` while constructing the response payload. Manifest-path-only lookups keep the existing normalized manifest-path cache semantics.
 
-The probe now resolves an older active model ID (`melix-dev-derived-0001`) so the registered metric exercises the cached-ID path instead of mostly measuring the newest-row fast case.
+The probe resolves an older active model ID (`melix-dev-derived-0001`) so the registered metric exercises the cached-ID path instead of mostly measuring the newest-row fast case.
 
 ## Validation Plan
 

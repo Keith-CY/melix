@@ -45,11 +45,12 @@ class ModelOpsJob:
     error_message: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass
 class _ActiveDerivedModelLookup:
     job: ModelOpsJob
     manifest: dict[str, Any]
     activation_manifest_path: str
+    resolved_activation_manifest_path: str | None = None
 
 
 class ModelOpsJobRegistry:
@@ -365,6 +366,7 @@ class ModelOpsJobRegistry:
                         job=job,
                         manifest=manifest,
                         activation_manifest_path=activation_manifest_path,
+                        resolved_activation_manifest_path=resolved_activation_manifest_path,
                     )
             self._active_derived_model_by_manifest_path_cache = cached_by_manifest_path
         return cached_by_manifest_path
@@ -474,9 +476,12 @@ class ModelOpsJobRegistry:
             lookup = self._cached_active_derived_model_by_id().get(normalized_model_id)
             if lookup is None:
                 return None
-            resolved_activation_manifest_path = str(
-                Path(lookup.activation_manifest_path).expanduser().resolve()
-            )
+            resolved_activation_manifest_path = lookup.resolved_activation_manifest_path
+            if resolved_activation_manifest_path is None:
+                resolved_activation_manifest_path = str(
+                    Path(lookup.activation_manifest_path).expanduser().resolve()
+                )
+                lookup.resolved_activation_manifest_path = resolved_activation_manifest_path
             if normalized_manifest_path and resolved_activation_manifest_path != normalized_manifest_path:
                 return None
             return self._derived_model_target_payload(
