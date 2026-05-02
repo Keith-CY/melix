@@ -879,6 +879,65 @@ def test_build_quality_and_token_stats_uses_prompt_completion_fast_path(
     }
 
 
+def test_build_quality_and_token_stats_uses_prompt_completion_duplicate_key_fast_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_generic_digest(sample: dict[str, object]) -> bytes:
+        raise AssertionError(f"normalized prompt_completion samples should not hash JSON digests ({sample=})")
+
+    monkeypatch.setattr(training_dataset_module, "_canonical_sample_digest", fail_generic_digest)
+
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        [
+            {"prompt": "same text", "completion": "answer"},
+            {"prompt": "same text", "completion": "answer"},
+            {"prompt": "different", "completion": "answer"},
+        ],
+        "prompt_completion",
+    )
+
+    assert quality == {
+        "duplicate_count": 1,
+        "duplicate_sample_indices": [1],
+        "dirty_count": 0,
+        "dirty_samples": [],
+    }
+    assert token_stats["sample_count"] == 3
+
+
+def test_build_quality_and_token_stats_falls_back_to_generic_digest_for_non_normalized_prompt_completion_samples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    digested_samples: list[dict[str, object]] = []
+    original_digest = training_dataset_module._canonical_sample_digest
+
+    def tracking_digest(sample: dict[str, object]) -> bytes:
+        digested_samples.append(sample)
+        return original_digest(sample)
+
+    monkeypatch.setattr(training_dataset_module, "_canonical_sample_digest", tracking_digest)
+
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        [
+            {"prompt": "same text", "completion": "answer", "metadata": "a"},
+            {"prompt": "same text", "completion": "answer", "metadata": "b"},
+        ],
+        "prompt_completion",
+    )
+
+    assert digested_samples == [
+        {"prompt": "same text", "completion": "answer", "metadata": "a"},
+        {"prompt": "same text", "completion": "answer", "metadata": "b"},
+    ]
+    assert quality == {
+        "duplicate_count": 0,
+        "duplicate_sample_indices": [],
+        "dirty_count": 0,
+        "dirty_samples": [],
+    }
+    assert token_stats["sample_count"] == 2
+
+
 def test_resolve_dataset_build_source_reuses_existing_package_sample_lists(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
