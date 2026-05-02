@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import runpy
 import sys
@@ -161,6 +162,16 @@ def test_scope_report_selects_download_pipeline_probe() -> None:
     assert "download-pipeline-directory-size-single-stat" in probe_ids
 
 
+def test_scope_report_selects_performance_report_results_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/pr_scoped_performance_report.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "pr-scoped-performance-report-results-scandir" in probe_ids
+
+
 def test_scope_report_force_selects_all_on_infra_change() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -185,6 +196,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "upload-receipt-published-files-scandir",
         "download-pipeline-directory-size-single-stat",
         "worker-registry-resident-bytes-accumulator",
+        "pr-scoped-performance-report-results-scandir",
     }
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
@@ -814,6 +826,39 @@ def test_data_generation_and_formatting_helpers_cover_misc_branches(tmp_path: Pa
     assert _matches_any_glob("docs/a.md", ("services/*.py",)) is False
     assert _is_relative_to(nested_path, tmp_path) is True
     assert _is_relative_to(Path("/tmp/not-child"), tmp_path) is False
+
+
+def test_report_results_loader_uses_scandir_without_path_glob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "b.json").write_text(json.dumps({"probe": {"id": "b"}}), encoding="utf-8")
+    (results_dir / "a.json").write_text(json.dumps({"probe": {"id": "a"}}), encoding="utf-8")
+    (results_dir / "ignored.txt").write_text("ignored", encoding="utf-8")
+
+    def fail_glob(self: Path, pattern: str):
+        raise AssertionError("_load_results should use os.scandir instead of Path.glob")
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
+    loaded = report_script["_load_results"](results_dir)
+
+    assert [payload["probe"]["id"] for payload in loaded] == ["a", "b"]
+
+
+def test_performance_report_results_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report_results_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["file_count"] == 2000.0
+    assert metrics["result_count"] == 2000.0
+    assert metrics["sample_count"] == 5.0
+    assert metrics["elapsed_ms_mean"] > 0.0
 
 
 def test_cli_scripts_smoke(tmp_path: Path, benchmark_scope: dict[str, object], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

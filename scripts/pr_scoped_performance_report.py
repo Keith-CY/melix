@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -24,8 +25,14 @@ def _load_results(results_dir: Path) -> list[dict[str, object]]:
     if not results_dir.exists():
         return []
     results: list[dict[str, object]] = []
-    for path in sorted(results_dir.glob("*.json")):
-        payload = json.loads(path.read_text(encoding="utf-8"))
+    result_paths = sorted(
+        entry.path
+        for entry in os.scandir(results_dir)
+        if entry.name.endswith(".json")
+    )
+    for path in result_paths:
+        with open(path, encoding="utf-8") as result_file:
+            payload = json.load(result_file)
         if isinstance(payload, dict):
             results.append(payload)
     return results
