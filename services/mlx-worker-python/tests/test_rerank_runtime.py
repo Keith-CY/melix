@@ -403,6 +403,11 @@ def test_rerank_context_tuple_and_frozenset_collections_are_scored_directly() ->
 
     assert isinstance(query_context.query_tokens, tuple)
     assert isinstance(query_context.query_token_set, frozenset)
+    assert query_context.tie_breaker_prefix == b"swift runtime\0"
+    assert backend.tie_breaker_from_prefix(
+        query_context.tie_breaker_prefix,
+        "control swift runtime",
+    ) == backend.tie_breaker("swift runtime", "control swift runtime")
     assert family._ordered_pair_bonus(query_context.query_tokens, ("swift", "runtime")) > 0.0
     assert family._contains_contiguous_query(
         ("control", "swift", "runtime"),
