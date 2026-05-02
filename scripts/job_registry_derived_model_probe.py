@@ -68,7 +68,10 @@ def main() -> int:
     job_count = 1200
     sample_count = 6
     registry, active_count = _seed_registry(job_count)
-    target_model_id = "melix-dev-derived-1199"
+    target_model_id = "melix-dev-derived-0001"
+    warmup_target = registry.resolve_derived_model_target(derived_model_id=target_model_id)
+    if not warmup_target or warmup_target.get("derived_model_id") != target_model_id:
+        raise RuntimeError("derived-model warmup lookup returned the wrong target")
 
     active_elapsed_ms: list[float] = []
     resolve_elapsed_ms: list[float] = []
