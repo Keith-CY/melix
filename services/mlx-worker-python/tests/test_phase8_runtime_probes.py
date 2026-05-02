@@ -1509,6 +1509,94 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     assert metrics["release_gate.m9_failed_threshold_count"] == 0.0
 
 
+def test_phase8_metrics_report_main_reuses_embedded_closure_audit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    embedded_closure_audit = {
+        "metrics": {
+            "closure_audit.blocker_count": 0.0,
+            "closure_audit.accepted_risk_count": 2.0,
+            "closure_audit.evidence_gap_count": 1.0,
+            "closure_audit.deferred_work_count": 3.0,
+        },
+        "summary": {
+            "top_unresolved_findings": [
+                "Embedded closure-audit evidence should be reused."
+            ]
+        },
+    }
+
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "measure_cold_boot_to_ready",
+        lambda repo_root: {"cold_boot_to_ready_ms": 801.2},
+    )
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "collect_restart_recovery_evidence",
+        lambda repo_root: {"restart_recovery_ms": 710.7, "restart_recovery_success_rate": 100.0},
+    )
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "collect_runtime_core_evidence",
+        lambda repo_root: {"multi_model_ready_count": 3, "multi_model_request_success_rate": 100.0},
+    )
+    monkeypatch.setattr(phase8_metrics_report, "load_release_gate_policy", lambda path: {})
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "build_release_gate_report",
+        lambda repo_root, policy, recovery, runtime_core: {
+            "install": {"checks": {"manifest_exists": True, "environment_script_exists": True, "all_plists_exist": True}},
+            "benchmarks": {"report_exists": True, "metrics": {}},
+            "training": {"training_duration_ms": 1420.0, "adapter_publish_ms": 118.0},
+            "recovery": recovery,
+            "runtime_core": runtime_core,
+            "m9": {
+                "summary": {
+                    "required_probe_count": 23.0,
+                    "missing_probe_count": 0.0,
+                    "failed_threshold_count": 0.0,
+                },
+                "closure_audit": embedded_closure_audit,
+            },
+            "passed": True,
+            "failures": [],
+        },
+    )
+
+    def fail_build_closure_audit(repo_root: Path) -> object:
+        raise AssertionError("build_closure_audit should not be called when release gate embeds closure_audit")
+
+    monkeypatch.setattr(phase8_metrics_report, "build_closure_audit", fail_build_closure_audit)
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "collect_operator_action_evidence",
+        lambda jobs_root: {
+            "operator_action_latency_ms": 0.5,
+            "registry_job_count": 2,
+            "registry_adapter_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["phase8_metrics_report.py", "--repo-root", str(tmp_path), "--json"],
+    )
+
+    assert phase8_metrics_report.main() == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    metrics = payload["metrics"]
+    assert metrics["closure_audit.blocker_count"] == 0.0
+    assert metrics["closure_audit.accepted_risk_count"] == 2.0
+    assert metrics["closure_audit.evidence_gap_count"] == 1.0
+    assert metrics["closure_audit.deferred_work_count"] == 3.0
+    assert payload["closure_audit"] == embedded_closure_audit
+
+
+
 def test_phase8_metrics_report_main_returns_nonzero_when_release_gate_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

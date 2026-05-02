@@ -48,7 +48,9 @@ def main() -> int:
         recovery=recovery,
         runtime_core=runtime_core,
     )
-    closure_audit = build_closure_audit(repo_root).to_dict()
+    closure_audit = dict(release_gate_report.get("m9", {})).get("closure_audit")
+    if closure_audit is None:
+        closure_audit = build_closure_audit(repo_root).to_dict()
     operator = collect_operator_action_evidence(repo_root / ".runtime" / "phase8-metrics")
     report = build_phase8_metrics_report(
         cold_boot=cold_boot,

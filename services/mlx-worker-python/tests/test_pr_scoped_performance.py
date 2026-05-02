@@ -196,6 +196,16 @@ def test_scope_report_selects_model_ops_bundle_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "model-ops-bundle-artifact-byte-accounting"
 
 
+def test_scope_report_selects_phase8_metrics_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/phase8_metrics_report.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "phase8-metrics-closure-audit-reuse"
+
+
 def test_scope_report_selects_bench_report_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -399,6 +409,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "pr-scoped-performance-scope-matcher",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
+        "phase8-metrics-closure-audit-reuse",
         "swift-cli-json-envelope-encoding",
         "upload-receipt-published-files-scandir",
         "download-pipeline-directory-size-single-stat",
