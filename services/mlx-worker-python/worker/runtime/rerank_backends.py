@@ -203,9 +203,11 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
     def _contains_contiguous_query(document_tokens: Sequence[str], query_tokens: Sequence[str]) -> bool:
         if not query_tokens or len(query_tokens) > len(document_tokens):
             return False
-        last_start = len(document_tokens) - len(query_tokens)
+        first_query_token = query_tokens[0]
+        query_length = len(query_tokens)
+        last_start = len(document_tokens) - query_length
         for start in range(last_start + 1):
-            if document_tokens[start : start + len(query_tokens)] == query_tokens:
+            if document_tokens[start] == first_query_token and document_tokens[start : start + query_length] == query_tokens:
                 return True
         return False
 

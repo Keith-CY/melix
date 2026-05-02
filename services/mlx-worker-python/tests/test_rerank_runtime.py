@@ -364,6 +364,14 @@ def test_rerank_context_tuple_and_frozenset_collections_are_scored_directly() ->
         ("control", "swift", "runtime"),
         query_context.query_tokens,
     )
+    assert family._contains_contiguous_query(
+        ("control", "plane", "swift", "runtime"),
+        query_context.query_tokens,
+    )
+    assert not family._contains_contiguous_query(
+        ("control", "plane", "runtime"),
+        query_context.query_tokens,
+    )
     assert family.score(
         backend,
         "swift runtime",
