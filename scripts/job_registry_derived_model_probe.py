@@ -72,9 +72,14 @@ def main() -> int:
     warmup_target = registry.resolve_derived_model_target(derived_model_id=target_model_id)
     if not warmup_target or warmup_target.get("derived_model_id") != target_model_id:
         raise RuntimeError("derived-model warmup lookup returned the wrong target")
+    target_manifest_path = str(warmup_target.get("activation_manifest_path", ""))
+    warmup_manifest_path_target = registry.resolve_derived_model_target(manifest_path=target_manifest_path)
+    if not warmup_manifest_path_target or warmup_manifest_path_target.get("derived_model_id") != target_model_id:
+        raise RuntimeError("manifest-path warmup lookup returned the wrong target")  # pragma: no cover
 
     active_elapsed_ms: list[float] = []
     resolve_elapsed_ms: list[float] = []
+    manifest_path_elapsed_ms: list[float] = []
     for _ in range(sample_count):
         started = time.perf_counter()
         manifests = registry.active_derived_model_manifests()
@@ -88,11 +93,23 @@ def main() -> int:
         if not target or target.get("derived_model_id") != target_model_id:
             raise RuntimeError("derived-model lookup returned the wrong target")
 
+        started = time.perf_counter()
+        manifest_path_target = registry.resolve_derived_model_target(manifest_path=target_manifest_path)
+        manifest_path_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+        if not manifest_path_target or manifest_path_target.get("derived_model_id") != target_model_id:
+            raise RuntimeError("manifest-path lookup returned the wrong target")  # pragma: no cover
+
     payload = {
         "active_manifest_count": float(active_count),
         "active_manifest_elapsed_ms_mean": round(statistics.fmean(active_elapsed_ms), 6),
-        "elapsed_ms_mean": round(statistics.fmean(active_elapsed_ms) + statistics.fmean(resolve_elapsed_ms), 6),
+        "elapsed_ms_mean": round(
+            statistics.fmean(active_elapsed_ms)
+            + statistics.fmean(resolve_elapsed_ms)
+            + statistics.fmean(manifest_path_elapsed_ms),
+            6,
+        ),
         "job_count": float(job_count),
+        "manifest_path_elapsed_ms_mean": round(statistics.fmean(manifest_path_elapsed_ms), 6),
         "removed_count": float(job_count - active_count),
         "resolve_target_elapsed_ms_mean": round(statistics.fmean(resolve_elapsed_ms), 6),
         "sample_count": float(sample_count),
