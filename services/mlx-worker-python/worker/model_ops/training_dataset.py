@@ -1345,9 +1345,9 @@ def _build_quality_and_token_stats(
         completion_tokens_append(completion_count)
         total_tokens_append(prompt_count + completion_count)
 
-    finalized_prompt_summary = _summarize_token_values(prompt_tokens)
-    finalized_completion_summary = _summarize_token_values(completion_tokens)
-    finalized_total_summary = _summarize_token_values(total_tokens)
+    finalized_prompt_summary = _summarize_token_values(prompt_tokens, sort_in_place=True)
+    finalized_completion_summary = _summarize_token_values(completion_tokens, sort_in_place=True)
+    finalized_total_summary = _summarize_token_values(total_tokens, sort_in_place=True)
 
     return (
         {
@@ -1409,9 +1409,9 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
             completion_tokens_append(completion_count)
             total_tokens_append(prompt_count + completion_count)
 
-    prompt_summary = _summarize_token_values(prompt_tokens, total=prompt_token_sum)
-    completion_summary = _summarize_token_values(completion_tokens, total=completion_token_sum)
-    total_summary = _summarize_token_values(total_tokens, total=total_token_sum)
+    prompt_summary = _summarize_token_values(prompt_tokens, total=prompt_token_sum, sort_in_place=True)
+    completion_summary = _summarize_token_values(completion_tokens, total=completion_token_sum, sort_in_place=True)
+    total_summary = _summarize_token_values(total_tokens, total=total_token_sum, sort_in_place=True)
 
     return {
         "estimator": "whitespace_v1",
@@ -1586,8 +1586,11 @@ def _mean_value(values: list[int]) -> float:
     return round(sum(values) / len(values), 3)
 
 
-def _summarize_token_values(values: list[int], *, total: int | None = None) -> dict[str, float | int]:
-    ordered = sorted(values)
+def _summarize_token_values(
+    values: list[int], *, total: int | None = None, sort_in_place: bool = False
+) -> dict[str, float | int]:
+    ordered = values if sort_in_place else list(values)
+    ordered.sort()
     return {
         "mean": _mean_value_from_total(total if total is not None else sum(values), len(values)),
         "p50": _sorted_percentile_value(ordered, 0.50),
