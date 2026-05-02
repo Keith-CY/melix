@@ -261,10 +261,15 @@ def _has_mlx_signal(
         return True
 
     for metadata_filename in ("README.md", "config.json", "model_index.json"):
-        if metadata_filename == "config.json" and config_payload is not None:
-            if config_payload and _metadata_payload_has_mlx_signal(config_payload):
-                return True
-            continue
+        if metadata_filename == "config.json" and config_payload is not None and config_payload:
+            try:
+                config_payload_text = json.dumps(config_payload, sort_keys=True).lower()
+            except (TypeError, ValueError):
+                config_payload_text = ""
+            else:
+                if _metadata_text_has_mlx_signal(config_payload_text):
+                    return True
+                continue
         metadata_text = _read_text_prefix(
             model_dir / metadata_filename,
             text_prefix_cache=text_prefix_cache,
@@ -1189,6 +1194,7 @@ class WorkerModelCatalog:
                 revision="local",
                 source_kind="local_mlx_directory",
                 metadata={},
+                config_payload=config_payload,
             )
             self._apply_root_metadata(
                 model,
@@ -1248,6 +1254,7 @@ class WorkerModelCatalog:
                         "melix.hf_repo_id": repo_id,
                         "melix.hf_revision": revision,
                     },
+                    config_payload=config_payload,
                 )
 
     @staticmethod
@@ -1345,6 +1352,7 @@ class WorkerModelCatalog:
         revision: str,
         source_kind: str,
         metadata: dict[str, str],
+        config_payload: Mapping[str, object] | None = None,
     ) -> common_pb2.ModelSpec:
         json_cache = getattr(self, "_json_file_cache", None)
         if json_cache is None:
@@ -1356,7 +1364,8 @@ class WorkerModelCatalog:
             "melix.source_kind": source_kind,
             "melix.model_path": runtime_model_path,
         }
-        config_payload = _load_model_config_payload(model_dir, json_cache=json_cache)
+        if config_payload is None:
+            config_payload = _load_model_config_payload(model_dir, json_cache=json_cache)
         ext.update(dflash_draft_metadata(config_payload))
         model_kind = "vlm" if _is_gemma4_vlm_config(config_payload) else "text"
         if model_kind == "text":
