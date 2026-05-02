@@ -137,6 +137,17 @@ def test_scope_report_selects_worker_registry_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "worker-registry-resident-bytes-accumulator"
 
 
+def test_scope_report_selects_pr_scoped_scope_script_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/pr_scoped_performance_scope.py"],
+    )
+
+    selected_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["force_all"] is True
+    assert "pr-scoped-performance-scope-json-read-bytes" in selected_ids
+
+
 def test_scope_report_selects_job_registry_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -428,6 +439,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "job-registry-derived-model-single-pass",
         "model-registry-plain-local-manifest-stat-elision",
         "package-macos-resolve-fallback-scandir",
+        "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
@@ -1850,6 +1862,27 @@ def test_report_script_preserves_exact_sticky_comment_body_on_markdown_stdout(
     assert (report_dir / "report.md").read_text(encoding="utf-8") == expected_markdown
     assert (report_dir / "pr-comment.md").read_text(encoding="utf-8") == expected_sticky
 
+
+
+def test_scope_cli_loads_changed_files_with_binary_json_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    changed_files_path = tmp_path / "changed-files.json"
+    changed_files_path.write_text(json.dumps(["scripts/pr_scoped_performance_scope.py"]), encoding="utf-8")
+    scope_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_scope.py"))
+    load_changed_files = scope_script["load_changed_files"]
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        raise AssertionError("scope changed-files loader should use read_bytes()")  # pragma: no cover
+
+    monkeypatch.setattr(scope_script["Path"], "read_text", fail_read_text)
+
+    assert load_changed_files(changed_files_path) == ["scripts/pr_scoped_performance_scope.py"]
+
+    changed_files_path.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="changed files payload must be a JSON list"):
+        load_changed_files(changed_files_path)
 
 
 def test_cli_scripts_smoke(tmp_path: Path, benchmark_scope: dict[str, object], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

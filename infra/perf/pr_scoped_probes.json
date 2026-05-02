@@ -577,6 +577,36 @@
     ]
   },
   {
+    "id": "pr-scoped-performance-scope-json-read-bytes",
+    "name": "PR-scoped performance scope changed-files JSON read bytes",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "scripts/pr_scoped_performance_scope.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "infra/perf/pr_scoped_probes.json",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_pr_scoped_scope_script_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_cli_loads_changed_files_with_binary_json_read services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_cli_scripts_smoke services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_pr_scoped_scope_script_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_cli_loads_changed_files_with_binary_json_read services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_cli_scripts_smoke services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json scripts/pr_scoped_performance_scope.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 - <<'PY'\nimport importlib.util\nimport json\nimport statistics\nimport tempfile\nimport time\nfrom pathlib import Path\nrepo_root = Path.cwd()\nmodule_path = repo_root / \"scripts\" / \"pr_scoped_performance_scope.py\"\nspec = importlib.util.spec_from_file_location(\"melix_pr_scope_probe\", module_path)\nif spec is None or spec.loader is None:\n    raise RuntimeError(f\"Unable to load {module_path}\")\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nload_changed_files = getattr(module, \"load_changed_files\", None)\nif load_changed_files is None:\n    load_changed_files = lambda path: json.loads(Path(path).read_text(encoding=\"utf-8\"))\nchanged_count = 5000\nsample_count = 9\nelapsed_samples = []\nloaded_count = 0\nwith tempfile.TemporaryDirectory(prefix=\"melix-pr-perf-scope-json-\") as temp_dir:\n    changed_files_path = Path(temp_dir) / \"changed-files.json\"\n    changed_files = [f\"services/mlx-worker-python/worker/productization/synthetic_{index:05d}.py\" for index in range(changed_count)]\n    changed_files_path.write_bytes(json.dumps(changed_files).encode(\"utf-8\"))\n    for _ in range(sample_count):\n        started = time.perf_counter()\n        loaded = load_changed_files(changed_files_path)\n        elapsed_samples.append((time.perf_counter() - started) * 1000.0)\n        loaded_count = len(loaded)\nif loaded_count != changed_count:\n    raise AssertionError(f\"expected {changed_count}, got {loaded_count}\")\nprint(json.dumps({\"changed_file_count\": float(changed_count), \"elapsed_ms_mean\": round(statistics.fmean(elapsed_samples), 6), \"elapsed_ms_min\": round(min(elapsed_samples), 6), \"sample_count\": float(sample_count)}, sort_keys=True))\nPY",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "elapsed_ms_min",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "pr-scoped-performance-scope-matcher",
     "name": "PR-scoped performance scope matcher",
     "runner": "ubuntu-latest",
