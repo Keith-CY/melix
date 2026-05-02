@@ -58,6 +58,7 @@ class ModelOpsJobRegistry:
         self._next_id = 1
         self._jobs: dict[str, ModelOpsJob] = {}
         self._active_derived_model_rows_cache: tuple[tuple[ModelOpsJob, dict[str, Any], str], ...] | None = None
+        self._active_derived_model_manifests_cache: tuple[dict[str, Any], ...] | None = None
         self._active_derived_model_by_id_cache: dict[str, _ActiveDerivedModelLookup] | None = None
         self._active_derived_model_by_manifest_path_cache: dict[str, _ActiveDerivedModelLookup] | None = None
         self._jobs_root = Path(jobs_root).expanduser().resolve() if jobs_root is not None else None
@@ -323,6 +324,7 @@ class ModelOpsJobRegistry:
 
     def _invalidate_active_derived_model_rows_cache(self) -> None:
         self._active_derived_model_rows_cache = None
+        self._active_derived_model_manifests_cache = None
         self._active_derived_model_by_id_cache = None
         self._active_derived_model_by_manifest_path_cache = None
 
@@ -495,7 +497,13 @@ class ModelOpsJobRegistry:
         )
 
     def active_derived_model_manifests(self) -> tuple[dict[str, Any], ...]:
-        return tuple(manifest for _, manifest, _ in self._cached_active_derived_model_job_rows())
+        cached_manifests = self._active_derived_model_manifests_cache
+        if cached_manifests is None:
+            cached_manifests = tuple(
+                manifest for _, manifest, _ in self._cached_active_derived_model_job_rows()
+            )
+            self._active_derived_model_manifests_cache = cached_manifests
+        return cached_manifests
 
     def _max_numeric_job_id(self) -> int:
         max_job_id = 0

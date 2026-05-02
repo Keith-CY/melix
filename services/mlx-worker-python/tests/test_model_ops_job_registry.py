@@ -202,9 +202,12 @@ def test_active_derived_model_row_cache_reuses_rows_and_invalidates() -> None:
 
     first_rows = registry._cached_active_derived_model_job_rows()
     second_rows = registry._cached_active_derived_model_job_rows()
+    first_manifests = registry.active_derived_model_manifests()
+    second_manifests = registry.active_derived_model_manifests()
 
     assert first_rows is second_rows
-    assert registry.active_derived_model_manifests() == (
+    assert first_manifests is second_manifests
+    assert first_manifests == (
         {
             "derived_model_id": "melix-dev-active",
             "derived_model_path": "/runtime/activate/melix-dev-active",
