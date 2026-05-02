@@ -209,6 +209,16 @@ def test_scope_report_selects_performance_report_results_probe() -> None:
     assert "pr-scoped-performance-report-results-scandir" in probe_ids
 
 
+def test_scope_report_selects_package_macos_resolve_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/package_macos_menubar_app.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "package-macos-resolve-direct-debug-fastpath" in probe_ids
+
+
 def test_scope_report_force_selects_all_on_infra_change() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -231,6 +241,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
+        "package-macos-resolve-direct-debug-fastpath",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
         "swift-cli-json-envelope-encoding",
@@ -1061,6 +1072,17 @@ def test_performance_report_results_probe_script_emits_metrics(capsys: pytest.Ca
     assert metrics["result_count"] == 2000.0
     assert metrics["sample_count"] == 5.0
     assert metrics["elapsed_ms_mean"] > 0.0
+
+
+def test_package_macos_resolve_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/package_macos_resolve_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 9.0
+    assert metrics["triple_count"] == 1500.0
+    assert metrics["elapsed_ms_mean"] >= 0.0
 
 
 def test_cli_scripts_smoke(tmp_path: Path, benchmark_scope: dict[str, object], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

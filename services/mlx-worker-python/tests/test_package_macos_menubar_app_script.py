@@ -79,6 +79,42 @@ def test_main_forwards_packaging_target_and_update_channel(
     assert payload["packaging_target_id"] == "macos_app_bundle_preview"
 
 
+def test_resolve_built_products_use_direct_debug_candidate_before_glob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    repo_root = tmp_path / "repo"
+    menubar_binary = repo_root / "apps/macos-menubar/.build/debug/melix-menubar"
+    swift_worker_binary = repo_root / "services/mlx-text-worker-swift/.build/debug/melix-text-worker-swift"
+    for binary in (menubar_binary, swift_worker_binary):
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def fail_glob(self: Path, pattern: str):
+        raise AssertionError("direct debug candidate should avoid scanning build triples")
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert module.resolve_built_binary(repo_root) == menubar_binary
+    assert module.resolve_built_swift_text_worker_binary(repo_root) == swift_worker_binary
+
+
+def test_resolve_built_product_falls_back_to_sorted_triple_debug_candidates(
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    expected = build_root / "arm64-apple-macosx/debug/melix-menubar"
+    later = build_root / "x86_64-apple-macosx/debug/melix-menubar"
+    for binary in (later, expected):
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    assert module._resolve_built_product(build_root, "melix-menubar") == expected
+    assert module._resolve_built_product(build_root, "missing-product") is None
+
+
 def test_package_workflow_uses_runtime_only_python_environment_for_bundle() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 

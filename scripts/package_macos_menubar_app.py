@@ -22,27 +22,36 @@ from worker.productization.macos_app_bundle import (
 )
 
 
-def resolve_built_binary(repo_root: Path) -> Path:
-    build_root = repo_root / "apps/macos-menubar/.build"
-    candidates = sorted(build_root.glob("*/debug/melix-menubar"))
-    if build_root.joinpath("debug/melix-menubar").exists():
-        candidates.insert(0, build_root / "debug/melix-menubar")
-    for candidate in candidates:
+def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
+    direct_candidate = build_root / "debug" / product_name
+    if direct_candidate.is_file():
+        return direct_candidate
+
+    for candidate in sorted(build_root.glob(f"*/debug/{product_name}")):
         if candidate.is_file():
             return candidate
+    return None
+
+
+def resolve_built_binary(repo_root: Path) -> Path:
+    candidate = _resolve_built_product(
+        repo_root / "apps/macos-menubar/.build",
+        "melix-menubar",
+    )
+    if candidate is not None:
+        return candidate
     raise FileNotFoundError(
         "Unable to find built `melix-menubar`. Run `swift test --package-path apps/macos-menubar` first."
     )
 
 
 def resolve_built_swift_text_worker_binary(repo_root: Path) -> Path:
-    build_root = repo_root / "services/mlx-text-worker-swift/.build"
-    candidates = sorted(build_root.glob("*/debug/melix-text-worker-swift"))
-    if build_root.joinpath("debug/melix-text-worker-swift").exists():
-        candidates.insert(0, build_root / "debug/melix-text-worker-swift")
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
+    candidate = _resolve_built_product(
+        repo_root / "services/mlx-text-worker-swift/.build",
+        "melix-text-worker-swift",
+    )
+    if candidate is not None:
+        return candidate
     raise FileNotFoundError(
         "Unable to find built `melix-text-worker-swift`. Run `swift test --package-path services/mlx-text-worker-swift` first."
     )
