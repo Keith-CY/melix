@@ -42,7 +42,6 @@ _REQUEST_PROBE_KEYS = (
     "dflash_rollback_count",
     "dflash_target_hidden_layers",
 )
-_REQUEST_PROBE_KEY_SET = frozenset(_REQUEST_PROBE_KEYS)
 _COUNT_PROBE_KEYS = {
     "speculative_accepted_tokens",
     "speculative_rejected_tokens",
@@ -63,7 +62,6 @@ _EVALUATION_SAMPLE_PROBE_KEYS = (
     "raw_response_chars",
     "extracted_result_chars",
 )
-_EVALUATION_SAMPLE_PROBE_KEY_SET = frozenset(_EVALUATION_SAMPLE_PROBE_KEYS)
 _LOWER_IS_BETTER_METRIC_FRAGMENTS = (
     "latency",
     "ttft",
@@ -458,9 +456,10 @@ def _collect_benchmark_probe_metrics(
     matrix_label_cache: dict[tuple[object, object, object, object, object], str] = {}
     for row in _dict_rows(rows):
         label = ""
-        for key, raw_value in row.items():
-            if key not in _REQUEST_PROBE_KEY_SET:
+        for key in _REQUEST_PROBE_KEYS:
+            if key not in row:
                 continue
+            raw_value = row[key]
             raw_value_type = type(raw_value)
             if raw_value_type is float:
                 value = raw_value
@@ -495,9 +494,10 @@ def _collect_evaluation_sample_probe_metrics(
     failure_stage_counts: dict[tuple[str, str], int] = {}
     for row in _dict_rows(rows):
         suite_id = str(row.get("suite_id", "")).strip() or "suite"
-        for key, raw_value in row.items():
-            if key not in _EVALUATION_SAMPLE_PROBE_KEY_SET:
+        for key in _EVALUATION_SAMPLE_PROBE_KEYS:
+            if key not in row:
                 continue
+            raw_value = row[key]
             raw_value_type = type(raw_value)
             if raw_value_type is float:
                 value = raw_value
