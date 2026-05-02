@@ -91,10 +91,7 @@ class EvaluationStore:
         )
 
         summary_csv_path = run_root / "evaluation-compare-summary.csv"
-        summary_csv_path.write_text(
-            self._compare_summary_csv(job=job, summaries=summaries),
-            encoding="utf-8",
-        )
+        self._write_compare_summary_csv(summary_csv_path, job=job, summaries=summaries)
 
         samples_jsonl_path = run_root / "evaluation-compare-samples.jsonl"
         self._write_jsonl(samples_jsonl_path, (sample.to_dict() for sample in samples))
@@ -129,6 +126,21 @@ class EvaluationStore:
             write(",".join(EvaluationStore._samples_csv_header()) + "\n")
             for sample in samples:
                 write(sample_csv_row(sample) + "\n")
+
+    @staticmethod
+    def _write_compare_summary_csv(
+        path: Path,
+        *,
+        job: EvaluationCompareJob,
+        summaries: tuple[EvaluationCompareSummary, ...],
+    ) -> None:
+        lineage_by_target_id = {entry.target_model_id: entry for entry in job.target_lineage}
+        with path.open("w", encoding="utf-8") as handle:
+            write = handle.write
+            compare_summary_csv_row = EvaluationStore._compare_summary_csv_row
+            write(",".join(EvaluationStore._compare_summary_csv_header()) + "\n")
+            for summary in summaries:
+                write(compare_summary_csv_row(job=job, summary=summary, lineage_by_target_id=lineage_by_target_id) + "\n")
 
     @staticmethod
     def _summary_payload(*, job: EvaluationJob, result: EvaluationResult) -> dict[str, object]:
@@ -218,12 +230,26 @@ class EvaluationStore:
         job: EvaluationCompareJob,
         summaries: tuple[EvaluationCompareSummary, ...],
     ) -> str:
+        lineage_by_target_id = {entry.target_model_id: entry for entry in job.target_lineage}
+        rows = [",".join(EvaluationStore._compare_summary_csv_header())]
+        for summary in summaries:
+            rows.append(
+                EvaluationStore._compare_summary_csv_row(
+                    job=job,
+                    summary=summary,
+                    lineage_by_target_id=lineage_by_target_id,
+                )
+            )
+        return "\n".join(rows) + "\n"
+
+    @staticmethod
+    def _compare_summary_csv_header() -> list[str]:
         # Module 2 adds two trailing columns carrying adapter lineage. New
         # columns land at the end of the header row so downstream parsers
         # keyed on column order preserve their existing behavior for the
         # first 21 columns; the two new columns are empty for registered
         # (non-adapter) targets.
-        header = [
+        return [
             "job_id",
             "base_model_id",
             "target_model_id",
@@ -248,45 +274,46 @@ class EvaluationStore:
             "target_adapter_manifest_path",
             "target_adapter_set_hash",
         ]
-        # Index lineage entries by target_model_id for O(1) lookup during
-        # row emission. Targets without a lineage record (legacy jobs or
-        # registered models) get empty-string adapter columns.
-        lineage_by_target_id = {entry.target_model_id: entry for entry in job.target_lineage}
-        rows = [",".join(header)]
-        for summary in summaries:
-            bootstrap_interval = summary.statistical_evidence.get("bootstrap", {})
-            analytical_interval = summary.statistical_evidence.get("analytical", {})
-            lineage = lineage_by_target_id.get(summary.target_model_id)
-            rows.append(
-                ",".join(
-                    [
-                        EvaluationStore._csv_field(job.job_id),
-                        EvaluationStore._csv_field(job.base_model_id),
-                        EvaluationStore._csv_field(summary.target_model_id),
-                        EvaluationStore._csv_field(job.suite_id),
-                        EvaluationStore._csv_field(job.dataset_id),
-                        EvaluationStore._csv_field(str(job.sample_size)),
-                        EvaluationStore._csv_field(str(summary.win_count)),
-                        EvaluationStore._csv_field(str(summary.loss_count)),
-                        EvaluationStore._csv_field(str(summary.tie_count)),
-                        EvaluationStore._csv_field(str(summary.regression_count)),
-                        EvaluationStore._csv_field(str(summary.base_accuracy)),
-                        EvaluationStore._csv_field(str(summary.target_accuracy)),
-                        EvaluationStore._csv_field(str(summary.delta_accuracy)),
-                        EvaluationStore._csv_field(str(summary.effect_threshold)),
-                        EvaluationStore._csv_field(summary.verdict),
-                        EvaluationStore._csv_field(str(bootstrap_interval.get("lower_bound", ""))),
-                        EvaluationStore._csv_field(str(bootstrap_interval.get("upper_bound", ""))),
-                        EvaluationStore._csv_field(str(analytical_interval.get("lower_bound", ""))),
-                        EvaluationStore._csv_field(str(analytical_interval.get("upper_bound", ""))),
-                        EvaluationStore._csv_field(str(summary.duration_seconds)),
-                        EvaluationStore._csv_field(str(job.created_at_unix_ms)),
-                        EvaluationStore._csv_field(lineage.adapter_manifest_path if lineage else ""),
-                        EvaluationStore._csv_field(lineage.adapter_set_hash if lineage else ""),
-                    ]
-                )
-            )
-        return "\n".join(rows) + "\n"
+
+    @staticmethod
+    def _compare_summary_csv_row(
+        *,
+        job: EvaluationCompareJob,
+        summary: EvaluationCompareSummary,
+        lineage_by_target_id: dict[str, object] | None = None,
+    ) -> str:
+        bootstrap_interval = summary.statistical_evidence.get("bootstrap", {})
+        analytical_interval = summary.statistical_evidence.get("analytical", {})
+        if lineage_by_target_id is None:
+            lineage_by_target_id = {entry.target_model_id: entry for entry in job.target_lineage}
+        lineage = lineage_by_target_id.get(summary.target_model_id)
+        return ",".join(
+            [
+                EvaluationStore._csv_field(job.job_id),
+                EvaluationStore._csv_field(job.base_model_id),
+                EvaluationStore._csv_field(summary.target_model_id),
+                EvaluationStore._csv_field(job.suite_id),
+                EvaluationStore._csv_field(job.dataset_id),
+                EvaluationStore._csv_field(str(job.sample_size)),
+                EvaluationStore._csv_field(str(summary.win_count)),
+                EvaluationStore._csv_field(str(summary.loss_count)),
+                EvaluationStore._csv_field(str(summary.tie_count)),
+                EvaluationStore._csv_field(str(summary.regression_count)),
+                EvaluationStore._csv_field(str(summary.base_accuracy)),
+                EvaluationStore._csv_field(str(summary.target_accuracy)),
+                EvaluationStore._csv_field(str(summary.delta_accuracy)),
+                EvaluationStore._csv_field(str(summary.effect_threshold)),
+                EvaluationStore._csv_field(summary.verdict),
+                EvaluationStore._csv_field(str(bootstrap_interval.get("lower_bound", ""))),
+                EvaluationStore._csv_field(str(bootstrap_interval.get("upper_bound", ""))),
+                EvaluationStore._csv_field(str(analytical_interval.get("lower_bound", ""))),
+                EvaluationStore._csv_field(str(analytical_interval.get("upper_bound", ""))),
+                EvaluationStore._csv_field(str(summary.duration_seconds)),
+                EvaluationStore._csv_field(str(job.created_at_unix_ms)),
+                EvaluationStore._csv_field(lineage.adapter_manifest_path if lineage else ""),
+                EvaluationStore._csv_field(lineage.adapter_set_hash if lineage else ""),
+            ]
+        )
 
     @staticmethod
     def _samples_csv(samples: tuple[EvaluationSample, ...]) -> str:
