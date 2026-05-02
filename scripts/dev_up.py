@@ -294,8 +294,22 @@ def compatible_mlx_metal_versions_for_swift_mlx(repo_root: Path) -> tuple[str, .
 
 
 def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
+    fallback_version: str | None = None
     for ancestor in metallib_path.resolve().parents:
-        for metadata_path in ancestor.glob("mlx_metal-*.dist-info/METADATA"):
+        try:
+            with os.scandir(ancestor) as entries:
+                dist_info_names = sorted(
+                    entry.name
+                    for entry in entries
+                    if entry.name.startswith("mlx_metal-")
+                    and entry.name.endswith(".dist-info")
+                    and entry.is_dir(follow_symlinks=False)
+                )
+        except OSError:
+            continue
+
+        for dist_info_name in dist_info_names:
+            metadata_path = ancestor / dist_info_name / "METADATA"
             try:
                 metadata = metadata_path.read_text(encoding="utf-8")
             except OSError:
@@ -306,10 +320,13 @@ def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
                     if version:
                         return version
 
-        for dist_info_path in ancestor.glob("mlx_metal-*.dist-info"):
-            match = re.fullmatch(r"mlx_metal-(?P<version>.+)\.dist-info", dist_info_path.name)
+        for dist_info_name in dist_info_names:
+            match = re.fullmatch(r"mlx_metal-(?P<version>.+)\.dist-info", dist_info_name)
             if match:
-                return match.group("version")
+                fallback_version = match.group("version")
+                break
+        if fallback_version is not None:
+            return fallback_version
 
     return None
 

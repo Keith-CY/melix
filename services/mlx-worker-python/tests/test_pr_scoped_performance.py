@@ -223,6 +223,16 @@ def test_scope_report_selects_package_macos_resolve_probe() -> None:
     assert "package-macos-resolve-fallback-scandir" in probe_ids
 
 
+def test_scope_report_selects_dev_up_mlx_metal_dist_info_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/dev_up.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "dev-up-mlx-metal-dist-info-scandir" in probe_ids
+
+
 def test_scope_report_force_selects_all_on_infra_change() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -322,6 +332,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "benchmark-store-matrix-streaming",
         "closure-audit-probe-source-short-circuit",
         "deterministic-rerank-query-context-reuse",
+        "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
         "evaluation-sample-probe-aggregation",
         "evaluation-store-compare-summary-csv-streaming",
