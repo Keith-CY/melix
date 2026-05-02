@@ -25,6 +25,7 @@ from worker.productization.pr_scoped_performance import (
     _float_or_none,
     _format_delta,
     _format_value,
+    _glob_literal_prefix,
     _is_relative_to,
     _load_upload_receipt_pipeline_module,
     _load_repo_module,
@@ -279,9 +280,7 @@ def test_scope_report_large_changed_set_preserves_exact_selection_semantics() ->
     assert scope["selected_count"] == 4
 
 
-def test_match_probe_indexes_deduplicates_repeated_watch_globs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
     probes = (
         ProbeDefinition(
             probe_id="alpha",
@@ -317,22 +316,36 @@ def test_match_probe_indexes_deduplicates_repeated_watch_globs(
             metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
         ),
     )
-    calls: list[tuple[str, str]] = []
-
-    def fake_glob_matches_path(path: str, glob: str) -> bool:
-        calls.append((path, glob))
-        return path == "services/b.py" and glob == "services/*.py"
-
-    monkeypatch.setattr(pr_scoped_performance_module, "_glob_matches_path", fake_glob_matches_path)
-
     matched = _match_probe_indexes(changed_paths=("shared.py", "services/b.py", "unmatched.py"), probes=probes)
 
     assert matched == {0, 1, 2}
-    assert calls == [
-        ("shared.py", "services/*.py"),
-        ("services/b.py", "services/*.py"),
-        ("unmatched.py", "services/*.py"),
-    ]
+
+
+def test_match_probe_indexes_skips_prefix_misses_before_regex(monkeypatch: pytest.MonkeyPatch) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/*.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    match_calls: list[str] = []
+
+    class FailingPattern:
+        def match(self, path: str) -> None:  # pragma: no cover - sentinel
+            match_calls.append(path)
+            raise AssertionError("prefix misses should not invoke regex matching")
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_compiled_glob_pattern", lambda glob: FailingPattern())
+
+    assert _match_probe_indexes(changed_paths=("docs/a.md", "README.md"), probes=probes) == set()
+    assert match_calls == []
 
 
 def test_compiled_glob_pattern_reuses_cached_regex() -> None:
@@ -1222,10 +1235,36 @@ def test_data_generation_and_formatting_helpers_cover_misc_branches(tmp_path: Pa
     assert _float_or_none(True) == 1.0
     assert _float_or_none(False) == 0.0
     assert _float_or_none("x") is None
+    assert _glob_literal_prefix("services/*.py") == "services/"
+    assert _glob_literal_prefix("docs/plans/file.md") == "docs/plans/file.md"
+    assert _glob_literal_prefix("tests/test_[ab].py") == "tests/test_"
     assert _matches_any_glob("services/a.py", ("services/*.py",)) is True
     assert _matches_any_glob("docs/a.md", ("services/*.py",)) is False
     assert _is_relative_to(nested_path, tmp_path) is True
     assert _is_relative_to(Path("/tmp/not-child"), tmp_path) is False
+
+
+def test_glob_matching_skips_regex_when_literal_prefix_misses(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_compile(glob: str):  # pragma: no cover - sentinel
+        raise AssertionError(f"regex should not be compiled for prefix miss: {glob}")
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_compiled_glob_pattern", fail_compile)
+
+    assert pr_scoped_performance_module._glob_matches_path(
+        "docs/plans/scope.md",
+        "services/mlx-worker-python/*.py",
+    ) is False
+
+
+def test_glob_matching_preserves_wildcard_semantics() -> None:
+    assert pr_scoped_performance_module._glob_matches_path(
+        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        "services/mlx-worker-python/worker/productization/*.py",
+    ) is True
+    assert pr_scoped_performance_module._glob_matches_path(
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    ) is True
 
 
 def test_report_results_loader_uses_scandir_and_binary_json_reads(
