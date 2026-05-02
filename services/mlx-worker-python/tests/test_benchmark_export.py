@@ -1544,6 +1544,21 @@ def test_rows_to_csv_accepts_generators_without_materializing_lists() -> None:
     ]
 
 
+def test_rows_to_csv_uses_writerows_stream_without_dictwriter(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingDictWriter:
+        def __init__(self, *args: object, **kwargs: object) -> None:  # pragma: no cover - exercised only on regression
+            raise AssertionError("_rows_to_csv should avoid per-row DictWriter dictionaries")
+
+    monkeypatch.setattr(csv, "DictWriter", FailingDictWriter)
+
+    csv_text = _rows_to_csv(
+        iter(({"job_id": "bench-1", "suite": "a,b", "ignored": "x"},)),
+        ["job_id", "suite"],
+    )
+
+    assert csv_text == 'job_id,suite\r\nbench-1,"a,b"\r\n'
+
+
 def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:
     bundle: dict[str, object] = {
         "evaluation_compare_summary_rows": [
