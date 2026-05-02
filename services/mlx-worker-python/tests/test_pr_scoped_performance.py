@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import time
 import runpy
 import sys
 
@@ -266,6 +267,16 @@ def test_scope_report_selects_dev_up_mlx_metal_dist_info_probe() -> None:
     assert "dev-up-mlx-metal-dist-info-scandir" in probe_ids
 
 
+def test_scope_report_selects_registry_cache_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/pr_scoped_performance.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "pr-scoped-performance-registry-cache" in probe_ids
+
+
 def test_scope_report_force_selects_all_on_infra_change() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -410,6 +421,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
         "phase8-metrics-closure-audit-reuse",
+        "pr-scoped-performance-registry-cache",
         "swift-cli-json-envelope-encoding",
         "upload-receipt-published-files-scandir",
         "download-pipeline-directory-size-single-stat",
@@ -460,6 +472,100 @@ def test_load_probe_registry_rejects_invalid_payloads(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="non-empty list"):
         load_probe_registry(invalid_metrics)
+
+
+def test_load_probe_registry_reuses_cached_payload_when_file_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registry_path = tmp_path / "probe-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "demo",
+                    "name": "Demo",
+                    "probe_impl": "command_json",
+                    "probe_command": "python3 -c \"import json; print(json.dumps({'elapsed_ms_mean': 1.0}))\"",
+                    "metrics": [{"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    read_calls = 0
+    original_read_text = Path.read_text
+
+    def tracked_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        nonlocal read_calls
+        if self == registry_path:
+            read_calls += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracked_read_text)
+
+    first = load_probe_registry(registry_path)
+    second = load_probe_registry(registry_path)
+
+    assert read_calls == 1
+    assert second is first
+
+
+def test_load_probe_registry_refreshes_cache_when_file_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registry_path = tmp_path / "probe-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "demo-a",
+                    "name": "Demo A",
+                    "probe_impl": "command_json",
+                    "probe_command": "python3 -c \"import json; print(json.dumps({'elapsed_ms_mean': 1.0}))\"",
+                    "metrics": [{"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    read_calls = 0
+    original_read_text = Path.read_text
+
+    def tracked_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        nonlocal read_calls
+        if self == registry_path:
+            read_calls += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracked_read_text)
+
+    first = load_probe_registry(registry_path)
+    time.sleep(0.001)
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "demo-b",
+                    "name": "Demo B",
+                    "probe_impl": "command_json",
+                    "probe_command": "python3 -c \"import json; print(json.dumps({'elapsed_ms_mean': 2.0, 'build_scope_report_ms_mean': 3.0}))\"",
+                    "metrics": [
+                        {"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"},
+                        {"key": "build_scope_report_ms_mean", "unit": "ms", "direction": "lower_is_better"},
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    second = load_probe_registry(registry_path)
+
+    assert read_calls == 2
+    assert first[0].probe_id == "demo-a"
+    assert second[0].probe_id == "demo-b"
 
 
 def test_single_pass_sample_iterable_rejects_repeated_iteration() -> None:
@@ -1015,6 +1121,20 @@ def test_run_probe_job_executes_verification_and_probe_for_current_repo() -> Non
     assert result["head_verification"]["test"]["ok"] is True
     assert result["head_verification"]["coverage"]["coverage_pct"] >= 95.0
     assert result["base_probe"]["metrics"]["elapsed_ms_mean"] > 0
+
+
+def test_dispatch_probe_impl_supports_registry_cache_probe() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "pr-scoped-performance-registry-cache"
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["load_probe_registry_ms_mean"] > 0
+    assert metrics["build_scope_report_ms_mean"] > 0
+    assert metrics["sample_count"] == 6.0
 
 
 def test_run_head_verification_skips_standalone_test_when_coverage_replays_tests(
