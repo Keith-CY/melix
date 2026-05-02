@@ -1933,14 +1933,14 @@ def _compiled_glob_pattern(glob: str) -> re.Pattern[str]:
 
 @lru_cache(maxsize=None)
 def _glob_literal_prefix(glob: str) -> str:
-    special_indexes = [
-        index
-        for token in ("*", "?", "[")
-        if (index := glob.find(token)) != -1
-    ]
-    if not special_indexes:
+    first_special_index = len(glob)
+    for token in "*?[":
+        index = glob.find(token)
+        if index != -1 and index < first_special_index:
+            first_special_index = index
+    if first_special_index == len(glob):
         return glob
-    return glob[: min(special_indexes)]
+    return glob[:first_special_index]
 
 
 def _glob_matches_path(path: str, glob: str) -> bool:
@@ -1950,12 +1950,30 @@ def _glob_matches_path(path: str, glob: str) -> bool:
     return _compiled_glob_pattern(glob).match(path) is not None
 
 
+@lru_cache(maxsize=1)
+def _force_all_wildcard_matchers() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    return tuple(
+        (_glob_literal_prefix(glob), _compiled_glob_pattern(glob))
+        for glob in _FORCE_ALL_WILDCARD_GLOBS
+    )
+
+
 def _path_matches_force_all(path: str) -> bool:
-    return path in _FORCE_ALL_EXACT_PATHS or _matches_any_glob(path, _FORCE_ALL_WILDCARD_GLOBS)
+    return path in _FORCE_ALL_EXACT_PATHS or _matches_any_compiled_glob(
+        path,
+        _force_all_wildcard_matchers(),
+    )
 
 
 def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
     return any(_glob_matches_path(path, glob) for glob in globs)
+
+
+def _matches_any_compiled_glob(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
+    return any(
+        (not prefix or path.startswith(prefix)) and pattern.match(path) is not None
+        for prefix, pattern in matchers
+    )
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

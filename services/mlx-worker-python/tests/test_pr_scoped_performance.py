@@ -359,8 +359,26 @@ def test_match_probe_indexes_skips_prefix_misses_before_regex(monkeypatch: pytes
     assert match_calls == []
 
 
-def test_compiled_glob_pattern_reuses_cached_regex() -> None:
+def test_compiled_glob_pattern_reuses_cached_regex(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _compiled_glob_pattern("services/*.py") is _compiled_glob_pattern("services/*.py")
+
+    pr_scoped_performance_module._force_all_wildcard_matchers.cache_clear()
+    compile_calls: list[str] = []
+    original_compile = pr_scoped_performance_module._compiled_glob_pattern
+
+    def tracked_compile(glob: str):
+        compile_calls.append(glob)
+        return original_compile(glob)
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_compiled_glob_pattern", tracked_compile)
+
+    assert pr_scoped_performance_module._path_matches_force_all("scripts/pr_scoped_performance_run.py") is True
+    assert pr_scoped_performance_module._path_matches_force_all("docs/plans/scope.md") is False
+    assert compile_calls == ["scripts/pr_scoped_performance_*.py"]
+    assert pr_scoped_performance_module._path_matches_force_all("scripts/pr_scoped_performance_report.py") is True
+    assert compile_calls == ["scripts/pr_scoped_performance_*.py"]
+
+    pr_scoped_performance_module._force_all_wildcard_matchers.cache_clear()
 
 
 def test_registered_probes_expose_focused_commands() -> None:
