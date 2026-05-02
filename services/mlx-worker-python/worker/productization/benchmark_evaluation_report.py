@@ -431,7 +431,7 @@ def _collect_runtime_metadata(
     *,
     prefix: str,
 ) -> None:
-    values_by_key: dict[str, set[str]] = {key: set() for key in _RUNTIME_PARAMETER_KEYS}
+    values_by_key: dict[str, set[str]] = {}
     for job in _dict_rows(jobs):
         parameters = job.get("parameters", {})
         if not isinstance(parameters, dict):
@@ -439,8 +439,9 @@ def _collect_runtime_metadata(
         for key in _RUNTIME_PARAMETER_KEYS:
             value = str(parameters.get(key, "")).strip()
             if value:
-                values_by_key[key].add(value)
-    for key, values in values_by_key.items():
+                values_by_key.setdefault(key, set()).add(value)
+    for key in _RUNTIME_PARAMETER_KEYS:
+        values = values_by_key.get(key)
         if values:
             metrics[f"{prefix}.{key}"] = ",".join(sorted(values))
 
