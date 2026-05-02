@@ -367,6 +367,8 @@ def _run_probe_impl(*, probe: ProbeDefinition, repo_root: Path, repo_label: str)
 def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, float]:
     if probe.probe_impl == "benchmark_evaluation_report":
         return _probe_benchmark_evaluation_report(repo_root)
+    if probe.probe_impl == "benchmark_export_run_scan":
+        return _probe_benchmark_export_run_scan(repo_root)
     if probe.probe_impl == "closure_audit":
         return _probe_closure_audit(repo_root)
     if probe.probe_impl == "deterministic_rerank_query_context_reuse":
@@ -438,6 +440,83 @@ def _probe_benchmark_evaluation_report(repo_root: Path) -> dict[str, float]:
         "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 3),
         "peak_bytes_mean": round(sum(peak_samples) / len(peak_samples), 1),
         "row_count": row_count,
+    }
+
+
+def _probe_benchmark_export_run_scan(repo_root: Path) -> dict[str, float]:
+    module = _load_repo_module(
+        repo_root / "services/mlx-worker-python/worker/productization/benchmark_export.py",
+        unique_name="melix_probe_benchmark_export",
+    )
+    run_directory_count = 240
+    result_files_per_run = 3
+    sample_count = 5
+    elapsed_samples: list[float] = []
+    result_file_count = 0.0
+    with tempfile.TemporaryDirectory(prefix="melix-pr-perf-benchmark-export-") as temp_dir:
+        temp_root = Path(temp_dir)
+        bench_root = temp_root / "bench"
+        runs_root = bench_root / "runs"
+        for run_index in range(run_directory_count):
+            run_root = runs_root / f"bench-{run_index:04d}"
+            run_root.mkdir(parents=True, exist_ok=True)
+            summary_payload = {
+                "schema_version": "melix.serving_benchmark_job.v1",
+                "job_id": f"bench-{run_index:04d}",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "synthetic",
+                "suites": ["smoke"],
+                "context_lengths": [32],
+                "generation_length": 8,
+                "batch_sizes": [1],
+                "repeats": 1,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "request_p50_ms": 24.45,
+                "request_p95_ms": 24.45,
+                "parameters": {},
+                "status": "completed",
+                "output_dir": str(run_root),
+                "created_at_unix_ms": 101,
+                "updated_at_unix_ms": 202,
+            }
+            (run_root / "bench-summary.json").write_text(json.dumps(summary_payload) + "\n", encoding="utf-8")
+            (run_root / "bench-context-rows.jsonl").write_text(
+                json.dumps({"job_id": summary_payload["job_id"], "row_kind": "context"}) + "\n",
+                encoding="utf-8",
+            )
+            (run_root / "bench-batch-rows.jsonl").write_text(
+                json.dumps({"job_id": summary_payload["job_id"], "row_kind": "batch"}) + "\n",
+                encoding="utf-8",
+            )
+            for result_index, suite in enumerate(("gamma", "alpha", "omega")):
+                (run_root / f"bench-result-{suite}.json").write_text(
+                    json.dumps({
+                        "job_id": summary_payload["job_id"],
+                        "suite": suite,
+                        "metric_index": result_index,
+                    }) + "\n",
+                    encoding="utf-8",
+                )
+        result_file_count = float(run_directory_count * result_files_per_run)
+        for _ in range(sample_count):
+            gc.collect()
+            started = time.perf_counter()
+            artifacts = module.collect_benchmark_artifacts(temp_root)
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            if len(artifacts.get("benchmark_jobs", [])) != run_directory_count:
+                raise ValueError("benchmark export probe produced an unexpected benchmark job count")
+            if len(artifacts.get("benchmark_results", [])) != int(result_file_count):
+                raise ValueError("benchmark export probe produced an unexpected benchmark result count")
+    elapsed_ms_mean = sum(elapsed_samples) / len(elapsed_samples)
+    return {
+        "elapsed_ms_mean": round(elapsed_ms_mean, 6),
+        "per_run_ms_mean": round(elapsed_ms_mean / float(run_directory_count), 6),
+        "result_file_count": result_file_count,
+        "run_directory_count": float(run_directory_count),
+        "sample_count": float(sample_count),
     }
 
 
