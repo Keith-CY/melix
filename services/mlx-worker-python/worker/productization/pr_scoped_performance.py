@@ -2030,10 +2030,12 @@ def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
 
 
 def _matches_any_compiled_glob(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
-    return any(
-        (not prefix or path.startswith(prefix)) and pattern.match(path) is not None
-        for prefix, pattern in matchers
-    )
+    for prefix, pattern in matchers:
+        if prefix and not path.startswith(prefix):
+            continue
+        if pattern.match(path) is not None:
+            return True
+    return False
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
