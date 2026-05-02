@@ -948,8 +948,11 @@ def test_job_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[s
     payload = json.loads(capsys.readouterr().out)
     assert payload["active_manifest_elapsed_ms_mean"] > 0
     assert payload["resolve_target_elapsed_ms_mean"] > 0
+    assert payload["restore_elapsed_ms_mean"] > 0
+    assert payload["restore_elapsed_ms_min"] > 0
     assert payload["active_manifest_count"] == 960.0
     assert payload["removed_count"] == 240.0
+    assert payload["restored_job_count"] == 880.0
     assert payload["sample_count"] == 6.0
 
 
