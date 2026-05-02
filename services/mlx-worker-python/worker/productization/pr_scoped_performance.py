@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import fnmatch
 import gc
 import importlib.util
@@ -122,11 +123,8 @@ def build_scope_report(
     if force_all:
         selected = probes
     else:
-        selected = tuple(
-            probe
-            for probe in probes
-            if any(_matches_any_glob(path, probe.watch_globs) for path in changed_paths)
-        )
+        matched_probe_indexes = _match_probe_indexes(changed_paths=changed_paths, probes=probes)
+        selected = tuple(probe for index, probe in enumerate(probes) if index in matched_probe_indexes)
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
@@ -385,6 +383,8 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_training_dataset_token_percentiles(repo_root)
     if probe.probe_impl == "upload_receipt_published_files":
         return _probe_upload_receipt_published_files(repo_root)
+    if probe.probe_impl == "pr_scoped_scope_matcher":
+        return _probe_pr_scoped_scope_matcher(repo_root)
     if probe.probe_impl == "command_json":
         return _probe_command_json(probe=probe, repo_root=repo_root)
     raise ValueError(f"unsupported probe implementation: {probe.probe_impl}")
@@ -1104,6 +1104,47 @@ def _probe_upload_receipt_published_files(repo_root: Path) -> dict[str, float]:
     }
 
 
+def _probe_pr_scoped_scope_matcher(repo_root: Path) -> dict[str, float]:
+    registry_path = repo_root / "infra/perf/pr_scoped_probes.json"
+    changed_files = _build_large_scope_probe_changed_files()
+    sample_count = 6
+    elapsed_samples: list[float] = []
+    selected_probe_counts: list[float] = []
+    force_all_selected_samples: list[float] = []
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        scope = build_scope_report(registry_path=registry_path, changed_files=changed_files)
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        selected_probe_counts.append(float(scope["selected_count"]))
+        force_all_selected_samples.append(1.0 if scope["force_all"] else 0.0)
+    return {
+        "build_scope_report_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
+        "build_scope_report_ms_min": round(min(elapsed_samples), 6),
+        "changed_file_count": float(len(changed_files)),
+        "selected_probe_count_mean": round(sum(selected_probe_counts) / len(selected_probe_counts), 6),
+        "force_all_selected_mean": round(sum(force_all_selected_samples) / len(force_all_selected_samples), 6),
+        "sample_count": float(sample_count),
+    }
+
+
+def _build_large_scope_probe_changed_files() -> list[str]:
+    changed_files: list[str] = []
+    for index in range(1600):
+        changed_files.append(f"docs/perf/synthetic/doc-{index:04d}.md")
+    for index in range(1600):
+        changed_files.append(f"services/mlx-worker-python/tests/synthetic/test_scope_{index:04d}.py")
+    changed_files.extend(
+        [
+            "services/mlx-worker-python/worker/productization/benchmark_export.py",
+            "services/mlx-worker-python/worker/engine/evaluation_core.py",
+            "services/mlx-worker-python/worker/model_ops/download_pipeline.py",
+            "README.md",
+            "",
+        ]
+    )
+    return changed_files
+
+
 def _load_upload_receipt_pipeline_module(path: Path) -> Any:
     module_names = (
         "packages",
@@ -1652,8 +1693,30 @@ def _float_or_none(value: object) -> float | None:
     return None
 
 
+def _match_probe_indexes(*, changed_paths: tuple[str, ...], probes: tuple[ProbeDefinition, ...]) -> set[int]:
+    glob_to_probe_indexes: dict[str, list[int]] = {}
+    for probe_index, probe in enumerate(probes):
+        for glob in probe.watch_globs:
+            glob_to_probe_indexes.setdefault(glob, []).append(probe_index)
+    matched_probe_indexes: set[int] = set()
+    for path in changed_paths:
+        for glob, probe_indexes in glob_to_probe_indexes.items():
+            if _glob_matches_path(path, glob):
+                matched_probe_indexes.update(probe_indexes)
+    return matched_probe_indexes
+
+
+@lru_cache(maxsize=None)
+def _compiled_glob_pattern(glob: str) -> re.Pattern[str]:
+    return re.compile(fnmatch.translate(glob))
+
+
+def _glob_matches_path(path: str, glob: str) -> bool:
+    return _compiled_glob_pattern(glob).match(path) is not None
+
+
 def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
-    return any(fnmatch.fnmatch(path, glob) for glob in globs)
+    return any(_glob_matches_path(path, glob) for glob in globs)
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
