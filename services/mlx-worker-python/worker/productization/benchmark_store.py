@@ -100,10 +100,14 @@ class BenchmarkStore:
             jsonl_path.open("w", encoding="utf-8") as jsonl_handle,
             csv_path.open("w", encoding="utf-8", newline="") as csv_handle,
         ):
-            writer = csv.DictWriter(csv_handle, fieldnames=fieldnames, extrasaction="ignore")
-            writer.writeheader()
+            csv_writer = csv.writer(csv_handle)
+            csv_writer.writerow(fieldnames)
+            write_jsonl = jsonl_handle.write
+            dump_json = json.dumps
+            normalize_csv_value = _csv_value
+            write_csv_row = csv_writer.writerow
             for row in rows:
                 payload = row.to_dict()
-                jsonl_handle.write(json.dumps(payload))
-                jsonl_handle.write("\n")
-                writer.writerow({field: _csv_value(payload.get(field, "")) for field in fieldnames})
+                write_jsonl(dump_json(payload) + "\n")
+                payload_get = payload.get
+                write_csv_row([normalize_csv_value(payload_get(field, "")) for field in fieldnames])
