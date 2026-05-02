@@ -666,6 +666,24 @@ def test_probe_benchmark_export_run_scan_rejects_unexpected_result_count(monkeyp
         _probe_benchmark_export_run_scan(REPO_ROOT)
 
 
+def test_probe_benchmark_export_run_scan_rejects_unexpected_summary_csv_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeBenchmarkExportModule:
+        @staticmethod
+        def collect_benchmark_artifacts(path: Path) -> dict[str, object]:
+            del path
+            return {"benchmark_jobs": [object()] * 240, "benchmark_results": [object()] * 720}
+
+        @staticmethod
+        def build_benchmark_summary_csv(artifacts: dict[str, object]) -> str:
+            del artifacts
+            return "job_id\r\n"
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_load_repo_module", lambda path, unique_name: FakeBenchmarkExportModule)
+
+    with pytest.raises(ValueError, match="unexpected summary CSV line count"):
+        _probe_benchmark_export_run_scan(REPO_ROOT)
+
+
 def test_dispatch_probe_impl_supports_benchmark_queue_probe() -> None:
     probe = ProbeDefinition(
         probe_id="benchmark-queue-decoded-record-cache",

@@ -558,10 +558,16 @@ def _iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
 
 def _rows_to_csv(rows: Iterable[dict[str, object]], fieldnames: list[str]) -> str:
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-    for row in rows:
-        writer.writerow({field: _csv_value(row.get(field, "")) for field in fieldnames})
+    writer = csv.writer(buffer)
+    writer.writerow(fieldnames)
+    normalize_csv_value = _csv_value
+
+    def csv_rows() -> Iterable[list[str]]:
+        for row in rows:
+            row_get = row.get
+            yield [normalize_csv_value(row_get(field, "")) for field in fieldnames]
+
+    writer.writerows(csv_rows())
     return buffer.getvalue()
 
 

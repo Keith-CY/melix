@@ -496,7 +496,9 @@ def _probe_benchmark_export_run_scan(repo_root: Path) -> dict[str, float]:
     result_files_per_run = 3
     sample_count = 5
     elapsed_samples: list[float] = []
+    csv_elapsed_samples: list[float] = []
     result_file_count = 0.0
+    csv_bytes = 0.0
     with tempfile.TemporaryDirectory(prefix="melix-pr-perf-benchmark-export-") as temp_dir:
         temp_root = Path(temp_dir)
         bench_root = temp_root / "bench"
@@ -554,8 +556,17 @@ def _probe_benchmark_export_run_scan(repo_root: Path) -> dict[str, float]:
                 raise ValueError("benchmark export probe produced an unexpected benchmark job count")
             if len(artifacts.get("benchmark_results", [])) != int(result_file_count):
                 raise ValueError("benchmark export probe produced an unexpected benchmark result count")
+            csv_started = time.perf_counter()
+            summary_csv = module.build_benchmark_summary_csv(artifacts)
+            csv_elapsed_samples.append((time.perf_counter() - csv_started) * 1000.0)
+            csv_bytes = float(len(summary_csv.encode("utf-8")))
+            if len(summary_csv.splitlines()) != run_directory_count + 1:
+                raise ValueError("benchmark export probe produced an unexpected summary CSV line count")
     elapsed_ms_mean = sum(elapsed_samples) / len(elapsed_samples)
+    csv_elapsed_ms_mean = sum(csv_elapsed_samples) / len(csv_elapsed_samples)
     return {
+        "csv_bytes": csv_bytes,
+        "csv_elapsed_ms_mean": round(csv_elapsed_ms_mean, 6),
         "elapsed_ms_mean": round(elapsed_ms_mean, 6),
         "per_run_ms_mean": round(elapsed_ms_mean / float(run_directory_count), 6),
         "result_file_count": result_file_count,
