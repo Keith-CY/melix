@@ -92,6 +92,41 @@ def test_job_registry_restore_scans_manifest_directories_once(monkeypatch: pytes
     assert len(scan_calls) <= 9
 
 
+def test_job_registry_restore_reads_manifest_bytes_without_text_decode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    jobs_root = tmp_path / "jobs"
+    manifest_path = jobs_root / "train_lora" / "model-ops-0001" / "train_lora.adapter.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "job_id": "model-ops-0001",
+                "operation": "train_lora",
+                "source_model": "melix-dev-text",
+            }
+        ).encode("utf-8")
+    )
+
+    read_bytes_calls: list[Path] = []
+    original_read_bytes = Path.read_bytes
+
+    def tracked_read_bytes(self: Path) -> bytes:
+        read_bytes_calls.append(self)
+        return original_read_bytes(self)
+
+    def forbidden_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        raise AssertionError(f"restore manifests should be read as bytes: {self}")  # pragma: no cover
+
+    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
+    monkeypatch.setattr(Path, "read_text", forbidden_read_text)
+
+    registry = ModelOpsJobRegistry(jobs_root=jobs_root)
+
+    assert "model-ops-0001" in registry._jobs
+    assert read_bytes_calls == [manifest_path]
+
+
 def test_json_safe_reuses_clean_containers_and_copies_only_changed_branch() -> None:
     clean = {"rows": [{"pct": 1.0, "label": "ready"}]}
 
