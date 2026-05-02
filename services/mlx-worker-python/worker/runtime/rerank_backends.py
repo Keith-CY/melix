@@ -197,11 +197,16 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
 
         if query_pairs is None:
             query_pairs = frozenset(_build_adjacent_pairs(query_tokens))
-        document_pairs = {
-            (document_tokens[index], document_tokens[index + 1])
-            for index in range(len(document_tokens) - 1)
-        }
-        return (len(query_pairs & document_pairs) / len(query_pairs)) * 0.15
+        matched_pairs: set[tuple[str, str]] = set()
+        query_pair_count = len(query_pairs)
+        for index in range(len(document_tokens) - 1):
+            pair = (document_tokens[index], document_tokens[index + 1])
+            if pair not in query_pairs:
+                continue
+            matched_pairs.add(pair)
+            if len(matched_pairs) == query_pair_count:
+                break
+        return (len(matched_pairs) / query_pair_count) * 0.15
 
     @staticmethod
     def _contains_contiguous_query(document_tokens: Sequence[str], query_tokens: Sequence[str]) -> bool:

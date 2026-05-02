@@ -416,6 +416,38 @@ def test_rerank_context_tuple_and_frozenset_collections_are_scored_directly() ->
     ) == family.score(backend, "swift runtime", "control swift runtime")
 
 
+def test_ordered_pair_bonus_stops_after_matching_all_query_pairs() -> None:
+    class CountingTokens:
+        def __init__(self, tokens: tuple[str, ...]) -> None:
+            self.tokens = tokens
+            self.access_count = 0
+
+        def __len__(self) -> int:
+            return len(self.tokens)
+
+        def __getitem__(self, index: int) -> str:
+            self.access_count += 1
+            return self.tokens[index]
+
+    document_tokens = CountingTokens(
+        (
+            "swift",
+            "runtime",
+            "padding-1",
+            "padding-2",
+            "padding-3",
+            "padding-4",
+            "padding-5",
+        )
+    )
+
+    assert (
+        JinaV3RerankFamilyAdapter._ordered_pair_bonus(("swift", "runtime"), document_tokens)
+        == 0.15
+    )
+    assert document_tokens.access_count <= 2
+
+
 def test_contiguous_query_scan_does_not_allocate_document_slices() -> None:
     class NoSliceTokens:
         def __init__(self, tokens: tuple[str, ...]) -> None:
