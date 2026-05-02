@@ -31,8 +31,8 @@ def _load_results(results_dir: Path) -> list[dict[str, object]]:
         if entry.name.endswith(".json")
     )
     for path in result_paths:
-        with open(path, encoding="utf-8") as result_file:
-            payload = json.load(result_file)
+        with open(path, "rb") as result_file:
+            payload = json.loads(result_file.read())
         if isinstance(payload, dict):
             results.append(payload)
     return results
