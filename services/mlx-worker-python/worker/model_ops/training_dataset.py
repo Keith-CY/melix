@@ -1294,7 +1294,7 @@ def _build_quality_and_token_stats(
     samples: Iterable[dict[str, Any]],
     format_name: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    seen: set[bytes] = set()
+    seen: set[object] = set()
     duplicate_indices: list[int] = []
     dirty_samples: list[dict[str, Any]] = []
     duplicate_count = 0
@@ -1310,6 +1310,7 @@ def _build_quality_and_token_stats(
     duplicate_indices_append = duplicate_indices.append
     dirty_samples_append = dirty_samples.append
     canonical_sample_digest = _canonical_sample_digest
+    prompt_completion_duplicate_key = _prompt_completion_duplicate_key
     dirty_sample_reasons = (
         _prompt_completion_dirty_sample_reasons
         if is_prompt_completion
@@ -1320,13 +1321,16 @@ def _build_quality_and_token_stats(
     quality_report_sample_limit = _QUALITY_REPORT_SAMPLE_LIMIT
     for index, sample in enumerate(samples):
         sample_count += 1
-        sample_digest = canonical_sample_digest(sample)
-        if sample_digest in seen:
+        if is_prompt_completion:
+            sample_identity = prompt_completion_duplicate_key(sample)
+        else:
+            sample_identity = canonical_sample_digest(sample)
+        if sample_identity in seen:
             duplicate_count += 1
             if len(duplicate_indices) < quality_report_sample_limit:
                 duplicate_indices_append(index)
         else:
-            seen.add(sample_digest)
+            seen.add(sample_identity)
         reasons = dirty_sample_reasons(sample)
         if reasons:
             dirty_count += 1
@@ -1553,6 +1557,15 @@ def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
 
 def _contains_problematic_control_characters(text: str) -> bool:
     return any(ord(character) < 32 and character not in _ALLOWED_CONTROL_CHARACTERS for character in text)
+
+
+def _prompt_completion_duplicate_key(sample: dict[str, Any]) -> tuple[str, str] | bytes:
+    if len(sample) == 2:
+        prompt = sample.get("prompt")
+        completion = sample.get("completion")
+        if isinstance(prompt, str) and isinstance(completion, str):
+            return prompt, completion
+    return _canonical_sample_digest(sample)
 
 
 def _canonical_sample_key(sample: dict[str, Any]) -> str:
