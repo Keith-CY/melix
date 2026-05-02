@@ -238,7 +238,7 @@ def test_auto_backend_records_installed_mlx_package_versions(monkeypatch: pytest
             "mlx-lm": "0.31.3",
         }[package_name]
 
-    monkeypatch.setattr(mlx_text_runtime_module.importlib.metadata, "version", fake_version)
+    monkeypatch.setattr(mlx_text_runtime_module, "_installed_package_version", fake_version)
     backend = AutoMLXBackend(
         load_fn=lambda model_source, **kwargs: (object(), FakeTokenizer()),
         stream_generate_fn=lambda *args, **kwargs: iter(()),

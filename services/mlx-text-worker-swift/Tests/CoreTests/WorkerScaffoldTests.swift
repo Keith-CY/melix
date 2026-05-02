@@ -960,6 +960,32 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertNotNil(summary.tokensPerSecond)
     }
 
+    func testVendoredChatSessionClearUsesAsyncSerialAccess() async {
+        let session = ChatSession(
+            makeLiveSwiftMLXModelContainer(promptTokens: [1, 2, 3]),
+            instructions: "system"
+        )
+
+        await session.clear()
+    }
+
+    @available(*, deprecated, message: "Exercises the deprecated ModelContainer chat-template compatibility shim.")
+    func testVendoredModelContainerConvenienceMethodsUseSerialRead() async throws {
+        let container = makeLiveSwiftMLXModelContainer(promptTokens: [4, 5, 6])
+
+        let prepared = try await container.prepare(input: UserInput(prompt: "hello"))
+        let decoded = await container.decode(tokens: [1, 2])
+        let encoded = await container.encode("tok3 tok4")
+        let templated = try await container.applyChatTemplate(messages: [
+            ["role": "user", "content": "hello"]
+        ])
+
+        XCTAssertEqual(prepared.text.tokens.size, 3)
+        XCTAssertEqual(decoded, "tok1 tok2")
+        XCTAssertEqual(encoded, [3, 4])
+        XCTAssertEqual(templated, [1, 2])
+    }
+
     func testAutoSwiftMLXBackendPrefillUsesLiveModelContainerBridge() async throws {
         let backend = AutoSwiftMLXBackend()
         let promptTokens = [1, 2, 3, 4, 5]

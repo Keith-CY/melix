@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import hashlib
-import importlib.metadata
-import inspect
 import importlib.util
 import logging
 import os
@@ -17,6 +15,10 @@ from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
+from worker.runtime.runtime_utils import (
+    callable_accepts_kwarg as _callable_accepts_kwarg,
+    installed_package_version as _installed_package_version,
+)
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
@@ -29,36 +31,8 @@ class RuntimeUnavailableError(RuntimeError):
 
 @dataclass(frozen=True)
 class MaterializedMediaPaths:
-    image_paths: list[str]
-    video_paths: list[str]
-
-
-def _callable_accepts_kwarg(callable_obj: Any, keyword: str) -> bool:
-    try:
-        signature = inspect.signature(callable_obj)
-    except (TypeError, ValueError):
-        return False
-
-    if any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in signature.parameters.values()
-    ):
-        return True
-
-    parameter = signature.parameters.get(keyword)
-    if parameter is None:
-        return False
-    return parameter.kind in (
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        inspect.Parameter.KEYWORD_ONLY,
-    )
-
-
-def _installed_package_version(package_name: str) -> str:
-    try:
-        return importlib.metadata.version(package_name)
-    except importlib.metadata.PackageNotFoundError:
-        return ""
+    image_paths: tuple[str, ...]
+    video_paths: tuple[str, ...]
 
 
 def _gemma4_multimodal_weight_presence(weight_names: list[str] | tuple[str, ...] | set[str]) -> tuple[bool, bool]:
@@ -452,7 +426,7 @@ class MLXVLMRuntime:
                     prepared_request.prompt_text,
                     num_images=len(media_paths.image_paths),
                 )
-                image_argument = media_paths.image_paths if media_paths.image_paths else None
+                image_argument = list(media_paths.image_paths) if media_paths.image_paths else None
                 stream_kwargs: dict[str, Any] = {
                     "image": image_argument,
                     "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
@@ -463,7 +437,7 @@ class MLXVLMRuntime:
                 }
                 if media_paths.video_paths:
                     if _callable_accepts_kwarg(self._backend.stream_generate_fn, "video"):
-                        stream_kwargs["video"] = media_paths.video_paths
+                        stream_kwargs["video"] = list(media_paths.video_paths)
                     else:
                         logger.warning(
                             "mlx-vlm stream_generate does not accept video=; "
@@ -605,7 +579,7 @@ class MLXVLMRuntime:
             suffix = MLXVLMRuntime._media_suffix(video.filename, video.format)
             video_path = temp_media_session.write_bytes(f"video-{index}.{suffix}", video.bytes_data)
             video_paths.append(str(video_path))
-        return MaterializedMediaPaths(image_paths=image_paths, video_paths=video_paths)
+        return MaterializedMediaPaths(image_paths=tuple(image_paths), video_paths=tuple(video_paths))
 
     @staticmethod
     def _media_suffix(filename: str, format_name: str) -> str:

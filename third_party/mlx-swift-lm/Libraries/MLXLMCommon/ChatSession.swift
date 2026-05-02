@@ -1,7 +1,6 @@
 // Copyright © 2025 Apple Inc.
 
 import CoreGraphics
-import Dispatch
 import Foundation
 import MLX
 
@@ -190,17 +189,11 @@ public final class ChatSession: @unchecked Sendable {
     }
 
     /// Clear the session history and cache, preserving system instructions.
-    public func clear() {
-        let semaphore = DispatchSemaphore(value: 0)
-        let sessionAccess = self.sessionAccess
-        Task.detached {
-            await sessionAccess.update { _ in
-                self.messages = self.messages.filter { $0.role == .system }
-                self.cache = []
-            }
-            semaphore.signal()
+    public func clear() async {
+        await sessionAccess.update { _ in
+            self.messages = self.messages.filter { $0.role == .system }
+            self.cache = []
         }
-        semaphore.wait()
     }
 
     // MARK: - Private

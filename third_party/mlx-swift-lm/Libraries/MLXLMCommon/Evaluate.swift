@@ -816,11 +816,11 @@ public func generate(
     let promptTokenCount = input.text.tokens.size
     let modelConfiguration = context.configuration
     let tokenizer = context.tokenizer
-    let iterator = SendableBox(iterator)
+    let iteratorBox = SendableBox(iterator)
 
     // Launch a Task to perform iteration asynchronously.
     let task = Task {
-        var iterator = iterator.consume()
+        let iterator = iteratorBox.consume()
         var start = Date.timeIntervalSinceReferenceDate
         var promptTime: TimeInterval = 0
 

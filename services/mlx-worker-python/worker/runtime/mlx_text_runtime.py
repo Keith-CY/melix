@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-import importlib.metadata
-import inspect
 import importlib.util
 import json
 from pathlib import Path
 from typing import Any
 
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
+from worker.runtime.runtime_utils import (
+    callable_accepts_kwarg as _callable_accepts_kwarg,
+    installed_package_version as _installed_package_version,
+)
 from worker.runtime.text_family_adapters import resolve_text_family_config
 
 
@@ -51,34 +53,6 @@ class RuntimeToolCallEvent:
 
 def _normalized_ext_value(model_spec, key: str) -> str:
     return str(getattr(model_spec, "ext", {}).get(key, "") or "").strip()
-
-
-def _callable_accepts_kwarg(callable_obj: Any, keyword: str) -> bool:
-    try:
-        signature = inspect.signature(callable_obj)
-    except (TypeError, ValueError):
-        return False
-
-    if any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in signature.parameters.values()
-    ):
-        return True
-
-    parameter = signature.parameters.get(keyword)
-    if parameter is None:
-        return False
-    return parameter.kind in (
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        inspect.Parameter.KEYWORD_ONLY,
-    )
-
-
-def _installed_package_version(package_name: str) -> str:
-    try:
-        return importlib.metadata.version(package_name)
-    except importlib.metadata.PackageNotFoundError:
-        return ""
 
 
 # String constants for the ext-field activation_mode signal. Kept as the

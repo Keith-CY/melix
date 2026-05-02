@@ -206,7 +206,7 @@ def test_mlx_vlm_runtime_records_installed_package_versions(monkeypatch: pytest.
         processor = SimpleNamespace(image_processor=object())
         return model, processor
 
-    monkeypatch.setattr(mlx_vlm_runtime_module.importlib.metadata, "version", fake_version)
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_installed_package_version", fake_version)
     runtime = MLXVLMRuntime(
         backend=AutoMLXVLMBackend(
             load_fn=fake_load,

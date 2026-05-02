@@ -128,8 +128,10 @@ public final class ModelContainer: Sendable {
     /// - Note: The `sending` keyword indicates the return value is transferred (not shared),
     ///   allowing non-Sendable types like `LMInput` to safely cross isolation boundaries.
     public func prepare(input: consuming sending UserInput) async throws -> sending LMInput {
-        let processor = await self.processor
-        return try await processor.prepare(input: input)
+        let input = SendableBox(input)
+        return try await context.read { context in
+            try await context.processor.prepare(input: input.consume())
+        }
     }
 
     /// Generate tokens from prepared input, returning an AsyncStream.
@@ -176,8 +178,9 @@ public final class ModelContainer: Sendable {
     /// - Parameter tokens: Array of token IDs
     /// - Returns: Decoded string
     public func decode(tokens: [Int]) async -> String {
-        let tokenizer = await self.tokenizer
-        return tokenizer.decode(tokens: tokens)
+        await context.read {
+            $0.tokenizer.decode(tokens: tokens)
+        }
     }
 
     /// Encode a string to token IDs.
@@ -185,8 +188,9 @@ public final class ModelContainer: Sendable {
     /// - Parameter text: Text to encode
     /// - Returns: Array of token IDs
     public func encode(_ text: String) async -> [Int] {
-        let tokenizer = await self.tokenizer
-        return tokenizer.encode(text: text)
+        await context.read {
+            $0.tokenizer.encode(text: text)
+        }
     }
 
     /// Apply chat template to messages and return token IDs.
@@ -195,7 +199,8 @@ public final class ModelContainer: Sendable {
     /// - Returns: Array of token IDs
     @available(*, deprecated, message: "Use applyChatTemplate directly on tokenizer")
     public func applyChatTemplate(messages: [[String: String]]) async throws -> [Int] {
-        let tokenizer = await self.tokenizer
-        return try tokenizer.applyChatTemplate(messages: messages)
+        try await context.read {
+            try $0.tokenizer.applyChatTemplate(messages: messages)
+        }
     }
 }

@@ -25,6 +25,8 @@ private actor AsyncMutex {
         if waiterHead < waiters.count {
             let next = waiters[waiterHead]
             waiterHead += 1
+            // Amortize the O(n) compaction cost: compact only after enough
+            // consumed slots have accumulated to make at least half the queue dead.
             if waiterHead > 32 && waiterHead * 2 >= waiters.count {
                 waiters.removeFirst(waiterHead)
                 waiterHead = 0
