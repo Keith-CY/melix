@@ -156,6 +156,11 @@ class LoRATrainingPipeline:
             "dataset_cache_key": dataset.cache_key,
             "dataset_cache_hit": dataset.cache_hit,
             "training_mode": config.training_mode,
+            "training_objective": config.training_objective,
+            "adapter_algorithm": config.adapter_algorithm,
+            "preference_loss": config.preference_loss,
+            "dataset_contract": config.dataset_contract,
+            "dora_enabled": config.adapter_algorithm == "dora",
             "quantization_mode": config.quantization_mode,
             "training_backend": training_result.execution_backend,
             "adapter_set_hash": adapter_set_hash,
@@ -245,6 +250,8 @@ class LoRATrainingPipeline:
                     "prompt_feature": dataset.hf_reference.prompt_feature,
                     "completion_feature": dataset.hf_reference.completion_feature,
                     "text_feature": dataset.hf_reference.text_feature,
+                    "chosen_feature": dataset.hf_reference.chosen_feature,
+                    "rejected_feature": dataset.hf_reference.rejected_feature,
                 }
             )
         manifest_path = output_dir / "train_lora.adapter.json"
