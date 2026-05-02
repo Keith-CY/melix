@@ -9,6 +9,7 @@ import pytest
 
 from worker.productization.benchmark_export import (
     _collect_benchmark_run,
+    _collect_evaluation_run,
     _iter_jsonl_dict_rows,
     _iter_sorted_child_directories,
     _iter_sorted_matching_files,
@@ -861,6 +862,95 @@ def test_iter_jsonl_dict_rows_streams_rows_lazily(tmp_path: Path) -> None:
     assert next(rows) == {"job_id": "bench-1", "row_kind": "context"}
     with pytest.raises(json.JSONDecodeError):
         next(rows)
+
+
+def test_collect_evaluation_run_uses_single_directory_scan_without_path_is_file_probes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "eval-run"
+    _write_eval_fixtures(run_root)
+    _write_eval_compare_fixtures(run_root)
+
+    scandir_calls = 0
+    original_scandir = __import__("os").scandir
+    original_is_file = Path.is_file
+
+    def tracked_scandir(path: str | bytes | int | Path):
+        nonlocal scandir_calls
+        if Path(path) == run_root:
+            scandir_calls += 1
+        return original_scandir(path)
+
+    def fail_run_file_probes(path: Path) -> bool:
+        if path.parent == run_root:
+            raise AssertionError(f"unexpected Path.is_file probe for {path.name}")
+        return original_is_file(path)
+
+    with pytest.raises(AssertionError, match="evaluation-job.json"):
+        fail_run_file_probes(run_root / "evaluation-job.json")
+    assert fail_run_file_probes(tmp_path / "outside.json") is False
+
+    monkeypatch.setattr("worker.productization.benchmark_export.os.scandir", tracked_scandir)
+    monkeypatch.setattr(Path, "is_file", fail_run_file_probes)
+
+    jobs: list[dict[str, object]] = []
+    results: list[dict[str, object]] = []
+    summaries: list[dict[str, object]] = []
+    samples: list[dict[str, object]] = []
+    compare_jobs: list[dict[str, object]] = []
+    compare_summary_rows: list[dict[str, object]] = []
+    compare_samples: list[dict[str, object]] = []
+
+    _collect_evaluation_run(
+        run_root,
+        jobs=jobs,
+        results=results,
+        summaries=summaries,
+        samples=samples,
+        compare_jobs=compare_jobs,
+        compare_summary_rows=compare_summary_rows,
+        compare_samples=compare_samples,
+    )
+
+    assert scandir_calls == 1
+    assert [job["job_id"] for job in jobs] == ["eval-1", "eval-compare-1"]
+    assert [row["job_id"] for row in results] == ["eval-1", "eval-compare-1"]
+    assert [row["job_id"] for row in summaries] == ["eval-1", "eval-compare-1"]
+    assert [sample["sample_id"] for sample in compare_samples] == ["sample-1"]
+    assert [sample["sample_id"] for sample in samples] == ["1", "melix-dev-text-lora-a:sample-1"]
+
+
+def test_collect_evaluation_run_preserves_load_failure_behavior_after_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "eval-run"
+    _write_eval_fixtures(run_root)
+
+    original_load_json_object = __import__(
+        "worker.productization.benchmark_export",
+        fromlist=["_load_json_object"],
+    )._load_json_object
+
+    def flaky_load_json_object(path: Path) -> dict[str, object]:
+        if path == run_root / "evaluation-job.json":
+            raise FileNotFoundError(path)
+        return original_load_json_object(path)
+
+    monkeypatch.setattr("worker.productization.benchmark_export._load_json_object", flaky_load_json_object)
+
+    with pytest.raises(FileNotFoundError):
+        _collect_evaluation_run(
+            run_root,
+            jobs=[],
+            results=[],
+            summaries=[],
+            samples=[],
+            compare_jobs=[],
+            compare_summary_rows=[],
+            compare_samples=[],
+        )
 
 
 def test_collect_evaluation_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:
