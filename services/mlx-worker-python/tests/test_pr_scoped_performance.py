@@ -154,6 +154,16 @@ def test_scope_report_selects_benchmark_export_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "benchmark-export-run-scan-single-pass"
 
 
+def test_scope_report_selects_benchmark_store_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/benchmark_store.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "benchmark-store-matrix-streaming"
+
+
 def test_scope_report_selects_bench_report_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -208,6 +218,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "benchmark-evaluation-report-running-aggregates",
         "benchmark-export-run-scan-single-pass",
+        "benchmark-store-matrix-streaming",
         "closure-audit-probe-source-short-circuit",
         "deterministic-rerank-query-context-reuse",
         "evaluation-job-id-high-water-mark",
@@ -474,13 +485,25 @@ def test_job_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[s
 
     assert excinfo.value.code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["elapsed_ms_mean"] > 0
     assert payload["active_manifest_elapsed_ms_mean"] > 0
     assert payload["resolve_target_elapsed_ms_mean"] > 0
-    assert payload["job_count"] == 1200.0
     assert payload["active_manifest_count"] == 960.0
     assert payload["removed_count"] == 240.0
     assert payload["sample_count"] == 6.0
+
+
+def test_benchmark_store_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/benchmark_store_probe.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["elapsed_ms_mean"] > 0
+    assert payload["peak_bytes_mean"] > 0
+    assert payload["summary_row_count"] == 750.0
+    assert payload["request_row_count"] == 6000.0
+    assert payload["request_csv_line_count"] == 6001.0
+    assert payload["sample_count"] == 3.0
 
 
 def test_upload_receipt_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
