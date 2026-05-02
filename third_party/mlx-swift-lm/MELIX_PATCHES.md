@@ -1,8 +1,11 @@
 # Melix patches for mlx-swift-lm
 
-Vendored from `ml-explore/mlx-swift-lm` at commit:
+Upstream alignment target:
 
-`5064b8c5d8ed3b0bbb71385c4124f0fc102e74a2`
+- `ml-explore/mlx-swift-lm` tag `2.31.3`
+- tag commit `25b00d4e22e61ec9c41efda47990cd2084ec87ff`
+
+The local tree retains Melix runtime patches on top of the upstream 2.x line.
 
 Melix patches:
 
@@ -17,3 +20,7 @@ Melix patches:
 - Add an experimental `fusedQ4AffineKeyValueQuantizedForDecode(...)` q4 affine key/value decode quantizer, including bfloat16 output casting, gated by `MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE=1` because real-model metrics show it is slower than MLX native `quantized(...)`.
 - Optimize the fused q4 decode attention kernel by computing online-softmax state on one lane and broadcasting it to value lanes, and by hoisting each lane's eight query values out of the historical-token loop. The single-lane online-softmax design is intentional for the current 4096-token cap; raising that cap should revisit a two-pass or parallel softmax reduction.
 - Keep `fusedQ4AffineKeyValueQuantizedForDecode(...)` opt-in and scoped to the fused decode contract; its packed/scales/biases output is validated by Melix tests but should be revalidated before any new non-fused consumer reuses it.
+- Keep the DFlash draft runtime and Qwen3/Qwen3.5 hidden-state hooks used by Melix speculative decode tests.
+- Carry the upstream 2.31.x Swift 6.1 concurrency compatibility surface for
+  `ModelContainer`, `UserInputProcessor`, `MessageGenerator`, and async
+  generation task capture while preserving Melix's existing service call paths.

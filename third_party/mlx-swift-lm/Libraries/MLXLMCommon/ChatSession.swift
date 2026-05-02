@@ -92,37 +92,14 @@ public final class ChatSession {
     ) async throws -> String {
         messages.append(.user(prompt, images: images, videos: videos))
 
-        func generate(context: ModelContext) async throws -> String {
-            let userInput = UserInput(
-                chat: messages, processing: processing, additionalContext: additionalContext)
-            let input = try await context.processor.prepare(input: userInput)
-
-            if cache.isEmpty {
-                cache = context.model.newCache(parameters: generateParameters)
-            }
-
-            var output = ""
-            for await generation in try MLXLMCommon.generate(
-                input: input, cache: cache, parameters: generateParameters, context: context
-            ) {
-                if let chunk = generation.chunk {
-                    output += chunk
-                }
-            }
-
-            Stream().synchronize()
-
-            return output
-        }
-
         let output: String
         switch model {
         case .container(let container):
-            output = try await container.perform { context in
-                try await generate(context: context)
+            output = try await container.perform(values: self) { context, session in
+                try await session.generateResponse(context: context)
             }
         case .context(let context):
-            output = try await generate(context: context)
+            output = try await generateResponse(context: context)
         }
 
         messages.append(.assistant(output))
@@ -164,9 +141,10 @@ public final class ChatSession {
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
+        let session = SendableBox(self)
         let task = Task {
             do {
-                try await self.performStreaming(continuation: continuation)
+                try await session.consume().performStreaming(continuation: continuation)
             } catch {
                 continuation.finish(throwing: error)
             }
@@ -209,38 +187,64 @@ public final class ChatSession {
     private func performStreaming(
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws {
-        func stream(context: ModelContext) async throws {
-            let userInput = UserInput(
-                chat: messages, processing: processing, additionalContext: additionalContext)
-            let input = try await context.processor.prepare(input: userInput)
-
-            if cache.isEmpty {
-                cache = context.model.newCache(parameters: generateParameters)
-            }
-
-            var fullResponse = ""
-            for await item in try MLXLMCommon.generate(
-                input: input, cache: cache, parameters: generateParameters, context: context
-            ) {
-                if let chunk = item.chunk {
-                    fullResponse += chunk
-                    continuation.yield(chunk)
-                }
-            }
-
-            Stream().synchronize()
-
-            messages.append(.assistant(fullResponse))
-            continuation.finish()
-        }
-
         switch model {
         case .container(let container):
-            try await container.perform { context in
-                try await stream(context: context)
+            try await container.perform(values: self) { context, session in
+                try await session.streamResponse(context: context, continuation: continuation)
             }
         case .context(let context):
-            try await stream(context: context)
+            try await streamResponse(context: context, continuation: continuation)
         }
+    }
+
+    private func generateResponse(context: ModelContext) async throws -> String {
+        let userInput = UserInput(
+            chat: messages, processing: processing, additionalContext: additionalContext)
+        let input = try await context.processor.prepare(input: userInput)
+
+        if cache.isEmpty {
+            cache = context.model.newCache(parameters: generateParameters)
+        }
+
+        var output = ""
+        for await generation in try MLXLMCommon.generate(
+            input: input, cache: cache, parameters: generateParameters, context: context
+        ) {
+            if let chunk = generation.chunk {
+                output += chunk
+            }
+        }
+
+        Stream().synchronize()
+
+        return output
+    }
+
+    private func streamResponse(
+        context: ModelContext,
+        continuation: AsyncThrowingStream<String, Error>.Continuation
+    ) async throws {
+        let userInput = UserInput(
+            chat: messages, processing: processing, additionalContext: additionalContext)
+        let input = try await context.processor.prepare(input: userInput)
+
+        if cache.isEmpty {
+            cache = context.model.newCache(parameters: generateParameters)
+        }
+
+        var fullResponse = ""
+        for await item in try MLXLMCommon.generate(
+            input: input, cache: cache, parameters: generateParameters, context: context
+        ) {
+            if let chunk = item.chunk {
+                fullResponse += chunk
+                continuation.yield(chunk)
+            }
+        }
+
+        Stream().synchronize()
+
+        messages.append(.assistant(fullResponse))
+        continuation.finish()
     }
 }

@@ -26,6 +26,11 @@ SWIFT_OPTIONAL_PARENT_ENV = (
     SWIFT_DFLASH_PROBE_ENV,
     SWIFT_DFLASH_PROBE_PATH_ENV,
 )
+KNOWN_SWIFT_MLX_CORE_VERSION_BY_PACKAGE_VERSION = {
+    # mlx-swift 0.31.3 vendors MLX core 0.31.1, so its Metal library ABI
+    # matches the mlx_metal 0.31.1 wheel rather than the Swift package tag.
+    "0.31.3": "0.31.1",
+}
 USAGE_TEXT = """Usage: bash scripts/dev_up.sh [--prefer-built]
 
 Options:
@@ -244,6 +249,50 @@ def resolve_swift_mlx_package_version(repo_root: Path) -> str | None:
     return None
 
 
+def read_swift_mlx_core_version(package_swift_path: Path) -> str | None:
+    try:
+        payload = package_swift_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    for line in payload.splitlines():
+        if "MLX_VERSION" not in line:
+            continue
+        match = re.search(r"(?P<version>[0-9]+(?:\.[0-9]+){1,2})", line)
+        if match:
+            return match.group("version")
+    return None
+
+
+def resolve_swift_mlx_core_version(repo_root: Path) -> str | None:
+    for package_swift_path in (
+        repo_root / SWIFT_TEXT_WORKER_PACKAGE_DIR / ".build/checkouts/mlx-swift/Package.swift",
+        repo_root / ".build/checkouts/mlx-swift/Package.swift",
+    ):
+        core_version = read_swift_mlx_core_version(package_swift_path)
+        if core_version is not None:
+            return core_version
+    return None
+
+
+def compatible_mlx_metal_versions_for_swift_mlx(repo_root: Path) -> tuple[str, ...]:
+    package_version = resolve_swift_mlx_package_version(repo_root)
+    if package_version is None:
+        return ()
+
+    candidates = (
+        resolve_swift_mlx_core_version(repo_root),
+        KNOWN_SWIFT_MLX_CORE_VERSION_BY_PACKAGE_VERSION.get(package_version),
+        package_version,
+    )
+    compatible_versions: list[str] = []
+    for candidate in candidates:
+        if candidate is None or candidate in compatible_versions:
+            continue
+        compatible_versions.append(candidate)
+    return tuple(compatible_versions)
+
+
 def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
     for ancestor in metallib_path.resolve().parents:
         for metadata_path in ancestor.glob("mlx_metal-*.dist-info/METADATA"):
@@ -284,7 +333,8 @@ def iter_mlx_metallib_candidates(root: Path):
 
 
 def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = None) -> Path | None:
-    expected_mlx_metal_version = resolve_swift_mlx_package_version(repo_root)
+    swift_mlx_package_version = resolve_swift_mlx_package_version(repo_root)
+    compatible_mlx_metal_versions = compatible_mlx_metal_versions_for_swift_mlx(repo_root)
     candidate_search_roots: list[Path] = []
     if uv_cache_dir is not None:
         candidate_search_roots.append(uv_cache_dir)
@@ -305,23 +355,26 @@ def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = N
         seen.add(resolved_root)
         for candidate in iter_mlx_metallib_candidates(resolved_root):
             resolved_candidate = candidate.resolve()
-            if expected_mlx_metal_version is None:
+            if not compatible_mlx_metal_versions:
                 return resolved_candidate
 
             candidate_version = read_mlx_metal_dist_info_version(resolved_candidate)
-            if candidate_version == expected_mlx_metal_version:
+            if candidate_version in compatible_mlx_metal_versions:
                 return resolved_candidate
 
             rejected_versions.setdefault(candidate_version or "unknown", []).append(resolved_candidate)
 
-    if expected_mlx_metal_version is not None and rejected_versions:
+    if swift_mlx_package_version is not None and rejected_versions:
         observed = ", ".join(
             f"{version} at {paths[0]}" for version, paths in sorted(rejected_versions.items())
         )
+        compatible_display = " or ".join(
+            f"mlx_metal {version}" for version in compatible_mlx_metal_versions
+        )
         raise RuntimeError(
             "No compatible Swift MLX metallib was found. "
-            f"{SWIFT_TEXT_WORKER_PACKAGE_DIR}/Package.resolved pins mlx-swift {expected_mlx_metal_version}, "
-            f"so the Swift text worker needs mlx_metal {expected_mlx_metal_version} mlx.metallib. "
+            f"{SWIFT_TEXT_WORKER_PACKAGE_DIR}/Package.resolved pins mlx-swift {swift_mlx_package_version}, "
+            f"so the Swift text worker needs {compatible_display} mlx.metallib. "
             f"Observed incompatible candidates: {observed}. "
             f"Set {SWIFT_MLX_METALLIB_PATH_ENV} to a matching mlx.metallib or install the matching mlx_metal wheel."
         )

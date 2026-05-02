@@ -14,9 +14,11 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.registry import WorkerRegistry
 from worker.runtime.multimodal_preprocessing import (
     PreparedImageInput,
+    PreparedVideoInput,
     PreparedVideoFramePolicy,
     PreparedVisionRequest,
 )
+from worker.runtime import mlx_vlm_runtime as mlx_vlm_runtime_module
 from worker.runtime.mlx_vlm_runtime import (
     AutoMLXVLMBackend,
     MLXVLMRuntime,
@@ -183,6 +185,133 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
     assert probe.multimodal_decode_mode == "native_quantized"
     assert probe.multimodal_decode_sync_mode == "executor_stream"
     assert probe.multi_image_scatter_mode == "none"
+
+
+def test_mlx_vlm_runtime_records_installed_package_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_version(package_name: str) -> str:
+        return {
+            "mlx": "0.31.2",
+            "mlx-lm": "0.31.3",
+            "mlx-vlm": "0.4.4",
+        }[package_name]
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="gemma4"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    monkeypatch.setattr(mlx_vlm_runtime_module.importlib.metadata, "version", fake_version)
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "formatted::prompt",
+        )
+    )
+
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+
+    assert loaded_model["metadata"]["mlx_version"] == "0.31.2"
+    assert loaded_model["metadata"]["mlx_lm_version"] == "0.31.3"
+    assert loaded_model["metadata"]["mlx_vlm_version"] == "0.4.4"
+
+
+def test_mlx_vlm_runtime_passes_video_when_backend_accepts_video_argument() -> None:
+    stream_calls: list[dict[str, object]] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="qwen2_vl"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = num_images
+        _ = kwargs
+        return f"formatted::{prompt}"
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, video=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = image
+        _ = kwargs
+        video_paths = list(video or [])
+        stream_calls.append({"prompt": prompt, "video": video_paths})
+        yield SimpleNamespace(text="video summary", generation_tokens=1)
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = PreparedVisionRequest(
+        prompt_text="Describe the video.",
+        images=[],
+        videos=[
+            PreparedVideoInput(
+                source_kind="inline",
+                reference="inline:video",
+                bytes_data=b"fake-video-payload",
+                mime_type="video/mp4",
+                format="mp4",
+                filename="sample.mp4",
+                byte_length=len(b"fake-video-payload"),
+                duration_ms=1000,
+                frame_budget=4,
+                start_ms=0,
+                end_ms=1000,
+                sha256_hex="beef",
+            )
+        ],
+        video_frame_policies=[
+            PreparedVideoFramePolicy(
+                reference="inline:video",
+                sampling_strategy="uniform",
+                requested_frame_budget=4,
+                effective_frame_count=4,
+                clip_start_ms=0,
+                clip_end_ms=1000,
+                clip_duration_ms=1000,
+            )
+        ],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(b"fake-video-payload"),
+        preprocess_peak_memory_bytes=len(b"fake-video-payload"),
+        prompt_hash_hex="11" * 32,
+        multimodal_hash_hex="22" * 32,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+        )
+    )
+
+    assert [event.text for event in events] == ["video summary"]
+    assert stream_calls[0]["prompt"] == "formatted::Describe the video."
+    video_paths = stream_calls[0]["video"]
+    assert isinstance(video_paths, list)
+    assert len(video_paths) == 1
+    assert not Path(video_paths[0]).exists()
 
 
 def test_mlx_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
