@@ -16,6 +16,11 @@ import tracemalloc
 import types
 from typing import Any
 
+
+def _glob_has_magic(glob: str) -> bool:
+    return any(character in glob for character in "*?[")
+
+
 _COMMENT_MARKER = "<!-- melix-pr-scoped-performance-report -->"
 _SCOPE_SCHEMA_VERSION = "melix.pr_scoped_performance_scope.v1"
 _PROBE_RESULT_SCHEMA_VERSION = "melix.pr_scoped_performance_probe_result.v1"
@@ -27,6 +32,8 @@ _FORCE_ALL_GLOBS = (
     "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
     "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
 )
+_FORCE_ALL_EXACT_PATHS = frozenset(glob for glob in _FORCE_ALL_GLOBS if not _glob_has_magic(glob))
+_FORCE_ALL_WILDCARD_GLOBS = tuple(glob for glob in _FORCE_ALL_GLOBS if _glob_has_magic(glob))
 _COVERAGE_PERCENT_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
 _TEXT_FILE_SUFFIXES = {".md", ".py", ".json", ".txt", ".yaml", ".yml"}
 
@@ -112,14 +119,33 @@ def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
     return tuple(probes)
 
 
+def load_probe_registry_for_scope(path: str | Path) -> tuple[ProbeDefinition, ...]:
+    registry_path = Path(path).resolve()
+    stat_result = registry_path.stat()
+    return _load_probe_registry_for_scope_cached(
+        registry_path.as_posix(),
+        stat_result.st_mtime_ns,
+        stat_result.st_size,
+    )
+
+
+@lru_cache(maxsize=None)
+def _load_probe_registry_for_scope_cached(
+    registry_path: str,
+    _mtime_ns: int,
+    _size: int,
+) -> tuple[ProbeDefinition, ...]:
+    return load_probe_registry(registry_path)
+
+
 def build_scope_report(
     *,
     registry_path: str | Path,
     changed_files: list[str],
 ) -> dict[str, object]:
-    probes = load_probe_registry(registry_path)
+    probes = load_probe_registry_for_scope(registry_path)
     changed_paths = tuple(sorted({path for path in changed_files if path}))
-    force_all = any(_matches_any_glob(path, _FORCE_ALL_GLOBS) for path in changed_paths)
+    force_all = any(_path_matches_force_all(path) for path in changed_paths)
     if force_all:
         selected = probes
     else:
@@ -1706,16 +1732,32 @@ def _float_or_none(value: object) -> float | None:
 
 
 def _match_probe_indexes(*, changed_paths: tuple[str, ...], probes: tuple[ProbeDefinition, ...]) -> set[int]:
-    glob_to_probe_indexes: dict[str, list[int]] = {}
-    for probe_index, probe in enumerate(probes):
-        for glob in probe.watch_globs:
-            glob_to_probe_indexes.setdefault(glob, []).append(probe_index)
+    exact_path_to_probe_indexes, wildcard_glob_to_probe_indexes = _probe_match_indexes(probes)
     matched_probe_indexes: set[int] = set()
     for path in changed_paths:
-        for glob, probe_indexes in glob_to_probe_indexes.items():
+        matched_probe_indexes.update(exact_path_to_probe_indexes.get(path, ()))
+        for glob, probe_indexes in wildcard_glob_to_probe_indexes.items():
             if _glob_matches_path(path, glob):
                 matched_probe_indexes.update(probe_indexes)
     return matched_probe_indexes
+
+
+@lru_cache(maxsize=None)
+def _probe_match_indexes(
+    probes: tuple[ProbeDefinition, ...],
+) -> tuple[dict[str, tuple[int, ...]], dict[str, tuple[int, ...]]]:
+    exact_path_to_probe_indexes: dict[str, list[int]] = {}
+    wildcard_glob_to_probe_indexes: dict[str, list[int]] = {}
+    for probe_index, probe in enumerate(probes):
+        for glob in probe.watch_globs:
+            if _glob_has_magic(glob):
+                wildcard_glob_to_probe_indexes.setdefault(glob, []).append(probe_index)
+            else:
+                exact_path_to_probe_indexes.setdefault(glob, []).append(probe_index)
+    return (
+        {path: tuple(probe_indexes) for path, probe_indexes in exact_path_to_probe_indexes.items()},
+        {glob: tuple(probe_indexes) for glob, probe_indexes in wildcard_glob_to_probe_indexes.items()},
+    )
 
 
 @lru_cache(maxsize=None)
@@ -1725,6 +1767,10 @@ def _compiled_glob_pattern(glob: str) -> re.Pattern[str]:
 
 def _glob_matches_path(path: str, glob: str) -> bool:
     return _compiled_glob_pattern(glob).match(path) is not None
+
+
+def _path_matches_force_all(path: str) -> bool:
+    return path in _FORCE_ALL_EXACT_PATHS or _matches_any_glob(path, _FORCE_ALL_WILDCARD_GLOBS)
 
 
 def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
