@@ -456,15 +456,18 @@ class DownloadPipeline:
         append_directory = stack.append
         pop_directory = stack.pop
         scandir = os.scandir
+        is_dir = os.DirEntry.is_dir
+        is_file = os.DirEntry.is_file
+        stat_entry = os.DirEntry.stat
         while stack:
             current = pop_directory()
             with scandir(current) as entries:
                 for entry in entries:
-                    if entry.is_dir(follow_symlinks=False):
+                    if is_dir(entry, follow_symlinks=False):
                         append_directory(entry.path)
                         continue
-                    if entry.is_file(follow_symlinks=False):
-                        total_bytes += entry.stat(follow_symlinks=False).st_size
+                    if is_file(entry, follow_symlinks=False):
+                        total_bytes += stat_entry(entry, follow_symlinks=False).st_size
         return total_bytes
 
     @staticmethod
