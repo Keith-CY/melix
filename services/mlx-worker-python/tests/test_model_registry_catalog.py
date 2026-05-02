@@ -166,6 +166,36 @@ def test_load_json_dict_file_returns_empty_and_clears_cache_for_non_file_path(tm
 
 
 
+def test_load_json_dict_file_reads_json_bytes_without_text_decode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.json"
+    target.write_bytes(b'{"model_type":"qwen3","library_name":"mlx"}\n')
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] = {}
+    read_bytes_calls: list[Path] = []
+    original_read_bytes = Path.read_bytes
+
+    def tracking_read_bytes(self: Path) -> bytes:
+        if self == target:
+            read_bytes_calls.append(self)
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_text", pytest.fail)
+    monkeypatch.setattr(Path, "read_bytes", tracking_read_bytes)
+
+    assert _load_json_dict_file(target, json_cache=json_cache) == {
+        "model_type": "qwen3",
+        "library_name": "mlx",
+    }
+    assert _load_json_dict_file(target, json_cache=json_cache) == {
+        "model_type": "qwen3",
+        "library_name": "mlx",
+    }
+    assert read_bytes_calls == [target]
+
+
+
 def test_read_text_prefix_does_not_cache_transient_open_failures(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -858,17 +888,17 @@ def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
         scandir_calls.append(path)
         return original_scandir(path)
 
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
     config_read_count = 0
 
-    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+    def tracking_read_bytes(self: Path) -> bytes:
         nonlocal config_read_count
         if self.resolve() == config_path.resolve():
             config_read_count += 1
-        return original_read_text(self, *args, **kwargs)
+        return original_read_bytes(self)
 
     monkeypatch.setattr(os, "scandir", tracking_scandir)
-    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+    monkeypatch.setattr(Path, "read_bytes", tracking_read_bytes)
 
     catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
     snapshot = catalog.registry_snapshot()
