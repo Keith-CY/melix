@@ -828,7 +828,7 @@ public actor RequestCoordinator {
 
         do {
             let upstream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
-            if plan.routeKind.supportsPhaseAwareExecution,
+            if plan.cacheRouteEligible,
                let phaseAwareClient = workerClient as? any PhaseAwareWorkerClientProtocol,
                shouldUsePhaseAwareExecution(for: request.workerRequest) {
                 upstream = makePhaseAwareUpstream(
@@ -1340,10 +1340,34 @@ public actor RequestCoordinator {
 
     private func canUsePhaseAwareExecution(
         routeKind: WorkerRouteKind,
+        modelID: String,
         request: Melix_Worker_V1_GenerateRequest
-    ) -> Bool {
-        routeKind.supportsPhaseAwareExecution
-            && shouldUsePhaseAwareExecution(for: request)
+    ) async -> Bool {
+        guard routeKind.supportsPhaseAwareExecution,
+              shouldUsePhaseAwareExecution(for: request)
+        else {
+            return false
+        }
+
+        guard routeKind == .pythonVLM else {
+            return true
+        }
+        guard let modelCatalog,
+              let model = await modelCatalog.model(id: modelID)
+        else {
+            return true
+        }
+
+        let executionMode = model.settings.ext["melix.vlm.execution_mode"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        if executionMode == "text_backed" {
+            return false
+        }
+        let backendID = model.settings.ext["melix.vlm.backend_id"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        return backendID.isEmpty || backendID == "deterministic"
     }
 
     private func resolvedRecoveryRequest(
@@ -1473,8 +1497,9 @@ public actor RequestCoordinator {
         let request = await resolvedModelAccelerationRequest(recoveredRequest)
         let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
         let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
-        let phaseAwareEligible = canUsePhaseAwareExecution(
+        let phaseAwareEligible = await canUsePhaseAwareExecution(
             routeKind: routeKind,
+            modelID: request.modelID,
             request: request.workerRequest
         )
         if routeKind.isMultimodalBackgroundRoute {

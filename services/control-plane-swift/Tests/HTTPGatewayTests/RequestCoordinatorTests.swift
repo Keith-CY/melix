@@ -524,7 +524,8 @@ struct RequestCoordinatorTests {
             ),
             abortRegistry: AbortRegistry(),
             schedulerReadModel: schedulerReadModel,
-            metricsStore: metricsStore
+            metricsStore: metricsStore,
+            modelCatalog: catalog
         )
 
         let execution = try await coordinator.startChatCompletion(
@@ -651,6 +652,89 @@ struct RequestCoordinatorTests {
             return delta.text == "local answer"
         })
         #expect(progress?.phase == .requestCompleted)
+    }
+
+    @Test("text-backed Gemma 4 VLM follow-ups use generate instead of phase-aware prefill")
+    func textBackedGemma4VLMFollowUpsUseGenerateInsteadOfPhaseAwarePrefill() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 9_000 })
+        _ = await sessionGraphStore.recordRequestStart(
+            sessionID: "session-gemma4-text",
+            branchID: "branch-main",
+            requestID: "req-parent"
+        )
+        var snapshot = Melix_Controlplane_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-parent"
+        snapshot.requestID = "req-parent"
+        snapshot.tokenBoundary = 6
+        _ = await sessionGraphStore.recordSnapshotHydration(
+            sessionID: "session-gemma4-text",
+            branchID: "branch-main",
+            snapshot: snapshot
+        )
+
+        var model = ModelCatalog.devVLMModel()
+        model.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        model.routeClass = .workerRoutePythonVlm
+        model.settings.ext["melix.capability.route_kind"] = WorkerRouteKind.pythonVLM.rawValue
+        model.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        model.settings.ext["melix.vlm.execution_mode"] = "text_backed"
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "\(model.modelID)::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog,
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-gemma4-text-follow-up",
+                modelID: model.modelID,
+                messages: [makeWorkerTextMessage("What is your size?")],
+                sessionID: "session-gemma4-text",
+                branchID: "branch-main",
+                parentRequestID: "req-parent",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in execution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        for _ in 0..<100 {
+            if await workerClient.generatedRequestIDs.isEmpty == false {
+                break
+            }
+            if await workerClient.lastPrefillRequest() != nil {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(await workerClient.lastPrefillRequest() == nil)
+        #expect(await workerClient.lastDecodeRequest() == nil)
+        #expect(await workerClient.generatedRequestIDs == ["req-gemma4-text-follow-up"])
+
+        if await workerClient.generatedRequestIDs.isEmpty == false {
+            await workerClient.emitToken(requestID: "req-gemma4-text-follow-up", text: "text-backed")
+            await workerClient.finish(requestID: "req-gemma4-text-follow-up")
+        } else {
+            await workerClient.emitDecodeStarted(
+                requestID: "req-gemma4-text-follow-up",
+                decodeHandle: "decode-req-gemma4-text-follow-up"
+            )
+            await workerClient.finishDecode(requestID: "req-gemma4-text-follow-up")
+        }
+        _ = try await consumer.value
     }
 
     @Test("video-bearing VLM requests stay dispatchable during ingress-only rollout")
