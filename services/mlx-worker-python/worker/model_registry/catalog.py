@@ -1170,8 +1170,6 @@ class WorkerModelCatalog:
             resolved_path = plain_local_model.model_dir
             if resolved_path in seen_paths or _is_hf_cache_snapshot_dir(root_resolved, resolved_path):
                 continue
-            if (resolved_path / "manifest.json").is_file():
-                continue
             model_id = _local_model_id(root_resolved, resolved_path)
             if model_id in discovered_models or model_id in self._seed_models:
                 continue

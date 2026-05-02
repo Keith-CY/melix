@@ -879,6 +879,44 @@ def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
 
 
 
+def test_registry_snapshot_does_not_stat_plain_local_manifest_after_tree_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    model_dir = root / "plain-model"
+    manifest_probe = (model_dir / "manifest.json").resolve()
+    _write_model_config(
+        model_dir,
+        {
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+            "library_name": "mlx",
+        },
+    )
+    _write_weights(model_dir)
+
+    original_is_file = Path.is_file
+    manifest_probe_calls = 0
+
+    def tracking_is_file(self: Path) -> bool:
+        nonlocal manifest_probe_calls
+        if self.resolve() == manifest_probe:
+            manifest_probe_calls += 1
+        return original_is_file(self)
+
+    assert tracking_is_file(manifest_probe) is False
+    manifest_probe_calls = 0
+    monkeypatch.setattr(Path, "is_file", tracking_is_file)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
+    snapshot = catalog.registry_snapshot()
+
+    assert [model.model_id for model in snapshot.models] == ["plain-model"]
+    assert manifest_probe_calls == 0
+
+
+
 def test_registry_snapshot_skips_plain_local_config_dirs_without_weights(tmp_path: Path) -> None:
     root = tmp_path / "root"
     model_dir = root / "plain-model"
