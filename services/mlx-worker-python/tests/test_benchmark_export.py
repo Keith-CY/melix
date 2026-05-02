@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from worker.productization.benchmark_export import (
+    _collect_benchmark_run,
     _iter_jsonl_dict_rows,
     _iter_sorted_child_directories,
     _iter_sorted_matching_files,
@@ -535,6 +536,185 @@ def test_collect_benchmark_artifacts_reads_per_run_history_from_runs_directory(
     assert [row["job_id"] for row in result["benchmark_results"]] == ["bench-1", "bench-2"]
     assert [row["job_id"] for row in result["benchmark_context_rows"]] == ["bench-1", "bench-2"]
     assert [row["job_id"] for row in result["benchmark_batch_rows"]] == ["bench-1", "bench-2"]
+
+
+def test_collect_benchmark_run_uses_single_directory_scan_without_path_is_file_probes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "bench-run"
+    _write_bench_fixtures(run_root)
+    (run_root / "bench-job.json").write_text(json.dumps({"job_id": "legacy-bench"}) + "\n")
+    (run_root / "bench-result-z.json").write_text(json.dumps({"job_id": "bench-1", "suite": "zeta"}) + "\n")
+    (run_root / "bench-result-a.json").write_text(json.dumps({"job_id": "bench-1", "suite": "alpha"}) + "\n")
+
+    scandir_calls = 0
+    original_scandir = __import__("os").scandir
+    original_is_file = Path.is_file
+
+    def tracked_scandir(path: str | bytes | int | Path):
+        nonlocal scandir_calls
+        if Path(path) == run_root:
+            scandir_calls += 1
+        return original_scandir(path)
+
+    def fail_run_file_probes(path: Path) -> bool:
+        if path.parent == run_root:
+            raise AssertionError(f"unexpected Path.is_file probe for {path.name}")
+        return original_is_file(path)
+
+    with pytest.raises(AssertionError, match="bench-summary.json"):
+        fail_run_file_probes(run_root / "bench-summary.json")
+    assert fail_run_file_probes(tmp_path / "outside.json") is False
+
+    monkeypatch.setattr("worker.productization.benchmark_export.os.scandir", tracked_scandir)
+    monkeypatch.setattr(Path, "is_file", fail_run_file_probes)
+
+    summary_rows: list[dict[str, object]] = []
+    context_rows: list[dict[str, object]] = []
+    batch_rows: list[dict[str, object]] = []
+    results: list[dict[str, object]] = []
+
+    _collect_benchmark_run(
+        run_root,
+        summary_rows=summary_rows,
+        context_rows=context_rows,
+        batch_rows=batch_rows,
+        results=results,
+    )
+
+    assert scandir_calls == 1
+    assert [row["job_id"] for row in summary_rows] == ["bench-1"]
+    assert [row["job_id"] for row in context_rows] == ["bench-1"]
+    assert [row["job_id"] for row in batch_rows] == ["bench-1"]
+    assert [row["suite"] for row in results] == ["alpha", "smoke", "zeta"]
+
+
+def test_collect_benchmark_run_prefers_summary_over_legacy_job_and_preserves_result_order(tmp_path: Path) -> None:
+    run_root = tmp_path / "bench-run"
+    _write_bench_fixtures(run_root)
+    (run_root / "bench-job.json").write_text(
+        json.dumps({"job_id": "bench-legacy", "model_id": "legacy-model", "status": "completed"}) + "\n"
+    )
+    (run_root / "bench-result-z.json").write_text(json.dumps({"job_id": "bench-1", "suite": "zeta"}) + "\n")
+    (run_root / "bench-result-a.json").write_text(json.dumps({"job_id": "bench-1", "suite": "alpha"}) + "\n")
+
+    result = collect_benchmark_artifacts(run_root)
+
+    assert [job["job_id"] for job in result["benchmark_jobs"]] == ["bench-1"]
+    assert result["benchmark_jobs"][0]["model_id"] == "melix-dev-text"
+    assert [row["suite"] for row in result["benchmark_results"]] == ["alpha", "smoke", "zeta"]
+
+
+def test_collect_benchmark_run_skips_unreadable_entries_during_single_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "bench-run"
+    _write_bench_fixtures(run_root)
+
+    class _BrokenEntry:
+        name = "bench-result-broken.json"
+
+        def is_file(self) -> bool:
+            raise OSError("stat failed")
+
+    class _SummaryEntry:
+        name = "bench-summary.json"
+
+        def is_file(self) -> bool:
+            return True
+
+    class _ContextEntry:
+        name = "bench-context-rows.jsonl"
+
+        def is_file(self) -> bool:
+            return True
+
+    class _BatchEntry:
+        name = "bench-batch-rows.jsonl"
+
+        def is_file(self) -> bool:
+            return True
+
+    class _ResultEntry:
+        name = "bench-result-smoke.json"
+
+        def is_file(self) -> bool:
+            return True
+
+    class _Scandir:
+        def __enter__(self):
+            return iter((_BrokenEntry(), _SummaryEntry(), _ContextEntry(), _BatchEntry(), _ResultEntry()))
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr("worker.productization.benchmark_export.os.scandir", lambda path: _Scandir())
+
+    summary_rows: list[dict[str, object]] = []
+    context_rows: list[dict[str, object]] = []
+    batch_rows: list[dict[str, object]] = []
+    results: list[dict[str, object]] = []
+
+    _collect_benchmark_run(
+        run_root,
+        summary_rows=summary_rows,
+        context_rows=context_rows,
+        batch_rows=batch_rows,
+        results=results,
+    )
+
+    assert [row["job_id"] for row in summary_rows] == ["bench-1"]
+    assert [row["job_id"] for row in context_rows] == ["bench-1"]
+    assert [row["job_id"] for row in batch_rows] == ["bench-1"]
+    assert [row["suite"] for row in results] == ["smoke"]
+
+
+def test_collect_benchmark_run_skips_missing_or_unreadable_payloads_after_single_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "bench-run"
+    _write_bench_fixtures(run_root)
+    (run_root / "bench-job.json").write_text(json.dumps({"job_id": "legacy-bench", "status": "completed"}) + "\n")
+    (run_root / "bench-result-a.json").write_text(json.dumps({"job_id": "bench-1", "suite": "alpha"}) + "\n")
+
+    original_load_json_object = _load_json_object
+    original_iter_jsonl_dict_rows = _iter_jsonl_dict_rows
+
+    def flaky_load_json_object(path: Path) -> dict[str, object]:
+        if path.name == "bench-summary.json":
+            raise FileNotFoundError(path)
+        if path.name == "bench-result-smoke.json":
+            raise OSError("result vanished")
+        return original_load_json_object(path)
+
+    def flaky_iter_jsonl_dict_rows(path: Path):
+        if path.name == "bench-context-rows.jsonl":
+            raise OSError("context vanished")
+        yield from original_iter_jsonl_dict_rows(path)
+
+    monkeypatch.setattr("worker.productization.benchmark_export._load_json_object", flaky_load_json_object)
+    monkeypatch.setattr("worker.productization.benchmark_export._iter_jsonl_dict_rows", flaky_iter_jsonl_dict_rows)
+
+    summary_rows: list[dict[str, object]] = []
+    context_rows: list[dict[str, object]] = []
+    batch_rows: list[dict[str, object]] = []
+    results: list[dict[str, object]] = []
+
+    _collect_benchmark_run(
+        run_root,
+        summary_rows=summary_rows,
+        context_rows=context_rows,
+        batch_rows=batch_rows,
+        results=results,
+    )
+
+    assert [row["job_id"] for row in summary_rows] == ["legacy-bench"]
+    assert context_rows == []
+    assert [row["job_id"] for row in batch_rows] == ["bench-1"]
+    assert [row["suite"] for row in results] == ["alpha"]
 
 
 def test_collect_benchmark_artifacts_reads_matrix_run_history_from_matrix_runs_directory(

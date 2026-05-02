@@ -449,6 +449,20 @@ def _load_json_object(path: Path) -> dict[str, object]:
     return payload
 
 
+def _try_load_json_object(path: Path) -> dict[str, object] | None:
+    try:
+        return _load_json_object(path)
+    except OSError:
+        return None
+
+
+def _try_iter_jsonl_dict_rows(path: Path) -> tuple[dict[str, object], ...]:
+    try:
+        return tuple(_iter_jsonl_dict_rows(path))
+    except OSError:
+        return ()
+
+
 def _collect_benchmark_run(
     run_root: Path,
     *,
@@ -457,23 +471,58 @@ def _collect_benchmark_run(
     batch_rows: list[dict[str, object]],
     results: list[dict[str, object]],
 ) -> None:
-    summary_path = run_root / "bench-summary.json"
-    job_path = run_root / "bench-job.json"
-    if summary_path.is_file():
-        summary_rows.append(_load_json_object(summary_path))
-    elif job_path.is_file():
-        summary_rows.append(_load_json_object(job_path))
+    summary_path: Path | None = None
+    job_path: Path | None = None
+    context_path: Path | None = None
+    batch_path: Path | None = None
+    result_paths: list[Path] = []
 
-    context_path = run_root / "bench-context-rows.jsonl"
-    if context_path.is_file():
-        context_rows.extend(_iter_jsonl_dict_rows(context_path))
+    try:
+        with os.scandir(run_root) as entries:
+            for entry in entries:
+                name = entry.name
+                try:
+                    if not entry.is_file():
+                        continue
+                except OSError:
+                    continue
+                path = run_root / name
+                if name == "bench-summary.json":
+                    summary_path = path
+                elif name == "bench-job.json":
+                    job_path = path
+                elif name == "bench-context-rows.jsonl":
+                    context_path = path
+                elif name == "bench-batch-rows.jsonl":
+                    batch_path = path
+                elif name.startswith("bench-result-") and name.endswith(".json"):
+                    result_paths.append(path)
+    except OSError:
+        return
 
-    batch_path = run_root / "bench-batch-rows.jsonl"
-    if batch_path.is_file():
-        batch_rows.extend(_iter_jsonl_dict_rows(batch_path))
+    if summary_path is not None:
+        summary_row = _try_load_json_object(summary_path)
+        if summary_row is not None:
+            summary_rows.append(summary_row)
+        elif job_path is not None:
+            job_row = _try_load_json_object(job_path)
+            if job_row is not None:
+                summary_rows.append(job_row)
+    elif job_path is not None:
+        job_row = _try_load_json_object(job_path)
+        if job_row is not None:
+            summary_rows.append(job_row)
 
-    for result_path in _iter_sorted_matching_files(run_root, prefix="bench-result-", suffix=".json"):
-        results.append(_load_json_object(result_path))
+    if context_path is not None:
+        context_rows.extend(_try_iter_jsonl_dict_rows(context_path))
+
+    if batch_path is not None:
+        batch_rows.extend(_try_iter_jsonl_dict_rows(batch_path))
+
+    for result_path in sorted(result_paths):
+        result_row = _try_load_json_object(result_path)
+        if result_row is not None:
+            results.append(result_row)
 
 
 def _collect_benchmark_matrix_run(
