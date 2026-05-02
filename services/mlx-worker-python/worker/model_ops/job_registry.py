@@ -382,13 +382,27 @@ class ModelOpsJobRegistry:
         if not normalized_model_id and not normalized_manifest_path:
             return None
 
-        for job, manifest, activation_manifest_path in self._active_derived_model_job_rows(self._ordered_jobs()):
+        ordered_jobs = self._ordered_jobs()
+        removed_targets = self._removed_derived_targets_from_ordered_jobs(ordered_jobs)
+        removed_model_ids = removed_targets["model_ids"]
+        removed_manifest_paths = removed_targets["manifest_paths"]
+        removed_activation_job_ids = removed_targets["activation_job_ids"]
+
+        for job in ordered_jobs:
+            if job.operation != "activate_adapter" or job.status != "completed":
+                continue
+            if job.job_id in removed_activation_job_ids:
+                continue
+            activation_manifest_path = str(job.output_path).strip()
+            manifest = self._job_manifest(job)
+            candidate_model_id = str(manifest.get("derived_model_id", "")).strip()
+            if candidate_model_id in removed_model_ids or activation_manifest_path in removed_manifest_paths:
+                continue
+            if normalized_model_id and candidate_model_id != normalized_model_id:
+                continue
             resolved_activation_manifest_path = str(
                 Path(activation_manifest_path).expanduser().resolve()
             )
-            candidate_model_id = str(manifest.get("derived_model_id", "")).strip()
-            if normalized_model_id and candidate_model_id != normalized_model_id:
-                continue
             if normalized_manifest_path and resolved_activation_manifest_path != normalized_manifest_path:
                 continue
             return {

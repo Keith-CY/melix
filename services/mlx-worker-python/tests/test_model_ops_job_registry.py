@@ -280,3 +280,95 @@ def test_resolve_derived_model_target_avoids_snapshot_jobs(monkeypatch: pytest.M
         "adapter_manifest_path": adapter_manifest_path,
         "adapter_weights_path": "/runtime/train/adapters.safetensors",
     }
+
+
+def test_resolve_derived_model_target_delays_path_resolution_until_id_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ModelOpsJobRegistry()
+    target_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.attach_manifest(
+        target_job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-target",
+                "derived_model_path": "/runtime/activate/melix-dev-target",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(target_job.job_id, "/runtime/activate/melix-dev-target/manifest.json")
+
+    removed_by_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.attach_manifest(
+        removed_by_job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-removed-by-job",
+                "derived_model_path": "/runtime/activate/melix-dev-removed-by-job",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    removed_by_job_path = "/runtime/activate/melix-dev-removed-by-job/manifest.json"
+    registry.complete(removed_by_job.job_id, removed_by_job_path)
+    removal_by_job = registry.start("remove_derived_model", "melix-dev-text", "/runtime/remove")
+    registry.attach_manifest(
+        removal_by_job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-removed-by-job",
+                "activation_job_id": removed_by_job.job_id,
+                "activation_manifest_path": removed_by_job_path,
+            }
+        ),
+    )
+    registry.complete(removal_by_job.job_id, "/runtime/remove/removed-by-job.json")
+
+    removed_by_model = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.attach_manifest(
+        removed_by_model.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-removed-by-model",
+                "derived_model_path": "/runtime/activate/melix-dev-removed-by-model",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(removed_by_model.job_id, "/runtime/activate/melix-dev-removed-by-model/manifest.json")
+    removal_by_model = registry.start("remove_derived_model", "melix-dev-text", "/runtime/remove")
+    registry.attach_manifest(
+        removal_by_model.job_id,
+        json.dumps({"derived_model_id": "melix-dev-removed-by-model"}),
+    )
+    registry.complete(removal_by_model.job_id, "/runtime/remove/removed-by-model.json")
+
+    for index in range(12):
+        job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+        registry.attach_manifest(
+            job.job_id,
+            json.dumps(
+                {
+                    "derived_model_id": f"melix-dev-other-{index}",
+                    "derived_model_path": f"/runtime/activate/melix-dev-other-{index}",
+                    "activation_mode": "fused_derived_model",
+                }
+            ),
+        )
+        registry.complete(job.job_id, f"/runtime/activate/melix-dev-other-{index}/manifest.json")
+
+    resolve_calls = 0
+
+    def counted_resolve(self: Path) -> Path:
+        nonlocal resolve_calls
+        resolve_calls += 1
+        return self
+
+    monkeypatch.setattr(Path, "resolve", counted_resolve)
+
+    target = registry.resolve_derived_model_target(derived_model_id="melix-dev-target")
+
+    assert target is not None
+    assert target["activation_job_id"] == target_job.job_id
+    assert resolve_calls == 1
