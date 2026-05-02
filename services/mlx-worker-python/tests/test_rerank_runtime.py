@@ -372,6 +372,41 @@ def test_rerank_context_tuple_and_frozenset_collections_are_scored_directly() ->
     ) == family.score(backend, "swift runtime", "control swift runtime")
 
 
+def test_contiguous_query_scan_does_not_allocate_document_slices() -> None:
+    class NoSliceTokens:
+        def __init__(self, tokens: tuple[str, ...]) -> None:
+            self.tokens = tokens
+
+        def __len__(self) -> int:
+            return len(self.tokens)
+
+        def __getitem__(self, index):
+            if isinstance(index, slice):
+                raise AssertionError("contiguous query scan should compare tokens without slicing")
+            return self.tokens[index]
+
+    family = JinaV3RerankFamilyAdapter()
+
+    assert family._contains_contiguous_query(
+        NoSliceTokens(("control", "swift", "runtime", "worker")),
+        ("swift", "runtime"),
+    )
+    assert not family._contains_contiguous_query(
+        NoSliceTokens(("control", "runtime", "swift", "worker")),
+        ("swift", "runtime"),
+    )
+    assert family._contains_contiguous_query(
+        NoSliceTokens(("control", "swift")),
+        ("swift",),
+    )
+    assert not family._contains_contiguous_query(
+        NoSliceTokens(("control", "runtime")),
+        ("swift",),
+    )
+    with pytest.raises(AssertionError, match="without slicing"):
+        NoSliceTokens(("swift", "runtime"))[0:1]
+
+
 def test_rerank_rejects_missing_and_wrong_model_kinds() -> None:
     runtime_service, inference_service = build_services()
     text_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())

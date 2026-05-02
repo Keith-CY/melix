@@ -201,11 +201,21 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
 
     @staticmethod
     def _contains_contiguous_query(document_tokens: Sequence[str], query_tokens: Sequence[str]) -> bool:
-        if not query_tokens or len(query_tokens) > len(document_tokens):
+        query_length = len(query_tokens)
+        if query_length == 0 or query_length > len(document_tokens):
             return False
-        last_start = len(document_tokens) - len(query_tokens)
+        if query_length == 1:
+            query_token = query_tokens[0]
+            return any(document_token == query_token for document_token in document_tokens)
+        last_start = len(document_tokens) - query_length
+        first_query_token = query_tokens[0]
         for start in range(last_start + 1):
-            if document_tokens[start : start + len(query_tokens)] == query_tokens:
+            if document_tokens[start] != first_query_token:
+                continue
+            if all(
+                document_tokens[start + offset] == query_tokens[offset]
+                for offset in range(1, query_length)
+            ):
                 return True
         return False
 
