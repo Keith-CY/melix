@@ -1154,7 +1154,7 @@ def test_data_generation_and_formatting_helpers_cover_misc_branches(tmp_path: Pa
     assert _is_relative_to(Path("/tmp/not-child"), tmp_path) is False
 
 
-def test_report_results_loader_uses_scandir_without_path_glob(
+def test_report_results_loader_uses_scandir_and_binary_json_reads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1167,7 +1167,11 @@ def test_report_results_loader_uses_scandir_without_path_glob(
     def fail_glob(self: Path, pattern: str):
         raise AssertionError("_load_results should use os.scandir instead of Path.glob")
 
+    def fail_json_load(*args: object, **kwargs: object):  # pragma: no cover - sentinel
+        raise AssertionError("_load_results should parse binary file contents with json.loads")
+
     monkeypatch.setattr(Path, "glob", fail_glob)
+    monkeypatch.setattr(json, "load", fail_json_load)
 
     report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
     loaded = report_script["_load_results"](results_dir)
