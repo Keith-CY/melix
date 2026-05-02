@@ -403,6 +403,48 @@ def test_probe_collectors_fast_path_exact_numeric_values(monkeypatch: pytest.Mon
     assert evaluation_metrics["eval.sample.smoke.validation_ms_mean"] == 0.0
 
 
+def test_probe_collectors_use_registered_probe_key_order_without_items_scan() -> None:
+    class NoItemsDict(dict[str, object]):
+        def items(self):  # type: ignore[override]
+            raise AssertionError("collector should scan registered probe keys directly")
+
+    benchmark_metrics: dict[str, object] = {}
+    _collect_benchmark_probe_metrics(
+        benchmark_metrics,
+        [
+            NoItemsDict(
+                {
+                    "suite_id": "smoke",
+                    "context_length": 1024,
+                    "generation_length": 128,
+                    "batch_size": 1,
+                    "concurrency_level": 2,
+                    "prefill_ms": 10.0,
+                    "irrelevant_payload": "skip",
+                }
+            )
+        ],
+        prefix="bench",
+    )
+
+    evaluation_metrics: dict[str, object] = {}
+    _collect_evaluation_sample_probe_metrics(
+        evaluation_metrics,
+        [
+            NoItemsDict(
+                {
+                    "suite_id": "smoke",
+                    "sample_render_ms": 3.0,
+                    "irrelevant_payload": "skip",
+                }
+            )
+        ],
+    )
+
+    assert benchmark_metrics["bench.smoke.ctx1024.gen128.b1.c2.prefill_ms_mean"] == 10.0
+    assert evaluation_metrics["eval.sample.smoke.sample_render_ms_mean"] == 3.0
+
+
 def test_collect_benchmark_probe_metrics_reuses_matrix_labels(monkeypatch: pytest.MonkeyPatch) -> None:
     original = benchmark_evaluation_report._matrix_label
     matrix_label_calls = 0
