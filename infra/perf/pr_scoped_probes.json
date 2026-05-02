@@ -557,6 +557,12 @@
         "warn_pct": 5.0
       },
       {
+        "key": "cold_load_probe_registry_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
         "key": "build_scope_report_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
