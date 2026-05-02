@@ -280,9 +280,7 @@ def test_scope_report_large_changed_set_preserves_exact_selection_semantics() ->
     assert scope["selected_count"] == 4
 
 
-def test_match_probe_indexes_deduplicates_repeated_watch_globs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
     probes = (
         ProbeDefinition(
             probe_id="alpha",
@@ -318,22 +316,36 @@ def test_match_probe_indexes_deduplicates_repeated_watch_globs(
             metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
         ),
     )
-    calls: list[tuple[str, str]] = []
-
-    def fake_glob_matches_path(path: str, glob: str) -> bool:
-        calls.append((path, glob))
-        return path == "services/b.py" and glob == "services/*.py"
-
-    monkeypatch.setattr(pr_scoped_performance_module, "_glob_matches_path", fake_glob_matches_path)
-
     matched = _match_probe_indexes(changed_paths=("shared.py", "services/b.py", "unmatched.py"), probes=probes)
 
     assert matched == {0, 1, 2}
-    assert calls == [
-        ("shared.py", "services/*.py"),
-        ("services/b.py", "services/*.py"),
-        ("unmatched.py", "services/*.py"),
-    ]
+
+
+def test_match_probe_indexes_skips_prefix_misses_before_regex(monkeypatch: pytest.MonkeyPatch) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/*.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    match_calls: list[str] = []
+
+    class FailingPattern:
+        def match(self, path: str) -> None:  # pragma: no cover - sentinel
+            match_calls.append(path)
+            raise AssertionError("prefix misses should not invoke regex matching")
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_compiled_glob_pattern", lambda glob: FailingPattern())
+
+    assert _match_probe_indexes(changed_paths=("docs/a.md", "README.md"), probes=probes) == set()
+    assert match_calls == []
 
 
 def test_compiled_glob_pattern_reuses_cached_regex() -> None:

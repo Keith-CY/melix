@@ -1795,12 +1795,14 @@ def _float_or_none(value: object) -> float | None:
 
 
 def _match_probe_indexes(*, changed_paths: tuple[str, ...], probes: tuple[ProbeDefinition, ...]) -> set[int]:
-    exact_path_to_probe_indexes, wildcard_glob_to_probe_indexes = _probe_match_indexes(probes)
+    exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
     matched_probe_indexes: set[int] = set()
     for path in changed_paths:
         matched_probe_indexes.update(exact_path_to_probe_indexes.get(path, ()))
-        for glob, probe_indexes in wildcard_glob_to_probe_indexes.items():
-            if _glob_matches_path(path, glob):
+        for prefix, pattern, probe_indexes in wildcard_glob_matchers:
+            if prefix and not path.startswith(prefix):
+                continue
+            if pattern.match(path) is not None:
                 matched_probe_indexes.update(probe_indexes)
     return matched_probe_indexes
 
@@ -1808,7 +1810,7 @@ def _match_probe_indexes(*, changed_paths: tuple[str, ...], probes: tuple[ProbeD
 @lru_cache(maxsize=None)
 def _probe_match_indexes(
     probes: tuple[ProbeDefinition, ...],
-) -> tuple[dict[str, tuple[int, ...]], dict[str, tuple[int, ...]]]:
+) -> tuple[dict[str, tuple[int, ...]], tuple[tuple[str, re.Pattern[str], tuple[int, ...]], ...]]:
     exact_path_to_probe_indexes: dict[str, list[int]] = {}
     wildcard_glob_to_probe_indexes: dict[str, list[int]] = {}
     for probe_index, probe in enumerate(probes):
@@ -1817,9 +1819,13 @@ def _probe_match_indexes(
                 wildcard_glob_to_probe_indexes.setdefault(glob, []).append(probe_index)
             else:
                 exact_path_to_probe_indexes.setdefault(glob, []).append(probe_index)
+    wildcard_glob_matchers = tuple(
+        (_glob_literal_prefix(glob), _compiled_glob_pattern(glob), tuple(probe_indexes))
+        for glob, probe_indexes in wildcard_glob_to_probe_indexes.items()
+    )
     return (
         {path: tuple(probe_indexes) for path, probe_indexes in exact_path_to_probe_indexes.items()},
-        {glob: tuple(probe_indexes) for glob, probe_indexes in wildcard_glob_to_probe_indexes.items()},
+        wildcard_glob_matchers,
     )
 
 
