@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -27,7 +28,14 @@ def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
     if direct_candidate.is_file():
         return direct_candidate
 
-    for candidate in sorted(build_root.glob(f"*/debug/{product_name}")):
+    try:
+        with os.scandir(build_root) as entries:
+            triple_names = sorted(entry.name for entry in entries if entry.is_dir())
+    except OSError:
+        return None
+
+    for triple_name in triple_names:
+        candidate = build_root / triple_name / "debug" / product_name
         if candidate.is_file():
             return candidate
     return None

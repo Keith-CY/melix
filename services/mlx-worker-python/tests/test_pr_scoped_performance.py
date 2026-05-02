@@ -216,7 +216,7 @@ def test_scope_report_selects_package_macos_resolve_probe() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert "package-macos-resolve-direct-debug-fastpath" in probe_ids
+    assert "package-macos-resolve-fallback-scandir" in probe_ids
 
 
 def test_scope_report_force_selects_all_on_infra_change() -> None:
@@ -241,7 +241,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
-        "package-macos-resolve-direct-debug-fastpath",
+        "package-macos-resolve-fallback-scandir",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
         "swift-cli-json-envelope-encoding",
@@ -1083,6 +1083,24 @@ def test_package_macos_resolve_probe_script_emits_metrics(capsys: pytest.Capture
     assert metrics["sample_count"] == 9.0
     assert metrics["triple_count"] == 1500.0
     assert metrics["elapsed_ms_mean"] >= 0.0
+
+
+def test_package_macos_resolve_probe_rejects_unexpected_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/package_macos_resolve_probe.py"))
+
+    class WrongModule:
+        @staticmethod
+        def resolve_built_binary(repo_root: Path) -> Path:
+            return repo_root / "apps/macos-menubar/.build/arch-0001/debug/melix-menubar"
+
+    monkeypatch.setitem(
+        probe_script["main"].__globals__,
+        "_load_packaging_module",
+        lambda repo_root: WrongModule,
+    )
+
+    with pytest.raises(AssertionError, match="expected .* got"):
+        probe_script["main"]()
 
 
 def test_cli_scripts_smoke(tmp_path: Path, benchmark_scope: dict[str, object], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
