@@ -284,14 +284,26 @@ def build_sticky_comment_body(markdown_report: str) -> str:
     return f"{_COMMENT_MARKER}\n{markdown_report.rstrip()}\n"
 
 
-def write_report_outputs(report: dict[str, object], output_dir: str | Path) -> dict[str, Path]:
+def write_report_outputs(
+    report: dict[str, object],
+    output_dir: str | Path,
+    *,
+    markdown_report: str | None = None,
+    sticky_comment: bool = False,
+) -> dict[str, Path]:
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     json_path = root / "report.json"
     markdown_path = root / "report.md"
+    markdown = render_markdown_report(report) if markdown_report is None else markdown_report
     json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    markdown_path.write_text(render_markdown_report(report), encoding="utf-8")
-    return {"json": json_path, "markdown": markdown_path}
+    markdown_path.write_text(markdown, encoding="utf-8")
+    outputs = {"json": json_path, "markdown": markdown_path}
+    if sticky_comment:
+        sticky_comment_path = root / "pr-comment.md"
+        sticky_comment_path.write_text(build_sticky_comment_body(markdown), encoding="utf-8")
+        outputs["sticky_comment"] = sticky_comment_path
+    return outputs
 
 
 def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, object]:
