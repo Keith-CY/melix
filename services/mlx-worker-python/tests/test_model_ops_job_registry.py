@@ -92,6 +92,37 @@ def test_job_registry_restore_scans_manifest_directories_once(monkeypatch: pytes
     assert len(scan_calls) <= 9
 
 
+def test_restore_manifest_jobs_reuses_sorted_manifest_paths_without_resorting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ModelOpsJobRegistry()
+    manifest_paths = [
+        Path("/tmp/train_lora/model-ops-0001/train_lora.adapter.json"),
+        Path("/tmp/train_lora/model-ops-0002/train_lora.adapter.json"),
+    ]
+
+    def fail_sorted(*args: object, **kwargs: object) -> list[Path]:  # pragma: no cover - regression guard
+        raise AssertionError("_restore_manifest_jobs should reuse already-sorted manifest paths")
+
+    def fake_read_manifest_dict(path: Path) -> dict[str, object]:
+        return {
+            "job_id": path.parent.name,
+            "operation": "train_lora",
+            "source_model": "melix-dev-text",
+        }
+
+    monkeypatch.setattr("worker.model_ops.job_registry.sorted", fail_sorted, raising=False)
+    monkeypatch.setattr(registry, "_read_manifest_dict", fake_read_manifest_dict)
+
+    registry._restore_manifest_jobs(
+        operation="train_lora",
+        manifest_paths=manifest_paths,
+        pct=0.97,
+    )
+
+    assert list(registry._jobs) == ["model-ops-0001", "model-ops-0002"]
+
+
 def test_json_safe_reuses_clean_containers_and_copies_only_changed_branch() -> None:
     clean = {"rows": [{"pct": 1.0, "label": "ready"}]}
 

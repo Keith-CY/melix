@@ -261,7 +261,7 @@ class ModelOpsJobRegistry:
         manifest_paths,
         pct: float,
     ) -> None:
-        for manifest_path in sorted(manifest_paths):
+        for manifest_path in manifest_paths:
             payload = self._read_manifest_dict(manifest_path)
             if not payload or str(payload.get("operation", "")).strip() != operation:
                 continue
