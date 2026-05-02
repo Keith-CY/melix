@@ -147,6 +147,16 @@ def test_scope_report_selects_job_registry_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "job-registry-derived-model-single-pass"
 
 
+def test_scope_report_selects_model_registry_catalog_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_registry/catalog.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "model-registry-plain-local-manifest-stat-elision"
+
+
 def test_scope_report_selects_deterministic_rerank_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -416,6 +426,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
+        "model-registry-plain-local-manifest-stat-elision",
         "package-macos-resolve-fallback-scandir",
         "pr-scoped-performance-scope-matcher",
         "training-dataset-token-percentiles-single-sort",
@@ -1331,6 +1342,21 @@ def test_command_json_probe_executes_probe_command_and_parses_metrics(tmp_path: 
     metrics = _probe_command_json(probe=probe, repo_root=tmp_path)
 
     assert metrics == {"elapsed_ms_mean": 12.5, "iteration_count": 3.0}
+
+
+def test_model_registry_catalog_probe_command_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "model-registry-plain-local-manifest-stat-elision"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["manifest_is_file_calls_mean"] == 0.0
+    assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 800.0
+    assert metrics["sample_count"] == 3.0
 
 
 def test_command_json_probe_rejects_missing_command_and_non_numeric_metrics(tmp_path: Path) -> None:
