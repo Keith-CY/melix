@@ -195,11 +195,17 @@ def test_causal_lm_rerank_produces_positive_and_negative_logits() -> None:
     assert rerank.items[1].score < 0
 
 
-def test_jina_v3_skips_contiguous_query_check_when_document_misses_query_terms(monkeypatch) -> None:
+def test_jina_v3_skips_pair_and_contiguous_query_checks_when_document_misses_query_terms(monkeypatch) -> None:
     adapter = JinaV3RerankFamilyAdapter()
     backend = DeterministicRerankBackend()
+    ordered_pair_bonus = Mock(return_value=0.0)
     contains = Mock(return_value=False)
 
+    monkeypatch.setattr(
+        JinaV3RerankFamilyAdapter,
+        "_ordered_pair_bonus",
+        staticmethod(ordered_pair_bonus),
+    )
     monkeypatch.setattr(
         JinaV3RerankFamilyAdapter,
         "_contains_contiguous_query",
@@ -213,14 +219,21 @@ def test_jina_v3_skips_contiguous_query_check_when_document_misses_query_terms(m
     )
 
     assert score >= 0.0
+    ordered_pair_bonus.assert_not_called()
     contains.assert_not_called()
 
 
-def test_causal_lm_skips_contiguous_query_check_when_document_misses_query_terms(monkeypatch) -> None:
+def test_causal_lm_skips_pair_and_contiguous_query_checks_when_document_misses_query_terms(monkeypatch) -> None:
     adapter = CausalLMRerankFamilyAdapter()
     backend = DeterministicRerankBackend()
+    ordered_pair_bonus = Mock(return_value=0.0)
     contains = Mock(return_value=False)
 
+    monkeypatch.setattr(
+        JinaV3RerankFamilyAdapter,
+        "_ordered_pair_bonus",
+        staticmethod(ordered_pair_bonus),
+    )
     monkeypatch.setattr(
         JinaV3RerankFamilyAdapter,
         "_contains_contiguous_query",
@@ -234,6 +247,7 @@ def test_causal_lm_skips_contiguous_query_check_when_document_misses_query_terms
     )
 
     assert score < 0.0
+    ordered_pair_bonus.assert_not_called()
     contains.assert_not_called()
 
 
