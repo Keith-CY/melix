@@ -179,6 +179,16 @@ def test_scope_report_selects_bench_report_probe() -> None:
     assert "maintenance-bench-report-readback" in probe_ids
 
 
+def test_scope_report_selects_release_gates_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/release_gates.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "release-gates-event-stream-summary" in probe_ids
+
+
 def test_scope_report_selects_upload_receipt_published_files_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -233,6 +243,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "job-registry-derived-model-single-pass",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
+        "release-gates-event-stream-summary",
         "swift-cli-json-envelope-encoding",
         "upload-receipt-published-files-scandir",
         "download-pipeline-directory-size-single-stat",
@@ -559,6 +570,42 @@ def test_benchmark_store_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["request_row_count"] == 6000.0
     assert payload["request_csv_line_count"] == 6001.0
     assert payload["sample_count"] == 3.0
+
+
+def test_release_gates_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/release_gates_event_stream_probe.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["elapsed_ms_mean"] > 0
+    assert payload["peak_bytes_mean"] > 0
+    assert payload["benchmark_metric_count"] == 2048.0
+    assert payload["benchmark_metric_total"] == 2048.0
+    assert payload["training_artifact_count"] == 1.0
+    assert payload["training_progress_total"] == 4096.0
+    assert payload["sample_count"] == 3.0
+
+
+def test_dispatch_probe_impl_supports_release_gates_command_json_probe() -> None:
+    probe = ProbeDefinition(
+        probe_id="release-gates-event-stream-summary",
+        name="Release gates event-stream summary",
+        runner="ubuntu-latest",
+        watch_globs=("services/mlx-worker-python/worker/productization/release_gates.py",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="command_json",
+        probe_command="python3 scripts/release_gates_event_stream_probe.py",
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["benchmark_metric_count"] == 2048.0
+    assert metrics["training_artifact_count"] == 1.0
 
 
 def test_upload_receipt_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:

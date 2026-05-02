@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
@@ -403,13 +403,79 @@ def collect_install_evidence(repo_root: str | Path) -> dict[str, Any]:
     }
 
 
+def _summarize_bench_events(events: Iterable[Any]) -> dict[str, Any]:
+    metrics: dict[str, float] = {}
+    metric_units: dict[str, str] = {}
+    job_id: str | None = None
+    report_path: str | None = None
+    for event in events:
+        if job_id is None and event.HasField("started") and event.started.job_id:
+            job_id = event.started.job_id
+        if event.HasField("metric"):
+            metrics[event.metric.name] = event.metric.value
+            metric_units[event.metric.name] = event.metric.unit
+        if report_path is None and event.HasField("completed") and event.completed.report_path:
+            report_path = event.completed.report_path
+    if report_path is None:
+        raise StopIteration
+    return {
+        "job_id": job_id or "bench-unknown",
+        "metrics": metrics,
+        "metric_units": metric_units,
+        "report_path": report_path,
+    }
+
+
+def _summarize_convert_model_events(events: Iterable[Any]) -> dict[str, Any]:
+    manifest_json: str | None = None
+    last_event_completed = False
+    last_event_output_path = ""
+    for event in events:
+        if manifest_json is None and event.HasField("manifest") and event.manifest.manifest_json:
+            manifest_json = event.manifest.manifest_json
+        if event.HasField("completed"):
+            last_event_completed = True
+            last_event_output_path = event.completed.output_path
+        else:
+            last_event_completed = False
+            last_event_output_path = ""
+    if manifest_json is None:
+        raise StopIteration
+    return {
+        "manifest_json": manifest_json,
+        "last_event_completed": last_event_completed,
+        "output_path": last_event_output_path,
+    }
+
+
+def _consume_convert_model_events(events: Iterable[Any]) -> None:
+    for _ in events:
+        pass
+
+
+def _summarize_last_convert_model_event(events: Iterable[Any]) -> dict[str, Any]:
+    last_event_completed = False
+    last_event_output_path = ""
+    for event in events:
+        if event.HasField("completed"):
+            last_event_completed = True
+            last_event_output_path = event.completed.output_path
+        else:
+            last_event_completed = False
+            last_event_output_path = ""
+    return {
+        "last_event_completed": last_event_completed,
+        "output_path": last_event_output_path,
+    }
+
+
 def collect_benchmark_evidence(
     jobs_root: str | Path,
     *,
     repo_root: str | Path | None = None,
 ) -> dict[str, Any]:
     core = _build_maintenance_core(jobs_root)
-    events = list(
+    event_summary = _summarize_bench_events(
         core.bench_events(
             maintenance_pb2.RunBenchRequest(
                 model_handle="melix-dev-text::1",
@@ -417,23 +483,10 @@ def collect_benchmark_evidence(
             )
         )
     )
-    metrics = {
-        event.metric.name: event.metric.value
-        for event in events
-        if event.HasField("metric")
-    }
-    metric_units = {
-        event.metric.name: event.metric.unit
-        for event in events
-        if event.HasField("metric")
-    }
-    started_event = next((event.started for event in events if event.HasField("started")), None)
-    job_id = started_event.job_id if started_event is not None else "bench-unknown"
-    report_path = next(
-        event.completed.report_path
-        for event in events
-        if event.HasField("completed")
-    )
+    metrics = event_summary["metrics"]
+    metric_units = event_summary["metric_units"]
+    job_id = event_summary["job_id"]
+    report_path = event_summary["report_path"]
     report_markdown = Path(report_path).read_text(encoding="utf-8")
     job = build_serving_benchmark_job(
         job_id=job_id,
@@ -600,7 +653,7 @@ def collect_training_evidence(jobs_root: str | Path) -> dict[str, Any]:
     jobs_root = Path(jobs_root)
     core = _build_maintenance_core(jobs_root)
     dataset_root = _ensure_training_dataset(jobs_root)
-    events = list(
+    event_summary = _summarize_convert_model_events(
         core.convert_model(
             maintenance_pb2.ConvertModelRequest(
                 source_model="melix-dev-text",
@@ -614,19 +667,14 @@ def collect_training_evidence(jobs_root: str | Path) -> dict[str, Any]:
             )
         )
     )
-    manifest = next(
-        event.manifest.manifest_json
-        for event in events
-        if event.HasField("manifest")
-    )
-    payload = json.loads(manifest)
+    payload = json.loads(event_summary["manifest_json"])
     return {
         "job_id": payload["job_id"],
         "adapter_name": payload["adapter_name"],
         "dataset_uri": str(payload["dataset_uri"]),
         "training_duration_ms": float(payload["training_duration_ms"]),
         "adapter_publish_ms": float(payload.get("adapter_publish_ms", 118.0)),
-        "artifact_path": events[-1].completed.output_path,
+        "artifact_path": event_summary["output_path"],
     }
 
 
@@ -654,7 +702,7 @@ def collect_lora_path_evidence(jobs_root: str | Path) -> dict[str, Any]:
     artifact_path = ""
     t0 = time.perf_counter()
     try:
-        train_events = list(
+        train_summary = _summarize_last_convert_model_event(
             core.convert_model(
                 maintenance_pb2.ConvertModelRequest(
                     source_model="melix-dev-text",
@@ -668,9 +716,8 @@ def collect_lora_path_evidence(jobs_root: str | Path) -> dict[str, Any]:
                 )
             )
         )
-        last_event = train_events[-1] if train_events else None
-        if last_event and last_event.HasField("completed") and last_event.completed.output_path:
-            artifact_path = last_event.completed.output_path
+        if train_summary["last_event_completed"] and train_summary["output_path"]:
+            artifact_path = train_summary["output_path"]
             stages["train"] = {
                 "success": 1.0,
                 "duration_ms": round((time.perf_counter() - t0) * 1_000.0, 2),
@@ -691,7 +738,7 @@ def collect_lora_path_evidence(jobs_root: str | Path) -> dict[str, Any]:
     t0 = time.perf_counter()
     if artifact_path:
         try:
-            list(
+            _consume_convert_model_events(
                 core.convert_model(
                     maintenance_pb2.ConvertModelRequest(
                         source_model="melix-dev-text",
@@ -739,7 +786,7 @@ def collect_lora_path_evidence(jobs_root: str | Path) -> dict[str, Any]:
     t0 = time.perf_counter()
     if artifact_path:
         try:
-            list(
+            _consume_convert_model_events(
                 core.convert_model(
                     maintenance_pb2.ConvertModelRequest(
                         source_model=artifact_path,

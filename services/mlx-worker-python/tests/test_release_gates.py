@@ -574,6 +574,56 @@ def test_collect_benchmark_evidence_includes_cache_recovery_report_when_repo_roo
     assert evidence["recovery_metrics"]["bench.recovery.partial_restore_ratio_pct"] == 80.0
 
 
+def test_collect_benchmark_evidence_consumes_stream_without_list_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = tmp_path / "jobs" / "bench" / "runs" / "stream-bench" / "bench-report.md"
+    final_report_path = tmp_path / "jobs" / "bench" / "runs" / "stream-bench" / "bench-report-final.md"
+    final_report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("# stream bench\n", encoding="utf-8")
+    final_report_path.write_text("# stream bench final\n", encoding="utf-8")
+
+    class BenchStream:
+        def __iter__(self):
+            yield maintenance_pb2.RunBenchEvent(started=maintenance_pb2.BenchStarted(job_id="stream-bench"))
+            yield maintenance_pb2.RunBenchEvent(
+                metric=maintenance_pb2.BenchMetric(
+                    name="bench.smoke.ttft_ms",
+                    value=22.5,
+                    unit="ms",
+                )
+            )
+            yield maintenance_pb2.RunBenchEvent(completed=maintenance_pb2.BenchCompleted(report_path=str(report_path)))
+            yield maintenance_pb2.RunBenchEvent(
+                metric=maintenance_pb2.BenchMetric(
+                    name="bench.latency.p95_ms",
+                    value=45.0,
+                    unit="ms",
+                )
+            )
+            yield maintenance_pb2.RunBenchEvent(
+                completed=maintenance_pb2.BenchCompleted(report_path=str(final_report_path))
+            )
+
+        def __getitem__(self, index: int):
+            raise AssertionError(f"benchmark stream should not be indexed: {index}")
+
+    class FakeCore:
+        def bench_events(self, request: maintenance_pb2.RunBenchRequest):
+            del request
+            return BenchStream()
+
+    monkeypatch.setattr(release_gates_module, "_build_maintenance_core", lambda jobs_root: FakeCore())
+
+    evidence = collect_benchmark_evidence(tmp_path / "jobs")
+
+    assert evidence["job"]["job_id"] == "stream-bench"
+    assert evidence["metrics"]["bench.smoke.ttft_ms"] == 22.5
+    assert evidence["metrics"]["bench.latency.p95_ms"] == 45.0
+    assert evidence["report_path"] == str(report_path)
+
+
 def test_collect_cache_recovery_benchmark_evidence_delegates_to_runtime_probes(
     tmp_path: Path,
     monkeypatch,
@@ -631,6 +681,54 @@ def test_collect_training_evidence_returns_required_metrics(tmp_path: Path) -> N
     assert evidence["dataset_uri"] == str(tmp_path / "jobs" / "datasets" / "melix-dev")
     assert evidence["training_duration_ms"] == 1420.0
     assert evidence["adapter_publish_ms"] == 118.0
+
+
+def test_collect_training_evidence_consumes_convert_stream_without_indexing_last_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_path = tmp_path / "jobs" / "train-lora" / "adapter"
+    final_output_path = tmp_path / "jobs" / "train-lora" / "adapter-final"
+    manifest_payload = {
+        "job_id": "train-stream-job",
+        "adapter_name": "melix-dev-adapter",
+        "dataset_uri": str(tmp_path / "jobs" / "datasets" / "melix-dev"),
+        "training_duration_ms": 1420.0,
+        "adapter_publish_ms": 118.0,
+    }
+    final_manifest_payload = {
+        **manifest_payload,
+        "job_id": "train-stream-job-final",
+        "training_duration_ms": 1500.0,
+    }
+
+    class ConvertStream:
+        def __iter__(self):
+            yield maintenance_pb2.ConvertModelEvent(manifest=maintenance_pb2.ConvertManifest(manifest_json=json.dumps(manifest_payload)))
+            yield maintenance_pb2.ConvertModelEvent(completed=maintenance_pb2.ConvertCompleted(output_path=str(output_path)))
+            yield maintenance_pb2.ConvertModelEvent(progress=maintenance_pb2.ConvertProgress(stage="cleanup", pct=1.0))
+            yield maintenance_pb2.ConvertModelEvent(
+                manifest=maintenance_pb2.ConvertManifest(manifest_json=json.dumps(final_manifest_payload))
+            )
+            yield maintenance_pb2.ConvertModelEvent(
+                completed=maintenance_pb2.ConvertCompleted(output_path=str(final_output_path))
+            )
+
+        def __getitem__(self, index: int):
+            raise AssertionError(f"convert stream should not be indexed: {index}")
+
+    class FakeCore:
+        def convert_model(self, request: maintenance_pb2.ConvertModelRequest):
+            del request
+            return ConvertStream()
+
+    monkeypatch.setattr(release_gates_module, "_build_maintenance_core", lambda jobs_root: FakeCore())
+
+    evidence = collect_training_evidence(tmp_path / "jobs")
+
+    assert evidence["job_id"] == "train-stream-job"
+    assert evidence["artifact_path"] == str(final_output_path)
+    assert evidence["training_duration_ms"] == 1420.0
 
 
 def test_load_release_gate_policy_includes_real_workload_family_rules() -> None:
@@ -2136,6 +2234,58 @@ def test_collect_lora_path_evidence_compare_stage_reflects_persisted_evidence(
     _write_persisted_evaluation_compare_evidence(jobs_root)
     evidence_with_compare = collect_lora_path_evidence(jobs_root)
     assert evidence_with_compare["stages"]["compare"]["success"] == 1.0
+
+
+def test_collect_lora_path_evidence_consumes_train_stream_without_indexing_last_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jobs_root = tmp_path / "jobs"
+    _write_persisted_evaluation_compare_evidence(jobs_root)
+    train_output_path = jobs_root / "lora-path" / "train" / "adapter"
+    final_train_output_path = jobs_root / "lora-path" / "train" / "adapter-final"
+
+    class ConvertStream:
+        def __init__(self, operation: str) -> None:
+            self.operation = operation
+
+        def __iter__(self):
+            if self.operation == "train_lora":
+                yield maintenance_pb2.ConvertModelEvent(
+                    completed=maintenance_pb2.ConvertCompleted(output_path=str(train_output_path))
+                )
+                yield maintenance_pb2.ConvertModelEvent(
+                    progress=maintenance_pb2.ConvertProgress(stage="cleanup", pct=1.0)
+                )
+                yield maintenance_pb2.ConvertModelEvent(
+                    completed=maintenance_pb2.ConvertCompleted(output_path=str(final_train_output_path))
+                )
+                return
+            yield maintenance_pb2.ConvertModelEvent(
+                progress=maintenance_pb2.ConvertProgress(stage=f"{self.operation}-prep", pct=0.5)
+            )
+            yield maintenance_pb2.ConvertModelEvent(
+                completed=maintenance_pb2.ConvertCompleted(
+                    output_path=str(jobs_root / "lora-path" / self.operation / "artifact")
+                )
+            )
+
+        def __getitem__(self, index: int):
+            raise AssertionError(f"convert stream should not be indexed: {index}")
+
+    class FakeCore:
+        def convert_model(self, request: maintenance_pb2.ConvertModelRequest):
+            return ConvertStream(request.ext.get("operation", "unknown"))
+
+    monkeypatch.setattr(release_gates_module, "_build_maintenance_core", lambda jobs_root: FakeCore())
+
+    evidence = collect_lora_path_evidence(jobs_root)
+
+    assert evidence["stages"]["train"]["success"] == 1.0
+    assert evidence["stages"]["activate"]["success"] == 1.0
+    assert evidence["stages"]["publish"]["success"] == 1.0
+    assert evidence["stages"]["compare"]["success"] == 1.0
+    assert evidence["summary"]["stages_failure_count"] == 0.0
 
 
 def test_evaluate_lora_path_evidence_reports_policy_violations() -> None:
