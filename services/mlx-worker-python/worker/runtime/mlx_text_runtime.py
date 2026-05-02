@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
+from worker.runtime.runtime_utils import (
+    callable_accepts_kwarg as _callable_accepts_kwarg,
+    installed_package_version as _installed_package_version,
+)
 from worker.runtime.text_family_adapters import resolve_text_family_config
 
 
@@ -246,6 +250,8 @@ class AutoMLXBackend:
             "model_path": model_spec.model_path,
             "model": model,
             "tokenizer": tokenizer,
+            "mlx_version": _installed_package_version("mlx"),
+            "mlx_lm_version": _installed_package_version("mlx-lm"),
             **adapter_metadata,
             **family_config.runtime_metadata(),
         }
@@ -257,11 +263,15 @@ class AutoMLXBackend:
         if not self._available:
             raise RuntimeUnavailableError("mlx-lm is not installed") from self._error
         self._ensure_runtime()
-        sampler = self._sampler_factory(
-            temp=float(sampling.temperature),
-            top_p=float(sampling.top_p),
-            top_k=int(sampling.top_k),
-        )
+        sampler_kwargs: dict[str, Any] = {
+            "temp": float(sampling.temperature),
+            "top_p": float(sampling.top_p),
+            "top_k": int(sampling.top_k),
+        }
+        for penalty_name in ("frequency_penalty", "presence_penalty"):
+            if _callable_accepts_kwarg(self._sampler_factory, penalty_name):
+                sampler_kwargs[penalty_name] = float(getattr(sampling, penalty_name, 0.0))
+        sampler = self._sampler_factory(**sampler_kwargs)
         max_tokens = int(sampling.max_output_tokens) if int(sampling.max_output_tokens) > 0 else 256
 
         for response in self._stream_generate_fn(

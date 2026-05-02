@@ -12,6 +12,7 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_registry.catalog import WorkerModelCatalog
+from worker.runtime import mlx_text_runtime as mlx_text_runtime_module
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeUnavailableError
 
@@ -228,6 +229,26 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].speculative_draft_model_configured is True
     assert chunks[-1].dflash_enabled is True
     assert chunks[-1].dflash_rollback_count == 2
+
+
+def test_auto_backend_records_installed_mlx_package_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_version(package_name: str) -> str:
+        return {
+            "mlx": "0.31.2",
+            "mlx-lm": "0.31.3",
+        }[package_name]
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_installed_package_version", fake_version)
+    backend = AutoMLXBackend(
+        load_fn=lambda model_source, **kwargs: (object(), FakeTokenizer()),
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "unused",
+    )
+
+    loaded_model = backend.load_model(WorkerModelCatalog.dev_text_model())
+
+    assert loaded_model["mlx_version"] == "0.31.2"
+    assert loaded_model["mlx_lm_version"] == "0.31.3"
 
 
 def test_text_runtime_load_and_generation_run_on_mlx_executor_thread() -> None:
@@ -503,6 +524,61 @@ def test_auto_backend_lazy_import_wires_runtime_modules(monkeypatch) -> None:
     assert seen["load"] == ("mlx-community/lazy-model", {"lazy": False})
     assert seen["stream"] == {"prompt": "lazy prompt", "max_tokens": 8, "sampler": "lazy-sampler"}
     assert [chunk.text for chunk in chunks] == ["token"]
+
+
+def test_auto_backend_passes_sampling_penalties_when_sampler_accepts_them() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_make_sampler(
+        *,
+        temp: float,
+        top_p: float,
+        top_k: int,
+        frequency_penalty: float,
+        presence_penalty: float,
+    ):
+        seen["sampler"] = {
+            "temp": temp,
+            "top_p": top_p,
+            "top_k": top_k,
+            "frequency_penalty": frequency_penalty,
+            "presence_penalty": presence_penalty,
+        }
+        return "penalty-aware-sampler"
+
+    def fake_stream_generate(model, tokenizer, prompt: str, max_tokens: int, sampler):
+        seen["stream"] = {"sampler": sampler, "max_tokens": max_tokens}
+        yield FakeGenerationResponse(text="token", prompt_tokens=3, generation_tokens=1, finish_reason="stop")
+
+    backend = AutoMLXBackend(
+        load_fn=lambda model_source, **kwargs: (object(), FakeTokenizer()),
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=fake_make_sampler,
+    )
+    loaded_model = backend.load_model(WorkerModelCatalog.dev_text_model())
+
+    list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(
+                temperature=0.25,
+                top_p=0.75,
+                top_k=5,
+                frequency_penalty=0.4,
+                presence_penalty=0.6,
+                max_output_tokens=9,
+            ),
+            Event(),
+        )
+    )
+
+    assert seen["sampler"]["temp"] == pytest.approx(0.25)
+    assert seen["sampler"]["top_p"] == pytest.approx(0.75)
+    assert seen["sampler"]["top_k"] == 5
+    assert seen["sampler"]["frequency_penalty"] == pytest.approx(0.4)
+    assert seen["sampler"]["presence_penalty"] == pytest.approx(0.6)
+    assert seen["stream"] == {"sampler": "penalty-aware-sampler", "max_tokens": 9}
 
 
 def test_auto_backend_handles_unavailable_runtime_and_skips_empty_segments(monkeypatch) -> None:

@@ -813,20 +813,25 @@ public func generate(
 ) -> AsyncStream<Generation> {
 
     let (stream, continuation) = AsyncStream<Generation>.makeStream()
+    let promptTokenCount = input.text.tokens.size
+    let modelConfiguration = context.configuration
+    let tokenizer = context.tokenizer
+    let iteratorBox = SendableBox(iterator)
 
     // Launch a Task to perform iteration asynchronously.
     let task = Task {
+        let iterator = iteratorBox.consume()
         var start = Date.timeIntervalSinceReferenceDate
         var promptTime: TimeInterval = 0
 
         let additionalEOSTokenIds = Set(
-            context.configuration.extraEOSTokens
+            modelConfiguration.extraEOSTokens
                 .compactMap {
-                    context.tokenizer.convertTokenToId($0)
+                    tokenizer.convertTokenToId($0)
                 })
 
         var tokenCount = 0
-        var detokenizer = NaiveStreamingDetokenizer(tokenizer: context.tokenizer)
+        var detokenizer = NaiveStreamingDetokenizer(tokenizer: tokenizer)
         let toolCallProcessor = ToolCallProcessor()
 
         for token in iterator {
@@ -840,8 +845,8 @@ public func generate(
                 start = now
             }
 
-            if token == context.tokenizer.unknownTokenId
-                || token == context.tokenizer.eosTokenId
+            if token == tokenizer.unknownTokenId
+                || token == tokenizer.eosTokenId
                 || additionalEOSTokenIds.contains(token)
             {
                 break
@@ -867,7 +872,7 @@ public func generate(
         let generateTime = now - start
 
         let info = GenerateCompletionInfo(
-            promptTokenCount: input.text.tokens.size,
+            promptTokenCount: promptTokenCount,
             generationTokenCount: tokenCount,
             promptTime: promptTime + iterator.promptPrefillTime,
             generationTime: generateTime

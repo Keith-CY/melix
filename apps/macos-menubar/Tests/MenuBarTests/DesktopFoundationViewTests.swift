@@ -928,9 +928,11 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
 
-        let view = hostView(DesktopModelRegistryEntriesView(viewModel: viewModel))
+        let registryView = DesktopModelRegistryEntriesView(viewModel: viewModel)
+        _ = hostView(registryView)
 
-        #expect(view.subviews.isEmpty == false)
+        #expect(registryView.entries.isEmpty)
+        #expect(registryView.selectedCard == nil)
         #expect(viewModel.modelRegistryEntries.isEmpty)
         #expect(viewModel.selectedHubModelCard == nil)
     }

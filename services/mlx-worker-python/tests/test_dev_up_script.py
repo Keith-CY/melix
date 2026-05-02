@@ -469,6 +469,26 @@ def test_prepare_swift_worker_launch_cwd_prefers_matching_swift_mlx_metallib_fro
     assert default_metallib.resolve() == matching_metallib_path.resolve()
 
 
+def test_prepare_swift_worker_launch_cwd_accepts_mlx_swift_0313_compatible_mlx_metal_0311(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    repo_root = tmp_path / "repo"
+    write_swift_mlx_package_resolved(repo_root, "0.31.3")
+    layout = replace(make_layout(dev_up, repo_root), uv_cache_dir=repo_root / ".uv-cache")
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    compatible_metallib_path = write_mlx_metal_fixture(layout.uv_cache_dir / "archive-v0/good", "0.31.1")
+    monkeypatch.setattr(dev_up.Path, "home", lambda: tmp_path / "empty-home")
+
+    launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, repo_root)
+
+    default_metallib = launch_cwd / "default.metallib"
+    assert launch_cwd == layout.runtime_dir / "swift-text-worker-cwd"
+    assert default_metallib.is_symlink()
+    assert default_metallib.resolve() == compatible_metallib_path.resolve()
+
+
 def test_prepare_swift_worker_launch_cwd_rejects_incompatible_auto_discovered_metallib(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

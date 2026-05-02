@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import hashlib
 import importlib.util
+import logging
 import os
 import time
 from pathlib import Path
@@ -14,12 +15,24 @@ from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
+from worker.runtime.runtime_utils import (
+    callable_accepts_kwarg as _callable_accepts_kwarg,
+    installed_package_version as _installed_package_version,
+)
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeUnavailableError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class MaterializedMediaPaths:
+    image_paths: tuple[str, ...]
+    video_paths: tuple[str, ...]
 
 
 def _gemma4_multimodal_weight_presence(weight_names: list[str] | tuple[str, ...] | set[str]) -> tuple[bool, bool]:
@@ -133,6 +146,9 @@ class AutoMLXVLMBackend:
             raise RuntimeUnavailableError("mlx-vlm is not installed") from self._error
         self._ensure_runtime()
         metadata = dict(model_spec.ext)
+        metadata["mlx_version"] = _installed_package_version("mlx")
+        metadata["mlx_lm_version"] = _installed_package_version("mlx-lm")
+        metadata["mlx_vlm_version"] = _installed_package_version("mlx-vlm")
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
         try:
             model, processor = self.load_fn(
@@ -394,7 +410,7 @@ class MLXVLMRuntime:
             prefix="melix-vlm-",
         )
         try:
-            image_paths = self._materialize_media(prepared_request, temp_media_session)
+            media_paths = self._materialize_media(prepared_request, temp_media_session)
 
             def backend_events():
                 # Must run on the executor-owned thread so the MLX runtime is
@@ -408,9 +424,31 @@ class MLXVLMRuntime:
                     loaded_model["processor"],
                     loaded_model["model"].config,
                     prepared_request.prompt_text,
-                    num_images=len(image_paths),
+                    num_images=len(media_paths.image_paths),
                 )
-                image_argument = image_paths if image_paths else None
+                image_argument = list(media_paths.image_paths) if media_paths.image_paths else None
+                stream_kwargs: dict[str, Any] = {
+                    "image": image_argument,
+                    "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+                    "temperature": float(getattr(sampling, "temperature", 0.0)),
+                    "top_p": float(getattr(sampling, "top_p", 1.0)),
+                    "top_k": int(getattr(sampling, "top_k", 0)),
+                    "verbose": False,
+                }
+                if media_paths.video_paths:
+                    if _callable_accepts_kwarg(self._backend.stream_generate_fn, "video"):
+                        stream_kwargs["video"] = list(media_paths.video_paths)
+                    else:
+                        logger.warning(
+                            "mlx-vlm stream_generate does not accept video=; "
+                            "falling back to prompt/image-only routing for %d video artifact(s)",
+                            len(media_paths.video_paths),
+                        )
+                        self._last_probe = replace(
+                            self._last_probe,
+                            multimodal_decode_mode="fallback",
+                            multimodal_fallback_reason="backend_video_kwarg_unsupported",
+                        )
 
                 started_at = time.perf_counter()
                 first_token_at: float | None = None
@@ -419,12 +457,7 @@ class MLXVLMRuntime:
                     loaded_model["model"],
                     loaded_model["processor"],
                     formatted_prompt,
-                    image=image_argument,
-                    max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
-                    temperature=float(getattr(sampling, "temperature", 0.0)),
-                    top_p=float(getattr(sampling, "top_p", 1.0)),
-                    top_k=int(getattr(sampling, "top_k", 0)),
-                    verbose=False,
+                    **stream_kwargs,
                 ):
                     if cancel_event.is_set():
                         return
@@ -533,18 +566,20 @@ class MLXVLMRuntime:
     def _materialize_media(
         prepared_request: PreparedVisionRequest,
         temp_media_session: TempMediaSession,
-    ) -> list[str]:
+    ) -> MaterializedMediaPaths:
         image_paths: list[str] = []
         for index, image in enumerate(prepared_request.images):
             suffix = MLXVLMRuntime._media_suffix(image.filename, image.format)
             image_path = temp_media_session.write_bytes(f"image-{index}.{suffix}", image.bytes_data)
             image_paths.append(str(image_path))
+        video_paths: list[str] = []
         for index, video in enumerate(prepared_request.videos):
             if not video.bytes_data:
                 continue
             suffix = MLXVLMRuntime._media_suffix(video.filename, video.format)
-            temp_media_session.write_bytes(f"video-{index}.{suffix}", video.bytes_data)
-        return image_paths
+            video_path = temp_media_session.write_bytes(f"video-{index}.{suffix}", video.bytes_data)
+            video_paths.append(str(video_path))
+        return MaterializedMediaPaths(image_paths=tuple(image_paths), video_paths=tuple(video_paths))
 
     @staticmethod
     def _media_suffix(filename: str, format_name: str) -> str:

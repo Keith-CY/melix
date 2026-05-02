@@ -6,6 +6,16 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version < '3.13'",
 ]
+conflicts = [[
+    { package = "melix-mlx-worker", extra = "mlx" },
+    { package = "melix-mlx-worker", extra = "audio" },
+], [
+    { package = "melix-mlx-worker", extra = "mlx" },
+    { package = "melix-mlx-worker", extra = "audio-stt" },
+], [
+    { package = "melix-mlx-worker", extra = "mlx" },
+    { package = "melix-mlx-worker", extra = "audio-tts" },
+]]
 
 [manifest]
 members = [
@@ -480,12 +490,12 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dill" },
     { name = "filelock" },
-    { name = "fsspec", extra = ["http"] },
+    { name = "fsspec", extra = ["http"], marker = "extra == 'extra-16-melix-mlx-worker-mlx'" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "multiprocess" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
     { name = "packaging" },
     { name = "pandas" },
     { name = "pyarrow" },
@@ -880,8 +890,8 @@ dependencies = [
     { name = "lazy-loader" },
     { name = "msgpack" },
     { name = "numba" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
     { name = "pooch" },
     { name = "scikit-learn" },
     { name = "scipy" },
@@ -1025,7 +1035,7 @@ audio-tts = [
 ]
 mlx = [
     { name = "mlx" },
-    { name = "mlx-lm" },
+    { name = "mlx-lm", version = "0.31.3", source = { registry = "https://pypi.org/simple" } },
     { name = "mlx-vlm" },
 ]
 
@@ -1039,12 +1049,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "grpcio", specifier = ">=1.71.0" },
-    { name = "mlx", marker = "extra == 'mlx'", specifier = ">=0.25.0" },
+    { name = "mlx", marker = "extra == 'mlx'", specifier = ">=0.31.2,<0.32" },
     { name = "mlx-audio", marker = "extra == 'audio'", specifier = "==0.4.2" },
     { name = "mlx-audio", marker = "extra == 'audio-stt'", specifier = "==0.4.2" },
     { name = "mlx-audio", marker = "extra == 'audio-tts'", specifier = "==0.4.2" },
-    { name = "mlx-lm", marker = "extra == 'mlx'", specifier = ">=0.22.0" },
-    { name = "mlx-vlm", marker = "extra == 'mlx'", git = "https://github.com/Blaizzy/mlx-vlm.git?rev=43b9b2078b7027e7622f34a434b2d94aada7eaad" },
+    { name = "mlx-lm", marker = "extra == 'mlx'", specifier = ">=0.31.3,<0.32" },
+    { name = "mlx-vlm", marker = "extra == 'mlx'", specifier = ">=0.4.4,<0.5" },
     { name = "protobuf", specifier = ">=5.29.0" },
 ]
 provides-extras = ["mlx", "audio-stt", "audio-tts", "audio"]
@@ -1082,27 +1092,27 @@ wheels = [
 
 [[package]]
 name = "mlx"
-version = "0.31.1"
+version = "0.31.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mlx-metal", marker = "sys_platform == 'darwin'" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/29/71fe1f68756f515856e6930973c23245810d4aa3cd22fddd719d86a709dc/mlx-0.31.1-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:8a63b31a398c9519f2bb0c81cf3865d9baca4ff573ffc31ead465d18286184e8", size = 574308 },
-    { url = "https://files.pythonhosted.org/packages/21/be/70654a2cee0d71fd10bd237a50a79d06ae51679a194db6a3b16c0c84e6a5/mlx-0.31.1-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:a7a9347df4dcc41f0d16ff70b65650820af4879f686534b233b16826a22afa00", size = 574309 },
-    { url = "https://files.pythonhosted.org/packages/ad/69/c7bc7b04f76b0cbd678f328011d1634bd0bcfc2da45aba06e084cb031127/mlx-0.31.1-cp312-cp312-macosx_26_0_arm64.whl", hash = "sha256:6cdb797ea31787d1ce9e5be77991c4bd5cbf129ab15f7253b78e09737f535fce", size = 574289 },
-    { url = "https://files.pythonhosted.org/packages/55/f7/dcc129228faab4d406041d91413c5999250ab79da6fe5417ac84f1616ff1/mlx-0.31.1-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:1ed1991c8e39f841d5756c0c543beb819763a2f80fba3f4b150bc6cad4d973de", size = 626439 },
-    { url = "https://files.pythonhosted.org/packages/90/1d/8b32e46ea98ab5c1c15cf1b37ac97af651977f84e72e1800412a700c51d9/mlx-0.31.1-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:195c5cb27328380287c0ffe9ef48f860ab75ec5d3dfce153d475dc2c99369708", size = 668679 },
-    { url = "https://files.pythonhosted.org/packages/44/45/04465da443634b23fb11670bbd2f7538b1ed43ffc5e0de44a95b3c29e9c1/mlx-0.31.1-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:9a6d3410fc951bd28508fed9c1ab5d9903f6f6bb101c3a5d63d4191d49a384a1", size = 574268 },
-    { url = "https://files.pythonhosted.org/packages/85/7b/84956960356ff36e8c1bbed68fac96709e98e6a1adbc8e3d0ff71022d84e/mlx-0.31.1-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:20bd7ba19882603ac22711092d0e799f1ff7b5183c2c641d417dab4d2423d99e", size = 574265 },
-    { url = "https://files.pythonhosted.org/packages/86/01/d6f0ef5b8c0b390af08246d1301e9717dfb076b3920012b53105a888ed8c/mlx-0.31.1-cp313-cp313-macosx_26_0_arm64.whl", hash = "sha256:4c4565d6f4f8ce295613ee342d313ee5ab0b0eab9a6272954450f8343f7876bc", size = 574172 },
-    { url = "https://files.pythonhosted.org/packages/df/05/eb29e9eb0cff9c7dfd872e26663e6e9512629730740e1db629086c80ac5a/mlx-0.31.1-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:9dc564a8b38b9aec279a1c7d34551068b1cc1f8e43b5ac044b56b2a9a4205195", size = 626558 },
-    { url = "https://files.pythonhosted.org/packages/25/45/ecb746fbb6acb75d03760e41cc7bd21c2e2b544528b3033f7d70402334ac/mlx-0.31.1-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:78f51ab929278366006ee7793dbb5c942b121542c793c33eb9b894a2ce8e27e1", size = 668625 },
-    { url = "https://files.pythonhosted.org/packages/99/65/208f511acd5fb1ed0b08f047bd6229583845cc6f4b5aa6547a3219332dbb/mlx-0.31.1-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:bba9d471ba20e050676292b1089a355c8042d3fc9462e4c1738a9735d7d40cfa", size = 576300 },
-    { url = "https://files.pythonhosted.org/packages/98/58/2d925cb3fa3cd28d279ed6f44508ab7fbbf7359b17359914aa3652a7d734/mlx-0.31.1-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:d90b0529b22553eb1353b113b7233aa391ca55e24b1ba69024c732fcc21c5c49", size = 576303 },
-    { url = "https://files.pythonhosted.org/packages/e1/17/abec0bd0f9347dae13e60b33325cb199312798842901953495e19f3bb3c8/mlx-0.31.1-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:69bc88b41ddd61b44cd6a4d417790f9971ba3fdf58d824934cea95a95b9b4031", size = 576275 },
-    { url = "https://files.pythonhosted.org/packages/a2/91/85c73f7cc3a661416d05315623458c719eda7de958b05f4e10ba40c52d07/mlx-0.31.1-cp314-cp314-manylinux_2_35_aarch64.whl", hash = "sha256:b973506fd49ba39df6dc4ff655b77bd35ea193cee878e71d6ee3d1a951d2b3a6", size = 628701 },
-    { url = "https://files.pythonhosted.org/packages/7d/e9/d87638e00a44dcf346fe838caaf1e2dae96a88d5779edbd66ce27d4bbdcc/mlx-0.31.1-cp314-cp314-manylinux_2_35_x86_64.whl", hash = "sha256:3987282a1e63252bdd7c636138812c67316c3f7c7a7acad08e76c8843648a056", size = 668959 },
+    { url = "https://files.pythonhosted.org/packages/c3/47/5f33906cb03d6a378a697cd2d2641a26b37dea17ee3d9124d7e39e8eca01/mlx-0.31.2-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:e5067aaf2be1f3d7bba5be52348775804f111173c1ed04639618fd713b1a530f", size = 584863 },
+    { url = "https://files.pythonhosted.org/packages/08/e7/a851a451b1327af9fb4df3991b9ae87d066b6f6630e854af55c288b0995a/mlx-0.31.2-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:edb9797db7d852477ca1c99708058654ee860d4148fe5765f0d55528e2b1aa22", size = 584860 },
+    { url = "https://files.pythonhosted.org/packages/3b/15/0d1dc0597644e5e7b011ca954ba0c47e13cd880a3b909b0c3f1b4d8bf8f1/mlx-0.31.2-cp312-cp312-macosx_26_0_arm64.whl", hash = "sha256:51ca102db641b01e7cb083ce8ecb580e281530a141a7ca12544bb370641630ae", size = 584887 },
+    { url = "https://files.pythonhosted.org/packages/5d/c3/00664239a98e8bd614733c4182cd402d2bacad2d7f79eca66562ac406870/mlx-0.31.2-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:117c7583cae0ca107cd53c591cc34f8e75f97a505aa47088844b7dc0fc69dc67", size = 627863 },
+    { url = "https://files.pythonhosted.org/packages/53/7b/af6cd73a79772af6f19eab2cb4c48eda23a9294d1650a4c1269a9996e532/mlx-0.31.2-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:99572133181481640a8bf8d449daf083816d0af3ee050c8adfc5bf45ceca91c6", size = 685090 },
+    { url = "https://files.pythonhosted.org/packages/a3/3f/888f8664d4f8e23a1363a5f50024be5216e199ab7ad0ba20988c7ed6d729/mlx-0.31.2-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:1b3fb0dda955b0d552ce57bdd6f42b3309ab21b067e40587d6848443d307e91f", size = 584796 },
+    { url = "https://files.pythonhosted.org/packages/dd/14/e9cd18b51f9e1dbcb060eec0fafc2d2428c8e1eacd9b0a02d7c5ce75b661/mlx-0.31.2-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:34b0171cd9eb5c43fdd82091f6135d6ccc5a065363a4a3e68fac64fb4e53d37c", size = 584790 },
+    { url = "https://files.pythonhosted.org/packages/ca/20/c6c5fb998c7834d094b2bfb9f003b5246cb270f0266da055c55546c34999/mlx-0.31.2-cp313-cp313-macosx_26_0_arm64.whl", hash = "sha256:c05981684279a8935d58b0dde3ea5b02d210c3bad3319aa0e9934ec2df165752", size = 584795 },
+    { url = "https://files.pythonhosted.org/packages/0b/19/aca251d4c5f3532ce9c2c1e95ad76740d9c6c298f406f62d992f465b9be0/mlx-0.31.2-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:cd1f4189e5f1bc68735f44eb63ce98ae09d66ac75d7ab5b15a41afae7e9f0513", size = 627843 },
+    { url = "https://files.pythonhosted.org/packages/3e/2b/b89364883b98f21c2fe29e52d4ac8bc2fa2fe0d79293b36ec421efc1854a/mlx-0.31.2-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:53c8d57ffa9ce77f8355663be05014c0dd37280e57f19126fb0a24389a30684b", size = 685064 },
+    { url = "https://files.pythonhosted.org/packages/8b/f5/e63f6a9316ded2d14a8ebc7a9ca25734c784e8c54d064a78b4dceeacec0e/mlx-0.31.2-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:a13c9ce23c3deef6aa5a09315e7953e1a5dc311e851fa16fc74c81fb2509c0b9", size = 588417 },
+    { url = "https://files.pythonhosted.org/packages/31/50/9d0c03ea3134cd85c132df7b0e4b75e6344bd8b4881a0b9c465cfa27f724/mlx-0.31.2-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:b0764bf11fc3a71dee988e19275eef67775cab63112d8bb7ef173ca8b2a1247c", size = 588421 },
+    { url = "https://files.pythonhosted.org/packages/ef/5b/d364cc793bcb504621313acb55627cf0d5403ab2e0a594aa081cdbe4591f/mlx-0.31.2-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:59ccbd0f0044d4f97f11ebcbf0c480bc9e962935fd96275f120954afea65be8a", size = 588384 },
+    { url = "https://files.pythonhosted.org/packages/1b/a4/e822202dd2e4e7d08671f2ecf7b6500af74f5bad5ceb27086b1aa6902f3a/mlx-0.31.2-cp314-cp314-manylinux_2_35_aarch64.whl", hash = "sha256:e81798c610f95a09c642c89214ba5c23b72ce18ce4728184aceabe7eddca33d7", size = 630473 },
+    { url = "https://files.pythonhosted.org/packages/40/6f/da48d2d7a76e644d35438ef6f33c68755fdd382e2c546fd1804ccba01d04/mlx-0.31.2-cp314-cp314-manylinux_2_35_x86_64.whl", hash = "sha256:69fbc94bf53607a75af9eb3e22c354738a6fe4e25aa4e2b20934b009a4bba1f3", size = 685459 },
 ]
 
 [[package]]
@@ -1114,10 +1124,10 @@ dependencies = [
     { name = "librosa" },
     { name = "miniaudio" },
     { name = "mlx" },
-    { name = "mlx-lm" },
+    { name = "mlx-lm", version = "0.31.1", source = { registry = "https://pypi.org/simple" } },
     { name = "numba" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
     { name = "protobuf" },
     { name = "pyloudnorm" },
     { name = "sounddevice" },
@@ -1133,11 +1143,16 @@ wheels = [
 name = "mlx-lm"
 version = "0.31.1"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
 dependencies = [
     { name = "jinja2" },
     { name = "mlx", marker = "sys_platform == 'darwin'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
     { name = "protobuf" },
     { name = "pyyaml" },
     { name = "sentencepiece" },
@@ -1149,33 +1164,61 @@ wheels = [
 ]
 
 [[package]]
+name = "mlx-lm"
+version = "0.31.3"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "jinja2" },
+    { name = "mlx", marker = "sys_platform == 'darwin'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "protobuf" },
+    { name = "pyyaml" },
+    { name = "sentencepiece" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/84/94/9a38d6b0c6fcca995b9136c94eb7da1e9c5165652edf228b96b29960fa7a/mlx_lm-0.31.3.tar.gz", hash = "sha256:61eb0e3ba09444f77f874aff295401d7ccd20b39495cbbce0c782a15474ce733", size = 304318 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/90/02/9a67b8e4f87e3e2e5cd7b1ad79304b93c09a0db6af34bee75e6551c06c60/mlx_lm-0.31.3-py3-none-any.whl", hash = "sha256:758cfddf1180053b7613db76fad3d246a331a2a905808e1164a275621fc983b8", size = 408890 },
+]
+
+[[package]]
 name = "mlx-metal"
-version = "0.31.1"
+version = "0.31.2"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/66/2313497fdbc7fbadf8e026c09366e3f049f9114e65ca4edc23cdb8699186/mlx_metal-0.31.1-py3-none-macosx_14_0_arm64.whl", hash = "sha256:70741174131dbf7fdd479cb730e06e08c358eac3bf7905d9e884e7960cfdd5b8", size = 38624074 },
-    { url = "https://files.pythonhosted.org/packages/c7/34/4c3c6890ce6095b2ab2ba2f5f15c9a7ba17208d47f8cacb572885a2dc0eb/mlx_metal-0.31.1-py3-none-macosx_15_0_arm64.whl", hash = "sha256:6c56bd8cd27743e635f5a90a22535af7c31bd22b4b126d46b6da2da52d72e413", size = 38618950 },
-    { url = "https://files.pythonhosted.org/packages/51/bc/987cb99e3aafb296aa11ce5133838a10eae8447edd53168d0804d4fb3a14/mlx_metal-0.31.1-py3-none-macosx_26_0_arm64.whl", hash = "sha256:e7324b7c56b519ae67c025d3ced07e5d35bc3a9f19d4c45fe4927f385148c59e", size = 49256543 },
+    { url = "https://files.pythonhosted.org/packages/3f/69/fe3b783ebe999f3118234e1e940feb622518bfb1dea6ac5d13b1d36a8449/mlx_metal-0.31.2-py3-none-macosx_14_0_arm64.whl", hash = "sha256:b25385bcee18fc194092255b8b53b9a3d8489eb650e59160f1b57aadd07aa2dc", size = 40055588 },
+    { url = "https://files.pythonhosted.org/packages/4f/5d/4c690d5b93c30ba002656c37363159d978705bf8eb801b8481840fb942c2/mlx_metal-0.31.2-py3-none-macosx_15_0_arm64.whl", hash = "sha256:e9d4e5fce6ca10a87a0e388597f99519ad594d09e674708b5312bd8bd4f5997d", size = 40053220 },
+    { url = "https://files.pythonhosted.org/packages/99/82/11fd62a8d7a3e96e5c43220b17de0151e3f10101f8bb3b865f5bd9cdd074/mlx_metal-0.31.2-py3-none-macosx_26_0_arm64.whl", hash = "sha256:84ffb60ee503f03eb684f5fb168d5cff31e2a16b7f27c1731eaf7662bd6e9b46", size = 55792151 },
 ]
 
 [[package]]
 name = "mlx-vlm"
-version = "0.4.3"
-source = { git = "https://github.com/Blaizzy/mlx-vlm.git?rev=43b9b2078b7027e7622f34a434b2d94aada7eaad#43b9b2078b7027e7622f34a434b2d94aada7eaad" }
+version = "0.4.4"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "datasets" },
     { name = "fastapi" },
     { name = "miniaudio" },
     { name = "mlx" },
-    { name = "mlx-lm" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "mlx-lm", version = "0.31.3", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
     { name = "opencv-python" },
     { name = "pillow" },
     { name = "requests" },
     { name = "tqdm" },
     { name = "transformers" },
     { name = "uvicorn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/94/ec/108aec30efb159940ea29d133d5d8ec14840edbec914869b46eaafac5552/mlx_vlm-0.4.4.tar.gz", hash = "sha256:3197e277c1be9ed1712ea04624df029e486f7747ad93e40e7bd1c9c771f8b179", size = 836370 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/81/235518176c3c8230e5274e91346ecf940591f653e73b0daeb505fb37eea9/mlx_vlm-0.4.4-py3-none-any.whl", hash = "sha256:3ff86ea738ab1914dc1b07e4fa5d4cc34bec5909e540692cfad0af808af13c11", size = 1014936 },
 ]
 
 [[package]]
@@ -1344,8 +1387,8 @@ version = "0.65.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "llvmlite" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/49/61/7299643b9c18d669e04be7c5bcb64d985070d07553274817b45b049e7bfe/numba-0.65.0.tar.gz", hash = "sha256:edad0d9f6682e93624c00125a471ae4df186175d71fd604c983c377cdc03e68b", size = 2764131 }
 wheels = [
@@ -1503,8 +1546,8 @@ name = "opencv-python"
 version = "4.13.0.92"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fc/6f/5a28fef4c4a382be06afe3938c64cc168223016fa520c5abaf37e8862aa5/opencv_python-4.13.0.92-cp37-abi3-macosx_13_0_arm64.whl", hash = "sha256:caf60c071ec391ba51ed00a4a920f996d0b64e3e46068aac1f646b5de0326a19", size = 46247052 },
@@ -1531,8 +1574,8 @@ name = "pandas"
 version = "2.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
     { name = "python-dateutil" },
     { name = "pytz" },
     { name = "tzdata" },
@@ -1915,8 +1958,8 @@ name = "pyloudnorm"
 version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
     { name = "scipy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/23/00/f915eaa75326f4209941179c2b93ac477f2040e4aeff5bb21d16eb8058f9/pyloudnorm-0.2.0.tar.gz", hash = "sha256:8bf597658ea4e1975c275adf490f6deb5369ea409f2901f939915efa4b681b16", size = 14037 }
@@ -1929,7 +1972,7 @@ name = "pytest"
 version = "9.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -2151,8 +2194,8 @@ version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "joblib" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
     { name = "scipy" },
     { name = "threadpoolctl" },
 ]
@@ -2195,8 +2238,8 @@ name = "scipy"
 version = "1.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7a/97/5a3609c4f8d58b039179648e62dd220f89864f56f7357f5d4f45c29eb2cc/scipy-1.17.1.tar.gz", hash = "sha256:95d8e012d8cb8816c226aef832200b1d45109ed4464303e997c5b13122b297c0", size = 30573822 }
 wheels = [
@@ -2348,8 +2391,8 @@ version = "0.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cffi" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e1/41/9b873a8c055582859b239be17902a85339bec6a30ad162f98c9b0288a2cc/soundfile-0.13.1.tar.gz", hash = "sha256:b2c68dab1e30297317080a5b43df57e302584c49e2942defdde0acccc53f0e5b", size = 46156 }
 wheels = [
@@ -2367,8 +2410,8 @@ name = "soxr"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/7e/f4b461944662ad75036df65277d6130f9411002bfb79e9df7dff40a31db9/soxr-1.0.0.tar.gz", hash = "sha256:e07ee6c1d659bc6957034f4800c60cb8b98de798823e34d2a2bba1caa85a4509", size = 171415 }
 wheels = [
@@ -2484,8 +2527,8 @@ version = "5.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (python_full_version < '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-stt') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-audio-tts') or (python_full_version >= '3.13' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-stt' and extra == 'extra-16-melix-mlx-worker-mlx') or (extra == 'extra-16-melix-mlx-worker-audio-tts' and extra == 'extra-16-melix-mlx-worker-mlx')" },
     { name = "packaging" },
     { name = "pyyaml" },
     { name = "regex" },
