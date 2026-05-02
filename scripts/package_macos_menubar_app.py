@@ -30,15 +30,12 @@ def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
 
     try:
         with os.scandir(build_root) as entries:
-            triple_entries = sorted(
-                (entry for entry in entries if entry.is_dir()),
-                key=lambda entry: entry.name,
-            )
-    except FileNotFoundError:
+            triple_names = sorted(entry.name for entry in entries if entry.is_dir())
+    except OSError:
         return None
 
-    for entry in triple_entries:
-        candidate = Path(entry.path) / "debug" / product_name
+    for triple_name in triple_names:
+        candidate = build_root / triple_name / "debug" / product_name
         if candidate.is_file():
             return candidate
     return None
