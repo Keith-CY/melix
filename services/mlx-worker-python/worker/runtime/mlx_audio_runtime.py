@@ -12,9 +12,17 @@ import wave
 from worker.runtime.audio_preprocessing import prepare_audio_input
 from worker.runtime.audio_runtime_protocols import (
     AudioBackendUnavailableError,
+    AudioProcessorValidationError,
     AudioRuntimeLoadedModel,
     SpeechResult,
     TranscriptionResult,
+)
+
+
+_AUDIO_PROCESSOR_CONFIG_FILES = (
+    "processor_config.json",
+    "preprocessor_config.json",
+    "feature_extractor_config.json",
 )
 
 
@@ -68,6 +76,28 @@ def _voice_metadata_for_model(model) -> dict[str, object]:
     return {}
 
 
+def _validate_local_audio_processor_assets(model_spec, *, backend_id: str, load_stage: str) -> None:
+    model_path = str(getattr(model_spec, "model_path", "") or "").strip()
+    if not model_path:
+        return
+    model_dir = Path(model_path).expanduser()
+    if not model_dir.exists():
+        return
+    if model_dir.is_file():
+        model_dir = model_dir.parent
+    if any((model_dir / file_name).is_file() for file_name in _AUDIO_PROCESSOR_CONFIG_FILES):
+        return
+    raise AudioProcessorValidationError(
+        model_id=str(getattr(model_spec, "model_id", "") or ""),
+        model_path=str(model_dir),
+        backend_id=backend_id,
+        family_id=str(getattr(model_spec, "ext", {}).get("melix.audio.family_id", "unknown") or "unknown"),
+        missing_asset_class="processor_config",
+        load_stage=load_stage,
+        required_files=_AUDIO_PROCESSOR_CONFIG_FILES,
+    )
+
+
 @dataclass(frozen=True)
 class MLXAudioTranscriptionProbeSnapshot:
     preprocess_latency_ms: float
@@ -96,6 +126,12 @@ class MLXAudioTranscriptionRuntime:
 
     def load_model(self, model_spec) -> AudioRuntimeLoadedModel:
         started_at = perf_counter()
+        backend_id = model_spec.ext.get("melix.audio.backend_id", "mlx_audio.stt") or "mlx_audio.stt"
+        _validate_local_audio_processor_assets(
+            model_spec,
+            backend_id=backend_id,
+            load_stage="load_model:processor_asset_preflight",
+        )
         try:
             from mlx_audio.stt.utils import load_model
         except ImportError as exc:  # pragma: no cover - environment dependent
@@ -105,7 +141,7 @@ class MLXAudioTranscriptionRuntime:
 
         model = load_model(model_spec.model_path)
         return AudioRuntimeLoadedModel(
-            backend_id=model_spec.ext.get("melix.audio.backend_id", "mlx_audio.stt") or "mlx_audio.stt",
+            backend_id=backend_id,
             family_id=model_spec.ext.get("melix.audio.family_id", "unknown") or "unknown",
             runtime_name=self.runtime_name,
             model=model,
@@ -181,6 +217,12 @@ class MLXAudioSpeechRuntime:
 
     def load_model(self, model_spec) -> AudioRuntimeLoadedModel:
         started_at = perf_counter()
+        backend_id = model_spec.ext.get("melix.audio.backend_id", "mlx_audio.tts") or "mlx_audio.tts"
+        _validate_local_audio_processor_assets(
+            model_spec,
+            backend_id=backend_id,
+            load_stage="load_model:processor_asset_preflight",
+        )
         try:
             from mlx_audio.tts.utils import load_model
         except ImportError as exc:  # pragma: no cover - environment dependent
@@ -204,7 +246,7 @@ class MLXAudioSpeechRuntime:
             voice_mode = "named"
 
         return AudioRuntimeLoadedModel(
-            backend_id=model_spec.ext.get("melix.audio.backend_id", "mlx_audio.tts") or "mlx_audio.tts",
+            backend_id=backend_id,
             family_id=model_spec.ext.get("melix.audio.family_id", "unknown") or "unknown",
             runtime_name=self.runtime_name,
             model=model,

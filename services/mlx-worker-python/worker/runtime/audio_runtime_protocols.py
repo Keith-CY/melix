@@ -9,6 +9,39 @@ class AudioBackendUnavailableError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class AudioProcessorValidationError(RuntimeError):
+    model_id: str
+    model_path: str
+    backend_id: str
+    family_id: str
+    missing_asset_class: str
+    load_stage: str
+    required_files: tuple[str, ...]
+
+    def __str__(self) -> str:
+        required = ", ".join(self.required_files)
+        return (
+            f"Audio model {self.model_id} is missing required {self.missing_asset_class} "
+            f"processor assets before {self.load_stage}. Expected one of: {required}. "
+            "Reinstall or redownload the managed audio model before retrying."
+        )
+
+    @property
+    def details(self) -> dict[str, str]:
+        return {
+            "model_id": self.model_id,
+            "model_path": self.model_path,
+            "backend_id": self.backend_id,
+            "family_id": self.family_id,
+            "missing_asset_class": self.missing_asset_class,
+            "load_stage": self.load_stage,
+            "required_files": ",".join(self.required_files),
+            "required_action": "redownload_audio_model",
+            "audio_processor_validation_result": "0",
+        }
+
+
+@dataclass(frozen=True)
 class AudioRuntimeLoadedModel:
     backend_id: str
     family_id: str

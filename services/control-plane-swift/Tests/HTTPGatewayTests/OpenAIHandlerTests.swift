@@ -297,6 +297,62 @@ struct OpenAIHandlerTests {
         #expect(authorized.statusCode == 200)
     }
 
+    @Test("shared API-key policy gates every operator-facing route except health")
+    func sharedAPIKeyPolicyGatesEveryOperatorFacingRouteExceptHealth() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "operator", label: "Operator", tokenHint: "operator", token: "sk-operator"),
+                ]
+            )
+        )
+        let operatorRoutes: [(HTTPMethod, String, String, Bool)] = [
+            (.get, "/v1/models", "missing_api_key", true),
+            (.get, "/v1/cache/stats", "missing_api_key", true),
+            (.post, "/v1/melix/auth/session", "missing_api_key", true),
+            (.get, "/v1/melix/auth/session", "missing_session", false),
+            (.delete, "/v1/melix/auth/session", "missing_session", false),
+            (.post, "/v1/chat/completions", "missing_api_key", true),
+            (.post, "/v1/completions", "missing_api_key", true),
+            (.post, "/v1/responses", "missing_api_key", true),
+            (.post, "/v1/messages", "missing_api_key", true),
+            (.post, "/v1/embeddings", "missing_api_key", true),
+            (.post, "/v1/rerank", "missing_api_key", true),
+            (.post, "/v1/audio/transcriptions", "missing_api_key", true),
+            (.post, "/v1/audio/speech", "missing_api_key", true),
+            (.post, "/v1/images/generations", "missing_api_key", true),
+            (.post, "/v1/images/edits", "missing_api_key", true),
+            (.get, "/v1/unknown", "missing_api_key", true),
+        ]
+
+        for (method, path, expectedErrorCode, _) in operatorRoutes {
+            let response = try await handler.handle(
+                HTTPRequest(method: method, path: path, headers: [:], body: Data("{}".utf8))
+            )
+            let payload = try await jsonObject(from: response.body)
+            #expect(response.statusCode == 401)
+            #expect(payload.errorCode == expectedErrorCode)
+        }
+
+        let health = try await handler.handle(
+            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+        )
+
+        let gatewayPolicyFailures = operatorRoutes.filter(\.3).count
+        #expect(health.statusCode == 200)
+        #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == Double(gatewayPolicyFailures))
+        #expect(await metricsStore.value(forKey: "route_auth_policy") == 2)
+    }
+
     @Test("gateway auth sessions can be created reused and revoked")
     func gatewayAuthSessionsCanBeCreatedReusedAndRevoked() async throws {
         let metricsStore = MetricsStore()
@@ -2964,6 +3020,81 @@ struct OpenAIHandlerTests {
         #expect(body.contains("\"melix_state\":\"unknown\""))
     }
 
+    @Test("wrong endpoint requests return actionable 400 diagnostics before worker dispatch")
+    func wrongEndpointRequestsReturnActionableDiagnosticsBeforeWorkerDispatch() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let nonTextClient = ScriptedPhaseFiveWorkerClient()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: nonTextClient,
+                embeddingClient: nonTextClient,
+                rerankClient: nonTextClient,
+                modelCatalog: catalog
+            ),
+            metricsStore: metricsStore
+        )
+        let cases: [(HTTPMethod, String, String, String)] = [
+            (
+                .post,
+                "/v1/chat/completions",
+                #"{"model":"melix-dev-transcribe","stream":true,"messages":[{"role":"user","content":"hello"}]}"#,
+                "/v1/audio/transcriptions"
+            ),
+            (.post, "/v1/embeddings", #"{"model":"melix-dev-speech","input":"hello"}"#, "/v1/audio/speech"),
+            (
+                .post,
+                "/v1/rerank",
+                #"{"model":"melix-dev-embed","query":"q","documents":["a"],"top_k":1}"#,
+                "/v1/embeddings"
+            ),
+            (
+                .post,
+                "/v1/audio/transcriptions",
+                #"{"model":"melix-dev-text","audio_base64":"aGVsbG8="}"#,
+                "/v1/chat/completions"
+            ),
+            (.post, "/v1/audio/speech", #"{"model":"melix-dev-transcribe","input":"hello"}"#, "/v1/audio/transcriptions"),
+            (.post, "/v1/images/generations", #"{"model":"melix-dev-rerank","prompt":"draw"}"#, "/v1/rerank"),
+            (.post, "/v1/images/edits", #"{"model":"melix-dev-text","prompt":"edit"}"#, "/v1/chat/completions"),
+        ]
+
+        for (method, path, rawBody, expectedEndpoint) in cases {
+            let response = try await handler.handle(
+                HTTPRequest(
+                    method: method,
+                    path: path,
+                    headers: [:],
+                    body: Data(rawBody.utf8)
+                )
+            )
+            let payload = try await jsonPayload(from: response.body)
+            let error = try #require(payload["error"] as? [String: Any])
+
+            #expect(response.statusCode == 400)
+            #expect(error["code"] as? String == "wrong_endpoint_for_model")
+            #expect(error["correct_endpoint"] as? String == expectedEndpoint)
+            #expect((error["message"] as? String ?? "").contains(expectedEndpoint))
+        }
+
+        #expect(await textClient.lastGenerateRequest == nil)
+        #expect(await nonTextClient.lastEmbedRequest == nil)
+        #expect(await nonTextClient.lastRerankRequest == nil)
+        #expect(await nonTextClient.lastTranscribeRequest == nil)
+        #expect(await nonTextClient.lastSpeakRequest == nil)
+        #expect(await nonTextClient.lastImageGenerateRequest == nil)
+        #expect(await nonTextClient.lastImageEditRequest == nil)
+        #expect(await metricsStore.value(forKey: "endpoint_type_validation_result") == 0)
+        #expect(await metricsStore.value(forKey: "endpoint_type_validation_rejection_count") == Double(cases.count))
+    }
+
     @Test("POST /v1/embeddings routes to the embedding worker and returns JSON")
     func postEmbeddingsRoutesAndReturnsJSON() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -4247,6 +4378,79 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 409)
         #expect(payload.contains("\"code\":\"audio_model_download_required\""))
         #expect(payload.contains("\"model_id\":\"melix-kokoro-mlx\""))
+        #expect(await audioClient.lastSpeakRequest == nil)
+    }
+
+    @Test("POST /v1/audio/speech propagates missing processor asset diagnostics from first load")
+    func postAudioSpeechPropagatesMissingProcessorAssetDiagnosticsFromFirstLoad() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        var loadFailure = Melix_Worker_V1_LoadModelResponse()
+        loadFailure.ok = false
+        loadFailure.error.code = "audio_processor_validation_failed"
+        loadFailure.error.message = "Audio model melix-kokoro-mlx is missing required processor_config processor assets before load_model:processor_asset_preflight."
+        loadFailure.error.details = [
+            "missing_asset_class": "processor_config",
+            "load_stage": "load_model:processor_asset_preflight",
+            "audio_processor_validation_result": "0",
+        ]
+        await audioClient.setLoadModelResponse(loadFailure)
+
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-audio-processor-\(UUID().uuidString)", isDirectory: true)
+        let managedModelPath = appSupportDirectory
+            .appendingPathComponent("managed/kokoro", isDirectory: true)
+            .path
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-tts"]
+        )
+        try assetManager.recordManagedModel(
+            modelID: "melix-kokoro-mlx",
+            revision: "mlx-audio",
+            sourceModelPath: "mlx-community/Kokoro-82M-bf16",
+            localModelPath: managedModelPath
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxKokoroModel()])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-kokoro-mlx",
+              "input": "hello speech",
+              "format": "wav"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+        let details = try #require(error["details"] as? [String: Any])
+
+        #expect(response.statusCode == 409)
+        #expect(error["code"] as? String == "audio_processor_validation_failed")
+        #expect(details["missing_asset_class"] as? String == "processor_config")
+        #expect(details["load_stage"] as? String == "load_model:processor_asset_preflight")
+        #expect(details["audio_processor_validation_result"] as? String == "0")
+        #expect(await audioClient.lastLoadModelRequest != nil)
         #expect(await audioClient.lastSpeakRequest == nil)
     }
 
@@ -6676,6 +6880,7 @@ private actor ScriptedPhaseFiveWorkerClient:
     private var imageGenerateResponse = Melix_Worker_V1_ImageGenerateResponse()
     private var imageEditResponse = Melix_Worker_V1_ImageEditResponse()
     private var runtimeStatsResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
+    private var loadModelResponseOverride: Melix_Worker_V1_LoadModelResponse?
     private var thrownFailure: Error?
 
     func setEmbedResponse(_ response: Melix_Worker_V1_EmbedResponse) {
@@ -6706,6 +6911,10 @@ private actor ScriptedPhaseFiveWorkerClient:
         runtimeStatsResponse = response
     }
 
+    func setLoadModelResponse(_ response: Melix_Worker_V1_LoadModelResponse) {
+        loadModelResponseOverride = response
+    }
+
     func setThrownFailure(_ failure: Error?) {
         thrownFailure = failure
     }
@@ -6730,6 +6939,9 @@ private actor ScriptedPhaseFiveWorkerClient:
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
         lastLoadModelRequest = request
+        if let loadModelResponseOverride {
+            return loadModelResponseOverride
+        }
         var response = Melix_Worker_V1_LoadModelResponse()
         response.ok = true
         response.modelHandle = "\(request.model.modelID)::python"
