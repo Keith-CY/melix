@@ -29,9 +29,12 @@ Metrics:
 ## Implementation plan
 
 1. Preserve the explicit `os.scandir()` stack and non-recursive traversal shape.
-2. Keep `DirEntry.is_dir(follow_symlinks=False)` as the directory fast path, then replace the file branch's `is_file()` + `stat()` pair with one `DirEntry.stat(follow_symlinks=False)` and `stat.S_ISREG` classification.
+2. Use `DirEntry.is_dir(follow_symlinks=False)` as the directory fast path and `DirEntry.is_file(follow_symlinks=False)` before reading file size so Linux directory entries that can answer from `d_type` avoid unnecessary stat calls for non-file entries.
 3. Keep directory symlinks and file symlinks out of the size calculation, matching the non-following traversal contract.
-4. Validate with focused tests, changed-scope coverage, and the registered probe locally on Linux before pushing.
+4. Bind the hot-loop stack and scandir helpers once per call so the synthetic directory-size probe measures less repeated attribute lookup while keeping the same traversal shape.
+5. Validate with focused tests, changed-scope coverage, and the registered probe locally on Linux before pushing.
+
+Deviation note: the earlier single-`stat()` branch was semantically correct, but local Linux probe runs showed the `is_file()` guard is faster for the registered synthetic workload because regular directory entries can be classified before their size stat is needed.
 
 ## Success criteria
 

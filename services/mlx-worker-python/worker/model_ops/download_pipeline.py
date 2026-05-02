@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -454,16 +453,18 @@ class DownloadPipeline:
     def _directory_size(path: Path) -> int:
         total_bytes = 0
         stack = [os.fspath(path)]
+        append_directory = stack.append
+        pop_directory = stack.pop
+        scandir = os.scandir
         while stack:
-            current = stack.pop()
-            with os.scandir(current) as entries:
+            current = pop_directory()
+            with scandir(current) as entries:
                 for entry in entries:
                     if entry.is_dir(follow_symlinks=False):
-                        stack.append(entry.path)
+                        append_directory(entry.path)
                         continue
-                    entry_stat = entry.stat(follow_symlinks=False)
-                    if stat.S_ISREG(entry_stat.st_mode):
-                        total_bytes += entry_stat.st_size
+                    if entry.is_file(follow_symlinks=False):
+                        total_bytes += entry.stat(follow_symlinks=False).st_size
         return total_bytes
 
     @staticmethod
