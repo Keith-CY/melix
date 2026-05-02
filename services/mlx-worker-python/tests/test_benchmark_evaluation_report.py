@@ -16,12 +16,14 @@ from worker.productization.benchmark_evaluation_report import (
     _collect_runtime_metadata,
     _dict_rows,
     _finalize_numeric_aggregate,
+    _finalize_probe_aggregates,
     _label_part,
     _markdown_cell,
     _metric_direction,
     _metric_key_direction,
     _report_rows,
     _update_numeric_aggregate,
+    _update_probe_aggregate_pairs,
     _update_probe_aggregates_by_label,
     build_benchmark_evaluation_report,
     build_sticky_comment_body,
@@ -349,6 +351,28 @@ def test_collect_benchmark_probe_metrics_groups_aggregates_by_label_and_preserve
             "prefill_ms": (24.0, 2),
             "decode_ms": (20.0, 1),
         }
+    }
+
+    aggregate_pairs: dict[tuple[str, str], tuple[float, int]] = {}
+    _update_probe_aggregate_pairs(aggregate_pairs, label="shared", key="prefill_ms", value=10.0)
+    _update_probe_aggregate_pairs(aggregate_pairs, label="shared", key="prefill_ms", value=14.0)
+    _update_probe_aggregate_pairs(aggregate_pairs, label="shared", key="decode_ms", value=20.0)
+    _update_probe_aggregate_pairs(
+        aggregate_pairs,
+        label="shared",
+        key="speculative_fallback_count",
+        value=4.0,
+    )
+
+    assert aggregate_pairs == {
+        ("shared", "prefill_ms"): (24.0, 2),
+        ("shared", "decode_ms"): (20.0, 1),
+        ("shared", "speculative_fallback_count"): (4.0, 1),
+    }
+    assert _finalize_probe_aggregates(aggregate_pairs, prefix="bench") == {
+        "bench.shared.prefill_ms_mean": 12.0,
+        "bench.shared.decode_ms_mean": 20.0,
+        "bench.shared.speculative_fallback_count_sum": 4.0,
     }
 
     metrics: dict[str, object] = {}

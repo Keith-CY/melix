@@ -125,6 +125,7 @@ _METRIC_DIRECTION_BY_KEY = {
 }
 
 _NumericAggregate = tuple[float, int]
+_ProbeAggregateKey = tuple[str, str]
 _BenchmarkLabelCacheKey = tuple[str, str, str, str, str, str]
 
 
@@ -453,7 +454,7 @@ def _collect_benchmark_probe_metrics(
     prefix: str,
     label_cache: dict[_BenchmarkLabelCacheKey, str] | None = None,
 ) -> None:
-    aggregates_by_label: dict[str, dict[str, _NumericAggregate]] = {}
+    aggregate_pairs: dict[_ProbeAggregateKey, _NumericAggregate] = {}
     matrix_label_cache: dict[tuple[object, object, object, object, object], str] = {}
     for row in _dict_rows(rows):
         label = ""
@@ -475,16 +476,13 @@ def _collect_benchmark_probe_metrics(
                         label_cache=label_cache,
                         matrix_label_cache=matrix_label_cache,
                     )
-                _update_probe_aggregates_by_label(
-                    aggregates_by_label,
+                _update_probe_aggregate_pairs(
+                    aggregate_pairs,
                     label=label,
                     key=key,
                     value=value,
                 )
-    for label, aggregates_by_key in aggregates_by_label.items():
-        for key, aggregate in aggregates_by_key.items():
-            suffix, value = _finalize_numeric_aggregate(key, aggregate)
-            metrics[f"{prefix}.{label}.{key}_{suffix}"] = value
+    metrics.update(_finalize_probe_aggregates(aggregate_pairs, prefix=prefix))
 
 
 def _collect_evaluation_sample_probe_metrics(
@@ -533,6 +531,17 @@ def _update_numeric_aggregate(
     return (aggregate[0] + value, aggregate[1] + 1)
 
 
+def _update_probe_aggregate_pairs(
+    aggregate_pairs: dict[_ProbeAggregateKey, _NumericAggregate],
+    *,
+    label: str,
+    key: str,
+    value: float,
+) -> None:
+    aggregate_key = (label, key)
+    aggregate_pairs[aggregate_key] = _update_numeric_aggregate(aggregate_pairs.get(aggregate_key), value)
+
+
 def _update_probe_aggregates_by_label(
     aggregates_by_label: dict[str, dict[str, _NumericAggregate]],
     *,
@@ -545,6 +554,18 @@ def _update_probe_aggregates_by_label(
         aggregates_by_key = {}
         aggregates_by_label[label] = aggregates_by_key
     aggregates_by_key[key] = _update_numeric_aggregate(aggregates_by_key.get(key), value)
+
+
+def _finalize_probe_aggregates(
+    aggregate_pairs: dict[_ProbeAggregateKey, _NumericAggregate],
+    *,
+    prefix: str,
+) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    for (label, key), aggregate in aggregate_pairs.items():
+        suffix, value = _finalize_numeric_aggregate(key, aggregate)
+        metrics[f"{prefix}.{label}.{key}_{suffix}"] = value
+    return metrics
 
 
 def _finalize_numeric_aggregate(
