@@ -448,6 +448,231 @@ def test_persist_result_exports_code_execution_evidence_fields(tmp_path: Path) -
     )
 
 
+def test_write_compare_summary_csv_streams_rows_without_building_one_giant_payload(monkeypatch) -> None:
+    writes: list[str] = []
+
+    class FakeFile:
+        def write(self, chunk: str) -> int:
+            writes.append(chunk)
+            return len(chunk)
+
+        def __enter__(self) -> FakeFile:
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+    target_path = Path("/tmp/evaluation-compare-summary.csv")
+
+    def fake_open(self: Path, mode: str = "r", encoding: str | None = None) -> FakeFile:
+        assert self == target_path
+        assert mode == "w"
+        assert encoding == "utf-8"
+        return FakeFile()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+    compare_job = build_evaluation_compare_job_record(
+        job_id="eval-compare-1",
+        base_model_id="melix-dev-text",
+        target_model_ids=("melix-dev-text-lora-a", "melix-dev-text-lora-b,quoted"),
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=2,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={"compare_mode": "base_vs_targets"},
+        status="completed",
+        output_dir="",
+        created_at_unix_ms=101,
+        updated_at_unix_ms=202,
+        target_lineage=(
+            EvaluationCompareTargetLineage(
+                target_model_id="melix-dev-text-lora-b,quoted",
+                materialization_kind="ephemeral_adapter",
+                adapter_manifest_path='adapters/manifest"beta".json',
+                adapter_set_hash="hash,lineage",
+            ),
+        ),
+    )
+    summaries = (
+        build_evaluation_compare_summary_record(
+            job_id="eval-compare-1",
+            base_model_id="melix-dev-text",
+            target_model_id="melix-dev-text-lora-a",
+            suite_id="mmlu",
+            dataset_id="mmlu-dev",
+            sample_size=2,
+            scoring_mode="multiple_choice_accuracy",
+            win_count=1,
+            loss_count=0,
+            tie_count=1,
+            regression_count=0,
+            base_accuracy=0.5,
+            target_accuracy=1.0,
+            delta_accuracy=0.5,
+            effect_threshold=0.1,
+            verdict="improvement",
+            category_breakdown={},
+            statistical_evidence={
+                "bootstrap": {"lower_bound": 0.15, "upper_bound": 0.8},
+                "analytical": {"lower_bound": 0.12, "upper_bound": 0.88},
+            },
+            release_gate_summary={},
+            duration_seconds=0.25,
+            metrics={},
+            report_path="",
+        ),
+        build_evaluation_compare_summary_record(
+            job_id="eval-compare-1",
+            base_model_id="melix-dev-text",
+            target_model_id="melix-dev-text-lora-b,quoted",
+            suite_id="mmlu",
+            dataset_id="mmlu-dev",
+            sample_size=2,
+            scoring_mode="multiple_choice_accuracy",
+            win_count=0,
+            loss_count=1,
+            tie_count=1,
+            regression_count=1,
+            base_accuracy=1.0,
+            target_accuracy=0.5,
+            delta_accuracy=-0.5,
+            effect_threshold=0.1,
+            verdict='regression "needs review"',
+            category_breakdown={},
+            statistical_evidence={
+                "bootstrap": {"lower_bound": -0.8, "upper_bound": -0.15},
+                "analytical": {"lower_bound": -0.88, "upper_bound": -0.12},
+            },
+            release_gate_summary={},
+            duration_seconds=0.5,
+            metrics={},
+            report_path="",
+        ),
+    )
+
+    EvaluationStore._write_compare_summary_csv(target_path, job=compare_job, summaries=summaries)
+
+    expected_payload = EvaluationStore._compare_summary_csv(job=compare_job, summaries=summaries)
+    assert "".join(writes) == expected_payload
+    assert len(writes) == 3
+    assert writes[0].startswith("job_id,base_model_id,target_model_id")
+    assert writes[1].endswith(",,\n")
+    assert '"melix-dev-text-lora-b,quoted"' in writes[2]
+    assert '"regression ""needs review"""' in writes[2]
+    assert '"adapters/manifest""beta"".json"' in writes[2]
+    assert '"hash,lineage"' in writes[2]
+
+
+
+def test_persist_compare_result_streams_compare_summary_csv_without_calling_legacy_builder(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = EvaluationStore()
+    jobs_root = tmp_path / "evaluation"
+    run_root = jobs_root / "runs" / "eval-compare-stream"
+    compare_job = build_evaluation_compare_job_record(
+        job_id="eval-compare-stream",
+        base_model_id="melix-dev-text",
+        target_model_ids=("melix-dev-text-lora-a",),
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=1,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={"compare_mode": "base_vs_targets"},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=101,
+        updated_at_unix_ms=202,
+        target_lineage=(
+            EvaluationCompareTargetLineage(
+                target_model_id="melix-dev-text-lora-a",
+                materialization_kind="ephemeral_adapter",
+                adapter_manifest_path="adapters/a.json",
+                adapter_set_hash="hash-a",
+            ),
+        ),
+    )
+    compare_summary = build_evaluation_compare_summary_record(
+        job_id="eval-compare-stream",
+        base_model_id="melix-dev-text",
+        target_model_id="melix-dev-text-lora-a",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=1,
+        scoring_mode="multiple_choice_accuracy",
+        win_count=1,
+        loss_count=0,
+        tie_count=0,
+        regression_count=0,
+        base_accuracy=0.0,
+        target_accuracy=1.0,
+        delta_accuracy=1.0,
+        effect_threshold=0.1,
+        verdict="improvement",
+        category_breakdown={},
+        statistical_evidence={
+            "bootstrap": {"lower_bound": 1.0, "upper_bound": 1.0},
+            "analytical": {"lower_bound": 1.0, "upper_bound": 1.0},
+        },
+        release_gate_summary={},
+        duration_seconds=0.25,
+        metrics={},
+        report_path=str(run_root / "evaluation-compare-report.md"),
+    )
+    compare_sample = build_evaluation_compare_sample_record(
+        job_id="eval-compare-stream",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="sample-1",
+        target_model_id="melix-dev-text-lora-a",
+        input_text="2+2?",
+        target="4",
+        base_extracted_result="4",
+        target_extracted_result="4",
+        base_raw_response="Answer: 4",
+        target_raw_response="Answer: 4",
+        base_typed_score=1.0,
+        target_typed_score=1.0,
+        outcome="score_tie",
+        regression_kind="",
+        base_time_s=0.01,
+        target_time_s=0.02,
+        base_extraction_status="extracted",
+        target_extraction_status="extracted",
+        base_validation_status="validated",
+        target_validation_status="validated",
+        base_failure_reason="",
+        target_failure_reason="",
+        base_parse_status="parsed_answer_prefix",
+        target_parse_status="parsed_answer_prefix",
+        category_label="math",
+        subject_label="algebra",
+    )
+    expected_csv = EvaluationStore._compare_summary_csv(job=compare_job, summaries=(compare_summary,))
+
+    def fail_compare_summary_csv(*, job: object, summaries: tuple[object, ...]) -> str:
+        raise AssertionError(
+            "persist_compare_result should stream compare summary CSV instead of calling _compare_summary_csv"
+        )
+
+    monkeypatch.setattr(EvaluationStore, "_compare_summary_csv", staticmethod(fail_compare_summary_csv))
+
+    persisted = store.persist_compare_result(
+        jobs_root=jobs_root,
+        job=compare_job,
+        summaries=(compare_summary,),
+        samples=(compare_sample,),
+    )
+
+    assert persisted["summary_csv"].read_text(encoding="utf-8") == expected_csv
+
+
+
 def test_persist_compare_result_writes_expected_compare_artifact_names_and_payloads(
     tmp_path: Path,
 ) -> None:

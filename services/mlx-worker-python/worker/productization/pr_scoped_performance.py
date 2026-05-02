@@ -373,6 +373,8 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
         return _probe_closure_audit(repo_root)
     if probe.probe_impl == "deterministic_rerank_query_context_reuse":
         return _probe_deterministic_rerank_query_context_reuse(repo_root)
+    if probe.probe_impl == "evaluation_store_compare_summary_csv_streaming":
+        return _probe_evaluation_store_compare_summary_csv_streaming(repo_root)
     if probe.probe_impl == "evaluation_store_samples_csv_streaming":
         return _probe_evaluation_store_samples_csv_streaming(repo_root)
     if probe.probe_impl == "evaluation_sample_probe_aggregation":
@@ -624,6 +626,133 @@ def _probe_deterministic_rerank_query_context_reuse(repo_root: Path) -> dict[str
         "sample_count": float(sample_count),
         "tokenize_calls_mean": round(sum(tokenize_call_samples) / len(tokenize_call_samples), 6),
     }
+
+
+def _probe_evaluation_store_compare_summary_csv_streaming(repo_root: Path) -> dict[str, float]:
+    summary_count = 10000
+    probe_script = f"""
+import gc
+import json
+import sys
+import tempfile
+import time
+import tracemalloc
+from pathlib import Path
+
+repo_root = Path({str(repo_root)!r})
+sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))
+from worker.productization.evaluation_schemas import (
+    build_evaluation_compare_job_record,
+    build_evaluation_compare_summary_record,
+)
+from worker.productization.evaluation_store import EvaluationStore
+
+summary_count = {summary_count}
+summaries = tuple(
+    build_evaluation_compare_summary_record(
+        job_id='eval-compare-perf',
+        base_model_id='melix-dev-text',
+        target_model_id=f'melix-dev-text-target-{{index:05d}}',
+        suite_id='mmlu',
+        dataset_id='mmlu.synthetic',
+        sample_size=64,
+        scoring_mode='multiple_choice_accuracy',
+        win_count=index % 7,
+        loss_count=(index + 1) % 5,
+        tie_count=(index + 2) % 3,
+        regression_count=index % 2,
+        base_accuracy=0.5,
+        target_accuracy=0.5 + ((index % 9) * 0.01),
+        delta_accuracy=((index % 9) * 0.01),
+        effect_threshold=0.02,
+        verdict='improvement' if index % 2 == 0 else 'watch',
+        category_breakdown={{}},
+        statistical_evidence={{
+            'bootstrap': {{
+                'lower_bound': -0.01 + ((index % 7) * 0.001),
+                'upper_bound': 0.03 + ((index % 7) * 0.001),
+            }},
+            'analytical': {{
+                'lower_bound': -0.02 + ((index % 5) * 0.001),
+                'upper_bound': 0.04 + ((index % 5) * 0.001),
+            }},
+        }},
+        release_gate_summary={{}},
+        duration_seconds=0.1 + ((index % 11) * 0.01),
+        metrics={{'eval.compare.delta_accuracy': ((index % 9) * 0.01)}},
+        report_path='',
+    )
+    for index in range(summary_count)
+)
+job = build_evaluation_compare_job_record(
+    job_id='eval-compare-perf',
+    base_model_id='melix-dev-text',
+    target_model_ids=tuple(summary.target_model_id for summary in summaries),
+    task_kind='text-generation',
+    source_repo='synthetic',
+    suite_id='mmlu',
+    dataset_id='mmlu.synthetic',
+    sample_size=64,
+    scoring_mode='multiple_choice_accuracy',
+    parameters={{'compare_mode': 'base_vs_targets'}},
+    status='completed',
+    output_dir='',
+    created_at_unix_ms=101,
+    updated_at_unix_ms=202,
+)
+store = EvaluationStore()
+writer = getattr(store, '_write_compare_summary_csv', None)
+elapsed_samples = []
+peak_samples = []
+csv_line_count = 0
+csv_bytes = 0
+for _ in range(3):
+    with tempfile.TemporaryDirectory(prefix='melix-pr-perf-eval-compare-store-') as temp_dir:
+        summary_csv_path = Path(temp_dir) / 'evaluation-compare-summary.csv'
+        gc.collect()
+        tracemalloc.start()
+        started = time.perf_counter()
+        if writer is not None:
+            writer(summary_csv_path, job=job, summaries=summaries)
+        else:
+            summary_csv_path.write_text(
+                store._compare_summary_csv(job=job, summaries=summaries),
+                encoding='utf-8',
+            )
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        peak_samples.append(float(peak_bytes))
+        tracemalloc.stop()
+        csv_line_count = float(len(summary_csv_path.read_text(encoding='utf-8').splitlines()))
+        if csv_line_count != float(summary_count + 1):
+            raise ValueError(f'unexpected compare summary CSV line count: {{csv_line_count}}')
+        csv_bytes = float(summary_csv_path.stat().st_size)
+print(json.dumps({{
+    'elapsed_ms_mean': round(sum(elapsed_samples) / len(elapsed_samples), 6),
+    'peak_bytes_mean': round(sum(peak_samples) / len(peak_samples), 1),
+    'summary_count': float(summary_count),
+    'csv_line_count': float(csv_line_count),
+    'csv_bytes': float(csv_bytes),
+}}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(repo_root / "services/mlx-worker-python"),
+            "python3",
+            "-c",
+            probe_script,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads((completed.stdout or "").strip())
+
 
 
 def _probe_evaluation_store_samples_csv_streaming(repo_root: Path) -> dict[str, float]:
