@@ -277,7 +277,7 @@ def test_match_probe_indexes_deduplicates_repeated_watch_globs(
             probe_id="beta",
             name="Beta",
             runner="ubuntu-latest",
-            watch_globs=("shared.py", "services/b.py"),
+            watch_globs=("shared.py", "services/*.py"),
             test_command="true",
             coverage_command="true",
             probe_impl="benchmark_evaluation_report",
@@ -300,15 +300,18 @@ def test_match_probe_indexes_deduplicates_repeated_watch_globs(
 
     def fake_glob_matches_path(path: str, glob: str) -> bool:
         calls.append((path, glob))
-        return path == glob
+        return path == "services/b.py" and glob == "services/*.py"
 
     monkeypatch.setattr(pr_scoped_performance_module, "_glob_matches_path", fake_glob_matches_path)
 
-    matched = _match_probe_indexes(changed_paths=("shared.py", "unmatched.py"), probes=probes)
+    matched = _match_probe_indexes(changed_paths=("shared.py", "services/b.py", "unmatched.py"), probes=probes)
 
     assert matched == {0, 1, 2}
-    assert len(calls) == 6
-    assert calls.count(("shared.py", "shared.py")) == 1
+    assert calls == [
+        ("shared.py", "services/*.py"),
+        ("services/b.py", "services/*.py"),
+        ("unmatched.py", "services/*.py"),
+    ]
 
 
 def test_compiled_glob_pattern_reuses_cached_regex() -> None:
