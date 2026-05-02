@@ -537,15 +537,19 @@ def test_load_probe_registry_reuses_cached_payload_when_file_is_unchanged(
         encoding="utf-8",
     )
     read_calls = 0
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
 
-    def tracked_read_text(self: Path, *args: object, **kwargs: object) -> str:
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("load_probe_registry should read JSON bytes without text decoding")
+
+    def tracked_read_bytes(self: Path, *args: object, **kwargs: object) -> bytes:
         nonlocal read_calls
         if self == registry_path:
             read_calls += 1
-        return original_read_text(self, *args, **kwargs)
+        return original_read_bytes(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", tracked_read_text)
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
 
     first = load_probe_registry(registry_path)
     second = load_probe_registry(registry_path)
@@ -574,15 +578,15 @@ def test_load_probe_registry_refreshes_cache_when_file_changes(
         encoding="utf-8",
     )
     read_calls = 0
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
 
-    def tracked_read_text(self: Path, *args: object, **kwargs: object) -> str:
+    def tracked_read_bytes(self: Path, *args: object, **kwargs: object) -> bytes:
         nonlocal read_calls
         if self == registry_path:
             read_calls += 1
-        return original_read_text(self, *args, **kwargs)
+        return original_read_bytes(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", tracked_read_text)
+    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
 
     first = load_probe_registry(registry_path)
     time.sleep(0.001)
@@ -1176,6 +1180,7 @@ def test_dispatch_probe_impl_supports_registry_cache_probe() -> None:
     metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["load_probe_registry_ms_mean"] > 0
+    assert metrics["cold_load_probe_registry_ms_mean"] > 0
     assert metrics["build_scope_report_ms_mean"] > 0
     assert metrics["sample_count"] == 6.0
 
