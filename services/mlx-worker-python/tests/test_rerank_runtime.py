@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
@@ -191,6 +193,48 @@ def test_causal_lm_rerank_produces_positive_and_negative_logits() -> None:
     assert [item.index for item in rerank.items] == [0, 1]
     assert rerank.items[0].score > 0
     assert rerank.items[1].score < 0
+
+
+def test_jina_v3_skips_contiguous_query_check_when_document_misses_query_terms(monkeypatch) -> None:
+    adapter = JinaV3RerankFamilyAdapter()
+    backend = DeterministicRerankBackend()
+    contains = Mock(return_value=False)
+
+    monkeypatch.setattr(
+        JinaV3RerankFamilyAdapter,
+        "_contains_contiguous_query",
+        staticmethod(contains),
+    )
+
+    score = adapter.score(
+        backend,
+        "swift control plane runtime",
+        "python worker packaging",
+    )
+
+    assert score >= 0.0
+    contains.assert_not_called()
+
+
+def test_causal_lm_skips_contiguous_query_check_when_document_misses_query_terms(monkeypatch) -> None:
+    adapter = CausalLMRerankFamilyAdapter()
+    backend = DeterministicRerankBackend()
+    contains = Mock(return_value=False)
+
+    monkeypatch.setattr(
+        JinaV3RerankFamilyAdapter,
+        "_contains_contiguous_query",
+        staticmethod(contains),
+    )
+
+    score = adapter.score(
+        backend,
+        "swift control plane runtime",
+        "python worker packaging",
+    )
+
+    assert score < 0.0
+    contains.assert_not_called()
 
 
 def test_load_model_rejects_unsupported_rerank_family() -> None:

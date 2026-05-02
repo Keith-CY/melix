@@ -166,6 +166,7 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         document_token_set = set(document_tokens)
 
         if not query_token_set and not document_token_set:
+            overlap_count = 0
             overlap_score = 1.0
         else:
             overlap_count = len(query_token_set & document_token_set)
@@ -173,8 +174,11 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
             overlap_score = overlap_count / union
 
         pair_bonus = self._ordered_pair_bonus(query_tokens, document_tokens, query_pairs=query_context.ordered_pairs)
-        exact_order_bonus = 0.1 if self._contains_contiguous_query(document_tokens, query_tokens) else 0.0
-        prefix_bonus = 0.05 if query_tokens and document_tokens[: len(query_tokens)] == query_tokens else 0.0
+        has_all_query_terms = overlap_count >= len(query_token_set)
+        exact_order_bonus = (
+            0.1 if has_all_query_terms and self._contains_contiguous_query(document_tokens, query_tokens) else 0.0
+        )
+        prefix_bonus = 0.05 if has_all_query_terms and document_tokens[: len(query_tokens)] == query_tokens else 0.0
 
         return round(
             overlap_score + pair_bonus + exact_order_bonus + prefix_bonus + backend.tie_breaker(query, document),
@@ -259,8 +263,12 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
             document_tokens,
             query_pairs=query_context.ordered_pairs,
         )
-        exact_order = JinaV3RerankFamilyAdapter._contains_contiguous_query(document_tokens, query_tokens)
-        prefix_match = bool(query_tokens) and document_tokens[: len(query_tokens)] == query_tokens
+        exact_order = (
+            JinaV3RerankFamilyAdapter._contains_contiguous_query(document_tokens, query_tokens)
+            if overlap_count >= len(query_token_set)
+            else False
+        )
+        prefix_match = overlap_count >= len(query_token_set) and document_tokens[: len(query_tokens)] == query_tokens
 
         yes_logit = overlap * 6.0
         yes_logit += pair_bonus * 3.0
