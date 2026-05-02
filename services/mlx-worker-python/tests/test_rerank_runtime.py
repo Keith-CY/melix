@@ -7,6 +7,7 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtim
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime import rerank_backends
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.rerank_backends import (
@@ -252,6 +253,27 @@ def test_rerank_family_base_score_is_abstract() -> None:
 
     with pytest.raises(NotImplementedError):
         adapter.score(DeterministicRerankBackend(), "swift", "swift runtime")
+
+
+def test_tie_breaker_caches_repeated_query_document_hashes(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = DeterministicRerankBackend()
+    backend.tie_breaker.cache_clear()
+    original_sha256 = rerank_backends.hashlib.sha256
+    calls = 0
+
+    def counting_sha256(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_sha256(*args, **kwargs)
+
+    monkeypatch.setattr(rerank_backends.hashlib, "sha256", counting_sha256)
+
+    first = backend.tie_breaker("cache query", "cache document")
+    second = backend.tie_breaker("cache query", "cache document")
+
+    assert second == first
+    assert calls == 1
+    backend.tie_breaker.cache_clear()
 
 
 def test_basic_rerank_family_scores_empty_and_overlap_inputs() -> None:

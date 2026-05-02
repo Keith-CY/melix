@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
 import re
 
@@ -34,6 +35,7 @@ class DeterministicRerankBackend:
         return TOKEN_RE.findall(text.lower())
 
     @staticmethod
+    @lru_cache(maxsize=8192)
     def tie_breaker(query: str, document: str) -> float:
         digest = hashlib.sha256(f"{query}\0{document}".encode("utf-8")).digest()
         return int.from_bytes(digest[:4], "little") / 0xFFFFFFFF * 0.0001
@@ -163,6 +165,7 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         query_tokens = query_context.query_tokens
         document_tokens = backend.tokenize(document)
         query_token_set = query_context.query_token_set
+        query_token_count = len(query_token_set)
         document_token_set = set(document_tokens)
 
         if not query_token_set and not document_token_set:
@@ -170,11 +173,11 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
             overlap_score = 1.0
         else:
             overlap_count = len(query_token_set & document_token_set)
-            union = (len(query_token_set) + len(document_token_set) - overlap_count) or 1
+            union = (query_token_count + len(document_token_set) - overlap_count) or 1
             overlap_score = overlap_count / union
 
         pair_bonus = self._ordered_pair_bonus(query_tokens, document_tokens, query_pairs=query_context.ordered_pairs)
-        has_all_query_terms = overlap_count >= len(query_token_set)
+        has_all_query_terms = overlap_count >= query_token_count
         exact_order_bonus = (
             0.1 if has_all_query_terms and self._contains_contiguous_query(document_tokens, query_tokens) else 0.0
         )
@@ -260,9 +263,10 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
         query_tokens = query_context.query_tokens
         document_tokens = backend.tokenize(document)
         query_token_set = query_context.query_token_set
+        query_token_count = len(query_token_set)
         document_token_set = set(document_tokens)
         overlap_count = len(query_token_set & document_token_set)
-        overlap = overlap_count / (len(query_token_set) or 1)
+        overlap = overlap_count / (query_token_count or 1)
         pair_bonus = JinaV3RerankFamilyAdapter._ordered_pair_bonus(
             query_tokens,
             document_tokens,
@@ -270,10 +274,10 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
         )
         exact_order = (
             JinaV3RerankFamilyAdapter._contains_contiguous_query(document_tokens, query_tokens)
-            if overlap_count >= len(query_token_set)
+            if overlap_count >= query_token_count
             else False
         )
-        prefix_match = overlap_count >= len(query_token_set) and document_tokens[: len(query_tokens)] == query_tokens
+        prefix_match = overlap_count >= query_token_count and document_tokens[: len(query_tokens)] == query_tokens
 
         yes_logit = overlap * 6.0
         yes_logit += pair_bonus * 3.0

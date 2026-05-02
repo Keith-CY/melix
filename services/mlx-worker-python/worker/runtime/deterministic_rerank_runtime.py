@@ -38,8 +38,9 @@ class DeterministicRerankRuntime:
             query_tokens=query_tokens,
             query_token_set=query_token_set,
         )
+        score_document = family.score
         return [
-            family.score(
+            score_document(
                 backend,
                 query,
                 document,
