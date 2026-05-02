@@ -634,6 +634,9 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
     def fail_generic_token_counter(sample: dict[str, object], format_name: str) -> tuple[int, int]:
         raise AssertionError(f"prompt_completion token stats should use the direct fast path ({format_name=})")
 
+    def fail_mean_value(values: list[int]) -> float:
+        raise AssertionError(f"prompt_completion token stats should reuse collected totals ({values=})")
+
     class SinglePassPromptCompletionSamples:
         def __init__(self) -> None:
             self.iterations = 0
@@ -653,6 +656,7 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
 
     monkeypatch.setattr(training_dataset_module, "_percentile_value", fail_percentile_value)
     monkeypatch.setattr(training_dataset_module, "_sample_token_counts", fail_generic_token_counter)
+    monkeypatch.setattr(training_dataset_module, "_mean_value", fail_mean_value)
 
     prompt_completion_samples = SinglePassPromptCompletionSamples()
 
@@ -676,6 +680,9 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
         "total_tokens_max": 7,
     }
     assert prompt_completion_samples.iterations == 1
+    with pytest.raises(AssertionError, match="reuse collected totals"):
+        fail_mean_value([])
+    assert training_dataset_module._mean_value_from_total(0, 0) == 0.0
 
     monkeypatch.undo()
     assert training_dataset_module._build_token_stats(
