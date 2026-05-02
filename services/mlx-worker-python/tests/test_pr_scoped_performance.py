@@ -1528,6 +1528,25 @@ def test_glob_matching_preserves_wildcard_semantics() -> None:
     ) is True
 
 
+def test_compiled_glob_matching_preserves_prefix_short_circuit() -> None:
+    matchers = (
+        (
+            "services/mlx-worker-python/",
+            pr_scoped_performance_module._compiled_glob_pattern("services/mlx-worker-python/*.py"),
+        ),
+        ("docs/", pr_scoped_performance_module._compiled_glob_pattern("docs/**/*.md")),
+    )
+
+    assert pr_scoped_performance_module._matches_any_compiled_glob(
+        "services/mlx-worker-python/pr_scoped_performance.py",
+        matchers,
+    ) is True
+    assert pr_scoped_performance_module._matches_any_compiled_glob(
+        "infra/perf/pr_scoped_probes.json",
+        matchers,
+    ) is False
+
+
 def test_report_results_loader_uses_scandir_and_binary_json_reads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
