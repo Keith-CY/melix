@@ -353,6 +353,58 @@ def test_has_model_weight_files_uses_os_scandir_single_pass_without_path_glob_or
     assert scandir_calls == [os.fspath(model_dir)]
 
 
+def test_has_model_weight_files_requires_indexed_safetensor_shards(tmp_path: Path) -> None:
+    model_dir = tmp_path / "indexed-model"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "metadata": {},
+                "weight_map": {
+                    "model.embed_tokens.weight": "model-00001-of-00002.safetensors",
+                    "model.layers.0.self_attn.q_proj.weight": "model-00002-of-00002.safetensors",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (model_dir / "model-00001-of-00002.safetensors").write_bytes(b"weights")
+
+    assert _has_model_weight_files(model_dir) is False
+
+    (model_dir / "model-00002-of-00002.safetensors").write_bytes(b"weights")
+
+    assert _has_model_weight_files(model_dir) is True
+
+
+def test_huggingface_cache_snapshot_skips_incomplete_indexed_weights(tmp_path: Path) -> None:
+    cache_root = tmp_path / "hub"
+    snapshot_dir = cache_root / "models--org--demo-mlx" / "snapshots" / "abc123"
+    snapshot_dir.mkdir(parents=True)
+    (cache_root / "models--org--demo-mlx" / "refs").mkdir()
+    (cache_root / "models--org--demo-mlx" / "refs" / "main").write_text("abc123\n", encoding="utf-8")
+    (snapshot_dir / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (snapshot_dir / "tokenizer.json").write_text("{}\n", encoding="utf-8")
+    (snapshot_dir / "README.md").write_text("---\nlibrary_name: mlx\n---\n", encoding="utf-8")
+    (snapshot_dir / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"model.embed_tokens.weight": "model-00001-of-00001.safetensors"}}),
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "HOME": str(tmp_path),
+            "MELIX_MODEL_ROOTS": str(cache_root),
+        }
+    )
+
+    assert [model.model_id for model in catalog.registry_snapshot(rescan=True).models] == []
+
+    (snapshot_dir / "model-00001-of-00001.safetensors").write_bytes(b"weights")
+
+    assert [model.model_id for model in catalog.registry_snapshot(rescan=True).models] == ["org/demo-mlx"]
+
+
 
 def test_has_model_weight_files_returns_false_when_scandir_raises_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     model_dir = tmp_path / "unreadable-model"

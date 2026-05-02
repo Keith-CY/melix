@@ -57,6 +57,9 @@ from worker.productization.device_identity import collect_device_identity
 from worker.productization.submission_builder import build_submission_payload
 
 
+_BUILTIN_EVENT_EXTRACTION_TOP20_DATASET_ID = "top200.event-extraction.top20.v1"
+
+
 class BootstrapMetricsExporter:
     def __init__(self, export_path: str | None) -> None:
         self._export_path = Path(export_path).resolve() if export_path else None
@@ -335,12 +338,26 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             scoring_mode = request.scoring_mode or request.profile.scoring_mode
             if scoring_mode == "event_extraction_weighted_f1":
                 source_kind = request.source.WhichOneof("kind")
-                if source_kind != "local_jsonl":
-                    raise ValueError("event_extraction_weighted_f1 requires --source-jsonl.")
-                parameters.setdefault("event_source_jsonl", request.source.local_jsonl.path)
-                parameters.setdefault("evaluation_source_kind", "jsonl")
-                parameters.setdefault("evaluation_source_locator", request.source.local_jsonl.path)
-                dataset_root = self._evaluation_materialization_root()
+                if source_kind == "local_jsonl":
+                    source_path = request.source.local_jsonl.path
+                    parameters.setdefault("event_source_jsonl", source_path)
+                    parameters.setdefault("evaluation_source_kind", "jsonl")
+                    parameters.setdefault("evaluation_source_locator", source_path)
+                    dataset_root = self._evaluation_materialization_root()
+                elif source_kind is None:
+                    resolved_dataset_id = request.dataset_id or _BUILTIN_EVENT_EXTRACTION_TOP20_DATASET_ID
+                    dataset_root = self._default_dataset_root(resolved_dataset_id)
+                    source_path = str((dataset_root / "samples.jsonl").resolve())
+                    parameters["dataset_id"] = resolved_dataset_id
+                    parameters.setdefault("event_source_jsonl", source_path)
+                    parameters.setdefault("evaluation_source_kind", "builtin_package")
+                    parameters.setdefault("evaluation_source_locator", source_path)
+                    parameters.setdefault("event_dataset_root", str(dataset_root))
+                else:
+                    raise ValueError(
+                        "event_extraction_weighted_f1 requires a built-in event extraction dataset "
+                        "or --source-jsonl."
+                    )
             else:
                 dataset_root = self._resolve_evaluation_dataset_root(request, parameters)
             run = self._evaluation_core.run_local_suite(
@@ -440,8 +457,9 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
 
     @staticmethod
     def _default_dataset_root(dataset_id: str) -> Path:
+        repo_root = Path(os.environ.get("MELIX_REPO_ROOT", "").strip() or Path.cwd())
         return (
-            Path.cwd()
+            repo_root
             / "services"
             / "mlx-worker-python"
             / "fixtures"

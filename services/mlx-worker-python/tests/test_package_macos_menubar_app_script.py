@@ -33,6 +33,7 @@ def test_main_forwards_packaging_target_and_update_channel(
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(module, "resolve_built_binary", lambda repo_root: tmp_path / "melix-menubar")
+    monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
     monkeypatch.setattr(
         module,
         "resolve_built_swift_text_worker_binary",
@@ -69,6 +70,7 @@ def test_main_forwards_packaging_target_and_update_channel(
     )
 
     assert module.main() == 0
+    assert seen["cli_executable_path"] == tmp_path / "melix"
     assert seen["packaging_target_id"] == "macos_app_bundle_preview"
     assert seen["update_channel_path"] == str(tmp_path / "stable.json")
     assert seen["icon_source_path"] == str(tmp_path / "MelixAppIcon.icns")

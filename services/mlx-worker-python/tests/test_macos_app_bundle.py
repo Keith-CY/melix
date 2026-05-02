@@ -72,6 +72,7 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
         app_name="Melix",
         bundle_repo_root=Path("repo"),
         bundled_app_binary_name="melix-menubar",
+        bundled_cli_binary_name="melix",
         bundled_swift_worker_binary_name="melix-text-worker-swift",
         bundled_python_executable_relative_path="python-runtime/bin/python3",
         bundled_site_packages_relative_path="python-site-packages",
@@ -79,15 +80,19 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
     )
 
     assert 'export MELIX_REPO_ROOT="$RESOURCES_DIR/repo"' in script
+    assert 'export MELIX_CLI="$RESOURCES_DIR/melix"' in script
+    assert 'export MELIX_MENU_BAR_STARTUP_SURFACE="console"' in script
     assert 'export MELIX_MENU_BAR_PRESENTATION_MODE="dock-and-tray"' in script
     assert 'export MELIX_PYTHON_BRIDGE_EXECUTABLE="$RESOURCES_DIR/python-runtime/bin/python3"' in script
     assert '"$RESOURCES_DIR/melix-text-worker-swift"' in script
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" -m worker.bootstrap' in script
     assert '--backend-mode "$MELIX_BACKEND_MODE"' in script
+    assert "export MELIX_SWIFT_WORKER_PID" in script
+    assert "export MELIX_PYTHON_WORKER_PID" in script
     assert '"$MELIX_MODEL_OPS_JOBS_ROOT"' in script
     assert '"$MELIX_EVALUATION_JOBS_ROOT"' in script
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" "$RESOURCES_DIR/repo/scripts/wait_for_worker_ready.py"' in script
-    assert '"$RESOURCES_DIR/melix-menubar" "$@"' in script
+    assert 'exec "$RESOURCES_DIR/melix-menubar" "$@"' in script
     assert "backend-mode deterministic" not in script
 
 
@@ -123,19 +128,62 @@ def test_resolve_site_packages_root_requires_virtualenv_site_packages(tmp_path: 
 def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     (repo_root / "services/mlx-worker-python/worker").mkdir(parents=True)
+    top20_fixture_root = (
+        repo_root
+        / "services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.top20.v1"
+    )
+    full_fixture_root = (
+        repo_root
+        / "services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.full.v1"
+    )
+    top20_fixture_root.mkdir(parents=True)
+    full_fixture_root.mkdir(parents=True)
     (repo_root / "packages/protocol/python").mkdir(parents=True)
     (repo_root / "scripts").mkdir(parents=True)
     (repo_root / "services/mlx-worker-python/worker/bootstrap.py").write_text("print('bootstrap')\n", encoding="utf-8")
     (repo_root / "services/mlx-worker-python/worker/control_plane_bridge.py").write_text("print('bridge')\n", encoding="utf-8")
     (repo_root / "services/mlx-worker-python/pyproject.toml").write_text("[project]\nname='fixture'\nversion='0.1.0'\n", encoding="utf-8")
+    (top20_fixture_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.evaluation_dataset_package.v2",
+                "dataset_id": "top200.event-extraction.top20.v1",
+                "suite_id": "event_extraction",
+                "sample_count": 20,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (top20_fixture_root / "samples.jsonl").write_text(
+        "".join(
+            json.dumps({"dialogue_id": str(index + 1), "dialogue": ["line"], "events": [{"action": ["test"]}]})
+            + "\n"
+            for index in range(20)
+        ),
+        encoding="utf-8",
+    )
+    (full_fixture_root / "samples.jsonl").write_text(
+        "".join(
+            json.dumps({"dialogue_id": str(index + 1), "dialogue": ["line"], "events": [{"action": ["test"]}]})
+            + "\n"
+            for index in range(200)
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "services/mlx-worker-python/fixtures/evaluation/top200_final.jsonl").write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
     (repo_root / "packages/protocol/python/__init__.py").write_text("", encoding="utf-8")
     (repo_root / "scripts/wait_for_worker_ready.py").write_text("print('wait')\n", encoding="utf-8")
 
     home_dir = tmp_path / "home"
     home_dir.mkdir()
     menubar = tmp_path / "melix-menubar"
+    cli = tmp_path / "melix"
     swift_worker = tmp_path / "melix-text-worker-swift"
-    for executable in (menubar, swift_worker):
+    for executable in (menubar, cli, swift_worker):
         executable.write_text("#!/usr/bin/env bash\necho melix\n", encoding="utf-8")
         executable.chmod(0o755)
 
@@ -153,6 +201,7 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     manifest = write_unsigned_macos_app_bundle(
         repo_root=repo_root,
         executable_path=menubar,
+        cli_executable_path=cli,
         swift_text_worker_executable_path=swift_worker,
         python_runtime_root=python_runtime,
         python_site_packages_path=python_site_packages,
@@ -162,16 +211,30 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
 
     app_path = Path(manifest["app_path"])
     assert app_path.exists() is True
+    assert Path(manifest["bundled_cli_binary_path"]).exists() is True
     assert Path(manifest["bundled_swift_worker_binary_path"]).exists() is True
     assert Path(manifest["bundled_python_runtime_path"]).exists() is True
     assert Path(manifest["bundled_site_packages_path"]).exists() is True
-    assert Path(manifest["bundled_repo_root_path"]).joinpath("services/mlx-worker-python/worker/bootstrap.py").exists() is True
+    bundled_repo_root = Path(manifest["bundled_repo_root_path"])
+    assert bundled_repo_root.joinpath("services/mlx-worker-python/worker/bootstrap.py").exists() is True
+    bundled_top20 = bundled_repo_root / "services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.top20.v1"
+    assert bundled_top20.joinpath("manifest.json").exists() is True
+    assert len(bundled_top20.joinpath("samples.jsonl").read_text(encoding="utf-8").splitlines()) == 20
+    assert bundled_repo_root.joinpath(
+        "services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.full.v1"
+    ).exists() is False
+    assert bundled_repo_root.joinpath("services/mlx-worker-python/fixtures/evaluation/top200_final.jsonl").exists() is False
     assert Path(manifest["bundled_icon_path"]).exists() is True
     assert Path(manifest["packaging_target_manifest_path"]).exists() is True
     launcher = Path(manifest["launcher_path"]).read_text(encoding="utf-8")
     assert "worker.bootstrap" in launcher
+    assert 'export MELIX_CLI="$RESOURCES_DIR/melix"' in launcher
     assert "melix-text-worker-swift" in launcher
+    assert 'export MELIX_MENU_BAR_STARTUP_SURFACE="console"' in launcher
     assert 'export MELIX_MENU_BAR_PRESENTATION_MODE="dock-and-tray"' in launcher
+    assert "export MELIX_SWIFT_WORKER_PID" in launcher
+    assert "export MELIX_PYTHON_WORKER_PID" in launcher
+    assert 'exec "$RESOURCES_DIR/melix-menubar" "$@"' in launcher
     plist_payload = plistlib.loads(Path(manifest["plist_path"]).read_bytes())
     assert plist_payload["CFBundleIdentifier"] == "io.melix.menubar.preview"
     assert plist_payload["CFBundleIconFile"] == "MelixAppIcon.icns"
@@ -197,8 +260,9 @@ def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -
     (repo_root / "packages/protocol/python/__init__.py").write_text("", encoding="utf-8")
     (repo_root / "scripts/wait_for_worker_ready.py").write_text("print('wait')\n", encoding="utf-8")
     menubar = tmp_path / "melix-menubar"
+    cli = tmp_path / "melix"
     swift_worker = tmp_path / "melix-text-worker-swift"
-    for executable in (menubar, swift_worker):
+    for executable in (menubar, cli, swift_worker):
         executable.write_text("#!/usr/bin/env bash\necho melix\n", encoding="utf-8")
         executable.chmod(0o755)
 
@@ -214,6 +278,7 @@ def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -
         write_unsigned_macos_app_bundle(
             repo_root=repo_root,
             executable_path=menubar,
+            cli_executable_path=cli,
             swift_text_worker_executable_path=swift_worker,
             python_runtime_root=python_runtime,
             python_site_packages_path=python_site_packages,

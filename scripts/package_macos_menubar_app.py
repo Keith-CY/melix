@@ -32,6 +32,17 @@ def resolve_built_binary(repo_root: Path) -> Path:
     )
 
 
+def resolve_built_cli_binary(repo_root: Path) -> Path:
+    build_root = repo_root / ".build"
+    candidates = sorted(build_root.glob("*/debug/melix"))
+    if build_root.joinpath("debug/melix").exists():
+        candidates.insert(0, build_root / "debug/melix")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("Unable to find built `melix`. Run `swift build --product melix` first.")
+
+
 def resolve_built_swift_text_worker_binary(repo_root: Path) -> Path:
     build_root = repo_root / "services/mlx-text-worker-swift/.build"
     candidates = sorted(build_root.glob("*/debug/melix-text-worker-swift"))
@@ -69,6 +80,7 @@ def main() -> int:
 
     repo_root = Path(args.repo_root).expanduser().resolve()
     menubar_binary = resolve_built_binary(repo_root)
+    cli_binary = resolve_built_cli_binary(repo_root)
     swift_worker_binary = resolve_built_swift_text_worker_binary(repo_root)
     python_runtime_root = (
         Path(args.python_runtime_root).expanduser().resolve()
@@ -83,6 +95,7 @@ def main() -> int:
     manifest = write_unsigned_macos_app_bundle(
         repo_root=repo_root,
         executable_path=menubar_binary,
+        cli_executable_path=cli_binary,
         swift_text_worker_executable_path=swift_worker_binary,
         python_runtime_root=python_runtime_root,
         python_site_packages_path=python_site_packages_path,

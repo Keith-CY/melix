@@ -42,6 +42,7 @@ from worker.productization.evaluation_final_result import (
     score_final_result,
 )
 from worker.productization.event_extraction import (
+    EventExtractionClientResult,
     EventExtractionPromptSpec,
     RemoteEventExtractionTarget,
     RemoteSemanticJudgeTarget,
@@ -50,7 +51,9 @@ from worker.productization.event_extraction import (
     default_event_extraction_prompt_spec,
     evaluate_event_extraction,
     evaluate_event_extraction_semantic,
+    event_extraction_chat_messages,
     event_prompt_content_hash,
+    extract_events_from_response_text,
     make_event_extraction_client,
     make_semantic_judge_client,
     normalize_event_fields,
@@ -121,6 +124,82 @@ class EvaluationRun:
         return self.results[0]
 
 
+class _LocalEventExtractionClient:
+    def __init__(
+        self,
+        *,
+        registry,
+        loaded_model,
+        prompt_spec: EventExtractionPromptSpec,
+        max_output_tokens: int,
+        seed: int,
+    ) -> None:
+        self._registry = registry
+        self._loaded_model = loaded_model
+        self._prompt_spec = prompt_spec
+        self._max_output_tokens = max_output_tokens
+        self._seed = seed
+
+    def extract_events(
+        self,
+        dialogue: list[str],
+        dialogue_id: str = "",
+    ) -> EventExtractionClientResult:
+        messages = event_extraction_chat_messages(self._prompt_spec, dialogue, dialogue_id)
+        request_body_bytes = len(
+            json.dumps({"messages": messages}, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        )
+        chat_messages = [
+            common_pb2.ChatMessage(
+                role=str(message.get("role") or "user"),
+                parts=[common_pb2.MessagePart(text=str(message.get("content") or ""))],
+            )
+            for message in messages
+        ]
+        request_id = f"event-extraction:local:{dialogue_id or 'sample'}:{time.time_ns()}"
+        runtime = self._registry.runtime_for_loaded_model(self._loaded_model)
+        state = self._registry.start_request(
+            request_id,
+            runtime_kind=str(getattr(self._loaded_model, "runtime_kind", "") or "text"),
+        )
+        chunks: list[str] = []
+        try:
+            rendered_prompt = runtime.render_prompt(
+                chat_messages,
+                loaded_model=self._loaded_model.runtime_model,
+                execution_ext={},
+            )
+            sampling = common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=1,
+                seed=max(self._seed, 0),
+                max_output_tokens=self._max_output_tokens,
+            )
+            for runtime_event in runtime.generate_tokens(
+                self._loaded_model.runtime_model,
+                rendered_prompt,
+                sampling,
+                state.cancel_event,
+                execution_ext={},
+            ):
+                text = getattr(runtime_event, "text", "")
+                if text:
+                    chunks.append(str(text))
+        finally:
+            runtime_kind = str(getattr(self._loaded_model, "runtime_kind", "") or "")
+            if runtime_kind in {"ocr", "vlm"} and hasattr(runtime, "last_probe_snapshot"):
+                self._registry.record_vision_probe(runtime_kind, runtime.last_probe_snapshot())
+            self._registry.finish_request(request_id)
+        raw_response = "".join(chunks).strip()
+        return EventExtractionClientResult(
+            events=extract_events_from_response_text(raw_response),
+            raw_response=raw_response,
+            request_body_bytes=request_body_bytes,
+            response_body_bytes=len(raw_response.encode("utf-8")),
+        )
+
+
 class EvaluationCore:
     def __init__(
         self,
@@ -177,6 +256,7 @@ class EvaluationCore:
             else (parameters or {}).get("scoring_mode", "")
         )
         if suite_id == "event_extraction" or requested_scoring_mode == "event_extraction_weighted_f1":
+            loaded_model = self._loaded_model_for_execution(model_handle)
             return self._run_event_extraction_suite(
                 model_id=model_id,
                 suite_id=suite_id,
@@ -185,6 +265,7 @@ class EvaluationCore:
                 scoring_mode=requested_scoring_mode or "event_extraction_weighted_f1",
                 parameters=dict(parameters or {}),
                 remote_target=remote_target,
+                loaded_model=loaded_model,
             )
 
         dataset_root = Path(dataset_root).resolve()
@@ -548,12 +629,14 @@ class EvaluationCore:
         scoring_mode: str,
         parameters: dict[str, str],
         remote_target: Any | None,
+        loaded_model: Any | None = None,
     ) -> EvaluationRun:
         source_jsonl = parameters.get("event_source_jsonl") or parameters.get("evaluation_source_locator", "")
         if not source_jsonl:
             raise ValueError("event_extraction_weighted_f1 requires a local JSONL source.")
-        if remote_target is None or not getattr(remote_target, "api_key", ""):
-            raise ValueError("event_extraction_weighted_f1 requires a remote provider target.")
+        uses_remote_target = remote_target is not None and bool(getattr(remote_target, "api_key", ""))
+        if not uses_remote_target and (loaded_model is None or self._registry is None):
+            raise ValueError("event_extraction_weighted_f1 requires a remote provider target or a loaded local model.")
 
         created_at_unix_ms = int(time.time() * 1000)
         job_id = self._next_job_id()
@@ -562,8 +645,12 @@ class EvaluationCore:
             if self._jobs_root is not None
             else Path.cwd() / "event-extraction" / job_id
         )
-        remote_model_id = str(getattr(remote_target, "model_id", "") or model_id)
-        safe_model_name = re.sub(r"[^A-Za-z0-9._-]+", "_", remote_model_id).strip("_") or "remote-model"
+        resolved_model_id = (
+            str(getattr(getattr(loaded_model, "spec", None), "model_id", "") or "")
+            if loaded_model is not None
+            else ""
+        ) or str(getattr(remote_target, "model_id", "") or model_id)
+        safe_model_name = re.sub(r"[^A-Za-z0-9._-]+", "_", resolved_model_id).strip("_") or "event-model"
         predictions_dir = output_root / "predictions"
         reports_dir = output_root / "reports" / safe_model_name
         predictions_dir.mkdir(parents=True, exist_ok=True)
@@ -600,18 +687,36 @@ class EvaluationCore:
             encoding="utf-8",
         )
 
-        client = make_event_extraction_client(
-            RemoteEventExtractionTarget(
-                provider_kind=str(getattr(remote_target, "provider_kind", "")),
-                base_url=str(getattr(remote_target, "base_url", "")),
-                api_key=str(getattr(remote_target, "api_key", "")),
-                model_id=remote_model_id,
-                timeout_seconds=int(getattr(remote_target, "timeout_seconds", 0) or 60),
-                extra_body=self._remote_provider_extra_body(parameters),
-            ),
-            prompt_spec=prompt_spec,
+        runtime_evidence = EvaluationCore._runtime_evidence_for_loaded_model(loaded_model)
+        if EvaluationCore._truthy_parameter(parameters, "require_live_model"):
+            EvaluationCore._validate_required_live_model(runtime_evidence, operation="evaluation")
+        event_task_kind = (
+            "image-text-to-text"
+            if str(runtime_evidence.get("runtime_kind") or "").strip() in {"ocr", "vlm"}
+            else "text-generation"
         )
-        rate_limit_per_minute = int(getattr(remote_target, "rate_limit_per_minute", 0) or 0)
+        if uses_remote_target:
+            client = make_event_extraction_client(
+                RemoteEventExtractionTarget(
+                    provider_kind=str(getattr(remote_target, "provider_kind", "")),
+                    base_url=str(getattr(remote_target, "base_url", "")),
+                    api_key=str(getattr(remote_target, "api_key", "")),
+                    model_id=resolved_model_id,
+                    timeout_seconds=int(getattr(remote_target, "timeout_seconds", 0) or 60),
+                    extra_body=self._remote_provider_extra_body(parameters),
+                ),
+                prompt_spec=prompt_spec,
+            )
+            rate_limit_per_minute = int(getattr(remote_target, "rate_limit_per_minute", 0) or 0)
+        else:
+            client = _LocalEventExtractionClient(
+                registry=self._registry,
+                loaded_model=loaded_model,
+                prompt_spec=prompt_spec,
+                max_output_tokens=int(parameters.get("event_max_output_tokens") or 2048),
+                seed=int(parameters.get("seed") or 0),
+            )
+            rate_limit_per_minute = 0
         min_interval_seconds = 60.0 / rate_limit_per_minute if rate_limit_per_minute > 0 else 0.0
         last_request_started = 0.0
         prediction_rows: list[dict[str, object]] = []
@@ -688,7 +793,7 @@ class EvaluationCore:
                         exc=exc,
                         failure_record=failure_record,
                         remote_target=remote_target,
-                        remote_model_id=remote_model_id,
+                        remote_model_id=resolved_model_id,
                         output_root=output_root,
                         prediction_path=prediction_path,
                         failure_path=failure_path,
@@ -801,7 +906,15 @@ class EvaluationCore:
         job_parameters.pop("eval_prompt_examples_json", None)
         job_parameters.pop("semantic_judge_api_key", None)
         job_parameters.pop("semantic_judge_base_url", None)
-        job_parameters["dataset_root"] = str(Path(source_jsonl).resolve())
+        event_dataset_root = parameters.get("event_dataset_root") or parameters.get(
+            "evaluation_materialized_dataset_root",
+            "",
+        )
+        job_parameters["dataset_root"] = (
+            str(Path(event_dataset_root).resolve())
+            if event_dataset_root
+            else str(Path(source_jsonl).resolve())
+        )
         job_parameters["event_source_jsonl"] = str(Path(source_jsonl).resolve())
         job_parameters["prediction_jsonl"] = str(prediction_path)
         job_parameters["failure_jsonl"] = str(failure_path)
@@ -826,7 +939,8 @@ class EvaluationCore:
         job_parameters["prompt_example_dialogue_ids"] = ",".join(prompt_example_dialogue_ids(prompt_spec))
         job_parameters["effective_scoring_mode"] = "event_extraction_weighted_f1"
         job_parameters["scoring_mode"] = "event_extraction_weighted_f1"
-        job_parameters.setdefault("remote_model_id", remote_model_id)
+        job_parameters.update(runtime_evidence)
+        job_parameters.setdefault("remote_model_id", resolved_model_id)
 
         result_metrics = {
             f"eval.{suite_id}.overall_weighted_f1": overall_weighted_f1,
@@ -865,8 +979,8 @@ class EvaluationCore:
         resolved_dataset_id = dataset_id or "top200"
         job = build_evaluation_job_record(
             job_id=job_id,
-            model_id=remote_model_id,
-            task_kind="text-generation",
+            model_id=resolved_model_id,
+            task_kind=event_task_kind,
             source_repo=job_parameters.get("source_repo", ""),
             suite_id=suite_id,
             dataset_id=resolved_dataset_id,
@@ -902,7 +1016,7 @@ class EvaluationCore:
                 record=BenchmarkQueueRecord(
                     queue_item_id=job.job_id,
                     job_kind="evaluation",
-                    model_id=remote_model_id,
+                    model_id=resolved_model_id,
                     suite_ids=(suite_id,),
                     parameters=job_parameters,
                     status="queued",

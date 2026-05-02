@@ -56,6 +56,7 @@ struct DesktopWorkspaceShellView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(DesktopWorkspacePaneAnimation.animation, value: viewModel.desktopPaneVisibility)
         }
+        .padding(.top, DesktopShellChromeMetrics.workspaceTitleBarContentTopInset)
         .sheet(item: Binding(
             get: { viewModel.pendingAudioSetupPrompt },
             set: { newValue in
@@ -575,7 +576,7 @@ private struct DesktopServerOverviewCardsView: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
             DesktopServerMetricCard(title: "Port", value: "\(session.effectivePort)", detail: session.gatewayConfigSourceText)
             DesktopServerMetricCard(title: "Context", value: "\(session.servingDefaults.effectiveMaxTokens)", detail: "max tokens")
-            DesktopServerMetricCard(title: "Acceleration", value: session.servingDefaults.effectiveAccelerationMode, detail: "serving mode")
+            DesktopServerMetricCard(title: "Acceleration", value: desktopAccelerationModeText(session.servingDefaults.effectiveAccelerationMode), detail: "serving mode")
             DesktopServerMetricCard(title: "State", value: session.lifecycle.rawValue, detail: session.powerState.rawValue)
             DesktopServerMetricCard(title: "Base URL", value: session.effectiveBaseURL, detail: "effective listener")
         }
@@ -611,110 +612,75 @@ private struct DesktopServerSessionSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Server Sessions")
+                Text("Servers")
                     .font(.headline)
                 Spacer()
-                Button {
-                    viewModel.createServerSession()
+                Menu {
+                    Button("Add Local Server") {
+                        viewModel.beginServerCreation(kind: .localServer)
+                    }
+                    Button("Add Remote Server") {
+                        viewModel.beginServerCreation(kind: .remoteServer)
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
-                .buttonStyle(.plain)
-                .help("New Server Session")
-                .accessibilityLabel("New Server Session")
+                .menuStyle(.borderlessButton)
+                .focusable(false)
+                .help("New Server")
+                .accessibilityLabel("New Server")
             }
 
-            if viewModel.serverSessions.isEmpty {
+            if viewModel.serverTargets.isEmpty {
                 ContentUnavailableView(
-                    "No Server Sessions",
+                    "No Servers",
                     systemImage: "network.slash",
-                    description: Text("Create a server session to bind a model to a listener.")
+                    description: Text("Create a local or remote server target.")
                 )
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(viewModel.serverSessions) { session in
+                        ForEach(viewModel.serverTargets) { target in
                             Button {
-                                viewModel.selectServerSession(id: session.id)
+                                viewModel.selectServerTarget(id: target.id)
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
-                                        Text(session.title)
+                                        Text(target.title)
                                             .font(.headline)
+                                            .lineLimit(1)
                                         Spacer()
-                                        Text(session.lifecycleSummaryText)
-                                            .font(.caption)
-                                            .foregroundStyle(session.isInteractiveReady ? MelixDesignTokens.StatusColor.success : .secondary)
+                                        Text(target.badgeText)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(MelixDesignTokens.accent)
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 3)
+                                            .background(
+                                                MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.capsule),
+                                                in: Capsule()
+                                            )
                                     }
-                                    Text("\(session.modelID) • \(session.listenerLabel)")
+                                    Text(target.detailText)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                    Text(target.statusText)
+                                        .font(.caption)
+                                        .foregroundStyle(target.isRunning ? MelixDesignTokens.StatusColor.success : .secondary)
+                                        .lineLimit(1)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
                                 .background(
-                                    viewModel.selectedServerSession?.id == session.id
+                                    viewModel.selectedServerTarget?.id == target.id
                                     ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
                                     : Color.secondary.opacity(0.06),
                                     in: RoundedRectangle(cornerRadius: 12)
                                 )
                             }
                             .buttonStyle(.plain)
+                            .focusable(false)
                         }
-                    }
-                }
-            }
-
-            Divider()
-
-            HStack {
-                Text("Remote Servers")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    viewModel.prepareNewRemoteServerDraft()
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.plain)
-                .help("New Remote Server")
-                .accessibilityLabel("New Remote Server")
-            }
-
-            if viewModel.remoteServers.isEmpty {
-                Text("No Remote Servers")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(viewModel.remoteServers, id: \.id) { server in
-                        Button {
-                            viewModel.selectRemoteServer(id: server.id)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text(server.title)
-                                        .font(.headline)
-                                    Spacer()
-                                    Text(server.healthStatus)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Text("\(server.defaultModelID) • \(server.providerKind)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                            .background(
-                                viewModel.selectedRemoteServerID == server.id
-                                ? Color.accentColor.opacity(0.14)
-                                : Color.secondary.opacity(0.06),
-                                in: RoundedRectangle(cornerRadius: 12)
-                            )
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -762,7 +728,7 @@ private struct DesktopRemoteServerEditor: View {
                     .disabled(viewModel.isRemoteServerIDEditable == false)
 
                     TextField(
-                        "Title",
+                        "Session Name",
                         text: Binding(
                             get: { viewModel.remoteServerTitleDraft },
                             set: { viewModel.remoteServerTitleDraft = $0 }
@@ -846,6 +812,7 @@ private struct DesktopRemoteServerEditor: View {
                         viewModel.saveRemoteServerDraft()
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.canSaveRemoteServerDraft == false)
 
                     Button("Remove") {
                         viewModel.removeSelectedRemoteServer()
@@ -860,6 +827,216 @@ private struct DesktopRemoteServerEditor: View {
     }
 }
 
+private struct DesktopServerCreationEditor: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if viewModel.selectedServerCreationKind == .localServer {
+                MelixSectionCard("New Local Session") {
+                    localServerCreationContent
+                }
+            } else {
+                DesktopRemoteServerEditor(viewModel: viewModel)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var localServerCreationContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if viewModel.serverModelOptions.isEmpty {
+                if viewModel.isRefreshingServerModelOptions {
+                    ContentUnavailableView(
+                        "Scanning Ready to Run Models",
+                        systemImage: "magnifyingglass",
+                        description: Text("Scanning configured model roots and Hugging Face cache snapshots.")
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "No Ready to Run Models",
+                        systemImage: "shippingbox",
+                        description: Text("Rescan model roots or download a model before creating a local server.")
+                    )
+                }
+            } else {
+                TextField(
+                    "Session Name",
+                    text: Binding(
+                        get: { viewModel.newLocalServerTitleDraft },
+                        set: { viewModel.newLocalServerTitleDraft = $0 }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+
+                Picker(
+                    "Served Model",
+                    selection: Binding(
+                        get: { viewModel.newLocalServerModelID },
+                        set: { viewModel.newLocalServerModelID = $0 }
+                    )
+                ) {
+                    ForEach(viewModel.serverModelOptions, id: \.modelID) { model in
+                        Text(model.displayNameWithID).tag(model.modelID)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                HStack(alignment: .top, spacing: 12) {
+                    TextField(
+                        "Host",
+                        text: Binding(
+                            get: { viewModel.newLocalServerHostDraft },
+                            set: { viewModel.newLocalServerHostDraft = $0 }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    TextField(
+                        "Port",
+                        value: Binding(
+                            get: { viewModel.newLocalServerPortDraft },
+                            set: { viewModel.newLocalServerPortDraft = $0 }
+                        ),
+                        format: .number
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 120)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        viewModel.cancelServerCreation()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Save") {
+                        viewModel.createLocalServerFromDraft()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.canCreateLocalServerFromDraft == false)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopServerLoRAAdapterSection: View {
+    let viewModel: RuntimeViewModel
+
+    private var selectedAdapterOption: RuntimeServerAdapterOptionState? {
+        viewModel.serverAdapterOptions.first(where: \.isSelected)
+    }
+
+    var body: some View {
+        MelixSectionCard("LoRA Adapter") {
+            VStack(alignment: .leading, spacing: 12) {
+                if viewModel.serverAdapterOptions.isEmpty {
+                    Text("No LoRA adapters are available.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker(
+                        "Adapter",
+                        selection: Binding(
+                            get: { selectedAdapterOption?.id ?? "" },
+                            set: { id in
+                                guard id.isEmpty == false else {
+                                    return
+                                }
+                                viewModel.applyServerAdapterPackage(id: id)
+                            }
+                        )
+                    ) {
+                        Text("Base model").tag("")
+                        ForEach(viewModel.serverAdapterOptions) { option in
+                            Text(option.title).tag(option.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    adapterStateSummary
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var adapterStateSummary: some View {
+        if let option = selectedAdapterOption {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("Serving derived model")
+                        .font(.headline)
+                    Text("LoRA active")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(MelixDesignTokens.accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.capsule),
+                            in: Capsule()
+                        )
+                }
+                Text(option.title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(option.derivedModelID)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("Activation: \(option.activationStatusText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("The selected server model is being served directly.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(viewModel.serverAdapterOptions) { option in
+                    HStack(alignment: .center, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(option.title)
+                                .font(.caption.weight(.semibold))
+                            Text(option.detailText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer()
+                        if option.isServeable {
+                            Button(option.actionTitle) {
+                                viewModel.applyServerAdapterPackage(id: option.id)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else {
+                            Button(option.actionTitle) {
+                                viewModel.applyServerAdapterPackage(id: option.id)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
 private struct DesktopServerSessionEditor: View {
     let viewModel: RuntimeViewModel
     @Binding var showsSidebar: Bool
@@ -867,8 +1044,11 @@ private struct DesktopServerSessionEditor: View {
     @Binding var showsAdvanced: Bool
 
     private let servingAccelerationModeOptions = [
-        ("Baseline", "baseline"),
+        ("None", "baseline"),
         ("Speculative Decode", "speculative_decode"),
+        ("Accelerated Prefill", "accelerated_prefill"),
+        ("Active KV Quantized", "active_kv_quantized"),
+        ("Sparse Prefill", "sparse_prefill"),
     ]
 
     var body: some View {
@@ -879,9 +1059,12 @@ private struct DesktopServerSessionEditor: View {
                     subtitle: "Choose model, configure listener, then start the server session."
                 ) {}
 
-                DesktopRemoteServerEditor(viewModel: viewModel)
-
-                if let session = viewModel.selectedServerSession {
+                if viewModel.isCreatingServerTarget {
+                    DesktopServerCreationEditor(viewModel: viewModel)
+                } else if viewModel.selectedServerTarget?.kind == .remoteServer {
+                    DesktopRemoteServerEditor(viewModel: viewModel)
+                } else if let session = viewModel.selectedServerSession,
+                          viewModel.selectedServerTarget?.kind == .localServer {
                     if let notice = session.lifecycleBannerState {
                         DesktopInlineNoticeCardView(notice: notice)
                     }
@@ -897,9 +1080,16 @@ private struct DesktopServerSessionEditor: View {
                                     set: { viewModel.updateSelectedServerSessionModelID($0) }
                                 )
                             ) {
-                                ForEach(viewModel.serveableModels, id: \.modelID) { model in
+                                ForEach(viewModel.serverModelOptions, id: \.modelID) { model in
                                     Text(model.displayNameWithID).tag(model.modelID)
                                 }
+                            }
+                            if viewModel.serverModelOptions.isEmpty {
+                                Text(viewModel.isRefreshingServerModelOptions
+                                    ? "Scanning Ready to Run model roots..."
+                                    : "No Ready to Run models are available. Rescan model roots or download a model before starting a local server.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
 
                             HStack {
@@ -958,6 +1148,8 @@ private struct DesktopServerSessionEditor: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
+                    DesktopServerLoRAAdapterSection(viewModel: viewModel)
 
                     MelixSectionCard("Serving Defaults") {
                         VStack(alignment: .leading, spacing: 10) {
@@ -1056,9 +1248,9 @@ private struct DesktopServerSessionEditor: View {
                     }
                 } else {
                     ContentUnavailableView(
-                        "No Server Session Selected",
+                        "No Server Selected",
                         systemImage: "server.rack",
-                        description: Text("Choose a server session from the list or create a new one.")
+                        description: Text("Choose a server from the list or create a new one.")
                     )
                 }
 
@@ -1163,7 +1355,7 @@ private struct DesktopServerSessionEditor: View {
                                 }
 
                                 Picker(
-                                    "Acceleration",
+                                    "Acceleration Mode",
                                     selection: Binding(
                                         get: { viewModel.selectedServerSession?.servingDefaults.accelerationMode ?? "baseline" },
                                         set: { viewModel.updateSelectedServerSessionAccelerationMode($0) }
@@ -1173,27 +1365,12 @@ private struct DesktopServerSessionEditor: View {
                                         Text(option.0).tag(option.1)
                                     }
                                 }
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: 280, alignment: .leading)
 
-                                HStack {
-                                    TextField(
-                                        "Draft model id",
-                                        text: Binding(
-                                            get: { viewModel.selectedServerSession?.servingDefaults.draftModelID ?? "" },
-                                            set: { viewModel.updateSelectedServerSessionDraftModelID($0) }
-                                        )
-                                    )
-                                    .textFieldStyle(.roundedBorder)
-
-                                    TextField(
-                                        "Num draft tokens",
-                                        value: Binding(
-                                            get: { viewModel.selectedServerSession?.servingDefaults.numDraftTokens ?? 0 },
-                                            set: { viewModel.updateSelectedServerSessionNumDraftTokens($0) }
-                                        ),
-                                        format: .number
-                                    )
-                                    .textFieldStyle(.roundedBorder)
-                                }
+                                serverAccelerationModeConfiguration(
+                                    mode: viewModel.selectedServerSession?.servingDefaults.accelerationMode ?? session.servingDefaults.accelerationMode
+                                )
 
                                 HStack {
                                     Button("Apply Serving Defaults", action: viewModel.applySelectedServerServingDefaultsFromUI)
@@ -1201,12 +1378,63 @@ private struct DesktopServerSessionEditor: View {
 
                                     let servingDefaults = session.servingDefaults
                                     Text(
-                                        "Source: \(servingDefaults.sourceText) • Effective temp \(servingDefaults.effectiveTemperature, format: .number.precision(.fractionLength(2))) • top_p \(servingDefaults.effectiveTopP, format: .number.precision(.fractionLength(2))) • max \(servingDefaults.effectiveMaxTokens) • stream \(servingDefaults.effectiveStreamIntervalTokens) • concurrent \(servingDefaults.effectiveConcurrentProcessingEnabled ? "on" : "off") • sequences \(servingDefaults.effectiveMaxConcurrentRequests) • prefill \(servingDefaults.effectivePrefillBatchSize) • completion \(servingDefaults.effectiveCompletionBatchSize) • accel \(servingDefaults.effectiveAccelerationMode)\(servingDefaults.effectiveDraftModelID.isEmpty ? "" : " • draft \(servingDefaults.effectiveDraftModelID)")\(servingDefaults.effectiveNumDraftTokens > 0 ? " • draft tokens \(servingDefaults.effectiveNumDraftTokens)" : "")\(servingDefaults.modelOverrideApplied ? " • model override applied" : "")"
+                                        "Source: \(servingDefaults.sourceText) • Effective temp \(servingDefaults.effectiveTemperature, format: .number.precision(.fractionLength(2))) • top_p \(servingDefaults.effectiveTopP, format: .number.precision(.fractionLength(2))) • max \(servingDefaults.effectiveMaxTokens) • stream \(servingDefaults.effectiveStreamIntervalTokens) • concurrent \(servingDefaults.effectiveConcurrentProcessingEnabled ? "on" : "off") • sequences \(servingDefaults.effectiveMaxConcurrentRequests) • prefill \(servingDefaults.effectivePrefillBatchSize) • completion \(servingDefaults.effectiveCompletionBatchSize) • accel \(desktopAccelerationModeText(servingDefaults.effectiveAccelerationMode))\(servingDefaults.effectiveDraftModelID.isEmpty ? "" : " • draft \(servingDefaults.effectiveDraftModelID)")\(servingDefaults.effectiveNumDraftTokens > 0 ? " • draft tokens \(servingDefaults.effectiveNumDraftTokens)" : "")\(servingDefaults.modelOverrideApplied ? " • model override applied" : "")"
                                     )
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 }
                             }
+    }
+
+    @ViewBuilder
+    private func serverAccelerationModeConfiguration(mode: String) -> some View {
+        switch mode {
+        case "speculative_decode":
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    TextField(
+                        "Draft model id",
+                        text: Binding(
+                            get: { viewModel.selectedServerSession?.servingDefaults.draftModelID ?? "" },
+                            set: { viewModel.updateSelectedServerSessionDraftModelID($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    TextField(
+                        "Num draft tokens",
+                        value: Binding(
+                            get: { viewModel.selectedServerSession?.servingDefaults.numDraftTokens ?? 0 },
+                            set: { viewModel.updateSelectedServerSessionNumDraftTokens($0) }
+                        ),
+                        format: .number
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Text("Draft model settings apply only when Speculative Decode is selected.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        case "accelerated_prefill":
+            accelerationModeReadOnlyCard("Uses the backend accelerated prefill profile for this server session.")
+        case "active_kv_quantized":
+            accelerationModeReadOnlyCard("Uses the backend active KV quantization profile for this server session.")
+        case "sparse_prefill":
+            accelerationModeReadOnlyCard("Uses the backend sparse prefill profile for this server session.")
+        default:
+            accelerationModeReadOnlyCard("No additional acceleration settings are enabled for this server session.")
+        }
+    }
+
+    private func accelerationModeReadOnlyCard(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -3001,17 +3229,11 @@ struct DesktopDiagnosticsToolSectionView: View {
     }
 
     private var benchmarkRunDisabled: Bool {
-        (
-            viewModel.selectedBenchmarkTargetMode == .catalogModel
-            && viewModel.benchmarkModels.isEmpty
-        ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
+        viewModel.canRunDiagnosticsBenchmark == false
     }
 
     private var evaluationRunDisabled: Bool {
-        (
-            viewModel.selectedEvaluationTargetMode == .catalogModel
-            && viewModel.evaluationModels.isEmpty
-        ) || viewModel.selectedEvaluationSuiteIDs.isEmpty
+        viewModel.canRunDiagnosticsEvaluation == false
     }
 
     private func applyDiagnosticsStage(_ stage: DesktopDiagnosticsStage) {
@@ -3264,90 +3486,70 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             if selectedStage != .evaluation {
                 DesktopEditorialSectionCard(selectedStage == .matrix ? "Matrix Configuration" : "Bench Configuration") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Picker(
-                        "Benchmark Target",
-                        selection: Binding(
-                            get: { viewModel.selectedBenchmarkTargetMode },
-                            set: { viewModel.selectedBenchmarkTargetMode = $0 }
-                        )
-                    ) {
-                        ForEach(RuntimeBenchmarkTargetMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Running Server")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
 
-                    if viewModel.selectedBenchmarkTargetMode == .catalogModel {
-                        if viewModel.benchmarkModels.isEmpty {
-                            Text("No benchmark-capable catalog models are available.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Picker(
-                                "Benchmark Model",
-                                selection: Binding(
-                                    get: { viewModel.selectedBenchmarkModelID },
-                                    set: { viewModel.selectedBenchmarkModelID = $0 }
-                                )
-                            ) {
-                                ForEach(viewModel.benchmarkModels) { model in
-                                    Text(model.displayNameWithID)
-                                        .tag(model.modelID)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-                    } else {
-                        TextField(
-                            "Hugging Face Repo ID",
-                            text: Binding(
-                                get: { viewModel.benchmarkHFRepoID },
-                                set: { viewModel.benchmarkHFRepoID = $0 }
+                        Picker(
+                            "Running Server",
+                            selection: Binding(
+                                get: { viewModel.selectedDiagnosticsServerTargetID },
+                                set: { viewModel.selectDiagnosticsServerTarget(id: $0) }
                             )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                    }
-
-                    Text(viewModel.benchmarkTargetSummaryText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
-                        ForEach(viewModel.benchmarkSuites) { suite in
-                            Button {
-                                toggleBenchmarkSuiteSelection(suite.id)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack {
-                                        Text(suite.title)
-                                            .font(.headline)
-                                        Spacer()
-                                        Image(systemName: viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? "checkmark.circle.fill" : "circle")
-                                            .foregroundStyle(viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? MelixDesignTokens.accent : .secondary)
-                                    }
-                                    Text("config \(suite.datasetName) • \(suite.defaultsText)")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                    Text(suite.datasetLabel)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(
-                                    viewModel.selectedBenchmarkSuiteIDs.contains(suite.id)
-                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
-                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
-                                    in: RoundedRectangle(cornerRadius: 12)
-                                )
+                        ) {
+                            ForEach(viewModel.diagnosticsServerTargets) { target in
+                                Text(target.title).tag(target.id)
                             }
-                            .buttonStyle(.plain)
                         }
-                    }
+                        .pickerStyle(.menu)
 
-                    Divider()
+                        Text(viewModel.benchmarkTargetSummaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
-                    if viewModel.selectedBenchmarkPresentationMode == .standard {
+                        if let disabledReason = viewModel.diagnosticsBenchmarkUnavailableText {
+                            Text(disabledReason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+                            ForEach(viewModel.benchmarkSuites) { suite in
+                                Button {
+                                    toggleBenchmarkSuiteSelection(suite.id)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack {
+                                            Text(suite.title)
+                                                .font(.headline)
+                                            Spacer()
+                                            Image(systemName: viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? "checkmark.circle.fill" : "circle")
+                                                .foregroundStyle(viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? MelixDesignTokens.accent : .secondary)
+                                        }
+                                        Text("config \(suite.datasetName) • \(suite.defaultsText)")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                        Text(suite.datasetLabel)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(
+                                        viewModel.selectedBenchmarkSuiteIDs.contains(suite.id)
+                                        ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                        : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+                                        in: RoundedRectangle(cornerRadius: 12)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        Divider()
+
+                        if viewModel.selectedBenchmarkPresentationMode == .standard {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Performance Controls")
                                 .font(.caption.weight(.semibold))
@@ -4035,60 +4237,40 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             if selectedStage == .evaluation {
                 DesktopEditorialSectionCard("Evaluation Configuration") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Picker(
-                        "Evaluation Target",
-                        selection: Binding(
-                            get: { viewModel.selectedEvaluationTargetMode },
-                            set: { viewModel.selectedEvaluationTargetMode = $0 }
-                        )
-                    ) {
-                        ForEach(RuntimeBenchmarkTargetMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    if viewModel.selectedEvaluationTargetMode == .catalogModel {
-                        if viewModel.evaluationModels.isEmpty {
-                            Text("No text-generation catalog models are available.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Picker(
-                                "Evaluation Model",
-                                selection: Binding(
-                                    get: { viewModel.selectedEvaluationModelID },
-                                    set: { viewModel.selectedEvaluationModelID = $0 }
-                                )
-                            ) {
-                                ForEach(viewModel.evaluationModels) { model in
-                                    Text(model.displayNameWithID)
-                                        .tag(model.modelID)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-                    } else {
-                        TextField(
-                            "Hugging Face Repo ID",
-                            text: Binding(
-                                get: { viewModel.evaluationHFRepoID },
-                                set: { viewModel.evaluationHFRepoID = $0 }
-                            )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                    }
-
-                    Text(viewModel.evaluationTargetSummaryText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Evaluation Prompt")
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Running Server")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
+
+                        Picker(
+                            "Running Server",
+                            selection: Binding(
+                                get: { viewModel.selectedDiagnosticsServerTargetID },
+                                set: { viewModel.selectDiagnosticsServerTarget(id: $0) }
+                            )
+                        ) {
+                            ForEach(viewModel.diagnosticsServerTargets) { target in
+                                Text(target.title).tag(target.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        Text(viewModel.evaluationTargetSummaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if let disabledReason = viewModel.diagnosticsEvaluationUnavailableText {
+                            Text(disabledReason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Evaluation Prompt")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
 
                         Picker(
                             "Evaluation Prompt",
@@ -4550,6 +4732,30 @@ struct DesktopDiagnosticsToolSectionView: View {
             if selectedStage == .evaluation {
                 DesktopEditorialSectionCard("Evaluation Results") {
                 VStack(alignment: .leading, spacing: 8) {
+                    if let failure = viewModel.lastCLIWorkflowFailure,
+                       failure.commandID.contains("eval") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Evaluation Command Failed")
+                                .font(.headline)
+                                .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                                .textSelection(.enabled)
+                            Text("\(failure.commandID) • \(failure.surface.rawValue) • \(failure.failureKind.rawValue)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            Text(failure.detail)
+                                .font(.caption)
+                                .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(
+                            MelixDesignTokens.StatusColor.error.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                    }
+
                     if let selectedEntry = viewModel.selectedEvaluationHistoryEntry {
                         Text("Selected eval \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
                             .font(.headline)
@@ -5578,6 +5784,23 @@ private func gatewayAccessHeaderText(_ session: DesktopServerSessionState) -> St
         return "Header: not required until shared access is enabled"
     case .enabled:
         return "Headers: x-api-key or Authorization: Bearer"
+    }
+}
+
+private func desktopAccelerationModeText(_ rawValue: String) -> String {
+    switch rawValue {
+    case "speculative_decode":
+        return "Speculative Decode"
+    case "accelerated_prefill":
+        return "Accelerated Prefill"
+    case "active_kv_quantized":
+        return "Active KV Quantized"
+    case "sparse_prefill":
+        return "Sparse Prefill"
+    case "baseline", "":
+        return "None"
+    default:
+        return "None"
     }
 }
 

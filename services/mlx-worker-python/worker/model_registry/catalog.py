@@ -170,8 +170,17 @@ def _load_model_config_payload(
 
 
 def _has_model_weight_files(model_dir: Path) -> bool:
-    if (model_dir / "model.safetensors.index.json").is_file():
-        return True
+    index_path = model_dir / "model.safetensors.index.json"
+    if index_path.is_file():
+        payload = _load_json_dict_file(index_path)
+        weight_map = payload.get("weight_map")
+        if not isinstance(weight_map, Mapping) or not weight_map:
+            return False
+        shard_names = {str(shard).strip() for shard in weight_map.values()}
+        shard_names.discard("")
+        if not shard_names:
+            return False
+        return all((model_dir / shard_name).is_file() for shard_name in shard_names)
     try:
         with os.scandir(os.fspath(model_dir)) as entries:
             for entry in entries:

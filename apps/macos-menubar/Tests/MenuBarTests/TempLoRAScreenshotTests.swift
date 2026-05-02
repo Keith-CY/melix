@@ -198,7 +198,7 @@ struct TempLoRAScreenshotTests {
         )
 
         viewModel.selectToolSection(.diagnostics)
-        viewModel.selectedBenchmarkTargetMode = .catalogModel
+        viewModel.updateSelectedServerSessionModelID(derivedModelID)
         viewModel.selectedBenchmarkModelID = derivedModelID
         viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
         viewModel.benchRepeats = "2"
@@ -261,7 +261,7 @@ struct TempLoRAScreenshotTests {
             title: "Melix"
         )
 
-        viewModel.selectedEvaluationTargetMode = .catalogModel
+        viewModel.updateSelectedServerSessionModelID(baseModelID)
         viewModel.selectedEvaluationModelID = baseModelID
         viewModel.selectedEvaluationMode = .compare
         viewModel.selectedEvaluationCompareTargetModelIDs = [derivedModelID]

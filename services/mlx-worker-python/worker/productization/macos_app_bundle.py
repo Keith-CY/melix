@@ -13,6 +13,9 @@ from worker.productization.packaging_targets import build_packaging_target_metad
 from worker.productization.startup_signals import default_update_channel_path
 
 
+_BUNDLED_EVALUATION_FIXTURE_IDS = ("top200.event-extraction.top20.v1",)
+
+
 @dataclass(frozen=True)
 class MacOSAppBundleLayout:
     app_path: Path
@@ -22,6 +25,7 @@ class MacOSAppBundleLayout:
     plist_path: Path
     launcher_path: Path
     bundled_app_binary_path: Path
+    bundled_cli_binary_path: Path
     bundled_swift_worker_binary_path: Path
     bundled_python_runtime_path: Path
     bundled_python_executable_path: Path
@@ -47,6 +51,7 @@ def build_macos_app_bundle_layout(output_path: str | Path, app_name: str = "Meli
         plist_path=contents_path / "Info.plist",
         launcher_path=macos_path / app_name,
         bundled_app_binary_path=resources_path / "melix-menubar",
+        bundled_cli_binary_path=resources_path / "melix",
         bundled_swift_worker_binary_path=resources_path / "melix-text-worker-swift",
         bundled_python_runtime_path=python_runtime_path,
         bundled_python_executable_path=python_runtime_path / "bin/python3",
@@ -146,6 +151,7 @@ def render_launcher_script(
     app_name: str,
     bundle_repo_root: str | Path,
     bundled_app_binary_name: str,
+    bundled_cli_binary_name: str,
     bundled_swift_worker_binary_name: str,
     bundled_python_executable_relative_path: str,
     bundled_site_packages_relative_path: str,
@@ -163,6 +169,7 @@ def render_launcher_script(
             'RESOURCES_DIR="$CONTENTS_DIR/Resources"',
             f'export MELIX_REPO_ROOT="$RESOURCES_DIR/{repo_root.as_posix()}"',
             'source "$RESOURCES_DIR/melix-product-env.sh"',
+            f'export MELIX_CLI="$RESOURCES_DIR/{bundled_cli_binary_name}"',
             'mkdir -p "$MELIX_RUNTIME_DIR" "$MELIX_LOGS_DIR" "$MELIX_RUNTIME_DIR/swift-text-worker-cache" "$MELIX_MANAGED_MODEL_ROOT" "$MELIX_AUDIO_RUNTIME_PACK_ROOT" "$MELIX_MODEL_OPS_JOBS_ROOT" "$MELIX_EVALUATION_JOBS_ROOT"',
             'RUN_TOKEN="${MELIX_RUN_TOKEN:-$$}"',
             'export MELIX_WORKER_SOCKET_PATH="$MELIX_RUNTIME_DIR/python-worker-${RUN_TOKEN}.sock"',
@@ -170,6 +177,7 @@ def render_launcher_script(
             'export MELIX_CONTROL_PLANE_METRICS_PATH="$MELIX_RUNTIME_DIR/control-plane-metrics-${RUN_TOKEN}.json"',
             'export MELIX_SWIFT_TEXT_WORKER_METRICS_PATH="$MELIX_RUNTIME_DIR/swift-text-worker-metrics-${RUN_TOKEN}.json"',
             'export MELIX_PYTHON_WORKER_METRICS_PATH="$MELIX_RUNTIME_DIR/python-worker-metrics-${RUN_TOKEN}.json"',
+            'export MELIX_MENU_BAR_STARTUP_SURFACE="console"',
             f'export MELIX_MENU_BAR_PRESENTATION_MODE="{menu_bar_presentation_mode}"',
             f'export MELIX_PYTHON_BRIDGE_EXECUTABLE="$RESOURCES_DIR/{bundled_python_executable_relative_path}"',
             'export PYTHONUNBUFFERED=1',
@@ -184,11 +192,13 @@ def render_launcher_script(
             'trap cleanup EXIT INT TERM',
             f'"$RESOURCES_DIR/{bundled_swift_worker_binary_name}" >"$MELIX_LOGS_DIR/swift-text-worker.stdout.log" 2>"$MELIX_LOGS_DIR/swift-text-worker.stderr.log" &',
             'MELIX_SWIFT_WORKER_PID=$!',
+            'export MELIX_SWIFT_WORKER_PID',
             f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" -m worker.bootstrap --socket-path "$MELIX_WORKER_SOCKET_PATH" --backend-mode "$MELIX_BACKEND_MODE" >"$MELIX_LOGS_DIR/python-worker.stdout.log" 2>"$MELIX_LOGS_DIR/python-worker.stderr.log" &',
             'MELIX_PYTHON_WORKER_PID=$!',
+            'export MELIX_PYTHON_WORKER_PID',
             f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" "$RESOURCES_DIR/{wait_script_relative_path}" --socket-path "$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH" --timeout-seconds 30',
             f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" "$RESOURCES_DIR/{wait_script_relative_path}" --socket-path "$MELIX_WORKER_SOCKET_PATH" --timeout-seconds 30',
-            f'"$RESOURCES_DIR/{bundled_app_binary_name}" "$@"',
+            f'exec "$RESOURCES_DIR/{bundled_app_binary_name}" "$@"',
             "",
         ]
     )
@@ -198,6 +208,7 @@ def write_unsigned_macos_app_bundle(
     *,
     repo_root: str | Path,
     executable_path: str | Path,
+    cli_executable_path: str | Path,
     swift_text_worker_executable_path: str | Path,
     python_runtime_root: str | Path,
     python_site_packages_path: str | Path,
@@ -211,6 +222,7 @@ def write_unsigned_macos_app_bundle(
 ) -> dict[str, str]:
     repo_root_path = Path(repo_root).expanduser().resolve()
     executable = Path(executable_path).expanduser().resolve()
+    cli_executable = Path(cli_executable_path).expanduser().resolve()
     swift_worker_executable = Path(swift_text_worker_executable_path).expanduser().resolve()
     python_runtime = Path(python_runtime_root).expanduser().resolve()
     python_site_packages = Path(python_site_packages_path).expanduser().resolve()
@@ -227,6 +239,8 @@ def write_unsigned_macos_app_bundle(
 
     if not executable.is_file():
         raise FileNotFoundError(f"Missing menubar executable: {executable}")
+    if not cli_executable.is_file():
+        raise FileNotFoundError(f"Missing Melix CLI executable: {cli_executable}")
     if not swift_worker_executable.is_file():
         raise FileNotFoundError(f"Missing Swift text worker executable: {swift_worker_executable}")
     if not python_runtime.is_dir():
@@ -250,6 +264,7 @@ def write_unsigned_macos_app_bundle(
     layout.resources_path.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(executable, layout.bundled_app_binary_path)
+    shutil.copy2(cli_executable, layout.bundled_cli_binary_path)
     shutil.copy2(swift_worker_executable, layout.bundled_swift_worker_binary_path)
     shutil.copy2(resolved_icon_source_path, layout.bundled_icon_path)
     shutil.copytree(python_runtime, layout.bundled_python_runtime_path, dirs_exist_ok=True, symlinks=True)
@@ -286,6 +301,7 @@ def write_unsigned_macos_app_bundle(
             app_name=app_name,
             bundle_repo_root=Path("repo"),
             bundled_app_binary_name=layout.bundled_app_binary_path.name,
+            bundled_cli_binary_name=layout.bundled_cli_binary_path.name,
             bundled_swift_worker_binary_name=layout.bundled_swift_worker_binary_path.name,
             bundled_python_executable_relative_path=layout.bundled_python_executable_path.relative_to(layout.resources_path).as_posix(),
             bundled_site_packages_relative_path=layout.bundled_site_packages_path.relative_to(layout.resources_path).as_posix(),
@@ -297,6 +313,7 @@ def write_unsigned_macos_app_bundle(
     for path in (
         layout.launcher_path,
         layout.bundled_app_binary_path,
+        layout.bundled_cli_binary_path,
         layout.bundled_swift_worker_binary_path,
         layout.bundled_python_executable_path,
     ):
@@ -307,6 +324,7 @@ def write_unsigned_macos_app_bundle(
         "launcher_path": str(layout.launcher_path),
         "resources_path": str(layout.resources_path),
         "bundled_binary_path": str(layout.bundled_app_binary_path),
+        "bundled_cli_binary_path": str(layout.bundled_cli_binary_path),
         "bundled_swift_worker_binary_path": str(layout.bundled_swift_worker_binary_path),
         "bundled_python_runtime_path": str(layout.bundled_python_runtime_path),
         "bundled_site_packages_path": str(layout.bundled_site_packages_path),
@@ -350,10 +368,12 @@ def _copy_repo_subset(repo_root: Path, target_root: Path) -> None:
     worker_root = target_root / "services/mlx-worker-python"
     protocol_root = target_root / "packages/protocol/python"
     scripts_root = target_root / "scripts"
+    evaluation_fixtures_root = worker_root / "fixtures/evaluation"
 
     (worker_root / "worker").mkdir(parents=True, exist_ok=True)
     protocol_root.mkdir(parents=True, exist_ok=True)
     scripts_root.mkdir(parents=True, exist_ok=True)
+    evaluation_fixtures_root.mkdir(parents=True, exist_ok=True)
 
     shutil.copytree(
         repo_root / "services/mlx-worker-python/worker",
@@ -370,4 +390,15 @@ def _copy_repo_subset(repo_root: Path, target_root: Path) -> None:
         symlinks=True,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
+    for dataset_id in _BUNDLED_EVALUATION_FIXTURE_IDS:
+        source_root = repo_root / "services/mlx-worker-python/fixtures/evaluation" / dataset_id
+        if not source_root.is_dir():
+            continue
+        shutil.copytree(
+            source_root,
+            evaluation_fixtures_root / dataset_id,
+            dirs_exist_ok=True,
+            symlinks=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
     shutil.copy2(repo_root / "scripts/wait_for_worker_ready.py", scripts_root / "wait_for_worker_ready.py")

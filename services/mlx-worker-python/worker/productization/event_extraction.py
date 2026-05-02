@@ -456,6 +456,18 @@ def make_event_extraction_client(
     raise ValueError(f"unsupported remote provider kind: {provider_kind}")
 
 
+def event_extraction_chat_messages(
+    prompt_spec: EventExtractionPromptSpec,
+    dialogue: Sequence[str],
+    dialogue_id: str = "",
+) -> list[dict[str, str]]:
+    prompt_input_mode = _prompt_input_mode(prompt_spec)
+    messages = [{"role": "system", "content": prompt_spec.system_prompt}]
+    messages.extend(_openai_example_messages(prompt_spec.examples, prompt_input_mode))
+    messages.append({"role": "user", "content": _dialogue_user_content(dialogue, dialogue_id, prompt_input_mode)})
+    return messages
+
+
 def make_semantic_judge_client(target: RemoteSemanticJudgeTarget):
     provider_kind = target.provider_kind.strip()
     if provider_kind in {"openai-compatible", "gemini-generative-language"}:
@@ -480,10 +492,7 @@ class OpenAICompatibleEventExtractionClient:
         dialogue: list[str],
         dialogue_id: str = "",
     ) -> EventExtractionClientResult:
-        messages = [{"role": "system", "content": self._prompt.system_prompt}]
-        prompt_input_mode = _prompt_input_mode(self._prompt)
-        messages.extend(_openai_example_messages(self._prompt.examples, prompt_input_mode))
-        messages.append({"role": "user", "content": _dialogue_user_content(dialogue, dialogue_id, prompt_input_mode)})
+        messages = event_extraction_chat_messages(self._prompt, dialogue, dialogue_id)
         payload = {
             "model": self._target.model_id,
             "messages": messages,

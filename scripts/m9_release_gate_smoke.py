@@ -138,6 +138,7 @@ def _build_fixture_report(
         },
         "evaluation_compare": _build_passing_evaluation_compare_report(),
         "real_workload": _build_passing_real_workload_report(),
+        "lora_path": _build_passing_lora_path_report(),
         "m9": m9,
     }
     if fixture_mode == "passing" and m9_failures:
@@ -301,6 +302,23 @@ def _build_passing_real_workload_report() -> dict[str, object]:
                     "peak_memory_gb": 9.8,
                 },
             },
+        },
+    }
+
+
+def _build_passing_lora_path_report() -> dict[str, object]:
+    return {
+        "stages": {
+            "dataset_build": {"success": 1.0, "duration_ms": 0.5},
+            "train": {"success": 1.0, "duration_ms": 1420.0},
+            "activate": {"success": 1.0, "duration_ms": 1.0},
+            "compare": {"success": 1.0, "duration_ms": 0.5},
+            "publish": {"success": 1.0, "duration_ms": 118.0},
+        },
+        "summary": {
+            "stages_success_count": 5.0,
+            "stages_failure_count": 0.0,
+            "full_path_success": 1.0,
         },
     }
 

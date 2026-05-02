@@ -214,6 +214,18 @@ swift run melix eval run \
   --sample-size 10
 ```
 
+Built-in event extraction top20 example:
+
+```bash
+swift run melix eval run \
+  --remote-server-id sub2api \
+  --remote-model gemini-2.5-flash \
+  --suite event_extraction \
+  --dataset-id top200.event-extraction.top20.v1 \
+  --scoring-mode event_extraction_weighted_f1 \
+  --sample-size 20
+```
+
 Executable-code example with a checked-in dev fixture:
 
 ```bash
@@ -263,8 +275,11 @@ Notes:
 - `mmlu.vision.dev.v1` is a checked-in image evaluation fixture under `services/mlx-worker-python/fixtures/evaluation/`
 - `imagenette.dev.v1` is a checked-in 10-sample validation subset sourced from `frgfm/imagenette` (`160px`, validation split, Apache-2.0)
 - `humaneval.dev.v1` and `mbpp.dev.v1` are checked-in executable-code fixtures under `services/mlx-worker-python/fixtures/evaluation/`
+- `top200.event-extraction.top20.v1` is the checked-in 20-dialogue event extraction validation slice for `event_extraction_weighted_f1`
 - relative `image_uri` entries inside multimodal datasets are resolved against the selected dataset root automatically
 - use `--dataset-root /absolute/path/to/evaluation-package` only when you want to override the checked-in fixture bundle
+- event extraction can use the built-in top20 package without `--source-jsonl`; use `--source-jsonl` only for ad hoc local JSONL runs such as the full `top200_final.jsonl`
+- event extraction currently requires a remote provider target for model inference; local downloaded model entries must pass registry and loadability checks before they can be used by local text/image suites
 - `--code-exec-policy sandboxed` is mandatory for `humaneval` and `mbpp`; Melix rejects those suites without it
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`
 - sample JSONL and CSV exports now include `execution_status` plus `execution_metadata` for

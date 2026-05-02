@@ -28,7 +28,10 @@ struct Phase8LoRAWindowSmokeTests {
             modelID: derivedModelID,
             alias: "Qwen35 Acceptance"
         )
-        let snapshot = phase8LoRAWindowSnapshot(models: [baseModel, derivedModel])
+        let snapshot = phase8LoRAWindowSnapshot(
+            models: [baseModel, derivedModel],
+            runtimeSessions: [phase8LoRAWindowRuntimeSession()]
+        )
 
         let directClient = FakeControlPlaneXPCClient()
         let runnerClient = FakeControlPlaneXPCClient()
@@ -115,7 +118,7 @@ struct Phase8LoRAWindowSmokeTests {
         await trainingSection.activateAdapter()
 
         viewModel.selectToolSection(.diagnostics)
-        viewModel.selectedEvaluationTargetMode = .catalogModel
+        viewModel.updateSelectedServerSessionModelID(baseModelID)
         viewModel.selectedEvaluationModelID = baseModelID
         viewModel.selectedEvaluationMode = .compare
         viewModel.selectedEvaluationCompareTargetModelIDs = [derivedModelID]
@@ -165,9 +168,19 @@ struct Phase8LoRAWindowSmokeTests {
             .count - negativeTrainBaselineCount
 
         let negativeActionClient = FakeControlPlaneXPCClient()
-        await negativeActionClient.configureSnapshot(phase8LoRAWindowSnapshot(models: [baseModel]))
+        await negativeActionClient.configureSnapshot(
+            phase8LoRAWindowSnapshot(
+                models: [baseModel],
+                runtimeSessions: [phase8LoRAWindowRuntimeSession()]
+            )
+        )
         let negativeActionRunnerClient = FakeControlPlaneXPCClient()
-        await negativeActionRunnerClient.configureSnapshot(phase8LoRAWindowSnapshot(models: [baseModel]))
+        await negativeActionRunnerClient.configureSnapshot(
+            phase8LoRAWindowSnapshot(
+                models: [baseModel],
+                runtimeSessions: [phase8LoRAWindowRuntimeSession()]
+            )
+        )
         await negativeActionRunnerClient.configureExportResult(
             ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSONWithoutResults())
         )
@@ -255,12 +268,24 @@ struct Phase8LoRAWindowSmokeTests {
 }
 
 private func phase8LoRAWindowSnapshot(
-    models: [Melix_Controlplane_V1_ModelSummary]
+    models: [Melix_Controlplane_V1_ModelSummary],
+    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = .serverReady
     snapshot.models = models
+    snapshot.runtimeSessions = runtimeSessions
     return snapshot
+}
+
+private func phase8LoRAWindowRuntimeSession() -> Melix_Controlplane_V1_ServerSessionRuntimeState {
+    var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
+    runtimeSession.serverSessionID = "server-session-1"
+    runtimeSession.lifecycleState = .ready
+    runtimeSession.powerState = .active
+    runtimeSession.wakeReason = .initialBoot
+    runtimeSession.updatedAtUnixMs = 1_717_171_717
+    return runtimeSession
 }
 
 private func phase8LoRAWindowModelSummary(
