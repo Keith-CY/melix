@@ -17,10 +17,10 @@ This slice is Python-only under `services/mlx-worker-python`, so it can be fully
 
 The current writer loop does extra per-row work:
 
-1. JSONL output performs two writes per row (`payload` then newline) instead of one coalesced write.
-2. The loop repeatedly resolves hot callables and rebuilds the CSV row mapping through repeated global/attribute lookups.
+1. JSONL output must stay coalesced to one write per row.
+2. The loop should avoid repeated hot callables and should hand CSV row emission to `csv.writerows()` instead of calling `writerow()` once per Python row.
 
-Coalescing the JSONL write and binding hot loop helpers locally should reduce Python overhead on large benchmark matrix persists without changing semantics.
+Coalescing the JSONL write, binding hot loop helpers locally, and using `csv.writerows()` over a streaming generator should reduce Python overhead on large benchmark matrix persists without changing semantics.
 
 ## Performance probe
 

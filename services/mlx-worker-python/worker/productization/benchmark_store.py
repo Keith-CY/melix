@@ -105,9 +105,11 @@ class BenchmarkStore:
             write_jsonl = jsonl_handle.write
             dump_json = json.dumps
             normalize_csv_value = _csv_value
-            write_csv_row = csv_writer.writerow
-            for row in rows:
-                payload = row.to_dict()
-                write_jsonl(dump_json(payload) + "\n")
-                payload_get = payload.get
-                write_csv_row([normalize_csv_value(payload_get(field, "")) for field in fieldnames])
+            def csv_rows() -> Iterable[list[str]]:
+                for row in rows:
+                    payload = row.to_dict()
+                    write_jsonl(dump_json(payload) + "\n")
+                    payload_get = payload.get
+                    yield [normalize_csv_value(payload_get(field, "")) for field in fieldnames]
+
+            csv_writer.writerows(csv_rows())
