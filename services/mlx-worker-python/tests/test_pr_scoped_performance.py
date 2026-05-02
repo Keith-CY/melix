@@ -1175,6 +1175,92 @@ def test_report_results_loader_uses_scandir_without_path_glob(
     assert [payload["probe"]["id"] for payload in loaded] == ["a", "b"]
 
 
+def test_performance_report_script_load_results_handles_missing_directory() -> None:
+    report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
+
+    assert report_script["_load_results"](REPO_ROOT / "missing-results-dir") == []
+
+
+
+def test_performance_report_script_json_output_and_invalid_scope(
+    tmp_path: Path,
+    benchmark_scope: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scope_path = tmp_path / "scope.json"
+    scope_path.write_text(json.dumps(benchmark_scope), encoding="utf-8")
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pr_scoped_performance_report.py",
+            "--scope",
+            str(scope_path),
+            "--results-dir",
+            str(results_dir),
+            "--format",
+            "json",
+        ],
+    )
+    report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
+
+    assert report_script["main"]() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"]["selected_probe_count"] == benchmark_scope["selected_count"]
+
+    invalid_scope_path = tmp_path / "invalid-scope.json"
+    invalid_scope_path.write_text("[]\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pr_scoped_performance_report.py",
+            "--scope",
+            str(invalid_scope_path),
+            "--results-dir",
+            str(results_dir),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="scope payload must be a JSON object"):
+        report_script["main"]()
+
+
+
+def test_pr_scoped_performance_report_script_exits_zero_as_main_module(
+    tmp_path: Path,
+    benchmark_scope: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scope_path = tmp_path / "scope.json"
+    scope_path.write_text(json.dumps(benchmark_scope), encoding="utf-8")
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pr_scoped_performance_report.py",
+            "--scope",
+            str(scope_path),
+            "--results-dir",
+            str(results_dir),
+            "--format",
+            "json",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+
+
+
 def test_performance_report_results_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report_results_probe.py"))
 
@@ -1214,6 +1300,135 @@ def test_package_macos_resolve_probe_rejects_unexpected_resolution(monkeypatch: 
 
     with pytest.raises(AssertionError, match="expected .* got"):
         probe_script["main"]()
+
+
+def test_report_script_writes_sticky_comment_artifact_for_terminal_output(
+    tmp_path: Path,
+    benchmark_scope: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = {
+        "probe": benchmark_scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 97.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 10.0,
+                "peak_bytes_mean": 100.0,
+            },
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 12.0,
+                "peak_bytes_mean": 120.0,
+            },
+        },
+    }
+    scope_path = tmp_path / "scope.json"
+    scope_path.write_text(json.dumps(benchmark_scope), encoding="utf-8")
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "probe.json").write_text(json.dumps(result), encoding="utf-8")
+    report_dir = tmp_path / "report"
+    expected_markdown = render_markdown_report(
+        build_performance_report(scope=benchmark_scope, probe_results=[result])
+    )
+    expected_sticky = build_sticky_comment_body(expected_markdown)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pr_scoped_performance_report.py",
+            "--scope",
+            str(scope_path),
+            "--results-dir",
+            str(results_dir),
+            "--output-dir",
+            str(report_dir),
+            "--format",
+            "terminal",
+            "--sticky-comment",
+        ],
+    )
+    report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
+
+    assert report_script["main"]() == 0
+
+    captured = capsys.readouterr().out
+    assert captured.startswith("Melix PR Scoped Performance Report\n")
+    assert (report_dir / "report.md").read_text(encoding="utf-8") == expected_markdown
+    assert (report_dir / "pr-comment.md").read_text(encoding="utf-8") == expected_sticky
+
+
+
+def test_report_script_preserves_exact_sticky_comment_body_on_markdown_stdout(
+    tmp_path: Path,
+    benchmark_scope: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = {
+        "probe": benchmark_scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 97.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 10.0,
+                "peak_bytes_mean": 100.0,
+            },
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 12.0,
+                "peak_bytes_mean": 120.0,
+            },
+        },
+    }
+    scope_path = tmp_path / "scope.json"
+    scope_path.write_text(json.dumps(benchmark_scope), encoding="utf-8")
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "probe.json").write_text(json.dumps(result), encoding="utf-8")
+    report_dir = tmp_path / "report"
+    expected_markdown = render_markdown_report(
+        build_performance_report(scope=benchmark_scope, probe_results=[result])
+    )
+    expected_sticky = build_sticky_comment_body(expected_markdown)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pr_scoped_performance_report.py",
+            "--scope",
+            str(scope_path),
+            "--results-dir",
+            str(results_dir),
+            "--output-dir",
+            str(report_dir),
+            "--format",
+            "markdown",
+            "--sticky-comment",
+        ],
+    )
+    report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
+
+    assert report_script["main"]() == 0
+
+    assert capsys.readouterr().out == expected_sticky
+    assert (report_dir / "report.md").read_text(encoding="utf-8") == expected_markdown
+    assert (report_dir / "pr-comment.md").read_text(encoding="utf-8") == expected_sticky
+
 
 
 def test_cli_scripts_smoke(tmp_path: Path, benchmark_scope: dict[str, object], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

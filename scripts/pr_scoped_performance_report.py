@@ -51,15 +51,22 @@ def main() -> int:
     if not isinstance(scope, dict):
         raise ValueError("scope payload must be a JSON object")
     report = build_performance_report(scope=scope, probe_results=_load_results(Path(args.results_dir)))
+    markdown_report = ""
+    if args.output_dir or args.format == "markdown" or args.sticky_comment:
+        markdown_report = render_markdown_report(report)
     if args.output_dir:
-        write_report_outputs(report, args.output_dir)
+        output_dir = Path(args.output_dir)
+        write_report_outputs(
+            report,
+            output_dir,
+            markdown_report=markdown_report,
+            sticky_comment=args.sticky_comment,
+        )
     if args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
     if args.format == "markdown":
-        markdown = render_markdown_report(report)
-        if args.sticky_comment:
-            markdown = build_sticky_comment_body(markdown)
+        markdown = build_sticky_comment_body(markdown_report) if args.sticky_comment else markdown_report
         print(markdown, end="" if markdown.endswith("\n") else "\n")
         return 0
     print(render_terminal_report(report), end="")
