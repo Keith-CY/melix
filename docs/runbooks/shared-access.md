@@ -90,6 +90,15 @@ Expected failure probes:
 - unknown shared key returns `401` with `invalid_api_key`
 - explicit shared headers in configured-but-disabled mode return `403` with `shared_access_disabled`
 
+### Route Parity
+
+The same shared-access policy applies to every operator-facing route except `/health`, including
+text generation, embeddings, rerank, audio transcription, audio speech, image generation/editing,
+cache stats, auth session creation, and unknown routes. Missing credentials in shared-enabled mode
+must return `401 missing_api_key` before request body decoding or worker dispatch. Session inspect
+and revoke routes require `X-Melix-Session`; missing session credentials return
+`401 missing_session` and do not fall through to the route handler.
+
 ### Desktop State
 
 After the menu bar app hydrates from handshake:
@@ -129,3 +138,14 @@ Supporting snapshot and bootstrap probes also expose:
 - `shared_access.ready`
 
 These values are projected into the control-plane snapshot and desktop operator state so backend truth, smoke evidence, and menu bar rendering stay aligned.
+
+Issue 77 also records:
+
+- `route_auth_policy`
+- `endpoint_type_validation_result`
+- `endpoint_type_validation_rejection_count`
+
+`route_auth_policy` is emitted for non-health requests after the gateway selects the effective
+access policy. `endpoint_type_validation_result = 0` with an incremented rejection count means the
+request selected a model that belongs to a different endpoint family; the JSON error body includes
+the requested endpoint, model endpoint family, and suggested retry endpoint.

@@ -47,7 +47,7 @@ from worker.productization.evaluation_final_result import (
     materialize_local_evaluation_dataset,
 )
 from worker.registry import DiskStreamingUnsupported, MemoryBudgetExceeded, WorkerRegistry
-from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
+from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError, AudioProcessorValidationError
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
@@ -147,6 +147,15 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
             return runtime_pb2.LoadModelResponse(
                 ok=False,
                 error=common_pb2.ErrorStatus(code="unavailable", message=str(exc)),
+            )
+        except AudioProcessorValidationError as exc:
+            return runtime_pb2.LoadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="audio_processor_validation_failed",
+                    message=str(exc),
+                    details=exc.details,
+                ),
             )
         except Exception as exc:
             is_real_audio_backend = (

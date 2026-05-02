@@ -154,6 +154,7 @@ def _install_audio_assets(app_support_dir: Path) -> None:
             "localModelPath": str(local_model_path),
         }
         _write_json(local_model_path / "managed-model.json", record)
+        _write_json(local_model_path / "preprocessor_config.json", {"processor_class": "FakeMLXAudioProcessor"})
         managed_model_records[model_id] = record
 
     _write_json(

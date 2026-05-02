@@ -373,6 +373,7 @@ public struct OpenAIHandler: Sendable {
             return .success(.localTrusted)
         }
         let gatewayAccessPolicy = await gatewayAccessPolicyStore.currentPolicy()
+        await metricsStore.set(gatewayAccessPolicy.metricModeCode, forKey: "route_auth_policy")
         if
             route != .createSession,
             let sessionToken = header(named: PersistentAuthSessionStore.sessionHeaderName, in: request.headers),
@@ -722,6 +723,12 @@ public struct OpenAIHandler: Sendable {
 
     private func handleEmbeddings(_ request: HTTPRequest) async throws -> HTTPResponse {
         let embeddingsRequest = try decoder.decode(OpenAIEmbeddingsRequest.self, from: request.body)
+        if let validationFailure = await endpointCompatibilityFailureResponse(
+            modelID: embeddingsRequest.model,
+            endpoint: .embedding
+        ) {
+            return validationFailure
+        }
         let inputs = embeddingsRequest.normalizedInputs
 
         guard let modelHandle = await modelCatalog.dispatchHandle(for: embeddingsRequest.model) else {
@@ -770,6 +777,12 @@ public struct OpenAIHandler: Sendable {
 
     private func handleRerank(_ request: HTTPRequest) async throws -> HTTPResponse {
         let rerankRequest = try decoder.decode(OpenAIRerankRequest.self, from: request.body)
+        if let validationFailure = await endpointCompatibilityFailureResponse(
+            modelID: rerankRequest.model,
+            endpoint: .rerank
+        ) {
+            return validationFailure
+        }
 
         guard let modelHandle = await modelCatalog.dispatchHandle(for: rerankRequest.model) else {
             return httpErrorResponse(for: .modelNotReady)
@@ -817,6 +830,12 @@ public struct OpenAIHandler: Sendable {
 
     private func handleAudioTranscriptions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let transcriptionRequest = try decoder.decode(OpenAIAudioTranscriptionsRequest.self, from: request.body)
+        if let validationFailure = await endpointCompatibilityFailureResponse(
+            modelID: transcriptionRequest.model,
+            endpoint: .transcription
+        ) {
+            return validationFailure
+        }
         let audioReference = transcriptionRequest.normalizedAudio
 
         if let preflightFailure = await audioReadinessFailureResponse(for: transcriptionRequest.model) {
@@ -834,6 +853,8 @@ public struct OpenAIHandler: Sendable {
             return httpErrorResponse(for: .modelRuntimeMissing)
         } catch OnDemandModelLoadError.modelNotReady {
             return httpErrorResponse(for: .modelNotReady)
+        } catch OnDemandModelLoadError.workerRejected(let error) {
+            return workerErrorResponse(error)
         } catch OnDemandModelLoadError.workerUnavailable {
             return workerUnavailableResponse()
         } catch {
@@ -922,6 +943,12 @@ public struct OpenAIHandler: Sendable {
 
     private func handleAudioSpeech(_ request: HTTPRequest) async throws -> HTTPResponse {
         let speechRequest = try decoder.decode(OpenAIAudioSpeechRequest.self, from: request.body)
+        if let validationFailure = await endpointCompatibilityFailureResponse(
+            modelID: speechRequest.model,
+            endpoint: .speech
+        ) {
+            return validationFailure
+        }
         let requestedFormat = (speechRequest.format ?? "wav").lowercased()
         if let selectedModel = await modelCatalog.model(id: speechRequest.model),
            !supportsSpeechFormat(requestedFormat, for: selectedModel) {
@@ -953,6 +980,8 @@ public struct OpenAIHandler: Sendable {
             return httpErrorResponse(for: .modelRuntimeMissing)
         } catch OnDemandModelLoadError.modelNotReady {
             return httpErrorResponse(for: .modelNotReady)
+        } catch OnDemandModelLoadError.workerRejected(let error) {
+            return workerErrorResponse(error)
         } catch OnDemandModelLoadError.workerUnavailable {
             return workerUnavailableResponse()
         } catch {
@@ -1039,6 +1068,12 @@ public struct OpenAIHandler: Sendable {
 
     private func handleImageGenerations(_ request: HTTPRequest) async throws -> HTTPResponse {
         let imageRequest = try decoder.decode(OpenAIImageGenerationsRequest.self, from: request.body)
+        if let validationFailure = await endpointCompatibilityFailureResponse(
+            modelID: imageRequest.model,
+            endpoint: .imageGeneration
+        ) {
+            return validationFailure
+        }
 
         guard let modelHandle = await modelCatalog.dispatchHandle(for: imageRequest.model) else {
             return httpErrorResponse(for: .modelNotReady)
@@ -1200,6 +1235,12 @@ public struct OpenAIHandler: Sendable {
 
     private func handleImageEdits(_ request: HTTPRequest) async throws -> HTTPResponse {
         let imageRequest = try decoder.decode(OpenAIImageEditsRequest.self, from: request.body)
+        if let validationFailure = await endpointCompatibilityFailureResponse(
+            modelID: imageRequest.model,
+            endpoint: .imageEdit
+        ) {
+            return validationFailure
+        }
         let resolvedEditMode = resolvedImageEditMode(imageRequest.editMode)
         let sourceArtifactID = imageRequest.sourceArtifactID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let promptDelta = imageRequest.promptDelta?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1438,6 +1479,12 @@ public struct OpenAIHandler: Sendable {
             metricsStore: metricsStore,
             rescan: true
         )
+        if let validationFailure = await endpointCompatibilityFailureResponse(
+            modelID: normalized.model,
+            endpoint: .textGeneration
+        ) {
+            throw HTTPRequestHandlingError.gatewayResponse(validationFailure)
+        }
         let modelHandle: String
         do {
             modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
@@ -1450,6 +1497,8 @@ public struct OpenAIHandler: Sendable {
             throw HTTPRequestHandlingError.modelRuntimeMissing
         } catch OnDemandModelLoadError.modelNotReady {
             throw HTTPRequestHandlingError.modelNotReady
+        } catch OnDemandModelLoadError.workerRejected(let error) {
+            throw HTTPRequestHandlingError.workerRejected(error)
         } catch OnDemandModelLoadError.workerUnavailable {
             throw HTTPRequestHandlingError.workerUnavailable
         } catch {
@@ -1657,6 +1706,10 @@ public struct OpenAIHandler: Sendable {
             )
         case .workerUnavailable:
             return workerUnavailableResponse()
+        case .workerRejected(let error):
+            return workerErrorResponse(error)
+        case .gatewayResponse(let response):
+            return response
         }
     }
 
@@ -1683,6 +1736,8 @@ public struct OpenAIHandler: Sendable {
             statusCode = 404
         case "cancelled":
             statusCode = 409
+        case "audio_processor_validation_failed":
+            statusCode = 409
         case "resource_exhausted":
             statusCode = 503
         case "deadline_exceeded":
@@ -1693,10 +1748,206 @@ public struct OpenAIHandler: Sendable {
             statusCode = 500
         }
 
+        var payloadError: [String: Any] = ["code": error.code, "message": error.message]
+        if !error.details.isEmpty {
+            payloadError["details"] = Dictionary(uniqueKeysWithValues: error.details.map { ($0.key, $0.value) })
+        }
         return jsonResponse(
             statusCode: statusCode,
-            payload: ["error": ["code": error.code, "message": error.message]]
+            payload: ["error": payloadError]
         )
+    }
+
+    private func endpointCompatibilityFailureResponse(
+        modelID: String,
+        endpoint: HTTPGatewayEndpointFamily
+    ) async -> HTTPResponse? {
+        guard let model = await modelCatalog.model(id: modelID) else {
+            return nil
+        }
+        if endpointSupportsModel(model, endpoint: endpoint) {
+            await metricsStore.set(1, forKey: "endpoint_type_validation_result")
+            return nil
+        }
+
+        await metricsStore.set(0, forKey: "endpoint_type_validation_result")
+        await metricsStore.increment("endpoint_type_validation_rejection_count")
+
+        let modelEndpoint = endpointFamilyHint(for: model)
+        let correctEndpoint = modelEndpoint?.suggestedEndpoint ?? "/v1/models"
+        let routeKind = modelRouteKind(for: model)?.metadataIdentifier ?? ""
+        let supportedTasks = normalizedIdentifierList(
+            model.supportedTasks,
+            fallback: model.settings.ext["melix.capability.supported_tasks"]
+        )
+        let message = if let modelEndpoint {
+            "Model \(modelID) is registered for \(modelEndpoint.displayName) and cannot serve \(endpoint.displayName) requests at \(endpoint.path). Use \(correctEndpoint) for this model."
+        } else {
+            "Model \(modelID) does not advertise support for \(endpoint.displayName) requests at \(endpoint.path). Inspect /v1/models for supported tasks before retrying."
+        }
+
+        return jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "wrong_endpoint_for_model",
+                    "message": message,
+                    "model_id": modelID,
+                    "requested_endpoint": endpoint.path,
+                    "requested_endpoint_family": endpoint.rawValue,
+                    "model_endpoint_family": modelEndpoint?.rawValue ?? "unknown",
+                    "correct_endpoint": correctEndpoint,
+                    "route_kind": routeKind,
+                    "supported_tasks": supportedTasks,
+                ],
+            ]
+        )
+    }
+
+    private func endpointSupportsModel(
+        _ model: Melix_Controlplane_V1_ModelSummary,
+        endpoint: HTTPGatewayEndpointFamily
+    ) -> Bool {
+        let kind = normalizedIdentifier(model.kind)
+        let capability = model.capabilityClass
+        let capabilityIdentifier = normalizedIdentifier(model.settings.ext["melix.capability.class"])
+        let routeKind = modelRouteKind(for: model)
+        let tasks = Set(normalizedIdentifierList(
+            model.supportedTasks,
+            fallback: model.settings.ext["melix.capability.supported_tasks"]
+        ))
+
+        switch endpoint {
+        case .textGeneration:
+            return tasks.contains("generate")
+                || tasks.contains("ocr")
+                || tasks.contains("vlm")
+                || kind == "text"
+                || kind == "ocr"
+                || kind == "vlm"
+                || capability == .modelCapabilityText
+                || capability == .modelCapabilityOcr
+                || capability == .modelCapabilityVlm
+                || capabilityIdentifier == "text"
+                || capabilityIdentifier == "ocr"
+                || capabilityIdentifier == "vlm"
+                || routeKind == .swiftText
+                || routeKind == .pythonCompatibility
+                || routeKind == .pythonOCR
+                || routeKind == .pythonVLM
+        case .embedding:
+            return tasks.contains("embed")
+                || kind == "embedding"
+                || capability == .modelCapabilityEmbedding
+                || capabilityIdentifier == "embedding"
+                || routeKind == .pythonEmbedding
+        case .rerank:
+            return tasks.contains("rerank")
+                || kind == "rerank"
+                || capability == .modelCapabilityRerank
+                || capabilityIdentifier == "rerank"
+                || routeKind == .pythonRerank
+        case .transcription:
+            return tasks.contains("transcribe")
+                || kind == "transcription"
+                || capability == .modelCapabilityTranscription
+                || capabilityIdentifier == "transcription"
+                || routeKind == .pythonTranscription
+        case .speech:
+            return tasks.contains("speak")
+                || kind == "speech"
+                || capability == .modelCapabilitySpeech
+                || capabilityIdentifier == "speech"
+                || routeKind == .pythonSpeech
+        case .imageGeneration:
+            if explicitBool(model.settings.ext["melix.image.supports_generation"]) == false {
+                return false
+            }
+            return tasks.contains("image_generate")
+                || kind == "image"
+                || kind == "image_generation"
+                || capability == .modelCapabilityImageGeneration
+                || capabilityIdentifier == "image_generation"
+                || routeKind == .pythonImage
+        case .imageEdit:
+            if explicitBool(model.settings.ext["melix.image.supports_edit"]) == false {
+                return false
+            }
+            return tasks.contains("image_edit")
+                || kind == "image"
+                || kind == "image_generation"
+                || capability == .modelCapabilityImageGeneration
+                || capabilityIdentifier == "image_generation"
+                || routeKind == .pythonImage
+        }
+    }
+
+    private func endpointFamilyHint(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> HTTPGatewayEndpointFamily? {
+        if endpointSupportsModel(model, endpoint: .embedding) {
+            return .embedding
+        }
+        if endpointSupportsModel(model, endpoint: .rerank) {
+            return .rerank
+        }
+        if endpointSupportsModel(model, endpoint: .transcription) {
+            return .transcription
+        }
+        if endpointSupportsModel(model, endpoint: .speech) {
+            return .speech
+        }
+        if endpointSupportsModel(model, endpoint: .imageGeneration) {
+            return .imageGeneration
+        }
+        if endpointSupportsModel(model, endpoint: .imageEdit) {
+            return .imageEdit
+        }
+        if endpointSupportsModel(model, endpoint: .textGeneration) {
+            return .textGeneration
+        }
+        return nil
+    }
+
+    private func modelRouteKind(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> WorkerRouteKind? {
+        if let route = WorkerRouteKind(routeClass: model.routeClass) {
+            return route
+        }
+        if let route = WorkerRouteKind(metadataIdentifier: model.settings.ext["melix.capability.route_kind"]) {
+            return route
+        }
+        return WorkerRouteKind(capabilityIdentifier: model.settings.ext["melix.capability.class"])
+    }
+
+    private func normalizedIdentifierList(
+        _ values: [String],
+        fallback: String?
+    ) -> [String] {
+        let identifiers = values.map(normalizedIdentifier).filter { !$0.isEmpty }
+        guard identifiers.isEmpty, let fallback else {
+            return identifiers
+        }
+        return fallback
+            .split(separator: ",")
+            .map { normalizedIdentifier(String($0)) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func normalizedIdentifier(_ value: String?) -> String {
+        (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func explicitBool(_ value: String?) -> Bool? {
+        switch normalizedIdentifier(value) {
+        case "true", "1", "yes", "on":
+            return true
+        case "false", "0", "no", "off":
+            return false
+        default:
+            return nil
+        }
     }
 
     private func audioReadinessFailureResponse(for modelID: String) async -> HTTPResponse? {
@@ -2560,6 +2811,60 @@ private enum HTTPRequestHandlingError: Error {
     case modelNotReady
     case modelRuntimeMissing
     case workerUnavailable
+    case workerRejected(Melix_Worker_V1_ErrorStatus)
+    case gatewayResponse(HTTPResponse)
+}
+
+private enum HTTPGatewayEndpointFamily: String {
+    case textGeneration = "text_generation"
+    case embedding
+    case rerank
+    case transcription
+    case speech
+    case imageGeneration = "image_generation"
+    case imageEdit = "image_edit"
+
+    var displayName: String {
+        switch self {
+        case .textGeneration:
+            return "text generation"
+        case .embedding:
+            return "embedding"
+        case .rerank:
+            return "rerank"
+        case .transcription:
+            return "audio transcription"
+        case .speech:
+            return "audio speech"
+        case .imageGeneration:
+            return "image generation"
+        case .imageEdit:
+            return "image edit"
+        }
+    }
+
+    var path: String {
+        switch self {
+        case .textGeneration:
+            return "/v1/chat/completions"
+        case .embedding:
+            return "/v1/embeddings"
+        case .rerank:
+            return "/v1/rerank"
+        case .transcription:
+            return "/v1/audio/transcriptions"
+        case .speech:
+            return "/v1/audio/speech"
+        case .imageGeneration:
+            return "/v1/images/generations"
+        case .imageEdit:
+            return "/v1/images/edits"
+        }
+    }
+
+    var suggestedEndpoint: String {
+        path
+    }
 }
 
 private struct HealthResponse: Codable {

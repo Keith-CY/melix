@@ -216,4 +216,6 @@ def test_image_edit_endpoint_supports_fill_override_and_generation_rejects_edit_
 
     assert edit_payload["job"]["state"] == "completed"
     assert edit_payload["job"]["artifacts"][0]["role"] == "edit_source"
-    assert failure_payload["error"]["message"].startswith("Image model melix-dev-image does not support generation workflows")
+    assert failure_payload["error"]["message"].startswith(
+        "Model melix-dev-image is registered for image edit and cannot serve image generation requests"
+    )
