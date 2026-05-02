@@ -179,7 +179,10 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
             union = (len(query_token_set) + len(document_token_set) - overlap_count) or 1
             overlap_score = overlap_count / union
 
-        pair_bonus = self._ordered_pair_bonus(query_tokens, document_tokens, query_pairs=query_context.ordered_pairs)
+        if overlap_count == 0:
+            pair_bonus = 0.0
+        else:
+            pair_bonus = self._ordered_pair_bonus(query_tokens, document_tokens, query_pairs=query_context.ordered_pairs)
         has_all_query_terms = overlap_count >= len(query_token_set)
         exact_order_bonus = (
             0.1 if has_all_query_terms and self._contains_contiguous_query(document_tokens, query_tokens) else 0.0
@@ -273,11 +276,14 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
         document_token_set = set(document_tokens)
         overlap_count = len(query_token_set & document_token_set)
         overlap = overlap_count / (len(query_token_set) or 1)
-        pair_bonus = JinaV3RerankFamilyAdapter._ordered_pair_bonus(
-            query_tokens,
-            document_tokens,
-            query_pairs=query_context.ordered_pairs,
-        )
+        if overlap_count == 0:
+            pair_bonus = 0.0
+        else:
+            pair_bonus = JinaV3RerankFamilyAdapter._ordered_pair_bonus(
+                query_tokens,
+                document_tokens,
+                query_pairs=query_context.ordered_pairs,
+            )
         exact_order = (
             JinaV3RerankFamilyAdapter._contains_contiguous_query(document_tokens, query_tokens)
             if overlap_count >= len(query_token_set)
