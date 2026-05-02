@@ -19,6 +19,7 @@ _SUPPORTED_FORMATS = {"chat_messages", "prompt_completion", "text_completion"}
 _SUPPORTED_ROLES = {"system", "user", "assistant", "tool"}
 _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
 _QUALITY_REPORT_SAMPLE_LIMIT = 10
+_ALLOWED_CONTROL_CHARACTERS = frozenset({"\n", "\r", "\t"})
 
 HFDatasetFetcher = Callable[[str, dict[str, str]], dict[str, Any]]
 
@@ -1551,7 +1552,7 @@ def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
 
 
 def _contains_problematic_control_characters(text: str) -> bool:
-    return any(ord(character) < 32 and character not in {"\n", "\r", "\t"} for character in text)
+    return any(ord(character) < 32 and character not in _ALLOWED_CONTROL_CHARACTERS for character in text)
 
 
 def _canonical_sample_key(sample: dict[str, Any]) -> str:
