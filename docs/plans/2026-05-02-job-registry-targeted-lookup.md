@@ -3,7 +3,7 @@
 ## Scope
 
 This performance slice is limited to the Python model-ops job registry derived-model lookup path.
-It keeps snapshot and active-manifest behavior unchanged while reducing work in `resolve_derived_model_target` when callers request one derived model by id or manifest path.
+It keeps snapshot and active-manifest behavior unchanged while caching the active derived-model row set between registry mutations so repeated `active_derived_model_manifests` and `resolve_derived_model_target` calls avoid rebuilding the same removal-filtered scan.
 
 ## Registered probe
 
@@ -17,9 +17,9 @@ The probe includes:
 
 ## Implementation plan
 
-1. Add a regression test proving derived-model id lookup does not resolve every non-matching activation path before finding the requested model.
-2. Change `resolve_derived_model_target` to iterate ordered jobs directly and return on the first matching active activation row instead of materializing the full active-derived tuple.
-3. Preserve removal filtering semantics by reusing `_removed_derived_targets_from_ordered_jobs` before the targeted scan.
+1. Add regression tests proving the active row set is reused across repeated reads and invalidated when registry mutations change derived-model activity.
+2. Store a cached active derived-model row tuple on `ModelOpsJobRegistry` and clear it from mutation methods that affect manifests, statuses, output paths, or output dirs.
+3. Route both `active_derived_model_manifests` and `resolve_derived_model_target` through the shared cached row builder while preserving removal filtering and delayed path-resolution semantics.
 4. Run focused tests, changed-scope coverage, and the registered probe locally on Linux before opening the PR.
 
 ## Verification commands

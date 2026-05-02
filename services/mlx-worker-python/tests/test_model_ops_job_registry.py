@@ -185,6 +185,85 @@ def test_active_derived_model_manifests_avoids_full_snapshot(monkeypatch: pytest
 
     assert registry.active_derived_model_manifests() == (active_manifest,)
 
+def test_active_derived_model_row_cache_reuses_rows_and_invalidates() -> None:
+    registry = ModelOpsJobRegistry()
+    active_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.attach_manifest(
+        active_job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": "/runtime/activate/melix-dev-active",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(active_job.job_id, "/runtime/activate/melix-dev-active/manifest.json")
+
+    first_rows = registry._cached_active_derived_model_job_rows()
+    second_rows = registry._cached_active_derived_model_job_rows()
+
+    assert first_rows is second_rows
+    assert registry.active_derived_model_manifests() == (
+        {
+            "derived_model_id": "melix-dev-active",
+            "derived_model_path": "/runtime/activate/melix-dev-active",
+            "activation_mode": "fused_derived_model",
+        },
+    )
+
+    removal_job = registry.start("remove_derived_model", "melix-dev-text", "/runtime/remove")
+    registry.attach_manifest(
+        removal_job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-active",
+                "activation_job_id": active_job.job_id,
+                "activation_manifest_path": "/runtime/activate/melix-dev-active/manifest.json",
+            }
+        ),
+    )
+    registry.complete(removal_job.job_id, "/runtime/remove/remove_derived_model.lifecycle.json")
+
+    assert registry._cached_active_derived_model_job_rows() is not first_rows
+    assert registry.active_derived_model_manifests() == ()
+
+
+
+def test_resolve_derived_model_target_reuses_active_row_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ModelOpsJobRegistry()
+    active_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.attach_manifest(
+        active_job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": "/runtime/activate/melix-dev-active",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(active_job.job_id, "/runtime/activate/melix-dev-active/manifest.json")
+
+    build_calls = 0
+    original_builder = ModelOpsJobRegistry._active_derived_model_job_rows.__func__
+
+    def counted_builder(cls, jobs):
+        nonlocal build_calls
+        build_calls += 1
+        return original_builder(cls, jobs)
+
+    monkeypatch.setattr(
+        ModelOpsJobRegistry,
+        "_active_derived_model_job_rows",
+        classmethod(counted_builder),
+    )
+
+    assert registry.resolve_derived_model_target(derived_model_id="melix-dev-active") is not None
+    assert registry.resolve_derived_model_target(derived_model_id="melix-dev-active") is not None
+    assert build_calls == 1
 
 
 def test_active_derived_model_manifests_skips_removed_manifest_path_without_job_id() -> None:

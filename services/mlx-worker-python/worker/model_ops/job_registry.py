@@ -50,6 +50,7 @@ class ModelOpsJobRegistry:
         self._lock = Lock()
         self._next_id = 1
         self._jobs: dict[str, ModelOpsJob] = {}
+        self._active_derived_model_rows_cache: tuple[tuple[ModelOpsJob, dict[str, Any], str], ...] | None = None
         self._jobs_root = Path(jobs_root).expanduser().resolve() if jobs_root is not None else None
         self._lora_experiment_store = LoraExperimentStore()
         if self._jobs_root is not None:
@@ -66,6 +67,7 @@ class ModelOpsJobRegistry:
                 output_dir=output_dir,
             )
             self._jobs[job_id] = job
+            self._invalidate_active_derived_model_rows_cache()
             return job
 
     def progress(self, job_id: str, stage: str, pct: float) -> None:
@@ -75,6 +77,7 @@ class ModelOpsJobRegistry:
     def set_output_dir(self, job_id: str, output_dir: str) -> None:
         with self._lock:
             self._jobs[job_id].output_dir = output_dir
+            self._invalidate_active_derived_model_rows_cache()
 
     def attach_manifest(self, job_id: str, manifest_json: str) -> None:
         with self._lock:
@@ -82,12 +85,14 @@ class ModelOpsJobRegistry:
             job.manifest_json = manifest_json
             job.manifest = self._decode_manifest_json(manifest_json)
             job.manifest_cached = True
+            self._invalidate_active_derived_model_rows_cache()
 
     def complete(self, job_id: str, output_path: str) -> None:
         with self._lock:
             job = self._jobs[job_id]
             job.status = "completed"
             job.output_path = output_path
+            self._invalidate_active_derived_model_rows_cache()
 
     def fail(self, job_id: str, code: str, message: str) -> None:
         with self._lock:
@@ -95,6 +100,7 @@ class ModelOpsJobRegistry:
             job.status = "failed"
             job.error_code = code
             job.error_message = message
+            self._invalidate_active_derived_model_rows_cache()
 
     def snapshot(self, exclude_job_ids: set[str] | None = None) -> dict[str, Any]:
         excluded = exclude_job_ids or set()
@@ -306,6 +312,18 @@ class ModelOpsJobRegistry:
         with self._lock:
             return tuple(sorted(self._jobs.values(), key=self._job_sort_key, reverse=True))
 
+    def _invalidate_active_derived_model_rows_cache(self) -> None:
+        self._active_derived_model_rows_cache = None
+
+    def _cached_active_derived_model_job_rows(
+        self,
+    ) -> tuple[tuple[ModelOpsJob, dict[str, Any], str], ...]:
+        cached_rows = self._active_derived_model_rows_cache
+        if cached_rows is None:
+            cached_rows = self._active_derived_model_job_rows(self._ordered_jobs())
+            self._active_derived_model_rows_cache = cached_rows
+        return cached_rows
+
     @classmethod
     def _job_manifest(cls, job: ModelOpsJob) -> dict[str, Any]:
         if job.operation == "registry_snapshot" or not job.manifest_json:
@@ -382,22 +400,8 @@ class ModelOpsJobRegistry:
         if not normalized_model_id and not normalized_manifest_path:
             return None
 
-        ordered_jobs = self._ordered_jobs()
-        removed_targets = self._removed_derived_targets_from_ordered_jobs(ordered_jobs)
-        removed_model_ids = removed_targets["model_ids"]
-        removed_manifest_paths = removed_targets["manifest_paths"]
-        removed_activation_job_ids = removed_targets["activation_job_ids"]
-
-        for job in ordered_jobs:
-            if job.operation != "activate_adapter" or job.status != "completed":
-                continue
-            if job.job_id in removed_activation_job_ids:
-                continue
-            activation_manifest_path = str(job.output_path).strip()
-            manifest = self._job_manifest(job)
+        for job, manifest, activation_manifest_path in self._cached_active_derived_model_job_rows():
             candidate_model_id = str(manifest.get("derived_model_id", "")).strip()
-            if candidate_model_id in removed_model_ids or activation_manifest_path in removed_manifest_paths:
-                continue
             if normalized_model_id and candidate_model_id != normalized_model_id:
                 continue
             resolved_activation_manifest_path = str(
@@ -421,7 +425,7 @@ class ModelOpsJobRegistry:
         return None
 
     def active_derived_model_manifests(self) -> tuple[dict[str, Any], ...]:
-        return tuple(manifest for _, manifest, _ in self._active_derived_model_job_rows(self._ordered_jobs()))
+        return tuple(manifest for _, manifest, _ in self._cached_active_derived_model_job_rows())
 
     def _max_numeric_job_id(self) -> int:
         max_job_id = 0
