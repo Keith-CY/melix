@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -159,6 +160,53 @@ def test_quantize_job_writes_manifest_once_after_in_memory_byte_convergence(
     assert write_calls == 1
     assert manifest_payload["manifest_bytes"] == manifest_path.stat().st_size
     assert json.loads(manifest_path.read_text(encoding="utf-8")) == manifest_payload
+
+
+def test_quantize_pipeline_counts_artifact_bytes_without_rescanning_bundle_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    original_scandir = os.scandir
+    bundle_scandir_calls = 0
+
+    def tracked_scandir(path: str | os.PathLike[str]) -> os.ScandirIterator[os.DirEntry[str]]:
+        nonlocal bundle_scandir_calls
+        if Path(path).name == "quantize.artifact":
+            bundle_scandir_calls += 1
+            raise AssertionError("quantize pipeline should not rescan the bundle directory for artifact_bytes")
+        return original_scandir(path)
+
+    with pytest.raises(AssertionError, match="should not rescan"):
+        tracked_scandir(bundle_path := tmp_path / "quantize.artifact")
+    assert bundle_scandir_calls == 1
+    bundle_scandir_calls = 0
+
+    monkeypatch.setattr(os, "scandir", tracked_scandir)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={"operation": "quantize"},
+            ),
+            context=None,
+        )
+    )
+
+    bundle_path = Path(events[-1].completed.output_path)
+    manifest_payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    expected_artifact_bytes = sum(
+        (bundle_path / file_name).stat().st_size
+        for file_name in ("config.json", "tokenizer.json", "weights.safetensors")
+    )
+
+    assert bundle_scandir_calls == 0
+    assert manifest_payload["artifact_bytes"] == expected_artifact_bytes
 
 
 def test_quantize_job_uses_typed_quant_profile_when_provided(tmp_path: Path) -> None:

@@ -679,6 +679,50 @@ def test_convert_model_writes_manifest_once_after_in_memory_byte_convergence(
     assert json.loads(manifest_path.read_text(encoding="utf-8")) == convert_payload
 
 
+def test_convert_pipeline_counts_artifact_bytes_without_rescanning_bundle_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    original_scandir = os.scandir
+    bundle_scandir_calls = 0
+
+    def tracked_scandir(path: str | os.PathLike[str]) -> os.ScandirIterator[os.DirEntry[str]]:
+        nonlocal bundle_scandir_calls
+        if Path(path).name == "convert.artifact":
+            bundle_scandir_calls += 1
+            raise AssertionError("convert pipeline should not rescan the bundle directory for artifact_bytes")
+        return original_scandir(path)
+
+    with pytest.raises(AssertionError, match="should not rescan"):
+        tracked_scandir(bundle_path := tmp_path / "convert.artifact")
+    assert bundle_scandir_calls == 1
+    bundle_scandir_calls = 0
+
+    monkeypatch.setattr(os, "scandir", tracked_scandir)
+
+    convert_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "convert"),
+                generate_manifest=True,
+            ),
+            context=None,
+        )
+    )
+    convert_manifest = next(event.manifest for event in convert_events if event.HasField("manifest"))
+    convert_payload = json.loads(convert_manifest.manifest_json)
+    bundle_path = Path(convert_events[-1].completed.output_path)
+    expected_artifact_bytes = sum(
+        (bundle_path / file_name).stat().st_size
+        for file_name in ("config.json", "tokenizer.json", "weights.safetensors")
+    )
+
+    assert bundle_scandir_calls == 0
+    assert convert_payload["artifact_bytes"] == expected_artifact_bytes
+
+
 def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None:
     service = build_service(tmp_path)
     artifact_path = tmp_path / "artifact"

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -71,11 +70,13 @@ class OQQuantizationPipeline:
                 "source_model": request.source_model,
             },
         }
+        artifact_bytes = 0
         for path, payload in files.items():
-            path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            artifact_bytes += self._write_json_file(path, payload)
 
         weights_path = bundle_path / "weights.safetensors"
-        weights_path.write_bytes(
+        artifact_bytes += self._write_bytes_file(
+            weights_path,
             json.dumps(
                 {
                     "model_id": source_model.model_id,
@@ -85,19 +86,12 @@ class OQQuantizationPipeline:
                     "calibration": calibration.to_dict(),
                 },
                 sort_keys=True,
-            ).encode("utf-8")
+            ).encode("utf-8"),
         )
 
         smoke_test_passed = False
         if request.run_smoke_test:
             smoke_test_passed = self._run_structural_smoke_test(bundle_path)
-
-        artifact_bytes = 0
-        for entry in os.scandir(bundle_path):
-            if entry.name == "manifest.json":
-                continue
-            if entry.is_file():
-                artifact_bytes += entry.stat().st_size
 
         manifest_path = bundle_path / "manifest.json"
         manifest_payload = self._manifest_payload(
@@ -237,6 +231,17 @@ class OQQuantizationPipeline:
     @staticmethod
     def _manifest_size(payload: dict[str, Any]) -> int:
         return len(OQQuantizationPipeline._encode_manifest(payload))
+
+    @staticmethod
+    def _write_json_file(path: Path, payload: dict[str, Any]) -> int:
+        encoded = json.dumps(payload, indent=2).encode("utf-8") + b"\n"
+        path.write_bytes(encoded)
+        return len(encoded)
+
+    @staticmethod
+    def _write_bytes_file(path: Path, payload: bytes) -> int:
+        path.write_bytes(payload)
+        return len(payload)
 
     @staticmethod
     def _write_manifest(path: Path, payload: dict[str, Any]) -> int:

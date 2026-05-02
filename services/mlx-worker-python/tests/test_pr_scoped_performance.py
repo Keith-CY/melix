@@ -44,6 +44,7 @@ from worker.productization.pr_scoped_performance import (
     _probe_evaluation_store_samples_csv_streaming,
     _probe_pr_scoped_scope_matcher,
     _probe_training_dataset_token_percentiles,
+    _probe_model_ops_bundle_artifact_bytes,
     _probe_command_json,
     _run_command,
     _run_head_verification,
@@ -183,6 +184,16 @@ def test_scope_report_selects_benchmark_queue_probe() -> None:
 
     assert scope["selected_count"] == 1
     assert scope["selected_probes"][0]["id"] == "benchmark-queue-decoded-record-cache"
+
+
+def test_scope_report_selects_model_ops_bundle_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/conversion_pipeline.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "model-ops-bundle-artifact-byte-accounting"
 
 
 def test_scope_report_selects_bench_report_probe() -> None:
@@ -375,6 +386,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "download-pipeline-directory-size-single-stat",
         "worker-registry-resident-bytes-accumulator",
         "pr-scoped-performance-report-results-scandir",
+        "model-ops-bundle-artifact-byte-accounting",
     }
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
@@ -505,6 +517,7 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     evaluation_store_metrics = _probe_evaluation_store_samples_csv_streaming(REPO_ROOT)
     scope_matcher_metrics = _probe_pr_scoped_scope_matcher(REPO_ROOT)
     training_dataset_metrics = _probe_training_dataset_token_percentiles(REPO_ROOT)
+    model_ops_bundle_metrics = _probe_model_ops_bundle_artifact_bytes(REPO_ROOT)
 
     assert benchmark_metrics["elapsed_ms_mean"] > 0
     assert benchmark_metrics["peak_bytes_mean"] > 0
@@ -552,6 +565,9 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert training_dataset_metrics["sample_count"] == 20000.0
     assert training_dataset_metrics["duplicate_count"] > 0
     assert training_dataset_metrics["dirty_count"] > 0
+    assert model_ops_bundle_metrics["elapsed_ms_mean"] > 0
+    assert model_ops_bundle_metrics["bundle_scandir_calls_mean"] == 0.0
+    assert model_ops_bundle_metrics["sample_count"] > 0
 
 
 def test_probe_evaluation_store_compare_summary_csv_streaming_targets_direct_writer(
@@ -936,6 +952,26 @@ def test_dispatch_probe_impl_supports_evaluation_sample_probe_aggregation_probe(
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["per_call_ms_mean"] > 0
     assert metrics["metric_count"] == 7.0
+
+
+def test_dispatch_probe_impl_supports_model_ops_bundle_probe() -> None:
+    probe = ProbeDefinition(
+        probe_id="model-ops-bundle-artifact-byte-accounting",
+        name="Model ops bundle artifact byte accounting",
+        runner="ubuntu-latest",
+        watch_globs=("services/mlx-worker-python/worker/model_ops/conversion_pipeline.py",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="model_ops_bundle_artifact_bytes",
+        probe_command='python3 -c "{}"',
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["bundle_scandir_calls_mean"] == 0.0
+    assert metrics["sample_count"] > 0
 
 
 def test_run_probe_job_executes_verification_and_probe_for_current_repo() -> None:
