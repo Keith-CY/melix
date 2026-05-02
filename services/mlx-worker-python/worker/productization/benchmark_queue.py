@@ -95,10 +95,8 @@ class BenchmarkQueueStore:
                     records.append(self._load_record(path, metadata_key=self._metadata_key(path)))
         except OSError:
             return []
-        return sorted(
-            (self._clone_record(record) for record in records),
-            key=lambda record: (record.created_at_unix_ms, record.queue_item_id),
-        )
+        records.sort(key=lambda record: (record.created_at_unix_ms, record.queue_item_id))
+        return [self._clone_record(record) for record in records]
 
     def transition(
         self,
