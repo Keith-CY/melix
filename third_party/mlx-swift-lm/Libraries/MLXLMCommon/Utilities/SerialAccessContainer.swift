@@ -6,6 +6,8 @@
 /// do not work with `async` blocks and an `actor` does not guarantee exclusive access
 /// for the duration of an `async` function.
 private actor AsyncMutex {
+    private static let waiterCompactionThreshold = 32
+
     private var isLocked = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var waiterHead = 0
@@ -25,9 +27,9 @@ private actor AsyncMutex {
         if waiterHead < waiters.count {
             let next = waiters[waiterHead]
             waiterHead += 1
-            // Amortize the O(n) compaction cost: compact only after enough
+            // Amortize the O(n) compaction cost by trimming only after enough
             // consumed slots have accumulated to make at least half the queue dead.
-            if waiterHead > 32 && waiterHead * 2 >= waiters.count {
+            if waiterHead >= Self.waiterCompactionThreshold && waiterHead * 2 >= waiters.count {
                 waiters.removeFirst(waiterHead)
                 waiterHead = 0
             }
