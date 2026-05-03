@@ -893,8 +893,8 @@ def test_registry_root_tree_records_plain_local_weight_presence_during_single_sc
 
     assert manifest_paths == ()
     assert hf_cache_repo_dirs == ()
-    assert [(scan.model_dir, scan.has_model_weight_files) for scan in plain_scans] == [
-        (config_dir.resolve(), True)
+    assert [(scan.model_dir, scan.has_model_weight_files, scan.has_generation_config) for scan in plain_scans] == [
+        (config_dir.resolve(), True, False)
     ]
 
 
@@ -1070,6 +1070,79 @@ def test_registry_snapshot_does_not_stat_plain_local_manifest_after_tree_scan(
 
     assert [model.model_id for model in snapshot.models] == ["plain-model"]
     assert manifest_probe_calls == 0
+
+
+
+def test_registry_snapshot_does_not_stat_missing_plain_local_generation_config_after_tree_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    model_dir = root / "plain-model"
+    generation_probe = (model_dir / "generation_config.json").resolve()
+    _write_model_config(
+        model_dir,
+        {
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+            "library_name": "mlx",
+        },
+    )
+    _write_weights(model_dir)
+
+    original_stat = Path.stat
+    generation_probe_calls = 0
+
+    def tracking_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        nonlocal generation_probe_calls
+        if os.fspath(self) == os.fspath(generation_probe):
+            generation_probe_calls += 1
+        return original_stat(self, *args, **kwargs)
+
+    try:
+        tracking_stat(generation_probe)
+    except FileNotFoundError:
+        pass
+    assert generation_probe_calls == 1
+    generation_probe_calls = 0
+    monkeypatch.setattr(Path, "stat", tracking_stat)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
+    snapshot = catalog.registry_snapshot()
+
+    assert [model.model_id for model in snapshot.models] == ["plain-model"]
+    assert generation_probe_calls == 0
+
+
+
+def test_registry_snapshot_imports_plain_local_generation_config_when_seen_during_tree_scan(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    model_dir = root / "plain-model"
+    _write_model_config(
+        model_dir,
+        {
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+            "library_name": "mlx",
+        },
+    )
+    _write_weights(model_dir)
+    (model_dir / "generation_config.json").write_text(
+        json.dumps({"temperature": 0.2, "top_p": 0.9, "max_new_tokens": 128}) + "\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
+    snapshot = catalog.registry_snapshot()
+
+    assert [model.model_id for model in snapshot.models] == ["plain-model"]
+    model = snapshot.models[0]
+    assert model.ext["melix.generation_config.temperature"] == "0.2"
+    assert model.ext["melix.generation_config.top_p"] == "0.9"
+    assert model.ext["melix.generation_config.max_tokens"] == "128"
+    assert model.ext["melix.generation_config.source"].endswith("generation_config.json")
 
 
 

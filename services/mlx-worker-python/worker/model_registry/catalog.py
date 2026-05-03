@@ -76,6 +76,7 @@ class RegistrySnapshot:
 class _PlainLocalModelScan:
     model_dir: Path
     has_model_weight_files: bool
+    has_generation_config: bool
 
 
 def _normalized(value: str | None) -> str:
@@ -134,8 +135,13 @@ def _merge_generation_config_metadata(
     *,
     ext: dict[str, str],
     json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    known_present: bool | None = None,
 ) -> None:
     generation_config_path = model_dir / "generation_config.json"
+    if known_present is False:
+        if json_cache is not None:
+            json_cache.pop(generation_config_path, None)
+        return
     payload = _load_json_dict_file(generation_config_path, json_cache=json_cache)
     if not payload:
         return
@@ -1197,6 +1203,7 @@ class WorkerModelCatalog:
                 source_kind="local_mlx_directory",
                 metadata={},
                 config_payload=config_payload,
+                has_generation_config=plain_local_model.has_generation_config,
             )
             self._apply_root_metadata(
                 model,
@@ -1282,6 +1289,7 @@ class WorkerModelCatalog:
                     child_names: list[str] = []
                     has_manifest = False
                     has_config = False
+                    has_generation_config = False
                     has_model_weight_files = False
                     for entry in entries:
                         try:
@@ -1290,6 +1298,9 @@ class WorkerModelCatalog:
                                 continue
                             if entry.name == "config.json" and entry.is_file():
                                 has_config = True
+                                continue
+                            if entry.name == "generation_config.json" and entry.is_file():
+                                has_generation_config = True
                                 continue
                             if entry.name == "model.safetensors.index.json" and entry.is_file():
                                 has_model_weight_files = True
@@ -1316,6 +1327,7 @@ class WorkerModelCatalog:
                     _PlainLocalModelScan(
                         model_dir=current,
                         has_model_weight_files=has_model_weight_files,
+                        has_generation_config=has_generation_config,
                     )
                 )
                 continue
@@ -1355,6 +1367,7 @@ class WorkerModelCatalog:
         source_kind: str,
         metadata: dict[str, str],
         config_payload: Mapping[str, object] | None = None,
+        has_generation_config: bool | None = None,
     ) -> common_pb2.ModelSpec:
         json_cache = getattr(self, "_json_file_cache", None)
         if json_cache is None:
@@ -1389,7 +1402,12 @@ class WorkerModelCatalog:
                     json_cache=json_cache,
                 )
             )
-        _merge_generation_config_metadata(model_dir, ext=ext, json_cache=json_cache)
+        _merge_generation_config_metadata(
+            model_dir,
+            ext=ext,
+            json_cache=json_cache,
+            known_present=has_generation_config,
+        )
         return common_pb2.ModelSpec(
             model_id=model_id,
             model_path=runtime_model_path,
