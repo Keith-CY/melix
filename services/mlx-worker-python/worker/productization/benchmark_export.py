@@ -370,6 +370,33 @@ def _collect_metric_values(run: dict[str, object]) -> dict[str, float]:
     return metric_values
 
 
+def _root_contains_artifact_markers(
+    root: Path,
+    *,
+    job_filename: str,
+    summary_filename: str | None = None,
+    alternate_job_filenames: list[str] | None = None,
+) -> bool:
+    file_markers = {job_filename, *(alternate_job_filenames or [])}
+    if summary_filename is not None:
+        file_markers.add(summary_filename)
+
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                name = entry.name
+                try:
+                    if name == "runs" and entry.is_dir():
+                        return True
+                    if name in file_markers and entry.is_file():
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+    return False
+
+
 def _resolve_artifact_root(
     jobs_root: Path,
     *,
@@ -378,28 +405,19 @@ def _resolve_artifact_root(
     summary_filename: str | None = None,
     alternate_job_filenames: list[str] | None = None,
 ) -> Path:
-    direct_job = jobs_root / job_filename
-    direct_runs = jobs_root / "runs"
     fallback_root = jobs_root / fallback_dir
-    fallback_job = fallback_root / job_filename
-    fallback_runs = fallback_root / "runs"
-    direct_summary = jobs_root / summary_filename if summary_filename else None
-    fallback_summary = fallback_root / summary_filename if summary_filename else None
-    alternate_job_filenames = alternate_job_filenames or []
-    direct_alternate_jobs = [jobs_root / filename for filename in alternate_job_filenames]
-    fallback_alternate_jobs = [fallback_root / filename for filename in alternate_job_filenames]
-    if (
-        direct_job.is_file()
-        or any(path.is_file() for path in direct_alternate_jobs)
-        or direct_runs.is_dir()
-        or (direct_summary is not None and direct_summary.is_file())
+    if _root_contains_artifact_markers(
+        jobs_root,
+        job_filename=job_filename,
+        summary_filename=summary_filename,
+        alternate_job_filenames=alternate_job_filenames,
     ):
         return jobs_root
-    if (
-        fallback_job.is_file()
-        or any(path.is_file() for path in fallback_alternate_jobs)
-        or fallback_runs.is_dir()
-        or (fallback_summary is not None and fallback_summary.is_file())
+    if _root_contains_artifact_markers(
+        fallback_root,
+        job_filename=job_filename,
+        summary_filename=summary_filename,
+        alternate_job_filenames=alternate_job_filenames,
     ):
         return fallback_root
     return jobs_root
