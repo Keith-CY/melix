@@ -1423,6 +1423,7 @@ def test_model_registry_catalog_probe_command_emits_metrics() -> None:
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["manifest_is_file_calls_mean"] == 0.0
     assert metrics["config_load_calls_mean"] == 800.0
+    assert metrics["manifest_parse_calls_mean"] == 0.0
     assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 800.0
     assert metrics["sample_count"] == 3.0
 
