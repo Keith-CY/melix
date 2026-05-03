@@ -327,6 +327,11 @@ def _iter_relative_file_paths_sorted(root: Path, *, prefix: str = "") -> Iterabl
 
 
 
+def _hf_cache_ref_snapshot_id(ref_path: Path) -> str:
+    return ref_path.read_bytes().decode("utf-8").strip()
+
+
+
 def _hf_cache_revision_map(
     cache_repo_dir: Path,
     *,
@@ -342,7 +347,7 @@ def _hf_cache_revision_map(
         try:
             for ref_path, relative_name in _iter_relative_file_paths_sorted(refs_dir):
                 try:
-                    snapshot_id = ref_path.read_text(encoding="utf-8").strip()
+                    snapshot_id = _hf_cache_ref_snapshot_id(ref_path)
                 except OSError:
                     continue
                 if not snapshot_id:

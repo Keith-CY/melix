@@ -487,20 +487,20 @@ def test_registry_catalog_helper_fallback_paths(tmp_path: Path) -> None:
     refs_dir = tmp_path / "models--org--demo" / "refs"
     refs_dir.mkdir(parents=True)
     unreadable_ref = refs_dir / "main"
-    unreadable_ref.write_text("abc123\n", encoding="utf-8")
+    unreadable_ref.write_bytes(b"abc123\n")
 
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
 
-    def fake_read_text(self: Path, *args: object, **kwargs: object) -> str:
+    def fake_read_bytes(self: Path) -> bytes:
         if self == unreadable_ref:
             raise OSError("boom")
-        return original_read_text(self, *args, **kwargs)
+        return original_read_bytes(self)
 
     assert _hf_cache_repo_id(Path("repo-without-prefix")) is None
     assert _hf_cache_repo_id(Path("models--missing-suffix")) is None
     monkeypatch = pytest.MonkeyPatch()
     try:
-        monkeypatch.setattr(Path, "read_text", fake_read_text)
+        monkeypatch.setattr(Path, "read_bytes", fake_read_bytes)
         assert _hf_cache_revision_map(refs_dir.parent) == {}
         assert _hf_cache_revision(refs_dir.parent, "abc123") == "abc123"
     finally:
@@ -514,24 +514,25 @@ def test_hf_cache_revision_map_reads_refs_once_and_preserves_nested_ref_names(mo
     refs_dir = cache_repo_dir / "refs"
     nested_ref = refs_dir / "heads" / "main"
     nested_ref.parent.mkdir(parents=True, exist_ok=True)
-    nested_ref.write_text("abc123\n", encoding="utf-8")
+    nested_ref.write_bytes(b"abc123\n")
     stable_ref = refs_dir / "tags" / "stable"
     stable_ref.parent.mkdir(parents=True, exist_ok=True)
-    stable_ref.write_text("def456\n", encoding="utf-8")
+    stable_ref.write_bytes(b"def456\n")
 
-    original_read_text = Path.read_text
-    read_paths: list[Path] = []
+    original_read_bytes = Path.read_bytes
+    read_bytes_paths: list[Path] = []
 
-    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
-        read_paths.append(self)
-        return original_read_text(self, *args, **kwargs)
+    def tracking_read_bytes(self: Path) -> bytes:
+        read_bytes_paths.append(self)
+        return original_read_bytes(self)
 
-    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+    monkeypatch.setattr(Path, "read_text", pytest.fail)
+    monkeypatch.setattr(Path, "read_bytes", tracking_read_bytes)
 
     revision_map = _hf_cache_revision_map(cache_repo_dir)
 
     assert revision_map == {"abc123": "heads/main", "def456": "tags/stable"}
-    assert read_paths == [nested_ref, stable_ref]
+    assert read_bytes_paths == [nested_ref, stable_ref]
     assert _hf_cache_revision(cache_repo_dir, "abc123", revision_map=revision_map) == "heads/main"
     assert _hf_cache_revision(cache_repo_dir, "missing", revision_map=revision_map) == "missing"
 
@@ -544,32 +545,33 @@ def test_hf_cache_revision_map_reads_only_needed_snapshot_refs_and_can_early_exi
     cache_repo_dir = tmp_path / "models--org--demo"
     refs_dir = cache_repo_dir / "refs"
     (refs_dir / "heads" / "feature").parent.mkdir(parents=True, exist_ok=True)
-    (refs_dir / "heads" / "feature").write_text("def456\n", encoding="utf-8")
+    (refs_dir / "heads" / "feature").write_bytes(b"def456\n")
     target_ref = refs_dir / "heads" / "main"
-    target_ref.write_text("abc123\n", encoding="utf-8")
+    target_ref.write_bytes(b"abc123\n")
     (refs_dir / "tags" / "release").parent.mkdir(parents=True, exist_ok=True)
-    (refs_dir / "tags" / "release").write_text("999999\n", encoding="utf-8")
+    (refs_dir / "tags" / "release").write_bytes(b"999999\n")
 
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
     original_scandir = os.scandir
-    read_paths: list[Path] = []
+    read_bytes_paths: list[Path] = []
     scandir_calls: list[str] = []
 
-    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
-        read_paths.append(self)
-        return original_read_text(self, *args, **kwargs)
+    def tracking_read_bytes(self: Path) -> bytes:
+        read_bytes_paths.append(self)
+        return original_read_bytes(self)
 
     def tracking_scandir(path: str):
         scandir_calls.append(path)
         return original_scandir(path)
 
-    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+    monkeypatch.setattr(Path, "read_text", pytest.fail)
+    monkeypatch.setattr(Path, "read_bytes", tracking_read_bytes)
     monkeypatch.setattr(os, "scandir", tracking_scandir)
 
     revision_map = _hf_cache_revision_map(cache_repo_dir, snapshot_ids={"abc123"})
 
     assert revision_map == {"abc123": "heads/main"}
-    assert read_paths == [refs_dir / "heads" / "feature", refs_dir / "heads" / "main"]
+    assert read_bytes_paths == [refs_dir / "heads" / "feature", refs_dir / "heads" / "main"]
     assert scandir_calls == [os.fspath(refs_dir), os.fspath(refs_dir / "heads")]
 
 
@@ -581,10 +583,10 @@ def test_hf_cache_revision_map_uses_recursive_scandir_without_rglob(
     refs_dir = cache_repo_dir / "refs"
     nested_ref = refs_dir / "heads" / "main"
     nested_ref.parent.mkdir(parents=True, exist_ok=True)
-    nested_ref.write_text("abc123\n", encoding="utf-8")
+    nested_ref.write_bytes(b"abc123\n")
     stable_ref = refs_dir / "tags" / "stable"
     stable_ref.parent.mkdir(parents=True, exist_ok=True)
-    stable_ref.write_text("def456\n", encoding="utf-8")
+    stable_ref.write_bytes(b"def456\n")
 
     original_scandir = os.scandir
     scandir_calls: list[str] = []
@@ -601,6 +603,31 @@ def test_hf_cache_revision_map_uses_recursive_scandir_without_rglob(
 
     assert _hf_cache_revision_map(cache_repo_dir) == {"abc123": "heads/main", "def456": "tags/stable"}
     assert scandir_calls == [os.fspath(refs_dir), os.fspath(refs_dir / "heads"), os.fspath(refs_dir / "tags")]
+
+
+
+def test_hf_cache_revision_map_reads_ref_bytes_without_text_decode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    target_ref = refs_dir / "heads" / "main"
+    target_ref.parent.mkdir(parents=True, exist_ok=True)
+    target_ref.write_bytes(b"abc123\n")
+
+    original_read_bytes = Path.read_bytes
+    read_bytes_paths: list[Path] = []
+
+    def tracking_read_bytes(self: Path) -> bytes:
+        read_bytes_paths.append(self)
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_text", pytest.fail)
+    monkeypatch.setattr(Path, "read_bytes", tracking_read_bytes)
+
+    assert _hf_cache_revision_map(cache_repo_dir) == {"abc123": "heads/main"}
+    assert read_bytes_paths == [target_ref]
 
 
 
