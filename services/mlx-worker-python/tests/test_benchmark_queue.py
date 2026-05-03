@@ -235,7 +235,7 @@ def test_list_records_returns_empty_when_queue_root_is_a_file(tmp_path: Path) ->
     assert records == []
 
 
-def test_list_records_skips_entries_when_is_file_raises_oserror(
+def test_list_records_skips_entries_when_stat_raises_oserror(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -246,7 +246,7 @@ def test_list_records_skips_entries_when_is_file_raises_oserror(
     class BrokenEntry:
         name = "broken.json"
 
-        def is_file(self) -> bool:
+        def stat(self):
             raise OSError("transient stat failure")
 
     class BrokenScandir:
@@ -449,6 +449,42 @@ def test_list_records_decodes_uncached_records_from_bytes(
     assert [record.queue_item_id for record in records] == ["queue-1"]
     assert read_bytes_calls == 1
     read_text_mock.assert_not_called()
+
+
+def test_list_records_reuses_direntry_stat_for_metadata_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / "queue"
+    queue_root.mkdir()
+    payload = BenchmarkQueueRecord(
+        queue_item_id="queue-1",
+        job_kind="benchmark",
+        model_id="melix-dev-text",
+        suite_ids=("smoke",),
+        parameters={"sample_size": "32"},
+        status="queued",
+        created_at_unix_ms=100,
+        updated_at_unix_ms=100,
+    ).to_dict()
+    path = queue_root / "queue-1.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    store = BenchmarkQueueStore()
+    original_stat = Path.stat
+    record_path_stat_calls = 0
+
+    def tracked_record_path_stat(self: Path, *args: object, **kwargs: object):
+        nonlocal record_path_stat_calls
+        if self == path:  # pragma: no cover - regression path must stay uncalled
+            record_path_stat_calls += 1
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", tracked_record_path_stat)
+
+    records = store.list_records(queue_root=queue_root)
+
+    assert [record.queue_item_id for record in records] == ["queue-1"]
+    assert record_path_stat_calls == 0
 
 
 def test_list_records_cold_cache_miss_clones_only_at_public_return_boundary(
