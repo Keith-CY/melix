@@ -358,6 +358,46 @@ def test_has_mlx_signal_falls_back_to_config_text_for_unserializable_nonempty_pa
 
 
 
+def test_metadata_payload_has_mlx_signal_does_not_request_sorted_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    kwargs_seen: list[dict[str, object]] = []
+    original_dumps = catalog_module.json.dumps
+
+    def fake_dumps(payload: object, *args: object, **kwargs: object) -> str:
+        kwargs_seen.append(dict(kwargs))
+        return original_dumps(payload, *args, **kwargs)
+
+    monkeypatch.setattr(catalog_module.json, "dumps", fake_dumps)
+
+    assert _metadata_payload_has_mlx_signal({"library_name": "mlx", "tags": ["text"]}) is True
+    assert kwargs_seen == [{}]
+
+
+
+def test_has_mlx_signal_config_payload_fast_path_does_not_request_sorted_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "plain-transformers-model"
+    model_dir.mkdir()
+
+    kwargs_seen: list[dict[str, object]] = []
+    original_dumps = catalog_module.json.dumps
+
+    def fake_dumps(payload: object, *args: object, **kwargs: object) -> str:
+        kwargs_seen.append(dict(kwargs))
+        return original_dumps(payload, *args, **kwargs)
+
+    monkeypatch.setattr(catalog_module.json, "dumps", fake_dumps)
+
+    assert _has_mlx_signal(
+        model_dir=model_dir,
+        repo_id="google/bert-base",
+        config_payload={"architectures": ["Qwen3ForCausalLM"], "library_name": "mlx"},
+    ) is True
+    assert kwargs_seen == [{}]
+
+
+
 def test_metadata_payload_has_mlx_signal_returns_false_for_unserializable_payload() -> None:
     assert _metadata_payload_has_mlx_signal({"tags": {"mlx"}}) is False
 
