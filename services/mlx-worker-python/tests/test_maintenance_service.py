@@ -654,10 +654,15 @@ def test_convert_model_writes_manifest_once_after_in_memory_byte_convergence(
     write_calls = 0
     original_write_manifest = ModelConversionPipeline._write_manifest
 
-    def counting_write_manifest(path: Path, payload: dict[str, object]) -> int:
+    def counting_write_manifest(
+        path: Path,
+        payload: dict[str, object],
+        *,
+        encoded_manifest: bytes | None = None,
+    ) -> int:
         nonlocal write_calls
         write_calls += 1
-        return original_write_manifest(path, payload)
+        return original_write_manifest(path, payload, encoded_manifest=encoded_manifest)
 
     monkeypatch.setattr(ModelConversionPipeline, "_write_manifest", staticmethod(counting_write_manifest))
 
@@ -678,6 +683,15 @@ def test_convert_model_writes_manifest_once_after_in_memory_byte_convergence(
     assert write_calls == 1
     assert convert_payload["manifest_bytes"] == manifest_path.stat().st_size
     assert json.loads(manifest_path.read_text(encoding="utf-8")) == convert_payload
+
+
+def test_convert_manifest_finalization_reuses_converged_encoding() -> None:
+    payload = {"schema_version": "test", "manifest_bytes": 0, "value": "x"}
+
+    encoded = ModelConversionPipeline._finalize_manifest_bytes(payload)
+
+    assert payload["manifest_bytes"] == len(encoded)
+    assert json.loads(encoded.decode("utf-8")) == payload
 
 
 def test_convert_pipeline_counts_artifact_bytes_without_rescanning_bundle_directory(

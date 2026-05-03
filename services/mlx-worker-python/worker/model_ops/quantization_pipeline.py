@@ -110,15 +110,8 @@ class OQQuantizationPipeline:
             artifact_bytes=artifact_bytes,
             smoke_test_passed=smoke_test_passed,
         )
-        manifest_bytes = 0
-        while True:
-            manifest_payload["manifest_bytes"] = manifest_bytes
-            next_manifest_bytes = self._manifest_size(manifest_payload)
-            if next_manifest_bytes == manifest_bytes:
-                break
-            manifest_bytes = next_manifest_bytes
-        manifest_payload["manifest_bytes"] = manifest_bytes
-        self._write_manifest(manifest_path, manifest_payload)
+        manifest_encoded = self._finalize_manifest_bytes(manifest_payload)
+        self._write_manifest(manifest_path, manifest_payload, encoded_manifest=manifest_encoded)
 
         return QuantizationPipelineResult(
             bundle_path=bundle_path,
@@ -233,6 +226,17 @@ class OQQuantizationPipeline:
         return len(OQQuantizationPipeline._encode_manifest(payload))
 
     @staticmethod
+    def _finalize_manifest_bytes(payload: dict[str, Any]) -> bytes:
+        manifest_bytes = 0
+        while True:
+            payload["manifest_bytes"] = manifest_bytes
+            encoded = OQQuantizationPipeline._encode_manifest(payload)
+            next_manifest_bytes = len(encoded)
+            if next_manifest_bytes == manifest_bytes:
+                return encoded
+            manifest_bytes = next_manifest_bytes
+
+    @staticmethod
     def _write_json_file(path: Path, payload: dict[str, Any]) -> int:
         encoded = json.dumps(payload, indent=2).encode("utf-8") + b"\n"
         path.write_bytes(encoded)
@@ -244,7 +248,12 @@ class OQQuantizationPipeline:
         return len(payload)
 
     @staticmethod
-    def _write_manifest(path: Path, payload: dict[str, Any]) -> int:
-        encoded = OQQuantizationPipeline._encode_manifest(payload)
+    def _write_manifest(
+        path: Path,
+        payload: dict[str, Any],
+        *,
+        encoded_manifest: bytes | None = None,
+    ) -> int:
+        encoded = encoded_manifest or OQQuantizationPipeline._encode_manifest(payload)
         path.write_bytes(encoded)
         return len(encoded)
