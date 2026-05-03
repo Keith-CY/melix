@@ -1958,6 +1958,25 @@ def test_performance_report_script_load_results_handles_missing_directory() -> N
     assert report_script["_load_results"](REPO_ROOT / "missing-results-dir") == []
 
 
+def test_performance_report_script_load_results_avoids_exists_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "result.json").write_text(json.dumps({"probe": {"id": "result"}}), encoding="utf-8")
+
+    def fail_exists(self: Path):  # pragma: no cover - sentinel
+        raise AssertionError("_load_results should let os.scandir perform the existence check")
+
+    monkeypatch.setattr(Path, "exists", fail_exists)
+    report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
+
+    loaded = report_script["_load_results"](results_dir)
+
+    assert loaded == [{"probe": {"id": "result"}}]
+
+
 
 def test_performance_report_script_json_output_and_invalid_scope(
     tmp_path: Path,
