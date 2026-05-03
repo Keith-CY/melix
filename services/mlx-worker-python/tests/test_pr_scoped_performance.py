@@ -551,6 +551,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "model-ops-bundle-artifact-byte-accounting",
     }
     registry_probe = None
+    swift_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
@@ -558,6 +559,8 @@ def test_registered_probes_expose_focused_commands() -> None:
         assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
         if probe.probe_id == "model-registry-plain-local-manifest-stat-elision":
             registry_probe = probe
+        if probe.probe_id == "swift-cli-json-envelope-encoding":
+            swift_probe = probe
 
     assert registry_probe is not None
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.test_command
@@ -570,6 +573,30 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.coverage_command
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.coverage_command
     assert "scripts/changed_scope_coverage.py" in registry_probe.coverage_command
+
+    assert swift_probe is not None
+    assert "MelixCLIRunnerTests/(" in swift_probe.test_command
+    assert "MelixCLITests/MelixCLIRunnerTests" not in swift_probe.test_command
+    swift_verification_tests = (
+        "jsonV1WrapsCommandResultsInAStableEnvelope",
+        "jsonV1ErrorEnvelopesAreMachineReadable",
+        "jsonMetricPatchingRejectsMissingPlaceholders",
+        "jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel",
+    )
+    swift_probe_tests = (
+        "jsonV1WrapsCommandResultsInAStableEnvelope",
+        "jsonV1ErrorEnvelopesAreMachineReadable",
+        "jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel",
+    )
+    for test_name in swift_verification_tests:
+        assert test_name in swift_probe.test_command
+        assert test_name in swift_probe.coverage_command
+    for test_name in swift_probe_tests:
+        assert test_name in swift_probe.probe_command
+    assert "jsonMetricPatchingRejectsMissingPlaceholders" not in swift_probe.probe_command
+    assert swift_probe.probe_command.startswith("python3 - <<'PY'")
+    assert "stdout=sys.stderr" in swift_probe.probe_command
+    assert "stderr=sys.stderr" in swift_probe.probe_command
 
 
 def test_load_probe_registry_uses_absolute_cache_key_without_resolving(
@@ -1531,13 +1558,20 @@ def test_metric_and_probe_helpers_cover_error_branches() -> None:
     assert "head boom" in _build_probe_details(result=probe_result)
 
 
-def test_command_and_verification_helpers_cover_skip_and_failure_paths(tmp_path: Path) -> None:
+def test_command_and_verification_helpers_cover_skip_and_failure_paths(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
     coverage_stdout = "TOTAL  10  0  100%\n"
     command_result = _run_command(
-        "python -c \"print('TOTAL  10  0  100%')\"",
+        "python3 -c \"import sys; print('TOTAL  10  0  100%'); print('progress line', file=sys.stderr)\"",
         cwd=tmp_path,
     )
     assert command_result["coverage_pct"] == 100.0
+    command_stderr = capsys.readouterr().err
+    assert "[pr-scoped-performance] starting command" in command_stderr
+    assert "TOTAL  10  0  100%" in command_stderr
+    assert "progress line" in command_stderr
     assert _parse_coverage_percent(coverage_stdout) == 100.0
     assert _parse_coverage_percent("no total line\n") is None
 

@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import tracemalloc
 import types
@@ -37,6 +38,11 @@ _FORCE_ALL_EXACT_PATHS = frozenset(glob for glob in _FORCE_ALL_GLOBS if not _glo
 _FORCE_ALL_WILDCARD_GLOBS = tuple(glob for glob in _FORCE_ALL_GLOBS if _glob_has_magic(glob))
 _COVERAGE_PERCENT_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
 _TEXT_FILE_SUFFIXES = {".md", ".py", ".json", ".txt", ".yaml", ".yml"}
+_COMMAND_HEARTBEAT_SECONDS = 30.0
+
+
+def _log_progress(message: str) -> None:
+    print(f"[pr-scoped-performance] {message}", file=sys.stderr, flush=True)
 
 
 @dataclass(frozen=True)
@@ -218,9 +224,18 @@ def run_probe_job(
     if probe is None:
         raise ValueError(f"unknown probe id: {probe_id}")
 
+    _log_progress(f"{probe_id}: starting head verification")
     head_verification = _run_head_verification(probe=probe, repo_root=Path(head_repo))
+    _log_progress(
+        f"{probe_id}: head verification completed "
+        f"test_ok={head_verification['test']['ok']} coverage_ok={head_verification['coverage']['ok']}"
+    )
+    _log_progress(f"{probe_id}: starting base probe")
     base_probe = _run_probe_impl(probe=probe, repo_root=Path(base_repo), repo_label="base")
+    _log_progress(f"{probe_id}: base probe completed ok={base_probe['ok']}")
+    _log_progress(f"{probe_id}: starting head probe")
     head_probe = _run_probe_impl(probe=probe, repo_root=Path(head_repo), repo_label="head")
+    _log_progress(f"{probe_id}: head probe completed ok={head_probe['ok']}")
     success = (
         head_verification["test"]["ok"]
         and head_verification["coverage"]["ok"]
@@ -407,19 +422,55 @@ def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[s
 
 
 def _run_command(command: str, *, cwd: Path) -> dict[str, object]:
-    completed = subprocess.run(
+    _log_progress(f"starting command in {cwd}: {command}")
+    started = time.perf_counter()
+    process = subprocess.Popen(
         command,
         shell=True,
         cwd=cwd,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
+        bufsize=1,
     )
-    stdout = completed.stdout or ""
-    stderr = completed.stderr or ""
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+
+    def stream_pipe(pipe: Any, chunks: list[str]) -> None:
+        try:
+            for line in iter(pipe.readline, ""):
+                chunks.append(line)
+                sys.stderr.write(line)
+                sys.stderr.flush()
+        finally:
+            pipe.close()
+
+    threads = [
+        threading.Thread(target=stream_pipe, args=(process.stdout, stdout_chunks), daemon=True),
+        threading.Thread(target=stream_pipe, args=(process.stderr, stderr_chunks), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+
+    next_heartbeat = _COMMAND_HEARTBEAT_SECONDS
+    while process.poll() is None:
+        time.sleep(1.0)
+        elapsed = time.perf_counter() - started
+        if elapsed >= next_heartbeat:
+            _log_progress(f"still running after {elapsed:.1f}s: {command}")
+            next_heartbeat += _COMMAND_HEARTBEAT_SECONDS
+
+    returncode = process.wait()
+    for thread in threads:
+        thread.join()
+    elapsed = time.perf_counter() - started
+    _log_progress(f"command completed rc={returncode} elapsed={elapsed:.1f}s: {command}")
+    stdout = "".join(stdout_chunks)
+    stderr = "".join(stderr_chunks)
     return {
         "command": command,
-        "ok": completed.returncode == 0,
-        "returncode": completed.returncode,
+        "ok": returncode == 0,
+        "returncode": returncode,
         "stdout": stdout,
         "stderr": stderr,
         "coverage_pct": _parse_coverage_percent(stdout),
@@ -483,19 +534,17 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
 def _probe_command_json(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, float]:
     if not probe.probe_command:
         raise ValueError("command_json probes require a non-empty probe_command")
-    completed = subprocess.run(
+    completed = _run_command(
         probe.probe_command,
-        shell=True,
         cwd=repo_root,
-        capture_output=True,
-        text=True,
     )
-    if completed.returncode != 0:
+    if completed["returncode"] != 0:
         raise RuntimeError(
             "probe_command failed "
-            f"with exit {completed.returncode}: {(completed.stderr or completed.stdout).strip()}"
+            f"with exit {completed['returncode']}: "
+            f"{(str(completed['stderr']) or str(completed['stdout'])).strip()}"
         )
-    stdout = completed.stdout.strip()
+    stdout = str(completed["stdout"]).strip()
     try:
         payload = json.loads(stdout)
     except json.JSONDecodeError as exc:

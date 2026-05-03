@@ -23,11 +23,11 @@ Optimize the Swift CLI JSON envelope metric-object assembly path and register a 
 
 The next slice keeps the same JSON literal formatting semantics but stores each generated placeholder's quoted JSON literal and UTF-8 data alongside the token. This avoids rebuilding the same quoted string and `Data` buffer while success/error envelope patching or pipeline placeholder lookup validates uniqueness, while preserving stable placeholder tokens and decimal formatting.
 
-The follow-up literal-format slice keeps the same `%.16e` POSIX formatting contract while dropping the redundant uppercase-exponent replacement pass. The format specifier already requests lowercase scientific notation, so avoiding the second string scan reduces per-envelope metric literal work without changing encoded output.
+The follow-up literal-format slice keeps the same `%.16e` POSIX formatting contract and normalizes the exponent marker to lowercase `e`. Some Swift/Foundation formatter combinations still emit uppercase `E`, so the explicit normalization preserves deterministic encoded output across local and CI toolchains.
 
 The Data patching slice keeps the same JSON placeholder semantics but patches the measured encode metric while the pretty-printed payload is still `Data`. It reuses the registered placeholder byte-range helpers, writes a width-padded numeric literal over the quoted placeholder, and appends the final newline after the in-place byte replacement. This avoids constructing an intermediate Swift `String` only to scan and copy it again for the metric patch, while preserving valid JSON whitespace and duplicate-placeholder validation.
 
-The PR-scoped performance registry uses a `command_json` probe mode so Swift probes can execute a shell command on a macOS runner and emit JSON metrics without requiring Python to import Swift code directly.
+The PR-scoped performance registry uses a `command_json` probe mode so Swift probes can execute a shell command on a macOS runner and emit JSON metrics without requiring Python to import Swift code directly. The runner streams command output and emits heartbeat progress to stderr so macOS cold builds remain observable in GitHub Actions.
 
 ## Success Metrics
 
