@@ -169,6 +169,25 @@ def build_services(backend=None):
     return registry, WorkerRuntimeService(registry), WorkerInferenceService(registry)
 
 
+def test_worker_registry_sparse_model_request_fast_path_preserves_semantics() -> None:
+    sparse = common_pb2.ModelSpec(model_id="melix-dev-text")
+    empty = common_pb2.ModelSpec()
+    full = WorkerModelCatalog.dev_text_model()
+    with_path = common_pb2.ModelSpec(model_id="melix-dev-text", model_path="/models/dev")
+
+    assert WorkerRegistry._is_sparse_model_request(sparse) is True
+    assert WorkerRegistry._is_sparse_model_request(empty) is True
+    assert WorkerRegistry._is_sparse_model_request(full) is False
+    assert WorkerRegistry._is_sparse_model_request(with_path) is False
+
+    registry = build_registry()
+    loaded = registry.load_model(sparse)
+
+    assert loaded.spec.model_id == "melix-dev-text"
+    assert loaded.spec.model_path == WorkerModelCatalog.dev_text_model().model_path
+    assert loaded.runtime_model["model_path"] == WorkerModelCatalog.dev_text_model().model_path
+
+
 def load_default_model(runtime_service: WorkerRuntimeService) -> str:
     response = runtime_service.LoadModel(
         runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),

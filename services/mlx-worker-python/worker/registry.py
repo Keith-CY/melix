@@ -268,8 +268,10 @@ class WorkerRegistry:
 
     @staticmethod
     def _is_sparse_model_request(model_spec: common_pb2.ModelSpec) -> bool:
-        populated_fields = {descriptor.name for descriptor, _ in model_spec.ListFields()}
-        return populated_fields <= {"model_id"}
+        populated_fields = model_spec.ListFields()
+        if not populated_fields:
+            return True
+        return len(populated_fields) == 1 and populated_fields[0][0].name == "model_id"
 
     def unload_model(self, handle: str) -> bool:
         with self._lock:
