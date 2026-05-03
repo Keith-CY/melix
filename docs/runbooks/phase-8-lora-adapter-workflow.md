@@ -19,7 +19,7 @@ surfaces:
 
 - choose a base text model
 - choose a local dataset package or a Hugging Face dataset source
-- choose `LoRA` or `QLoRA` training mode
+- choose `LoRA`, `QLoRA`, `DoRA`, preference, or continual-pretraining training mode
 - set LoRA hyperparameters, adapter name, target repo, optional validation split, and optional derived-model alias
 - choose `fused_derived_model` or `adapter_backed_runtime` activation mode
 - start training, inspect persisted adapter history, activate an adapter into a derived model, publish the adapter package, and remove an activated derived model
@@ -77,6 +77,7 @@ Supported package formats:
 - `chat_messages`
 - `prompt_completion`
 - `text_completion`
+- `preference_pair`
 
 Example `manifest.json`:
 
@@ -95,6 +96,13 @@ Example `samples.jsonl` for `chat_messages`:
 ```jsonl
 {"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Say hi."},{"role":"assistant","content":"Hi there."}]}
 {"messages":[{"role":"user","content":"Say bye."},{"role":"assistant","content":"Bye."}]}
+```
+
+Example `samples.jsonl` for `preference_pair`:
+
+```jsonl
+{"prompt":"Choose the more helpful answer.","chosen":"Give a direct answer with the relevant command.","rejected":"Add unrelated background before answering."}
+{"prompt":"Pick the safer response.","chosen":"Explain the limitation and offer a supported path.","rejected":"Pretend an unsupported feature exists."}
 ```
 
 ## Train Adapter
@@ -127,6 +135,15 @@ Use the following `ext` keys as the stable operator-facing inputs:
   "max_seq_length": "2048"
 }
 ```
+
+Supported `training_mode` values:
+
+- `lora`: supervised fine-tuning with LoRA adapters
+- `qlora`: supervised fine-tuning against a quantized base model
+- `dora`: supervised fine-tuning contract with DoRA adapter metadata
+- `dpo`: preference-mode contract requiring `preference_pair` samples
+- `orpo`: preference-mode contract requiring `preference_pair` samples
+- `cpt`: continual-pretraining contract requiring `text_completion` samples
 
 Equivalent CLI examples:
 
@@ -163,7 +180,11 @@ Expected training behavior:
 
 - dataset validation runs before backend execution
 - Hugging Face dataset materialization is cached under `<jobs_root>/datasets/<cache-key>`
-- Melix supports both `lora` and `qlora` through the same `train_lora` surface
+- Melix supports `lora`, `qlora`, `dora`, `dpo`, `orpo`, and `cpt` through the same `train_lora` surface
+- `dora` records `adapter_algorithm=dora` and `dora_enabled=true` in the adapter manifest
+- `dpo` and `orpo` require `preference_pair` datasets and record `training_objective=preference`
+- `cpt` requires `text_completion` datasets and records `training_objective=continual_pretraining`
+- this slice defines worker-owned mode and dataset contracts; DPO, ORPO, and CPT optimizer-loop breadth remains bounded by the active local runner implementation
 - if `hf_valid_split` is provided, the normalized dataset snapshot persists the explicit validation source
 - Melix expands compact target modules or preset groups into family-specific module paths
 - supported preset groups currently include `attention`, `mlp`, `attention_mlp`, and `full`; `qwen` plus `kimi` also accept `qkv`, `gemma` also accepts `gated_mlp`, experimental `mixtral` accepts `experts`, and experimental `qwen3moe` accepts `qkv`, `experts`, and `attention_experts` (`full` is an alias for `attention_experts`)

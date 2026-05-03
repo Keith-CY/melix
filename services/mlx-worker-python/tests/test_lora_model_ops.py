@@ -726,6 +726,154 @@ def test_train_lora_supports_qlora_with_hf_valid_split_and_persists_desired_alia
     ]
 
 
+def test_train_lora_supports_dora_mode_contract_and_manifest(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-dora",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-dora"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "dora",
+                    "adapter_name": "melix-dora-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+
+    assert payload["training_mode"] == "dora"
+    assert payload["training_objective"] == "supervised_finetuning"
+    assert payload["adapter_algorithm"] == "dora"
+    assert payload["preference_loss"] == ""
+    assert payload["dataset_contract"] == "sft"
+    assert payload["dora_enabled"] is True
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.training_mode == "dora"
+    assert runner.last_train_request.config.adapter_algorithm == "dora"
+    assert runner.last_train_request.config.training_objective == "supervised_finetuning"
+
+
+@pytest.mark.parametrize("training_mode", ["dpo", "orpo"])
+def test_train_lora_supports_preference_mode_contracts(
+    tmp_path: Path,
+    training_mode: str,
+) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / f"dataset-{training_mode}",
+        format="preference_pair",
+        samples=[
+            {
+                "prompt": "Choose a response.",
+                "chosen": "The concise response.",
+                "rejected": "The unrelated response.",
+            },
+            {
+                "prompt": "Choose a safer answer.",
+                "chosen": "Follow the guide.",
+                "rejected": "Make a guess.",
+            },
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / f"train-{training_mode}"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": training_mode,
+                    "adapter_name": f"melix-{training_mode}-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    normalized_dataset_path = Path(payload["normalized_dataset_manifest_path"])
+    normalized_dataset_payload = json.loads(normalized_dataset_path.read_text(encoding="utf-8"))
+
+    assert payload["training_mode"] == training_mode
+    assert payload["dataset_format"] == "preference_pair"
+    assert payload["training_objective"] == "preference"
+    assert payload["adapter_algorithm"] == "lora"
+    assert payload["preference_loss"] == training_mode
+    assert payload["dataset_contract"] == "preference_pair"
+    assert payload["dora_enabled"] is False
+    assert normalized_dataset_payload["format"] == "preference_pair"
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.dataset_format == "preference_pair"
+    assert runner.last_train_request.config.preference_loss == training_mode
+    assert runner.last_train_request.config.training_objective == "preference"
+
+
+def test_train_lora_supports_continual_pretraining_contract(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-cpt",
+        format="text_completion",
+        samples=[
+            {"text": "Long-form domain text for local continual pretraining."},
+            {"text": "A second document keeps the contract sample based."},
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-cpt"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "cpt",
+                    "adapter_name": "melix-cpt-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+
+    assert payload["training_mode"] == "cpt"
+    assert payload["dataset_format"] == "text_completion"
+    assert payload["training_objective"] == "continual_pretraining"
+    assert payload["adapter_algorithm"] == "lora"
+    assert payload["preference_loss"] == ""
+    assert payload["dataset_contract"] == "text_completion"
+    assert payload["response_only"] is False
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.mask_prompt is False
+    assert runner.last_train_request.config.training_objective == "continual_pretraining"
+
+
 def test_train_lora_rejects_qlora_for_non_quantized_base_model(tmp_path: Path) -> None:
     dataset_dir = _write_dataset_package(
         tmp_path / "dataset",
@@ -761,6 +909,120 @@ def test_train_lora_rejects_qlora_for_non_quantized_base_model(tmp_path: Path) -
     )
 
     assert events[-1].failed.error.code == "unsupported_training_mode"
+
+
+@pytest.mark.parametrize("training_mode", ["dpo", "orpo"])
+def test_train_lora_rejects_preference_modes_without_preference_pair_dataset(
+    tmp_path: Path,
+    training_mode: str,
+) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / f"dataset-invalid-{training_mode}",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / f"train-invalid-{training_mode}"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": training_mode,
+                    "adapter_name": f"melix-invalid-{training_mode}",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_dataset_package"
+    assert events[-1].failed.error.details["training_mode"] == training_mode
+    assert events[-1].failed.error.details["required_format"] == "preference_pair"
+    assert events[-1].failed.error.details["actual_format"] == "chat_messages"
+
+
+def test_train_lora_rejects_cpt_without_text_completion_dataset(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-cpt",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-cpt"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "cpt",
+                    "adapter_name": "melix-invalid-cpt",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_dataset_package"
+    assert events[-1].failed.error.details["training_mode"] == "cpt"
+    assert events[-1].failed.error.details["required_format"] == "text_completion"
+    assert events[-1].failed.error.details["actual_format"] == "chat_messages"
+
+
+def test_train_lora_rejects_sft_mode_with_preference_pair_dataset(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-sft",
+        format="preference_pair",
+        samples=[
+            {
+                "prompt": "Choose.",
+                "chosen": "A.",
+                "rejected": "B.",
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-sft"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "lora",
+                    "adapter_name": "melix-invalid-sft",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_dataset_package"
+    assert events[-1].failed.error.details["training_mode"] == "lora"
+    assert events[-1].failed.error.details["required_format"] == (
+        "chat_messages,prompt_completion,text_completion"
+    )
+    assert events[-1].failed.error.details["actual_format"] == "preference_pair"
 
 
 def test_train_lora_resolves_qwen_attention_preset_and_catalog_support_metadata(tmp_path: Path) -> None:
@@ -1261,12 +1523,23 @@ def test_training_config_validates_direct_error_paths() -> None:
     with pytest.raises(Exception) as bad_mode_error:
         training_config_module.normalize_training_config(
             source_model=text_model,
-            ext={"training_mode": "dora"},
+            ext={"training_mode": "ppo"},
             dataset_format="text_completion",
             response_only_supported=True,
             sample_count=1,
         )
     assert bad_mode_error.value.code == "unsupported_training_mode"
+
+    dora_config = training_config_module.normalize_training_config(
+        source_model=text_model,
+        ext={"training_mode": "dora"},
+        dataset_format="text_completion",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    assert dora_config.training_mode == "dora"
+    assert dora_config.adapter_algorithm == "dora"
+    assert dora_config.training_objective == "supervised_finetuning"
 
     with pytest.raises(Exception) as preset_error:
         training_config_module.normalize_training_config(
