@@ -52,6 +52,7 @@ _GENERATION_CONFIG_TEMPERATURE_KEY = "melix.generation_config.temperature"
 _GENERATION_CONFIG_TOP_P_KEY = "melix.generation_config.top_p"
 _GENERATION_CONFIG_MAX_TOKENS_KEY = "melix.generation_config.max_tokens"
 _GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
+_REGISTRY_SCAN_PRUNED_DIR_NAMES = frozenset({"blobs", ".git", "__pycache__"})
 
 
 @dataclass(frozen=True)
@@ -1289,7 +1290,7 @@ class WorkerModelCatalog:
         stack = [resolved_root]
         while stack:
             current = stack.pop()
-            if current.name in {"blobs", ".git", "__pycache__"}:
+            if current.name in _REGISTRY_SCAN_PRUNED_DIR_NAMES:
                 continue
             if _is_hf_cache_pruned_subtree(resolved_root, current):
                 continue
@@ -1301,29 +1302,30 @@ class WorkerModelCatalog:
                     has_generation_config = False
                     has_model_weight_files = False
                     for entry in entries:
+                        entry_name = entry.name
                         try:
-                            if entry.name == "manifest.json" and entry.is_file():
+                            if entry_name == "manifest.json" and entry.is_file():
                                 has_manifest = True
                                 continue
-                            if entry.name == "config.json" and entry.is_file():
+                            if entry_name == "config.json" and entry.is_file():
                                 has_config = True
                                 continue
-                            if entry.name == "generation_config.json" and entry.is_file():
+                            if entry_name == "generation_config.json" and entry.is_file():
                                 has_generation_config = True
                                 continue
-                            if entry.name == "model.safetensors.index.json" and entry.is_file():
+                            if entry_name == "model.safetensors.index.json" and entry.is_file():
                                 has_model_weight_files = True
                                 continue
-                            if entry.name.endswith((".safetensors", ".npz")) and entry.is_file():
+                            if entry_name.endswith((".safetensors", ".npz")) and entry.is_file():
                                 has_model_weight_files = True
                                 continue
                             if entry.is_dir():
-                                child_path = current / entry.name
-                                if current == resolved_root and entry.name.startswith("models--"):
+                                child_path = current / entry_name
+                                if current == resolved_root and entry_name.startswith("models--"):
                                     if _hf_cache_repo_id(child_path) is not None:
                                         hf_cache_repo_dirs.append(child_path)
                                         continue
-                                child_names.append(entry.name)
+                                child_names.append(entry_name)
                         except OSError:
                             continue
             except OSError:
