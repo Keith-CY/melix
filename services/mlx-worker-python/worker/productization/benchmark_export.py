@@ -5,10 +5,56 @@ import json
 import io
 import time
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 import os
 from pathlib import Path
 
 _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
+
+
+@dataclass(frozen=True)
+class _ScannedDirectoryEntries:
+    directory: Path
+    file_names: tuple[str, ...]
+    dir_names: tuple[str, ...]
+
+    def file_path(self, name: str) -> Path | None:
+        if name not in self.file_names:
+            return None
+        return self.directory / name
+
+    def has_dir(self, name: str) -> bool:
+        return name in self.dir_names
+
+    def matching_file_paths(self, *, prefix: str, suffix: str) -> tuple[Path, ...]:
+        return tuple(
+            self.directory / name
+            for name in self.file_names
+            if name.startswith(prefix) and name.endswith(suffix)
+        )
+
+
+def _scan_directory(directory: Path) -> _ScannedDirectoryEntries | None:
+    try:
+        file_names: list[str] = []
+        dir_names: list[str] = []
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_file():
+                        file_names.append(entry.name)
+                        continue
+                    if entry.is_dir():
+                        dir_names.append(entry.name)
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return _ScannedDirectoryEntries(
+        directory=directory,
+        file_names=tuple(sorted(file_names)),
+        dir_names=tuple(sorted(dir_names)),
+    )
 
 
 def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
@@ -125,14 +171,158 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
 
 
 def build_export_bundle(jobs_root: Path) -> dict[str, object]:
-    benchmark = collect_benchmark_artifacts(jobs_root)
-    evaluation = collect_evaluation_artifacts(jobs_root)
+    jobs_root = Path(jobs_root)
+    root_scan = _scan_directory(jobs_root)
+    benchmark_root = _resolve_artifact_root(
+        jobs_root,
+        fallback_dir="bench",
+        job_filename="bench-job.json",
+        summary_filename="bench-summary.json",
+        scanned_entries=root_scan,
+    )
+    evaluation_root = _resolve_artifact_root(
+        jobs_root,
+        fallback_dir="evaluation",
+        job_filename="evaluation-job.json",
+        alternate_job_filenames=["evaluation-compare-job.json"],
+        scanned_entries=root_scan,
+    )
+    if benchmark_root == evaluation_root:
+        benchmark, evaluation = _collect_shared_export_artifacts(
+            shared_root=benchmark_root,
+            shared_scan=root_scan if benchmark_root == jobs_root else _scan_directory(benchmark_root),
+        )
+    else:
+        benchmark = collect_benchmark_artifacts(jobs_root)
+        evaluation = collect_evaluation_artifacts(jobs_root)
     return {
         "export_schema_version": _EXPORT_SCHEMA_VERSION,
         "exported_at_unix_ms": int(time.time() * 1000),
         **benchmark,
         **evaluation,
     }
+
+
+def _collect_shared_export_artifacts(
+    *,
+    shared_root: Path,
+    shared_scan: _ScannedDirectoryEntries | None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    summary_rows: list[dict[str, object]] = []
+    context_rows: list[dict[str, object]] = []
+    batch_rows: list[dict[str, object]] = []
+    benchmark_results: list[dict[str, object]] = []
+    matrix_jobs: list[dict[str, object]] = []
+    matrix_summary_rows: list[dict[str, object]] = []
+    matrix_request_rows: list[dict[str, object]] = []
+    evaluation_jobs: list[dict[str, object]] = []
+    evaluation_results: list[dict[str, object]] = []
+    evaluation_summary_rows: list[dict[str, object]] = []
+    evaluation_samples: list[dict[str, object]] = []
+    compare_jobs: list[dict[str, object]] = []
+    compare_summary_rows: list[dict[str, object]] = []
+    compare_samples: list[dict[str, object]] = []
+
+    _collect_benchmark_run(
+        shared_root,
+        summary_rows=summary_rows,
+        context_rows=context_rows,
+        batch_rows=batch_rows,
+        results=benchmark_results,
+        scanned_entries=shared_scan,
+    )
+    _collect_evaluation_run(
+        shared_root,
+        jobs=evaluation_jobs,
+        results=evaluation_results,
+        summaries=evaluation_summary_rows,
+        samples=evaluation_samples,
+        compare_jobs=compare_jobs,
+        compare_summary_rows=compare_summary_rows,
+        compare_samples=compare_samples,
+        scanned_entries=shared_scan,
+    )
+
+    matrix_roots: list[tuple[Path, _ScannedDirectoryEntries | None]] = [(shared_root, shared_scan)]
+    nested_bench_root = shared_root / "bench"
+    if nested_bench_root.is_dir() and nested_bench_root != shared_root:
+        matrix_roots.append((nested_bench_root, None))
+    for matrix_root, matrix_scan in matrix_roots:
+        has_matrix_root_artifacts = False
+        if matrix_scan is not None and matrix_scan.directory == matrix_root:
+            has_matrix_root_artifacts = any(
+                matrix_scan.file_path(name) is not None
+                for name in (
+                    "bench-matrix-job.json",
+                    "bench-matrix-summary.jsonl",
+                    "bench-matrix-requests.jsonl",
+                )
+            )
+        else:
+            has_matrix_root_artifacts = _root_contains_artifact_markers(
+                matrix_root,
+                job_filename="bench-matrix-job.json",
+                summary_filename="bench-matrix-summary.jsonl",
+            )
+        if has_matrix_root_artifacts:
+            _collect_benchmark_matrix_run(
+                matrix_root,
+                jobs=matrix_jobs,
+                summary_rows=matrix_summary_rows,
+                request_rows=matrix_request_rows,
+            )
+        matrix_runs_root = matrix_root / "matrix-runs"
+        for run_root in _iter_sorted_child_directories(matrix_runs_root):
+            _collect_benchmark_matrix_run(
+                run_root,
+                jobs=matrix_jobs,
+                summary_rows=matrix_summary_rows,
+                request_rows=matrix_request_rows,
+            )
+
+    runs_root = shared_root / "runs"
+    for run_root in _iter_sorted_child_directories(runs_root):
+        run_scan = _scan_directory(run_root)
+        _collect_benchmark_run(
+            run_root,
+            summary_rows=summary_rows,
+            context_rows=context_rows,
+            batch_rows=batch_rows,
+            results=benchmark_results,
+            scanned_entries=run_scan,
+        )
+        _collect_evaluation_run(
+            run_root,
+            jobs=evaluation_jobs,
+            results=evaluation_results,
+            summaries=evaluation_summary_rows,
+            samples=evaluation_samples,
+            compare_jobs=compare_jobs,
+            compare_summary_rows=compare_summary_rows,
+            compare_samples=compare_samples,
+            scanned_entries=run_scan,
+        )
+
+    benchmark = {
+        "benchmark_jobs": summary_rows,
+        "benchmark_summary_rows": summary_rows,
+        "benchmark_context_rows": context_rows,
+        "benchmark_batch_rows": batch_rows,
+        "benchmark_results": benchmark_results,
+        "benchmark_matrix_jobs": matrix_jobs,
+        "benchmark_matrix_summary_rows": matrix_summary_rows,
+        "benchmark_matrix_request_rows": matrix_request_rows,
+    }
+    evaluation = {
+        "evaluation_jobs": evaluation_jobs,
+        "evaluation_results": evaluation_results,
+        "evaluation_summary_rows": evaluation_summary_rows,
+        "evaluation_samples": evaluation_samples,
+        "evaluation_compare_jobs": compare_jobs,
+        "evaluation_compare_summary_rows": compare_summary_rows,
+        "evaluation_compare_samples": compare_samples,
+    }
+    return benchmark, evaluation
 
 
 def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
@@ -376,24 +566,20 @@ def _root_contains_artifact_markers(
     job_filename: str,
     summary_filename: str | None = None,
     alternate_job_filenames: list[str] | None = None,
+    scanned_entries: _ScannedDirectoryEntries | None = None,
 ) -> bool:
     file_markers = {job_filename, *(alternate_job_filenames or [])}
     if summary_filename is not None:
         file_markers.add(summary_filename)
 
-    try:
-        with os.scandir(root) as entries:
-            for entry in entries:
-                name = entry.name
-                try:
-                    if name == "runs" and entry.is_dir():
-                        return True
-                    if name in file_markers and entry.is_file():
-                        return True
-                except OSError:
-                    continue
-    except OSError:
+    scan = scanned_entries if scanned_entries is not None and scanned_entries.directory == root else _scan_directory(root)
+    if scan is None:
         return False
+    if scan.has_dir("runs"):
+        return True
+    for marker in file_markers:
+        if scan.file_path(marker) is not None:
+            return True
     return False
 
 
@@ -404,6 +590,7 @@ def _resolve_artifact_root(
     job_filename: str,
     summary_filename: str | None = None,
     alternate_job_filenames: list[str] | None = None,
+    scanned_entries: _ScannedDirectoryEntries | None = None,
 ) -> Path:
     fallback_root = jobs_root / fallback_dir
     if _root_contains_artifact_markers(
@@ -411,6 +598,7 @@ def _resolve_artifact_root(
         job_filename=job_filename,
         summary_filename=summary_filename,
         alternate_job_filenames=alternate_job_filenames,
+        scanned_entries=scanned_entries,
     ):
         return jobs_root
     if _root_contains_artifact_markers(
@@ -487,35 +675,16 @@ def _collect_benchmark_run(
     context_rows: list[dict[str, object]],
     batch_rows: list[dict[str, object]],
     results: list[dict[str, object]],
+    scanned_entries: _ScannedDirectoryEntries | None = None,
 ) -> None:
-    summary_path: Path | None = None
-    job_path: Path | None = None
-    context_path: Path | None = None
-    batch_path: Path | None = None
-    result_paths: list[Path] = []
-
-    try:
-        with os.scandir(run_root) as entries:
-            for entry in entries:
-                name = entry.name
-                try:
-                    if not entry.is_file():
-                        continue
-                except OSError:
-                    continue
-                path = run_root / name
-                if name == "bench-summary.json":
-                    summary_path = path
-                elif name == "bench-job.json":
-                    job_path = path
-                elif name == "bench-context-rows.jsonl":
-                    context_path = path
-                elif name == "bench-batch-rows.jsonl":
-                    batch_path = path
-                elif name.startswith("bench-result-") and name.endswith(".json"):
-                    result_paths.append(path)
-    except OSError:
+    scan = scanned_entries if scanned_entries is not None and scanned_entries.directory == run_root else _scan_directory(run_root)
+    if scan is None:
         return
+    summary_path = scan.file_path("bench-summary.json")
+    job_path = scan.file_path("bench-job.json")
+    context_path = scan.file_path("bench-context-rows.jsonl")
+    batch_path = scan.file_path("bench-batch-rows.jsonl")
+    result_paths = list(scan.matching_file_paths(prefix="bench-result-", suffix=".json"))
 
     if summary_path is not None:
         summary_row = _try_load_json_object(summary_path)
@@ -854,41 +1023,18 @@ def _collect_evaluation_run(
     compare_jobs: list[dict[str, object]],
     compare_summary_rows: list[dict[str, object]],
     compare_samples: list[dict[str, object]],
+    scanned_entries: _ScannedDirectoryEntries | None = None,
 ) -> None:
-    job_path: Path | None = None
-    result_path: Path | None = None
-    summary_path: Path | None = None
-    samples_path: Path | None = None
-    compare_job_path: Path | None = None
-    compare_summary_path: Path | None = None
-    compare_samples_path: Path | None = None
-
-    try:
-        with os.scandir(run_root) as entries:
-            for entry in entries:
-                name = entry.name
-                try:
-                    if not entry.is_file():
-                        continue
-                except OSError:
-                    continue
-                path = run_root / name
-                if name == "evaluation-job.json":
-                    job_path = path
-                elif name == "evaluation-result.json":
-                    result_path = path
-                elif name == "evaluation-summary.json":
-                    summary_path = path
-                elif name == "evaluation-samples.jsonl":
-                    samples_path = path
-                elif name == "evaluation-compare-job.json":
-                    compare_job_path = path
-                elif name == "evaluation-compare-summary.json":
-                    compare_summary_path = path
-                elif name == "evaluation-compare-samples.jsonl":
-                    compare_samples_path = path
-    except OSError:
+    scan = scanned_entries if scanned_entries is not None and scanned_entries.directory == run_root else _scan_directory(run_root)
+    if scan is None:
         return
+    job_path = scan.file_path("evaluation-job.json")
+    result_path = scan.file_path("evaluation-result.json")
+    summary_path = scan.file_path("evaluation-summary.json")
+    samples_path = scan.file_path("evaluation-samples.jsonl")
+    compare_job_path = scan.file_path("evaluation-compare-job.json")
+    compare_summary_path = scan.file_path("evaluation-compare-summary.json")
+    compare_samples_path = scan.file_path("evaluation-compare-samples.jsonl")
 
     job: dict[str, object] | None = None
     if job_path is not None:

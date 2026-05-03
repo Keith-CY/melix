@@ -3,10 +3,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
 
+import worker.productization.benchmark_export as benchmark_export_module
 from worker.productization.benchmark_export import (
     _collect_benchmark_matrix_run,
     _collect_benchmark_run,
@@ -1273,6 +1275,39 @@ def test_build_export_bundle_collects_benchmark_and_evaluation_from_model_ops_ro
     assert len(bundle["evaluation_jobs"]) == 1
     assert len(bundle["evaluation_results"]) == 1
     assert len(bundle["evaluation_samples"]) == 1
+
+
+def test_build_export_bundle_reuses_shared_run_directory_scans_for_mixed_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_bench_fixtures(tmp_path)
+    _write_eval_fixtures(tmp_path)
+    bench_run_root = tmp_path / "runs" / "bench-1"
+    eval_run_root = tmp_path / "runs" / "eval-1"
+    _write_bench_fixtures(bench_run_root)
+    _write_eval_fixtures(eval_run_root)
+
+    tracked_paths = {tmp_path, bench_run_root, eval_run_root}
+    scandir_counts: dict[Path, int] = {path: 0 for path in tracked_paths}
+    original_scandir = os.scandir
+
+    def tracking_scandir(path: os.PathLike[str] | str):
+        path_obj = Path(path)
+        if path_obj in scandir_counts:
+            scandir_counts[path_obj] += 1
+        return original_scandir(path)
+
+    monkeypatch.setattr(benchmark_export_module.os, "scandir", tracking_scandir)
+
+    bundle = build_export_bundle(tmp_path)
+
+    assert len(bundle["benchmark_jobs"]) == 2
+    assert len(bundle["evaluation_jobs"]) == 2
+    assert scandir_counts[tmp_path] == 1
+    assert scandir_counts[bench_run_root] == 1
+    assert scandir_counts[eval_run_root] == 1
+
 
 
 def test_write_export_bundle_persists_structured_json(tmp_path: Path) -> None:

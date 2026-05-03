@@ -678,16 +678,17 @@ def _probe_benchmark_export_run_scan(repo_root: Path) -> dict[str, float]:
     csv_elapsed_samples: list[float] = []
     result_file_count = 0.0
     csv_bytes = 0.0
+    expected_job_count = float(run_directory_count + 1)
+    expected_evaluation_result_count = float(run_directory_count + 1)
+    expected_sample_count = float(run_directory_count + 1)
     with tempfile.TemporaryDirectory(prefix="melix-pr-perf-benchmark-export-") as temp_dir:
         temp_root = Path(temp_dir)
-        bench_root = temp_root / "bench"
-        runs_root = bench_root / "runs"
-        for run_index in range(run_directory_count):
-            run_root = runs_root / f"bench-{run_index:04d}"
+
+        def write_benchmark_artifacts(run_root: Path, *, job_id: str) -> None:
             run_root.mkdir(parents=True, exist_ok=True)
             summary_payload = {
                 "schema_version": "melix.serving_benchmark_job.v1",
-                "job_id": f"bench-{run_index:04d}",
+                "job_id": job_id,
                 "model_id": "melix-dev-text",
                 "task_kind": "text-generation",
                 "source_repo": "synthetic",
@@ -709,44 +710,124 @@ def _probe_benchmark_export_run_scan(repo_root: Path) -> dict[str, float]:
             }
             (run_root / "bench-summary.json").write_text(json.dumps(summary_payload) + "\n", encoding="utf-8")
             (run_root / "bench-context-rows.jsonl").write_text(
-                json.dumps({"job_id": summary_payload["job_id"], "row_kind": "context"}) + "\n",
+                json.dumps({"job_id": job_id, "row_kind": "context"}) + "\n",
                 encoding="utf-8",
             )
             (run_root / "bench-batch-rows.jsonl").write_text(
-                json.dumps({"job_id": summary_payload["job_id"], "row_kind": "batch"}) + "\n",
+                json.dumps({"job_id": job_id, "row_kind": "batch"}) + "\n",
                 encoding="utf-8",
             )
             for result_index, suite in enumerate(("gamma", "alpha", "omega")):
                 (run_root / f"bench-result-{suite}.json").write_text(
-                    json.dumps({
-                        "job_id": summary_payload["job_id"],
-                        "suite": suite,
-                        "metric_index": result_index,
-                    }) + "\n",
+                    json.dumps({"job_id": job_id, "suite": suite, "metric_index": result_index}) + "\n",
                     encoding="utf-8",
                 )
-        result_file_count = float(run_directory_count * result_files_per_run)
+
+        def write_evaluation_artifacts(run_root: Path, *, job_id: str) -> None:
+            run_root.mkdir(parents=True, exist_ok=True)
+            (run_root / "evaluation-job.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "melix.evaluation_job.v1",
+                        "job_id": job_id,
+                        "model_id": "melix-dev-text",
+                        "task_kind": "text-generation",
+                        "source_repo": "synthetic",
+                        "suite_id": "mmlu",
+                        "dataset_id": "mmlu.dev.v1",
+                        "sample_size": 1,
+                        "output_dir": str(run_root),
+                        "created_at_unix_ms": 101,
+                        "updated_at_unix_ms": 202,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_root / "evaluation-result.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "melix.evaluation_result.v2",
+                        "job_id": job_id,
+                        "suite_id": "mmlu",
+                        "dataset_id": "mmlu.dev.v1",
+                        "sample_size": 1,
+                        "primary_score_name": "typed_score_mean",
+                        "primary_score_value": 1.0,
+                        "extraction_success_count": 1,
+                        "validation_success_count": 1,
+                        "scored_sample_count": 1,
+                        "failure_count": 0,
+                        "duration_seconds": 0.1,
+                        "metrics": [{"name": "eval.mmlu.typed_score_mean", "value": 1.0, "unit": "ratio"}],
+                        "report_path": str(run_root / "evaluation-result.json"),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_root / "evaluation-samples.jsonl").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "melix.evaluation_sample.v2",
+                        "job_id": job_id,
+                        "suite_id": "mmlu",
+                        "dataset_id": "mmlu.dev.v1",
+                        "sample_id": f"sample-{job_id}",
+                        "input_text": "2+2?",
+                        "target": "4",
+                        "raw_response": "4",
+                        "extracted_result": "4",
+                        "typed_score": 1.0,
+                        "time_s": 0.01,
+                        "extraction_status": "extracted",
+                        "validation_status": "validated",
+                        "failure_reason": "",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+        write_benchmark_artifacts(temp_root, job_id="bench-root")
+        write_evaluation_artifacts(temp_root, job_id="eval-root")
+        runs_root = temp_root / "runs"
+        for run_index in range(run_directory_count):
+            run_root = runs_root / f"run-{run_index:04d}"
+            write_benchmark_artifacts(run_root, job_id=f"bench-{run_index:04d}")
+            write_evaluation_artifacts(run_root, job_id=f"eval-{run_index:04d}")
+        result_file_count = float((run_directory_count + 1) * result_files_per_run)
         for _ in range(sample_count):
             gc.collect()
             started = time.perf_counter()
-            artifacts = module.collect_benchmark_artifacts(temp_root)
+            artifacts = module.build_export_bundle(temp_root)
             elapsed_samples.append((time.perf_counter() - started) * 1000.0)
-            if len(artifacts.get("benchmark_jobs", [])) != run_directory_count:
+            if len(artifacts.get("benchmark_jobs", [])) != expected_job_count:
                 raise ValueError("benchmark export probe produced an unexpected benchmark job count")
+            if len(artifacts.get("evaluation_jobs", [])) != expected_job_count:
+                raise ValueError("benchmark export probe produced an unexpected evaluation job count")
             if len(artifacts.get("benchmark_results", [])) != int(result_file_count):
                 raise ValueError("benchmark export probe produced an unexpected benchmark result count")
+            if len(artifacts.get("evaluation_results", [])) != int(expected_evaluation_result_count):
+                raise ValueError("benchmark export probe produced an unexpected evaluation result count")
+            if len(artifacts.get("evaluation_samples", [])) != int(expected_sample_count):
+                raise ValueError("benchmark export probe produced an unexpected evaluation sample count")
             csv_started = time.perf_counter()
             summary_csv = module.build_benchmark_summary_csv(artifacts)
             csv_elapsed_samples.append((time.perf_counter() - csv_started) * 1000.0)
             csv_bytes = float(len(summary_csv.encode("utf-8")))
-            if len(summary_csv.splitlines()) != run_directory_count + 1:
+            if len(summary_csv.splitlines()) != int(expected_job_count) + 1:
                 raise ValueError("benchmark export probe produced an unexpected summary CSV line count")
     elapsed_ms_mean = sum(elapsed_samples) / len(elapsed_samples)
     csv_elapsed_ms_mean = sum(csv_elapsed_samples) / len(csv_elapsed_samples)
     return {
+        "benchmark_job_count": expected_job_count,
         "csv_bytes": csv_bytes,
         "csv_elapsed_ms_mean": round(csv_elapsed_ms_mean, 6),
         "elapsed_ms_mean": round(elapsed_ms_mean, 6),
+        "evaluation_job_count": expected_job_count,
+        "evaluation_result_count": expected_evaluation_result_count,
+        "evaluation_sample_count": expected_sample_count,
         "per_run_ms_mean": round(elapsed_ms_mean / float(run_directory_count), 6),
         "result_file_count": result_file_count,
         "run_directory_count": float(run_directory_count),
