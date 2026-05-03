@@ -15,6 +15,7 @@ from worker.productization.benchmark_export import (
     _iter_sorted_child_directories,
     _iter_sorted_matching_files,
     _load_json_object,
+    _resolve_artifact_root,
     _rows_to_csv,
     build_comparison_table,
     build_benchmark_batch_csv,
@@ -809,6 +810,61 @@ def test_collect_benchmark_matrix_run_skips_entries_with_stat_failures(tmp_path:
     assert jobs == [{"job_id": "bench-matrix-1"}]
     assert summary_rows == [{"job_id": "bench-matrix-1", "row_kind": "summary"}]
     assert request_rows == [{"job_id": "bench-matrix-1", "row_kind": "request"}]
+
+
+def test_resolve_artifact_root_uses_single_scans_without_path_status_probes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    direct_root = tmp_path / "jobs"
+    fallback_root = direct_root / "bench"
+    fallback_root.mkdir(parents=True)
+    (fallback_root / "legacy-bench-job.json").write_text(json.dumps({"job_id": "legacy"}) + "\n")
+
+    scanned_names: list[str] = []
+    original_scandir = __import__("os").scandir
+
+    class _BrokenEntry:
+        name = "bench-job.json"
+
+        def is_file(self) -> bool:
+            raise OSError("stat failed")
+
+        def is_dir(self) -> bool:
+            raise OSError("stat failed")
+
+    class _DirectScandir:
+        def __enter__(self):
+            return iter((_BrokenEntry(),))
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def tracked_scandir(path: str | bytes | int | Path):
+        scanned_names.append(Path(path).name)
+        if Path(path) == direct_root:
+            return _DirectScandir()
+        return original_scandir(path)
+
+    monkeypatch.setattr("worker.productization.benchmark_export.os.scandir", tracked_scandir)
+    monkeypatch.setattr(
+        Path,
+        "is_file",
+        lambda self: (_ for _ in ()).throw(AssertionError("_resolve_artifact_root should not use Path.is_file")),
+    )
+    monkeypatch.setattr(
+        Path,
+        "is_dir",
+        lambda self: (_ for _ in ()).throw(AssertionError("_resolve_artifact_root should not use Path.is_dir")),
+    )
+
+    assert _resolve_artifact_root(
+        direct_root,
+        fallback_dir="bench",
+        job_filename="bench-job.json",
+        alternate_job_filenames=["legacy-bench-job.json"],
+    ) == fallback_root
+    assert scanned_names == ["jobs", "bench"]
 
 
 def test_iter_sorted_child_directories_returns_sorted_directories(tmp_path: Path) -> None:
