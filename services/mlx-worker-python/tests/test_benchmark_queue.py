@@ -451,6 +451,40 @@ def test_list_records_decodes_uncached_records_from_bytes(
     read_text_mock.assert_not_called()
 
 
+def test_list_records_cold_cache_miss_clones_only_at_public_return_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / "queue"
+    queue_root.mkdir()
+    payload = BenchmarkQueueRecord(
+        queue_item_id="queue-1",
+        job_kind="benchmark",
+        model_id="melix-dev-text",
+        suite_ids=("smoke",),
+        parameters={"sample_size": "32"},
+        status="queued",
+        created_at_unix_ms=100,
+        updated_at_unix_ms=100,
+    ).to_dict()
+    (queue_root / "queue-1.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    store = BenchmarkQueueStore()
+    clone_calls = 0
+    original_clone = BenchmarkQueueStore._clone_record
+
+    def tracked_clone(record: BenchmarkQueueRecord) -> BenchmarkQueueRecord:
+        nonlocal clone_calls
+        clone_calls += 1
+        return original_clone(record)
+
+    monkeypatch.setattr(BenchmarkQueueStore, "_clone_record", staticmethod(tracked_clone))
+
+    records = store.list_records(queue_root=queue_root)
+
+    assert [record.queue_item_id for record in records] == ["queue-1"]
+    assert clone_calls == 1
+
+
 def test_list_records_reload_changed_files_and_transition_refreshes_cache(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
