@@ -222,6 +222,105 @@ def test_mlx_vlm_runtime_records_installed_package_versions(monkeypatch: pytest.
     assert loaded_model["metadata"]["mlx_vlm_version"] == "0.4.4"
 
 
+def test_mlx_vlm_runtime_caches_family_config_across_prompt_render_and_token_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolve_call_count = 0
+
+    class FakeFamilyConfig:
+        def capability_metadata(self) -> dict[str, str]:
+            return {
+                "vision_family_id": "gemma4-v1",
+                "vision_prompt_profile_id": "gemma4-chatml-v1",
+            }
+
+        def shape_request(self, prepared: PreparedVisionRequest) -> PreparedVisionRequest:
+            return prepared
+
+        def prompt_token_count(self, prepared: PreparedVisionRequest) -> int:
+            return len(prepared.prompt_text.split())
+
+    def fake_resolve(metadata: dict[str, str]) -> FakeFamilyConfig:
+        nonlocal resolve_call_count
+        resolve_call_count += 1
+        assert metadata["vision_family_id"] == "gemma4-v1"
+        return FakeFamilyConfig()
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "resolve_vision_family_config", fake_resolve)
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_installed_package_version", lambda name: f"{name}-version")
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "formatted::prompt",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+
+    assert resolve_call_count == 1
+    cached_config = loaded_model["_vision_family_config"]
+
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Describe the image")])],
+        loaded_model=loaded_model,
+    )
+
+    assert runtime.prompt_token_count(prepared, loaded_model=loaded_model) == 3
+    assert runtime.prompt_token_count(prepared, loaded_model=loaded_model) == 3
+    assert loaded_model["_vision_family_config"] is cached_config
+    assert resolve_call_count == 1
+
+
+def test_mlx_vlm_runtime_family_config_backfills_cache_for_legacy_loaded_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolve_call_count = 0
+
+    class FakeFamilyConfig:
+        def capability_metadata(self) -> dict[str, str]:
+            return {}
+
+        def shape_request(self, prepared: PreparedVisionRequest) -> PreparedVisionRequest:
+            return prepared
+
+        def prompt_token_count(self, prepared: PreparedVisionRequest) -> int:
+            return len(prepared.prompt_text)
+
+    def fake_resolve(metadata: dict[str, str]) -> FakeFamilyConfig:
+        nonlocal resolve_call_count
+        resolve_call_count += 1
+        assert metadata["vision_family_id"] == "gemma4-v1"
+        return FakeFamilyConfig()
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "resolve_vision_family_config", fake_resolve)
+
+    legacy_loaded_model = {
+        "metadata": {
+            "vision_family_id": "gemma4-v1",
+            "vision_prompt_profile_id": "gemma4-chatml-v1",
+            "melix.vlm.execution_mode": "multimodal",
+        }
+    }
+    runtime = MLXVLMRuntime()
+
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="legacy cache path")])],
+        loaded_model=legacy_loaded_model,
+    )
+
+    assert runtime.prompt_token_count(prepared, loaded_model=legacy_loaded_model) == len("legacy cache path")
+    assert legacy_loaded_model["_vision_family_config"] is not None
+    assert resolve_call_count == 1
+
+
 def test_mlx_vlm_runtime_passes_video_when_backend_accepts_video_argument() -> None:
     stream_calls: list[dict[str, object]] = []
 

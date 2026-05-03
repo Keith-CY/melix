@@ -165,6 +165,7 @@ class AutoMLXVLMBackend:
                 original_error=exc,
             )
         metadata["melix.vlm.execution_mode"] = execution_mode
+        family_config = resolve_vision_family_config(dict(model_spec.ext))
         return {
             "model_id": model_spec.model_id,
             "model_kind": model_spec.model_kind,
@@ -177,7 +178,8 @@ class AutoMLXVLMBackend:
             "model": model,
             "processor": processor,
             "metadata": metadata,
-            **resolve_vision_family_config(dict(model_spec.ext)).capability_metadata(),
+            "_vision_family_config": family_config,
+            **family_config.capability_metadata(),
         }
 
     @staticmethod
@@ -593,13 +595,19 @@ class MLXVLMRuntime:
     def _family_config(loaded_model) -> Any:
         metadata: dict[str, str] = {}
         if isinstance(loaded_model, dict):
+            cached_config = loaded_model.get("_vision_family_config")
+            if cached_config is not None:
+                return cached_config
             raw_metadata = loaded_model.get("metadata")
             if isinstance(raw_metadata, dict):
                 metadata = {
                     str(key): str(value)
                     for key, value in raw_metadata.items()
                 }
-        return resolve_vision_family_config(metadata)
+        family_config = resolve_vision_family_config(metadata)
+        if isinstance(loaded_model, dict):
+            loaded_model["_vision_family_config"] = family_config
+        return family_config
 
     @staticmethod
     def _prompt_text_from_messages(messages) -> str:
