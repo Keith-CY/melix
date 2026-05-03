@@ -149,7 +149,7 @@ def load_report_input(path: str | Path) -> dict[str, object]:
     if not input_path.is_file():
         raise ValueError(f"report input is missing: {input_path}")
     try:
-        payload = json.loads(input_path.read_text(encoding="utf-8"))
+        payload = json.loads(input_path.read_bytes())
     except json.JSONDecodeError as exc:
         raise ValueError(f"report input could not be decoded: {input_path}") from exc
     if not isinstance(payload, dict):

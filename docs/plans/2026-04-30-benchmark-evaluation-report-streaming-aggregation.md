@@ -16,6 +16,10 @@ A follow-up Linux-verifiable slice fast-paths exact `float`, `int`, and `bool` v
 
 A second follow-up Linux-verifiable slice extends the exact-type numeric fast path into metric-row comparison plus benchmark request-row and evaluation sample-row collectors. Already-decoded JSON probe metrics are commonly exact `float`, `int`, or `bool` values, so these hot paths now avoid a generic tuple `isinstance` check and skip `_float_or_none` unless the value needs string parsing, while preserving bool rate/count semantics.
 
+## 2026-05-03 input JSON byte-decoding slice
+
+This Linux-verifiable slice keeps the report loader behavior unchanged while decoding benchmark/evaluation export JSON directly from `Path.read_bytes()`. The registered benchmark-evaluation report probe now records `load_input_ms_mean` around `load_report_input()` before report construction, so this removes the intermediate UTF-8 string decode and lets `json.loads` consume bytes directly. The regression test forbids `Path.read_text()` on the loader path while preserving malformed, missing, non-object, and directory fallback behavior.
+
 ## Touched Files
 
 - `services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py`
