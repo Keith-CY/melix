@@ -413,6 +413,7 @@ def _build_metric_row(
     }
 
 
+@lru_cache(maxsize=None)
 def _metric_direction(metric_name: str) -> str:
     return _metric_key_direction(metric_name.rsplit(".", maxsplit=1)[-1])
 
