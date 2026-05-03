@@ -111,6 +111,60 @@ struct DesktopFoundationViewTests {
         #expect(DesktopLoRAVisualPolish.chartFillOpacity == 0.24)
     }
 
+    @Test("command center visuals track design-system and Apple-style inputs")
+    func commandCenterVisualsTrackDesignInputs() {
+        #expect(DesktopCommandCenterVisuals.visualDirection == "Digital Broadsheet Command Center")
+        #expect(DesktopCommandCenterVisuals.operatorLabel == "Melix Operator")
+        #expect(DesktopCommandCenterVisuals.windowTitle == "Command Center")
+        #expect(DesktopCommandCenterVisuals.runtimeSectionTitle == "Runtime")
+        #expect(DesktopCommandCenterVisuals.pressureSectionTitle == "Resource And Queue Pressure")
+        #expect(DesktopCommandCenterVisuals.recoverySectionTitle == "Recovery")
+        #expect(DesktopCommandCenterVisuals.workflowSectionTitle == "Workflow")
+        #expect(DesktopCommandCenterVisuals.activitySectionTitle == "Recent Activity")
+        #expect(DesktopCommandCenterVisuals.sessionSummarySectionTitle == "Session Summary")
+        #expect(DesktopCommandCenterVisuals.primaryModelTitle == "Primary Model")
+        #expect(DesktopCommandCenterVisuals.repositoryDesignSystemPath == "docs/design-system/README.md")
+        #expect(DesktopCommandCenterVisuals.appleLayoutGuidanceURL.contains("human-interface-guidelines/layout"))
+        #expect(DesktopCommandCenterVisuals.maxContentWidth == 1120)
+        #expect(DesktopCommandCenterVisuals.primaryColumnMinimumWidth > DesktopCommandCenterVisuals.secondaryColumnWidth)
+        #expect(DesktopCommandCenterVisuals.panelCornerRadius == MelixDesignTokens.Radius.xl)
+        #expect(DesktopCommandCenterVisuals.statusSymbolName == "command.circle")
+        #expect(DesktopCommandCenterVisuals.recoverySymbolName == "arrow.clockwise.circle")
+    }
+
+    @Test("command center health is derived from foundation state semantics")
+    func commandCenterHealthUsesSemanticFoundationState() {
+        func foundation(
+            serverState: Melix_Controlplane_V1_ServerState,
+            lastError: String? = nil
+        ) -> DesktopFoundationState {
+            var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+            snapshot.serverState = serverState
+            return DesktopFoundationState.build(
+                statusTitle: "Melix Ready",
+                serverStateText: "Localized server copy",
+                connectionStateText: "Localized connection copy",
+                connectionDetailText: "Snapshot hydrated",
+                snapshot: snapshot,
+                protocolVersion: "melix.controlplane.v1",
+                serverVersion: "0.1.0",
+                daemonInstanceID: "daemon-command-center-health",
+                features: ["xpc"],
+                productUpdateSummary: nil,
+                productUpdateDetail: nil,
+                lastError: lastError,
+                recentEvents: []
+            )
+        }
+
+        #expect(foundation(serverState: .serverReady).healthState == .runtimeReady)
+        #expect(foundation(serverState: .serverDegraded).healthState == .runtimeWarning)
+        #expect(foundation(serverState: .serverDraining).healthState == .runtimeWarning)
+        #expect(foundation(serverState: .serverStopped).healthState == .recoveryAvailable)
+        #expect(foundation(serverState: .serverFailed).healthState == .needsAttention)
+        #expect(foundation(serverState: .serverReady, lastError: "Handshake failed").healthState == .needsAttention)
+    }
+
     @Test("logo svg resource mirrors the design system asset")
     func logoSVGResourceMirrorsDesignSystemAsset() throws {
         let root = try repositoryRootForDesktopFoundationTests()
@@ -527,6 +581,13 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(view.subviews.isEmpty == false)
+        #expect(DesktopCommandCenterVisuals.operatorLabel == "Melix Operator")
+        #expect(DesktopCommandCenterVisuals.windowTitle == "Command Center")
+        #expect(DesktopCommandCenterVisuals.runtimeSectionTitle == "Runtime")
+        #expect(DesktopCommandCenterVisuals.pressureSectionTitle == "Resource And Queue Pressure")
+        #expect(DesktopCommandCenterVisuals.recoverySectionTitle == "Recovery")
+        #expect(DesktopCommandCenterVisuals.activitySectionTitle == "Recent Activity")
+        #expect(DesktopCommandCenterVisuals.sessionSummarySectionTitle == "Session Summary")
     }
 
     @Test("command center renders state-first recovery and workflow summaries")
@@ -600,6 +661,10 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.desktopFoundationState.models.isEmpty == false)
         #expect(viewModel.recoverableDownloads.count == 3)
         #expect(viewModel.desktopSignalStates.contains { $0.title == "Download Recovery Available" })
+        #expect(DesktopCommandCenterVisuals.recoverySectionTitle == "Recovery")
+        #expect(viewModel.recoverableDownloads.first?.resumeActionTitle == "Resume Download")
+        #expect(DesktopCommandCenterView.downloadRecoveryOverflowActionTitle == "View All Downloads")
+        #expect(DesktopCommandCenterVisuals.workflowSectionTitle == "Workflow")
         #expect(DesktopCommandCenterView.downloadRecoveryOverflowText(totalCount: 2) == nil)
         #expect(DesktopCommandCenterView.downloadRecoveryOverflowText(totalCount: 3) == "+1 more stalled download")
         #expect(DesktopCommandCenterView.downloadRecoveryOverflowActionTitle == "View All Downloads")
@@ -2074,6 +2139,7 @@ struct DesktopFoundationViewTests {
             serverStateText: "Ready",
             connectionStateText: "Connected",
             connectionDetailText: "Snapshot hydrated",
+            healthState: .runtimeReady,
             dashboardCards: [],
             queueLanes: [],
             models: [],
