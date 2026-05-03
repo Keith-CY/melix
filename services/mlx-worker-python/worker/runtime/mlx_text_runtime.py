@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from dataclasses import replace
 import importlib.util
 import json
 from pathlib import Path
@@ -51,8 +52,108 @@ class RuntimeToolCallEvent:
     arguments_json_fragment: str
 
 
+@dataclass(frozen=True)
+class ResolvedTextStopContract:
+    sequences: tuple[str, ...]
+    resolved_stop_token_count: int
+    source: str
+
+
 def _normalized_ext_value(model_spec, key: str) -> str:
     return str(getattr(model_spec, "ext", {}).get(key, "") or "").strip()
+
+
+_TEXT_STOP_SEQUENCE_KEYS = (
+    "melix.stop_sequences",
+    "melix.turn_boundary.stop_sequences",
+    "stop_sequences",
+)
+
+
+def _split_stop_sequence_value(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        if stripped.startswith("["):
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, list):
+                return [str(item).strip() for item in payload if str(item).strip()]
+        return [part.strip() for part in stripped.split(",") if part.strip()]
+    if isinstance(value, list | tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _loaded_model_metadata(loaded_model: Any) -> list[dict[str, Any]]:
+    if not isinstance(loaded_model, dict):
+        return []
+    metadata: list[dict[str, Any]] = []
+    for key in ("metadata", "model_ext", "ext"):
+        value = loaded_model.get(key)
+        if isinstance(value, dict):
+            metadata.append(value)
+    metadata.append(loaded_model)
+    return metadata
+
+
+def _tokenizer_eos_token_ids(tokenizer: Any) -> tuple[str, ...]:
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    if eos_token_id is None:
+        return ()
+    if isinstance(eos_token_id, list | tuple | set):
+        return tuple(str(item) for item in eos_token_id if str(item).strip())
+    return (str(eos_token_id),) if str(eos_token_id).strip() else ()
+
+
+def resolve_text_stop_contract(
+    loaded_model: Any,
+    sampling: Any,
+    execution_ext: dict[str, str] | None = None,
+) -> ResolvedTextStopContract:
+    ordered_sequences: list[str] = []
+    seen_sequences: set[str] = set()
+    sources: list[str] = []
+
+    def add_sequences(values: Iterable[str], source: str) -> None:
+        added = False
+        for value in values:
+            sequence = str(value).strip()
+            if not sequence or sequence in seen_sequences:
+                continue
+            seen_sequences.add(sequence)
+            ordered_sequences.append(sequence)
+            added = True
+        if added and source not in sources:
+            sources.append(source)
+
+    add_sequences((str(item) for item in getattr(sampling, "stop", [])), "request")
+
+    metadata_sources = _loaded_model_metadata(loaded_model)
+    if execution_ext:
+        metadata_sources.append(dict(execution_ext))
+    for metadata in metadata_sources:
+        for key in _TEXT_STOP_SEQUENCE_KEYS:
+            add_sequences(_split_stop_sequence_value(metadata.get(key)), "model_metadata")
+
+    tokenizer = loaded_model.get("tokenizer") if isinstance(loaded_model, dict) else None
+    eos_token_ids = _tokenizer_eos_token_ids(tokenizer)
+    eos_token = str(getattr(tokenizer, "eos_token", "") or "").strip() if tokenizer is not None else ""
+    if eos_token:
+        add_sequences((eos_token,), "tokenizer_eos")
+    elif eos_token_ids and "tokenizer_eos" not in sources:
+        sources.append("tokenizer_eos")
+
+    return ResolvedTextStopContract(
+        sequences=tuple(ordered_sequences),
+        resolved_stop_token_count=len(ordered_sequences) + len(eos_token_ids),
+        source="+".join(sources) if sources else "none",
+    )
 
 
 # String constants for the ext-field activation_mode signal. Kept as the
@@ -248,6 +349,8 @@ class AutoMLXBackend:
         return {
             "model_id": model_spec.model_id,
             "model_path": model_spec.model_path,
+            "model_ext": dict(model_spec.ext),
+            "metadata": dict(model_spec.ext),
             "model": model,
             "tokenizer": tokenizer,
             "mlx_version": _installed_package_version("mlx"),
@@ -259,7 +362,14 @@ class AutoMLXBackend:
     def estimate_resident_bytes(self, model_spec) -> int:
         return 0
 
-    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event) -> Iterable[str]:
+    def generate_tokens(
+        self,
+        loaded_model,
+        prompt: str,
+        sampling,
+        cancel_event,
+        execution_ext: dict[str, str] | None = None,
+    ) -> Iterable[str]:
         if not self._available:
             raise RuntimeUnavailableError("mlx-lm is not installed") from self._error
         self._ensure_runtime()
@@ -273,6 +383,13 @@ class AutoMLXBackend:
                 sampler_kwargs[penalty_name] = float(getattr(sampling, penalty_name, 0.0))
         sampler = self._sampler_factory(**sampler_kwargs)
         max_tokens = int(sampling.max_output_tokens) if int(sampling.max_output_tokens) > 0 else 256
+        stop_contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+        stream_kwargs: dict[str, Any] = {}
+        if stop_contract.sequences:
+            for kwarg_name in ("stop", "stop_words", "stop_sequences"):
+                if _callable_accepts_kwarg(self._stream_generate_fn, kwarg_name):
+                    stream_kwargs[kwarg_name] = list(stop_contract.sequences)
+                    break
 
         for response in self._stream_generate_fn(
             loaded_model["model"],
@@ -280,6 +397,7 @@ class AutoMLXBackend:
             prompt,
             max_tokens=max_tokens,
             sampler=sampler,
+            **stream_kwargs,
         ):
             if cancel_event.is_set():
                 return
@@ -401,20 +519,114 @@ class MLXTextRuntime:
         cancel_event,
         execution_ext: dict[str, str] | None = None,
     ):
-        _ = execution_ext
+        stop_contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
         if self._executor is None:
-            item_iterable = self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event)
+            item_iterable = self._backend_generate_tokens(
+                loaded_model,
+                prompt,
+                sampling,
+                cancel_event,
+                execution_ext,
+            )
         else:
             item_iterable = self._executor.iterate(
-                lambda: self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event)
+                lambda: self._backend_generate_tokens(
+                    loaded_model,
+                    prompt,
+                    sampling,
+                    cancel_event,
+                    execution_ext,
+                )
             )
         try:
-            for item in item_iterable:
-                if isinstance(item, (RuntimeTokenEvent, RuntimeToolCallEvent)):
-                    yield item
-                else:
-                    yield RuntimeTokenEvent(text=str(item))
+            normalized_events = (
+                item if isinstance(item, (RuntimeTokenEvent, RuntimeToolCallEvent)) else RuntimeTokenEvent(text=str(item))
+                for item in item_iterable
+            )
+            yield from self._apply_stop_sequences(normalized_events, stop_contract.sequences)
         finally:
             close = getattr(item_iterable, "close", None)
             if callable(close):
                 close()
+
+    def _backend_generate_tokens(
+        self,
+        loaded_model,
+        prompt: str,
+        sampling,
+        cancel_event,
+        execution_ext: dict[str, str] | None,
+    ):
+        if _callable_accepts_kwarg(self._backend.generate_tokens, "execution_ext"):
+            return self._backend.generate_tokens(
+                loaded_model,
+                prompt,
+                sampling,
+                cancel_event,
+                execution_ext=execution_ext,
+            )
+        return self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event)
+
+    def _apply_stop_sequences(
+        self,
+        events: Iterable[RuntimeTokenEvent | RuntimeToolCallEvent],
+        stop_sequences: tuple[str, ...],
+    ):
+        if not stop_sequences:
+            yield from events
+            return
+
+        pending = ""
+        last_token_event: RuntimeTokenEvent | None = None
+        for event in events:
+            if isinstance(event, RuntimeToolCallEvent):
+                if pending and last_token_event is not None:
+                    yield replace(last_token_event, text=pending, raw_text=pending, finish_reason=None)
+                    pending = ""
+                yield event
+                continue
+
+            last_token_event = event
+            candidate = f"{pending}{event.text}"
+            stop_index = _first_stop_sequence_index(candidate, stop_sequences)
+            if stop_index is not None:
+                visible = candidate[:stop_index]
+                if visible:
+                    yield replace(event, text=visible, raw_text=visible, finish_reason=None)
+                yield replace(event, text="", raw_text="", finish_reason="stop_sequence")
+                return
+
+            held_suffix = _viable_stop_prefix_suffix(candidate, stop_sequences)
+            if held_suffix:
+                visible = candidate[: -len(held_suffix)]
+                pending = held_suffix
+            else:
+                visible = candidate
+                pending = ""
+
+            if visible:
+                yield replace(
+                    event,
+                    text=visible,
+                    raw_text=visible,
+                    finish_reason=None if pending else event.finish_reason,
+                )
+            elif event.finish_reason and not pending:
+                yield event
+
+        if pending and last_token_event is not None:
+            yield replace(last_token_event, text=pending, raw_text=pending)
+
+
+def _first_stop_sequence_index(text: str, stop_sequences: tuple[str, ...]) -> int | None:
+    indexes = [index for sequence in stop_sequences if (index := text.find(sequence)) >= 0]
+    return min(indexes) if indexes else None
+
+
+def _viable_stop_prefix_suffix(text: str, stop_sequences: tuple[str, ...]) -> str:
+    max_prefix_length = min(len(text), max((len(sequence) for sequence in stop_sequences), default=0) - 1)
+    for length in range(max_prefix_length, 0, -1):
+        suffix = text[-length:]
+        if any(sequence.startswith(suffix) for sequence in stop_sequences):
+            return suffix
+    return ""

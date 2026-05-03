@@ -70,6 +70,56 @@ class StructuredStreamingBackend:
         )
 
 
+class ShortPrefixStreamingBackend:
+    runtime_name = "fake-mlx"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 2048
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        yield RuntimeTokenEvent(
+            text="",
+            raw_text="OK<",
+            prompt_tokens=3,
+            completion_tokens=1,
+            finish_reason="stop",
+        )
+
+
+class StopContractTokenizer:
+    eos_token = "</s>"
+    eos_token_id = 2
+
+
+class StopContractStreamingBackend:
+    runtime_name = "fake-mlx"
+
+    def __init__(self) -> None:
+        self.seen_stop_sequences: list[str] = []
+
+    def load_model(self, model_spec):
+        return {
+            "model_id": model_spec.model_id,
+            "metadata": dict(model_spec.ext),
+            "tokenizer": StopContractTokenizer(),
+        }
+
+    def estimate_resident_bytes(self, model_spec):
+        return 2048
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        self.seen_stop_sequences = list(sampling.stop)
+        yield RuntimeTokenEvent(
+            text="keep</turn>drop",
+            prompt_tokens=3,
+            completion_tokens=1,
+            finish_reason="length",
+        )
+
+
 def build_services():
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StreamingFakeBackend()),
@@ -169,6 +219,83 @@ def test_generate_streams_reasoning_tool_and_content_channels_from_raw_text() ->
     assert completed.reasoning_mode_source == "request_enable_thinking"
     assert completed.reasoning_effort == "low"
     assert completed.parser_metrics["duplicate_tool_delta_count"] == "0"
+
+
+def test_generate_stream_flushes_short_visible_prefix_before_marker_hold() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=ShortPrefixStreamingBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-short-prefix"),
+            model_handle=load_response.model_handle,
+            ext={"melix.tool_parser.mode": "qwen"},
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="short")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=4),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert token_text == ["OK"]
+    assert completed.assistant_text == "OK<"
+    assert completed.parser_metrics["stream_prefix_hold_chars"] == "1"
+    assert completed.parser_metrics["stream_short_reply_flush_count"] == "1"
+
+
+def test_generate_stream_exports_stop_contract_metrics_and_stops_at_turn_boundary() -> None:
+    backend = StopContractStreamingBackend()
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    model = WorkerModelCatalog.dev_text_model()
+    model.ext["melix.stop_sequences"] = "</model>"
+    load_response = runtime_service.LoadModel(runtime_pb2.LoadModelRequest(model=model), context=None)
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-stop-contract"),
+            model_handle=load_response.model_handle,
+            reasoning=common_pb2.ReasoningConfig(mode_source="request"),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="stop at boundary")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=8, stop=["</turn>"]),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert backend.seen_stop_sequences == ["</turn>", "</model>", "</s>"]
+    assert token_text == ["keep"]
+    assert completed.finish_reason == "stop_sequence"
+    assert completed.assistant_text == "keep"
+    assert completed.parser_metrics["resolved_stop_token_count"] == "4"
+    assert completed.parser_metrics["reasoning_flag_source"] == "request"
+    assert completed.parser_metrics["turn_boundary_stop_reason"] == "stop_sequence"
 
 
 def test_text_prefill_returns_structured_unimplemented_error() -> None:

@@ -53,6 +53,8 @@ The worker stream assembler reports parser metrics on completed events:
 - `malformed_reasoning_count`
 - `non_monotonic_stream_count`
 - `suppressed_reasoning_count`
+- `stream_prefix_hold_chars`
+- `stream_short_reply_flush_count`
 
 Expected healthy values:
 
@@ -63,6 +65,10 @@ Expected healthy values:
 - truncated reasoning increments `malformed_reasoning_count` without exposing hidden text
 - non-monotonic adapter fragments increment `non_monotonic_stream_count`
 - reasoning-disabled requests with `<think>` blocks increment `suppressed_reasoning_count`
+- partial marker prefixes hold only the still-viable structural suffix; public
+  text before that suffix is emitted immediately
+- short visible prefixes that flush before a held marker suffix increment
+  `stream_short_reply_flush_count`
 
 ## JSON Structured Output Checks
 
