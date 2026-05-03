@@ -54,13 +54,9 @@ def resolve_built_binary(repo_root: Path) -> Path:
 
 
 def resolve_built_cli_binary(repo_root: Path) -> Path:
-    build_root = repo_root / ".build"
-    candidates = sorted(build_root.glob("*/debug/melix"))
-    if build_root.joinpath("debug/melix").exists():
-        candidates.insert(0, build_root / "debug/melix")
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
+    candidate = _resolve_built_product(repo_root / ".build", "melix")
+    if candidate is not None:
+        return candidate
     raise FileNotFoundError("Unable to find built `melix`. Run `swift build --product melix` first.")
 
 

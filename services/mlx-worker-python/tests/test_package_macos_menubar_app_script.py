@@ -88,8 +88,9 @@ def test_resolve_built_products_use_direct_debug_candidate_before_glob(
     module = load_package_macos_app_module()
     repo_root = tmp_path / "repo"
     menubar_binary = repo_root / "apps/macos-menubar/.build/debug/melix-menubar"
+    cli_binary = repo_root / ".build/debug/melix"
     swift_worker_binary = repo_root / "services/mlx-text-worker-swift/.build/debug/melix-text-worker-swift"
-    for binary in (menubar_binary, swift_worker_binary):
+    for binary in (menubar_binary, cli_binary, swift_worker_binary):
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
@@ -99,6 +100,7 @@ def test_resolve_built_products_use_direct_debug_candidate_before_glob(
     monkeypatch.setattr(Path, "glob", fail_glob)
 
     assert module.resolve_built_binary(repo_root) == menubar_binary
+    assert module.resolve_built_cli_binary(repo_root) == cli_binary
     assert module.resolve_built_swift_text_worker_binary(repo_root) == swift_worker_binary
 
 
@@ -125,6 +127,29 @@ def test_resolve_built_product_falls_back_to_sorted_triple_debug_candidates(
     assert module._resolve_built_product(build_root, "melix-menubar") == expected
     assert module._resolve_built_product(build_root, "missing-product") is None
     assert module._resolve_built_product(tmp_path / "missing-build-root", "melix-menubar") is None
+
+
+def test_resolve_built_cli_binary_falls_back_with_scandir_without_path_glob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    repo_root = tmp_path / "repo"
+    expected = repo_root / ".build/arm64-apple-macosx/debug/melix"
+    later = repo_root / ".build/x86_64-apple-macosx/debug/melix"
+    for binary in (later, expected):
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        Path,
+        "glob",
+        lambda self, pattern: (_ for _ in ()).throw(
+            AssertionError("CLI fallback resolution should use os.scandir instead of Path.glob")
+        ),
+    )
+
+    assert module.resolve_built_cli_binary(repo_root) == expected
 
 
 def test_package_workflow_uses_runtime_only_python_environment_for_bundle() -> None:
