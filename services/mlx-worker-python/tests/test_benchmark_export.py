@@ -34,6 +34,27 @@ from worker.productization.benchmark_export import (
 )
 
 
+def test_load_json_object_reads_bytes_without_text_file_wrapper(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_bytes(json.dumps({"job_id": "bench-1", "value": 1.25}).encode("utf-8"))
+
+    original_open = Path.open
+    binary_open_count = 0
+
+    def tracking_open(self: Path, mode: str = "r", *args: object, **kwargs: object):
+        nonlocal binary_open_count
+        if self == payload_path:
+            if "b" not in mode:
+                raise AssertionError("expected benchmark JSON object loading to use read_bytes")  # pragma: no cover
+            binary_open_count += 1
+        return original_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+
+    assert _load_json_object(payload_path) == {"job_id": "bench-1", "value": 1.25}
+    assert binary_open_count == 1
+
+
 class _CountingMetricList(list[dict[str, float | str]]):
     def __init__(self, items: list[dict[str, float | str]]) -> None:
         super().__init__(items)
