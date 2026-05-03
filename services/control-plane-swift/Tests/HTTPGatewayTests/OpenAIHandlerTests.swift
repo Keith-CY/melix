@@ -6694,6 +6694,7 @@ struct OpenAIHandlerTests {
               "workflow_node_id": "node-handler",
               "session_id": "session-handler",
               "messages": [
+                { "role": "assistant", "content": "<think>hidden prior turn</think>Visible prior answer." },
                 { "role": "user", "content": "Continue the tool result." }
               ]
             }
@@ -6714,10 +6715,13 @@ struct OpenAIHandlerTests {
         #expect(generated?.execution.scheduling.lane == "text.prefill.hot")
         #expect(generated?.execution.scheduling.admissionPolicy == "workflow.tool_followup")
         #expect(generated?.execution.cacheHints.cachePolicy == "session-hot")
+        #expect(generated?.messages.first?.parts.first?.text == "Visible prior answer.")
         #expect(generated?.execution.ext["melix.preset_id"] == "deep_reasoning")
         #expect(generated?.execution.ext["melix.workflow"] == "tool_followup")
+        #expect(generated?.execution.ext["melix.reasoning.history_strip_count"] == "1")
         #expect(metrics.values["http.preset_shaped_count", default: 0] == 1)
         #expect(metrics.values["http.workflow_shaped_count", default: 0] == 1)
+        #expect(metrics.values["http.reasoning_history_strip_count", default: 0] == 1)
         #expect(metrics.values["http.shaping_ms", default: -1] >= 0)
     }
 

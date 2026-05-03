@@ -40,6 +40,10 @@ Out of scope:
 - `stream_pipeline.continuity_rehydration_count` records supported repeated-turn rehydration.
 - `stream_prefix_hold_chars` records the longest viable structural-prefix suffix held by a request-local assembler.
 - `stream_short_reply_flush_count` records short visible prefixes emitted before a held structural suffix.
+- `reasoning_history_strip_count` records leading hidden-thought blocks removed from prior assistant turns before prompt rebuild.
+- `stream_parser_request_context_mode`, `tool_call_markup_leak_count`, and
+  `reasoning_channel_recovery_count` make parser context, visible markup leaks,
+  and recovered malformed reasoning channels observable.
 
 ## Verification
 

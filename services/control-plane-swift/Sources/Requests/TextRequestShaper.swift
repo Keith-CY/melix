@@ -120,6 +120,11 @@ public struct ResolvedOCRExecutionPolicy: Sendable, Equatable {
 }
 
 public struct TextRequestShaper: Sendable {
+    private struct HistorySanitizationResult: Sendable {
+        let messages: [NormalizedTextMessage]
+        let stripCount: Int
+    }
+
     private struct PresetDefaults: Sendable {
         let temperature: Double?
         let topP: Double?
@@ -242,6 +247,7 @@ public struct TextRequestShaper: Sendable {
         let workflow = workflows[workflowKind] ?? workflows[.interactive]!
         let resolvedSessionID = request.sessionID?.nilIfEmpty
         let resolvedBranchID = request.branchID?.nilIfEmpty ?? (resolvedSessionID == nil ? nil : "branch-main")
+        let sanitizedHistory = sanitizeReasoningHistory(messages: request.messages)
         let resolvedOCRPolicy = resolveOCRPolicy(
             request: request,
             modelPolicy: modelOCRPolicy
@@ -306,14 +312,14 @@ public struct TextRequestShaper: Sendable {
             toolParserSuppressedReason = nil
         }
         let partialMode = resolvePartialMode(
-            messages: request.messages,
+            messages: sanitizedHistory.messages,
             chatTemplate: resolvedChatTemplate
         )
 
         return ShapedTextRequest(
             endpoint: request.endpoint,
             model: request.model,
-            messages: request.messages,
+            messages: sanitizedHistory.messages,
             stream: request.stream,
             includeUsage: request.includeUsage,
             temperature: temperature,
@@ -350,6 +356,7 @@ public struct TextRequestShaper: Sendable {
             reasoningEffort: resolvedThinking.effort,
             reasoningAutoDetectModelFamily: resolvedThinking.autoDetectModelFamily,
             reasoningContinuityRehydrated: resolvedThinking.continuityRehydrated,
+            reasoningHistoryStripCount: sanitizedHistory.stripCount,
             structuredOutput: request.structuredOutput,
             toolParser: resolvedToolParser,
             toolParserSuppressedReason: toolParserSuppressedReason,
@@ -423,6 +430,59 @@ public struct TextRequestShaper: Sendable {
             return false
         }
         return true
+    }
+
+    private func sanitizeReasoningHistory(messages: [NormalizedTextMessage]) -> HistorySanitizationResult {
+        var stripCount = 0
+        let sanitizedMessages = messages.map { message in
+            guard message.role == "assistant" else {
+                return message
+            }
+
+            var parts = message.parts
+            for index in parts.indices {
+                let originalText = parts[index].text
+                guard !originalText.isEmpty else {
+                    continue
+                }
+
+                let stripped = Self.stripLeadingHiddenThoughtBlocks(from: originalText)
+                if stripped.count > 0 {
+                    parts[index].text = stripped.text
+                    stripCount += stripped.count
+                }
+                break
+            }
+
+            return NormalizedTextMessage(
+                role: message.role,
+                name: message.name,
+                parts: parts,
+                harmonyMetadata: message.harmonyMetadata
+            )
+        }
+
+        return HistorySanitizationResult(messages: sanitizedMessages, stripCount: stripCount)
+    }
+
+    private static func stripLeadingHiddenThoughtBlocks(from text: String) -> (text: String, count: Int) {
+        var remaining = text[...]
+        var count = 0
+
+        while true {
+            let tagStart = remaining.drop(while: { $0.isWhitespace }).startIndex
+            guard remaining[tagStart...].hasPrefix("<think>") else {
+                return count == 0 ? (text, 0) : (String(remaining), count)
+            }
+
+            let bodyStart = remaining.index(tagStart, offsetBy: "<think>".count)
+            guard let closeRange = remaining[bodyStart...].range(of: "</think>") else {
+                return count == 0 ? (text, 0) : (String(remaining), count)
+            }
+
+            count += 1
+            remaining = remaining[closeRange.upperBound...]
+        }
     }
 }
 
