@@ -35,9 +35,21 @@ from worker.productization.benchmark_evaluation_report import (
 
 
 class _SparseProbeRow(dict[str, object]):
-    def __init__(self, *args: object, forbidden_keys: set[str], **kwargs: object) -> None:
+    def __init__(
+        self,
+        *args: object,
+        forbidden_keys: set[str],
+        forbid_contains: bool = False,
+        **kwargs: object,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._forbidden_keys = forbidden_keys
+        self._forbid_contains = forbid_contains
+
+    def __contains__(self, key: object) -> bool:
+        if self._forbid_contains and key in self._forbidden_keys:
+            raise AssertionError(f"unexpected fixed-key membership scan for {key}")
+        return super().__contains__(key)
 
     def get(self, key: str, default: object = None) -> object:
         if key in self._forbidden_keys:
@@ -487,16 +499,22 @@ def test_evaluation_sample_collector_finalizes_mean_metrics_directly(
     assert metrics == {"eval.sample.smoke.sample_render_ms_mean": 4.0}
 
 
-def test_probe_collectors_use_registered_probe_key_order_without_items_scan() -> None:
+def test_probe_collectors_use_expected_sparse_row_scan_strategy() -> None:
+    class NoContainsDict(dict[str, object]):
+        def __contains__(self, key: object) -> bool:
+            if key in {"prefill_ms", "decode_ms", "tokens_in", "dflash_enabled"}:
+                raise AssertionError("benchmark collector should scan actual row items")
+            return super().__contains__(key)
+
     class NoItemsDict(dict[str, object]):
         def items(self):  # type: ignore[override]
-            raise AssertionError("collector should scan registered probe keys directly")
+            raise AssertionError("evaluation collector should scan registered probe keys directly")
 
     benchmark_metrics: dict[str, object] = {}
     _collect_benchmark_probe_metrics(
         benchmark_metrics,
         [
-            NoItemsDict(
+            NoContainsDict(
                 {
                     "suite_id": "smoke",
                     "context_length": 1024,
@@ -973,6 +991,7 @@ def test_report_builder_uses_sparse_benchmark_probe_rows_without_fixed_key_scans
             "prefill_ms_extra": 123,
         },
         forbidden_keys={"prefill_ms", "decode_ms", "tokens_in", "dflash_enabled"},
+        forbid_contains=True,
     )
 
     report = build_benchmark_evaluation_report(
