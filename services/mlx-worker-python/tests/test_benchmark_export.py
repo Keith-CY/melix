@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from worker.productization.benchmark_export import (
+    _collect_benchmark_matrix_run,
     _collect_benchmark_run,
     _collect_evaluation_run,
     _iter_jsonl_dict_rows,
@@ -730,6 +731,84 @@ def test_collect_benchmark_artifacts_reads_matrix_run_history_from_matrix_runs_d
     assert [job["job_id"] for job in result["benchmark_matrix_jobs"]] == ["bench-matrix-1", "bench-matrix-2"]
     assert [row["job_id"] for row in result["benchmark_matrix_summary_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
     assert [row["job_id"] for row in result["benchmark_matrix_request_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
+
+
+def test_collect_benchmark_matrix_run_uses_direntry_checks_without_path_is_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_bench_matrix_run_fixture(tmp_path, job_id="bench-matrix-1")
+    run_root = tmp_path / "matrix-runs" / "bench-matrix-1"
+
+    monkeypatch.setattr(
+        Path,
+        "is_file",
+        lambda self: (_ for _ in ()).throw(AssertionError("_collect_benchmark_matrix_run should not use Path.is_file")),
+    )
+
+    jobs: list[dict[str, object]] = []
+    summary_rows: list[dict[str, object]] = []
+    request_rows: list[dict[str, object]] = []
+
+    _collect_benchmark_matrix_run(
+        run_root,
+        jobs=jobs,
+        summary_rows=summary_rows,
+        request_rows=request_rows,
+    )
+
+    assert [job["job_id"] for job in jobs] == ["bench-matrix-1"]
+    assert [row["job_id"] for row in summary_rows] == ["bench-matrix-1"]
+    assert [row["job_id"] for row in request_rows] == ["bench-matrix-1"]
+
+
+def test_collect_benchmark_matrix_run_skips_entries_with_stat_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run_root = tmp_path / "matrix-runs" / "bench-matrix-1"
+    run_root.mkdir(parents=True)
+    payloads = {
+        "bench-matrix-job.json": json.dumps({"job_id": "bench-matrix-1"}) + "\n",
+        "bench-matrix-summary.jsonl": json.dumps({"job_id": "bench-matrix-1", "row_kind": "summary"}) + "\n",
+        "bench-matrix-requests.jsonl": json.dumps({"job_id": "bench-matrix-1", "row_kind": "request"}) + "\n",
+    }
+    for name, payload in payloads.items():
+        (run_root / name).write_text(payload)
+
+    class _BrokenEntry:
+        name = "bench-matrix-broken.json"
+
+        def is_file(self) -> bool:
+            raise OSError("stat failed")
+
+    class _GoodEntry:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def is_file(self) -> bool:
+            return True
+
+    class _Scandir:
+        def __enter__(self):
+            return iter((_BrokenEntry(), _GoodEntry("bench-matrix-job.json"), _GoodEntry("bench-matrix-summary.jsonl"), _GoodEntry("bench-matrix-requests.jsonl")))
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr("worker.productization.benchmark_export.os.scandir", lambda path: _Scandir())
+
+    jobs: list[dict[str, object]] = []
+    summary_rows: list[dict[str, object]] = []
+    request_rows: list[dict[str, object]] = []
+
+    _collect_benchmark_matrix_run(
+        run_root,
+        jobs=jobs,
+        summary_rows=summary_rows,
+        request_rows=request_rows,
+    )
+
+    assert jobs == [{"job_id": "bench-matrix-1"}]
+    assert summary_rows == [{"job_id": "bench-matrix-1", "row_kind": "summary"}]
+    assert request_rows == [{"job_id": "bench-matrix-1", "row_kind": "request"}]
 
 
 def test_iter_sorted_child_directories_returns_sorted_directories(tmp_path: Path) -> None:
