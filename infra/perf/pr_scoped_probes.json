@@ -83,6 +83,12 @@
     "coverage_replays_tests": true,
     "metrics": [
       {
+        "key": "cold_elapsed_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
         "key": "warm_elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
