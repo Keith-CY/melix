@@ -647,6 +647,29 @@ def test_sample_probe_means_aggregate_multiple_fields_in_one_pass() -> None:
     }
 
 
+def test_percentile_preserves_interpolated_results() -> None:
+    assert EvaluationCore._percentile([42.0], 95.0) == 42.0
+    assert EvaluationCore._percentile([10.0, 20.0, 30.0, 40.0], 50.0) == 25.0
+    assert EvaluationCore._percentile([10.0, 20.0, 30.0, 40.0], 95.0) == 38.5
+
+
+def test_latency_stats_reuse_single_sorted_vector(monkeypatch: pytest.MonkeyPatch) -> None:
+    sorted_call_count = 0
+    original_sorted = builtins.sorted
+
+    def counting_sorted(*args, **kwargs):
+        nonlocal sorted_call_count
+        sorted_call_count += 1
+        return original_sorted(*args, **kwargs)
+
+    monkeypatch.setattr(builtins, "sorted", counting_sorted)
+
+    stats = EvaluationCore._latency_stats([40.0, 10.0, 30.0, 20.0])
+
+    assert stats == {"mean": 25.0, "p50": 25.0, "p95": 38.5, "max": 40.0}
+    assert sorted_call_count == 1
+
+
 def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,

@@ -108,9 +108,10 @@ def test_scope_report_selects_evaluation_probes() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert probe_ids == {
         "evaluation-job-id-high-water-mark",
+        "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
     }
 
@@ -528,6 +529,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
         "evaluation-final-result-materialization-streaming",
+        "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-store-samples-csv-streaming",
@@ -1663,6 +1665,22 @@ def test_command_json_probe_executes_probe_command_and_parses_metrics(tmp_path: 
     metrics = _probe_command_json(probe=probe, repo_root=tmp_path)
 
     assert metrics == {"elapsed_ms_mean": 12.5, "iteration_count": 3.0}
+
+
+def test_evaluation_latency_percentile_probe_command_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-latency-percentile-vector-reuse"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["sorted_calls_mean"] == 1.0
+    assert metrics["sample_count"] == 12000.0
+    assert metrics["iteration_count"] == 160.0
+    assert metrics["p95"] >= metrics["p50"]
 
 
 def test_model_registry_catalog_probe_command_emits_metrics() -> None:
