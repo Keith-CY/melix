@@ -35,13 +35,19 @@ class DownloadPipelineResult:
 
 
 @dataclass(frozen=True)
+class _DownloadManifestContext:
+    state_path: Path
+    base_payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class _RetryableDownloadFailure(Exception):
-    manifest_json: str
+    manifest_payload: dict[str, Any]
 
 
 @dataclass(frozen=True)
 class _StalledDownloadFailure(Exception):
-    manifest_json: str
+    manifest_payload: dict[str, Any]
 
 
 class DownloadPipeline:
@@ -84,15 +90,18 @@ class DownloadPipeline:
         stall_detection_count = 0
         resume_from_bytes = self._resume_from_bytes(partial_path=partial_path, total_bytes=total_bytes)
         resume_used = resume_from_bytes > 0
+        manifest_context = self._manifest_context(
+            request=request,
+            job_id=job_id,
+            output_dir=output_dir,
+            output_path=output_path,
+            partial_path=partial_path,
+            state_path=state_path,
+            selected_mirror=selected_mirror,
+        )
         snapshots: list[DownloadSnapshot] = [
             self._snapshot(
-                request=request,
-                job_id=job_id,
-                output_dir=output_dir,
-                output_path=output_path,
-                partial_path=partial_path,
-                state_path=state_path,
-                selected_mirror=selected_mirror,
+                manifest_context=manifest_context,
                 status="running",
                 terminal_state="running",
                 stage="prepare",
@@ -126,13 +135,7 @@ class DownloadPipeline:
                             downloaded_bytes += len(chunk)
                             snapshots.append(
                                 self._snapshot(
-                                    request=request,
-                                    job_id=job_id,
-                                    output_dir=output_dir,
-                                    output_path=output_path,
-                                    partial_path=partial_path,
-                                    state_path=state_path,
-                                    selected_mirror=selected_mirror,
+                                    manifest_context=manifest_context,
                                     status="running",
                                     terminal_state="running",
                                     stage="download",
@@ -150,14 +153,8 @@ class DownloadPipeline:
                             if stall_after_bytes and downloaded_bytes >= stall_after_bytes and stall_elapsed_ms > stall_timeout_ms:
                                 stall_detection_count += 1
                                 raise _StalledDownloadFailure(
-                                    manifest_json=self._build_manifest_json(
-                                        request=request,
-                                        job_id=job_id,
-                                        output_dir=output_dir,
-                                        output_path=output_path,
-                                        partial_path=partial_path,
-                                        state_path=state_path,
-                                        selected_mirror=selected_mirror,
+                                    manifest_payload=self._build_manifest_payload(
+                                        manifest_context=manifest_context,
                                         status="stalled",
                                         terminal_state="stalled",
                                         stage="download",
@@ -175,14 +172,8 @@ class DownloadPipeline:
                             if remaining_failures > 0 and fail_after_bytes and downloaded_bytes >= fail_after_bytes:
                                 remaining_failures -= 1
                                 raise _RetryableDownloadFailure(
-                                    manifest_json=self._build_manifest_json(
-                                        request=request,
-                                        job_id=job_id,
-                                        output_dir=output_dir,
-                                        output_path=output_path,
-                                        partial_path=partial_path,
-                                        state_path=state_path,
-                                        selected_mirror=selected_mirror,
+                                    manifest_payload=self._build_manifest_payload(
+                                        manifest_context=manifest_context,
                                         status="retrying",
                                         terminal_state="running",
                                         stage="download",
@@ -200,13 +191,7 @@ class DownloadPipeline:
                 os.replace(os.fspath(partial_path), os.fspath(output_path))
                 snapshots.append(
                     self._snapshot(
-                        request=request,
-                        job_id=job_id,
-                        output_dir=output_dir,
-                        output_path=output_path,
-                        partial_path=partial_path,
-                        state_path=state_path,
-                        selected_mirror=selected_mirror,
+                        manifest_context=manifest_context,
                         status="completed",
                         terminal_state="completed",
                         stage="download",
@@ -224,9 +209,8 @@ class DownloadPipeline:
             except _RetryableDownloadFailure as exc:
                 if retry_count >= max_retries:
                     terminal_json = self._terminal_manifest_json(
-                        exc.manifest_json,
+                        exc.manifest_payload,
                         status="failed",
-                        state_path=state_path,
                     )
                     raise ModelOperationError(
                         code="download_retry_exhausted",
@@ -237,9 +221,8 @@ class DownloadPipeline:
             except _StalledDownloadFailure as exc:
                 if retry_count >= max_retries:
                     terminal_json = self._terminal_manifest_json(
-                        exc.manifest_json,
+                        exc.manifest_payload,
                         status="stalled",
-                        state_path=state_path,
                     )
                     raise ModelOperationError(
                         code="download_stalled",
@@ -498,13 +481,7 @@ class DownloadPipeline:
     def _snapshot(
         self,
         *,
-        request: maintenance_pb2.ConvertModelRequest,
-        job_id: str,
-        output_dir: Path,
-        output_path: Path,
-        partial_path: Path,
-        state_path: Path,
-        selected_mirror: str,
+        manifest_context: _DownloadManifestContext,
         status: str,
         terminal_state: str,
         stage: str,
@@ -517,14 +494,8 @@ class DownloadPipeline:
         stall_detection_count: int,
         stall_reason: str,
     ) -> DownloadSnapshot:
-        manifest_json = self._build_manifest_json(
-            request=request,
-            job_id=job_id,
-            output_dir=output_dir,
-            output_path=output_path,
-            partial_path=partial_path,
-            state_path=state_path,
-            selected_mirror=selected_mirror,
+        manifest_payload = self._build_manifest_payload(
+            manifest_context=manifest_context,
             status=status,
             terminal_state=terminal_state,
             stage=stage,
@@ -537,9 +508,10 @@ class DownloadPipeline:
             stall_detection_count=stall_detection_count,
             stall_reason=stall_reason,
         )
+        manifest_json = self._write_manifest_json(manifest_context.state_path, manifest_payload)
         return DownloadSnapshot(stage=stage, pct=pct, manifest_json=manifest_json)
 
-    def _build_manifest_json(
+    def _manifest_context(
         self,
         *,
         request: maintenance_pb2.ConvertModelRequest,
@@ -549,6 +521,28 @@ class DownloadPipeline:
         partial_path: Path,
         state_path: Path,
         selected_mirror: str,
+    ) -> _DownloadManifestContext:
+        return _DownloadManifestContext(
+            state_path=state_path,
+            base_payload={
+                "schema_version": "melix.download_job.v1",
+                "job_id": job_id,
+                "operation": "download",
+                "source_model": request.source_model,
+                "output_dir": str(output_dir),
+                "source_path": request.ext.get("source_path", ""),
+                "output_path": str(output_path),
+                "partial_path": str(partial_path),
+                "state_path": str(state_path),
+                "selected_mirror": selected_mirror,
+                "ext": self._public_ext(request.ext),
+            },
+        )
+
+    @staticmethod
+    def _build_manifest_payload(
+        *,
+        manifest_context: _DownloadManifestContext,
         status: str,
         terminal_state: str,
         stage: str,
@@ -560,22 +554,14 @@ class DownloadPipeline:
         resume_from_bytes: int,
         stall_detection_count: int,
         stall_reason: str,
-    ) -> str:
-        payload = {
-            "schema_version": "melix.download_job.v1",
-            "job_id": job_id,
-            "operation": "download",
-            "source_model": request.source_model,
-            "output_dir": str(output_dir),
+    ) -> dict[str, Any]:
+        payload = dict(manifest_context.base_payload)
+        payload.update(
+            {
             "status": status,
             "terminal_state": terminal_state,
             "stage": stage,
             "pct": round(pct, 6),
-            "source_path": request.ext.get("source_path", ""),
-            "output_path": str(output_path),
-            "partial_path": str(partial_path),
-            "state_path": str(state_path),
-            "selected_mirror": selected_mirror,
             "downloaded_bytes": downloaded_bytes,
             "total_bytes": total_bytes,
             "resume_used": resume_used,
@@ -583,26 +569,29 @@ class DownloadPipeline:
             "retry_count": retry_count,
             "stall_detection_count": stall_detection_count,
             "stall_reason": stall_reason,
-            "ext": self._public_ext(request.ext),
             "metrics": {
                 "download.resume_success_rate": 1.0 if resume_used and terminal_state == "completed" else 0.0,
                 "download.retry_count": retry_count,
                 "download.stall_detection_count": stall_detection_count,
             },
-        }
-        self._write_json_atomically(state_path, payload)
+            }
+        )
+        return payload
+
+    @staticmethod
+    def _write_manifest_json(state_path: Path, payload: dict[str, Any]) -> str:
+        DownloadPipeline._write_json_atomically(state_path, payload)
         return json.dumps(payload, sort_keys=True)
 
     @staticmethod
-    def _terminal_manifest_json(manifest_json: str, *, status: str, state_path: Path) -> str:
-        payload = json.loads(manifest_json)
+    def _terminal_manifest_json(manifest_payload: dict[str, Any], *, status: str) -> str:
+        payload = dict(manifest_payload)
         payload["status"] = status
         if status == "failed":
             payload["terminal_state"] = "failed"
         elif status == "stalled":
             payload["terminal_state"] = "stalled"
-        DownloadPipeline._write_json_atomically(state_path, payload)
-        return json.dumps(payload, sort_keys=True)
+        return DownloadPipeline._write_manifest_json(Path(str(payload["state_path"])), payload)
 
     @staticmethod
     def _write_json_atomically(path: Path, payload: dict[str, Any]) -> None:
