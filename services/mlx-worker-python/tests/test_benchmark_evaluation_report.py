@@ -386,6 +386,15 @@ def test_collect_benchmark_probe_metrics_groups_aggregates_by_label_and_preserve
     }
 
 
+def test_metric_direction_caches_full_metric_names() -> None:
+    _metric_direction.cache_clear()
+
+    assert _metric_direction("bench.smoke.prefill_ms") == "lower_is_better"
+    assert _metric_direction("bench.smoke.prefill_ms") == "lower_is_better"
+
+    assert _metric_direction.cache_info().hits == 1
+
+
 def test_metric_row_fast_paths_exact_numeric_values(monkeypatch: pytest.MonkeyPatch) -> None:
     parsed_values: list[object] = []
     original = benchmark_evaluation_report._float_or_none
