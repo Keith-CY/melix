@@ -151,12 +151,11 @@ class BenchmarkQueueStore:
         if cached is not None and cached.metadata_key == current_metadata_key:
             return cached.record
         record = BenchmarkQueueRecord.from_dict(json.loads(path.read_bytes()))
-        cached_record = self._clone_record(record)
         self._decoded_record_cache[path] = _RecordCacheEntry(
             metadata_key=current_metadata_key,
-            record=cached_record,
+            record=record,
         )
-        return cached_record
+        return record
 
     def queue_snapshot(self, *, queue_root: Path) -> dict[str, object]:
         records = self.list_records(queue_root=queue_root)
