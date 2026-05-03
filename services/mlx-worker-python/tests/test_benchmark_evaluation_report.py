@@ -1062,12 +1062,18 @@ def test_report_loader_rejects_missing_and_non_object_inputs(tmp_path: Path) -> 
         load_report_input(non_object)
 
 
-def test_report_loader_accepts_export_bundle_path(tmp_path: Path) -> None:
+def test_report_loader_accepts_export_bundle_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bundle_path = tmp_path / "bundle.json"
     bundle_path.write_text(
         json.dumps(_bundle(ttft_ms=100.0, tokens_per_second=50.0, accuracy=0.8)) + "\n",
         encoding="utf-8",
     )
+
+    def forbid_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        del self, args, kwargs
+        raise AssertionError("load_report_input should decode JSON from bytes")
+
+    monkeypatch.setattr(Path, "read_text", forbid_read_text)
 
     payload = load_report_input(bundle_path)
 
