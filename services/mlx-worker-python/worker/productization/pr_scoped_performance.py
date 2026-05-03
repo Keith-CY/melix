@@ -45,6 +45,19 @@ def _log_progress(message: str) -> None:
     print(f"[pr-scoped-performance] {message}", file=sys.stderr, flush=True)
 
 
+def _summarize_command(command: str, *, max_length: int = 180) -> str:
+    lines = [line.strip() for line in command.splitlines() if line.strip()]
+    if not lines:
+        return "<empty command>"
+
+    summary = lines[0]
+    if len(lines) > 1:
+        summary = f"{summary} ..."
+    if len(summary) > max_length:
+        return f"{summary[: max_length - 4]} ..."
+    return summary
+
+
 @dataclass(frozen=True)
 class MetricDefinition:
     key: str
@@ -422,7 +435,8 @@ def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[s
 
 
 def _run_command(command: str, *, cwd: Path) -> dict[str, object]:
-    _log_progress(f"starting command in {cwd}: {command}")
+    command_summary = _summarize_command(command)
+    _log_progress(f"starting command in {cwd}: {command_summary}")
     started = time.perf_counter()
     process = subprocess.Popen(
         command,
@@ -457,14 +471,14 @@ def _run_command(command: str, *, cwd: Path) -> dict[str, object]:
         time.sleep(1.0)
         elapsed = time.perf_counter() - started
         if elapsed >= next_heartbeat:
-            _log_progress(f"still running after {elapsed:.1f}s: {command}")
+            _log_progress(f"still running after {elapsed:.1f}s: {command_summary}")
             next_heartbeat += _COMMAND_HEARTBEAT_SECONDS
 
     returncode = process.wait()
     for thread in threads:
         thread.join()
     elapsed = time.perf_counter() - started
-    _log_progress(f"command completed rc={returncode} elapsed={elapsed:.1f}s: {command}")
+    _log_progress(f"command completed rc={returncode} elapsed={elapsed:.1f}s: {command_summary}")
     stdout = "".join(stdout_chunks)
     stderr = "".join(stderr_chunks)
     return {
