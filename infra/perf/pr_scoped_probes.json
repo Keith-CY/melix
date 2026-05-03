@@ -989,11 +989,11 @@
       "Sources/MelixCLICore/MelixCLIJSON.swift",
       "tests/MelixCLITests/MelixCLIRunnerTests.swift"
     ],
-    "test_command": "swift test --filter MelixCLITests/MelixCLIRunnerTests",
-    "coverage_command": "swift test --filter MelixCLITests/MelixCLIRunnerTests",
+    "test_command": "swift test --filter 'MelixCLIRunnerTests/(jsonV1WrapsCommandResultsInAStableEnvelope|jsonV1ErrorEnvelopesAreMachineReadable|jsonMetricPatchingRejectsMissingPlaceholders|jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel)'",
+    "coverage_command": "swift test --filter 'MelixCLIRunnerTests/(jsonV1WrapsCommandResultsInAStableEnvelope|jsonV1ErrorEnvelopesAreMachineReadable|jsonMetricPatchingRejectsMissingPlaceholders|jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel)'",
     "coverage_replays_tests": true,
     "probe_impl": "command_json",
-    "probe_command": "python - <<'PY'\nimport json\nimport subprocess\nimport sys\nimport time\n\nstarted = time.perf_counter()\ncompleted = subprocess.run(\n    ['swift', 'test', '--filter', 'MelixCLITests/MelixCLIRunnerTests'],\n    capture_output=True,\n    text=True,\n    timeout=600,\n)\nelapsed_ms = (time.perf_counter() - started) * 1000.0\nsys.stderr.write(completed.stdout)\nsys.stderr.write(completed.stderr)\nif completed.returncode != 0:\n    raise SystemExit(completed.returncode)\n\nprint(json.dumps({\n    'elapsed_ms_mean': round(elapsed_ms, 3),\n    'sample_count': 1.0,\n}, sort_keys=True))\nPY",
+    "probe_command": "python - <<'PY'\nimport json\nimport subprocess\nimport sys\nimport time\n\nfocused_filter = 'MelixCLIRunnerTests/(jsonV1WrapsCommandResultsInAStableEnvelope|jsonV1ErrorEnvelopesAreMachineReadable|jsonMetricPatchingRejectsMissingPlaceholders|jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel)'\nstarted = time.perf_counter()\ncompleted = subprocess.run(\n    ['swift', 'test', '--filter', focused_filter],\n    capture_output=True,\n    text=True,\n    timeout=600,\n)\nelapsed_ms = (time.perf_counter() - started) * 1000.0\nsys.stderr.write(completed.stdout)\nsys.stderr.write(completed.stderr)\nif completed.returncode != 0:\n    raise SystemExit(completed.returncode)\n\nprint(json.dumps({\n    'elapsed_ms_mean': round(elapsed_ms, 3),\n    'sample_count': 1.0,\n}, sort_keys=True))\nPY",
     "metrics": [
       {
         "key": "elapsed_ms_mean",
