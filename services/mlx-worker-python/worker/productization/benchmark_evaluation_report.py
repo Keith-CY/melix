@@ -518,8 +518,8 @@ def _collect_evaluation_sample_probe_metrics(
                 failure_stage_counts.get((suite_id, failure_stage), 0) + 1
             )
     for (suite_id, key), aggregate in aggregates_by_suite_and_key.items():
-        _, value = _finalize_numeric_aggregate(key, aggregate)
-        metrics[f"eval.sample.{suite_id}.{key}_mean"] = value
+        total, count = aggregate
+        metrics[f"eval.sample.{suite_id}.{key}_mean"] = total / count
     for (suite_id, failure_stage), count in failure_stage_counts.items():
         metrics[f"eval.sample.{suite_id}.failure_stage.{failure_stage}.failure_count"] = float(count)
 

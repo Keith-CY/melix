@@ -459,6 +459,34 @@ def test_probe_collectors_fast_path_exact_numeric_values(monkeypatch: pytest.Mon
     assert evaluation_metrics["eval.sample.smoke.validation_ms_mean"] == 0.0
 
 
+def test_evaluation_sample_collector_finalizes_mean_metrics_directly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_finalize_numeric_aggregate(
+        key: str,
+        aggregate: tuple[float, int] | None,
+    ) -> tuple[str, float]:
+        del aggregate
+        raise AssertionError(f"unexpected generic aggregate finalizer for {key}")
+
+    monkeypatch.setattr(
+        benchmark_evaluation_report,
+        "_finalize_numeric_aggregate",
+        fail_finalize_numeric_aggregate,
+    )
+
+    metrics: dict[str, object] = {}
+    _collect_evaluation_sample_probe_metrics(
+        metrics,
+        [
+            {"suite_id": "smoke", "sample_render_ms": 3.0},
+            {"suite_id": "smoke", "sample_render_ms": 5.0},
+        ],
+    )
+
+    assert metrics == {"eval.sample.smoke.sample_render_ms_mean": 4.0}
+
+
 def test_probe_collectors_use_registered_probe_key_order_without_items_scan() -> None:
     class NoItemsDict(dict[str, object]):
         def items(self):  # type: ignore[override]
