@@ -306,14 +306,35 @@ class MLXLMRunner:
                 message=(process.stderr or process.stdout or "MLX subprocess failed.").strip(),
             )
 
-        for line in reversed(process.stdout.splitlines()):
-            if line.startswith(_RESULT_PREFIX):
-                return json.loads(line.removeprefix(_RESULT_PREFIX))
+        payload = _extract_structured_result_payload(process.stdout)
+        if payload is not None:
+            return payload
 
         raise ModelOperationError(
             code=error_code,
             message="MLX subprocess completed without returning a structured result.",
         )
+
+
+def _extract_structured_result_payload(stdout: str) -> dict[str, object] | None:
+    search_end = len(stdout)
+    prefix = _RESULT_PREFIX
+    prefix_length = len(prefix)
+    while True:
+        prefix_index = stdout.rfind(prefix, 0, search_end)
+        if prefix_index < 0:
+            return None
+        if prefix_index > 0 and stdout[prefix_index - 1] not in {"\n", "\r"}:
+            search_end = prefix_index
+            continue
+        line_end = len(stdout)
+        newline_index = stdout.find("\n", prefix_index)
+        carriage_index = stdout.find("\r", prefix_index)
+        if newline_index >= 0:
+            line_end = min(line_end, newline_index)
+        if carriage_index >= 0:
+            line_end = min(line_end, carriage_index)
+        return json.loads(stdout[prefix_index + prefix_length:line_end])
 
 
 def _mlx_lora_namespace(request: TrainingRequest):
