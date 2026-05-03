@@ -5,6 +5,7 @@ import os
 import plistlib
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -204,6 +205,10 @@ def render_launcher_script(
     )
 
 
+def elapsed_seconds(started_at: float) -> float:
+    return round(time.perf_counter() - started_at, 6)
+
+
 def write_unsigned_macos_app_bundle(
     *,
     repo_root: str | Path,
@@ -219,7 +224,9 @@ def write_unsigned_macos_app_bundle(
     packaging_target_id: str = "macos_app_bundle_preview",
     update_channel_path: str | Path | None = None,
     icon_source_path: str | Path | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
+    write_started_at = time.perf_counter()
+    timings: dict[str, float] = {}
     repo_root_path = Path(repo_root).expanduser().resolve()
     executable = Path(executable_path).expanduser().resolve()
     cli_executable = Path(cli_executable_path).expanduser().resolve()
@@ -263,15 +270,30 @@ def write_unsigned_macos_app_bundle(
     layout.macos_path.mkdir(parents=True, exist_ok=True)
     layout.resources_path.mkdir(parents=True, exist_ok=True)
 
+    started_at = time.perf_counter()
     shutil.copy2(executable, layout.bundled_app_binary_path)
+    timings["copy_app_binary_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
     shutil.copy2(cli_executable, layout.bundled_cli_binary_path)
+    timings["copy_cli_binary_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
     shutil.copy2(swift_worker_executable, layout.bundled_swift_worker_binary_path)
+    timings["copy_swift_worker_binary_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
     shutil.copy2(resolved_icon_source_path, layout.bundled_icon_path)
+    timings["copy_icon_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
     shutil.copytree(python_runtime, layout.bundled_python_runtime_path, dirs_exist_ok=True, symlinks=True)
+    timings["copy_python_runtime_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
     shutil.copytree(python_site_packages, layout.bundled_site_packages_path, dirs_exist_ok=True, symlinks=True)
+    timings["copy_python_site_packages_seconds"] = elapsed_seconds(started_at)
 
+    started_at = time.perf_counter()
     _copy_repo_subset(repo_root_path, layout.bundled_repo_root_path)
+    timings["copy_repo_subset_seconds"] = elapsed_seconds(started_at)
 
+    started_at = time.perf_counter()
     layout.embedded_env_script_path.write_text(
         render_portable_environment_script(
             product_version=version,
@@ -282,7 +304,6 @@ def write_unsigned_macos_app_bundle(
         ),
         encoding="utf-8",
     )
-    os.chmod(layout.embedded_env_script_path, 0o755)
     layout.packaging_target_manifest_path.write_text(
         json.dumps(target_metadata, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -309,7 +330,10 @@ def write_unsigned_macos_app_bundle(
         ),
         encoding="utf-8",
     )
+    timings["write_metadata_seconds"] = elapsed_seconds(started_at)
 
+    started_at = time.perf_counter()
+    os.chmod(layout.embedded_env_script_path, 0o755)
     for path in (
         layout.launcher_path,
         layout.bundled_app_binary_path,
@@ -318,6 +342,8 @@ def write_unsigned_macos_app_bundle(
         layout.bundled_python_executable_path,
     ):
         os.chmod(path, 0o755)
+    timings["chmod_seconds"] = elapsed_seconds(started_at)
+    timings["write_total_seconds"] = elapsed_seconds(write_started_at)
 
     return {
         "app_path": str(layout.app_path),
@@ -339,6 +365,7 @@ def write_unsigned_macos_app_bundle(
         "packaging_kind": str(target_metadata["packaging_kind"]),
         "logical_product_identity": str(target_metadata["logical_product_identity"]),
         "update_channel_path": str(target_metadata["update_channel_path"]),
+        "timings": timings,
     }
 
 

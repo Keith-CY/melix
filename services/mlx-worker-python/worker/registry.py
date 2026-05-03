@@ -119,7 +119,13 @@ class WorkerRegistry:
         self._lock = Lock()
         self._next_model_handle = 1
         self._loaded_models: dict[str, LoadedModel] = {}
+        self._loaded_model_resident_bytes = 0
+        self._reserved_model_resident_bytes = 0
         self._requests: dict[str, RequestState] = {}
+        self._active_request_count = 0
+        self._active_prefill_count = 0
+        self._active_decode_count = 0
+        self._active_multimodal_request_count = 0
         self._draining = False
         self._last_probe_kind = ""
         self._last_preprocess_latency_ms = 0.0
@@ -197,21 +203,23 @@ class WorkerRegistry:
         runtime_kind, runtime = self._runtime_for_model(resolved)
         estimated = runtime.estimate_resident_bytes(resolved)
         with self._lock:
-            existing_resident_bytes = sum(item.estimated_resident_bytes for item in self._loaded_models.values())
-
-        projected_resident_bytes = existing_resident_bytes + estimated
-        required_process_bytes = projected_resident_bytes + self._memory_headroom_bytes
-        if self._process_memory_budget_bytes > 0 and required_process_bytes > self._process_memory_budget_bytes:
-            raise MemoryBudgetExceeded(
-                budget_bytes=self._process_memory_budget_bytes,
-                headroom_bytes=self._memory_headroom_bytes,
-                projected_resident_bytes=projected_resident_bytes,
-                required_bytes=required_process_bytes,
-            )
+            existing_resident_bytes = self._loaded_model_resident_bytes + self._reserved_model_resident_bytes
+            projected_resident_bytes = existing_resident_bytes + estimated
+            required_process_bytes = projected_resident_bytes + self._memory_headroom_bytes
+            if self._process_memory_budget_bytes > 0 and required_process_bytes > self._process_memory_budget_bytes:
+                raise MemoryBudgetExceeded(
+                    budget_bytes=self._process_memory_budget_bytes,
+                    headroom_bytes=self._memory_headroom_bytes,
+                    projected_resident_bytes=projected_resident_bytes,
+                    required_bytes=required_process_bytes,
+                )
+            self._reserved_model_resident_bytes += estimated
 
         effective_request_budget_bytes = max(0, memory_budget_bytes)
         required_request_bytes = estimated + self._memory_headroom_bytes
         if effective_request_budget_bytes > 0 and required_request_bytes > effective_request_budget_bytes:
+            with self._lock:
+                self._reserved_model_resident_bytes = max(0, self._reserved_model_resident_bytes - estimated)
             raise MemoryBudgetExceeded(
                 budget_bytes=effective_request_budget_bytes,
                 headroom_bytes=self._memory_headroom_bytes,
@@ -219,14 +227,20 @@ class WorkerRegistry:
                 required_bytes=required_request_bytes,
             )
 
-        runtime_model = runtime.load_model(resolved)
-        residency = self._loaded_residency(
-            resolved,
-            pin_on_load=pin_on_load,
-            effective_disk_streaming_mode=requested_disk_streaming_mode,
-        )
+        try:
+            runtime_model = runtime.load_model(resolved)
+            residency = self._loaded_residency(
+                resolved,
+                pin_on_load=pin_on_load,
+                effective_disk_streaming_mode=requested_disk_streaming_mode,
+            )
+        except Exception:
+            with self._lock:
+                self._reserved_model_resident_bytes = max(0, self._reserved_model_resident_bytes - estimated)
+            raise
 
         with self._lock:
+            self._reserved_model_resident_bytes = max(0, self._reserved_model_resident_bytes - estimated)
             handle = f"{resolved.model_id}::{self._next_model_handle}"
             self._next_model_handle += 1
             loaded = LoadedModel(
@@ -239,6 +253,7 @@ class WorkerRegistry:
                 residency=residency,
             )
             self._loaded_models[handle] = loaded
+            self._loaded_model_resident_bytes += estimated
             if runtime_kind in {"transcription", "speech"}:
                 self._last_audio_model_load_latency_ms = float(getattr(runtime_model, "load_latency_ms", 0.0))
             return loaded
@@ -253,12 +268,18 @@ class WorkerRegistry:
 
     @staticmethod
     def _is_sparse_model_request(model_spec: common_pb2.ModelSpec) -> bool:
-        populated_fields = {descriptor.name for descriptor, _ in model_spec.ListFields()}
-        return populated_fields <= {"model_id"}
+        populated_fields = model_spec.ListFields()
+        if not populated_fields:
+            return True
+        return len(populated_fields) == 1 and populated_fields[0][0].name == "model_id"
 
     def unload_model(self, handle: str) -> bool:
         with self._lock:
-            return self._loaded_models.pop(handle, None) is not None
+            loaded = self._loaded_models.pop(handle, None)
+            if loaded is None:
+                return False
+            self._loaded_model_resident_bytes = max(0, self._loaded_model_resident_bytes - loaded.estimated_resident_bytes)
+            return True
 
     def warmup_model(self, handle: str, synthetic_messages=None) -> int | None:
         loaded = self.get_loaded_model(handle)
@@ -324,7 +345,11 @@ class WorkerRegistry:
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
         state = RequestState(request_id=request_id, runtime_kind=runtime_kind)
         with self._lock:
+            existing = self._requests.get(request_id)
+            if existing is not None:
+                self._remove_request_from_counters(existing)
             self._requests[request_id] = state
+            self._add_request_to_counters(state)
         return state
 
     def get_request(self, request_id: str) -> RequestState | None:
@@ -335,11 +360,15 @@ class WorkerRegistry:
         with self._lock:
             state = self._requests.get(request_id)
             if state is not None:
+                self._remove_request_from_counters(state)
                 state.phase = phase
+                self._add_request_to_counters(state)
 
     def finish_request(self, request_id: str) -> None:
         with self._lock:
-            self._requests.pop(request_id, None)
+            state = self._requests.pop(request_id, None)
+            if state is not None:
+                self._remove_request_from_counters(state)
 
     def abort_request(self, request_id: str) -> bool:
         with self._lock:
@@ -352,13 +381,11 @@ class WorkerRegistry:
     def runtime_stats(self) -> runtime_pb2.RuntimeStats:
         cache_stats = self.cache_stats_response().stats
         with self._lock:
-            active_requests = len(self._requests)
-            active_prefills = sum(1 for state in self._requests.values() if state.phase == "prefill")
-            active_decodes = sum(1 for state in self._requests.values() if state.phase == "decode")
-            active_multimodal_requests = sum(
-                1 for state in self._requests.values() if state.runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}
-            )
-            model_resident_bytes = sum(item.estimated_resident_bytes for item in self._loaded_models.values())
+            active_requests = self._active_request_count
+            active_prefills = self._active_prefill_count
+            active_decodes = self._active_decode_count
+            active_multimodal_requests = self._active_multimodal_request_count
+            model_resident_bytes = self._loaded_model_resident_bytes
             cache_resident_bytes = cache_stats.l1_bytes + cache_stats.l2_bytes
             kv_cache_bytes = 0
             peak_allocation_bytes = 0
@@ -436,6 +463,28 @@ class WorkerRegistry:
         stats.peak_allocation_bytes = peak_allocation_bytes
         stats.memory_headroom_bytes = memory_headroom_bytes
         return stats
+
+    @staticmethod
+    def _is_multimodal_request_kind(runtime_kind: str) -> bool:
+        return runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}
+
+    def _add_request_to_counters(self, state: RequestState) -> None:
+        self._active_request_count += 1
+        if state.phase == "prefill":
+            self._active_prefill_count += 1
+        elif state.phase == "decode":
+            self._active_decode_count += 1
+        if self._is_multimodal_request_kind(state.runtime_kind):
+            self._active_multimodal_request_count += 1
+
+    def _remove_request_from_counters(self, state: RequestState) -> None:
+        self._active_request_count = max(0, self._active_request_count - 1)
+        if state.phase == "prefill":
+            self._active_prefill_count = max(0, self._active_prefill_count - 1)
+        elif state.phase == "decode":
+            self._active_decode_count = max(0, self._active_decode_count - 1)
+        if self._is_multimodal_request_kind(state.runtime_kind):
+            self._active_multimodal_request_count = max(0, self._active_multimodal_request_count - 1)
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
         response = cache_pb2.GetCacheStatsResponse()

@@ -6,6 +6,7 @@ docs/product-brief.md
 .runtime
 .claude
 .venv
+.venv-*
 __pycache__/
 .pytest_cache/
 .coverage

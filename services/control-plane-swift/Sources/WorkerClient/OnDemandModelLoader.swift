@@ -2,10 +2,26 @@ import Foundation
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
-enum OnDemandModelLoadError: Error {
+enum OnDemandModelLoadError: Error, Equatable {
     case modelNotReady
     case runtimeCacheMissing
+    case workerRejected(Melix_Worker_V1_ErrorStatus)
     case workerUnavailable
+
+    static func == (lhs: OnDemandModelLoadError, rhs: OnDemandModelLoadError) -> Bool {
+        switch (lhs, rhs) {
+        case (.modelNotReady, .modelNotReady),
+             (.runtimeCacheMissing, .runtimeCacheMissing),
+             (.workerUnavailable, .workerUnavailable):
+            return true
+        case (.workerRejected(let lhsError), .workerRejected(let rhsError)):
+            return lhsError.code == rhsError.code
+                && lhsError.message == rhsError.message
+                && lhsError.details == rhsError.details
+        default:
+            return false
+        }
+    }
 }
 
 enum OnDemandModelLoader {
@@ -112,6 +128,9 @@ enum OnDemandModelLoader {
                 reason: failureReason,
                 memoryBudgetEvidence: memoryBudgetEvidence
             )
+            if response.error.code == "audio_processor_validation_failed" {
+                throw OnDemandModelLoadError.workerRejected(response.error)
+            }
             throw OnDemandModelLoadError.workerUnavailable
         }
 

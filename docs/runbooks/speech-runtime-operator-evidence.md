@@ -95,6 +95,16 @@ If transcription requests fail with `audio_model_download_required`:
 - inspect `.melix-managed-audio-models.json`
 - confirm the managed model root still contains a `managed-model.json` entry for the failing model
 
+If transcription or synthesis first-load requests fail with `audio_processor_validation_failed`:
+
+- inspect the HTTP error `details`
+- confirm `missing_asset_class` is `processor_config`
+- confirm `load_stage` identifies `load_model:processor_asset_preflight`
+- confirm `audio_processor_validation_result` is `0`
+- inspect the managed model directory and verify it contains one of `processor_config.json`,
+  `preprocessor_config.json`, or `feature_extractor_config.json`
+- redownload or reinstall the managed audio model before retrying the request
+
 If synthesis locale evidence regresses:
 
 - inspect `requested_locale`

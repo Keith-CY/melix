@@ -15,8 +15,8 @@ from worker.engine.evaluation_core import EvaluationCore
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.productization.evaluation_schemas import EvaluationCompareJob
 from worker.productization.event_extraction import EventExtractionClientResult
+from worker.productization.evaluation_schemas import EvaluationCompareJob, build_evaluation_sample_record
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
 
@@ -565,6 +565,88 @@ def test_run_local_suite_streams_samples_jsonl_without_read_text(
     assert [sample.extracted_result for sample in run.samples] == ["4", "6"]
 
 
+def test_sample_probe_means_aggregate_multiple_fields_in_one_pass() -> None:
+    class SinglePassSamples:
+        def __init__(self, values: tuple[object, ...]) -> None:
+            self._values = values
+            self.iteration_count = 0
+
+        def __iter__(self):
+            self.iteration_count += 1
+            return iter(self._values)
+
+    field_names = (
+        "sample_render_ms",
+        "inference_ms",
+        "extraction_ms",
+        "validation_ms",
+        "scoring_ms",
+        "raw_response_chars",
+        "extracted_result_chars",
+    )
+    samples = SinglePassSamples(
+        (
+            build_evaluation_sample_record(
+                job_id="eval-0001",
+                suite_id="mmlu",
+                dataset_id="mmlu-dev",
+                sample_id="1",
+                system="",
+                input_text="2+2?",
+                target="4",
+                raw_response="Answer: 4",
+                extracted_result="4",
+                typed_score=1.0,
+                time_s=0.1,
+                extraction_status="extracted",
+                validation_status="validated",
+                failure_reason="",
+                sample_render_ms=1.11111,
+                inference_ms=2.22222,
+                extraction_ms=3.33333,
+                validation_ms=4.44444,
+                scoring_ms=5.55555,
+                raw_response_chars=9,
+                extracted_result_chars=1,
+            ),
+            SimpleNamespace(
+                sample_render_ms=None,
+                inference_ms=0.0,
+                extraction_ms=8.0,
+                validation_ms="",
+                scoring_ms=10.0,
+                raw_response_chars=0,
+                extracted_result_chars=False,
+            ),
+            SimpleNamespace(
+                sample_render_ms=2.22229,
+                inference_ms=4.44449,
+                extraction_ms=6.66669,
+                validation_ms=8.88889,
+                scoring_ms=10.00001,
+                raw_response_chars=12,
+            ),
+        )
+    )
+
+    aggregated = EvaluationCore._sample_probe_means(samples, field_names)
+    expected = {
+        field_name: round(
+            sum(float(getattr(sample, field_name, 0.0) or 0.0) for sample in samples._values)
+            / len(samples._values),
+            4,
+        )
+        for field_name in field_names
+    }
+
+    assert aggregated == expected
+    assert samples.iteration_count == 1
+    assert EvaluationCore._sample_probe_means((), ()) == {}
+    assert EvaluationCore._sample_probe_means((), field_names) == {
+        field_name: 0.0 for field_name in field_names
+    }
+
+
 def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
@@ -609,6 +691,23 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert metrics["eval.mmlu.scored_sample_count"] == 2.0
     assert metrics["eval.mmlu.failure_count"] == 0.0
     assert metrics["eval.mmlu.duration_seconds"] >= 0.0
+    assert metrics["eval.mmlu.sample_render_ms_mean"] == EvaluationCore._sample_probe_mean(
+        run.samples, "sample_render_ms"
+    )
+    assert metrics["eval.mmlu.inference_ms_mean"] == EvaluationCore._sample_probe_mean(
+        run.samples, "inference_ms"
+    )
+    assert metrics["eval.mmlu.extraction_ms_mean"] == EvaluationCore._sample_probe_mean(
+        run.samples, "extraction_ms"
+    )
+    assert metrics["eval.mmlu.validation_ms_mean"] == EvaluationCore._sample_probe_mean(
+        run.samples, "validation_ms"
+    )
+    assert metrics["eval.mmlu.scoring_ms_mean"] == EvaluationCore._sample_probe_mean(
+        run.samples, "scoring_ms"
+    )
+    assert metrics["eval.mmlu.raw_response_chars_mean"] == 9.0
+    assert metrics["eval.mmlu.extracted_result_chars_mean"] == 1.0
     assert run.result.primary_score_name == "typed_score_mean"
     assert run.result.primary_score_value == 1.0
     assert run.result.extraction_success_count == 2
@@ -655,6 +754,31 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert queue_payload["completed_at_unix_ms"] > 0
 
 
+@pytest.mark.parametrize(
+    ("name", "expected_index"),
+    [
+        ("eval-0000", 0),
+        ("eval-0421", 421),
+        ("eval-9999", 9999),
+        ("eval-10000", 10000),
+        ("eval-１２３４", 1234),
+        ("eval-١٢٣٤", 1234),
+        ("eval-123", None),
+        ("eval-²345", None),
+        ("eval-ⅫⅢⅣⅤ", None),
+        ("eval-12x4", None),
+        ("Eval-0001", None),
+        ("eval_0001", None),
+        ("notes", None),
+    ],
+)
+def test_parse_run_directory_index_accepts_melix_ids_and_python_decimal_suffixes(
+    name: str,
+    expected_index: int | None,
+) -> None:
+    assert EvaluationCore._parse_run_directory_index(name) == expected_index
+
+
 def test_next_job_id_primes_from_highest_existing_run_directory(tmp_path: Path) -> None:
     jobs_root = tmp_path / "runs" / "mmlu"
     runs_root = jobs_root / "runs"
@@ -663,13 +787,29 @@ def test_next_job_id_primes_from_highest_existing_run_directory(tmp_path: Path) 
     (runs_root / "notes").mkdir(parents=True)
     (runs_root / "README.txt").write_text("ignore me\n", encoding="utf-8")
     (runs_root / "eval-999x").mkdir(parents=True)
+    (runs_root / "eval-１２３４").mkdir(parents=True)
+    (runs_root / "eval-١٢٣٤").mkdir(parents=True)
 
     runner = EvaluationCore(jobs_root=jobs_root)
 
-    assert runner._next_job_id() == "eval-0004"
-    assert runner._next_job_id() == "eval-0005"
-    assert (runs_root / "eval-0004").is_dir()
-    assert (runs_root / "eval-0005").is_dir()
+    assert runner._next_job_id() == "eval-1235"
+    assert runner._next_job_id() == "eval-1236"
+    assert (runs_root / "eval-1235").is_dir()
+    assert (runs_root / "eval-1236").is_dir()
+
+
+def test_next_job_id_primes_from_rollover_run_directories(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "runs" / "mmlu"
+    runs_root = jobs_root / "runs"
+    (runs_root / "eval-9999").mkdir(parents=True)
+    (runs_root / "eval-10000").mkdir(parents=True)
+
+    runner = EvaluationCore(jobs_root=jobs_root)
+
+    assert runner._next_job_id() == "eval-10001"
+    assert runner._next_job_id() == "eval-10002"
+    assert (runs_root / "eval-10001").is_dir()
+    assert (runs_root / "eval-10002").is_dir()
 
 
 def test_next_job_id_only_scans_existing_runs_once_per_process(

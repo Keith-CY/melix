@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MODULE_PATH = REPO_ROOT / "scripts" / "package_macos_menubar_app.py"
+PACKAGE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "package-self-contained-app.yml"
 
 
 def load_package_macos_app_module():
@@ -77,3 +79,225 @@ def test_main_forwards_packaging_target_and_update_channel(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["packaging_target_id"] == "macos_app_bundle_preview"
+
+
+def test_resolve_built_products_use_direct_debug_candidate_before_glob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    repo_root = tmp_path / "repo"
+    menubar_binary = repo_root / "apps/macos-menubar/.build/debug/melix-menubar"
+    swift_worker_binary = repo_root / "services/mlx-text-worker-swift/.build/debug/melix-text-worker-swift"
+    for binary in (menubar_binary, swift_worker_binary):
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def fail_glob(self: Path, pattern: str):
+        raise AssertionError("direct debug candidate should avoid scanning build triples")
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert module.resolve_built_binary(repo_root) == menubar_binary
+    assert module.resolve_built_swift_text_worker_binary(repo_root) == swift_worker_binary
+
+
+def test_resolve_built_product_falls_back_to_sorted_triple_debug_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    expected = build_root / "arm64-apple-macosx/debug/melix-menubar"
+    later = build_root / "x86_64-apple-macosx/debug/melix-menubar"
+    for binary in (later, expected):
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        Path,
+        "glob",
+        lambda self, pattern: (_ for _ in ()).throw(
+            AssertionError("fallback build-product resolution should use os.scandir instead of Path.glob")
+        ),
+    )
+
+    assert module._resolve_built_product(build_root, "melix-menubar") == expected
+    assert module._resolve_built_product(build_root, "missing-product") is None
+    assert module._resolve_built_product(tmp_path / "missing-build-root", "melix-menubar") is None
+
+
+def test_package_workflow_uses_runtime_only_python_environment_for_bundle() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    runtime_sync = re.search(
+        r"UV_PROJECT_ENVIRONMENT=\"\$GITHUB_WORKSPACE/\.venv-package\".*?uv sync (?P<args>[^\n]+)",
+        workflow,
+        flags=re.DOTALL,
+    )
+    assert runtime_sync is not None
+    sync_args = runtime_sync.group("args")
+    assert "--project services/mlx-worker-python" in sync_args
+    assert "--extra mlx" in sync_args
+    assert "--no-dev" in sync_args
+    assert "--frozen" in sync_args
+    assert re.search(r'PACKAGE_PYTHON="\$GITHUB_WORKSPACE/\.venv-package/bin/python"', workflow)
+    assert "--python-runtime-root" in workflow
+    assert "$PYTHON_RUNTIME_ROOT" in workflow
+    assert "--python-site-packages-path" in workflow
+    assert "$PYTHON_SITE_PACKAGES" in workflow
+
+
+def test_main_resolves_default_build_outputs_and_prints_app_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = load_package_macos_app_module()
+    repo_root = tmp_path / "repo"
+    menubar_binary = repo_root / "apps/macos-menubar/.build/debug/melix-menubar"
+    cli_binary = repo_root / ".build/debug/melix"
+    swift_worker_binary = (
+        repo_root / "services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/melix-text-worker-swift"
+    )
+    python_executable = repo_root / ".venv/bin/python"
+    site_packages = repo_root / ".venv/lib/python3.13/site-packages"
+    for path in (menubar_binary, cli_binary, swift_worker_binary, python_executable):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    site_packages.mkdir(parents=True)
+    seen: dict[str, object] = {}
+
+    def fake_write_unsigned_macos_app_bundle(**kwargs):
+        seen.update(kwargs)
+        return {
+            "app_path": str(tmp_path / "Melix.app"),
+            "packaging_target_id": "macos_app_bundle_preview",
+            "timings": {
+                "write_total_seconds": 0.125,
+            },
+        }
+
+    monkeypatch.setattr(module, "write_unsigned_macos_app_bundle", fake_write_unsigned_macos_app_bundle)
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "package_macos_menubar_app.py",
+            "--repo-root",
+            str(repo_root),
+            "--output-path",
+            str(tmp_path / "Melix.app"),
+        ],
+    )
+
+    assert module.main() == 0
+
+    assert capsys.readouterr().out.strip() == str(tmp_path / "Melix.app")
+    assert seen["executable_path"] == menubar_binary.resolve()
+    assert seen["cli_executable_path"] == cli_binary.resolve()
+    assert seen["swift_text_worker_executable_path"] == swift_worker_binary.resolve()
+    assert seen["python_runtime_root"] == python_executable.resolve().parent.parent
+    assert seen["python_site_packages_path"] == site_packages.resolve()
+
+
+def test_main_records_archive_timing_in_json_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(module, "resolve_built_binary", lambda repo_root: tmp_path / "melix-menubar")
+    monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
+    monkeypatch.setattr(
+        module,
+        "resolve_built_swift_text_worker_binary",
+        lambda repo_root: tmp_path / "melix-text-worker-swift",
+    )
+    monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
+    monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
+
+    def fake_write_unsigned_macos_app_bundle(**kwargs):
+        return {
+            "app_path": str(tmp_path / "Melix.app"),
+            "packaging_target_id": "macos_app_bundle_preview",
+            "timings": {
+                "write_total_seconds": 0.25,
+            },
+        }
+
+    def fake_archive_macos_app_bundle(app_path, requested_archive_path):
+        seen["app_path"] = app_path
+        seen["archive_path"] = requested_archive_path
+        return Path(requested_archive_path)
+
+    monkeypatch.setattr(module, "write_unsigned_macos_app_bundle", fake_write_unsigned_macos_app_bundle)
+    monkeypatch.setattr(module, "archive_macos_app_bundle", fake_archive_macos_app_bundle)
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "package_macos_menubar_app.py",
+            "--repo-root",
+            str(tmp_path / "repo"),
+            "--output-path",
+            str(tmp_path / "Melix.app"),
+            "--archive-path",
+            str(archive_path),
+            "--json",
+        ],
+    )
+
+    assert module.main() == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["archive_path"] == str(archive_path)
+    assert seen["archive_path"] == str(archive_path)
+    assert payload["timings"]["write_total_seconds"] == 0.25
+    assert isinstance(payload["timings"]["archive_seconds"], float)
+    assert payload["timings"]["archive_seconds"] >= 0.0
+    assert payload["timings"]["total_seconds"] >= payload["timings"]["write_total_seconds"]
+
+
+def test_main_requires_write_timing_when_archive_is_requested(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+
+    monkeypatch.setattr(module, "resolve_built_binary", lambda repo_root: tmp_path / "melix-menubar")
+    monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
+    monkeypatch.setattr(
+        module,
+        "resolve_built_swift_text_worker_binary",
+        lambda repo_root: tmp_path / "melix-text-worker-swift",
+    )
+    monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
+    monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
+    monkeypatch.setattr(
+        module,
+        "write_unsigned_macos_app_bundle",
+        lambda **kwargs: {"app_path": str(tmp_path / "Melix.app"), "timings": {}},
+    )
+    monkeypatch.setattr(module, "archive_macos_app_bundle", lambda app_path, requested_archive_path: archive_path)
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "package_macos_menubar_app.py",
+            "--repo-root",
+            str(tmp_path / "repo"),
+            "--output-path",
+            str(tmp_path / "Melix.app"),
+            "--archive-path",
+            str(archive_path),
+            "--json",
+        ],
+    )
+
+    with pytest.raises(KeyError, match="write_total_seconds missing"):
+        module.main()

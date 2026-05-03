@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from functools import lru_cache
 import json
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,6 @@ _REQUEST_PROBE_KEYS = (
     "dflash_rollback_count",
     "dflash_target_hidden_layers",
 )
-_REQUEST_PROBE_KEY_SET = frozenset(_REQUEST_PROBE_KEYS)
 _COUNT_PROBE_KEYS = {
     "speculative_accepted_tokens",
     "speculative_rejected_tokens",
@@ -62,7 +62,16 @@ _EVALUATION_SAMPLE_PROBE_KEYS = (
     "raw_response_chars",
     "extracted_result_chars",
 )
-_EVALUATION_SAMPLE_PROBE_KEY_SET = frozenset(_EVALUATION_SAMPLE_PROBE_KEYS)
+_MATRIX_SUMMARY_METRIC_KEYS = (
+    "request_latency_mean_ms",
+    "request_latency_p95_ms",
+    "ttft_mean_ms",
+    "ttft_p95_ms",
+    "throughput_tokens_per_second",
+    "success_rate",
+    "failed_count",
+)
+_EVALUATION_SUMMARY_METRIC_KEYS = ("failure_count", "duration_seconds")
 _LOWER_IS_BETTER_METRIC_FRAGMENTS = (
     "latency",
     "ttft",
@@ -126,6 +135,8 @@ _METRIC_DIRECTION_BY_KEY = {
 }
 
 _NumericAggregate = tuple[float, int]
+_ProbeAggregateKey = tuple[str, str]
+_BenchmarkLabelCacheKey = tuple[str, str, str, str, str, str]
 
 
 def load_report_input(path: str | Path) -> dict[str, object]:
@@ -271,6 +282,7 @@ def write_report_outputs(
 
 def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
     metrics: dict[str, object] = {}
+    label_cache: dict[_BenchmarkLabelCacheKey, str] = {}
     _collect_runtime_metadata(
         metrics,
         bundle.get("benchmark_jobs", []),
@@ -296,23 +308,17 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
         metrics,
         bundle.get("benchmark_context_rows", []),
         prefix="bench.context",
+        label_cache=label_cache,
     )
     _collect_benchmark_probe_metrics(
         metrics,
         bundle.get("benchmark_batch_rows", []),
         prefix="bench.batch",
+        label_cache=label_cache,
     )
     for row in _dict_rows(bundle.get("benchmark_matrix_summary_rows", [])):
-        label = _matrix_label(row)
-        for key in (
-            "request_latency_mean_ms",
-            "request_latency_p95_ms",
-            "ttft_mean_ms",
-            "ttft_p95_ms",
-            "throughput_tokens_per_second",
-            "success_rate",
-            "failed_count",
-        ):
+        label = _matrix_label(row, label_cache=label_cache)
+        for key in _MATRIX_SUMMARY_METRIC_KEYS:
             value = _float_or_none(row.get(key))
             if value is not None:
                 metrics[f"bench.matrix.{label}.{key}"] = value
@@ -320,6 +326,7 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
         metrics,
         bundle.get("benchmark_matrix_request_rows", []),
         prefix="bench.matrix.request",
+        label_cache=label_cache,
     )
     for row in _dict_rows(bundle.get("evaluation_summary_rows", [])):
         suite_id = str(row.get("suite_id", "")).strip() or "suite"
@@ -327,7 +334,7 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
         score_value = _float_or_none(row.get("primary_score_value"))
         if score_value is not None:
             metrics[f"eval.{suite_id}.{score_name}"] = score_value
-        for key in ("failure_count", "duration_seconds"):
+        for key in _EVALUATION_SUMMARY_METRIC_KEYS:
             value = _float_or_none(row.get(key))
             if value is not None:
                 metrics[f"eval.{suite_id}.{key}"] = value
@@ -352,8 +359,20 @@ def _build_metric_row(
             "direction": direction,
             "status": "missing",
         }
-    baseline_number = _float_or_none(baseline)
-    candidate_number = _float_or_none(candidate)
+    baseline_type = type(baseline)
+    if baseline_type is float:
+        baseline_number = baseline
+    elif baseline_type is int or baseline_type is bool:
+        baseline_number = float(baseline)
+    else:
+        baseline_number = _float_or_none(baseline)
+    candidate_type = type(candidate)
+    if candidate_type is float:
+        candidate_number = candidate
+    elif candidate_type is int or candidate_type is bool:
+        candidate_number = float(candidate)
+    else:
+        candidate_number = _float_or_none(candidate)
     if baseline_number is None or candidate_number is None:
         return {
             "metric": metric_name,
@@ -392,7 +411,11 @@ def _build_metric_row(
 
 
 def _metric_direction(metric_name: str) -> str:
-    metric_key = metric_name.rsplit(".", maxsplit=1)[-1]
+    return _metric_key_direction(metric_name.rsplit(".", maxsplit=1)[-1])
+
+
+@lru_cache(maxsize=None)
+def _metric_key_direction(metric_key: str) -> str:
     known_direction = _METRIC_DIRECTION_BY_KEY.get(metric_key)
     if known_direction is not None:
         return known_direction
@@ -411,7 +434,7 @@ def _collect_runtime_metadata(
     *,
     prefix: str,
 ) -> None:
-    values_by_key: dict[str, set[str]] = {key: set() for key in _RUNTIME_PARAMETER_KEYS}
+    values_by_key: dict[str, set[str]] = {}
     for job in _dict_rows(jobs):
         parameters = job.get("parameters", {})
         if not isinstance(parameters, dict):
@@ -419,8 +442,9 @@ def _collect_runtime_metadata(
         for key in _RUNTIME_PARAMETER_KEYS:
             value = str(parameters.get(key, "")).strip()
             if value:
-                values_by_key[key].add(value)
-    for key, values in values_by_key.items():
+                values_by_key.setdefault(key, set()).add(value)
+    for key in _RUNTIME_PARAMETER_KEYS:
+        values = values_by_key.get(key)
         if values:
             metrics[f"{prefix}.{key}"] = ",".join(sorted(values))
 
@@ -430,31 +454,37 @@ def _collect_benchmark_probe_metrics(
     rows: object,
     *,
     prefix: str,
+    label_cache: dict[_BenchmarkLabelCacheKey, str] | None = None,
 ) -> None:
-    aggregates_by_label: dict[str, dict[str, _NumericAggregate]] = {}
+    aggregate_pairs: dict[_ProbeAggregateKey, _NumericAggregate] = {}
     matrix_label_cache: dict[tuple[object, object, object, object, object], str] = {}
     for row in _dict_rows(rows):
         label = ""
-        for key, raw_value in row.items():
-            if key not in _REQUEST_PROBE_KEY_SET:
+        for key in _REQUEST_PROBE_KEYS:
+            if key not in row:
                 continue
-            if isinstance(raw_value, (int, float)):
+            raw_value = row[key]
+            raw_value_type = type(raw_value)
+            if raw_value_type is float:
+                value = raw_value
+            elif raw_value_type is int or raw_value_type is bool:
                 value = float(raw_value)
             else:
                 value = _float_or_none(raw_value)
             if value is not None:
                 if not label:
-                    label = _benchmark_probe_label(row, matrix_label_cache=matrix_label_cache)
-                _update_probe_aggregates_by_label(
-                    aggregates_by_label,
+                    label = _benchmark_probe_label(
+                        row,
+                        label_cache=label_cache,
+                        matrix_label_cache=matrix_label_cache,
+                    )
+                _update_probe_aggregate_pairs(
+                    aggregate_pairs,
                     label=label,
                     key=key,
                     value=value,
                 )
-    for label, aggregates_by_key in aggregates_by_label.items():
-        for key, aggregate in aggregates_by_key.items():
-            suffix, value = _finalize_numeric_aggregate(key, aggregate)
-            metrics[f"{prefix}.{label}.{key}_{suffix}"] = value
+    metrics.update(_finalize_probe_aggregates(aggregate_pairs, prefix=prefix))
 
 
 def _collect_evaluation_sample_probe_metrics(
@@ -465,10 +495,14 @@ def _collect_evaluation_sample_probe_metrics(
     failure_stage_counts: dict[tuple[str, str], int] = {}
     for row in _dict_rows(rows):
         suite_id = str(row.get("suite_id", "")).strip() or "suite"
-        for key, raw_value in row.items():
-            if key not in _EVALUATION_SAMPLE_PROBE_KEY_SET:
+        for key in _EVALUATION_SAMPLE_PROBE_KEYS:
+            if key not in row:
                 continue
-            if isinstance(raw_value, (int, float)):
+            raw_value = row[key]
+            raw_value_type = type(raw_value)
+            if raw_value_type is float:
+                value = raw_value
+            elif raw_value_type is int or raw_value_type is bool:
                 value = float(raw_value)
             else:
                 value = _float_or_none(raw_value)
@@ -484,8 +518,8 @@ def _collect_evaluation_sample_probe_metrics(
                 failure_stage_counts.get((suite_id, failure_stage), 0) + 1
             )
     for (suite_id, key), aggregate in aggregates_by_suite_and_key.items():
-        _, value = _finalize_numeric_aggregate(key, aggregate)
-        metrics[f"eval.sample.{suite_id}.{key}_mean"] = value
+        total, count = aggregate
+        metrics[f"eval.sample.{suite_id}.{key}_mean"] = total / count
     for (suite_id, failure_stage), count in failure_stage_counts.items():
         metrics[f"eval.sample.{suite_id}.failure_stage.{failure_stage}.failure_count"] = float(count)
 
@@ -497,6 +531,17 @@ def _update_numeric_aggregate(
     if aggregate is None:
         return (value, 1)
     return (aggregate[0] + value, aggregate[1] + 1)
+
+
+def _update_probe_aggregate_pairs(
+    aggregate_pairs: dict[_ProbeAggregateKey, _NumericAggregate],
+    *,
+    label: str,
+    key: str,
+    value: float,
+) -> None:
+    aggregate_key = (label, key)
+    aggregate_pairs[aggregate_key] = _update_numeric_aggregate(aggregate_pairs.get(aggregate_key), value)
 
 
 def _update_probe_aggregates_by_label(
@@ -511,6 +556,18 @@ def _update_probe_aggregates_by_label(
         aggregates_by_key = {}
         aggregates_by_label[label] = aggregates_by_key
     aggregates_by_key[key] = _update_numeric_aggregate(aggregates_by_key.get(key), value)
+
+
+def _finalize_probe_aggregates(
+    aggregate_pairs: dict[_ProbeAggregateKey, _NumericAggregate],
+    *,
+    prefix: str,
+) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    for (label, key), aggregate in aggregate_pairs.items():
+        suffix, value = _finalize_numeric_aggregate(key, aggregate)
+        metrics[f"{prefix}.{label}.{key}_{suffix}"] = value
+    return metrics
 
 
 def _finalize_numeric_aggregate(
@@ -540,6 +597,7 @@ def _aggregate_probe_values(key: str, values: list[float]) -> tuple[str, float]:
 
 def _benchmark_probe_label(
     row: dict[str, object],
+    label_cache: dict[_BenchmarkLabelCacheKey, str] | None = None,
     *,
     matrix_label_cache: dict[tuple[object, object, object, object, object], str] | None = None,
 ) -> str:
@@ -555,26 +613,64 @@ def _benchmark_probe_label(
             try:
                 return matrix_label_cache[cache_key]
             except KeyError:
-                label = _matrix_label(row)
+                label = _matrix_label(row, label_cache=label_cache)
                 matrix_label_cache[cache_key] = label
                 return label
             except TypeError:
                 pass
-        return _matrix_label(row)
-    suite = _label_part(row.get("suite", row.get("suite_id", "suite")))
-    context_length = _label_part(row.get("context_length", 0))
-    generation_length = _label_part(row.get("generation_length", 0))
-    batch_size = _label_part(row.get("batch_size", 0))
-    return f"{suite}.ctx{context_length}.gen{generation_length}.b{batch_size}"
+        return _matrix_label(row, label_cache=label_cache)
+    key = (
+        "bench",
+        str(row.get("suite", row.get("suite_id", "suite"))),
+        str(row.get("context_length", 0)),
+        str(row.get("generation_length", 0)),
+        str(row.get("batch_size", 0)),
+        "",
+    )
+    return _cached_benchmark_label(key, label_cache=label_cache)
 
 
-def _matrix_label(row: dict[str, object]) -> str:
-    suite_id = _label_part(row.get("suite_id", "suite"))
-    context_length = _label_part(row.get("context_length", 0))
-    generation_length = _label_part(row.get("generation_length", 0))
-    batch_size = _label_part(row.get("batch_size", 0))
-    concurrency_level = _label_part(row.get("concurrency_level", 0))
-    return f"{suite_id}.ctx{context_length}.gen{generation_length}.b{batch_size}.c{concurrency_level}"
+def _matrix_label(
+    row: dict[str, object],
+    label_cache: dict[_BenchmarkLabelCacheKey, str] | None = None,
+) -> str:
+    key = (
+        "matrix",
+        str(row.get("suite_id", "suite")),
+        str(row.get("context_length", 0)),
+        str(row.get("generation_length", 0)),
+        str(row.get("batch_size", 0)),
+        str(row.get("concurrency_level", 0)),
+    )
+    return _cached_benchmark_label(key, label_cache=label_cache)
+
+
+def _cached_benchmark_label(
+    key: _BenchmarkLabelCacheKey,
+    *,
+    label_cache: dict[_BenchmarkLabelCacheKey, str] | None,
+) -> str:
+    if label_cache is None:
+        return _build_benchmark_label(key)
+    cached = label_cache.get(key)
+    if cached is not None:
+        return cached
+    label = _build_benchmark_label(key)
+    label_cache[key] = label
+    return label
+
+
+def _build_benchmark_label(key: _BenchmarkLabelCacheKey) -> str:
+    kind, suite, context_length, generation_length, batch_size, concurrency_level = key
+    parts = [
+        suite.replace(" ", "_"),
+        f"ctx{_label_part(context_length)}",
+        f"gen{_label_part(generation_length)}",
+        f"b{_label_part(batch_size)}",
+    ]
+    if kind == "matrix":
+        parts.append(f"c{_label_part(concurrency_level)}")
+    return ".".join(parts)
 
 
 def _label_part(value: object) -> str:
@@ -599,15 +695,18 @@ def _dict_rows(value: object) -> Iterator[dict[str, object]]:
 
 
 def _float_or_none(value: object) -> float | None:
-    if isinstance(value, bool):
+    value_type = type(value)
+    if value_type is float:
+        return value
+    if value_type is int or value_type is bool:
         return float(value)
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str) and value.strip():
-        try:
-            return float(value)
-        except ValueError:
-            return None
+    if isinstance(value, str):
+        stripped_value = value.strip()
+        if stripped_value:
+            try:
+                return float(stripped_value)
+            except ValueError:
+                return None
     return None
 
 

@@ -61,10 +61,7 @@ class EvaluationStore:
             jsonl_path = run_root / "evaluation-samples.jsonl"
             self._write_jsonl(jsonl_path, (sample.to_dict() for sample in samples))
             csv_path = run_root / "evaluation-samples.csv"
-            csv_path.write_text(
-                self._samples_csv(samples),
-                encoding="utf-8",
-            )
+            self._write_samples_csv(csv_path, samples)
             persisted["samples_jsonl"] = jsonl_path
             persisted["samples_csv"] = csv_path
         return persisted
@@ -94,10 +91,7 @@ class EvaluationStore:
         )
 
         summary_csv_path = run_root / "evaluation-compare-summary.csv"
-        summary_csv_path.write_text(
-            self._compare_summary_csv(job=job, summaries=summaries),
-            encoding="utf-8",
-        )
+        self._write_compare_summary_csv(summary_csv_path, job=job, summaries=summaries)
 
         samples_jsonl_path = run_root / "evaluation-compare-samples.jsonl"
         self._write_jsonl(samples_jsonl_path, (sample.to_dict() for sample in samples))
@@ -119,9 +113,34 @@ class EvaluationStore:
     @staticmethod
     def _write_jsonl(path: Path, rows: Iterable[object]) -> None:
         with path.open("w", encoding="utf-8") as handle:
+            write = handle.write
+            dumps = json.dumps
             for row in rows:
-                handle.write(json.dumps(row))
-                handle.write("\n")
+                write(dumps(row) + "\n")
+
+    @staticmethod
+    def _write_samples_csv(path: Path, samples: tuple[EvaluationSample, ...]) -> None:
+        with path.open("w", encoding="utf-8") as handle:
+            write = handle.write
+            sample_csv_row = EvaluationStore._sample_csv_row
+            write(",".join(EvaluationStore._samples_csv_header()) + "\n")
+            for sample in samples:
+                write(sample_csv_row(sample) + "\n")
+
+    @staticmethod
+    def _write_compare_summary_csv(
+        path: Path,
+        *,
+        job: EvaluationCompareJob,
+        summaries: tuple[EvaluationCompareSummary, ...],
+    ) -> None:
+        lineage_by_target_id = {entry.target_model_id: entry for entry in job.target_lineage}
+        with path.open("w", encoding="utf-8") as handle:
+            write = handle.write
+            compare_summary_csv_row = EvaluationStore._compare_summary_csv_row
+            write(",".join(EvaluationStore._compare_summary_csv_header()) + "\n")
+            for summary in summaries:
+                write(compare_summary_csv_row(job=job, summary=summary, lineage_by_target_id=lineage_by_target_id) + "\n")
 
     @staticmethod
     def _summary_payload(*, job: EvaluationJob, result: EvaluationResult) -> dict[str, object]:
@@ -211,12 +230,26 @@ class EvaluationStore:
         job: EvaluationCompareJob,
         summaries: tuple[EvaluationCompareSummary, ...],
     ) -> str:
+        lineage_by_target_id = {entry.target_model_id: entry for entry in job.target_lineage}
+        rows = [",".join(EvaluationStore._compare_summary_csv_header())]
+        for summary in summaries:
+            rows.append(
+                EvaluationStore._compare_summary_csv_row(
+                    job=job,
+                    summary=summary,
+                    lineage_by_target_id=lineage_by_target_id,
+                )
+            )
+        return "\n".join(rows) + "\n"
+
+    @staticmethod
+    def _compare_summary_csv_header() -> list[str]:
         # Module 2 adds two trailing columns carrying adapter lineage. New
         # columns land at the end of the header row so downstream parsers
         # keyed on column order preserve their existing behavior for the
         # first 21 columns; the two new columns are empty for registered
         # (non-adapter) targets.
-        header = [
+        return [
             "job_id",
             "base_model_id",
             "target_model_id",
@@ -241,49 +274,57 @@ class EvaluationStore:
             "target_adapter_manifest_path",
             "target_adapter_set_hash",
         ]
-        # Index lineage entries by target_model_id for O(1) lookup during
-        # row emission. Targets without a lineage record (legacy jobs or
-        # registered models) get empty-string adapter columns.
-        lineage_by_target_id = {entry.target_model_id: entry for entry in job.target_lineage}
-        rows = [",".join(header)]
-        for summary in summaries:
-            bootstrap_interval = summary.statistical_evidence.get("bootstrap", {})
-            analytical_interval = summary.statistical_evidence.get("analytical", {})
-            lineage = lineage_by_target_id.get(summary.target_model_id)
-            rows.append(
-                ",".join(
-                    [
-                        EvaluationStore._csv_field(job.job_id),
-                        EvaluationStore._csv_field(job.base_model_id),
-                        EvaluationStore._csv_field(summary.target_model_id),
-                        EvaluationStore._csv_field(job.suite_id),
-                        EvaluationStore._csv_field(job.dataset_id),
-                        EvaluationStore._csv_field(str(job.sample_size)),
-                        EvaluationStore._csv_field(str(summary.win_count)),
-                        EvaluationStore._csv_field(str(summary.loss_count)),
-                        EvaluationStore._csv_field(str(summary.tie_count)),
-                        EvaluationStore._csv_field(str(summary.regression_count)),
-                        EvaluationStore._csv_field(str(summary.base_accuracy)),
-                        EvaluationStore._csv_field(str(summary.target_accuracy)),
-                        EvaluationStore._csv_field(str(summary.delta_accuracy)),
-                        EvaluationStore._csv_field(str(summary.effect_threshold)),
-                        EvaluationStore._csv_field(summary.verdict),
-                        EvaluationStore._csv_field(str(bootstrap_interval.get("lower_bound", ""))),
-                        EvaluationStore._csv_field(str(bootstrap_interval.get("upper_bound", ""))),
-                        EvaluationStore._csv_field(str(analytical_interval.get("lower_bound", ""))),
-                        EvaluationStore._csv_field(str(analytical_interval.get("upper_bound", ""))),
-                        EvaluationStore._csv_field(str(summary.duration_seconds)),
-                        EvaluationStore._csv_field(str(job.created_at_unix_ms)),
-                        EvaluationStore._csv_field(lineage.adapter_manifest_path if lineage else ""),
-                        EvaluationStore._csv_field(lineage.adapter_set_hash if lineage else ""),
-                    ]
-                )
-            )
-        return "\n".join(rows) + "\n"
+
+    @staticmethod
+    def _compare_summary_csv_row(
+        *,
+        job: EvaluationCompareJob,
+        summary: EvaluationCompareSummary,
+        lineage_by_target_id: dict[str, object] | None = None,
+    ) -> str:
+        bootstrap_interval = summary.statistical_evidence.get("bootstrap", {})
+        analytical_interval = summary.statistical_evidence.get("analytical", {})
+        if lineage_by_target_id is None:
+            lineage_by_target_id = {entry.target_model_id: entry for entry in job.target_lineage}
+        lineage = lineage_by_target_id.get(summary.target_model_id)
+        return ",".join(
+            [
+                EvaluationStore._csv_field(job.job_id),
+                EvaluationStore._csv_field(job.base_model_id),
+                EvaluationStore._csv_field(summary.target_model_id),
+                EvaluationStore._csv_field(job.suite_id),
+                EvaluationStore._csv_field(job.dataset_id),
+                EvaluationStore._csv_field(str(job.sample_size)),
+                EvaluationStore._csv_field(str(summary.win_count)),
+                EvaluationStore._csv_field(str(summary.loss_count)),
+                EvaluationStore._csv_field(str(summary.tie_count)),
+                EvaluationStore._csv_field(str(summary.regression_count)),
+                EvaluationStore._csv_field(str(summary.base_accuracy)),
+                EvaluationStore._csv_field(str(summary.target_accuracy)),
+                EvaluationStore._csv_field(str(summary.delta_accuracy)),
+                EvaluationStore._csv_field(str(summary.effect_threshold)),
+                EvaluationStore._csv_field(summary.verdict),
+                EvaluationStore._csv_field(str(bootstrap_interval.get("lower_bound", ""))),
+                EvaluationStore._csv_field(str(bootstrap_interval.get("upper_bound", ""))),
+                EvaluationStore._csv_field(str(analytical_interval.get("lower_bound", ""))),
+                EvaluationStore._csv_field(str(analytical_interval.get("upper_bound", ""))),
+                EvaluationStore._csv_field(str(summary.duration_seconds)),
+                EvaluationStore._csv_field(str(job.created_at_unix_ms)),
+                EvaluationStore._csv_field(lineage.adapter_manifest_path if lineage else ""),
+                EvaluationStore._csv_field(lineage.adapter_set_hash if lineage else ""),
+            ]
+        )
 
     @staticmethod
     def _samples_csv(samples: tuple[EvaluationSample, ...]) -> str:
-        header = [
+        rows = [",".join(EvaluationStore._samples_csv_header())]
+        for sample in samples:
+            rows.append(EvaluationStore._sample_csv_row(sample))
+        return "\n".join(rows) + "\n"
+
+    @staticmethod
+    def _samples_csv_header() -> list[str]:
+        return [
             "id",
             "task_kind",
             "target",
@@ -317,47 +358,46 @@ class EvaluationStore:
             "extracted_result_chars",
             "failure_stage",
         ]
-        rows = [",".join(header)]
-        for sample in samples:
-            rows.append(
-                ",".join(
-                    [
-                        EvaluationStore._csv_field(sample.sample_id),
-                        EvaluationStore._csv_field(sample.task_kind),
-                        EvaluationStore._csv_field(sample.target),
-                        EvaluationStore._csv_field(sample.extracted_result),
-                        EvaluationStore._csv_field(sample.input_text),
-                        EvaluationStore._csv_field(sample.raw_response),
-                        EvaluationStore._csv_field(str(sample.typed_score)),
-                        EvaluationStore._csv_field(str(sample.time_s)),
-                        EvaluationStore._csv_field(sample.extraction_status),
-                        EvaluationStore._csv_field(sample.validation_status),
-                        EvaluationStore._csv_field(sample.failure_reason),
-                        EvaluationStore._csv_field(",".join(sample.input_modalities)),
-                        EvaluationStore._csv_field(",".join(sample.media_references)),
-                        EvaluationStore._csv_field(sample.code_language),
-                        EvaluationStore._csv_field(sample.code_entry_point),
-                        EvaluationStore._csv_field(sample.code_compile_status),
-                        EvaluationStore._csv_field(sample.code_runtime_status),
-                        EvaluationStore._csv_field(sample.code_timeout_status),
-                        EvaluationStore._csv_field(sample.code_test_status),
-                        EvaluationStore._csv_field(str(sample.code_tests_passed)),
-                        EvaluationStore._csv_field(str(sample.code_tests_total)),
-                        EvaluationStore._csv_field(sample.code_failure_detail),
-                        EvaluationStore._csv_field(sample.category_label),
-                        EvaluationStore._csv_field(sample.subject_label),
-                        EvaluationStore._csv_field(str(sample.sample_render_ms)),
-                        EvaluationStore._csv_field(str(sample.inference_ms)),
-                        EvaluationStore._csv_field(str(sample.extraction_ms)),
-                        EvaluationStore._csv_field(str(sample.validation_ms)),
-                        EvaluationStore._csv_field(str(sample.scoring_ms)),
-                        EvaluationStore._csv_field(str(sample.raw_response_chars)),
-                        EvaluationStore._csv_field(str(sample.extracted_result_chars)),
-                        EvaluationStore._csv_field(sample.failure_stage),
-                    ]
-                )
-            )
-        return "\n".join(rows) + "\n"
+
+    @staticmethod
+    def _sample_csv_row(sample: EvaluationSample) -> str:
+        csv_field = EvaluationStore._csv_field
+        return ",".join(
+            [
+                csv_field(sample.sample_id),
+                csv_field(sample.task_kind),
+                csv_field(sample.target),
+                csv_field(sample.extracted_result),
+                csv_field(sample.input_text),
+                csv_field(sample.raw_response),
+                csv_field(str(sample.typed_score)),
+                csv_field(str(sample.time_s)),
+                csv_field(sample.extraction_status),
+                csv_field(sample.validation_status),
+                csv_field(sample.failure_reason),
+                csv_field(",".join(sample.input_modalities)),
+                csv_field(",".join(sample.media_references)),
+                csv_field(sample.code_language),
+                csv_field(sample.code_entry_point),
+                csv_field(sample.code_compile_status),
+                csv_field(sample.code_runtime_status),
+                csv_field(sample.code_timeout_status),
+                csv_field(sample.code_test_status),
+                csv_field(str(sample.code_tests_passed)),
+                csv_field(str(sample.code_tests_total)),
+                csv_field(sample.code_failure_detail),
+                csv_field(sample.category_label),
+                csv_field(sample.subject_label),
+                csv_field(str(sample.sample_render_ms)),
+                csv_field(str(sample.inference_ms)),
+                csv_field(str(sample.extraction_ms)),
+                csv_field(str(sample.validation_ms)),
+                csv_field(str(sample.scoring_ms)),
+                csv_field(str(sample.raw_response_chars)),
+                csv_field(str(sample.extracted_result_chars)),
+                csv_field(sample.failure_stage),
+            ]
+        )
 
     @staticmethod
     def _csv_field(value: str) -> str:

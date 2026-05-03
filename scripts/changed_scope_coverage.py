@@ -10,42 +10,63 @@ import subprocess
 import sys
 
 
-def _changed_lines(repo_root: Path, rel_path: str) -> set[int]:
-    proc = subprocess.run(
-        ["git", "diff", "--unified=0", "--", rel_path],
-        cwd=repo_root,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    changed: set[int] = set()
+def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
+    changed_by_path: dict[str, set[int]] = {}
+    current_path: str | None = None
     new_line: int | None = None
-    for line in proc.stdout.splitlines():
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            match = re.match(r"diff --git a/(.+) b/(.+)", line)
+            current_path = None if match is None else match.group(2)
+            if current_path is not None:
+                changed_by_path.setdefault(current_path, set())
+            new_line = None
+            continue
         if line.startswith("@@"):
             match = re.search(r"\+(\d+)(?:,(\d+))?", line)
             if match is None:
                 continue
             new_line = int(match.group(1))
             continue
-        if new_line is None or line.startswith("+++") or line.startswith("---"):
+        if current_path is None or new_line is None:
+            continue
+        if line.startswith("\\ "):
+            continue
+        if re.match(r"\+\+\+ (?:b/|/dev/null)", line) or re.match(r"--- (?:a/|/dev/null)", line):
             continue
         if line.startswith("+"):
-            changed.add(new_line)
+            changed_by_path[current_path].add(new_line)
             new_line += 1
         elif line.startswith("-"):
             continue
         else:
             new_line += 1
-    return changed
+    return changed_by_path
 
 
-def _measurable_changed_lines(repo_root: Path, coverage_payload: dict[str, object], rel_path: str) -> tuple[list[int], list[int], list[int]]:
+def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, set[int]]:
+    proc = subprocess.run(
+        ["git", "diff", "--unified=0", "--", *rel_paths],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    changed_by_path = _parse_changed_lines(proc.stdout)
+    return {rel_path: changed_by_path.get(rel_path, set()) for rel_path in rel_paths}
+
+
+def _measurable_changed_lines(
+    repo_root: Path,
+    coverage_payload: dict[str, object],
+    rel_path: str,
+    changed: set[int],
+) -> tuple[list[int], list[int], list[int]]:
     entry = coverage_payload["files"][rel_path]
     executed = set(entry["executed_lines"])
     missing = set(entry["missing_lines"])
     measured = executed | missing
     source_lines = (repo_root / rel_path).read_text(encoding="utf-8").splitlines()
-    changed = _changed_lines(repo_root, rel_path)
     measurable = [
         line_no
         for line_no in sorted(changed)
@@ -66,12 +87,18 @@ def main() -> int:
 
     repo_root = Path.cwd()
     coverage_payload = json.loads(Path(args.coverage_json).read_text(encoding="utf-8"))
+    changed_lines_by_path = _changed_lines_by_path(repo_root, args.paths)
 
     total_measurable = 0
     total_covered = 0
     total_missed = 0
     for rel_path in args.paths:
-        measurable, covered, missed = _measurable_changed_lines(repo_root, coverage_payload, rel_path)
+        measurable, covered, missed = _measurable_changed_lines(
+            repo_root,
+            coverage_payload,
+            rel_path,
+            changed_lines_by_path.get(rel_path, set()),
+        )
         total_measurable += len(measurable)
         total_covered += len(covered)
         total_missed += len(missed)

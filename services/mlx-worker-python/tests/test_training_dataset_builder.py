@@ -634,17 +634,31 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
     def fail_generic_token_counter(sample: dict[str, object], format_name: str) -> tuple[int, int]:
         raise AssertionError(f"prompt_completion token stats should use the direct fast path ({format_name=})")
 
+    def fail_mean_value(values: list[int]) -> float:
+        raise AssertionError(f"prompt_completion token stats should reuse collected totals ({values=})")
+
+    class SinglePassPromptCompletionSamples:
+        def __init__(self) -> None:
+            self.iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            if self.iterations > 1:
+                raise AssertionError("prompt_completion token stats should consume the iterable only once")
+            return iter(
+                [
+                    {"prompt": "a b c", "completion": "d e"},
+                    {"prompt": "f", "completion": "g h i j"},
+                    {"prompt": "k l", "completion": "m"},
+                    {"prompt": "n o p q", "completion": "r s t"},
+                ]
+            )
+
     monkeypatch.setattr(training_dataset_module, "_percentile_value", fail_percentile_value)
     monkeypatch.setattr(training_dataset_module, "_sample_token_counts", fail_generic_token_counter)
+    monkeypatch.setattr(training_dataset_module, "_mean_value", fail_mean_value)
 
-    prompt_completion_samples = iter(
-        [
-            {"prompt": "a b c", "completion": "d e"},
-            {"prompt": "f", "completion": "g h i j"},
-            {"prompt": "k l", "completion": "m"},
-            {"prompt": "n o p q", "completion": "r s t"},
-        ]
-    )
+    prompt_completion_samples = SinglePassPromptCompletionSamples()
 
     assert training_dataset_module._build_token_stats(
         prompt_completion_samples,
@@ -665,6 +679,10 @@ def test_build_token_stats_reuses_single_sorted_pass_per_token_series(monkeypatc
         "total_tokens_p95": 5,
         "total_tokens_max": 7,
     }
+    assert prompt_completion_samples.iterations == 1
+    with pytest.raises(AssertionError, match="reuse collected totals"):
+        fail_mean_value([])
+    assert training_dataset_module._mean_value_from_total(0, 0) == 0.0
 
     monkeypatch.undo()
     assert training_dataset_module._build_token_stats(
@@ -759,6 +777,183 @@ def test_build_token_stats_skips_quality_only_work(monkeypatch: pytest.MonkeyPat
         "total_tokens_p95": 4,
         "total_tokens_max": 4,
     }
+
+
+def test_build_quality_and_token_stats_caps_retained_examples_but_preserves_total_counts() -> None:
+    repeated_sample = {"prompt": "same text", "completion": "same text"}
+
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        [dict(repeated_sample) for _ in range(12)],
+        "prompt_completion",
+    )
+
+    assert quality == {
+        "duplicate_count": 11,
+        "duplicate_sample_indices": list(range(1, 11)),
+        "dirty_count": 12,
+        "dirty_samples": [
+            {"index": index, "reasons": ["duplicate_prompt_completion"]}
+            for index in range(10)
+        ],
+    }
+    assert token_stats["sample_count"] == 12
+    assert token_stats["prompt_tokens_mean"] == 2.0
+    assert token_stats["prompt_tokens_p95"] == 2
+    assert token_stats["total_tokens_max"] == 4
+
+
+def test_prompt_completion_dirty_sample_reasons_match_generic_quality_rules() -> None:
+    samples = [
+        {"prompt": "hello", "completion": "world"},
+        {"prompt": "same text", "completion": " same text "},
+        {"prompt": "bad\x00prompt", "completion": "clean"},
+        {"prompt": "bad\x00same", "completion": "bad\x00same"},
+    ]
+
+    for sample in samples:
+        assert training_dataset_module._prompt_completion_dirty_sample_reasons(
+            sample
+        ) == training_dataset_module._dirty_sample_reasons(sample)
+
+
+def test_build_quality_and_token_stats_uses_prompt_completion_fast_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_generic_token_counter(sample: dict[str, object], format_name: str) -> tuple[int, int]:
+        raise AssertionError(f"prompt_completion quality stats should use the direct fast path ({format_name=}, {sample=})")
+
+    monkeypatch.setattr(training_dataset_module, "_sample_token_counts", fail_generic_token_counter)
+
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        [
+            {"prompt": "a b c", "completion": "d e"},
+            {"prompt": "f", "completion": "g h i j"},
+            {"prompt": "k l", "completion": "m"},
+            {"prompt": "n o p q", "completion": "r s t"},
+        ],
+        "prompt_completion",
+    )
+
+    assert quality == {
+        "duplicate_count": 0,
+        "duplicate_sample_indices": [],
+        "dirty_count": 0,
+        "dirty_samples": [],
+    }
+    assert token_stats == {
+        "estimator": "whitespace_v1",
+        "sample_count": 4,
+        "prompt_tokens_mean": 2.5,
+        "prompt_tokens_p50": 2,
+        "prompt_tokens_p95": 3,
+        "prompt_tokens_max": 4,
+        "completion_tokens_mean": 2.5,
+        "completion_tokens_p50": 2,
+        "completion_tokens_p95": 3,
+        "completion_tokens_max": 4,
+        "total_tokens_mean": 5.0,
+        "total_tokens_p50": 5,
+        "total_tokens_p95": 5,
+        "total_tokens_max": 7,
+    }
+
+    monkeypatch.undo()
+    assert training_dataset_module._build_quality_and_token_stats(
+        [{"text": "alpha beta gamma"}, {"text": "delta"}],
+        "text_completion",
+    )[1] == {
+        "estimator": "whitespace_v1",
+        "sample_count": 2,
+        "prompt_tokens_mean": 0.0,
+        "prompt_tokens_p50": 0,
+        "prompt_tokens_p95": 0,
+        "prompt_tokens_max": 0,
+        "completion_tokens_mean": 2.0,
+        "completion_tokens_p50": 1,
+        "completion_tokens_p95": 1,
+        "completion_tokens_max": 3,
+        "total_tokens_mean": 2.0,
+        "total_tokens_p50": 1,
+        "total_tokens_p95": 1,
+        "total_tokens_max": 3,
+    }
+
+
+def test_build_quality_and_token_stats_uses_prompt_completion_duplicate_key_fast_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_generic_digest(sample: dict[str, object]) -> bytes:
+        raise AssertionError(f"normalized prompt_completion samples should not hash JSON digests ({sample=})")
+
+    monkeypatch.setattr(training_dataset_module, "_canonical_sample_digest", fail_generic_digest)
+
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        [
+            {"prompt": "same text", "completion": "answer"},
+            {"prompt": "same text", "completion": "answer"},
+            {"prompt": "different", "completion": "answer"},
+        ],
+        "prompt_completion",
+    )
+
+    assert quality == {
+        "duplicate_count": 1,
+        "duplicate_sample_indices": [1],
+        "dirty_count": 0,
+        "dirty_samples": [],
+    }
+    assert token_stats["sample_count"] == 3
+
+
+def test_build_quality_and_token_stats_falls_back_to_generic_digest_for_non_normalized_prompt_completion_samples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    digested_samples: list[dict[str, object]] = []
+    original_digest = training_dataset_module._canonical_sample_digest
+
+    def tracking_digest(sample: dict[str, object]) -> bytes:
+        digested_samples.append(sample)
+        return original_digest(sample)
+
+    monkeypatch.setattr(training_dataset_module, "_canonical_sample_digest", tracking_digest)
+
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        [
+            {"prompt": "same text", "completion": "answer", "metadata": "a"},
+            {"prompt": "same text", "completion": "answer", "metadata": "b"},
+        ],
+        "prompt_completion",
+    )
+
+    assert digested_samples == [
+        {"prompt": "same text", "completion": "answer", "metadata": "a"},
+        {"prompt": "same text", "completion": "answer", "metadata": "b"},
+    ]
+    assert quality == {
+        "duplicate_count": 0,
+        "duplicate_sample_indices": [],
+        "dirty_count": 0,
+        "dirty_samples": [],
+    }
+    assert token_stats["sample_count"] == 2
+
+
+def test_summarize_token_values_preserves_input_order_by_default() -> None:
+    values = [4, 1, 3, 2]
+
+    summary = training_dataset_module._summarize_token_values(values, total=10)
+
+    assert summary == {"mean": 2.5, "p50": 2, "p95": 3, "max": 4}
+    assert values == [4, 1, 3, 2]
+
+
+def test_summarize_token_values_can_sort_temporary_lists_in_place() -> None:
+    values = [4, 1, 3, 2]
+
+    summary = training_dataset_module._summarize_token_values(values, total=10, sort_in_place=True)
+
+    assert summary == {"mean": 2.5, "p50": 2, "p95": 3, "max": 4}
+    assert values == [1, 2, 3, 4]
 
 
 def test_resolve_dataset_build_source_reuses_existing_package_sample_lists(

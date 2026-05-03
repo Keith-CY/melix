@@ -1000,9 +1000,11 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
 
-        let view = hostView(DesktopModelRegistryEntriesView(viewModel: viewModel))
+        let registryView = DesktopModelRegistryEntriesView(viewModel: viewModel)
+        _ = hostView(registryView)
 
-        _ = view
+        #expect(registryView.entries.isEmpty)
+        #expect(registryView.selectedCard == nil)
         #expect(viewModel.modelRegistryEntries.isEmpty)
         #expect(viewModel.selectedHubModelCard == nil)
     }
@@ -4058,25 +4060,177 @@ struct DesktopFoundationViewTests {
         """)
 
         #expect(blocks == [
-            .paragraph("Intro **bold** and _italic_ with `code`."),
-            .unorderedList(["one", "two"]),
-            .orderedList(["first", "second"]),
+            .paragraph("Intro **bold** and _italic_ with `code`\\."),
+            .unorderedList([
+                DesktopChatMarkdownListItem(text: "one"),
+                DesktopChatMarkdownListItem(text: "two"),
+            ]),
+            .orderedList(start: 1, items: [
+                DesktopChatMarkdownListItem(text: "first"),
+                DesktopChatMarkdownListItem(text: "second"),
+            ]),
             .codeBlock(language: "swift", code: "let value = 1"),
-            .table(header: ["Metric", "Value"], rows: [["TTFT", "12 ms"]]),
+            .table(
+                header: ["Metric", "Value"],
+                alignments: [.none, .trailing],
+                rows: [["TTFT", "12 ms"]]
+            ),
         ])
+    }
+
+    @Test("chat markdown parser builds AST backed blocks")
+    func chatMarkdownParserBuildsASTBackedBlocks() {
+        let blocks = DesktopChatMarkdownRenderer.blocks(from: """
+        # Result
+
+        > quoted **answer**
+
+        - parent
+          - child
+
+        3. first
+           1. child
+
+        ---
+
+        ![diagram alt](https://example.com/diagram.png)
+
+        | Name | Alignment | Note |
+        | :--- | ---: | :---: |
+        | Alpha \\| Beta | Right | Center |
+        """)
+
+        #expect(blocks == [
+            .heading(level: 1, text: "Result"),
+            .blockQuote([
+                .paragraph("quoted **answer**"),
+            ]),
+            .unorderedList([
+                DesktopChatMarkdownListItem(
+                    text: "parent",
+                    children: [
+                        .unorderedList([
+                            DesktopChatMarkdownListItem(text: "child"),
+                        ]),
+                    ]
+                ),
+            ]),
+            .orderedList(
+                start: 3,
+                items: [
+                    DesktopChatMarkdownListItem(
+                        text: "first",
+                        children: [
+                            .orderedList(
+                                start: 1,
+                                items: [
+                                    DesktopChatMarkdownListItem(text: "child"),
+                                ]
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+            .thematicBreak,
+            .paragraph("diagram alt"),
+            .table(
+                header: ["Name", "Alignment", "Note"],
+                alignments: [.leading, .trailing, .center],
+                rows: [["Alpha \\| Beta", "Right", "Center"]]
+            ),
+        ])
+    }
+
+    @Test("chat markdown list items preserve loose child order")
+    func chatMarkdownListItemsPreserveLooseChildOrder() {
+        let blocks = DesktopChatMarkdownRenderer.blocks(from: """
+        - intro
+
+          - nested
+
+          conclusion
+        """)
+
+        #expect(blocks == [
+            .unorderedList([
+                DesktopChatMarkdownListItem(
+                    text: "intro",
+                    children: [
+                        .unorderedList([
+                            DesktopChatMarkdownListItem(text: "nested"),
+                        ]),
+                        .paragraph("conclusion"),
+                    ]
+                ),
+            ]),
+        ])
+
+        let codeOnlyItem = DesktopChatMarkdownRenderer.blocks(from: """
+        -
+          ```swift
+          let value = 1
+          ```
+        """)
+
+        #expect(codeOnlyItem == [
+            .unorderedList([
+                DesktopChatMarkdownListItem(
+                    text: "",
+                    children: [
+                        .codeBlock(language: "swift", code: "let value = 1"),
+                    ]
+                ),
+            ]),
+        ])
+    }
+
+    @Test("chat markdown literal punctuation stays literal after inline parse")
+    func chatMarkdownLiteralPunctuationStaysLiteralAfterInlineParse() {
+        let blocks = DesktopChatMarkdownRenderer.blocks(from: "multiply: 2 * 3 or 4 * 5")
+
+        #expect(blocks == [.paragraph("multiply: 2 \\* 3 or 4 \\* 5")])
+
+        let text: String
+        if case .paragraph(let paragraphText) = blocks.first {
+            text = paragraphText
+        } else {
+            text = ""
+        }
+        let attributed = DesktopChatMarkdownInlineFormatter.attributedString(fromSanitized: text)
+        let inlineCodeWithBacktick = DesktopChatMarkdownRenderer.blocks(from: "``a ` b``")
+
+        #expect(String(attributed.characters) == "multiply: 2 * 3 or 4 * 5")
+        #expect(attributed.runs.allSatisfy { $0.inlinePresentationIntent == nil })
+        #expect(inlineCodeWithBacktick == [.paragraph("``a ` b``")])
     }
 
     @Test("chat markdown inline formatter removes markdown markers while preserving readable text")
     func chatMarkdownInlineFormatterRemovesMarkers() {
         let attributed = DesktopChatMarkdownInlineFormatter.attributedString(
-            from: "**bold** and _italic_ and `code`"
+            from: "**bold** and _italic_ and `code` and ~~strike~~"
         )
         let linked = DesktopChatMarkdownInlineFormatter.attributedString(
             from: "[Melix](https://example.com)"
         )
+        let image = DesktopChatMarkdownInlineFormatter.attributedString(
+            from: "![Diagram](https://example.com/diagram.png)"
+        )
+        let imageTitle = DesktopChatMarkdownInlineFormatter.attributedString(
+            from: "![](https://example.com/diagram.png \"Diagram title\")"
+        )
+        let lineBreaks = DesktopChatMarkdownInlineFormatter.attributedString(
+            fromSanitized: "soft\nbreak and hard  \nbreak"
+        )
+        let inlineHTML = DesktopChatMarkdownInlineFormatter.attributedString(
+            fromSanitized: "Hello <span>ignored</span>"
+        )
 
-        #expect(String(attributed.characters) == "bold and italic and code")
+        #expect(String(attributed.characters) == "bold and italic and code and strike")
         #expect(String(linked.characters) == "Melix")
+        #expect(String(image.characters) == "Diagram")
+        #expect(String(imageTitle.characters) == "Diagram title")
+        #expect(String(lineBreaks.characters) == "soft break and hard\nbreak")
+        #expect(String(inlineHTML.characters) == "Hello ignored")
         #expect(linked.runs.allSatisfy { $0.link == nil })
     }
 
@@ -4104,6 +4258,378 @@ struct DesktopFoundationViewTests {
 
         #expect(view.subviews.isEmpty == false)
     }
+
+    @Test("chat markdown body view hosts rich AST backed block branches")
+    @MainActor
+    func chatMarkdownBodyViewHostsRichASTBackedBlockBranches() {
+        let view = hostView(DesktopChatMarkdownBodyView(rawText: """
+        # Heading
+        ## Subheading
+        ### Minor
+        #### Body-sized
+
+        > quoted
+
+        ---
+
+        - parent
+          - child
+
+        3. first
+           1. child
+
+        ```
+        blank language
+        ```
+
+        | Left | Center | Right |
+        | :--- | :---: | ---: |
+        | A | B | C |
+        | Long | Row | Extra | Trimmed |
+        """))
+
+        #expect(view.subviews.isEmpty == false)
+    }
+
+    @Test("chat markdown code blocks expose badge highlight and copy behavior")
+    func chatMarkdownCodeBlocksExposeBadgeHighlightAndCopyBehavior() throws {
+        let code = """
+        let enabled = true
+        // keep comments readable
+        """
+        let presentation = DesktopChatMarkdownCodeBlockPresentation(language: " swift ", code: code)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("melix.chat.markdown.copy.\(UUID().uuidString)"))
+
+        DesktopChatMarkdownCodeBlockClipboard.copy(code, to: pasteboard)
+
+        #expect(presentation.languageBadge == "Swift")
+        #expect(presentation.copyAccessibilityLabel == "Copy code")
+        #expect(String(presentation.highlightedCode.characters) == code)
+        #expect(presentation.highlightedCode.runs.contains { $0.foregroundColor != nil })
+        #expect(pasteboard.string(forType: .string) == code)
+    }
+
+    @Test("chat markdown code language badges and highlighter branches")
+    func chatMarkdownCodeLanguageBadgesAndHighlighterBranches() {
+        #expect(DesktopChatMarkdownCodeLanguage.badge(for: "javascript") == "JavaScript")
+        #expect(DesktopChatMarkdownCodeLanguage.badge(for: "ts") == "TypeScript")
+        #expect(DesktopChatMarkdownCodeLanguage.badge(for: "bash") == "Shell")
+        #expect(DesktopChatMarkdownCodeLanguage.badge(for: "python") == "Python")
+        #expect(DesktopChatMarkdownCodeLanguage.badge(for: "patch") == "Diff")
+        #expect(DesktopChatMarkdownCodeLanguage.badge(for: "toml") == "TOML")
+        #expect(DesktopChatMarkdownCodeLanguage.badge(for: "") == "Plain Text")
+
+        let json = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: #"{"enabled": true, "count": 12, "label": "ok"}"#,
+            language: "json"
+        )
+        let shell = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: "git status\n# comment line here\nvalue",
+            language: "bash"
+        )
+        let diff = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: """
+            @@ -1 +1 @@
+            -old
+            +new
+             context
+            """,
+            language: "diff"
+        )
+        let plain = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: "",
+            language: "text"
+        )
+
+        #expect(String(json.characters).contains(#""enabled""#))
+        #expect(json.runs.contains { $0.foregroundColor != nil })
+        #expect(
+            attributedString(shell, hasColoredRunCovering: "# comment line here"),
+            "Full comment line should be colored, not just the delimiter"
+        )
+        #expect(diff.runs.contains { $0.foregroundColor != nil })
+        #expect(String(plain.characters).isEmpty)
+    }
+
+    @Test("chat markdown JS and Python keywords are colored with language-specific sets")
+    func chatMarkdownJSAndPythonKeywordsAreColoredWithLanguageSpecificSets() {
+        let js = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: "function foo() { return null; }",
+            language: "javascript"
+        )
+        let py = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: "def foo():\n    pass\n    return None",
+            language: "python"
+        )
+        let swift = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: "func foo() -> Void { return }",
+            language: "swift"
+        )
+
+        // JS-specific keywords like `function` and `null` must be colored.
+        let jsText = String(js.characters)
+        let functionRange = jsText.range(of: "function")
+        #expect(functionRange != nil)
+        if let range = functionRange {
+            let charIndex = jsText.distance(from: jsText.startIndex, to: range.lowerBound)
+            let colored = js.runs.contains { run in
+                let start = js.characters.distance(from: js.characters.startIndex, to: run.range.lowerBound)
+                return start == charIndex && run.foregroundColor != nil
+            }
+            #expect(colored, "`function` should be highlighted in JavaScript")
+        }
+
+        // Python-specific keywords like `def` and `None` must be colored.
+        let pyText = String(py.characters)
+        let defRange = pyText.range(of: "def")
+        #expect(defRange != nil)
+        if let range = defRange {
+            let charIndex = pyText.distance(from: pyText.startIndex, to: range.lowerBound)
+            let colored = py.runs.contains { run in
+                let start = py.characters.distance(from: py.characters.startIndex, to: run.range.lowerBound)
+                return start == charIndex && run.foregroundColor != nil
+            }
+            #expect(colored, "`def` should be highlighted in Python")
+        }
+
+        // `func` is a Swift keyword and should be colored in Swift but not be
+        // incorrectly used to color JS/Python (they have `function`/`def`).
+        #expect(swift.runs.contains { $0.foregroundColor != nil })
+    }
+
+    @Test("chat markdown stable identities avoid positional render ids")
+    func chatMarkdownStableIdentitiesAvoidPositionalRenderIDs() {
+        let chunks = [
+            DesktopChatMarkdownRenderChunk(
+                source: "duplicate",
+                blocks: [.paragraph("repeat")],
+                isStable: true
+            ),
+            DesktopChatMarkdownRenderChunk(
+                source: "duplicate",
+                blocks: [.paragraph("repeat")],
+                isStable: true
+            ),
+        ]
+        let blocks: [DesktopChatMarkdownBlock] = [
+            .paragraph("repeat"),
+            .paragraph("repeat"),
+            .heading(level: 2, text: "Title"),
+            .unorderedList([
+                DesktopChatMarkdownListItem(text: "child"),
+            ]),
+        ]
+        let firstBlockIDs = DesktopChatMarkdownStableIdentity.identifiedBlocks(blocks).map(\.id)
+        let secondBlockIDs = DesktopChatMarkdownStableIdentity.identifiedBlocks(blocks).map(\.id)
+        let items = [
+            DesktopChatMarkdownListItem(text: "same"),
+            DesktopChatMarkdownListItem(text: "same"),
+            DesktopChatMarkdownListItem(text: "different"),
+        ]
+        let identifiedItems = DesktopChatMarkdownStableIdentity.identifiedListItems(items)
+        let chunkIDs = DesktopChatMarkdownStableIdentity.identifiedChunks(chunks).map(\.id)
+        let itemIDs = identifiedItems.map(\.id)
+
+        #expect(Set(chunkIDs).count == chunkIDs.count)
+        #expect(firstBlockIDs == secondBlockIDs)
+        #expect(Set(firstBlockIDs).count == firstBlockIDs.count)
+        #expect(Set(itemIDs).count == itemIDs.count)
+        #expect(identifiedItems.map(\.offset) == [0, 1, 2])
+    }
+
+    @Test("chat markdown table layout bounds wide content")
+    func chatMarkdownTableLayoutBoundsWideContent() {
+        let layout = DesktopChatMarkdownTableLayout(
+            header: ["Name", "Very Long Column", "Status"],
+            rows: [[
+                "alpha",
+                String(repeating: "wide-content-", count: 24),
+                "ready",
+            ]]
+        )
+
+        #expect(layout.columnWidths.count == 3)
+        #expect(layout.columnWidths.allSatisfy { $0 >= DesktopChatMarkdownLayoutMetrics.tableColumnMinWidth })
+        #expect(layout.columnWidths.contains(DesktopChatMarkdownLayoutMetrics.tableColumnMaxWidth))
+        #expect(
+            layout.lineLimit(for: String(repeating: "wide-content-", count: 24)) ==
+                DesktopChatMarkdownLayoutMetrics.tableCellMaximumLineCount
+        )
+    }
+
+    @Test("chat markdown body view hosts code and table polish controls")
+    @MainActor
+    func chatMarkdownBodyViewHostsCodeAndTablePolishControls() {
+        let view = hostView(DesktopChatMarkdownBodyView(rawText: """
+        ```json
+        {"enabled": true, "mode": "local"}
+        ```
+
+        | Column | Long |
+        | --- | --- |
+        | A | \(String(repeating: "wide ", count: 80)) |
+        """))
+
+        #expect(view.subviews.isEmpty == false)
+    }
+
+    @Test("chat markdown body view hosts lazy long response plans")
+    @MainActor
+    func chatMarkdownBodyViewHostsLazyLongResponsePlans() {
+        let view = hostView(DesktopChatMarkdownBodyView(rawText: chatMarkdownLongStreamingSample(sectionCount: 56)))
+
+        #expect(view.subviews.isEmpty == false)
+    }
+
+    @Test("chat markdown renderer builds lazy streaming render plans")
+    func chatMarkdownRendererBuildsLazyStreamingRenderPlans() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 64)
+        let stableBlocks = chatMarkdownLongStreamingSample(sectionCount: 48)
+        let firstStream = stableBlocks + "\n\nPartial tail"
+        let secondStream = firstStream + " still streaming"
+
+        let firstPlan = DesktopChatMarkdownRenderer.renderPlan(from: firstStream, mode: .streaming)
+        let firstStats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        let secondPlan = DesktopChatMarkdownRenderer.renderPlan(from: secondStream, mode: .streaming)
+        let secondStats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+        #expect(firstPlan.usesLazyRendering)
+        #expect(firstPlan.chunks.count > 1)
+        #expect(firstPlan.blocks == DesktopChatMarkdownRenderer.blocks(from: firstStream))
+        #expect(secondPlan.chunks.count == firstPlan.chunks.count)
+        #expect(secondStats.chunkHitCount > firstStats.chunkHitCount)
+        #expect(secondStats.chunkMissCount - firstStats.chunkMissCount <= 1)
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting()
+    }
+
+    @Test("chat markdown complete render plans cache the tail chunk")
+    func chatMarkdownCompleteRenderPlansCacheTheTailChunk() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 64)
+        let source = chatMarkdownLongStreamingSample(sectionCount: 48) + "\n\nComplete tail"
+
+        _ = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .complete)
+        let firstCompleteStats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .complete)
+        let secondCompleteStats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+        #expect(secondCompleteStats.chunkHitCount > firstCompleteStats.chunkHitCount)
+        #expect(secondCompleteStats.chunkMissCount == firstCompleteStats.chunkMissCount)
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 64)
+        _ = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .streaming)
+        let firstStreamingStats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .streaming)
+        let secondStreamingStats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+        #expect(secondStreamingStats.chunkHitCount > firstStreamingStats.chunkHitCount)
+        #expect(secondStreamingStats.chunkMissCount > firstStreamingStats.chunkMissCount)
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting()
+    }
+
+    @Test("chat markdown chunker keeps mismatched fence markers inside code")
+    func chatMarkdownChunkerKeepsMismatchedFenceMarkersInsideCode() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 64)
+        let longCode = Array(repeating: "let value = 42", count: 180).joined(separator: "\n")
+        let source = """
+        ```swift
+        \(longCode)
+        ~~~not a closing fence~~~
+
+        \(longCode)
+        ```
+        """
+
+        let plan = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .complete)
+
+        #expect(plan.chunks.count == 1)
+        #expect(plan.blocks == [
+            .codeBlock(
+                language: "swift",
+                code: "\(longCode)\n~~~not a closing fence~~~\n\n\(longCode)"
+            ),
+        ])
+
+        let longerFenceSource = """
+        ````swift
+        \(longCode)
+        ```
+
+        \(longCode)
+        ````
+        """
+        let longerFencePlan = DesktopChatMarkdownRenderer.renderPlan(from: longerFenceSource, mode: .complete)
+
+        #expect(longerFencePlan.chunks.count == 1)
+        #expect(longerFencePlan.blocks == [
+            .codeBlock(language: "swift", code: "\(longCode)\n```\n\n\(longCode)"),
+        ])
+
+        let shortFenceMarkerSource = String(repeating: "plain text\n", count: 220) + "\n``\n\ntrailing"
+        let shortFenceMarkerPlan = DesktopChatMarkdownRenderer.renderPlan(
+            from: shortFenceMarkerSource,
+            mode: .complete
+        )
+
+        #expect(shortFenceMarkerPlan.blocks.isEmpty == false)
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting()
+    }
+
+    @Test("chat markdown renderer evicts old chunk cache entries")
+    func chatMarkdownRendererEvictsOldChunkCacheEntries() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 1)
+
+        _ = DesktopChatMarkdownRenderer.renderPlan(
+            from: chatMarkdownLongStreamingSample(sectionCount: 36),
+            mode: .complete
+        )
+        let stats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+        #expect(stats.chunkMissCount > 1)
+        #expect(stats.evictionCount > 0)
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting()
+    }
+
+    @Test("chat markdown fixture snapshot stays stable")
+    func chatMarkdownFixtureSnapshotStaysStable() throws {
+        let source = try chatMarkdownFixture(named: "chat-markdown-rich.md")
+        let expected = try chatMarkdownFixture(named: "chat-markdown-rich.snapshot.txt")
+
+        let snapshot = chatMarkdownBlockSnapshot(DesktopChatMarkdownRenderer.blocks(from: source))
+
+        #expect(snapshot == expected.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    #if DEBUG
+    @Test("chat markdown performance probe reports large sample cache benefit")
+    func chatMarkdownPerformanceProbeReportsLargeSampleCacheBenefit() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 256)
+
+        let report = DesktopChatMarkdownPerformanceProbe.measure(sampleSizes: [5_000, 50_000, 200_000])
+
+        #expect(report.samples.map(\.targetByteCount) == [5_000, 50_000, 200_000])
+        #expect(report.samples.allSatisfy { $0.blockCount > 0 })
+        #expect(report.samples.allSatisfy { $0.chunkCount > 0 })
+        #expect(report.samples.allSatisfy { $0.firstParseDurationMS >= 0 })
+        #expect(report.samples.allSatisfy { $0.cachedParseDurationMS >= 0 })
+        #expect(report.samples.allSatisfy { $0.cacheHitDelta > 0 })
+
+        let stats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        let sampleMetrics = report.samples
+            .map {
+                "\($0.targetByteCount):first_ms=\(String(format: "%.3f", $0.firstParseDurationMS)),cached_ms=\(String(format: "%.3f", $0.cachedParseDurationMS)),hits=\($0.cacheHitDelta),misses=\($0.cacheMissDelta),evictions=\($0.evictionDelta),chunks=\($0.chunkCount)"
+            }
+            .joined(separator: ";")
+        print(
+            "M16_CHAT_MARKDOWN_PERF=samples=[\(sampleMetrics)] eviction_count=\(stats.evictionCount) latest_build_ms=\(String(format: "%.3f", stats.latestBuildDurationMS))"
+        )
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting()
+    }
+    #endif
 
     @Test("chat markdown surfaces keep restrained low-border styling")
     func chatMarkdownSurfacesKeepRestrainedLowBorderStyling() {
@@ -4145,6 +4671,68 @@ struct DesktopFoundationViewTests {
                 code: "<b>keep as code</b>\n[keep](javascript:alert(1))"
             ),
         ])
+    }
+
+    @Test("chat markdown renderer preserves inline source edge cases")
+    func chatMarkdownRendererPreservesInlineSourceEdgeCases() {
+        let softBreak = DesktopChatMarkdownRenderer.blocks(from: "soft\nbreak")
+        let hardBreak = DesktopChatMarkdownRenderer.blocks(from: "hard  \nbreak")
+        let strikeLinkAndTitleImage = DesktopChatMarkdownRenderer.blocks(from: """
+        ~~gone~~ [label](https://example.com) ![](https://example.com/image.png "fallback")
+        """)
+        let unclosedFence = DesktopChatMarkdownRenderer.blocks(from: """
+        ```swift
+        let value = 2
+        """)
+        let pureHTML = DesktopChatMarkdownRenderer.blocks(from: "<br />")
+
+        #expect(softBreak == [.paragraph("soft break")])
+        #expect(hardBreak == [.paragraph("hard\nbreak")])
+        #expect(strikeLinkAndTitleImage == [.paragraph("~~gone~~ label fallback")])
+        #expect(unclosedFence == [.codeBlock(language: "swift", code: "let value = 2")])
+        #expect(pureHTML == [])
+    }
+
+    @Test("chat markdown renderer caches parsed blocks and evicts old entries")
+    func chatMarkdownRendererCachesParsedBlocksAndEvictsOldEntries() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 2)
+
+        _ = DesktopChatMarkdownRenderer.blocks(from: "A")
+        let first = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownRenderer.blocks(from: "A")
+        let second = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownRenderer.blocks(from: "B")
+        _ = DesktopChatMarkdownRenderer.blocks(from: "C")
+        let third = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownRenderer.blocks(from: "A")
+        let fourth = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+        #expect(first.parseMissCount == 1)
+        #expect(second.parseHitCount == 1)
+        #expect(third.evictionCount == 1)
+        // Misses are cumulative since reset: A, B, C, then A again after eviction.
+        #expect(fourth.parseMissCount == 4)
+        #expect(fourth.latestBuildDurationMS >= 0)
+    }
+
+    @Test("chat markdown renderer caches inline attributed strings and evicts old entries")
+    func chatMarkdownRendererCachesInlineAttributedStringsAndEvictsOldEntries() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 1)
+        let firstSource = String(repeating: "**A** ", count: 512)
+
+        _ = DesktopChatMarkdownInlineFormatter.attributedString(from: firstSource)
+        let first = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownInlineFormatter.attributedString(from: firstSource)
+        let second = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownInlineFormatter.attributedString(from: "**B**")
+        let third = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+        #expect(first.inlineMissCount == 1)
+        #expect(first.latestBuildDurationMS > 0)
+        #expect(second.inlineHitCount == 1)
+        #expect(third.evictionCount == 1)
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting()
     }
 
     @Test("chat session sidebar renders the empty state when no chat sessions exist")
@@ -6782,6 +7370,110 @@ private func makeExperimentGroupRegistrySnapshotManifest() -> String {
       ]
     }
     """#
+}
+
+private func chatMarkdownFixture(named name: String) throws -> String {
+    let fixtureURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .appendingPathComponent("Fixtures")
+        .appendingPathComponent(name)
+    return try String(contentsOf: fixtureURL, encoding: .utf8)
+}
+
+private func chatMarkdownBlockSnapshot(_ blocks: [DesktopChatMarkdownBlock]) -> String {
+    blocks.flatMap { chatMarkdownBlockSnapshotLines($0, indent: 0) }
+        .joined(separator: "\n")
+}
+
+private func attributedString(
+    _ attributed: AttributedString,
+    hasColoredRunCovering substring: String
+) -> Bool {
+    let plainText = String(attributed.characters)
+    guard let range = plainText.range(of: substring) else {
+        return false
+    }
+    let substringStart = plainText.distance(from: plainText.startIndex, to: range.lowerBound)
+    let substringEnd = plainText.distance(from: plainText.startIndex, to: range.upperBound)
+
+    return attributed.runs.contains { run in
+        guard run.foregroundColor != nil else {
+            return false
+        }
+        let runStart = attributed.characters.distance(
+            from: attributed.characters.startIndex,
+            to: run.range.lowerBound
+        )
+        let runEnd = attributed.characters.distance(
+            from: attributed.characters.startIndex,
+            to: run.range.upperBound
+        )
+        return runStart <= substringStart && runEnd >= substringEnd
+    }
+}
+
+private func chatMarkdownLongStreamingSample(sectionCount: Int) -> String {
+    (1...sectionCount)
+        .map { index in
+            """
+            ## Section \(index)
+
+            - item \(index)
+            - cached \(index)
+
+            ```swift
+            let value\(index) = \(index)
+            ```
+            """
+        }
+        .joined(separator: "\n\n")
+}
+
+private func chatMarkdownBlockSnapshotLines(
+    _ block: DesktopChatMarkdownBlock,
+    indent: Int
+) -> [String] {
+    let prefix = String(repeating: "  ", count: indent)
+    switch block {
+    case .paragraph(let text):
+        return ["\(prefix)paragraph: \(text)"]
+    case .heading(let level, let text):
+        return ["\(prefix)heading\(level): \(text)"]
+    case .blockQuote(let children):
+        return ["\(prefix)quote:"] + children.flatMap {
+            chatMarkdownBlockSnapshotLines($0, indent: indent + 1)
+        }
+    case .unorderedList(let items):
+        return ["\(prefix)unordered:"] + chatMarkdownListItemSnapshotLines(items, indent: indent + 1)
+    case .orderedList(let start, let items):
+        return ["\(prefix)ordered(\(start)):"]
+            + chatMarkdownListItemSnapshotLines(items, indent: indent + 1)
+    case .codeBlock(let language, let code):
+        return [
+            "\(prefix)code[\(language.isEmpty ? "plain" : language)]:",
+            "\(prefix)  \(code.replacingOccurrences(of: "\n", with: "\\n"))",
+        ]
+    case .table(let header, let alignments, let rows):
+        let alignmentText = alignments.map(String.init(describing:)).joined(separator: ",")
+        let rowLines = rows.map { "\(prefix)  row: \($0.joined(separator: " | "))" }
+        return [
+            "\(prefix)table[\(alignmentText)]: \(header.joined(separator: " | "))",
+        ] + rowLines
+    case .thematicBreak:
+        return ["\(prefix)thematic-break"]
+    }
+}
+
+private func chatMarkdownListItemSnapshotLines(
+    _ items: [DesktopChatMarkdownListItem],
+    indent: Int
+) -> [String] {
+    items.flatMap { item -> [String] in
+        let prefix = String(repeating: "  ", count: indent)
+        return ["\(prefix)- \(item.text)"] + item.children.flatMap {
+            chatMarkdownBlockSnapshotLines($0, indent: indent + 1)
+        }
+    }
 }
 
 private actor EmptyToolsSnapshotControlPlaneXPCClient: ControlPlaneXPCClient {

@@ -18,6 +18,8 @@ from worker.model_ops.errors import ModelOperationError
 _SUPPORTED_FORMATS = {"chat_messages", "prompt_completion", "text_completion"}
 _SUPPORTED_ROLES = {"system", "user", "assistant", "tool"}
 _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
+_QUALITY_REPORT_SAMPLE_LIMIT = 10
+_ALLOWED_CONTROL_CHARACTERS = frozenset({"\n", "\r", "\t"})
 
 HFDatasetFetcher = Callable[[str, dict[str, str]], dict[str, Any]]
 
@@ -1292,54 +1294,83 @@ def _build_quality_and_token_stats(
     samples: Iterable[dict[str, Any]],
     format_name: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    seen: set[bytes] = set()
+    seen: set[object] = set()
     duplicate_indices: list[int] = []
     dirty_samples: list[dict[str, Any]] = []
+    duplicate_count = 0
+    dirty_count = 0
     prompt_tokens: list[int] = []
     completion_tokens: list[int] = []
     total_tokens: list[int] = []
     sample_count = 0
+    is_prompt_completion = format_name == "prompt_completion"
+    prompt_tokens_append = prompt_tokens.append
+    completion_tokens_append = completion_tokens.append
+    total_tokens_append = total_tokens.append
+    duplicate_indices_append = duplicate_indices.append
+    dirty_samples_append = dirty_samples.append
+    canonical_sample_digest = _canonical_sample_digest
+    prompt_completion_duplicate_key = _prompt_completion_duplicate_key
+    dirty_sample_reasons = (
+        _prompt_completion_dirty_sample_reasons
+        if is_prompt_completion
+        else _dirty_sample_reasons
+    )
+    sample_token_counts = _sample_token_counts
+    whitespace_token_count = _whitespace_token_count
+    quality_report_sample_limit = _QUALITY_REPORT_SAMPLE_LIMIT
     for index, sample in enumerate(samples):
         sample_count += 1
-        sample_digest = _canonical_sample_digest(sample)
-        if sample_digest in seen:
-            duplicate_indices.append(index)
+        if is_prompt_completion:
+            sample_identity = prompt_completion_duplicate_key(sample)
         else:
-            seen.add(sample_digest)
-        reasons = _dirty_sample_reasons(sample)
+            sample_identity = canonical_sample_digest(sample)
+        if sample_identity in seen:
+            duplicate_count += 1
+            if len(duplicate_indices) < quality_report_sample_limit:
+                duplicate_indices_append(index)
+        else:
+            seen.add(sample_identity)
+        reasons = dirty_sample_reasons(sample)
         if reasons:
-            dirty_samples.append({"index": index, "reasons": reasons})
-        prompt_count, completion_count = _sample_token_counts(sample, format_name)
-        prompt_tokens.append(prompt_count)
-        completion_tokens.append(completion_count)
-        total_tokens.append(prompt_count + completion_count)
+            dirty_count += 1
+            if len(dirty_samples) < quality_report_sample_limit:
+                dirty_samples_append({"index": index, "reasons": reasons})
+        if is_prompt_completion:
+            prompt_count = whitespace_token_count(str(sample.get("prompt", "")))
+            completion_count = whitespace_token_count(str(sample.get("completion", "")))
+        else:
+            prompt_count, completion_count = sample_token_counts(sample, format_name)
+        prompt_tokens_append(prompt_count)
+        completion_tokens_append(completion_count)
+        total_tokens_append(prompt_count + completion_count)
 
-    prompt_summary = _summarize_token_values(prompt_tokens)
-    completion_summary = _summarize_token_values(completion_tokens)
-    total_summary = _summarize_token_values(total_tokens)
+    finalized_prompt_summary = _summarize_token_values(prompt_tokens, sort_in_place=True)
+    finalized_completion_summary = _summarize_token_values(completion_tokens, sort_in_place=True)
+    finalized_total_summary = _summarize_token_values(total_tokens, sort_in_place=True)
 
     return (
         {
-            "duplicate_count": len(duplicate_indices),
-            "duplicate_sample_indices": duplicate_indices[:10],
-            "dirty_count": len(dirty_samples),
-            "dirty_samples": dirty_samples[:10],
+            "duplicate_count": duplicate_count,
+            "duplicate_sample_indices": duplicate_indices,
+            "dirty_count": dirty_count,
+            "dirty_samples": dirty_samples,
         },
         {
             "estimator": "whitespace_v1",
             "sample_count": sample_count,
-            "prompt_tokens_mean": prompt_summary["mean"],
-            "prompt_tokens_p50": prompt_summary["p50"],
-            "prompt_tokens_p95": prompt_summary["p95"],
-            "prompt_tokens_max": prompt_summary["max"],
-            "completion_tokens_mean": completion_summary["mean"],
-            "completion_tokens_p50": completion_summary["p50"],
-            "completion_tokens_p95": completion_summary["p95"],
-            "completion_tokens_max": completion_summary["max"],
-            "total_tokens_mean": total_summary["mean"],
-            "total_tokens_p50": total_summary["p50"],
-            "total_tokens_p95": total_summary["p95"],
-            "total_tokens_max": total_summary["max"],
+            "prompt_tokens_mean": finalized_prompt_summary["mean"],
+            "prompt_tokens_p50": finalized_prompt_summary["p50"],
+            "prompt_tokens_p95": finalized_prompt_summary["p95"],
+            "prompt_tokens_max": finalized_prompt_summary["max"],
+            "completion_tokens_mean": finalized_completion_summary["mean"],
+            "completion_tokens_p50": finalized_completion_summary["p50"],
+            "completion_tokens_p95": finalized_completion_summary["p95"],
+            "completion_tokens_max": finalized_completion_summary["max"],
+            "total_tokens_mean": finalized_total_summary["mean"],
+            "total_tokens_p50": finalized_total_summary["p50"],
+            "total_tokens_p95": finalized_total_summary["p95"],
+            "total_tokens_max": finalized_total_summary["max"],
         },
     )
 
@@ -1353,21 +1384,19 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
     completion_tokens: list[int] = []
     total_tokens: list[int] = []
     sample_count = 0
+    prompt_token_sum: int | None = None
+    completion_token_sum: int | None = None
+    total_token_sum: int | None = None
     if format_name == "prompt_completion":
-        materialized_samples = samples if isinstance(samples, list) else list(samples)
-        sample_count = len(materialized_samples)
-        prompt_tokens = [
-            len(str(sample.get("prompt", "")).split())
-            for sample in materialized_samples
-        ]
-        completion_tokens = [
-            len(str(sample.get("completion", "")).split())
-            for sample in materialized_samples
-        ]
-        total_tokens = [
-            prompt_count + completion_count
-            for prompt_count, completion_count in zip(prompt_tokens, completion_tokens)
-        ]
+        (
+            sample_count,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            prompt_token_sum,
+            completion_token_sum,
+            total_token_sum,
+        ) = _collect_prompt_completion_token_counts(samples)
     else:
         prompt_tokens_append = prompt_tokens.append
         completion_tokens_append = completion_tokens.append
@@ -1380,9 +1409,9 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
             completion_tokens_append(completion_count)
             total_tokens_append(prompt_count + completion_count)
 
-    prompt_summary = _summarize_token_values(prompt_tokens)
-    completion_summary = _summarize_token_values(completion_tokens)
-    total_summary = _summarize_token_values(total_tokens)
+    prompt_summary = _summarize_token_values(prompt_tokens, total=prompt_token_sum, sort_in_place=True)
+    completion_summary = _summarize_token_values(completion_tokens, total=completion_token_sum, sort_in_place=True)
+    total_summary = _summarize_token_values(total_tokens, total=total_token_sum, sort_in_place=True)
 
     return {
         "estimator": "whitespace_v1",
@@ -1400,6 +1429,43 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
         "total_tokens_p95": total_summary["p95"],
         "total_tokens_max": total_summary["max"],
     }
+
+
+def _collect_prompt_completion_token_counts(
+    samples: Iterable[dict[str, Any]],
+) -> tuple[int, list[int], list[int], list[int], int, int, int]:
+    prompt_tokens: list[int] = []
+    completion_tokens: list[int] = []
+    total_tokens: list[int] = []
+    prompt_tokens_append = prompt_tokens.append
+    completion_tokens_append = completion_tokens.append
+    total_tokens_append = total_tokens.append
+    sample_count = 0
+    prompt_token_sum = 0
+    completion_token_sum = 0
+    total_token_sum = 0
+
+    for sample in samples:
+        sample_count += 1
+        prompt_count = len(str(sample.get("prompt", "")).split())
+        completion_count = len(str(sample.get("completion", "")).split())
+        total_count = prompt_count + completion_count
+        prompt_token_sum += prompt_count
+        completion_token_sum += completion_count
+        total_token_sum += total_count
+        prompt_tokens_append(prompt_count)
+        completion_tokens_append(completion_count)
+        total_tokens_append(total_count)
+
+    return (
+        sample_count,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        prompt_token_sum,
+        completion_token_sum,
+        total_token_sum,
+    )
 
 
 def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int, int]:
@@ -1455,6 +1521,26 @@ def _dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:
     return unique_reasons
 
 
+def _prompt_completion_dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:
+    prompt = str(sample.get("prompt", ""))
+    completion = str(sample.get("completion", ""))
+    has_control_characters = _contains_problematic_control_characters(
+        prompt
+    ) or _contains_problematic_control_characters(completion)
+    stripped_prompt = prompt.strip()
+    stripped_completion = completion.strip()
+    has_duplicate_prompt_completion = bool(
+        stripped_prompt and stripped_completion and stripped_prompt == stripped_completion
+    )
+    if has_control_characters:
+        if has_duplicate_prompt_completion:
+            return ["control_characters", "duplicate_prompt_completion"]
+        return ["control_characters"]
+    if has_duplicate_prompt_completion:
+        return ["duplicate_prompt_completion"]
+    return []
+
+
 def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
     if "messages" in sample:
         messages = sample.get("messages", [])
@@ -1470,7 +1556,16 @@ def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
 
 
 def _contains_problematic_control_characters(text: str) -> bool:
-    return any(ord(character) < 32 and character not in {"\n", "\r", "\t"} for character in text)
+    return any(ord(character) < 32 and character not in _ALLOWED_CONTROL_CHARACTERS for character in text)
+
+
+def _prompt_completion_duplicate_key(sample: dict[str, Any]) -> tuple[str, str] | bytes:
+    if len(sample) == 2:
+        prompt = sample.get("prompt")
+        completion = sample.get("completion")
+        if isinstance(prompt, str) and isinstance(completion, str):
+            return prompt, completion
+    return _canonical_sample_digest(sample)
 
 
 def _canonical_sample_key(sample: dict[str, Any]) -> str:
@@ -1491,14 +1586,23 @@ def _mean_value(values: list[int]) -> float:
     return round(sum(values) / len(values), 3)
 
 
-def _summarize_token_values(values: list[int]) -> dict[str, float | int]:
-    ordered = sorted(values)
+def _summarize_token_values(
+    values: list[int], *, total: int | None = None, sort_in_place: bool = False
+) -> dict[str, float | int]:
+    ordered = values if sort_in_place else list(values)
+    ordered.sort()
     return {
-        "mean": _mean_value(values),
+        "mean": _mean_value_from_total(total if total is not None else sum(values), len(values)),
         "p50": _sorted_percentile_value(ordered, 0.50),
         "p95": _sorted_percentile_value(ordered, 0.95),
         "max": ordered[-1] if ordered else 0,
     }
+
+
+def _mean_value_from_total(total: int, count: int) -> float:
+    if count == 0:
+        return 0.0
+    return round(total / count, 3)
 
 
 def _sorted_percentile_value(ordered_values: list[int], pct: float) -> int:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import csv
 import hashlib
 import json
@@ -677,6 +678,50 @@ def test_convert_model_writes_manifest_once_after_in_memory_byte_convergence(
     assert write_calls == 1
     assert convert_payload["manifest_bytes"] == manifest_path.stat().st_size
     assert json.loads(manifest_path.read_text(encoding="utf-8")) == convert_payload
+
+
+def test_convert_pipeline_counts_artifact_bytes_without_rescanning_bundle_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    original_scandir = os.scandir
+    bundle_scandir_calls = 0
+
+    def tracked_scandir(path: str | os.PathLike[str]) -> os.ScandirIterator[os.DirEntry[str]]:
+        nonlocal bundle_scandir_calls
+        if Path(path).name == "convert.artifact":
+            bundle_scandir_calls += 1
+            raise AssertionError("convert pipeline should not rescan the bundle directory for artifact_bytes")
+        return original_scandir(path)
+
+    with pytest.raises(AssertionError, match="should not rescan"):
+        tracked_scandir(bundle_path := tmp_path / "convert.artifact")
+    assert bundle_scandir_calls == 1
+    bundle_scandir_calls = 0
+
+    monkeypatch.setattr(os, "scandir", tracked_scandir)
+
+    convert_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "convert"),
+                generate_manifest=True,
+            ),
+            context=None,
+        )
+    )
+    convert_manifest = next(event.manifest for event in convert_events if event.HasField("manifest"))
+    convert_payload = json.loads(convert_manifest.manifest_json)
+    bundle_path = Path(convert_events[-1].completed.output_path)
+    expected_artifact_bytes = sum(
+        (bundle_path / file_name).stat().st_size
+        for file_name in ("config.json", "tokenizer.json", "weights.safetensors")
+    )
+
+    assert bundle_scandir_calls == 0
+    assert convert_payload["artifact_bytes"] == expected_artifact_bytes
 
 
 def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None:
@@ -1722,6 +1767,28 @@ def test_upload_receipt_pipeline_collect_published_file_list_filters_and_sorts(t
         "aa.bin",
         "sub/aa.bin",
         "sub/zz.bin",
+    ]
+
+
+def test_upload_receipt_pipeline_collect_published_file_list_uses_scandir_stack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "model"
+    source_root.mkdir()
+    (source_root / "weights.bin").write_text("weights", encoding="utf-8")
+    nested_root = source_root / "nested"
+    nested_root.mkdir()
+    (nested_root / "config.json").write_text("{}", encoding="utf-8")
+
+    def fail_os_walk(*args, **kwargs):
+        raise AssertionError("published file collection should avoid os.walk")  # pragma: no cover
+
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.os.walk", fail_os_walk)
+
+    assert UploadReceiptPipeline._collect_published_file_list(source_root) == [
+        "nested/config.json",
+        "weights.bin",
     ]
 
 
@@ -4070,6 +4137,109 @@ def test_run_bench_persists_report_without_reading_report_file(tmp_path: Path, m
     assert report_path.name == "bench-report.md"
     assert "# Melix Bench" in report
     assert "runtime_name: fast-benchmark" in report
+
+
+def test_percentiles_reuse_one_sorted_vector_and_preserve_interpolation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_sorted = builtins.sorted
+    sorted_calls: list[list[float]] = []
+
+    def tracked_sorted(values: list[float], *args: object, **kwargs: object) -> list[float]:
+        ordered = original_sorted(values, *args, **kwargs)
+        sorted_calls.append(list(ordered))
+        return ordered
+
+    monkeypatch.setattr(builtins, "sorted", tracked_sorted)
+
+    values = [5.0, 1.0, 7.0, 9.0]
+
+    assert MaintenanceCore._percentiles(values) == ()
+    assert MaintenanceCore._percentiles([], 50.0, 95.0) == (0.0, 0.0)
+    assert MaintenanceCore._percentiles(values, 50.0, 95.0) == (6.0, 8.7)
+    assert MaintenanceCore._percentile(values, 95.0) == 8.7
+    assert sorted_calls == [[1.0, 5.0, 7.0, 9.0], [1.0, 5.0, 7.0, 9.0]]
+
+
+def test_run_bench_latency_and_summary_reuse_single_sorted_request_latency_vector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path, registry=registry)
+    service._core._benchmark_suite_catalog = BenchmarkSuiteCatalog(
+        hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+    )
+
+    monkeypatch.setattr(
+        MaintenanceCore,
+        "_percentile",
+        staticmethod(lambda values, percentile: (_ for _ in ()).throw(AssertionError("legacy percentile helper should not run"))),
+    )
+
+    events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle=loaded.handle,
+                suites=["latency"],
+                parameters={"require_live_model": "true"},
+            ),
+            context=None,
+        )
+    )
+
+    metrics = {
+        event.metric.name: event.metric.value
+        for event in events
+        if event.HasField("metric")
+    }
+
+    assert metrics["bench.latency.p95_ms"] >= metrics["bench.latency.p50_ms"] >= 0.0
+
+
+def test_run_bench_matrix_reuses_single_sorted_latency_vectors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=RecordingBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
+
+    monkeypatch.setattr(
+        MaintenanceCore,
+        "_percentile",
+        staticmethod(
+            lambda values, percentile: 9.2
+            if percentile == 95.0
+            else (_ for _ in ()).throw(AssertionError("matrix percentile reuse should only leave the queue-wait p95 path"))
+        ),
+    )
+
+    response = service.RunBenchMatrix(
+        maintenance_pb2.RunBenchMatrixRequest(
+            model_handle="melix-dev-text::1",
+            task_kind="text-generation",
+            suite_ids=["smoke"],
+            context_lengths=[1024, 256],
+            generation_lengths=[128],
+            batch_sizes=[2],
+            cache_profiles=["cold"],
+            reasoning_modes=["enabled"],
+            structured_output_modes=["plain_text"],
+            concurrency_levels=[1],
+            repeats=2,
+            requests=4,
+        ),
+        context=None,
+    )
+
+    assert len(response.summary_rows) == 2
 
 
 def test_run_bench_require_live_model_rejects_deterministic_runtime(tmp_path: Path) -> None:

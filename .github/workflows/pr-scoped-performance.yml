@@ -180,12 +180,8 @@ jobs:
             --scope artifacts/scope/scope.json \
             --results-dir artifacts/probes \
             --output-dir artifacts/report \
-            --format terminal | tee artifacts/report/report.txt
-          python head/scripts/pr_scoped_performance_report.py \
-            --scope artifacts/scope/scope.json \
-            --results-dir artifacts/probes \
-            --format markdown \
-            --sticky-comment > artifacts/report/pr-comment.md
+            --format terminal \
+            --sticky-comment | tee artifacts/report/report.txt
 
       - name: Upload report artifact
         if: always()

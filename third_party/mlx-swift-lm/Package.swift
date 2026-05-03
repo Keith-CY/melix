@@ -1,11 +1,16 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.1
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
 
 let package = Package(
     name: "mlx-swift-lm",
-    platforms: [.macOS(.v14), .iOS(.v16)],
+    platforms: [
+        .macOS(.v14),
+        .iOS(.v17),
+        .tvOS(.v17),
+        .visionOS(.v1),
+    ],
     products: [
         .library(
             name: "MLXLLM",
@@ -21,10 +26,10 @@ let package = Package(
             targets: ["MLXEmbedders"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.29.1")),
+        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.31.3")),
         .package(
             url: "https://github.com/huggingface/swift-transformers",
-            .upToNextMinor(from: "1.1.6")
+            .upToNextMinor(from: "1.2.0")
         ),
     ],
     targets: [

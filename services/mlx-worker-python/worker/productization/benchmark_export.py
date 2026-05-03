@@ -449,6 +449,20 @@ def _load_json_object(path: Path) -> dict[str, object]:
     return payload
 
 
+def _try_load_json_object(path: Path) -> dict[str, object] | None:
+    try:
+        return _load_json_object(path)
+    except OSError:
+        return None
+
+
+def _try_iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
+    try:
+        yield from _iter_jsonl_dict_rows(path)
+    except OSError:
+        return
+
+
 def _collect_benchmark_run(
     run_root: Path,
     *,
@@ -457,23 +471,58 @@ def _collect_benchmark_run(
     batch_rows: list[dict[str, object]],
     results: list[dict[str, object]],
 ) -> None:
-    summary_path = run_root / "bench-summary.json"
-    job_path = run_root / "bench-job.json"
-    if summary_path.is_file():
-        summary_rows.append(_load_json_object(summary_path))
-    elif job_path.is_file():
-        summary_rows.append(_load_json_object(job_path))
+    summary_path: Path | None = None
+    job_path: Path | None = None
+    context_path: Path | None = None
+    batch_path: Path | None = None
+    result_paths: list[Path] = []
 
-    context_path = run_root / "bench-context-rows.jsonl"
-    if context_path.is_file():
-        context_rows.extend(_iter_jsonl_dict_rows(context_path))
+    try:
+        with os.scandir(run_root) as entries:
+            for entry in entries:
+                name = entry.name
+                try:
+                    if not entry.is_file():
+                        continue
+                except OSError:
+                    continue
+                path = run_root / name
+                if name == "bench-summary.json":
+                    summary_path = path
+                elif name == "bench-job.json":
+                    job_path = path
+                elif name == "bench-context-rows.jsonl":
+                    context_path = path
+                elif name == "bench-batch-rows.jsonl":
+                    batch_path = path
+                elif name.startswith("bench-result-") and name.endswith(".json"):
+                    result_paths.append(path)
+    except OSError:
+        return
 
-    batch_path = run_root / "bench-batch-rows.jsonl"
-    if batch_path.is_file():
-        batch_rows.extend(_iter_jsonl_dict_rows(batch_path))
+    if summary_path is not None:
+        summary_row = _try_load_json_object(summary_path)
+        if summary_row is not None:
+            summary_rows.append(summary_row)
+        elif job_path is not None:
+            job_row = _try_load_json_object(job_path)
+            if job_row is not None:
+                summary_rows.append(job_row)
+    elif job_path is not None:
+        job_row = _try_load_json_object(job_path)
+        if job_row is not None:
+            summary_rows.append(job_row)
 
-    for result_path in _iter_sorted_matching_files(run_root, prefix="bench-result-", suffix=".json"):
-        results.append(_load_json_object(result_path))
+    if context_path is not None:
+        context_rows.extend(_try_iter_jsonl_dict_rows(context_path))
+
+    if batch_path is not None:
+        batch_rows.extend(_try_iter_jsonl_dict_rows(batch_path))
+
+    for result_path in sorted(result_paths):
+        result_row = _try_load_json_object(result_path)
+        if result_row is not None:
+            results.append(result_row)
 
 
 def _collect_benchmark_matrix_run(
@@ -483,16 +532,36 @@ def _collect_benchmark_matrix_run(
     summary_rows: list[dict[str, object]],
     request_rows: list[dict[str, object]],
 ) -> None:
-    job_path = run_root / "bench-matrix-job.json"
-    if job_path.is_file():
+    job_path: Path | None = None
+    summary_path: Path | None = None
+    requests_path: Path | None = None
+
+    try:
+        with os.scandir(run_root) as entries:
+            for entry in entries:
+                name = entry.name
+                try:
+                    if not entry.is_file():
+                        continue
+                except OSError:
+                    continue
+                path = run_root / name
+                if name == "bench-matrix-job.json":
+                    job_path = path
+                elif name == "bench-matrix-summary.jsonl":
+                    summary_path = path
+                elif name == "bench-matrix-requests.jsonl":
+                    requests_path = path
+    except OSError:
+        return
+
+    if job_path is not None:
         jobs.append(_load_json_object(job_path))
 
-    summary_path = run_root / "bench-matrix-summary.jsonl"
-    if summary_path.is_file():
+    if summary_path is not None:
         summary_rows.extend(_iter_jsonl_dict_rows(summary_path))
 
-    requests_path = run_root / "bench-matrix-requests.jsonl"
-    if requests_path.is_file():
+    if requests_path is not None:
         request_rows.extend(_iter_jsonl_dict_rows(requests_path))
 
 
@@ -509,10 +578,16 @@ def _iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
 
 def _rows_to_csv(rows: Iterable[dict[str, object]], fieldnames: list[str]) -> str:
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-    for row in rows:
-        writer.writerow({field: _csv_value(row.get(field, "")) for field in fieldnames})
+    writer = csv.writer(buffer)
+    writer.writerow(fieldnames)
+    normalize_csv_value = _csv_value
+
+    def csv_rows() -> Iterable[list[str]]:
+        for row in rows:
+            row_get = row.get
+            yield [normalize_csv_value(row_get(field, "")) for field in fieldnames]
+
+    writer.writerows(csv_rows())
     return buffer.getvalue()
 
 
@@ -763,43 +838,74 @@ def _collect_evaluation_run(
     compare_summary_rows: list[dict[str, object]],
     compare_samples: list[dict[str, object]],
 ) -> None:
-    job_path = run_root / "evaluation-job.json"
-    if job_path.is_file():
-        jobs.append(_load_json_object(job_path))
+    job_path: Path | None = None
+    result_path: Path | None = None
+    summary_path: Path | None = None
+    samples_path: Path | None = None
+    compare_job_path: Path | None = None
+    compare_summary_path: Path | None = None
+    compare_samples_path: Path | None = None
 
-    result_path = run_root / "evaluation-result.json"
-    if result_path.is_file():
+    try:
+        with os.scandir(run_root) as entries:
+            for entry in entries:
+                name = entry.name
+                try:
+                    if not entry.is_file():
+                        continue
+                except OSError:
+                    continue
+                path = run_root / name
+                if name == "evaluation-job.json":
+                    job_path = path
+                elif name == "evaluation-result.json":
+                    result_path = path
+                elif name == "evaluation-summary.json":
+                    summary_path = path
+                elif name == "evaluation-samples.jsonl":
+                    samples_path = path
+                elif name == "evaluation-compare-job.json":
+                    compare_job_path = path
+                elif name == "evaluation-compare-summary.json":
+                    compare_summary_path = path
+                elif name == "evaluation-compare-samples.jsonl":
+                    compare_samples_path = path
+    except OSError:
+        return
+
+    job: dict[str, object] | None = None
+    if job_path is not None:
+        job = _load_json_object(job_path)
+        jobs.append(job)
+
+    result: dict[str, object] | None = None
+    if result_path is not None:
         result = _load_json_object(result_path)
         results.append(result)
 
-    summary_path = run_root / "evaluation-summary.json"
-    if summary_path.is_file():
+    if summary_path is not None:
         summaries.append(_load_json_object(summary_path))
-    elif job_path.is_file() and result_path.is_file():
-        summaries.append(_build_evaluation_summary_row(jobs[-1], results[-1]))
+    elif job is not None and result is not None:
+        summaries.append(_build_evaluation_summary_row(job, result))
 
-    samples_path = run_root / "evaluation-samples.jsonl"
-    if samples_path.is_file():
+    if samples_path is not None:
         samples.extend(_iter_jsonl_dict_rows(samples_path))
 
-    compare_job_path = run_root / "evaluation-compare-job.json"
-    if not compare_job_path.is_file():
+    if compare_job_path is None:
         return
 
     compare_job = _load_json_object(compare_job_path)
     compare_jobs.append(compare_job)
     jobs.append(_normalize_evaluation_compare_job(compare_job))
 
-    compare_summary_path = run_root / "evaluation-compare-summary.json"
-    if compare_summary_path.is_file():
+    if compare_summary_path is not None:
         compare_summary_payload = _load_json_object(compare_summary_path)
         for summary in _compare_target_summaries(compare_summary_payload):
             results.append(_normalize_evaluation_compare_result(summary))
             summaries.append(_normalize_evaluation_compare_summary_row(compare_job, summary))
             compare_summary_rows.append(summary)
 
-    compare_samples_path = run_root / "evaluation-compare-samples.jsonl"
-    if compare_samples_path.is_file():
+    if compare_samples_path is not None:
         for sample in _iter_jsonl_dict_rows(compare_samples_path):
             compare_samples.append(sample)
             samples.append(

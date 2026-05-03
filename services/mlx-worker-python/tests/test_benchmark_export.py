@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 from worker.productization.benchmark_export import (
+    _collect_benchmark_matrix_run,
+    _collect_benchmark_run,
+    _collect_evaluation_run,
     _iter_jsonl_dict_rows,
     _iter_sorted_child_directories,
     _iter_sorted_matching_files,
@@ -537,6 +540,185 @@ def test_collect_benchmark_artifacts_reads_per_run_history_from_runs_directory(
     assert [row["job_id"] for row in result["benchmark_batch_rows"]] == ["bench-1", "bench-2"]
 
 
+def test_collect_benchmark_run_uses_single_directory_scan_without_path_is_file_probes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "bench-run"
+    _write_bench_fixtures(run_root)
+    (run_root / "bench-job.json").write_text(json.dumps({"job_id": "legacy-bench"}) + "\n")
+    (run_root / "bench-result-z.json").write_text(json.dumps({"job_id": "bench-1", "suite": "zeta"}) + "\n")
+    (run_root / "bench-result-a.json").write_text(json.dumps({"job_id": "bench-1", "suite": "alpha"}) + "\n")
+
+    scandir_calls = 0
+    original_scandir = __import__("os").scandir
+    original_is_file = Path.is_file
+
+    def tracked_scandir(path: str | bytes | int | Path):
+        nonlocal scandir_calls
+        if Path(path) == run_root:
+            scandir_calls += 1
+        return original_scandir(path)
+
+    def fail_run_file_probes(path: Path) -> bool:
+        if path.parent == run_root:
+            raise AssertionError(f"unexpected Path.is_file probe for {path.name}")
+        return original_is_file(path)
+
+    with pytest.raises(AssertionError, match="bench-summary.json"):
+        fail_run_file_probes(run_root / "bench-summary.json")
+    assert fail_run_file_probes(tmp_path / "outside.json") is False
+
+    monkeypatch.setattr("worker.productization.benchmark_export.os.scandir", tracked_scandir)
+    monkeypatch.setattr(Path, "is_file", fail_run_file_probes)
+
+    summary_rows: list[dict[str, object]] = []
+    context_rows: list[dict[str, object]] = []
+    batch_rows: list[dict[str, object]] = []
+    results: list[dict[str, object]] = []
+
+    _collect_benchmark_run(
+        run_root,
+        summary_rows=summary_rows,
+        context_rows=context_rows,
+        batch_rows=batch_rows,
+        results=results,
+    )
+
+    assert scandir_calls == 1
+    assert [row["job_id"] for row in summary_rows] == ["bench-1"]
+    assert [row["job_id"] for row in context_rows] == ["bench-1"]
+    assert [row["job_id"] for row in batch_rows] == ["bench-1"]
+    assert [row["suite"] for row in results] == ["alpha", "smoke", "zeta"]
+
+
+def test_collect_benchmark_run_prefers_summary_over_legacy_job_and_preserves_result_order(tmp_path: Path) -> None:
+    run_root = tmp_path / "bench-run"
+    _write_bench_fixtures(run_root)
+    (run_root / "bench-job.json").write_text(
+        json.dumps({"job_id": "bench-legacy", "model_id": "legacy-model", "status": "completed"}) + "\n"
+    )
+    (run_root / "bench-result-z.json").write_text(json.dumps({"job_id": "bench-1", "suite": "zeta"}) + "\n")
+    (run_root / "bench-result-a.json").write_text(json.dumps({"job_id": "bench-1", "suite": "alpha"}) + "\n")
+
+    result = collect_benchmark_artifacts(run_root)
+
+    assert [job["job_id"] for job in result["benchmark_jobs"]] == ["bench-1"]
+    assert result["benchmark_jobs"][0]["model_id"] == "melix-dev-text"
+    assert [row["suite"] for row in result["benchmark_results"]] == ["alpha", "smoke", "zeta"]
+
+
+def test_collect_benchmark_run_skips_unreadable_entries_during_single_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "bench-run"
+    _write_bench_fixtures(run_root)
+
+    class _BrokenEntry:
+        name = "bench-result-broken.json"
+
+        def is_file(self) -> bool:
+            raise OSError("stat failed")
+
+    class _SummaryEntry:
+        name = "bench-summary.json"
+
+        def is_file(self) -> bool:
+            return True
+
+    class _ContextEntry:
+        name = "bench-context-rows.jsonl"
+
+        def is_file(self) -> bool:
+            return True
+
+    class _BatchEntry:
+        name = "bench-batch-rows.jsonl"
+
+        def is_file(self) -> bool:
+            return True
+
+    class _ResultEntry:
+        name = "bench-result-smoke.json"
+
+        def is_file(self) -> bool:
+            return True
+
+    class _Scandir:
+        def __enter__(self):
+            return iter((_BrokenEntry(), _SummaryEntry(), _ContextEntry(), _BatchEntry(), _ResultEntry()))
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr("worker.productization.benchmark_export.os.scandir", lambda path: _Scandir())
+
+    summary_rows: list[dict[str, object]] = []
+    context_rows: list[dict[str, object]] = []
+    batch_rows: list[dict[str, object]] = []
+    results: list[dict[str, object]] = []
+
+    _collect_benchmark_run(
+        run_root,
+        summary_rows=summary_rows,
+        context_rows=context_rows,
+        batch_rows=batch_rows,
+        results=results,
+    )
+
+    assert [row["job_id"] for row in summary_rows] == ["bench-1"]
+    assert [row["job_id"] for row in context_rows] == ["bench-1"]
+    assert [row["job_id"] for row in batch_rows] == ["bench-1"]
+    assert [row["suite"] for row in results] == ["smoke"]
+
+
+def test_collect_benchmark_run_skips_missing_or_unreadable_payloads_after_single_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "bench-run"
+    _write_bench_fixtures(run_root)
+    (run_root / "bench-job.json").write_text(json.dumps({"job_id": "legacy-bench", "status": "completed"}) + "\n")
+    (run_root / "bench-result-a.json").write_text(json.dumps({"job_id": "bench-1", "suite": "alpha"}) + "\n")
+
+    original_load_json_object = _load_json_object
+    original_iter_jsonl_dict_rows = _iter_jsonl_dict_rows
+
+    def flaky_load_json_object(path: Path) -> dict[str, object]:
+        if path.name == "bench-summary.json":
+            raise FileNotFoundError(path)
+        if path.name == "bench-result-smoke.json":
+            raise OSError("result vanished")
+        return original_load_json_object(path)
+
+    def flaky_iter_jsonl_dict_rows(path: Path):
+        if path.name == "bench-context-rows.jsonl":
+            raise OSError("context vanished")
+        yield from original_iter_jsonl_dict_rows(path)
+
+    monkeypatch.setattr("worker.productization.benchmark_export._load_json_object", flaky_load_json_object)
+    monkeypatch.setattr("worker.productization.benchmark_export._iter_jsonl_dict_rows", flaky_iter_jsonl_dict_rows)
+
+    summary_rows: list[dict[str, object]] = []
+    context_rows: list[dict[str, object]] = []
+    batch_rows: list[dict[str, object]] = []
+    results: list[dict[str, object]] = []
+
+    _collect_benchmark_run(
+        run_root,
+        summary_rows=summary_rows,
+        context_rows=context_rows,
+        batch_rows=batch_rows,
+        results=results,
+    )
+
+    assert [row["job_id"] for row in summary_rows] == ["legacy-bench"]
+    assert context_rows == []
+    assert [row["job_id"] for row in batch_rows] == ["bench-1"]
+    assert [row["suite"] for row in results] == ["alpha"]
+
+
 def test_collect_benchmark_artifacts_reads_matrix_run_history_from_matrix_runs_directory(
     tmp_path: Path,
 ) -> None:
@@ -549,6 +731,84 @@ def test_collect_benchmark_artifacts_reads_matrix_run_history_from_matrix_runs_d
     assert [job["job_id"] for job in result["benchmark_matrix_jobs"]] == ["bench-matrix-1", "bench-matrix-2"]
     assert [row["job_id"] for row in result["benchmark_matrix_summary_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
     assert [row["job_id"] for row in result["benchmark_matrix_request_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
+
+
+def test_collect_benchmark_matrix_run_uses_direntry_checks_without_path_is_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_bench_matrix_run_fixture(tmp_path, job_id="bench-matrix-1")
+    run_root = tmp_path / "matrix-runs" / "bench-matrix-1"
+
+    monkeypatch.setattr(
+        Path,
+        "is_file",
+        lambda self: (_ for _ in ()).throw(AssertionError("_collect_benchmark_matrix_run should not use Path.is_file")),
+    )
+
+    jobs: list[dict[str, object]] = []
+    summary_rows: list[dict[str, object]] = []
+    request_rows: list[dict[str, object]] = []
+
+    _collect_benchmark_matrix_run(
+        run_root,
+        jobs=jobs,
+        summary_rows=summary_rows,
+        request_rows=request_rows,
+    )
+
+    assert [job["job_id"] for job in jobs] == ["bench-matrix-1"]
+    assert [row["job_id"] for row in summary_rows] == ["bench-matrix-1"]
+    assert [row["job_id"] for row in request_rows] == ["bench-matrix-1"]
+
+
+def test_collect_benchmark_matrix_run_skips_entries_with_stat_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run_root = tmp_path / "matrix-runs" / "bench-matrix-1"
+    run_root.mkdir(parents=True)
+    payloads = {
+        "bench-matrix-job.json": json.dumps({"job_id": "bench-matrix-1"}) + "\n",
+        "bench-matrix-summary.jsonl": json.dumps({"job_id": "bench-matrix-1", "row_kind": "summary"}) + "\n",
+        "bench-matrix-requests.jsonl": json.dumps({"job_id": "bench-matrix-1", "row_kind": "request"}) + "\n",
+    }
+    for name, payload in payloads.items():
+        (run_root / name).write_text(payload)
+
+    class _BrokenEntry:
+        name = "bench-matrix-broken.json"
+
+        def is_file(self) -> bool:
+            raise OSError("stat failed")
+
+    class _GoodEntry:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def is_file(self) -> bool:
+            return True
+
+    class _Scandir:
+        def __enter__(self):
+            return iter((_BrokenEntry(), _GoodEntry("bench-matrix-job.json"), _GoodEntry("bench-matrix-summary.jsonl"), _GoodEntry("bench-matrix-requests.jsonl")))
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr("worker.productization.benchmark_export.os.scandir", lambda path: _Scandir())
+
+    jobs: list[dict[str, object]] = []
+    summary_rows: list[dict[str, object]] = []
+    request_rows: list[dict[str, object]] = []
+
+    _collect_benchmark_matrix_run(
+        run_root,
+        jobs=jobs,
+        summary_rows=summary_rows,
+        request_rows=request_rows,
+    )
+
+    assert jobs == [{"job_id": "bench-matrix-1"}]
+    assert summary_rows == [{"job_id": "bench-matrix-1", "row_kind": "summary"}]
+    assert request_rows == [{"job_id": "bench-matrix-1", "row_kind": "request"}]
 
 
 def test_iter_sorted_child_directories_returns_sorted_directories(tmp_path: Path) -> None:
@@ -681,6 +941,95 @@ def test_iter_jsonl_dict_rows_streams_rows_lazily(tmp_path: Path) -> None:
     assert next(rows) == {"job_id": "bench-1", "row_kind": "context"}
     with pytest.raises(json.JSONDecodeError):
         next(rows)
+
+
+def test_collect_evaluation_run_uses_single_directory_scan_without_path_is_file_probes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "eval-run"
+    _write_eval_fixtures(run_root)
+    _write_eval_compare_fixtures(run_root)
+
+    scandir_calls = 0
+    original_scandir = __import__("os").scandir
+    original_is_file = Path.is_file
+
+    def tracked_scandir(path: str | bytes | int | Path):
+        nonlocal scandir_calls
+        if Path(path) == run_root:
+            scandir_calls += 1
+        return original_scandir(path)
+
+    def fail_run_file_probes(path: Path) -> bool:
+        if path.parent == run_root:
+            raise AssertionError(f"unexpected Path.is_file probe for {path.name}")
+        return original_is_file(path)
+
+    with pytest.raises(AssertionError, match="evaluation-job.json"):
+        fail_run_file_probes(run_root / "evaluation-job.json")
+    assert fail_run_file_probes(tmp_path / "outside.json") is False
+
+    monkeypatch.setattr("worker.productization.benchmark_export.os.scandir", tracked_scandir)
+    monkeypatch.setattr(Path, "is_file", fail_run_file_probes)
+
+    jobs: list[dict[str, object]] = []
+    results: list[dict[str, object]] = []
+    summaries: list[dict[str, object]] = []
+    samples: list[dict[str, object]] = []
+    compare_jobs: list[dict[str, object]] = []
+    compare_summary_rows: list[dict[str, object]] = []
+    compare_samples: list[dict[str, object]] = []
+
+    _collect_evaluation_run(
+        run_root,
+        jobs=jobs,
+        results=results,
+        summaries=summaries,
+        samples=samples,
+        compare_jobs=compare_jobs,
+        compare_summary_rows=compare_summary_rows,
+        compare_samples=compare_samples,
+    )
+
+    assert scandir_calls == 1
+    assert [job["job_id"] for job in jobs] == ["eval-1", "eval-compare-1"]
+    assert [row["job_id"] for row in results] == ["eval-1", "eval-compare-1"]
+    assert [row["job_id"] for row in summaries] == ["eval-1", "eval-compare-1"]
+    assert [sample["sample_id"] for sample in compare_samples] == ["sample-1"]
+    assert [sample["sample_id"] for sample in samples] == ["1", "melix-dev-text-lora-a:sample-1"]
+
+
+def test_collect_evaluation_run_preserves_load_failure_behavior_after_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "eval-run"
+    _write_eval_fixtures(run_root)
+
+    original_load_json_object = __import__(
+        "worker.productization.benchmark_export",
+        fromlist=["_load_json_object"],
+    )._load_json_object
+
+    def flaky_load_json_object(path: Path) -> dict[str, object]:
+        if path == run_root / "evaluation-job.json":
+            raise FileNotFoundError(path)
+        return original_load_json_object(path)
+
+    monkeypatch.setattr("worker.productization.benchmark_export._load_json_object", flaky_load_json_object)
+
+    with pytest.raises(FileNotFoundError):
+        _collect_evaluation_run(
+            run_root,
+            jobs=[],
+            results=[],
+            summaries=[],
+            samples=[],
+            compare_jobs=[],
+            compare_summary_rows=[],
+            compare_samples=[],
+        )
 
 
 def test_collect_evaluation_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:
@@ -1272,6 +1621,21 @@ def test_rows_to_csv_accepts_generators_without_materializing_lists() -> None:
         {"job_id": "eval-1", "typed_score": "0.1"},
         {"job_id": "eval-2", "typed_score": "0.2"},
     ]
+
+
+def test_rows_to_csv_uses_writerows_stream_without_dictwriter(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingDictWriter:
+        def __init__(self, *args: object, **kwargs: object) -> None:  # pragma: no cover - exercised only on regression
+            raise AssertionError("_rows_to_csv should avoid per-row DictWriter dictionaries")
+
+    monkeypatch.setattr(csv, "DictWriter", FailingDictWriter)
+
+    csv_text = _rows_to_csv(
+        iter(({"job_id": "bench-1", "suite": "a,b", "ignored": "x"},)),
+        ["job_id", "suite"],
+    )
+
+    assert csv_text == 'job_id,suite\r\nbench-1,"a,b"\r\n'
 
 
 def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:

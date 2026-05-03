@@ -7,6 +7,12 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
+class _RecordCacheEntry:
+    metadata_key: tuple[int, int, int, int]
+    record: BenchmarkQueueRecord
+
+
+@dataclass(frozen=True)
 class BenchmarkQueueRecord:
     queue_item_id: str
     job_kind: str
@@ -57,14 +63,18 @@ class BenchmarkQueueRecord:
 
 
 class BenchmarkQueueStore:
+    def __init__(self) -> None:
+        self._decoded_record_cache: dict[Path, _RecordCacheEntry] = {}
+
     def enqueue(
         self,
         *,
         queue_root: Path,
         record: BenchmarkQueueRecord,
     ) -> BenchmarkQueueRecord:
-        self._write_record(queue_root=queue_root, record=record)
-        return record
+        persisted_record = self._clone_record(record)
+        self._write_record(queue_root=queue_root, record=persisted_record)
+        return self._clone_record(persisted_record)
 
     def list_records(self, *, queue_root: Path) -> list[BenchmarkQueueRecord]:
         if not queue_root.is_dir():
@@ -81,10 +91,12 @@ class BenchmarkQueueStore:
                             continue
                     except OSError:
                         continue
-                    records.append(self._load_record(Path(entry.path)))
+                    path = Path(entry.path)
+                    records.append(self._load_record(path, metadata_key=self._metadata_key(path)))
         except OSError:
             return []
-        return sorted(records, key=lambda record: (record.created_at_unix_ms, record.queue_item_id))
+        records.sort(key=lambda record: (record.created_at_unix_ms, record.queue_item_id))
+        return [self._clone_record(record) for record in records]
 
     def transition(
         self,
@@ -113,18 +125,38 @@ class BenchmarkQueueStore:
             completed_at_unix_ms=completed_at_unix_ms,
         )
         self._write_record(queue_root=queue_root, record=updated)
-        return updated
+        return self._clone_record(updated)
 
     def _write_record(self, *, queue_root: Path, record: BenchmarkQueueRecord) -> None:
         queue_root.mkdir(parents=True, exist_ok=True)
-        self._record_path(queue_root=queue_root, queue_item_id=record.queue_item_id).write_text(
-            json.dumps(record.to_dict(), indent=2) + "\n",
+        path = self._record_path(queue_root=queue_root, queue_item_id=record.queue_item_id)
+        persisted_record = self._clone_record(record)
+        path.write_text(
+            json.dumps(persisted_record.to_dict(), indent=2) + "\n",
             encoding="utf-8",
         )
+        self._decoded_record_cache[path] = _RecordCacheEntry(
+            metadata_key=self._metadata_key(path),
+            record=persisted_record,
+        )
 
-    @staticmethod
-    def _load_record(path: Path) -> BenchmarkQueueRecord:
-        return BenchmarkQueueRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    def _load_record(
+        self,
+        path: Path,
+        *,
+        metadata_key: tuple[int, int, int, int] | None = None,
+    ) -> BenchmarkQueueRecord:
+        current_metadata_key = self._metadata_key(path) if metadata_key is None else metadata_key
+        cached = self._decoded_record_cache.get(path)
+        if cached is not None and cached.metadata_key == current_metadata_key:
+            return cached.record
+        record = BenchmarkQueueRecord.from_dict(json.loads(path.read_bytes()))
+        cached_record = self._clone_record(record)
+        self._decoded_record_cache[path] = _RecordCacheEntry(
+            metadata_key=current_metadata_key,
+            record=cached_record,
+        )
+        return cached_record
 
     def queue_snapshot(self, *, queue_root: Path) -> dict[str, object]:
         records = self.list_records(queue_root=queue_root)
@@ -138,5 +170,30 @@ class BenchmarkQueueStore:
         }
 
     @staticmethod
+    def _clone_record(record: BenchmarkQueueRecord) -> BenchmarkQueueRecord:
+        return BenchmarkQueueRecord(
+            queue_item_id=record.queue_item_id,
+            job_kind=record.job_kind,
+            model_id=record.model_id,
+            suite_ids=record.suite_ids,
+            parameters=dict(record.parameters),
+            status=record.status,
+            created_at_unix_ms=record.created_at_unix_ms,
+            updated_at_unix_ms=record.updated_at_unix_ms,
+            started_at_unix_ms=record.started_at_unix_ms,
+            completed_at_unix_ms=record.completed_at_unix_ms,
+        )
+
+    @staticmethod
     def _record_path(*, queue_root: Path, queue_item_id: str) -> Path:
         return queue_root / f"{queue_item_id}.json"
+
+    @staticmethod
+    def _metadata_key(path: Path) -> tuple[int, int, int, int]:
+        stat_result = path.stat()
+        return (
+            int(stat_result.st_mtime_ns),
+            int(stat_result.st_size),
+            int(stat_result.st_ino),
+            int(stat_result.st_dev),
+        )

@@ -392,6 +392,49 @@ def test_resolve_local_mlx_metallib_uses_scandir_stack_without_path_rglob(
     assert dev_up.resolve_local_mlx_metallib(tmp_path, uv_cache_dir=layout.uv_cache_dir) == metallib_path.resolve()
 
 
+def test_read_mlx_metal_dist_info_version_uses_scandir_without_path_glob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    metallib_path = write_mlx_metal_fixture(tmp_path / "site-packages", "0.29.1")
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - exercised only on regression
+        raise AssertionError("read_mlx_metal_dist_info_version() should not allocate Path.glob() results")
+
+    monkeypatch.setattr(dev_up.Path, "glob", fail_glob)
+
+    assert dev_up.read_mlx_metal_dist_info_version(metallib_path) == "0.29.1"
+
+
+def test_read_mlx_metal_dist_info_version_falls_back_to_dist_info_directory_name(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+    metallib_path = tmp_path / "site-packages/mlx/lib/mlx.metallib"
+    metallib_path.parent.mkdir(parents=True)
+    metallib_path.write_text("mlx", encoding="utf-8")
+    dist_info_path = tmp_path / "site-packages/mlx_metal-0.31.1.dist-info"
+    dist_info_path.mkdir()
+
+    assert dev_up.read_mlx_metal_dist_info_version(metallib_path) == "0.31.1"
+
+
+def test_read_mlx_metal_dist_info_version_skips_scandir_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    metallib_path = tmp_path / "site-packages/mlx/lib/mlx.metallib"
+    metallib_path.parent.mkdir(parents=True)
+    metallib_path.write_text("mlx", encoding="utf-8")
+
+    def fail_scandir(path: Path):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(dev_up.os, "scandir", fail_scandir)
+
+    assert dev_up.read_mlx_metal_dist_info_version(metallib_path) is None
+
+
 def test_iter_mlx_metallib_candidates_skips_scandir_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -467,6 +510,26 @@ def test_prepare_swift_worker_launch_cwd_prefers_matching_swift_mlx_metallib_fro
     assert launch_cwd == layout.runtime_dir / "swift-text-worker-cwd"
     assert default_metallib.is_symlink()
     assert default_metallib.resolve() == matching_metallib_path.resolve()
+
+
+def test_prepare_swift_worker_launch_cwd_accepts_mlx_swift_0313_compatible_mlx_metal_0311(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    repo_root = tmp_path / "repo"
+    write_swift_mlx_package_resolved(repo_root, "0.31.3")
+    layout = replace(make_layout(dev_up, repo_root), uv_cache_dir=repo_root / ".uv-cache")
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    compatible_metallib_path = write_mlx_metal_fixture(layout.uv_cache_dir / "archive-v0/good", "0.31.1")
+    monkeypatch.setattr(dev_up.Path, "home", lambda: tmp_path / "empty-home")
+
+    launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, repo_root)
+
+    default_metallib = launch_cwd / "default.metallib"
+    assert launch_cwd == layout.runtime_dir / "swift-text-worker-cwd"
+    assert default_metallib.is_symlink()
+    assert default_metallib.resolve() == compatible_metallib_path.resolve()
 
 
 def test_prepare_swift_worker_launch_cwd_rejects_incompatible_auto_discovered_metallib(

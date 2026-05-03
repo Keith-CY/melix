@@ -110,6 +110,15 @@ _NUMERIC_RESULT_PATTERN = re.compile(r"=\s*([-+]?\d+(?:\.\d+)?)")
 _OPTION_TOKEN_PATTERN = re.compile(r"\b([A-Z])\b")
 _DIGIT_TOKEN_PATTERN = re.compile(r"\b(\d+)\b")
 _MULTIMODAL_TASK_KINDS = {"image-to-text", "image-text-to-text"}
+_SAMPLE_PROBE_MEAN_FIELDS = (
+    ("sample_render_ms_mean", "sample_render_ms"),
+    ("inference_ms_mean", "inference_ms"),
+    ("extraction_ms_mean", "extraction_ms"),
+    ("validation_ms_mean", "validation_ms"),
+    ("scoring_ms_mean", "scoring_ms"),
+    ("raw_response_chars_mean", "raw_response_chars"),
+    ("extracted_result_chars_mean", "extracted_result_chars"),
+)
 
 
 @dataclass(frozen=True)
@@ -484,6 +493,10 @@ class EvaluationCore:
         extraction_success_rate = round(extraction_success_count / max(len(sample_records), 1), 4)
         validation_success_rate = round(validation_success_count / max(len(sample_records), 1), 4)
         job_parameters.setdefault("sample_size", str(len(sample_records)))
+        sample_probe_means = self._sample_probe_means(
+            sample_records,
+            tuple(field_name for _, field_name in _SAMPLE_PROBE_MEAN_FIELDS),
+        )
         result_metrics = {
             f"eval.{suite_id}.typed_score_mean": typed_score_mean,
             f"eval.{suite_id}.threshold_pass_rate": threshold_pass_rate,
@@ -494,27 +507,10 @@ class EvaluationCore:
             f"eval.{suite_id}.scored_sample_count": float(scored_sample_count),
             f"eval.{suite_id}.failure_count": float(failure_count),
             f"eval.{suite_id}.duration_seconds": duration_seconds,
-            f"eval.{suite_id}.sample_render_ms_mean": self._sample_probe_mean(
-                sample_records, "sample_render_ms"
-            ),
-            f"eval.{suite_id}.inference_ms_mean": self._sample_probe_mean(
-                sample_records, "inference_ms"
-            ),
-            f"eval.{suite_id}.extraction_ms_mean": self._sample_probe_mean(
-                sample_records, "extraction_ms"
-            ),
-            f"eval.{suite_id}.validation_ms_mean": self._sample_probe_mean(
-                sample_records, "validation_ms"
-            ),
-            f"eval.{suite_id}.scoring_ms_mean": self._sample_probe_mean(
-                sample_records, "scoring_ms"
-            ),
-            f"eval.{suite_id}.raw_response_chars_mean": self._sample_probe_mean(
-                sample_records, "raw_response_chars"
-            ),
-            f"eval.{suite_id}.extracted_result_chars_mean": self._sample_probe_mean(
-                sample_records, "extracted_result_chars"
-            ),
+            **{
+                f"eval.{suite_id}.{metric_name}": sample_probe_means[field_name]
+                for metric_name, field_name in _SAMPLE_PROBE_MEAN_FIELDS
+            },
         }
         result_units = {
             f"eval.{suite_id}.typed_score_mean": "ratio",
@@ -1801,6 +1797,15 @@ class EvaluationCore:
                     next_index += 1
                     self._next_job_index = next_index
 
+    @staticmethod
+    def _parse_run_directory_index(name: str) -> int | None:
+        if not name.startswith("eval-"):
+            return None
+        suffix = name[5:]
+        if len(suffix) < 4 or not suffix.isdecimal():
+            return None
+        return int(suffix)
+
     def _prime_next_job_index(self, runs_root: Path) -> int:
         if self._next_job_index is not None:
             return self._next_job_index
@@ -1809,10 +1814,10 @@ class EvaluationCore:
             for entry in entries:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-                match = re.fullmatch(r"eval-(\d{4})", entry.name)
-                if match is None:
+                index = self._parse_run_directory_index(entry.name)
+                if index is None:
                     continue
-                highest_index = max(highest_index, int(match.group(1)))
+                highest_index = max(highest_index, index)
         self._next_job_index = highest_index + 1
         return self._next_job_index
 
@@ -1999,6 +2004,23 @@ class EvaluationCore:
             return float(raw_value)
         except ValueError:
             return float(default_value)
+
+    @staticmethod
+    def _sample_probe_means(samples: Any, field_names: tuple[str, ...]) -> dict[str, float]:
+        if not field_names:
+            return {}
+        totals = {field_name: 0.0 for field_name in field_names}
+        sample_count = 0
+        for sample in samples:
+            sample_count += 1
+            for field_name in field_names:
+                totals[field_name] += float(getattr(sample, field_name, 0.0) or 0.0)
+        if sample_count == 0:
+            return {field_name: 0.0 for field_name in field_names}
+        return {
+            field_name: round(total / sample_count, 4)
+            for field_name, total in totals.items()
+        }
 
     @staticmethod
     def _sample_probe_mean(samples: tuple[EvaluationSample, ...], field_name: str) -> float:

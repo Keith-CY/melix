@@ -8,6 +8,14 @@ This Linux-only optimization slice targets `services/mlx-worker-python` and avoi
 
 Reduce redundant memory use and per-row overhead in `worker/productization/benchmark_evaluation_report.py` by replacing per-metric `list[float]` accumulation with running sum/count aggregation, then fast-pathing numeric probe rows and label formatting before falling back to generic handling, while preserving all output keys and values.
 
+## 2026-05-01 numeric coercion slice
+
+A follow-up Linux-verifiable slice fast-paths exact `float`, `int`, and `bool` values inside `_float_or_none` before falling back to string parsing. The registered synthetic benchmark-evaluation report probe repeatedly normalizes already-numeric JSON rows, so this removes the tuple `isinstance` check from the hot path while preserving bool and string coercion semantics.
+
+## 2026-05-01 exact numeric collector fast-path slice
+
+A second follow-up Linux-verifiable slice extends the exact-type numeric fast path into metric-row comparison plus benchmark request-row and evaluation sample-row collectors. Already-decoded JSON probe metrics are commonly exact `float`, `int`, or `bool` values, so these hot paths now avoid a generic tuple `isinstance` check and skip `_float_or_none` unless the value needs string parsing, while preserving bool rate/count semantics.
+
 ## Touched Files
 
 - `services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py`

@@ -5,7 +5,7 @@ import os
 import runpy
 from argparse import Namespace
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -30,7 +30,7 @@ from worker.model_ops.mlx_lm_runner import ActivationRequest, TrainingRequest
 from worker.model_ops.training_config import LoRATrainingConfig
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
-from worker.registry import WorkerRegistry
+from worker.registry import LoadedModel, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_delay import configured_delay_ms
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeUnavailableError
@@ -169,6 +169,25 @@ def build_services(backend=None):
     return registry, WorkerRuntimeService(registry), WorkerInferenceService(registry)
 
 
+def test_worker_registry_sparse_model_request_fast_path_preserves_semantics() -> None:
+    sparse = common_pb2.ModelSpec(model_id="melix-dev-text")
+    empty = common_pb2.ModelSpec()
+    full = WorkerModelCatalog.dev_text_model()
+    with_path = common_pb2.ModelSpec(model_id="melix-dev-text", model_path="/models/dev")
+
+    assert WorkerRegistry._is_sparse_model_request(sparse) is True
+    assert WorkerRegistry._is_sparse_model_request(empty) is True
+    assert WorkerRegistry._is_sparse_model_request(full) is False
+    assert WorkerRegistry._is_sparse_model_request(with_path) is False
+
+    registry = build_registry()
+    loaded = registry.load_model(sparse)
+
+    assert loaded.spec.model_id == "melix-dev-text"
+    assert loaded.spec.model_path == WorkerModelCatalog.dev_text_model().model_path
+    assert loaded.runtime_model["model_path"] == WorkerModelCatalog.dev_text_model().model_path
+
+
 def load_default_model(runtime_service: WorkerRuntimeService) -> str:
     response = runtime_service.LoadModel(
         runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
@@ -263,6 +282,82 @@ def test_runtime_service_rejects_model_loads_that_exceed_process_budget_and_repo
     assert stats.stats.resident_bytes == 0
 
 
+def test_worker_registry_reserves_resident_bytes_across_concurrent_loads() -> None:
+    class BlockingBackend(FakeBackend):
+        def __init__(self) -> None:
+            self.started = Event()
+            self.release = Event()
+
+        def load_model(self, model_spec):
+            self.started.set()
+            self.release.wait(timeout=5)
+            return super().load_model(model_spec)
+
+    backend = BlockingBackend()
+    registry = build_registry(
+        backend=backend,
+        process_memory_budget_bytes=9_000,
+        memory_headroom_bytes=1_000,
+    )
+    results: list[object] = [None]
+
+    def load_first() -> None:
+        results[0] = registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    first_thread = Thread(target=load_first)
+    first_thread.start()
+    assert backend.started.wait(timeout=5) is True
+
+    with pytest.raises(MemoryBudgetExceeded) as excinfo:
+        registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    backend.release.set()
+    first_thread.join(timeout=5)
+
+    first = results[0]
+    assert isinstance(first, LoadedModel)
+    assert excinfo.value.projected_resident_bytes == 8_192
+    assert excinfo.value.required_bytes == 9_192
+    stats = registry.runtime_stats()
+    assert stats.model_resident_bytes == 4_096
+    assert registry._reserved_model_resident_bytes == 0
+    assert registry.unload_model(first.handle) is True
+
+
+
+def test_worker_registry_releases_reserved_bytes_when_load_fails() -> None:
+    registry = build_registry(backend=FailingBackend())
+
+    with pytest.raises(RuntimeError, match="cannot load model"):
+        registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    assert registry._reserved_model_resident_bytes == 0
+    assert registry.runtime_stats().model_resident_bytes == 0
+    assert registry.list_loaded_models() == []
+
+
+
+def test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes() -> None:
+    registry = build_registry()
+    first = registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    class ValuesFailDict(dict):
+        def values(self):
+            raise AssertionError("loaded model resident bytes should not rescan dict values")
+
+    registry._loaded_models = ValuesFailDict(registry._loaded_models)
+
+    second = registry.load_model(WorkerModelCatalog.dev_text_model())
+    stats = registry.runtime_stats()
+
+    assert second.handle != first.handle
+    assert stats.model_resident_bytes == first.estimated_resident_bytes + second.estimated_resident_bytes
+    assert registry.unload_model(first.handle) is True
+    assert registry.unload_model(second.handle) is True
+    assert registry.unload_model("missing-handle") is False
+    assert registry.runtime_stats().model_resident_bytes == 0
+
+
 def test_registry_capabilities_and_request_lifecycle() -> None:
     registry = build_registry()
 
@@ -284,6 +379,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     vision_state = registry.start_request("req-vision", runtime_kind="ocr")
     transcription_state = registry.start_request("req-transcription", runtime_kind="transcription")
     speech_state = registry.start_request("req-speech", runtime_kind="speech")
+    registry.set_request_phase("req-vision", "prefill")
+    registry.set_request_phase("req-transcription", "decode")
+    registry.set_request_phase("missing", "prefill")
     assert vision_state.runtime_kind == "ocr"
     assert transcription_state.runtime_kind == "transcription"
     assert speech_state.runtime_kind == "speech"
@@ -302,6 +400,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
         ),
     )
     vision_stats = registry.runtime_stats()
+    assert vision_stats.active_requests == 3
+    assert vision_stats.active_prefills == 1
+    assert vision_stats.active_decodes == 1
     assert vision_stats.active_multimodal_requests == 3
     assert vision_stats.last_probe_kind == "ocr"
     assert vision_stats.last_preprocess_latency_ms == 12.0
@@ -367,6 +468,37 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     registry.finish_request("req-transcription")
     registry.finish_request("req-speech")
     assert registry.runtime_stats().active_multimodal_requests == 0
+
+
+def test_runtime_stats_request_counters_stay_consistent_without_request_scan() -> None:
+    registry = build_registry()
+
+    registry.start_request("req-reused", runtime_kind="ocr")
+    registry.set_request_phase("req-reused", "prefill")
+    registry.start_request("req-reused", runtime_kind="text")
+    registry.set_request_phase("req-reused", "decode")
+    registry.start_request("req-image", runtime_kind="image")
+
+    stats = registry.runtime_stats()
+    assert stats.active_requests == 2
+    assert stats.active_prefills == 0
+    assert stats.active_decodes == 1
+    assert stats.active_multimodal_requests == 1
+
+    registry.finish_request("req-reused")
+    registry.finish_request("missing")
+    stats = registry.runtime_stats()
+    assert stats.active_requests == 1
+    assert stats.active_prefills == 0
+    assert stats.active_decodes == 0
+    assert stats.active_multimodal_requests == 1
+
+    registry.finish_request("req-image")
+    stats = registry.runtime_stats()
+    assert stats.active_requests == 0
+    assert stats.active_prefills == 0
+    assert stats.active_decodes == 0
+    assert stats.active_multimodal_requests == 0
 
 
 def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backend_configuration() -> None:

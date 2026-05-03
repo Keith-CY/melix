@@ -5,18 +5,22 @@ description = "Python worker for the Melix execution plane."
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
-  "coverage>=7.10.0",
   "grpcio>=1.71.0",
-  "grpcio-tools>=1.71.0",
   "protobuf>=5.29.0",
+]
+
+[dependency-groups]
+dev = [
+  "coverage>=7.10.0",
+  "grpcio-tools>=1.71.0",
   "pytest>=8.3.0",
 ]
 
 [project.optional-dependencies]
 mlx = [
-  "mlx>=0.25.0",
-  "mlx-lm>=0.22.0",
-  "mlx-vlm @ git+https://github.com/Blaizzy/mlx-vlm.git@43b9b2078b7027e7622f34a434b2d94aada7eaad",
+  "mlx>=0.31.2,<0.32",
+  "mlx-lm>=0.31.3,<0.32",
+  "mlx-vlm>=0.4.4,<0.5",
 ]
 audio-stt = [
   "mlx-audio==0.4.2",

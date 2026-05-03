@@ -8,3 +8,19 @@ dependencies = []
 
 [tool.uv.workspace]
 members = ["services/mlx-worker-python"]
+
+[tool.uv]
+conflicts = [
+  [
+    { package = "melix-mlx-worker", extra = "mlx" },
+    { package = "melix-mlx-worker", extra = "audio" },
+  ],
+  [
+    { package = "melix-mlx-worker", extra = "mlx" },
+    { package = "melix-mlx-worker", extra = "audio-stt" },
+  ],
+  [
+    { package = "melix-mlx-worker", extra = "mlx" },
+    { package = "melix-mlx-worker", extra = "audio-tts" },
+  ],
+]

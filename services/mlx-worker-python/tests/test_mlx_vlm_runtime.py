@@ -14,9 +14,11 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.registry import WorkerRegistry
 from worker.runtime.multimodal_preprocessing import (
     PreparedImageInput,
+    PreparedVideoInput,
     PreparedVideoFramePolicy,
     PreparedVisionRequest,
 )
+from worker.runtime import mlx_vlm_runtime as mlx_vlm_runtime_module
 from worker.runtime.mlx_vlm_runtime import (
     AutoMLXVLMBackend,
     MLXVLMRuntime,
@@ -183,6 +185,353 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
     assert probe.multimodal_decode_mode == "native_quantized"
     assert probe.multimodal_decode_sync_mode == "executor_stream"
     assert probe.multi_image_scatter_mode == "none"
+
+
+def test_mlx_vlm_runtime_records_installed_package_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_version(package_name: str) -> str:
+        return {
+            "mlx": "0.31.2",
+            "mlx-lm": "0.31.3",
+            "mlx-vlm": "0.4.4",
+        }[package_name]
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="gemma4"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_installed_package_version", fake_version)
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "formatted::prompt",
+        )
+    )
+
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+
+    assert loaded_model["metadata"]["mlx_version"] == "0.31.2"
+    assert loaded_model["metadata"]["mlx_lm_version"] == "0.31.3"
+    assert loaded_model["metadata"]["mlx_vlm_version"] == "0.4.4"
+
+
+def test_mlx_vlm_runtime_caches_family_config_across_prompt_render_and_token_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolve_call_count = 0
+
+    class FakeFamilyConfig:
+        def capability_metadata(self) -> dict[str, str]:
+            return {
+                "vision_family_id": "gemma4-v1",
+                "vision_prompt_profile_id": "gemma4-chatml-v1",
+            }
+
+        def shape_request(self, prepared: PreparedVisionRequest) -> PreparedVisionRequest:
+            return prepared
+
+        def prompt_token_count(self, prepared: PreparedVisionRequest) -> int:
+            return len(prepared.prompt_text.split())
+
+    def fake_resolve(metadata: dict[str, str]) -> FakeFamilyConfig:
+        nonlocal resolve_call_count
+        resolve_call_count += 1
+        assert metadata["vision_family_id"] == "gemma4-v1"
+        return FakeFamilyConfig()
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "resolve_vision_family_config", fake_resolve)
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_installed_package_version", lambda name: f"{name}-version")
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "formatted::prompt",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+
+    assert resolve_call_count == 1
+    cached_config = loaded_model["_vision_family_config"]
+
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Describe the image")])],
+        loaded_model=loaded_model,
+    )
+
+    assert runtime.prompt_token_count(prepared, loaded_model=loaded_model) == 3
+    assert runtime.prompt_token_count(prepared, loaded_model=loaded_model) == 3
+    assert loaded_model["_vision_family_config"] is cached_config
+    assert resolve_call_count == 1
+
+
+def test_mlx_vlm_runtime_family_config_backfills_cache_for_legacy_loaded_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolve_call_count = 0
+
+    class FakeFamilyConfig:
+        def capability_metadata(self) -> dict[str, str]:
+            return {}
+
+        def shape_request(self, prepared: PreparedVisionRequest) -> PreparedVisionRequest:
+            return prepared
+
+        def prompt_token_count(self, prepared: PreparedVisionRequest) -> int:
+            return len(prepared.prompt_text)
+
+    def fake_resolve(metadata: dict[str, str]) -> FakeFamilyConfig:
+        nonlocal resolve_call_count
+        resolve_call_count += 1
+        assert metadata["vision_family_id"] == "gemma4-v1"
+        return FakeFamilyConfig()
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "resolve_vision_family_config", fake_resolve)
+
+    legacy_loaded_model = {
+        "metadata": {
+            "vision_family_id": "gemma4-v1",
+            "vision_prompt_profile_id": "gemma4-chatml-v1",
+            "melix.vlm.execution_mode": "multimodal",
+        }
+    }
+    runtime = MLXVLMRuntime()
+
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="legacy cache path")])],
+        loaded_model=legacy_loaded_model,
+    )
+
+    assert runtime.prompt_token_count(prepared, loaded_model=legacy_loaded_model) == len("legacy cache path")
+    assert legacy_loaded_model["_vision_family_config"] is not None
+    assert resolve_call_count == 1
+
+
+def test_mlx_vlm_runtime_passes_video_when_backend_accepts_video_argument() -> None:
+    stream_calls: list[dict[str, object]] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="qwen2_vl"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = num_images
+        _ = kwargs
+        return f"formatted::{prompt}"
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, video=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = image
+        _ = kwargs
+        video_paths = list(video or [])
+        stream_calls.append({"prompt": prompt, "video": video_paths})
+        yield SimpleNamespace(text="video summary", generation_tokens=1)
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = PreparedVisionRequest(
+        prompt_text="Describe the video.",
+        images=[],
+        videos=[
+            PreparedVideoInput(
+                source_kind="inline",
+                reference="inline:video",
+                bytes_data=b"fake-video-payload",
+                mime_type="video/mp4",
+                format="mp4",
+                filename="sample.mp4",
+                byte_length=len(b"fake-video-payload"),
+                duration_ms=1000,
+                frame_budget=4,
+                start_ms=0,
+                end_ms=1000,
+                sha256_hex="beef",
+            )
+        ],
+        video_frame_policies=[
+            PreparedVideoFramePolicy(
+                reference="inline:video",
+                sampling_strategy="uniform",
+                requested_frame_budget=4,
+                effective_frame_count=4,
+                clip_start_ms=0,
+                clip_end_ms=1000,
+                clip_duration_ms=1000,
+            )
+        ],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(b"fake-video-payload"),
+        preprocess_peak_memory_bytes=len(b"fake-video-payload"),
+        prompt_hash_hex="11" * 32,
+        multimodal_hash_hex="22" * 32,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+        )
+    )
+
+    assert [event.text for event in events] == ["video summary"]
+    assert stream_calls[0]["prompt"] == "formatted::Describe the video."
+    video_paths = stream_calls[0]["video"]
+    assert isinstance(video_paths, list)
+    assert len(video_paths) == 1
+    assert not Path(video_paths[0]).exists()
+
+
+def test_mlx_vlm_runtime_records_video_fallback_when_backend_omits_video_argument(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stream_calls: list[dict[str, object]] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="qwen2_vl"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0):
+        _ = processor
+        _ = config
+        _ = num_images
+        return f"formatted::{prompt}"
+
+    def fake_stream_generate(
+        model,
+        processor,
+        prompt: str,
+        image=None,
+        max_tokens: int = 64,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+        top_k: int = 0,
+        verbose: bool = False,
+    ):
+        _ = model
+        _ = processor
+        stream_calls.append(
+            {
+                "prompt": prompt,
+                "image": image,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+                "top_k": top_k,
+                "verbose": verbose,
+            }
+        )
+        yield SimpleNamespace(text="fallback summary", generation_tokens=1)
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = PreparedVisionRequest(
+        prompt_text="Describe the video.",
+        images=[],
+        videos=[
+            PreparedVideoInput(
+                source_kind="inline",
+                reference="inline:video",
+                bytes_data=b"fake-video-payload",
+                mime_type="video/mp4",
+                format="mp4",
+                filename="sample.mp4",
+                byte_length=len(b"fake-video-payload"),
+                duration_ms=1000,
+                frame_budget=4,
+                start_ms=0,
+                end_ms=1000,
+                sha256_hex="beef",
+            )
+        ],
+        video_frame_policies=[
+            PreparedVideoFramePolicy(
+                reference="inline:video",
+                sampling_strategy="uniform",
+                requested_frame_budget=4,
+                effective_frame_count=4,
+                clip_start_ms=0,
+                clip_end_ms=1000,
+                clip_duration_ms=1000,
+            )
+        ],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(b"fake-video-payload"),
+        preprocess_peak_memory_bytes=len(b"fake-video-payload"),
+        prompt_hash_hex="11" * 32,
+        multimodal_hash_hex="22" * 32,
+    )
+
+    caplog.set_level("WARNING", logger=mlx_vlm_runtime_module.__name__)
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+        )
+    )
+
+    assert [event.text for event in events] == ["fallback summary"]
+    assert stream_calls == [
+        {
+            "prompt": "formatted::Describe the video.",
+            "image": None,
+            "max_tokens": 8,
+            "temperature": 0.0,
+            "top_p": 0.0,
+            "top_k": 0,
+            "verbose": False,
+        }
+    ]
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == "fallback"
+    assert probe.multimodal_fallback_reason == "backend_video_kwarg_unsupported"
+    assert "does not accept video=" in caplog.text
 
 
 def test_mlx_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:

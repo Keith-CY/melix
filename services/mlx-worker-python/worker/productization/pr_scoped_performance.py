@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import fnmatch
 import gc
+import os
 import importlib.util
 import json
 from pathlib import Path
@@ -12,7 +14,13 @@ import sys
 import tempfile
 import time
 import tracemalloc
+import types
 from typing import Any
+
+
+def _glob_has_magic(glob: str) -> bool:
+    return any(character in glob for character in "*?[")
+
 
 _COMMENT_MARKER = "<!-- melix-pr-scoped-performance-report -->"
 _SCOPE_SCHEMA_VERSION = "melix.pr_scoped_performance_scope.v1"
@@ -25,6 +33,8 @@ _FORCE_ALL_GLOBS = (
     "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
     "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
 )
+_FORCE_ALL_EXACT_PATHS = frozenset(glob for glob in _FORCE_ALL_GLOBS if not _glob_has_magic(glob))
+_FORCE_ALL_WILDCARD_GLOBS = tuple(glob for glob in _FORCE_ALL_GLOBS if _glob_has_magic(glob))
 _COVERAGE_PERCENT_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
 _TEXT_FILE_SUFFIXES = {".md", ".py", ".json", ".txt", ".yaml", ".yml"}
 
@@ -72,8 +82,22 @@ class ProbeDefinition:
         }
 
 
+_PROBE_REGISTRY_CACHE: dict[str, tuple[int, int, tuple[ProbeDefinition, ...]]] = {}
+
+
+def _probe_registry_cache_key(path: str | Path) -> str:
+    return os.path.abspath(os.fspath(path))
+
+
 def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    path_obj = Path(path)
+    cache_key = _probe_registry_cache_key(path_obj)
+    stat_result = path_obj.stat()
+    cached = _PROBE_REGISTRY_CACHE.get(cache_key)
+    if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
+        return cached[2]
+
+    payload = json.loads(path_obj.read_bytes())
     if not isinstance(payload, list):
         raise ValueError("probe registry must be a JSON list")
     probes: list[ProbeDefinition] = []
@@ -107,7 +131,29 @@ def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
                 coverage_replays_tests=bool(raw_probe.get("coverage_replays_tests", False)),
             )
         )
-    return tuple(probes)
+    probe_tuple = tuple(probes)
+    _PROBE_REGISTRY_CACHE[cache_key] = (stat_result.st_mtime_ns, stat_result.st_size, probe_tuple)
+    return probe_tuple
+
+
+def load_probe_registry_for_scope(path: str | Path) -> tuple[ProbeDefinition, ...]:
+    registry_path = Path(path)
+    cache_key = _probe_registry_cache_key(registry_path)
+    stat_result = registry_path.stat()
+    return _load_probe_registry_for_scope_cached(
+        cache_key,
+        stat_result.st_mtime_ns,
+        stat_result.st_size,
+    )
+
+
+@lru_cache(maxsize=None)
+def _load_probe_registry_for_scope_cached(
+    registry_path: str,
+    _mtime_ns: int,
+    _size: int,
+) -> tuple[ProbeDefinition, ...]:
+    return load_probe_registry(registry_path)
 
 
 def build_scope_report(
@@ -115,17 +161,15 @@ def build_scope_report(
     registry_path: str | Path,
     changed_files: list[str],
 ) -> dict[str, object]:
-    probes = load_probe_registry(registry_path)
-    changed_paths = tuple(sorted({path for path in changed_files if path}))
-    force_all = any(_matches_any_glob(path, _FORCE_ALL_GLOBS) for path in changed_paths)
+    probes = load_probe_registry_for_scope(registry_path)
+    changed_path_set = {path for path in changed_files if path}
+    force_all = any(_path_matches_force_all(path) for path in changed_path_set)
     if force_all:
         selected = probes
     else:
-        selected = tuple(
-            probe
-            for probe in probes
-            if any(_matches_any_glob(path, probe.watch_globs) for path in changed_paths)
-        )
+        matched_probe_indexes = _match_probe_indexes(changed_paths=changed_path_set, probes=probes)
+        selected = tuple(probe for index, probe in enumerate(probes) if index in matched_probe_indexes)
+    changed_paths = tuple(sorted(changed_path_set))
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
@@ -285,14 +329,26 @@ def build_sticky_comment_body(markdown_report: str) -> str:
     return f"{_COMMENT_MARKER}\n{markdown_report.rstrip()}\n"
 
 
-def write_report_outputs(report: dict[str, object], output_dir: str | Path) -> dict[str, Path]:
+def write_report_outputs(
+    report: dict[str, object],
+    output_dir: str | Path,
+    *,
+    markdown_report: str | None = None,
+    sticky_comment: bool = False,
+) -> dict[str, Path]:
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     json_path = root / "report.json"
     markdown_path = root / "report.md"
+    markdown = render_markdown_report(report) if markdown_report is None else markdown_report
     json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    markdown_path.write_text(render_markdown_report(report), encoding="utf-8")
-    return {"json": json_path, "markdown": markdown_path}
+    markdown_path.write_text(markdown, encoding="utf-8")
+    outputs = {"json": json_path, "markdown": markdown_path}
+    if sticky_comment:
+        sticky_comment_path = root / "pr-comment.md"
+        sticky_comment_path.write_text(build_sticky_comment_body(markdown), encoding="utf-8")
+        outputs["sticky_comment"] = sticky_comment_path
+    return outputs
 
 
 def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, object]:
@@ -366,12 +422,32 @@ def _run_probe_impl(*, probe: ProbeDefinition, repo_root: Path, repo_label: str)
 def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, float]:
     if probe.probe_impl == "benchmark_evaluation_report":
         return _probe_benchmark_evaluation_report(repo_root)
+    if probe.probe_impl == "benchmark_export_run_scan":
+        return _probe_benchmark_export_run_scan(repo_root)
+    if probe.probe_impl == "benchmark_queue_cache":
+        return _probe_benchmark_queue_cache(repo_root)
     if probe.probe_impl == "closure_audit":
         return _probe_closure_audit(repo_root)
+    if probe.probe_impl == "deterministic_rerank_query_context_reuse":
+        return _probe_deterministic_rerank_query_context_reuse(repo_root)
+    if probe.probe_impl == "evaluation_store_compare_summary_csv_streaming":
+        return _probe_evaluation_store_compare_summary_csv_streaming(repo_root)
+    if probe.probe_impl == "evaluation_store_samples_csv_streaming":
+        return _probe_evaluation_store_samples_csv_streaming(repo_root)
+    if probe.probe_impl == "evaluation_sample_probe_aggregation":
+        return _probe_evaluation_sample_probe_aggregation(repo_root)
     if probe.probe_impl == "evaluation_job_id":
         return _probe_evaluation_job_id(repo_root)
     if probe.probe_impl == "training_dataset_token_percentiles":
         return _probe_training_dataset_token_percentiles(repo_root)
+    if probe.probe_impl == "upload_receipt_published_files":
+        return _probe_upload_receipt_published_files(repo_root)
+    if probe.probe_impl == "pr_scoped_scope_matcher":
+        return _probe_pr_scoped_scope_matcher(repo_root)
+    if probe.probe_impl == "model_ops_bundle_artifact_bytes":
+        return _probe_model_ops_bundle_artifact_bytes(repo_root)
+    if probe.probe_impl == "pr_scoped_performance_registry_cache":
+        return _probe_pr_scoped_performance_registry_cache(repo_root)
     if probe.probe_impl == "command_json":
         return _probe_command_json(probe=probe, repo_root=repo_root)
     raise ValueError(f"unsupported probe implementation: {probe.probe_impl}")
@@ -407,6 +483,58 @@ def _probe_command_json(*, probe: ProbeDefinition, repo_root: Path) -> dict[str,
     return metrics
 
 
+def _probe_pr_scoped_performance_registry_cache(repo_root: Path) -> dict[str, float]:
+    module = _load_repo_module(
+        repo_root / "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        unique_name="melix_probe_pr_scoped_performance_registry_cache",
+    )
+    registry_path = repo_root / "infra/perf/pr_scoped_probes.json"
+    changed_files = [
+        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    ]
+    load_iterations = 400
+    cold_load_iterations = 60
+    scope_iterations = 200
+    sample_count = 6
+    load_samples: list[float] = []
+    cold_load_samples: list[float] = []
+    scope_samples: list[float] = []
+    cache = getattr(module, "_PROBE_REGISTRY_CACHE", None)
+
+    for _ in range(sample_count):
+        if isinstance(cache, dict):
+            cache.clear()
+        started = time.perf_counter()
+        for _ in range(load_iterations):
+            module.load_probe_registry(registry_path)
+        load_samples.append((time.perf_counter() - started) * 1000.0)
+
+        started = time.perf_counter()
+        for _ in range(cold_load_iterations):
+            if isinstance(cache, dict):
+                cache.clear()
+            module.load_probe_registry(registry_path)
+        cold_load_samples.append((time.perf_counter() - started) * 1000.0)
+
+        if isinstance(cache, dict):
+            cache.clear()
+        started = time.perf_counter()
+        for _ in range(scope_iterations):
+            module.build_scope_report(registry_path=registry_path, changed_files=changed_files)
+        scope_samples.append((time.perf_counter() - started) * 1000.0)
+
+    return {
+        "load_probe_registry_iterations": float(load_iterations),
+        "load_probe_registry_ms_mean": round(sum(load_samples) / len(load_samples), 6),
+        "cold_load_probe_registry_iterations": float(cold_load_iterations),
+        "cold_load_probe_registry_ms_mean": round(sum(cold_load_samples) / len(cold_load_samples), 6),
+        "build_scope_report_iterations": float(scope_iterations),
+        "build_scope_report_ms_mean": round(sum(scope_samples) / len(scope_samples), 6),
+        "sample_count": float(sample_count),
+    }
+
+
 def _probe_benchmark_evaluation_report(repo_root: Path) -> dict[str, float]:
     module = _load_repo_module(
         repo_root / "services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py",
@@ -431,6 +559,158 @@ def _probe_benchmark_evaluation_report(repo_root: Path) -> dict[str, float]:
         "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 3),
         "peak_bytes_mean": round(sum(peak_samples) / len(peak_samples), 1),
         "row_count": row_count,
+    }
+
+
+def _probe_benchmark_export_run_scan(repo_root: Path) -> dict[str, float]:
+    module = _load_repo_module(
+        repo_root / "services/mlx-worker-python/worker/productization/benchmark_export.py",
+        unique_name="melix_probe_benchmark_export",
+    )
+    run_directory_count = 240
+    result_files_per_run = 3
+    sample_count = 5
+    elapsed_samples: list[float] = []
+    csv_elapsed_samples: list[float] = []
+    result_file_count = 0.0
+    csv_bytes = 0.0
+    with tempfile.TemporaryDirectory(prefix="melix-pr-perf-benchmark-export-") as temp_dir:
+        temp_root = Path(temp_dir)
+        bench_root = temp_root / "bench"
+        runs_root = bench_root / "runs"
+        for run_index in range(run_directory_count):
+            run_root = runs_root / f"bench-{run_index:04d}"
+            run_root.mkdir(parents=True, exist_ok=True)
+            summary_payload = {
+                "schema_version": "melix.serving_benchmark_job.v1",
+                "job_id": f"bench-{run_index:04d}",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "synthetic",
+                "suites": ["smoke"],
+                "context_lengths": [32],
+                "generation_length": 8,
+                "batch_sizes": [1],
+                "repeats": 1,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "request_p50_ms": 24.45,
+                "request_p95_ms": 24.45,
+                "parameters": {},
+                "status": "completed",
+                "output_dir": str(run_root),
+                "created_at_unix_ms": 101,
+                "updated_at_unix_ms": 202,
+            }
+            (run_root / "bench-summary.json").write_text(json.dumps(summary_payload) + "\n", encoding="utf-8")
+            (run_root / "bench-context-rows.jsonl").write_text(
+                json.dumps({"job_id": summary_payload["job_id"], "row_kind": "context"}) + "\n",
+                encoding="utf-8",
+            )
+            (run_root / "bench-batch-rows.jsonl").write_text(
+                json.dumps({"job_id": summary_payload["job_id"], "row_kind": "batch"}) + "\n",
+                encoding="utf-8",
+            )
+            for result_index, suite in enumerate(("gamma", "alpha", "omega")):
+                (run_root / f"bench-result-{suite}.json").write_text(
+                    json.dumps({
+                        "job_id": summary_payload["job_id"],
+                        "suite": suite,
+                        "metric_index": result_index,
+                    }) + "\n",
+                    encoding="utf-8",
+                )
+        result_file_count = float(run_directory_count * result_files_per_run)
+        for _ in range(sample_count):
+            gc.collect()
+            started = time.perf_counter()
+            artifacts = module.collect_benchmark_artifacts(temp_root)
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            if len(artifacts.get("benchmark_jobs", [])) != run_directory_count:
+                raise ValueError("benchmark export probe produced an unexpected benchmark job count")
+            if len(artifacts.get("benchmark_results", [])) != int(result_file_count):
+                raise ValueError("benchmark export probe produced an unexpected benchmark result count")
+            csv_started = time.perf_counter()
+            summary_csv = module.build_benchmark_summary_csv(artifacts)
+            csv_elapsed_samples.append((time.perf_counter() - csv_started) * 1000.0)
+            csv_bytes = float(len(summary_csv.encode("utf-8")))
+            if len(summary_csv.splitlines()) != run_directory_count + 1:
+                raise ValueError("benchmark export probe produced an unexpected summary CSV line count")
+    elapsed_ms_mean = sum(elapsed_samples) / len(elapsed_samples)
+    csv_elapsed_ms_mean = sum(csv_elapsed_samples) / len(csv_elapsed_samples)
+    return {
+        "csv_bytes": csv_bytes,
+        "csv_elapsed_ms_mean": round(csv_elapsed_ms_mean, 6),
+        "elapsed_ms_mean": round(elapsed_ms_mean, 6),
+        "per_run_ms_mean": round(elapsed_ms_mean / float(run_directory_count), 6),
+        "result_file_count": result_file_count,
+        "run_directory_count": float(run_directory_count),
+        "sample_count": float(sample_count),
+    }
+
+
+def _probe_benchmark_queue_cache(repo_root: Path) -> dict[str, float]:
+    module = _load_repo_module(
+        repo_root / "services/mlx-worker-python/worker/productization/benchmark_queue.py",
+        unique_name="melix_probe_benchmark_queue",
+    )
+    record_count = 128
+    warm_sample_count = 5
+    with tempfile.TemporaryDirectory(prefix="melix-pr-perf-benchmark-queue-") as temp_dir:
+        queue_root = Path(temp_dir) / "queue"
+        queue_root.mkdir(parents=True, exist_ok=True)
+        for index in range(record_count):
+            record = module.BenchmarkQueueRecord(
+                queue_item_id=f"queue-{index:04d}",
+                job_kind="benchmark",
+                model_id="melix-dev-text",
+                suite_ids=("smoke", "latency"),
+                parameters={"sample_size": str(16 + (index % 4))},
+                status="queued",
+                created_at_unix_ms=1_000 + index,
+                updated_at_unix_ms=1_000 + index,
+            )
+            (queue_root / f"queue-{index:04d}.json").write_text(
+                json.dumps(record.to_dict(), indent=2) + "\n",
+                encoding="utf-8",
+            )
+        store = module.BenchmarkQueueStore()
+        tracked_loads = 0
+        original_loads = module.json.loads
+
+        def counting_loads(raw: str | bytes, *args: object, **kwargs: object) -> object:
+            nonlocal tracked_loads
+            tracked_loads += 1
+            return original_loads(raw, *args, **kwargs)
+
+        module.json.loads = counting_loads
+        try:
+            cold_started = time.perf_counter()
+            cold_records = store.list_records(queue_root=queue_root)
+            cold_elapsed_ms = (time.perf_counter() - cold_started) * 1000.0
+            if len(cold_records) != record_count:
+                raise ValueError("benchmark queue probe produced an unexpected benchmark queue record count")
+            cold_json_loads = tracked_loads
+            warm_elapsed_samples: list[float] = []
+            warm_json_load_samples: list[float] = []
+            for _ in range(warm_sample_count):
+                before_loads = tracked_loads
+                started = time.perf_counter()
+                warm_records = store.list_records(queue_root=queue_root)
+                warm_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+                if len(warm_records) != record_count:
+                    raise ValueError("benchmark queue probe produced an unexpected benchmark queue record count")
+                warm_json_load_samples.append(float(tracked_loads - before_loads))
+        finally:
+            module.json.loads = original_loads
+    return {
+        "cold_elapsed_ms": round(cold_elapsed_ms, 6),
+        "cold_json_loads": float(cold_json_loads),
+        "record_count": float(record_count),
+        "warm_elapsed_ms_mean": round(sum(warm_elapsed_samples) / len(warm_elapsed_samples), 6),
+        "warm_json_loads_mean": round(sum(warm_json_load_samples) / len(warm_json_load_samples), 6),
+        "warm_sample_count": float(warm_sample_count),
     }
 
 
@@ -469,6 +749,412 @@ def _probe_closure_audit(repo_root: Path) -> dict[str, float]:
         "probe_file_reads_mean": round(sum(read_samples) / len(read_samples), 3),
         "finding_count": finding_count,
     }
+
+
+def _probe_deterministic_rerank_query_context_reuse(repo_root: Path) -> dict[str, float]:
+    del repo_root
+    from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
+    from worker.runtime.rerank_backends import DeterministicRerankBackend, JinaV3RerankFamilyAdapter
+
+    document_count = 2048
+    iteration_count = 8
+    sample_count = 5
+    query = "swift control plane runtime"
+    documents = [
+        f"swift runtime document {index} control plane" if index % 2 == 0 else f"python worker document {index} packaging"
+        for index in range(document_count)
+    ]
+
+    class CountingBackend(DeterministicRerankBackend):
+        def __init__(self) -> None:
+            self.tokenize_calls = 0
+
+        def tokenize(self, text: str) -> list[str]:
+            self.tokenize_calls += 1
+            return super().tokenize(text)
+
+    class TrackingFamily(JinaV3RerankFamilyAdapter):
+        def __init__(self) -> None:
+            self.query_context_builds = 0
+
+        def build_query_context(self, backend: DeterministicRerankBackend, query: str, **kwargs: object):
+            self.query_context_builds += 1
+            return super().build_query_context(backend, query, **kwargs)
+
+    elapsed_samples: list[float] = []
+    query_context_build_samples: list[float] = []
+    tokenize_call_samples: list[float] = []
+
+    runtime = DeterministicRerankRuntime()
+    for _ in range(sample_count):
+        backend = CountingBackend()
+        family = TrackingFamily()
+        started = time.perf_counter()
+        for _ in range(iteration_count):
+            scores = runtime.score_documents(
+                {
+                    "rerank_backend": backend,
+                    "rerank_family_adapter": family,
+                },
+                query,
+                documents,
+            )
+            if len(scores) != document_count:
+                raise ValueError(f"expected {document_count} scores, got {len(scores)}")
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        query_context_build_samples.append(float(family.query_context_builds) / float(iteration_count))
+        tokenize_call_samples.append(float(backend.tokenize_calls) / float(iteration_count))
+
+    return {
+        "document_count": float(document_count),
+        "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
+        "iteration_count": float(iteration_count),
+        "query_context_builds_mean": round(
+            sum(query_context_build_samples) / len(query_context_build_samples),
+            6,
+        ),
+        "sample_count": float(sample_count),
+        "tokenize_calls_mean": round(sum(tokenize_call_samples) / len(tokenize_call_samples), 6),
+    }
+
+
+def _probe_evaluation_store_compare_summary_csv_streaming(repo_root: Path) -> dict[str, float]:
+    summary_count = 10000
+    probe_script = f"""
+import gc
+import json
+import sys
+import tempfile
+import time
+import tracemalloc
+from pathlib import Path
+
+repo_root = Path({str(repo_root)!r})
+sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))
+from worker.productization.evaluation_schemas import (
+    build_evaluation_compare_job_record,
+    build_evaluation_compare_summary_record,
+)
+from worker.productization.evaluation_store import EvaluationStore
+
+summary_count = {summary_count}
+summaries = tuple(
+    build_evaluation_compare_summary_record(
+        job_id='eval-compare-perf',
+        base_model_id='melix-dev-text',
+        target_model_id=f'melix-dev-text-target-{{index:05d}}',
+        suite_id='mmlu',
+        dataset_id='mmlu.synthetic',
+        sample_size=64,
+        scoring_mode='multiple_choice_accuracy',
+        win_count=index % 7,
+        loss_count=(index + 1) % 5,
+        tie_count=(index + 2) % 3,
+        regression_count=index % 2,
+        base_accuracy=0.5,
+        target_accuracy=0.5 + ((index % 9) * 0.01),
+        delta_accuracy=((index % 9) * 0.01),
+        effect_threshold=0.02,
+        verdict='improvement' if index % 2 == 0 else 'watch',
+        category_breakdown={{}},
+        statistical_evidence={{
+            'bootstrap': {{
+                'lower_bound': -0.01 + ((index % 7) * 0.001),
+                'upper_bound': 0.03 + ((index % 7) * 0.001),
+            }},
+            'analytical': {{
+                'lower_bound': -0.02 + ((index % 5) * 0.001),
+                'upper_bound': 0.04 + ((index % 5) * 0.001),
+            }},
+        }},
+        release_gate_summary={{}},
+        duration_seconds=0.1 + ((index % 11) * 0.01),
+        metrics={{'eval.compare.delta_accuracy': ((index % 9) * 0.01)}},
+        report_path='',
+    )
+    for index in range(summary_count)
+)
+job = build_evaluation_compare_job_record(
+    job_id='eval-compare-perf',
+    base_model_id='melix-dev-text',
+    target_model_ids=tuple(summary.target_model_id for summary in summaries),
+    task_kind='text-generation',
+    source_repo='synthetic',
+    suite_id='mmlu',
+    dataset_id='mmlu.synthetic',
+    sample_size=64,
+    scoring_mode='multiple_choice_accuracy',
+    parameters={{'compare_mode': 'base_vs_targets'}},
+    status='completed',
+    output_dir='',
+    created_at_unix_ms=101,
+    updated_at_unix_ms=202,
+)
+store = EvaluationStore()
+writer = getattr(store, '_write_compare_summary_csv', None)
+elapsed_samples = []
+peak_samples = []
+csv_line_count = 0
+csv_bytes = 0
+for _ in range(3):
+    with tempfile.TemporaryDirectory(prefix='melix-pr-perf-eval-compare-store-') as temp_dir:
+        summary_csv_path = Path(temp_dir) / 'evaluation-compare-summary.csv'
+        gc.collect()
+        tracemalloc.start()
+        started = time.perf_counter()
+        if writer is not None:
+            writer(summary_csv_path, job=job, summaries=summaries)
+        else:
+            summary_csv_path.write_text(
+                store._compare_summary_csv(job=job, summaries=summaries),
+                encoding='utf-8',
+            )
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        peak_samples.append(float(peak_bytes))
+        tracemalloc.stop()
+        csv_line_count = float(len(summary_csv_path.read_text(encoding='utf-8').splitlines()))
+        if csv_line_count != float(summary_count + 1):
+            raise ValueError(f'unexpected compare summary CSV line count: {{csv_line_count}}')
+        csv_bytes = float(summary_csv_path.stat().st_size)
+print(json.dumps({{
+    'elapsed_ms_mean': round(sum(elapsed_samples) / len(elapsed_samples), 6),
+    'peak_bytes_mean': round(sum(peak_samples) / len(peak_samples), 1),
+    'summary_count': float(summary_count),
+    'csv_line_count': float(csv_line_count),
+    'csv_bytes': float(csv_bytes),
+}}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(repo_root / "services/mlx-worker-python"),
+            "python3",
+            "-c",
+            probe_script,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads((completed.stdout or "").strip())
+
+
+
+def _probe_evaluation_store_samples_csv_streaming(repo_root: Path) -> dict[str, float]:
+    sample_count = 10000
+    probe_script = f"""
+import gc
+import json
+import sys
+import tempfile
+import time
+import tracemalloc
+from pathlib import Path
+
+repo_root = Path({str(repo_root)!r})
+sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))
+from worker.productization.evaluation_schemas import (
+    build_evaluation_job_record,
+    build_evaluation_result_record,
+    build_evaluation_sample_record,
+)
+from worker.productization.evaluation_store import EvaluationStore
+
+sample_count = {sample_count}
+samples = tuple(
+    build_evaluation_sample_record(
+        job_id='eval-perf',
+        suite_id='mmlu',
+        dataset_id='mmlu.synthetic',
+        sample_id=f'sample-{{index:05d}}',
+        system='',
+        input_text=f'Question {{index}}?',
+        target=str(index % 5),
+        raw_response=f'Answer {{index % 5}}',
+        extracted_result=str(index % 5),
+        typed_score=1.0 if index % 2 == 0 else 0.0,
+        time_s=0.01,
+        extraction_status='extracted',
+        validation_status='validated',
+        failure_reason='',
+        task_kind='text-generation',
+        input_modalities=('text',),
+        media_references=(),
+        raw_response_chars=0 if index % 19 == 0 else len(f'Answer {{index % 5}}'),
+        extracted_result_chars=0 if index % 23 == 0 else len(str(index % 5)),
+    )
+    for index in range(sample_count)
+)
+job = build_evaluation_job_record(
+    job_id='eval-perf',
+    model_id='melix-dev-text',
+    task_kind='text-generation',
+    source_repo='synthetic',
+    suite_id='mmlu',
+    dataset_id='mmlu.synthetic',
+    sample_size=sample_count,
+    scoring_mode='deterministic_accuracy',
+    few_shot=0,
+    seed=7,
+    code_exec_policy='sandboxed',
+    parameters={{}},
+    status='completed',
+    output_dir='',
+    created_at_unix_ms=101,
+    updated_at_unix_ms=202,
+)
+result = build_evaluation_result_record(
+    job_id='eval-perf',
+    suite_id='mmlu',
+    dataset_id='mmlu.synthetic',
+    sample_size=sample_count,
+    primary_score_name='normalized_exact_match',
+    primary_score_value=0.5,
+    extraction_success_count=sample_count,
+    validation_success_count=sample_count,
+    scored_sample_count=sample_count,
+    failure_count=0,
+    duration_seconds=0.25,
+    metrics={{'eval.mmlu.accuracy': 0.5}},
+    report_path='',
+    units={{'eval.mmlu.accuracy': 'ratio'}},
+)
+store = EvaluationStore()
+elapsed_samples = []
+peak_samples = []
+csv_line_count = 0
+for _ in range(3):
+    with tempfile.TemporaryDirectory(prefix='melix-pr-perf-eval-store-') as temp_dir:
+        jobs_root = Path(temp_dir) / 'evaluation'
+        gc.collect()
+        tracemalloc.start()
+        started = time.perf_counter()
+        persisted = store.persist_result(
+            jobs_root=jobs_root,
+            job=job,
+            result=result,
+            samples=samples,
+        )
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        peak_samples.append(float(peak_bytes))
+        tracemalloc.stop()
+        csv_line_count = float(len(persisted['samples_csv'].read_text(encoding='utf-8').splitlines()))
+        if csv_line_count != float(sample_count + 1):
+            raise ValueError(f'unexpected evaluation samples CSV line count: {{csv_line_count}}')
+print(json.dumps({{
+    'elapsed_ms_mean': round(sum(elapsed_samples) / len(elapsed_samples), 6),
+    'peak_bytes_mean': round(sum(peak_samples) / len(peak_samples), 1),
+    'sample_count': float(sample_count),
+    'csv_line_count': float(csv_line_count),
+}}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(repo_root / "services/mlx-worker-python"),
+            "python3",
+            "-c",
+            probe_script,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads((completed.stdout or "").strip())
+
+
+def _probe_evaluation_sample_probe_aggregation(repo_root: Path) -> dict[str, float]:
+    sample_count = 20000
+    field_names = (
+        "sample_render_ms",
+        "inference_ms",
+        "extraction_ms",
+        "validation_ms",
+        "scoring_ms",
+        "raw_response_chars",
+        "extracted_result_chars",
+    )
+    probe_script = f"""
+import json
+import sys
+import time
+from pathlib import Path
+
+repo_root = Path({str(repo_root)!r})
+sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))
+from worker.engine.evaluation_core import EvaluationCore
+from worker.productization.evaluation_schemas import build_evaluation_sample_record
+
+field_names = {field_names!r}
+sample_count = {sample_count}
+samples = tuple(
+    build_evaluation_sample_record(
+        job_id='eval-probe',
+        suite_id='mmlu',
+        dataset_id='mmlu-dev',
+        sample_id=str(index),
+        system='',
+        input_text=f'prompt {{index}}',
+        target='answer',
+        raw_response=f'Answer: {{index % 10}}',
+        extracted_result=str(index % 10),
+        typed_score=1.0 if index % 2 == 0 else 0.0,
+        time_s=0.1,
+        extraction_status='extracted',
+        validation_status='validated',
+        failure_reason='',
+        sample_render_ms=(index % 11) * 0.1,
+        inference_ms=(index % 13) * 0.2,
+        extraction_ms=(index % 7) * 0.3,
+        validation_ms=(index % 5) * 0.4,
+        scoring_ms=(index % 3) * 0.5,
+        raw_response_chars=0 if index % 17 == 0 else len(f'Answer: {{index % 10}}'),
+        extracted_result_chars=0 if index % 19 == 0 else len(str(index % 10)),
+    )
+    for index in range(sample_count)
+)
+elapsed_samples = []
+metrics = {{}}
+for _ in range(3):
+    started = time.perf_counter()
+    metrics = EvaluationCore._sample_probe_means(samples, field_names)
+    elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+elapsed_ms_mean = sum(elapsed_samples) / len(elapsed_samples)
+print(json.dumps({{
+    'elapsed_ms_mean': round(elapsed_ms_mean, 3),
+    'per_call_ms_mean': round(elapsed_ms_mean / max(sample_count, 1), 6),
+    'sample_count': float(sample_count),
+    'metric_count': float(len(metrics)),
+}}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(repo_root / "services/mlx-worker-python"),
+            "python3",
+            "-c",
+            probe_script,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads((completed.stdout or "").strip())
 
 
 def _probe_evaluation_job_id(repo_root: Path) -> dict[str, float]:
@@ -540,25 +1226,259 @@ def _probe_training_dataset_token_percentiles(repo_root: Path) -> dict[str, floa
         repo_root / "services/mlx-worker-python/worker/model_ops/training_dataset.py",
         unique_name="melix_probe_training_dataset_token_percentiles",
     )
-    samples = _build_large_training_dataset_samples()
+    samples = _build_large_training_dataset_quality_samples()
     elapsed_samples: list[float] = []
-    prompt_p95 = 0.0
-    total_p95 = 0.0
+    peak_samples: list[float] = []
     sample_count = 0.0
+    duplicate_count = 0.0
+    dirty_count = 0.0
     for _ in range(3):
         gc.collect()
-        started = time.perf_counter()
-        token_stats = module._build_token_stats(samples, "prompt_completion")
-        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
-        prompt_p95 = float(token_stats["prompt_tokens_p95"])
-        total_p95 = float(token_stats["total_tokens_p95"])
-        sample_count = float(token_stats["sample_count"])
+        tracemalloc.start()
+        try:
+            started = time.perf_counter()
+            quality, token_stats = module._build_quality_and_token_stats(samples, "prompt_completion")
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            _, peak_bytes = tracemalloc.get_traced_memory()
+            peak_samples.append(float(peak_bytes))
+            sample_count = float(token_stats["sample_count"])
+            duplicate_count = float(quality["duplicate_count"])
+            dirty_count = float(quality["dirty_count"])
+        finally:
+            tracemalloc.stop()
     return {
         "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 3),
+        "peak_bytes_mean": round(sum(peak_samples) / len(peak_samples), 3),
         "sample_count": sample_count,
-        "prompt_tokens_p95": prompt_p95,
-        "total_tokens_p95": total_p95,
+        "duplicate_count": duplicate_count,
+        "dirty_count": dirty_count,
     }
+
+
+def _probe_upload_receipt_published_files(repo_root: Path) -> dict[str, float]:
+    module = _load_upload_receipt_pipeline_module(
+        repo_root / "services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py",
+    )
+    directory_count = 180
+    files_per_directory = 40
+    sample_count = 5
+    elapsed_samples: list[float] = []
+    published_file_count = 0.0
+    with tempfile.TemporaryDirectory(prefix="melix-pr-perf-upload-receipt-") as temp_dir:
+        source_root = Path(temp_dir) / "publish-bundle"
+        expected_file_count = 0
+        for directory_index in range(directory_count):
+            directory = source_root / f"shard-{directory_index:04d}"
+            directory.mkdir(parents=True, exist_ok=True)
+            for file_index in range(files_per_directory):
+                (directory / f"part-{file_index:04d}.safetensors").write_bytes(b"melix")
+                expected_file_count += 1
+        (source_root / "README.md").write_text("# Melix synthetic publish bundle\n", encoding="utf-8")
+        expected_file_count += 1
+        for _ in range(sample_count):
+            started = time.perf_counter()
+            published_files = module.UploadReceiptPipeline._collect_published_file_list(source_root)
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            published_file_count = float(len(published_files))
+            if len(published_files) != expected_file_count:
+                raise ValueError(
+                    f"expected {expected_file_count} published files, got {len(published_files)}"
+                )
+    return {
+        "directory_count": float(directory_count),
+        "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
+        "elapsed_ms_min": round(min(elapsed_samples), 6),
+        "files_per_directory": float(files_per_directory),
+        "published_file_count": published_file_count,
+        "sample_count": float(sample_count),
+    }
+
+
+def _probe_pr_scoped_scope_matcher(repo_root: Path) -> dict[str, float]:
+    registry_path = repo_root / "infra/perf/pr_scoped_probes.json"
+    changed_files = _build_large_scope_probe_changed_files()
+    sample_count = 6
+    elapsed_samples: list[float] = []
+    selected_probe_counts: list[float] = []
+    force_all_selected_samples: list[float] = []
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        scope = build_scope_report(registry_path=registry_path, changed_files=changed_files)
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        selected_probe_counts.append(float(scope["selected_count"]))
+        force_all_selected_samples.append(1.0 if scope["force_all"] else 0.0)
+    return {
+        "build_scope_report_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
+        "build_scope_report_ms_min": round(min(elapsed_samples), 6),
+        "changed_file_count": float(len(changed_files)),
+        "selected_probe_count_mean": round(sum(selected_probe_counts) / len(selected_probe_counts), 6),
+        "force_all_selected_mean": round(sum(force_all_selected_samples) / len(force_all_selected_samples), 6),
+        "sample_count": float(sample_count),
+    }
+
+
+def _build_large_scope_probe_changed_files() -> list[str]:
+    changed_files: list[str] = []
+    for index in range(1600):
+        changed_files.append(f"docs/perf/synthetic/doc-{index:04d}.md")
+    for index in range(1600):
+        changed_files.append(f"services/mlx-worker-python/tests/synthetic/test_scope_{index:04d}.py")
+    changed_files.extend(
+        [
+            "services/mlx-worker-python/worker/productization/benchmark_export.py",
+            "services/mlx-worker-python/worker/engine/evaluation_core.py",
+            "services/mlx-worker-python/worker/model_ops/download_pipeline.py",
+            "README.md",
+            "",
+        ]
+    )
+    return changed_files
+
+
+def _load_upload_receipt_pipeline_module(path: Path) -> Any:
+    module_names = (
+        "packages",
+        "packages.protocol",
+        "packages.protocol.python",
+        "packages.protocol.python.worker",
+        "packages.protocol.python.worker.v1",
+        "packages.protocol.python.worker.v1.maintenance_pb2",
+        "worker",
+        "worker.model_ops",
+        "worker.model_ops.errors",
+    )
+    missing = object()
+    previous_modules = {name: sys.modules.get(name, missing) for name in module_names}
+
+    packages_module = types.ModuleType("packages")
+    protocol_module = types.ModuleType("packages.protocol")
+    python_module = types.ModuleType("packages.protocol.python")
+    worker_protocol_module = types.ModuleType("packages.protocol.python.worker")
+    worker_v1_module = types.ModuleType("packages.protocol.python.worker.v1")
+    maintenance_module = types.ModuleType("packages.protocol.python.worker.v1.maintenance_pb2")
+    worker_module = types.ModuleType("worker")
+    model_ops_module = types.ModuleType("worker.model_ops")
+    errors_module = types.ModuleType("worker.model_ops.errors")
+
+    class ModelOperationError(Exception):
+        pass
+
+    errors_module.ModelOperationError = ModelOperationError
+    worker_v1_module.maintenance_pb2 = maintenance_module
+    worker_protocol_module.v1 = worker_v1_module
+    python_module.worker = worker_protocol_module
+    protocol_module.python = python_module
+    packages_module.protocol = protocol_module
+    model_ops_module.errors = errors_module
+    worker_module.model_ops = model_ops_module
+
+    sys.modules.update(
+        {
+            "packages": packages_module,
+            "packages.protocol": protocol_module,
+            "packages.protocol.python": python_module,
+            "packages.protocol.python.worker": worker_protocol_module,
+            "packages.protocol.python.worker.v1": worker_v1_module,
+            "packages.protocol.python.worker.v1.maintenance_pb2": maintenance_module,
+            "worker": worker_module,
+            "worker.model_ops": model_ops_module,
+            "worker.model_ops.errors": errors_module,
+        }
+    )
+    try:
+        return _load_repo_module(
+            path,
+            unique_name="melix_probe_upload_receipt_pipeline",
+        )
+    finally:
+        for name, previous in previous_modules.items():
+            if previous is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
+
+
+def _probe_model_ops_bundle_artifact_bytes(repo_root: Path) -> dict[str, float]:
+    probe_script = """
+import json
+import os
+import tempfile
+import time
+from pathlib import Path
+
+from packages.protocol.python.worker.v1 import maintenance_pb2
+from worker.grpc_server import WorkerMaintenanceService
+from worker.model_registry.catalog import WorkerModelCatalog
+from worker.registry import WorkerRegistry
+
+elapsed_samples = []
+scandir_samples = []
+sample_count = 0.0
+
+for _ in range(3):
+    with tempfile.TemporaryDirectory(prefix='melix-pr-perf-model-ops-bundle-') as temp_dir:
+        temp_root = Path(temp_dir)
+        service = WorkerMaintenanceService(
+            WorkerRegistry(model_catalog=WorkerModelCatalog()),
+            jobs_root=temp_root / 'model-ops',
+        )
+        original_scandir = os.scandir
+        bundle_scandir_calls = [0]
+
+        def tracked_scandir(path):
+            bundle_scandir_calls[0] += int(Path(path).name.endswith('.artifact'))
+            return original_scandir(path)
+
+        os.scandir = tracked_scandir
+        try:
+            started = time.perf_counter()
+            convert_events = list(
+                service.ConvertModel(
+                    maintenance_pb2.ConvertModelRequest(
+                        source_model='melix-dev-text',
+                        output_dir=str(temp_root / 'convert'),
+                        generate_manifest=True,
+                    ),
+                    context=None,
+                )
+            )
+            quantize_events = list(
+                service.ConvertModel(
+                    maintenance_pb2.ConvertModelRequest(
+                        source_model='melix-dev-text',
+                        output_dir=str(temp_root / 'quantize'),
+                        weight_quant='q4',
+                        kv_quant='q8',
+                        generate_manifest=True,
+                        ext={'operation': 'quantize'},
+                    ),
+                    context=None,
+                )
+            )
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        finally:
+            os.scandir = original_scandir
+
+        sample_count = float(len(convert_events) + len(quantize_events))
+        scandir_samples.append(float(bundle_scandir_calls[0]))
+
+print(json.dumps({
+    'elapsed_ms_mean': round(sum(elapsed_samples) / len(elapsed_samples), 3),
+    'bundle_scandir_calls_mean': round(sum(scandir_samples) / len(scandir_samples), 3),
+    'sample_count': sample_count,
+}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 - <<'PY'\n"
+        f"{probe_script}"
+        "\nPY",
+        shell=True,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads((completed.stdout or "").strip())
 
 
 def _load_repo_module(path: Path, *, unique_name: str) -> Any:
@@ -679,6 +1599,31 @@ def _build_large_training_dataset_samples() -> list[dict[str, str]]:
         }
         for index in range(20000)
     ]
+
+
+def _single_pass_sample_iterable(samples: list[dict[str, str]]) -> Iterable[dict[str, str]]:
+    class _SinglePassIterable:
+        def __init__(self, rows: list[dict[str, str]]) -> None:
+            self._rows = rows
+            self._iterated = False
+
+        def __iter__(self) -> Iterable[dict[str, str]]:
+            if self._iterated:
+                raise RuntimeError("training dataset sample iterable was consumed more than once")
+            self._iterated = True
+            return iter(self._rows)
+
+    return _SinglePassIterable(samples)
+
+
+def _build_large_training_dataset_quality_samples() -> list[dict[str, str]]:
+    samples = _build_large_training_dataset_samples()
+    for index in range(0, len(samples), 17):
+        sample = dict(samples[index - 1] if index else samples[index])
+        if index % 51 == 0:
+            sample["completion"] = sample["prompt"]
+        samples[index] = sample
+    return samples
 
 
 def _seed_closure_audit_repo(root: Path) -> Path:
@@ -1021,8 +1966,96 @@ def _float_or_none(value: object) -> float | None:
     return None
 
 
+def _match_probe_indexes(*, changed_paths: set[str] | frozenset[str] | tuple[str, ...], probes: tuple[ProbeDefinition, ...]) -> set[int]:
+    exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
+    matched_probe_indexes: set[int] = set()
+    if not isinstance(changed_paths, (set, frozenset)):
+        changed_paths = set(changed_paths)
+    for path in exact_path_to_probe_indexes.keys() & changed_paths:
+        matched_probe_indexes.update(exact_path_to_probe_indexes[path])
+    if not wildcard_glob_matchers:
+        return matched_probe_indexes
+    for path in changed_paths:
+        for prefix, pattern, probe_indexes in wildcard_glob_matchers:
+            if prefix and not path.startswith(prefix):
+                continue
+            if pattern.match(path) is not None:
+                matched_probe_indexes.update(probe_indexes)
+    return matched_probe_indexes
+
+
+@lru_cache(maxsize=None)
+def _probe_match_indexes(
+    probes: tuple[ProbeDefinition, ...],
+) -> tuple[dict[str, tuple[int, ...]], tuple[tuple[str, re.Pattern[str], tuple[int, ...]], ...]]:
+    exact_path_to_probe_indexes: dict[str, list[int]] = {}
+    wildcard_glob_to_probe_indexes: dict[str, list[int]] = {}
+    for probe_index, probe in enumerate(probes):
+        for glob in probe.watch_globs:
+            if _glob_has_magic(glob):
+                wildcard_glob_to_probe_indexes.setdefault(glob, []).append(probe_index)
+            else:
+                exact_path_to_probe_indexes.setdefault(glob, []).append(probe_index)
+    wildcard_glob_matchers = tuple(
+        (_glob_literal_prefix(glob), _compiled_glob_pattern(glob), tuple(probe_indexes))
+        for glob, probe_indexes in wildcard_glob_to_probe_indexes.items()
+    )
+    return (
+        {path: tuple(probe_indexes) for path, probe_indexes in exact_path_to_probe_indexes.items()},
+        wildcard_glob_matchers,
+    )
+
+
+@lru_cache(maxsize=None)
+def _compiled_glob_pattern(glob: str) -> re.Pattern[str]:
+    return re.compile(fnmatch.translate(glob))
+
+
+@lru_cache(maxsize=None)
+def _glob_literal_prefix(glob: str) -> str:
+    first_special_index = len(glob)
+    for token in "*?[":
+        index = glob.find(token)
+        if index != -1 and index < first_special_index:
+            first_special_index = index
+    if first_special_index == len(glob):
+        return glob
+    return glob[:first_special_index]
+
+
+def _glob_matches_path(path: str, glob: str) -> bool:
+    prefix = _glob_literal_prefix(glob)
+    if prefix and not path.startswith(prefix):
+        return False
+    return _compiled_glob_pattern(glob).match(path) is not None
+
+
+@lru_cache(maxsize=1)
+def _force_all_wildcard_matchers() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    return tuple(
+        (_glob_literal_prefix(glob), _compiled_glob_pattern(glob))
+        for glob in _FORCE_ALL_WILDCARD_GLOBS
+    )
+
+
+def _path_matches_force_all(path: str) -> bool:
+    return path in _FORCE_ALL_EXACT_PATHS or _matches_any_compiled_glob(
+        path,
+        _force_all_wildcard_matchers(),
+    )
+
+
 def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
-    return any(fnmatch.fnmatch(path, glob) for glob in globs)
+    return any(_glob_matches_path(path, glob) for glob in globs)
+
+
+def _matches_any_compiled_glob(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
+    for prefix, pattern in matchers:
+        if prefix and not path.startswith(prefix):
+            continue
+        if pattern.match(path) is not None:
+            return True
+    return False
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

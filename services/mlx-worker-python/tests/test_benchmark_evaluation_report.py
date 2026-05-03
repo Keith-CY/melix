@@ -5,18 +5,25 @@ from pathlib import Path
 
 import pytest
 
+import worker.productization.benchmark_evaluation_report as benchmark_evaluation_report
 from worker.productization.benchmark_evaluation_report import (
     _METRIC_DIRECTION_BY_KEY,
     _aggregate_probe_values,
     _benchmark_probe_label,
+    _build_metric_row,
     _collect_benchmark_probe_metrics,
+    _collect_evaluation_sample_probe_metrics,
+    _collect_runtime_metadata,
     _dict_rows,
     _finalize_numeric_aggregate,
+    _finalize_probe_aggregates,
     _label_part,
     _markdown_cell,
     _metric_direction,
+    _metric_key_direction,
     _report_rows,
     _update_numeric_aggregate,
+    _update_probe_aggregate_pairs,
     _update_probe_aggregates_by_label,
     build_benchmark_evaluation_report,
     build_sticky_comment_body,
@@ -109,6 +116,17 @@ def test_report_builder_computes_direction_aware_deltas() -> None:
     assert report["summary"]["status"] == "warning"
 
 
+def test_metric_direction_reuses_metric_key_cache_for_repeated_suffixes() -> None:
+    _metric_key_direction.cache_clear()
+
+    assert _metric_direction("bench.context.ctx1024.prefill_ms_mean") == "lower_is_better"
+    assert _metric_direction("bench.context.ctx2048.prefill_ms_mean") == "lower_is_better"
+
+    cache_info = _metric_key_direction.cache_info()
+    assert cache_info.misses == 1
+    assert cache_info.hits == 1
+
+
 def test_report_builder_warns_on_zero_baseline_regressions() -> None:
     baseline = {
         "benchmark_matrix_summary_rows": [
@@ -175,6 +193,37 @@ def test_report_builder_treats_cache_hit_rate_as_higher_is_better() -> None:
 
     assert row["direction"] == "higher_is_better"
     assert row["status"] == "warning"
+
+
+def test_collect_runtime_metadata_preserves_key_order_with_sparse_values() -> None:
+    metrics: dict[str, object] = {}
+
+    _collect_runtime_metadata(
+        metrics,
+        [
+            {
+                "parameters": {
+                    "runtime_model_id": "target/head",
+                    "runtime_kind": "swift-text",
+                }
+            },
+            {
+                "parameters": {
+                    "runtime_kind": "python-worker",
+                    "runtime_model_id": "target/base",
+                    "unused_runtime_value": "ignored",
+                }
+            },
+            {"parameters": {"runtime_model_id": ""}},
+            {"parameters": "invalid"},
+        ],
+        prefix="bench.runtime",
+    )
+
+    assert metrics == {
+        "bench.runtime.runtime_kind": "python-worker,swift-text",
+        "bench.runtime.runtime_model_id": "target/base,target/head",
+    }
 
 
 def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
@@ -304,6 +353,28 @@ def test_collect_benchmark_probe_metrics_groups_aggregates_by_label_and_preserve
         }
     }
 
+    aggregate_pairs: dict[tuple[str, str], tuple[float, int]] = {}
+    _update_probe_aggregate_pairs(aggregate_pairs, label="shared", key="prefill_ms", value=10.0)
+    _update_probe_aggregate_pairs(aggregate_pairs, label="shared", key="prefill_ms", value=14.0)
+    _update_probe_aggregate_pairs(aggregate_pairs, label="shared", key="decode_ms", value=20.0)
+    _update_probe_aggregate_pairs(
+        aggregate_pairs,
+        label="shared",
+        key="speculative_fallback_count",
+        value=4.0,
+    )
+
+    assert aggregate_pairs == {
+        ("shared", "prefill_ms"): (24.0, 2),
+        ("shared", "decode_ms"): (20.0, 1),
+        ("shared", "speculative_fallback_count"): (4.0, 1),
+    }
+    assert _finalize_probe_aggregates(aggregate_pairs, prefix="bench") == {
+        "bench.shared.prefill_ms_mean": 12.0,
+        "bench.shared.decode_ms_mean": 20.0,
+        "bench.shared.speculative_fallback_count_sum": 4.0,
+    }
+
     metrics: dict[str, object] = {}
     _collect_benchmark_probe_metrics(metrics, [row_a, row_b], prefix="bench")
 
@@ -313,6 +384,182 @@ def test_collect_benchmark_probe_metrics_groups_aggregates_by_label_and_preserve
         f"bench.{label}.decode_ms_mean": 22.0,
         f"bench.{label}.speculative_fallback_count_sum": 4.0,
     }
+
+
+def test_metric_row_fast_paths_exact_numeric_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    parsed_values: list[object] = []
+    original = benchmark_evaluation_report._float_or_none
+
+    def tracked_float_or_none(value: object) -> float | None:
+        parsed_values.append(value)
+        return original(value)
+
+    monkeypatch.setattr(benchmark_evaluation_report, "_float_or_none", tracked_float_or_none)
+
+    numeric_row = _build_metric_row(metric_name="bench.smoke.prefill_ms", baseline=10.0, candidate=12)
+    bool_row = _build_metric_row(metric_name="bench.smoke.cache_hit", baseline=True, candidate=False)
+    metadata_row = _build_metric_row(metric_name="bench.smoke.runtime_kind", baseline="mlx", candidate="mlx")
+
+    assert parsed_values == ["mlx", "mlx"]
+    assert numeric_row["delta"] == 2.0
+    assert numeric_row["direction"] == "lower_is_better"
+    assert bool_row["baseline"] == 1.0
+    assert bool_row["candidate"] == 0.0
+    assert metadata_row["status"] == "ok"
+
+
+def test_probe_collectors_fast_path_exact_numeric_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    parsed_values: list[object] = []
+    original = benchmark_evaluation_report._float_or_none
+
+    def tracked_float_or_none(value: object) -> float | None:
+        parsed_values.append(value)
+        return original(value)
+
+    monkeypatch.setattr(benchmark_evaluation_report, "_float_or_none", tracked_float_or_none)
+
+    benchmark_metrics: dict[str, object] = {}
+    _collect_benchmark_probe_metrics(
+        benchmark_metrics,
+        [
+            {
+                "suite_id": "smoke",
+                "context_length": 1024,
+                "generation_length": 128,
+                "batch_size": 1,
+                "concurrency_level": 1,
+                "prefill_ms": 10.0,
+                "decode_ms": 20,
+                "cache_hit": True,
+                "warmup_ms": "2.5",
+            }
+        ],
+        prefix="bench",
+    )
+    evaluation_metrics: dict[str, object] = {}
+    _collect_evaluation_sample_probe_metrics(
+        evaluation_metrics,
+        [
+            {
+                "suite_id": "smoke",
+                "sample_render_ms": 3.0,
+                "inference_ms": 4,
+                "validation_ms": False,
+                "scoring_ms": "5.5",
+            }
+        ],
+    )
+
+    assert parsed_values == ["2.5", "5.5"]
+    assert benchmark_metrics["bench.smoke.ctx1024.gen128.b1.c1.prefill_ms_mean"] == 10.0
+    assert benchmark_metrics["bench.smoke.ctx1024.gen128.b1.c1.decode_ms_mean"] == 20.0
+    assert benchmark_metrics["bench.smoke.ctx1024.gen128.b1.c1.cache_hit_rate"] == 1.0
+    assert evaluation_metrics["eval.sample.smoke.sample_render_ms_mean"] == 3.0
+    assert evaluation_metrics["eval.sample.smoke.inference_ms_mean"] == 4.0
+    assert evaluation_metrics["eval.sample.smoke.validation_ms_mean"] == 0.0
+
+
+def test_evaluation_sample_collector_finalizes_mean_metrics_directly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_finalize_numeric_aggregate(
+        key: str,
+        aggregate: tuple[float, int] | None,
+    ) -> tuple[str, float]:
+        del aggregate
+        raise AssertionError(f"unexpected generic aggregate finalizer for {key}")
+
+    monkeypatch.setattr(
+        benchmark_evaluation_report,
+        "_finalize_numeric_aggregate",
+        fail_finalize_numeric_aggregate,
+    )
+
+    metrics: dict[str, object] = {}
+    _collect_evaluation_sample_probe_metrics(
+        metrics,
+        [
+            {"suite_id": "smoke", "sample_render_ms": 3.0},
+            {"suite_id": "smoke", "sample_render_ms": 5.0},
+        ],
+    )
+
+    assert metrics == {"eval.sample.smoke.sample_render_ms_mean": 4.0}
+
+
+def test_probe_collectors_use_registered_probe_key_order_without_items_scan() -> None:
+    class NoItemsDict(dict[str, object]):
+        def items(self):  # type: ignore[override]
+            raise AssertionError("collector should scan registered probe keys directly")
+
+    benchmark_metrics: dict[str, object] = {}
+    _collect_benchmark_probe_metrics(
+        benchmark_metrics,
+        [
+            NoItemsDict(
+                {
+                    "suite_id": "smoke",
+                    "context_length": 1024,
+                    "generation_length": 128,
+                    "batch_size": 1,
+                    "concurrency_level": 2,
+                    "prefill_ms": 10.0,
+                    "irrelevant_payload": "skip",
+                }
+            )
+        ],
+        prefix="bench",
+    )
+
+    evaluation_metrics: dict[str, object] = {}
+    _collect_evaluation_sample_probe_metrics(
+        evaluation_metrics,
+        [
+            NoItemsDict(
+                {
+                    "suite_id": "smoke",
+                    "sample_render_ms": 3.0,
+                    "irrelevant_payload": "skip",
+                }
+            )
+        ],
+    )
+
+    assert benchmark_metrics["bench.smoke.ctx1024.gen128.b1.c2.prefill_ms_mean"] == 10.0
+    assert evaluation_metrics["eval.sample.smoke.sample_render_ms_mean"] == 3.0
+
+
+def test_collect_benchmark_probe_metrics_reuses_matrix_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = benchmark_evaluation_report._matrix_label
+    matrix_label_calls = 0
+
+    def tracked_matrix_label(
+        row: dict[str, object],
+        *,
+        label_cache: dict[tuple[str, str, str, str, str, str], str] | None = None,
+    ) -> str:
+        nonlocal matrix_label_calls
+        matrix_label_calls += 1
+        return original(row, label_cache=label_cache)
+
+    monkeypatch.setattr(benchmark_evaluation_report, "_matrix_label", tracked_matrix_label)
+    rows = [
+        {
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 1,
+            "concurrency_level": 4,
+            "prefill_ms": float(index),
+        }
+        for index in range(5)
+    ]
+
+    metrics: dict[str, object] = {}
+    _collect_benchmark_probe_metrics(metrics, rows, prefix="bench")
+
+    assert matrix_label_calls == 1
+    assert metrics["bench.smoke.ctx1024.gen128.b1.c4.prefill_ms_mean"] == 2.0
 
 
 def test_dict_rows_returns_lazy_iterable_of_dict_rows() -> None:
@@ -328,6 +575,93 @@ def test_aggregate_probe_values_handles_empty_inputs() -> None:
     assert _aggregate_probe_values("prefill_ms", []) == ("mean", 0.0)
     assert _aggregate_probe_values("cache_hit", []) == ("rate", 0.0)
     assert _aggregate_probe_values("speculative_fallback_count", []) == ("sum", 0.0)
+
+
+def test_benchmark_probe_label_cache_reuses_identical_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = benchmark_evaluation_report._build_benchmark_label
+    built_keys: list[tuple[str, str, str, str, str, str]] = []
+
+    def tracked(key: tuple[str, str, str, str, str, str]) -> str:
+        built_keys.append(key)
+        return original(key)
+
+    monkeypatch.setattr(benchmark_evaluation_report, "_build_benchmark_label", tracked)
+
+    cache: dict[tuple[str, str, str, str, str, str], str] = {}
+    context_row = {
+        "suite": "smoke suite",
+        "context_length": 128,
+        "generation_length": 32,
+        "batch_size": 1,
+    }
+    matrix_row = {
+        "suite_id": "smoke suite",
+        "context_length": 128,
+        "generation_length": 32,
+        "batch_size": 1,
+        "concurrency_level": 2,
+    }
+
+    assert (
+        benchmark_evaluation_report._benchmark_probe_label(context_row, label_cache=cache)
+        == "smoke_suite.ctx128.gen32.b1"
+    )
+    assert (
+        benchmark_evaluation_report._benchmark_probe_label(
+            {**context_row, "prefill_ms": 7.0},
+            label_cache=cache,
+        )
+        == "smoke_suite.ctx128.gen32.b1"
+    )
+    assert benchmark_evaluation_report._matrix_label(matrix_row, label_cache=cache) == (
+        "smoke_suite.ctx128.gen32.b1.c2"
+    )
+    assert (
+        benchmark_evaluation_report._benchmark_probe_label(
+            {**matrix_row, "prefill_ms": 9.0},
+            label_cache=cache,
+        )
+        == "smoke_suite.ctx128.gen32.b1.c2"
+    )
+
+    assert built_keys == [
+        ("bench", "smoke suite", "128", "32", "1", ""),
+        ("matrix", "smoke suite", "128", "32", "1", "2"),
+    ]
+
+
+def test_benchmark_probe_label_cache_preserves_stringified_shape_boundaries() -> None:
+    cache: dict[tuple[str, str, str, str, str, str], str] = {}
+
+    numeric_row = {
+        "suite": "shape",
+        "context_length": 1,
+        "generation_length": 2,
+        "batch_size": True,
+    }
+    float_row = {
+        "suite": "shape",
+        "context_length": 1.0,
+        "generation_length": 2,
+        "batch_size": 1,
+    }
+    unhashable_row = {
+        "suite": ["shape", "list"],
+        "context_length": {"nested": "value"},
+        "generation_length": 2,
+        "batch_size": 1,
+    }
+
+    assert benchmark_evaluation_report._benchmark_probe_label(numeric_row, label_cache=cache) == (
+        "shape.ctx1.gen2.bTrue"
+    )
+    assert benchmark_evaluation_report._benchmark_probe_label(float_row) == "shape.ctx1.0.gen2.b1"
+    assert benchmark_evaluation_report._benchmark_probe_label(float_row, label_cache=cache) == (
+        "shape.ctx1.0.gen2.b1"
+    )
+    assert benchmark_evaluation_report._benchmark_probe_label(unhashable_row, label_cache=cache) == (
+        "['shape',_'list'].ctx{'nested':_'value'}.gen2.b1"
+    )
 
 
 def test_row_iterators_filter_invalid_entries_without_materializing_copies() -> None:

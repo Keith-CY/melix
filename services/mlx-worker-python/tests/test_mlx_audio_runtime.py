@@ -6,8 +6,10 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from packages.protocol.python.worker.v1 import inference_pb2
+from packages.protocol.python.worker.v1 import inference_pb2, runtime_pb2
+from worker.grpc_server import WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
+from worker.registry import WorkerRegistry
 
 
 def _install_fake_mlx_audio(
@@ -203,3 +205,85 @@ def test_mlx_audio_speech_runtime_falls_back_to_voice_descriptor_only_for_instru
         }
     ]
     assert probe.voice_fallback_count == 1
+
+
+@pytest.mark.parametrize(
+    ("builder", "runtime_class_name", "backend_id"),
+    [
+        (WorkerModelCatalog.mlx_whisper_model, "MLXAudioTranscriptionRuntime", "mlx_audio.stt"),
+        (WorkerModelCatalog.mlx_kokoro_model, "MLXAudioSpeechRuntime", "mlx_audio.tts"),
+    ],
+)
+def test_mlx_audio_runtimes_reject_local_models_missing_processor_assets(
+    tmp_path: Path,
+    builder,
+    runtime_class_name: str,
+    backend_id: str,
+) -> None:
+    import worker.runtime.mlx_audio_runtime as mlx_audio_runtime
+    from worker.runtime.audio_runtime_protocols import AudioProcessorValidationError
+
+    model_dir = tmp_path / "managed-audio-model"
+    model_dir.mkdir()
+    model_spec = builder()
+    model_spec.model_path = str(model_dir)
+    runtime = getattr(mlx_audio_runtime, runtime_class_name)()
+
+    with pytest.raises(AudioProcessorValidationError) as error:
+        runtime.load_model(model_spec)
+
+    assert error.value.details["backend_id"] == backend_id
+    assert error.value.details["missing_asset_class"] == "processor_config"
+    assert error.value.details["load_stage"] == "load_model:processor_asset_preflight"
+    assert error.value.details["audio_processor_validation_result"] == "0"
+    assert "processor_config.json" in error.value.details["required_files"]
+
+
+def test_mlx_audio_processor_validation_accepts_local_processor_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.mlx_audio_runtime import MLXAudioTranscriptionRuntime
+
+    model_dir = tmp_path / "managed-whisper"
+    model_dir.mkdir()
+    (model_dir / "preprocessor_config.json").write_text("{}", encoding="utf-8")
+    captured_paths: list[str] = []
+
+    class FakeSTTModel:
+        def generate(self, audio_path: str, **kwargs):
+            _ = audio_path
+            _ = kwargs
+            return SimpleNamespace(text="ok", language="en", total_time=1.0)
+
+    def fake_load_model(model_path: str):
+        captured_paths.append(model_path)
+        return FakeSTTModel()
+
+    _install_fake_mlx_audio(monkeypatch, stt_loader=fake_load_model)
+    model_spec = WorkerModelCatalog.mlx_whisper_model()
+    model_spec.model_path = str(model_dir)
+
+    loaded = MLXAudioTranscriptionRuntime().load_model(model_spec)
+
+    assert loaded.backend_id == "mlx_audio.stt"
+    assert captured_paths == [str(model_dir)]
+
+
+def test_worker_load_model_returns_actionable_audio_processor_validation_error(tmp_path: Path) -> None:
+    model_dir = tmp_path / "managed-whisper"
+    model_dir.mkdir()
+    model_spec = WorkerModelCatalog.mlx_whisper_model()
+    model_spec.model_path = str(model_dir)
+    service = WorkerRuntimeService(WorkerRegistry(model_catalog=WorkerModelCatalog()))
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=model_spec),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "audio_processor_validation_failed"
+    assert response.error.details["missing_asset_class"] == "processor_config"
+    assert response.error.details["load_stage"] == "load_model:processor_asset_preflight"
+    assert response.error.details["audio_processor_validation_result"] == "0"

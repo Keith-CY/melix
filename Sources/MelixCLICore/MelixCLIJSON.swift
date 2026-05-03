@@ -12,9 +12,13 @@ enum MelixCLIJSONMetricPatch {
 
     struct Placeholder {
         let token: String
+        let jsonLiteral: String
+        let jsonLiteralData: Data
 
-        var jsonLiteral: String {
-            "\"\(token)\""
+        init(token: String) {
+            self.token = token
+            self.jsonLiteral = "\"\(token)\""
+            self.jsonLiteralData = Data(jsonLiteral.utf8)
         }
     }
 
@@ -32,7 +36,7 @@ enum MelixCLIJSONMetricPatch {
             format: "%.16e",
             locale: metricLiteralLocale,
             finiteValue
-        ).replacingOccurrences(of: "E", with: "e")
+        )
     }
 
     static func replacePlaceholder(in text: String, with value: Double) throws -> String {
@@ -71,7 +75,7 @@ enum MelixCLIJSONMetricPatch {
         in data: Data,
         placeholder: Placeholder
     ) throws -> Range<Data.Index> {
-        let placeholderData = Data(placeholder.jsonLiteral.utf8)
+        let placeholderData = placeholder.jsonLiteralData
         guard let range = data.range(of: placeholderData) else {
             throw MelixCLIError.runtime("Failed to locate pipeline metrics placeholder.")
         }
@@ -93,12 +97,15 @@ enum MelixCLIJSONMetricPatch {
 }
 
 enum MelixCLIJSON {
-    static func prettyString(_ payload: Any) throws -> String {
-        let data = try JSONSerialization.data(
+    static func prettyData(_ payload: Any) throws -> Data {
+        try JSONSerialization.data(
             withJSONObject: payload,
             options: [.prettyPrinted, .sortedKeys]
         )
-        return String(decoding: data, as: UTF8.self) + "\n"
+    }
+
+    static func prettyString(_ payload: Any) throws -> String {
+        String(decoding: try prettyData(payload), as: UTF8.self) + "\n"
     }
 
     static func jsonValue(from text: String) -> Any {
@@ -122,6 +129,22 @@ enum MelixCLIJSON {
         }
         finalMetrics[metricName] = placeholder.token
         return finalMetrics
+    }
+
+    static func metricPatchedPrettyString(
+        _ payload: Any,
+        placeholder: MelixCLIJSONMetricPatch.Placeholder,
+        elapsedMilliseconds: Double
+    ) throws -> String {
+        var data = try prettyData(payload)
+        let range = try MelixCLIJSONMetricPatch.placeholderRange(in: data, placeholder: placeholder)
+        let literalData = try MelixCLIJSONMetricPatch.paddedLiteralData(
+            for: elapsedMilliseconds,
+            byteCount: range.count
+        )
+        data.replaceSubrange(range, with: literalData)
+        data.append(UInt8(ascii: "\n"))
+        return String(decoding: data, as: UTF8.self)
     }
 }
 
@@ -152,11 +175,10 @@ public enum MelixCLIJSONEnvelope {
             "metrics": finalMetrics,
         ]
         let encodeStart = DispatchTime.now()
-        let text = try MelixCLIJSON.prettyString(payload)
-        return try MelixCLIJSONMetricPatch.replacePlaceholder(
-            in: text,
+        return try MelixCLIJSON.metricPatchedPrettyString(
+            payload,
             placeholder: placeholder,
-            with: elapsedMilliseconds(since: encodeStart)
+            elapsedMilliseconds: elapsedMilliseconds(since: encodeStart)
         )
     }
 
@@ -202,11 +224,10 @@ public enum MelixCLIJSONEnvelope {
             "metrics": finalMetrics,
         ]
         let encodeStart = DispatchTime.now()
-        let text = try MelixCLIJSON.prettyString(payload)
-        return try MelixCLIJSONMetricPatch.replacePlaceholder(
-            in: text,
+        return try MelixCLIJSON.metricPatchedPrettyString(
+            payload,
             placeholder: placeholder,
-            with: elapsedMilliseconds(since: encodeStart)
+            elapsedMilliseconds: elapsedMilliseconds(since: encodeStart)
         )
     }
 

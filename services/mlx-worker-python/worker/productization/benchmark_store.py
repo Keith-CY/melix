@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import csv
 import json
 from collections.abc import Iterable
 from pathlib import Path
 
 from worker.productization.benchmark_export import (
-    build_benchmark_matrix_requests_csv,
-    build_benchmark_matrix_summary_csv,
+    _canonical_benchmark_matrix_request_columns,
+    _canonical_benchmark_matrix_summary_columns,
+    _csv_value,
 )
 from worker.productization.benchmark_schemas import (
     BenchmarkMatrixJob,
@@ -60,29 +62,22 @@ class BenchmarkStore:
             encoding="utf-8",
         )
 
-        summary_payloads = tuple(row.to_dict() for row in summary_rows)
-        request_payloads = tuple(row.to_dict() for row in request_rows)
-
         summary_jsonl_path = jobs_root / "bench-matrix-summary.jsonl"
-        self._write_jsonl(summary_jsonl_path, summary_payloads)
-
-        requests_jsonl_path = jobs_root / "bench-matrix-requests.jsonl"
-        self._write_jsonl(requests_jsonl_path, request_payloads)
-
         summary_csv_path = jobs_root / "bench-matrix-summary.csv"
-        summary_csv_path.write_text(
-            build_benchmark_matrix_summary_csv(
-                {"benchmark_matrix_summary_rows": summary_payloads}
-            ),
-            encoding="utf-8",
+        self._write_jsonl_and_csv(
+            jsonl_path=summary_jsonl_path,
+            csv_path=summary_csv_path,
+            rows=summary_rows,
+            fieldnames=_canonical_benchmark_matrix_summary_columns(),
         )
 
+        requests_jsonl_path = jobs_root / "bench-matrix-requests.jsonl"
         requests_csv_path = jobs_root / "bench-matrix-requests.csv"
-        requests_csv_path.write_text(
-            build_benchmark_matrix_requests_csv(
-                {"benchmark_matrix_request_rows": request_payloads}
-            ),
-            encoding="utf-8",
+        self._write_jsonl_and_csv(
+            jsonl_path=requests_jsonl_path,
+            csv_path=requests_csv_path,
+            rows=request_rows,
+            fieldnames=_canonical_benchmark_matrix_request_columns(),
         )
 
         return {
@@ -94,8 +89,27 @@ class BenchmarkStore:
         }
 
     @staticmethod
-    def _write_jsonl(path: Path, rows: Iterable[dict[str, object]]) -> None:
-        with path.open("w", encoding="utf-8") as handle:
-            for row in rows:
-                handle.write(json.dumps(row))
-                handle.write("\n")
+    def _write_jsonl_and_csv(
+        *,
+        jsonl_path: Path,
+        csv_path: Path,
+        rows: Iterable[BenchmarkMatrixSummaryRow | BenchmarkMatrixRequestRow],
+        fieldnames: list[str],
+    ) -> None:
+        with (
+            jsonl_path.open("w", encoding="utf-8") as jsonl_handle,
+            csv_path.open("w", encoding="utf-8", newline="") as csv_handle,
+        ):
+            csv_writer = csv.writer(csv_handle)
+            csv_writer.writerow(fieldnames)
+            write_jsonl = jsonl_handle.write
+            dump_json = json.dumps
+            normalize_csv_value = _csv_value
+            def csv_rows() -> Iterable[list[str]]:
+                for row in rows:
+                    payload = row.to_dict()
+                    write_jsonl(dump_json(payload) + "\n")
+                    payload_get = payload.get
+                    yield [normalize_csv_value(payload_get(field, "")) for field in fieldnames]
+
+            csv_writer.writerows(csv_rows())
