@@ -1712,7 +1712,7 @@ def test_compiled_glob_matching_preserves_prefix_short_circuit() -> None:
     ) is False
 
 
-def test_report_results_loader_uses_scandir_and_binary_json_reads(
+def test_report_results_loader_uses_scandir_binary_json_reads_and_keeps_payloads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1734,7 +1734,7 @@ def test_report_results_loader_uses_scandir_and_binary_json_reads(
     report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
     loaded = report_script["_load_results"](results_dir)
 
-    assert [payload["probe"]["id"] for payload in loaded] == ["a", "b"]
+    assert {payload["probe"]["id"] for payload in loaded} == {"a", "b"}
 
 
 def test_performance_report_script_load_results_handles_missing_directory() -> None:
