@@ -638,6 +638,37 @@
     ]
   },
   {
+    "id": "job-registry-restore-sort-elision",
+    "name": "Job registry restore sort elision",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_ops/job_registry.py",
+      "services/mlx-worker-python/tests/test_model_ops_job_registry.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/job_registry_restore_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_model_ops_job_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_job_registry_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_job_registry_restore_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_model_ops_job_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_job_registry_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_job_registry_restore_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/job_registry.py services/mlx-worker-python/tests/test_model_ops_job_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/job_registry_restore_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -lc 'if [ -f scripts/job_registry_restore_probe.py ]; then python3 scripts/job_registry_restore_probe.py; else python3 - <<\"PY\"\nimport json\nimport statistics\nimport sys\nimport time\nfrom pathlib import Path\n\nTRAIN_MANIFEST_COUNT = 5000\nACTIVATE_MANIFEST_COUNT = 5000\nREMOVE_MANIFEST_COUNT = 5000\nSAMPLE_COUNT = 8\nSOURCE_MODEL_ID = \"melix-dev-text\"\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\nfrom worker.model_ops.job_registry import ModelOpsJobRegistry\n\ndef train_manifest_paths():\n    return [Path(f\"/tmp/melix-restore/train_lora/model-ops-{index:05d}/train_lora.adapter.json\") for index in range(TRAIN_MANIFEST_COUNT)]\n\ndef activate_manifest_paths():\n    return [Path(f\"/tmp/melix-restore/activate_adapter/model-ops-{TRAIN_MANIFEST_COUNT + index:05d}/one/manifest.json\") for index in range(ACTIVATE_MANIFEST_COUNT)]\n\ndef remove_manifest_paths():\n    base = TRAIN_MANIFEST_COUNT + ACTIVATE_MANIFEST_COUNT\n    return [Path(f\"/tmp/melix-restore/remove_derived_model/model-ops-{base + index:05d}/remove_derived_model.lifecycle.json\") for index in range(REMOVE_MANIFEST_COUNT)]\n\ndef expected_job_id(path):\n    return path.parent.parent.name if path.name == \"manifest.json\" else path.parent.name\n\ndef payload_for(operation, path):\n    job_id = expected_job_id(path)\n    return {\"job_id\": job_id, \"operation\": operation, \"source_model\": SOURCE_MODEL_ID, \"derived_model_id\": job_id, \"activation_job_id\": job_id, \"activation_manifest_path\": str(path), \"adapter_manifest_path\": str(path)}\n\ntrain_paths = train_manifest_paths()\nactivate_paths = activate_manifest_paths()\nremove_paths = remove_manifest_paths()\nexpected_job_count = float(len(train_paths) + len(activate_paths) + len(remove_paths))\noriginal_read_manifest_dict = ModelOpsJobRegistry._read_manifest_dict\nelapsed_samples = []\ntry:\n    for _ in range(SAMPLE_COUNT):\n        registry = ModelOpsJobRegistry()\n        def fake_read_manifest_dict(path):\n            if path.name == \"train_lora.adapter.json\":\n                return payload_for(\"train_lora\", path)\n            if path.name == \"manifest.json\":\n                return payload_for(\"activate_adapter\", path)\n            return payload_for(\"remove_derived_model\", path)\n        ModelOpsJobRegistry._read_manifest_dict = staticmethod(fake_read_manifest_dict)\n        started = time.perf_counter()\n        registry._restore_manifest_jobs(operation=\"train_lora\", manifest_paths=train_paths, pct=0.97)\n        registry._restore_manifest_jobs(operation=\"activate_adapter\", manifest_paths=activate_paths, pct=0.95)\n        registry._restore_manifest_jobs(operation=\"remove_derived_model\", manifest_paths=remove_paths, pct=0.95)\n        elapsed_ms = (time.perf_counter() - started) * 1000.0\n        if float(len(registry._jobs)) != expected_job_count:\n            raise RuntimeError(f\"expected {expected_job_count:.0f} restored jobs, got {len(registry._jobs)}\")\n        elapsed_samples.append(elapsed_ms)\nfinally:\n    ModelOpsJobRegistry._read_manifest_dict = original_read_manifest_dict\nrestore_elapsed_ms_mean = statistics.fmean(elapsed_samples)\npayload = {\n    \"job_count\": expected_job_count,\n    \"per_manifest_ms_mean\": round(restore_elapsed_ms_mean / expected_job_count, 9),\n    \"restore_elapsed_ms_mean\": round(restore_elapsed_ms_mean, 6),\n    \"sample_count\": float(SAMPLE_COUNT),\n    \"train_manifest_count\": float(len(train_paths)),\n    \"activate_manifest_count\": float(len(activate_paths)),\n    \"remove_manifest_count\": float(len(remove_paths)),\n}\nprint(json.dumps(payload, sort_keys=True))\nPY\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "restore_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "per_manifest_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "deterministic-rerank-query-context-reuse",
     "name": "Deterministic rerank query-context reuse",
     "runner": "ubuntu-latest",

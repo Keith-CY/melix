@@ -180,8 +180,11 @@ def test_scope_report_selects_job_registry_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/model_ops/job_registry.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "job-registry-derived-model-single-pass"
+    assert scope["selected_count"] == 2
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "job-registry-derived-model-single-pass",
+        "job-registry-restore-sort-elision",
+    ]
 
 
 def test_scope_report_selects_mlx_lm_runner_probe() -> None:
@@ -528,6 +531,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
+        "job-registry-restore-sort-elision",
         "mlx-lm-structured-result-tail-parse",
         "mlx-vlm-family-config-cache",
         "model-registry-plain-local-manifest-stat-elision",
@@ -1076,6 +1080,21 @@ def test_job_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[s
     assert payload["removed_count"] == 240.0
     assert payload["restored_job_count"] == 880.0
     assert payload["sample_count"] == 6.0
+
+
+def test_job_registry_restore_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/job_registry_restore_probe.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["restore_elapsed_ms_mean"] > 0
+    assert payload["per_manifest_ms_mean"] > 0
+    assert payload["job_count"] == 15000.0
+    assert payload["train_manifest_count"] == 5000.0
+    assert payload["activate_manifest_count"] == 5000.0
+    assert payload["remove_manifest_count"] == 5000.0
+    assert payload["sample_count"] == 8.0
 
 
 def test_benchmark_store_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
