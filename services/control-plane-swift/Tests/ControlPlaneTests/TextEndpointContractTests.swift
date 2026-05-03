@@ -199,6 +199,33 @@ struct TextEndpointContractTests {
         )
     }
 
+    @Test("prior assistant hidden-thought prefixes are stripped from every text part")
+    func priorAssistantHiddenThoughtPrefixesAreStrippedFromEveryTextPart() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "reasoning-history-strip-parts" })
+        let translated = try translator.translate(
+            MelixMessagesRequest(
+                model: "melix-dev-text",
+                messages: [
+                    .init(
+                        role: "assistant",
+                        contentBlocks: [
+                            .init(type: .text, text: "<think>hidden first part</think>Visible first part."),
+                            .init(type: .text, text: "\n<think>hidden second part</think>Visible second part."),
+                        ]
+                    ),
+                    .init(role: "user", content: "Continue.")
+                ]
+            ),
+            modelHandle: "worker-text"
+        )
+
+        let assistant = try #require(translated.workerRequest.messages.first)
+
+        #expect(assistant.role == "assistant")
+        #expect(assistant.parts.map(\.text) == ["Visible first part.", "Visible second part."])
+        #expect(translated.workerRequest.execution.ext["melix.reasoning.history_strip_count"] == "2")
+    }
+
     @Test("inline hidden-thought literals in assistant history are preserved")
     func inlineHiddenThoughtLiteralsInAssistantHistoryArePreserved() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "reasoning-history-literal" })
