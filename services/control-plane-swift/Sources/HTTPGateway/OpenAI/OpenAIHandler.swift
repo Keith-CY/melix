@@ -1580,6 +1580,11 @@ public struct OpenAIHandler: Sendable {
         if translated.workerRequest.execution.ext["melix.chat_template_kwargs.forced_json"] != nil {
             await metricsStore.increment("http.chat_template_kwargs_forced_request_count")
         }
+        if let rawStripCount = translated.workerRequest.execution.ext["melix.reasoning.history_strip_count"],
+           let stripCount = Double(rawStripCount),
+           stripCount > 0 {
+            await metricsStore.increment("http.reasoning_history_strip_count", by: stripCount)
+        }
     }
 
     private func streamResponse(

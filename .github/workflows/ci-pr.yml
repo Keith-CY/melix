@@ -22,6 +22,9 @@ jobs:
 
       - uses: rhysd/actionlint@v1.7.12
 
+      - name: Shell syntax check
+        run: bash -n scripts/ci_progress.sh
+
       - name: Diff check
         run: git diff --check HEAD^1 HEAD
 
@@ -39,10 +42,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
 
       - name: Bootstrap
-        run: make bootstrap
+        run: bash scripts/ci_progress.sh "Bootstrap" make bootstrap
 
       - name: Check generated protocol outputs
-        run: make proto-check
+        run: bash scripts/ci_progress.sh "Protocol drift check" make proto-check
 
   swift-tests:
     runs-on: macos-15
@@ -58,10 +61,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
 
       - name: Bootstrap
-        run: make bootstrap
+        run: bash scripts/ci_progress.sh "Bootstrap" make bootstrap
 
       - name: Swift tests
-        run: make swift-test
+        run: bash scripts/ci_progress.sh "Swift tests" make swift-test
 
   python-tests:
     runs-on: macos-15
@@ -77,10 +80,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
 
       - name: Bootstrap
-        run: make bootstrap
+        run: bash scripts/ci_progress.sh "Bootstrap" make bootstrap
 
       - name: Python tests
-        run: make py-test
+        run: bash scripts/ci_progress.sh "Python tests" make py-test
 
   integration-scope:
     runs-on: ubuntu-latest
@@ -129,10 +132,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
 
       - name: Bootstrap
-        run: make bootstrap
+        run: bash scripts/ci_progress.sh "Bootstrap" make bootstrap
 
       - name: Build Swift integration prerequisites
-        run: make swift-build-integration-prereqs
+        run: bash scripts/ci_progress.sh "Swift integration prerequisite build" make swift-build-integration-prereqs
 
       - name: Integration tests
-        run: make integration-test
+        run: bash scripts/ci_progress.sh "Integration tests" make integration-test

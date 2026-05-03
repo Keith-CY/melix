@@ -28,6 +28,7 @@ For a reasoning-enabled request, inspect the worker `GenerateRequest.execution` 
 - `melix.reasoning.effort`
 - `melix.reasoning.auto_detect_model_family`
 - `melix.reasoning.continuity_rehydrated`
+- `melix.reasoning.history_strip_count`
 - `ReasoningConfig.mode`
 - `ReasoningConfig.mode_source`
 - `ReasoningConfig.effort`
@@ -55,6 +56,9 @@ The worker stream assembler reports parser metrics on completed events:
 - `suppressed_reasoning_count`
 - `stream_prefix_hold_chars`
 - `stream_short_reply_flush_count`
+- `stream_parser_request_context_mode`
+- `tool_call_markup_leak_count`
+- `reasoning_channel_recovery_count`
 
 Expected healthy values:
 
@@ -69,6 +73,13 @@ Expected healthy values:
   text before that suffix is emitted immediately
 - short visible prefixes that flush before a held marker suffix increment
   `stream_short_reply_flush_count`
+- prior assistant turns with leading `<think>...</think>` blocks increment
+  `melix.reasoning.history_strip_count` during request shaping; inline literal
+  marker mentions are preserved
+- tool-aware streams should report `stream_parser_request_context_mode` as
+  `tool_parser` and keep `tool_call_markup_leak_count == 0`
+- malformed reasoning-open boundaries should increment
+  `reasoning_channel_recovery_count` without emitting hidden text
 
 ## JSON Structured Output Checks
 

@@ -167,6 +167,58 @@ struct TextEndpointContractTests {
         }
     }
 
+    @Test("prior assistant hidden-thought prefixes are stripped before prompt rebuild")
+    func priorAssistantHiddenThoughtPrefixesAreStrippedBeforePromptRebuild() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "reasoning-history-strip" })
+        let translated = try translator.translate(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [
+                    .init(
+                        role: "assistant",
+                        content: "<think>hidden chain</think>\n<think>hidden continuation</think>Visible answer mentioning <think> literally."
+                    ),
+                    .init(role: "user", content: "Continue.")
+                ]
+            ),
+            modelHandle: "worker-text"
+        )
+
+        let assistant = try #require(translated.workerRequest.messages.first)
+
+        #expect(assistant.role == "assistant")
+        #expect(assistant.parts.first?.text == "Visible answer mentioning <think> literally.")
+        #expect(translated.workerRequest.execution.ext["melix.reasoning.history_strip_count"] == "2")
+        #expect(
+            !translated.workerRequest.messages
+                .map(\.parts)
+                .flatMap { $0 }
+                .map(\.text)
+                .joined(separator: "\n")
+                .contains("hidden chain")
+        )
+    }
+
+    @Test("inline hidden-thought literals in assistant history are preserved")
+    func inlineHiddenThoughtLiteralsInAssistantHistoryArePreserved() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "reasoning-history-literal" })
+        let translated = try translator.translate(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [
+                    .init(role: "assistant", content: "Visible <think> literal marker"),
+                    .init(role: "user", content: "Continue.")
+                ]
+            ),
+            modelHandle: "worker-text"
+        )
+
+        let assistant = try #require(translated.workerRequest.messages.first)
+
+        #expect(assistant.parts.first?.text == "Visible <think> literal marker")
+        #expect(translated.workerRequest.execution.ext["melix.reasoning.history_strip_count"] == "0")
+    }
+
     @Test("reasoning policy resolver covers template explicit-disable and family auto-detect precedence")
     func reasoningPolicyResolverCoversTemplateExplicitDisableAndFamilyAutoDetectPrecedence() {
         let resolver = ReasoningPolicyResolver()
