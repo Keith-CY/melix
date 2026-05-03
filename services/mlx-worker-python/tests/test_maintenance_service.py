@@ -652,14 +652,21 @@ def test_convert_model_writes_manifest_once_after_in_memory_byte_convergence(
 ) -> None:
     service = build_service(tmp_path)
     write_calls = 0
+    encode_manifest_bytes: list[int] = []
     original_write_manifest = ModelConversionPipeline._write_manifest
+    original_encode_manifest = ModelConversionPipeline._encode_manifest
 
-    def counting_write_manifest(path: Path, payload: dict[str, object]) -> int:
+    def counting_write_manifest(path: Path, payload: dict[str, object], encoded: bytes | None = None) -> int:
         nonlocal write_calls
         write_calls += 1
-        return original_write_manifest(path, payload)
+        return original_write_manifest(path, payload, encoded)
+
+    def tracking_encode_manifest(payload: dict[str, object]) -> bytes:
+        encode_manifest_bytes.append(int(payload["manifest_bytes"]))
+        return original_encode_manifest(payload)
 
     monkeypatch.setattr(ModelConversionPipeline, "_write_manifest", staticmethod(counting_write_manifest))
+    monkeypatch.setattr(ModelConversionPipeline, "_encode_manifest", staticmethod(tracking_encode_manifest))
 
     convert_events = list(
         service.ConvertModel(
@@ -674,10 +681,16 @@ def test_convert_model_writes_manifest_once_after_in_memory_byte_convergence(
     convert_manifest = next(event.manifest for event in convert_events if event.HasField("manifest"))
     convert_payload = json.loads(convert_manifest.manifest_json)
     manifest_path = Path(convert_events[-1].completed.output_path) / "manifest.json"
+    final_manifest_bytes = convert_payload["manifest_bytes"]
 
     assert write_calls == 1
+    assert encode_manifest_bytes.count(final_manifest_bytes) == 1
     assert convert_payload["manifest_bytes"] == manifest_path.stat().st_size
     assert json.loads(manifest_path.read_text(encoding="utf-8")) == convert_payload
+
+    rewrite_path = manifest_path.with_name("manifest.rewrite.json")
+    assert original_write_manifest(rewrite_path, convert_payload) == final_manifest_bytes
+    assert rewrite_path.read_bytes() == manifest_path.read_bytes()
 
 
 def test_convert_pipeline_counts_artifact_bytes_without_rescanning_bundle_directory(

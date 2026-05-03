@@ -95,14 +95,16 @@ class ModelConversionPipeline:
             smoke_test_passed=smoke_test_passed,
         )
         manifest_bytes = 0
+        encoded_manifest = b""
         while True:
             manifest_payload["manifest_bytes"] = manifest_bytes
-            next_manifest_bytes = self._manifest_size(manifest_payload)
+            encoded_manifest = self._encode_manifest(manifest_payload)
+            next_manifest_bytes = len(encoded_manifest)
             if next_manifest_bytes == manifest_bytes:
                 break
             manifest_bytes = next_manifest_bytes
         manifest_payload["manifest_bytes"] = manifest_bytes
-        self._write_manifest(manifest_path, manifest_payload)
+        self._write_manifest(manifest_path, manifest_payload, encoded_manifest)
 
         return ConversionPipelineResult(
             bundle_path=bundle_path,
@@ -226,7 +228,8 @@ class ModelConversionPipeline:
         return len(payload)
 
     @staticmethod
-    def _write_manifest(path: Path, payload: dict[str, Any]) -> int:
-        encoded = ModelConversionPipeline._encode_manifest(payload)
+    def _write_manifest(path: Path, payload: dict[str, Any], encoded: bytes | None = None) -> int:
+        if encoded is None:
+            encoded = ModelConversionPipeline._encode_manifest(payload)
         path.write_bytes(encoded)
         return len(encoded)
