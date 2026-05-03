@@ -145,6 +145,14 @@ def test_restore_manifest_jobs_preserves_collected_manifest_order_without_resort
     )
 
     assert list(registry._jobs) == ["model-ops-0002", "model-ops-0001"]
+    restored_job = registry._jobs["model-ops-0002"]
+    assert restored_job.manifest_cached is True
+    assert restored_job.manifest == {
+        "job_id": "model-ops-0002",
+        "operation": "train_lora",
+        "source_model": "src-2",
+    }
+    assert json.loads(restored_job.manifest_json) == restored_job.manifest
 
 
 

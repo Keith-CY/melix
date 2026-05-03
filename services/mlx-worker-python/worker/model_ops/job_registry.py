@@ -277,7 +277,7 @@ class ModelOpsJobRegistry:
                 source_model=str(payload.get("source_model", "")),
                 output_dir=str(output_dir),
                 stage_history=[("write_manifest", pct)],
-                manifest_json=json.dumps(payload, sort_keys=True),
+                manifest_json=json.dumps(payload),
                 manifest=payload,
                 manifest_cached=True,
                 output_path=str(manifest_path),
