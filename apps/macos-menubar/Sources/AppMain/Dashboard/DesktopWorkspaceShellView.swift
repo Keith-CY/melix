@@ -272,237 +272,58 @@ struct DesktopCommandCenterView: View {
         let serverSessions = liveServerSessions
 
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Command Center")
-                    .font(.largeTitle.weight(.semibold))
+            VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
+                DesktopCommandCenterHeaderView(
+                    foundation: foundation,
+                    lastError: viewModel?.lastError
+                )
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
-                    GroupBox("Runtime Health") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(foundation.serverStateText)
-                                .font(.headline)
-                            Text(foundation.connectionStateText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(foundation.connectionDetailText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: DesktopCommandCenterVisuals.columnSpacing) {
+                        VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
+                            DesktopCommandCenterRuntimePanel(foundation: foundation)
+                            DesktopCommandCenterPressurePanel(foundation: foundation)
+                            DesktopCommandCenterActivityPanel(foundation: foundation)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(minWidth: DesktopCommandCenterVisuals.primaryColumnMinimumWidth)
+
+                        VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
+                            DesktopCommandCenterRecoveryPanel(
+                                viewModel: viewModel,
+                                serverSessions: serverSessions
+                            )
+                            DesktopCommandCenterWorkflowPanel(viewModel: viewModel)
+                            DesktopCommandCenterSessionSummaryPanel(
+                                chatSessions: chatSessions,
+                                serverSessions: serverSessions
+                            )
+                        }
+                        .frame(width: DesktopCommandCenterVisuals.secondaryColumnWidth)
                     }
 
-                    GroupBox("Primary Model") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            if let model = foundation.models.first {
-                                Text(model.displayName)
-                                    .font(.headline)
-                                    .lineLimit(1)
-                                Text("\(model.modelID) • \(model.stateText) • \(model.memoryPolicyText)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(model.memoryText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            } else {
-                                Text("No model discovered.")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
+                        DesktopCommandCenterRuntimePanel(foundation: foundation)
+                        DesktopCommandCenterRecoveryPanel(
+                            viewModel: viewModel,
+                            serverSessions: serverSessions
+                        )
+                        DesktopCommandCenterPressurePanel(foundation: foundation)
+                        DesktopCommandCenterWorkflowPanel(viewModel: viewModel)
+                        DesktopCommandCenterActivityPanel(foundation: foundation)
+                        DesktopCommandCenterSessionSummaryPanel(
+                            chatSessions: chatSessions,
+                            serverSessions: serverSessions
+                        )
                     }
-
-                    if let viewModel, viewModel.recoverableDownloads.isEmpty == false {
-                        GroupBox("Download Recovery") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(viewModel.recoverableDownloads.prefix(2)) { entry in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(entry.sourceModel)
-                                            .font(.headline)
-                                            .lineLimit(1)
-                                        Text(entry.progressText)
-                                            .font(.caption.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                        Button("Resume Download") {
-                                            Task { await viewModel.resumeDownload(jobID: entry.jobID) }
-                                        }
-                                        .buttonStyle(.borderedProminent)
-                                        .controlSize(.small)
-                                    }
-                                }
-                                if let overflowText = Self.downloadRecoveryOverflowText(
-                                    totalCount: viewModel.recoverableDownloads.count
-                                ) {
-                                    HStack {
-                                        Text(overflowText)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                        Button(Self.downloadRecoveryOverflowActionTitle) {
-                                            viewModel.selectSurface(.tools)
-                                            viewModel.selectToolSection(.downloads)
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-
-                    if let operation = viewModel?.lastModelOperation {
-                        GroupBox("Last Operation") {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(operation.operation)
-                                    .font(.headline)
-                                Text(operation.modelID)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(operation.outputPath)
-                                    .font(.caption2.monospaced())
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(2)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-
-                    if let lastError = viewModel?.lastError {
-                        GroupBox("Latest Error") {
-                            Text(lastError)
-                                .foregroundStyle(MelixDesignTokens.StatusColor.error)
-                                .lineLimit(3)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
-
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
-                    ForEach(foundation.dashboardCards.filter { ["server", "connection", "backpressure", "memory"].contains($0.id) }) { card in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(card.title)
-                                .font(.headline)
-                            Text(card.value)
-                                .font(.title3.weight(.semibold))
-                            Text(card.detail)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
-                    }
-                }
-
-                HStack(alignment: .top, spacing: 16) {
-                    GroupBox("Resource And Queue Pressure") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(foundation.queueLanes) { lane in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack {
-                                        Text(lane.id)
-                                            .font(.headline)
-                                        Spacer()
-                                        Text("bp \(String(format: "%.2f", lane.backpressure))")
-                                            .font(.caption.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Text("\(lane.laneClass) • active \(lane.activeRequests) • queued \(lane.queuedRequests)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            if foundation.queueLanes.isEmpty {
-                                Text("No active queue pressure.")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    GroupBox("Recovery Items") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(serverSessions.filter { $0.lifecycle == .error || $0.lifecycle == .stopped || $0.lifecycle == .unavailable }) { session in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(session.title)
-                                        .font(.headline)
-                                    Text("\(session.lifecycle.rawValue) • \(session.effectiveBaseURL)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    if !session.lastError.isEmpty {
-                                        Text(session.lastError)
-                                            .font(.caption)
-                                            .foregroundStyle(MelixDesignTokens.StatusColor.error)
-                                    }
-                                }
-                            }
-                            if serverSessions.contains(where: { $0.lifecycle == .error || $0.lifecycle == .stopped || $0.lifecycle == .unavailable }) == false {
-                                Text("No recovery items.")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-
-                GroupBox("Recent Activity") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(foundation.logs.prefix(8)) { entry in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(entry.kind)
-                                        .font(.caption2)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(.quaternary, in: Capsule())
-                                    Spacer()
-                                    Text(entry.level.uppercased())
-                                        .font(.caption2)
-                                        .foregroundStyle(entry.level == "error" ? MelixDesignTokens.StatusColor.error : .secondary)
-                                }
-                                Text(entry.message)
-                                    .font(.body)
-                                Text(entry.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        if foundation.logs.isEmpty {
-                            Text("No recent activity.")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                GroupBox("Session Summary") {
-                    HStack(alignment: .top, spacing: 24) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Chat Sessions")
-                                .font(.headline)
-                            Text("\(chatSessions.count)")
-                                .font(.title3.weight(.semibold))
-                            Text(chatSessions.first?.summaryText ?? "No chat sessions")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Server Sessions")
-                                .font(.headline)
-                            Text("\(serverSessions.count)")
-                                .font(.title3.weight(.semibold))
-                            Text(serverSessions.first?.effectiveListenerLabel ?? "No listener configured")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(20)
+            .padding(DesktopCommandCenterVisuals.contentPadding)
+            .frame(
+                maxWidth: DesktopCommandCenterVisuals.maxContentWidth,
+                alignment: .leading
+            )
         }
+        .background(MelixDesignTokens.Palette.backgroundBase.color)
     }
 
     private var liveFoundation: DesktopFoundationState {
@@ -515,6 +336,561 @@ struct DesktopCommandCenterView: View {
 
     private var liveServerSessions: [DesktopServerSessionState] {
         viewModel?.serverSessions ?? serverSessions
+    }
+}
+
+enum DesktopCommandCenterVisuals {
+    static let repositoryDesignSystemPath = "docs/design-system/README.md"
+    static let appleLayoutGuidanceURL = "https://developer.apple.com/design/human-interface-guidelines/layout"
+    static let visualDirection = "Digital Broadsheet Command Center"
+    static let operatorLabel = "Melix Operator"
+    static let windowTitle = "Command Center"
+    static let runtimeSectionTitle = "Runtime"
+    static let pressureSectionTitle = "Resource And Queue Pressure"
+    static let recoverySectionTitle = "Recovery"
+    static let workflowSectionTitle = "Workflow"
+    static let activitySectionTitle = "Recent Activity"
+    static let sessionSummarySectionTitle = "Session Summary"
+    static let primaryModelTitle = "Primary Model"
+    static let maxContentWidth: CGFloat = 1120
+    static let primaryColumnMinimumWidth: CGFloat = 520
+    static let secondaryColumnWidth: CGFloat = 320
+    static let contentPadding = MelixDesignTokens.Spacing.huge
+    static let sectionSpacing = MelixDesignTokens.Spacing.xl
+    static let columnSpacing = MelixDesignTokens.Spacing.huge
+    static let panelCornerRadius = MelixDesignTokens.Radius.xl
+    static let statusSymbolName = "command.circle"
+    static let recoverySymbolName = "arrow.clockwise.circle"
+}
+
+private struct DesktopCommandCenterHeaderView: View {
+    let foundation: DesktopFoundationState
+    let lastError: String?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.lg) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+                Text(DesktopCommandCenterVisuals.operatorLabel).melixSectionLabel()
+                Text(DesktopCommandCenterVisuals.windowTitle)
+                    .font(MelixDesignTokens.Typography.largeTitle)
+                Text(foundation.title)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: MelixDesignTokens.Spacing.lg)
+
+            HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.sm) {
+                Image(systemName: healthSymbolName)
+                    .foregroundStyle(healthTint)
+                Text(healthLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(healthTint)
+            }
+            .padding(.horizontal, MelixDesignTokens.Spacing.md)
+            .padding(.vertical, MelixDesignTokens.Spacing.sm)
+            .background(
+                healthTint.opacity(MelixDesignTokens.AccentOpacity.weak),
+                in: Capsule()
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var healthLabel: String {
+        switch resolvedHealthState {
+        case .runtimeReady:
+            return "Runtime Ready"
+        case .runtimeWarning:
+            return "Runtime Warning"
+        case .recoveryAvailable:
+            return "Recovery Available"
+        case .needsAttention:
+            return "Needs Attention"
+        case .runtimeState:
+            return "Runtime State"
+        }
+    }
+
+    private var healthSymbolName: String {
+        switch resolvedHealthState {
+        case .needsAttention:
+            return "exclamationmark.triangle.fill"
+        case .runtimeWarning:
+            return "exclamationmark.triangle"
+        case .recoveryAvailable:
+            return "pause.circle.fill"
+        case .runtimeReady, .runtimeState:
+            return DesktopCommandCenterVisuals.statusSymbolName
+        }
+    }
+
+    private var healthTint: Color {
+        switch resolvedHealthState {
+        case .needsAttention:
+            return MelixDesignTokens.StatusColor.error
+        case .runtimeWarning, .recoveryAvailable:
+            return MelixDesignTokens.StatusColor.warning
+        case .runtimeReady:
+            return MelixDesignTokens.StatusColor.success
+        case .runtimeState:
+            return MelixDesignTokens.StatusColor.info
+        }
+    }
+
+    private var resolvedHealthState: DesktopFoundationHealthState {
+        if let lastError, !lastError.isEmpty {
+            return .needsAttention
+        }
+        return foundation.healthState
+    }
+}
+
+private struct DesktopCommandCenterPanel<Content: View>: View {
+    let title: String
+    let symbolName: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, symbolName: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.symbolName = symbolName
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+            HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.sm) {
+                Image(systemName: symbolName)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.accent)
+                Text(title).melixSectionLabel()
+            }
+
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(MelixDesignTokens.Spacing.panelInset)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .melixCard(radius: DesktopCommandCenterVisuals.panelCornerRadius)
+    }
+}
+
+private struct DesktopCommandCenterRuntimePanel: View {
+    let foundation: DesktopFoundationState
+
+    var body: some View {
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.runtimeSectionTitle,
+            symbolName: "gauge.with.dots.needle.67percent"
+        ) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.lg) {
+                HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.xxl) {
+                    VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                        Text(foundation.serverStateText)
+                            .font(.title3.weight(.semibold))
+                        Text(foundation.connectionStateText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(foundation.connectionDetailText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer(minLength: MelixDesignTokens.Spacing.md)
+
+                    DesktopCommandCenterPrimaryModelView(model: foundation.models.first)
+                        .frame(maxWidth: 300, alignment: .leading)
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 118), spacing: MelixDesignTokens.Spacing.md)],
+                    spacing: MelixDesignTokens.Spacing.md
+                ) {
+                    ForEach(foundation.dashboardCards.filter { commandCenterMetricIDs.contains($0.id) }) { card in
+                        DesktopCommandCenterMetricView(card: card)
+                    }
+                }
+            }
+        }
+    }
+
+    private var commandCenterMetricIDs: Set<String> {
+        ["server", "connection", "backpressure", "memory"]
+    }
+}
+
+private struct DesktopCommandCenterPrimaryModelView: View {
+    let model: RuntimeModelRow?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            Text(DesktopCommandCenterVisuals.primaryModelTitle).melixSectionLabel()
+            if let model {
+                Text(model.displayName)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("\(model.modelID) • \(model.stateText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("\(model.memoryPolicyText) • \(model.memoryText)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            } else {
+                Text("No model discovered.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterMetricView: View {
+    let card: DesktopDashboardCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            Text(card.title).melixSectionLabel()
+            Text(card.value)
+                .font(.headline.monospacedDigit())
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text(card.detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopCommandCenterPressurePanel: View {
+    let foundation: DesktopFoundationState
+
+    var body: some View {
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.pressureSectionTitle,
+            symbolName: "waveform.path.ecg"
+        ) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+                ForEach(foundation.queueLanes) { lane in
+                    DesktopCommandCenterQueueLaneView(lane: lane)
+                }
+                if foundation.queueLanes.isEmpty {
+                    Text("No active queue pressure.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterQueueLaneView: View {
+    let lane: DesktopQueueLaneRow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(lane.id)
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer()
+                Text("bp \(String(format: "%.2f", lane.backpressure))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(lane.laneClass) • active \(lane.activeRequests) • queued \(lane.queuedRequests)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct DesktopCommandCenterRecoveryPanel: View {
+    let viewModel: RuntimeViewModel?
+    let serverSessions: [DesktopServerSessionState]
+
+    var body: some View {
+        let recoverySessions = serverSessions.filter {
+            $0.lifecycle == .error || $0.lifecycle == .stopped || $0.lifecycle == .unavailable
+        }
+        let recoverableDownloads = viewModel?.recoverableDownloads ?? []
+        let hasLatestError = (viewModel?.lastError ?? "").isEmpty == false
+        let hasRecovery = recoverableDownloads.isEmpty == false
+            || recoverySessions.isEmpty == false
+            || hasLatestError
+
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.recoverySectionTitle,
+            symbolName: DesktopCommandCenterVisuals.recoverySymbolName
+        ) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+                if let lastError = viewModel?.lastError, !lastError.isEmpty {
+                    DesktopCommandCenterAlertRow(
+                        title: "Latest Error",
+                        detail: lastError,
+                        tint: MelixDesignTokens.StatusColor.error
+                    )
+                }
+
+                ForEach(recoverableDownloads.prefix(2)) { entry in
+                    DesktopCommandCenterDownloadRecoveryRow(
+                        entry: entry,
+                        resume: {
+                            Task { await viewModel?.resumeDownload(jobID: entry.jobID) }
+                        }
+                    )
+                }
+
+                if let viewModel,
+                   let overflowText = DesktopCommandCenterView.downloadRecoveryOverflowText(
+                    totalCount: recoverableDownloads.count
+                   ) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(overflowText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(DesktopCommandCenterView.downloadRecoveryOverflowActionTitle) {
+                            viewModel.selectSurface(.tools)
+                            viewModel.selectToolSection(.downloads)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+
+                ForEach(recoverySessions) { session in
+                    DesktopCommandCenterServerRecoveryRow(session: session)
+                }
+
+                if !hasRecovery {
+                    Text("No recovery items.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterAlertRow: View {
+    let title: String
+    let detail: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.xs) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(.headline)
+            }
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(tint)
+                .lineLimit(3)
+        }
+    }
+}
+
+private struct DesktopCommandCenterDownloadRecoveryRow: View {
+    let entry: RuntimeDownloadQueueEntryState
+    let resume: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
+                VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                    Text(entry.sourceModel)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(entry.progressText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: MelixDesignTokens.Spacing.sm)
+
+                Button(action: resume) {
+                    Label(entry.resumeActionTitle, systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .fixedSize(horizontal: true, vertical: false)
+            }
+
+            if !entry.transferDetailText.isEmpty {
+                Text(entry.transferDetailText)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterServerRecoveryRow: View {
+    let session: DesktopServerSessionState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            Text(session.title)
+                .font(.headline)
+                .lineLimit(1)
+            Text("\(session.lifecycle.rawValue) • \(session.effectiveBaseURL)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if !session.lastError.isEmpty {
+                Text(session.lastError)
+                    .font(.caption2)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .lineLimit(2)
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterWorkflowPanel: View {
+    let viewModel: RuntimeViewModel?
+
+    var body: some View {
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.workflowSectionTitle,
+            symbolName: "point.3.connected.trianglepath.dotted"
+        ) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+                if let operation = viewModel?.lastModelOperation {
+                    VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                        Text(operation.operation)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text("\(operation.modelID) • \(operation.stage)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(operation.outputPath)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                } else {
+                    Text("No model operation recorded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterActivityPanel: View {
+    let foundation: DesktopFoundationState
+
+    var body: some View {
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.activitySectionTitle,
+            symbolName: "list.bullet.rectangle"
+        ) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+                ForEach(foundation.logs.prefix(8)) { entry in
+                    DesktopCommandCenterActivityRow(entry: entry)
+                }
+                if foundation.logs.isEmpty {
+                    Text("No recent activity.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterActivityRow: View {
+    let entry: DesktopLogEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
+                Text(entry.kind)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(entry.level)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(
+                        entry.level == "error"
+                            ? MelixDesignTokens.StatusColor.error
+                            : MelixDesignTokens.Palette.foregroundTertiary.color
+                    )
+            }
+            Text(entry.message)
+                .font(.body)
+                .lineLimit(2)
+            Text(entry.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+    }
+}
+
+private struct DesktopCommandCenterSessionSummaryPanel: View {
+    let chatSessions: [DesktopChatSessionState]
+    let serverSessions: [DesktopServerSessionState]
+
+    var body: some View {
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.sessionSummarySectionTitle,
+            symbolName: "rectangle.stack"
+        ) {
+            HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.xxl) {
+                DesktopCommandCenterSessionMetricView(
+                    title: "Chat Sessions",
+                    value: "\(chatSessions.count)",
+                    detail: chatSessions.first?.summaryText ?? "No chat sessions"
+                )
+                DesktopCommandCenterSessionMetricView(
+                    title: "Server Sessions",
+                    value: "\(serverSessions.count)",
+                    detail: serverSessions.first?.effectiveListenerLabel ?? "No listener configured"
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct DesktopCommandCenterSessionMetricView: View {
+    let title: String
+    let value: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            Text(title).melixSectionLabel()
+            Text(value)
+                .font(.title3.weight(.semibold).monospacedDigit())
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

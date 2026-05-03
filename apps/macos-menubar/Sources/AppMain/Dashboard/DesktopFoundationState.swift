@@ -71,6 +71,35 @@ public struct DesktopLogEntry: Identifiable, Equatable, Sendable {
     }
 }
 
+public enum DesktopFoundationHealthState: String, Equatable, Sendable {
+    case runtimeReady
+    case runtimeWarning
+    case recoveryAvailable
+    case needsAttention
+    case runtimeState
+
+    static func resolve(
+        serverState: Melix_Controlplane_V1_ServerState,
+        hasErrors: Bool
+    ) -> DesktopFoundationHealthState {
+        if hasErrors {
+            return .needsAttention
+        }
+        switch serverState {
+        case .serverReady:
+            return .runtimeReady
+        case .serverDegraded, .serverDraining:
+            return .runtimeWarning
+        case .serverStopped:
+            return .recoveryAvailable
+        case .serverFailed:
+            return .needsAttention
+        default:
+            return .runtimeState
+        }
+    }
+}
+
 public struct DesktopMetricRow: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
@@ -144,6 +173,7 @@ public struct DesktopFoundationState: Equatable, Sendable {
     public let serverStateText: String
     public let connectionStateText: String
     public let connectionDetailText: String
+    public let healthState: DesktopFoundationHealthState
     public let dashboardCards: [DesktopDashboardCard]
     public let queueLanes: [DesktopQueueLaneRow]
     public let models: [RuntimeModelRow]
@@ -212,6 +242,11 @@ public struct DesktopFoundationState: Equatable, Sendable {
         let guardDetail = recentGuardAlerts.first?.message
             ?? modelGuardAlerts.first.map { formatTransitionReason($0.residency.transitionReason) }
             ?? "No active memory guard failures"
+
+        let healthState = DesktopFoundationHealthState.resolve(
+            serverState: snapshot.serverState,
+            hasErrors: (lastError?.isEmpty == false) || snapshot.recentErrors.isEmpty == false
+        )
 
         let dashboardCards = [
             DesktopDashboardCard(
@@ -414,6 +449,7 @@ public struct DesktopFoundationState: Equatable, Sendable {
             serverStateText: serverStateText,
             connectionStateText: connectionStateText,
             connectionDetailText: connectionDetailText,
+            healthState: healthState,
             dashboardCards: dashboardCards,
             queueLanes: queueLanes,
             models: snapshot.models
