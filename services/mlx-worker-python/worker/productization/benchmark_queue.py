@@ -4,6 +4,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+import stat
 
 
 @dataclass(frozen=True)
@@ -87,12 +88,18 @@ class BenchmarkQueueStore:
                     if not entry.name.endswith(".json"):
                         continue
                     try:
-                        if not entry.is_file():
-                            continue
+                        stat_result = entry.stat()
                     except OSError:
                         continue
+                    if not stat.S_ISREG(stat_result.st_mode):
+                        continue
                     path = Path(entry.path)
-                    records.append(self._load_record(path, metadata_key=self._metadata_key(path)))
+                    records.append(
+                        self._load_record(
+                            path,
+                            metadata_key=self._metadata_key_from_stat(stat_result),
+                        )
+                    )
         except OSError:
             return []
         records.sort(key=lambda record: (record.created_at_unix_ms, record.queue_item_id))
@@ -189,7 +196,10 @@ class BenchmarkQueueStore:
 
     @staticmethod
     def _metadata_key(path: Path) -> tuple[int, int, int, int]:
-        stat_result = path.stat()
+        return BenchmarkQueueStore._metadata_key_from_stat(path.stat())
+
+    @staticmethod
+    def _metadata_key_from_stat(stat_result: os.stat_result) -> tuple[int, int, int, int]:
         return (
             int(stat_result.st_mtime_ns),
             int(stat_result.st_size),
