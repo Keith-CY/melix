@@ -73,6 +73,8 @@ class RequestStreamAssembler:
             "malformed_reasoning_count": 0,
             "non_monotonic_stream_count": 0,
             "suppressed_reasoning_count": 0,
+            "stream_prefix_hold_chars": 0,
+            "stream_short_reply_flush_count": 0,
         }
 
     def accept(self, fragment: StreamFragment) -> list[AssemblyDelta]:
@@ -161,8 +163,18 @@ class RequestStreamAssembler:
         while self._buffer:
             next_tag = self._next_structural_tag()
             if next_tag is None:
-                if not final and self._has_partial_structural_tag_suffix():
-                    break
+                if not final:
+                    held_suffix = self._partial_structural_tag_suffix()
+                    if held_suffix:
+                        self._record_prefix_hold(held_suffix)
+                        visible_prefix = self._buffer[: -len(held_suffix)]
+                        if visible_prefix:
+                            self._buffer = held_suffix
+                            if len(visible_prefix) <= 8:
+                                self._metrics["stream_short_reply_flush_count"] += 1
+                            deltas.append(self._content_delta(visible_prefix))
+                            continue
+                        break
                 content = self._buffer
                 self._buffer = ""
                 deltas.append(self._content_delta(content))
@@ -224,6 +236,20 @@ class RequestStreamAssembler:
 
     def _has_partial_structural_tag_suffix(self) -> bool:
         return self._buffer.endswith(self._structural_tag_prefixes)
+
+    def _partial_structural_tag_suffix(self) -> str:
+        if not self._has_partial_structural_tag_suffix():
+            return ""
+        for prefix in reversed(self._structural_tag_prefixes):
+            if self._buffer.endswith(prefix):
+                return prefix
+        return ""
+
+    def _record_prefix_hold(self, suffix: str) -> None:
+        self._metrics["stream_prefix_hold_chars"] = max(
+            self._metrics["stream_prefix_hold_chars"],
+            len(suffix),
+        )
 
     def _content_delta(self, content: str) -> AssemblyDelta:
         self._assistant_parts.append(content)

@@ -18,6 +18,7 @@ from worker.productization.pr_scoped_performance import (
     _build_large_training_dataset_samples,
     _build_metric_row,
     _single_pass_sample_iterable,
+    _summarize_command,
     _build_probe_report_row,
     _build_probe_details,
     _closure_index_text,
@@ -1172,9 +1173,14 @@ def test_job_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[s
     assert payload["sample_count"] == 6.0
 
 
-def test_job_registry_restore_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+def test_job_registry_restore_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
     with pytest.raises(SystemExit) as excinfo:
         runpy.run_path(str(REPO_ROOT / "scripts/job_registry_restore_probe.py"), run_name="__main__")
+
+    from worker.model_ops.job_registry import ModelOpsJobRegistry
 
     assert excinfo.value.code == 0
     payload = json.loads(capsys.readouterr().out)
@@ -1185,6 +1191,7 @@ def test_job_registry_restore_probe_script_emits_metrics(capsys: pytest.CaptureF
     assert payload["activate_manifest_count"] == 5000.0
     assert payload["remove_manifest_count"] == 5000.0
     assert payload["sample_count"] == 8.0
+    assert ModelOpsJobRegistry()._read_manifest_dict(tmp_path / "missing.json") == {}
 
 
 def test_benchmark_store_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1601,6 +1608,30 @@ def test_command_and_verification_helpers_cover_skip_and_failure_paths(
     assert verification["coverage"]["stderr"].startswith("Skipped because")
 
 
+def test_command_summary_keeps_ci_heartbeats_compact() -> None:
+    assert _summarize_command("python3 - <<'PY'\nprint('x')\nPY") == "python3 - <<'PY' ..."
+    assert _summarize_command(" \n ") == "<empty command>"
+
+    long_summary = _summarize_command("python3 -c " + "x" * 300, max_length=80)
+    assert len(long_summary) <= 80
+    assert long_summary.endswith(" ...")
+
+
+def test_run_command_emits_heartbeat_for_silent_command(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(pr_scoped_performance_module, "_COMMAND_HEARTBEAT_SECONDS", 0.01)
+
+    result = _run_command("python -c \"import time; time.sleep(0.05); print('done')\"", cwd=tmp_path)
+
+    assert result["ok"] is True
+    stderr = capsys.readouterr().err
+    assert "still running after" in stderr
+    assert "python -c" in stderr
+
+
 def test_command_json_probe_executes_probe_command_and_parses_metrics(tmp_path: Path) -> None:
     probe = ProbeDefinition(
         probe_id="command-json",
@@ -1633,10 +1664,10 @@ def test_model_registry_catalog_probe_command_emits_metrics() -> None:
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["manifest_is_file_calls_mean"] == 0.0
-    assert metrics["config_load_calls_mean"] == 800.0
+    assert metrics["config_load_calls_mean"] == 400.0
     assert metrics["manifest_parse_calls_mean"] == 0.0
-    assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 800.0
-    assert metrics["sample_count"] == 3.0
+    assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 400.0
+    assert metrics["sample_count"] == 2.0
 
 
 def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:

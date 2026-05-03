@@ -7,6 +7,7 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.registry import WorkerRegistry
 from worker.runtime.mlx_text_runtime import RuntimeToolCallEvent, RuntimeTokenEvent
+from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
 
 
@@ -24,8 +25,15 @@ class EngineCore:
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
         assembler = self._stream_assembler(request)
+        stop_contract = resolve_text_stop_contract(
+            loaded_model.runtime_model,
+            request.sampling,
+            request.execution.ext,
+        )
+        effective_sampling = self._sampling_with_resolved_stop(request.sampling, stop_contract.sequences)
         prompt_tokens_default = 0
         last_token_event: RuntimeTokenEvent | None = None
+        turn_boundary_stop_reason = ""
 
         try:
             template_kwargs = self._chat_template_kwargs(request)
@@ -43,7 +51,7 @@ class EngineCore:
             for runtime_event in runtime.generate_tokens(
                 loaded_model.runtime_model,
                 prompt,
-                request.sampling,
+                effective_sampling,
                 state.cancel_event,
                 execution_ext=request.execution.ext,
             ):
@@ -63,6 +71,8 @@ class EngineCore:
                     continue
 
                 last_token_event = runtime_event
+                if runtime_event.finish_reason == "stop_sequence":
+                    turn_boundary_stop_reason = "stop_sequence"
                 for delta in assembler.accept(
                     StreamFragment(text=runtime_event.text, raw_text=runtime_event.raw_text)
                 ):
@@ -126,6 +136,14 @@ class EngineCore:
                 finish_reason = last_token_event.finish_reason
 
             assembled = assembler.completed()
+            parser_metrics: dict[str, object] = dict(assembled.metrics)
+            parser_metrics.update(
+                {
+                    "resolved_stop_token_count": stop_contract.resolved_stop_token_count,
+                    "reasoning_flag_source": self._reasoning_flag_source(request),
+                    "turn_boundary_stop_reason": turn_boundary_stop_reason or finish_reason,
+                }
+            )
             yield inference_pb2.ExecuteEvent(
                 request_id=request_id,
                 execution_kind="generate",
@@ -138,7 +156,7 @@ class EngineCore:
                     reasoning_mode_source=request.execution.reasoning.mode_source,
                     reasoning_effort=request.execution.reasoning.effort,
                     reasoning_continuity_preserved=request.execution.reasoning.continuity_rehydrated,
-                    parser_metrics={key: str(value) for key, value in assembled.metrics.items()},
+                    parser_metrics={key: str(value) for key, value in parser_metrics.items()},
                 ),
             )
         except Exception as exc:  # pragma: no cover - defensive branch
@@ -376,6 +394,26 @@ class EngineCore:
             reasoning_enabled=reasoning_enabled,
             structured_output_mode=ext.get("melix.structured_output.mode", ""),
             tool_parser_mode=ext.get("melix.tool_parser.mode", ""),
+        )
+
+    @staticmethod
+    def _sampling_with_resolved_stop(
+        sampling: common_pb2.SamplingConfig,
+        stop_sequences: tuple[str, ...],
+    ) -> common_pb2.SamplingConfig:
+        resolved = common_pb2.SamplingConfig()
+        resolved.CopyFrom(sampling)
+        del resolved.stop[:]
+        resolved.stop.extend(stop_sequences)
+        return resolved
+
+    @staticmethod
+    def _reasoning_flag_source(request: inference_pb2.GenerateRequest) -> str:
+        return (
+            request.execution.reasoning.mode_source
+            or request.execution.ext.get("melix.reasoning.mode_source", "")
+            or request.execution.ext.get("melix.reasoning.source", "")
+            or "unspecified"
         )
 
     @staticmethod

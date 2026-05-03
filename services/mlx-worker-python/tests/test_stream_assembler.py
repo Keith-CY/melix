@@ -237,11 +237,15 @@ def test_split_structural_tag_preserves_content_until_tag_is_complete() -> None:
         tool_parser_mode="qwen",
     )
 
-    assert assembler.accept(StreamFragment(raw_text="alpha<")) == []
+    first = assembler.accept(StreamFragment(raw_text="alpha<"))
     deltas = assembler.accept(StreamFragment(raw_text="alpha<think>hidden</think> omega"))
 
-    assert [delta.content_text for delta in deltas if delta.content_text] == ["alpha", " omega"]
+    assert [delta.content_text for delta in first if delta.content_text] == ["alpha"]
+    assert [delta.content_text for delta in deltas if delta.content_text] == [" omega"]
     assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["hidden"]
+    completed = assembler.completed()
+    assert completed.metrics["stream_prefix_hold_chars"] == 1
+    assert completed.metrics["stream_short_reply_flush_count"] == 1
 
 
 def test_split_structural_tag_prefix_longer_than_one_character_is_not_public_content() -> None:
@@ -252,11 +256,15 @@ def test_split_structural_tag_prefix_longer_than_one_character_is_not_public_con
         tool_parser_mode="qwen",
     )
 
-    assert assembler.accept(StreamFragment(raw_text="alpha<thi")) == []
+    first = assembler.accept(StreamFragment(raw_text="alpha<thi"))
     deltas = assembler.accept(StreamFragment(raw_text="alpha<think>hidden</think> omega"))
 
-    assert [delta.content_text for delta in deltas if delta.content_text] == ["alpha", " omega"]
+    assert [delta.content_text for delta in first if delta.content_text] == ["alpha"]
+    assert [delta.content_text for delta in deltas if delta.content_text] == [" omega"]
     assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["hidden"]
+    completed = assembler.completed()
+    assert completed.metrics["stream_prefix_hold_chars"] == len("<thi")
+    assert completed.metrics["stream_short_reply_flush_count"] == 1
 
 
 def test_split_tool_tag_prefix_longer_than_one_character_is_not_public_content() -> None:
@@ -267,16 +275,37 @@ def test_split_tool_tag_prefix_longer_than_one_character_is_not_public_content()
         tool_parser_mode="qwen",
     )
 
-    assert assembler.accept(StreamFragment(raw_text="alpha<tool_ca")) == []
+    first = assembler.accept(StreamFragment(raw_text="alpha<tool_ca"))
     deltas = assembler.accept(
         StreamFragment(
             raw_text='alpha<tool_call>{"name":"search","arguments":{"q":"alpha"}}</tool_call>'
         )
     )
 
-    assert [delta.content_text for delta in deltas if delta.content_text] == ["alpha"]
+    assert [delta.content_text for delta in first if delta.content_text] == ["alpha"]
+    assert [delta.content_text for delta in deltas if delta.content_text] == []
     calls = [delta.tool_call for delta in deltas if delta.tool_call]
     assert [call.tool_name for call in calls] == ["search"]
+    completed = assembler.completed()
+    assert completed.metrics["stream_prefix_hold_chars"] == len("<tool_ca")
+    assert completed.metrics["stream_short_reply_flush_count"] == 1
+
+
+def test_short_visible_prefix_flushes_before_held_marker_prefix() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-short-prefix-flush",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="OK<"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["OK"]
+    assert completed.assistant_text == "OK<"
+    assert completed.metrics["stream_prefix_hold_chars"] == 1
+    assert completed.metrics["stream_short_reply_flush_count"] == 1
 
 
 def test_truncated_reasoning_is_recoverable_and_not_public_content() -> None:

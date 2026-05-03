@@ -14,12 +14,15 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime import mlx_text_runtime as mlx_text_runtime_module
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
-from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeUnavailableError
+from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeToolCallEvent
+from worker.runtime.mlx_text_runtime import RuntimeUnavailableError, resolve_text_stop_contract
 
 
 class FakeTokenizer:
     def __init__(self) -> None:
         self.calls: list[tuple[list[dict[str, str]], dict[str, object]]] = []
+        self.eos_token = "</s>"
+        self.eos_token_id = 2
 
     def apply_chat_template(self, messages, **kwargs):
         self.calls.append((messages, kwargs))
@@ -229,6 +232,146 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].speculative_draft_model_configured is True
     assert chunks[-1].dflash_enabled is True
     assert chunks[-1].dflash_rollback_count == 2
+
+
+def test_text_stop_contract_merges_request_metadata_and_tokenizer_eos() -> None:
+    contract = resolve_text_stop_contract(
+        {
+            "tokenizer": FakeTokenizer(),
+            "metadata": {"melix.stop_sequences": '["</model>", "</request>"]'},
+            "model_ext": {"melix.turn_boundary.stop_sequences": "</turn>"},
+        },
+        common_pb2.SamplingConfig(stop=["</request>"]),
+        {"melix.stop_sequences": "</ext>"},
+    )
+
+    assert contract.sequences == ("</request>", "</model>", "</turn>", "</ext>", "</s>")
+    assert contract.resolved_stop_token_count == 6
+    assert contract.source == "request+model_metadata+tokenizer_eos"
+
+
+def test_text_stop_contract_handles_metadata_and_tokenizer_edge_cases() -> None:
+    class EosIdOnlyTokenizer:
+        eos_token = ""
+        eos_token_id = [2, 3, ""]
+
+    assert mlx_text_runtime_module._split_stop_sequence_value(" ") == []
+    assert mlx_text_runtime_module._split_stop_sequence_value("[not-json") == ["[not-json"]
+    assert mlx_text_runtime_module._split_stop_sequence_value(["</list>", " "]) == ["</list>"]
+    assert mlx_text_runtime_module._split_stop_sequence_value(42) == ["42"]
+
+    request_only_contract = resolve_text_stop_contract(
+        object(),
+        common_pb2.SamplingConfig(stop=["</request>"]),
+    )
+    assert request_only_contract.sequences == ("</request>",)
+    assert request_only_contract.resolved_stop_token_count == 1
+    assert request_only_contract.source == "request"
+
+    eos_id_contract = resolve_text_stop_contract(
+        {"tokenizer": EosIdOnlyTokenizer()},
+        common_pb2.SamplingConfig(),
+    )
+    assert eos_id_contract.sequences == ()
+    assert eos_id_contract.resolved_stop_token_count == 2
+    assert eos_id_contract.source == "tokenizer_eos"
+
+
+def test_auto_backend_passes_resolved_stop_sequences_when_supported() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        _ = kwargs
+        return object(), FakeTokenizer()
+
+    def fake_stream_generate(model, tokenizer, prompt: str, max_tokens: int, sampler, stop):
+        seen["stop"] = stop
+        yield FakeGenerationResponse(
+            text="done",
+            prompt_tokens=1,
+            generation_tokens=1,
+            finish_reason="stop",
+        )
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.ext["melix.stop_sequences"] = "</model>"
+    loaded_model = backend.load_model(model_spec)
+
+    chunks = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=4, stop=["</request>"]),
+            Event(),
+        )
+    )
+
+    assert seen["stop"] == ["</request>", "</model>", "</s>"]
+    assert [chunk.text for chunk in chunks] == ["done"]
+
+
+def test_runtime_enforces_stop_sequences_across_backend_chunk_boundaries() -> None:
+    class ChunkedStopBackend:
+        runtime_name = "fake-stop-runtime"
+
+        def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+            yield RuntimeTokenEvent(text="alpha<sto", prompt_tokens=1, completion_tokens=1)
+            yield RuntimeTokenEvent(
+                text="p>leaked",
+                prompt_tokens=1,
+                completion_tokens=2,
+                finish_reason="length",
+            )
+
+    runtime = MLXTextRuntime(backend=ChunkedStopBackend())
+    events = list(
+        runtime.generate_tokens(
+            {"tokenizer": FakeTokenizer()},
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=8, stop=["<stop>"]),
+            Event(),
+        )
+    )
+
+    assert [event.text for event in events] == ["alpha", ""]
+    assert events[-1].finish_reason == "stop_sequence"
+
+
+def test_runtime_stop_sequence_filter_flushes_pending_text_around_non_text_events() -> None:
+    runtime = MLXTextRuntime(backend=object())
+
+    events = list(
+        runtime._apply_stop_sequences(
+            [
+                RuntimeTokenEvent(text="<sto", prompt_tokens=1, completion_tokens=1),
+                RuntimeToolCallEvent(call_id="call-1", tool_name="lookup", arguments_json_fragment="{}"),
+                RuntimeTokenEvent(text="", prompt_tokens=1, completion_tokens=2, finish_reason="length"),
+            ],
+            ("<stop>",),
+        )
+    )
+
+    assert [type(event) for event in events] == [RuntimeTokenEvent, RuntimeToolCallEvent, RuntimeTokenEvent]
+    assert events[0].text == "<sto"
+    assert events[2].finish_reason == "length"
+
+
+def test_runtime_stop_sequence_filter_flushes_trailing_viable_prefix() -> None:
+    runtime = MLXTextRuntime(backend=object())
+
+    events = list(
+        runtime._apply_stop_sequences(
+            [RuntimeTokenEvent(text="<sto", prompt_tokens=1, completion_tokens=1)],
+            ("<stop>",),
+        )
+    )
+
+    assert [event.text for event in events] == ["<sto"]
 
 
 def test_auto_backend_records_installed_mlx_package_versions(monkeypatch: pytest.MonkeyPatch) -> None:

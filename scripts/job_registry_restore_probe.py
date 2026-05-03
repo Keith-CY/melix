@@ -73,7 +73,7 @@ def _measure_restore() -> dict[str, float]:
         len(train_manifest_paths) + len(activate_manifest_paths) + len(remove_manifest_paths)
     )
 
-    original_read_manifest_dict = ModelOpsJobRegistry._read_manifest_dict
+    original_read_manifest_dict = ModelOpsJobRegistry.__dict__["_read_manifest_dict"]
     elapsed_samples: list[float] = []
     try:
         for _ in range(SAMPLE_COUNT):

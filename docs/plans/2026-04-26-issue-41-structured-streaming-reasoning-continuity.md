@@ -38,6 +38,8 @@ Out of scope:
 - `stream_pipeline.duplicate_tool_delta_count` remains zero in sequential and parallel fixtures.
 - `stream_pipeline.reasoning_leak_count` remains zero for structured-output and hidden-continuity fixtures.
 - `stream_pipeline.continuity_rehydration_count` records supported repeated-turn rehydration.
+- `stream_prefix_hold_chars` records the longest viable structural-prefix suffix held by a request-local assembler.
+- `stream_short_reply_flush_count` records short visible prefixes emitted before a held structural suffix.
 
 ## Verification
 
@@ -51,6 +53,7 @@ Out of scope:
 
 - no cross-request parser-state bleed across the concurrency fixture
 - no malformed or duplicated streamed tool-call payloads in repository-owned fixtures
+- short visible streaming replies are not swallowed by marker-prefix buffering
 - JSON-only structured-output streams are not contaminated by hidden reasoning prefixes or generic tool parsing
 - repeated session turns preserve supported hidden reasoning continuity while public output remains sanitized
 - metrics and docs explain how to reproduce the stream-pipeline evidence
