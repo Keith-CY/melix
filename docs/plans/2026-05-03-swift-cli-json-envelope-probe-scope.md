@@ -22,11 +22,17 @@ for base measurement, and once for head measurement.
 - Update `infra/perf/pr_scoped_probes.json`.
 - Keep the existing probe id, runner, metric, watch globs, and
   `coverage_replays_tests` behavior.
-- Use a focused Swift test filter covering:
+- Use a focused Swift verification filter covering:
   - JSON v1 success envelopes
   - JSON v1 error envelopes
   - metric placeholder rejection paths
   - sentinel-like artifact strings
+- Use a base/head measurement filter covering the envelope encode paths that
+  pass on both the base and head checkouts. The head verification gate keeps the
+  metric placeholder rejection coverage, while the measurement command avoids
+  letting the known baseline uppercase-exponent behavior fail the base probe.
+- Stream long Swift command output to the GitHub Actions log and emit probe
+  phase progress so macOS runs do not appear stalled during cold builds.
 
 ## Success Criteria
 
@@ -34,5 +40,7 @@ for base measurement, and once for head measurement.
 - PR-scoped performance registry JSON remains valid.
 - The focused probe entry still exposes non-empty test, coverage, and probe
   commands through `test_registered_probes_expose_focused_commands`.
+- The CI runner emits start, heartbeat, and completion messages for long-running
+  probe commands.
 - The local command surface used for this change passes where the local Swift
   toolchain is available.
