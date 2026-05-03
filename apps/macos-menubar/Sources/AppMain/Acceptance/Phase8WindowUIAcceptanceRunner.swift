@@ -316,15 +316,17 @@ public final class Phase8WindowUIAcceptanceRunner {
         timings["phase8.ui.managed_materialize_ms"] = elapsedMS(since: materializeStartedAt)
         viewModel.selectedLoraModelID = materializeReceipt.modelID
         let managedModelRootPath = resolvedManagedModelRootPath()
-        if viewModel.registryConfiguredRootPaths.contains(managedModelRootPath) == false {
-            viewModel.registryRootPathDraft = managedModelRootPath
-            await viewModel.addRegistryRoot()
-        } else {
-            await viewModel.rescanRegistryRoots()
+        var registryRootPaths = viewModel.registryConfiguredRootPaths
+        if registryRootPaths.contains(managedModelRootPath) == false {
+            registryRootPaths.append(managedModelRootPath)
         }
-        await viewModel.refreshDesktopFoundation()
-        try await waitFor("managed model visibility") {
-            self.viewModel.models.contains(where: { $0.modelID == materializeReceipt.modelID })
+        await viewModel.refreshModelRegistry(
+            modelID: "melix-dev-text",
+            registryRootsOverride: registryRootPaths,
+            rescan: true
+        )
+        try await waitFor(managedModelVisibilityDescription(modelID: materializeReceipt.modelID)) {
+            self.viewModel.serverModelOptions.contains(where: { $0.modelID == materializeReceipt.modelID })
         }
 
         let serverSessionID = try await prepareServerSession(modelID: materializeReceipt.modelID)
@@ -364,7 +366,7 @@ public final class Phase8WindowUIAcceptanceRunner {
         let derivedChatReceipt = try await runChat(modelID: derivedModelID, message: phase8DerivedChatPrompt)
         timings["phase8.ui.derived_chat_roundtrip_ms"] = elapsedMS(since: derivedChatStartedAt)
 
-        viewModel.selectedBenchmarkTargetMode = .catalogModel
+        viewModel.updateSelectedServerSessionModelID(materializeReceipt.modelID)
         viewModel.selectedBenchmarkModelID = materializeReceipt.modelID
         viewModel.selectedBenchmarkSuiteIDs = Set(config.benchSuites)
         viewModel.benchRepeats = "1"
@@ -395,7 +397,7 @@ public final class Phase8WindowUIAcceptanceRunner {
             outputURL: exportsRoot.appendingPathComponent("bench-matrix-requests.csv")
         )
 
-        viewModel.selectedEvaluationTargetMode = .catalogModel
+        viewModel.updateSelectedServerSessionModelID(derivedModelID)
         viewModel.selectedEvaluationModelID = derivedModelID
         viewModel.selectedEvaluationSuiteIDs = Set(config.evaluationSuites)
         viewModel.evaluationSampleSize = "4"
@@ -887,5 +889,16 @@ public final class Phase8WindowUIAcceptanceRunner {
         return URL(fileURLWithPath: config.melixHome, isDirectory: true)
             .appendingPathComponent("models/default-managed", isDirectory: true)
             .path
+    }
+
+    private func managedModelVisibilityDescription(modelID: String) -> String {
+        [
+            "managed model visibility",
+            "model_id=\(modelID)",
+            "server_model_options=\(viewModel.serverModelOptions.map(\.modelID).joined(separator: ","))",
+            "registry_models=\(viewModel.registryCatalogModels.map(\.modelID).joined(separator: ","))",
+            "registry_roots=\(viewModel.registryConfiguredRootPaths.joined(separator: ","))",
+            "last_error=\(viewModel.lastError ?? "nil")",
+        ].joined(separator: " ")
     }
 }

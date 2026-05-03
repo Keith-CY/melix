@@ -14,6 +14,7 @@ A runbook should let a new contributor or agent diagnose and recover a known cla
 
 Current runbooks:
 
+- `agent-ui-walkthrough.md`
 - `benchmark-matrix-evaluation-and-lora.md`
 - `desktop-polish.md`
 - `disk-streaming-evidence.md`

@@ -5523,6 +5523,38 @@ struct MelixCLIRunnerTests {
         #expect(firstJob["suite_id"] as? String == "mmlu")
     }
 
+    @Test("eval run defaults event extraction to the built in top20 dataset")
+    func evalRunDefaultsEventExtractionToBuiltInTop20Dataset() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-event-top20",
+                suiteID: "event_extraction",
+                datasetID: "top200.event-extraction.top20.v1",
+                metricName: "eval.event_extraction.overall_weighted_f1",
+                metricValue: 0.5
+            ),
+        ])
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["event_extraction"],
+                    sampleSize: 20,
+                    profile: .init(scoringMode: "event_extraction_weighted_f1"),
+                    json: true
+                )
+            )
+        )
+
+        let request = try #require((await client.evaluationRequests).first)
+        #expect(request.suiteID == "event_extraction")
+        #expect(request.datasetID == "top200.event-extraction.top20.v1")
+        #expect(request.source.kind == .builtinPackage)
+        #expect(request.sampleSize == 20)
+    }
+
     @Test("eval run dispatches multiple remote targets concurrently and preserves target order")
     func evalRunDispatchesMultipleRemoteTargetsConcurrently() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())

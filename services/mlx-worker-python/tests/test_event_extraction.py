@@ -2456,7 +2456,7 @@ def test_evaluation_core_event_extraction_validates_source_target_and_rows(tmp_p
             remote_target=None,
         )
     except ValueError as exc:
-        assert str(exc) == "event_extraction_weighted_f1 requires a remote provider target."
+        assert str(exc) == "event_extraction_weighted_f1 requires a remote provider target or a loaded local model."
     else:  # pragma: no cover - assertion guard
         raise AssertionError("expected missing remote target validation")
 

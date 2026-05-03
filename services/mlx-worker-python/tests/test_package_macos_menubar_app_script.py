@@ -35,6 +35,7 @@ def test_main_forwards_packaging_target_and_update_channel(
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(module, "resolve_built_binary", lambda repo_root: tmp_path / "melix-menubar")
+    monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
     monkeypatch.setattr(
         module,
         "resolve_built_swift_text_worker_binary",
@@ -71,6 +72,7 @@ def test_main_forwards_packaging_target_and_update_channel(
     )
 
     assert module.main() == 0
+    assert seen["cli_executable_path"] == tmp_path / "melix"
     assert seen["packaging_target_id"] == "macos_app_bundle_preview"
     assert seen["update_channel_path"] == str(tmp_path / "stable.json")
     assert seen["icon_source_path"] == str(tmp_path / "MelixAppIcon.icns")
@@ -154,12 +156,13 @@ def test_main_resolves_default_build_outputs_and_prints_app_path(
     module = load_package_macos_app_module()
     repo_root = tmp_path / "repo"
     menubar_binary = repo_root / "apps/macos-menubar/.build/debug/melix-menubar"
+    cli_binary = repo_root / ".build/debug/melix"
     swift_worker_binary = (
         repo_root / "services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/melix-text-worker-swift"
     )
     python_executable = repo_root / ".venv/bin/python"
     site_packages = repo_root / ".venv/lib/python3.13/site-packages"
-    for path in (menubar_binary, swift_worker_binary, python_executable):
+    for path in (menubar_binary, cli_binary, swift_worker_binary, python_executable):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     site_packages.mkdir(parents=True)
@@ -192,6 +195,7 @@ def test_main_resolves_default_build_outputs_and_prints_app_path(
 
     assert capsys.readouterr().out.strip() == str(tmp_path / "Melix.app")
     assert seen["executable_path"] == menubar_binary.resolve()
+    assert seen["cli_executable_path"] == cli_binary.resolve()
     assert seen["swift_text_worker_executable_path"] == swift_worker_binary.resolve()
     assert seen["python_runtime_root"] == python_executable.resolve().parent.parent
     assert seen["python_site_packages_path"] == site_packages.resolve()
@@ -207,6 +211,7 @@ def test_main_records_archive_timing_in_json_manifest(
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(module, "resolve_built_binary", lambda repo_root: tmp_path / "melix-menubar")
+    monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
     monkeypatch.setattr(
         module,
         "resolve_built_swift_text_worker_binary",
@@ -265,6 +270,7 @@ def test_main_requires_write_timing_when_archive_is_requested(
     archive_path = tmp_path / "Melix.zip"
 
     monkeypatch.setattr(module, "resolve_built_binary", lambda repo_root: tmp_path / "melix-menubar")
+    monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
     monkeypatch.setattr(
         module,
         "resolve_built_swift_text_worker_binary",

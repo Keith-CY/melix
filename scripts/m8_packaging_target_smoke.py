@@ -46,10 +46,11 @@ def _write_repo_fixture(repo_root: Path) -> None:
     (branding_dir / "MelixAppIcon.icns").write_bytes(b"melix-fixture-icon")
 
 
-def _write_bundle_fixture(temp_root: Path) -> tuple[Path, Path, Path, Path]:
+def _write_bundle_fixture(temp_root: Path) -> tuple[Path, Path, Path, Path, Path]:
     menubar_binary = temp_root / "melix-menubar"
+    cli_binary = temp_root / "melix"
     swift_worker_binary = temp_root / "melix-text-worker-swift"
-    for executable in (menubar_binary, swift_worker_binary):
+    for executable in (menubar_binary, cli_binary, swift_worker_binary):
         executable.write_text("#!/usr/bin/env bash\necho melix\n", encoding="utf-8")
         executable.chmod(0o755)
 
@@ -62,7 +63,7 @@ def _write_bundle_fixture(temp_root: Path) -> tuple[Path, Path, Path, Path]:
     python_site_packages_path = temp_root / "python-site-packages"
     python_site_packages_path.mkdir(parents=True, exist_ok=True)
     (python_site_packages_path / "grpc.py").write_text("", encoding="utf-8")
-    return menubar_binary, swift_worker_binary, python_runtime_root, python_site_packages_path
+    return menubar_binary, cli_binary, swift_worker_binary, python_runtime_root, python_site_packages_path
 
 
 def main() -> int:
@@ -96,12 +97,13 @@ def main() -> int:
         )
         homebrew_manifest = build_homebrew_service_manifest(homebrew_layout, homebrew_specs)
 
-        menubar_binary, swift_worker_binary, python_runtime_root, python_site_packages_path = _write_bundle_fixture(
-            temp_root
+        menubar_binary, cli_binary, swift_worker_binary, python_runtime_root, python_site_packages_path = (
+            _write_bundle_fixture(temp_root)
         )
         bundle_manifest = write_unsigned_macos_app_bundle(
             repo_root=repo_root,
             executable_path=menubar_binary,
+            cli_executable_path=cli_binary,
             swift_text_worker_executable_path=swift_worker_binary,
             python_runtime_root=python_runtime_root,
             python_site_packages_path=python_site_packages_path,

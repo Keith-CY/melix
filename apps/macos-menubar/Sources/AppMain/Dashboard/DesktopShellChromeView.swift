@@ -1,6 +1,7 @@
 import SwiftUI
 
 enum DesktopShellChromeMetrics {
+    static let workspaceTitleBarContentTopInset: CGFloat = 72
     static let titleBarTabHeightBudget: CGFloat = 30
     static let titleBarTabHorizontalPadding: CGFloat = 9
     static let titleBarTabVerticalPadding: CGFloat = 4
@@ -129,6 +130,7 @@ struct DesktopWorkspaceTitleBarCommandCenterButton: View {
         .help("Open Command Center")
         .accessibilityLabel("Open Command Center")
         .keyboardShortcut("k", modifiers: .command)
+        .focusable(false)
         .fixedSize(horizontal: true, vertical: false)
     }
 }
@@ -224,6 +226,7 @@ struct DesktopPaneToggleButton: View {
         .buttonStyle(.plain)
         .help(label)
         .accessibilityLabel(label)
+        .focusable(false)
 
         if let shortcut {
             button.keyboardShortcut(shortcut)
@@ -257,6 +260,7 @@ struct DesktopShellTabStripView: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(shortcutKey(for: surface), modifiers: .command)
+                .focusable(false)
                 .fixedSize(horizontal: true, vertical: false)
             }
         }

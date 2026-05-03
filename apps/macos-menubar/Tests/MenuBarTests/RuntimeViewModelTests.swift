@@ -7,6 +7,9 @@ import MelixCLICore
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
+private let testReadyModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+private let testReadyLoRAModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit-lora"
+
 @Suite("Runtime View Model", .serialized)
 struct RuntimeViewModelTests {
     @Test("start hydrates the initial snapshot into app state")
@@ -30,9 +33,9 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.hydration_ms"] != nil)
     }
 
-    @Test("server session seed prefers the first serveable model even when it is vlm")
+    @Test("server session seed skips placeholders and uses the first ready model")
     @MainActor
-    func serverSessionSeedPrefersFirstServeableModelEvenWhenItIsVLM() async throws {
+    func serverSessionSeedSkipsPlaceholdersAndUsesTheFirstReadyModel() async throws {
         let client = FakeControlPlaneXPCClient()
         let snapshot = makeSnapshot(
             serverState: .serverReady,
@@ -49,6 +52,12 @@ struct RuntimeViewModelTests {
                     state: .modelWarm,
                     features: ["vlm", "chat"]
                 ),
+                makeCapabilityModelSummary(
+                    modelID: testReadyModelID,
+                    kind: "text",
+                    state: .modelWarm,
+                    features: ["chat"]
+                ),
             ]
         )
         await client.configureSnapshot(snapshot)
@@ -56,8 +65,9 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        #expect(viewModel.serveableModels.map(\.modelID) == ["melix-dev-vlm"])
-        #expect(viewModel.selectedServerSession?.modelID == "melix-dev-vlm")
+        #expect(viewModel.serveableModels.map(\.modelID) == ["melix-dev-vlm", testReadyModelID])
+        #expect(viewModel.serverModelOptions.map(\.modelID) == [testReadyModelID])
+        #expect(viewModel.selectedServerSession?.modelID == testReadyModelID)
     }
 
     @Test("start hides internal model operations and uses friendly model aliases")
@@ -406,7 +416,9 @@ struct RuntimeViewModelTests {
                 serverState: .serverReady,
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
-                ]
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         await client.configureExportResult(
@@ -549,7 +561,8 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
-                ]
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         let store = FakeEvaluationPromptStore()
@@ -666,6 +679,30 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.numDraftTokens == 6)
         #expect(session.servingDefaults.sourceText == "Operator Override")
         #expect(await metrics.snapshot()["menu.serving_defaults_apply_ms"] != nil)
+    }
+
+    @Test("applySelectedServerServingDefaults maps every server acceleration mode")
+    @MainActor
+    func applySelectedServerServingDefaultsMapsEveryServerAccelerationMode() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let cases: [(rawValue: String, expectedMode: Melix_Controlplane_V1_AccelerationMode)] = [
+            ("baseline", .baseline),
+            ("speculative_decode", .speculativeDecode),
+            ("accelerated_prefill", .acceleratedPrefill),
+            ("active_kv_quantized", .activeKvQuantized),
+            ("sparse_prefill", .sparsePrefill),
+        ]
+
+        for modeCase in cases {
+            viewModel.updateSelectedServerSessionAccelerationMode(modeCase.rawValue)
+            await viewModel.applySelectedServerServingDefaults()
+
+            let request = try #require(await client.recordedServingDefaultsApplyRequests.last)
+            #expect(request.accelerationMode == modeCase.expectedMode)
+        }
     }
 
     @Test("applySelectedServerServingDefaults no-ops without a selected session")
@@ -1267,6 +1304,12 @@ struct RuntimeViewModelTests {
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
         let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)]
+            )
+        )
         let metrics = MenuBarMetricsStore()
         let viewModel = RuntimeViewModel(
             client: client,
@@ -1312,6 +1355,12 @@ struct RuntimeViewModelTests {
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
         let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)]
+            )
+        )
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
@@ -1339,6 +1388,12 @@ struct RuntimeViewModelTests {
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
         let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)]
+            )
+        )
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
@@ -1376,6 +1431,12 @@ struct RuntimeViewModelTests {
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
         let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)]
+            )
+        )
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
@@ -1413,6 +1474,12 @@ struct RuntimeViewModelTests {
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
         let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)]
+            )
+        )
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
@@ -1451,6 +1518,12 @@ struct RuntimeViewModelTests {
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
         let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)]
+            )
+        )
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
@@ -1758,6 +1831,12 @@ struct RuntimeViewModelTests {
     @MainActor
     func shellStateSelectionAndServerSessionControlsUpdateState() async throws {
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)]
+            )
+        )
         let viewModel = RuntimeViewModel(client: client)
         var stateChangeCount = 0
         var commandCenterOpenCount = 0
@@ -2381,6 +2460,10 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError == "Choose a Server Session before sending chat prompts.")
 
         viewModel.createServerSession()
+        #expect(viewModel.serverSessions.isEmpty)
+        #expect(viewModel.lastError == "No Ready to Run model is available. Rescan or download a model before creating a local server.")
+
+        viewModel.createServerSession(modelID: "melix-dev-text")
 
         let seededServer = try #require(viewModel.selectedServerSession)
         let seededChat = try #require(viewModel.selectedChatSession)
@@ -3004,12 +3087,75 @@ struct RuntimeViewModelTests {
             "Managed Download",
             "Hugging Face",
         ])
+        #expect(viewModel.modelRegistryEntries.map(\.availabilityGroup) == [
+            .readyToRun,
+            .discoverAndDownload,
+            .discoverAndDownload,
+        ])
         let hubEntry = try #require(viewModel.modelRegistryEntries.first { $0.repoID == heavyModel.repoID })
         #expect(hubEntry.runSuitabilityText == "Heavy")
         #expect(hubEntry.canDownload)
         #expect(hubEntry.sizeText.contains("resident"))
-        #expect(await metrics.snapshot()["registry.unified_entry_count"] == 3)
+        #expect(await metrics.snapshot()["registry.entry_count"] == 3)
+        #expect(await metrics.snapshot()["registry.ready_to_run_entry_count"] == 1)
+        #expect(await metrics.snapshot()["registry.discover_download_entry_count"] == 2)
         #expect(await metrics.snapshot()["hub.local_fit_estimated_resident_bytes"] == 70_200_000_000)
+    }
+
+    @Test("model registry groups ready local models and excludes duplicate hub discoveries")
+    @MainActor
+    func modelRegistryGroupsReadyLocalModelsAndExcludesDuplicateHubDiscoveries() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var readyHFCacheModel = makeModelSummary(
+            modelID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+            state: .modelWarm
+        )
+        readyHFCacheModel.settings.ext["melix.hf_repo_id"] = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [readyHFCacheModel]
+            )
+        )
+
+        var searchResult = Melix_Controlplane_V1_HubSearchResult()
+        var duplicate = Melix_Controlplane_V1_HubModelSummary()
+        duplicate.repoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        duplicate.author = "unsloth"
+        duplicate.modelName = "gemma-4-E4B-it-MLX-8bit"
+        duplicate.pipelineTag = "image-text-to-text"
+        duplicate.mlxCompatible = true
+        duplicate.localFitStatus = "ok"
+        duplicate.recommendedAction = "download"
+
+        var discoverOnly = Melix_Controlplane_V1_HubModelSummary()
+        discoverOnly.repoID = "mlx-community/new-model-4bit"
+        discoverOnly.author = "mlx-community"
+        discoverOnly.modelName = "new-model-4bit"
+        discoverOnly.pipelineTag = "text-generation"
+        discoverOnly.mlxCompatible = true
+        discoverOnly.localFitStatus = "ok"
+        discoverOnly.recommendedAction = "download"
+        searchResult.models = [duplicate, discoverOnly]
+        await client.configureHubSearchResult(searchResult)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.modelHubSearchQuery = "gemma"
+        await viewModel.searchModelHub()
+
+        #expect(viewModel.modelRegistryEntries.contains { entry in
+            entry.id == "local:unsloth/gemma-4-E4B-it-MLX-8bit"
+                && entry.availabilityGroup == .readyToRun
+        })
+        #expect(viewModel.modelRegistryEntries.contains { entry in
+            entry.repoID == "unsloth/gemma-4-E4B-it-MLX-8bit"
+                && entry.availabilityGroup == .discoverAndDownload
+        } == false)
+        #expect(viewModel.modelRegistryEntries.contains { entry in
+            entry.repoID == "mlx-community/new-model-4bit"
+                && entry.availabilityGroup == .discoverAndDownload
+        })
     }
 
     @Test("hub search result size text uses raw byte values")
@@ -3076,7 +3222,7 @@ struct RuntimeViewModelTests {
         #expect(source.contains("func record(name: String, value: Double)"))
         #expect(source.contains("public private(set) var modelRegistryEntries: [RuntimeRegistryEntryState] = []"))
         #expect(source.contains("public var modelRegistryEntries: [RuntimeRegistryEntryState] {") == false)
-        #expect(source.contains("registry.unified_entry_count\", valueMs") == false)
+        #expect(source.contains("registry.entry_count\", valueMs") == false)
         #expect(source.contains("hub.local_fit_estimated_resident_bytes\", valueMs") == false)
         #expect(source.contains("registry.blocked_download_attempt_count\", valueMs") == false)
     }
@@ -3587,6 +3733,12 @@ struct RuntimeViewModelTests {
         await directClient.configureErrors(
             applyGatewayConfig: MenuBarTestError(description: "direct gateway apply should not run"),
             applyServingDefaults: MenuBarTestError(description: "direct serving defaults apply should not run")
+        )
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)]
+            )
         )
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
@@ -5115,6 +5267,16 @@ struct RuntimeViewModelTests {
         let client = FakeControlPlaneXPCClient()
         let metrics = MenuBarMetricsStore()
         let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
         await client.configureModelOperation(
             makeNamedModelOperationResult(
                 operation: "registry_snapshot",
@@ -5164,10 +5326,10 @@ struct RuntimeViewModelTests {
         )
         await viewModel.publishLatestAdapter()
 
-        #expect(await client.recordedActions.contains("info:melix-dev-text"))
+        #expect(await client.recordedActions.contains("info:\(testReadyModelID)"))
         #expect(await client.recordedActions.contains("doctor"))
         #expect(await client.recordedActions.contains("bench"))
-        #expect(await client.recordedActions.contains("operation:quantize:melix-dev-text"))
+        #expect(await client.recordedActions.contains("operation:quantize:\(testReadyModelID)"))
         #expect(await client.recordedActions.contains("operation:train_lora:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:activate_adapter:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:upload:melix-dev-text"))
@@ -5258,7 +5420,8 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
-                ]
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         await client.configureBenchResponse(
@@ -5277,7 +5440,7 @@ struct RuntimeViewModelTests {
         )
 
         await viewModel.start()
-        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.updateSelectedServerSessionModelID("melix-dev-text-lora")
         viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
         viewModel.benchmarkSampleSize = "6"
         viewModel.benchmarkBatchFactor = "2"
@@ -5321,7 +5484,8 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
-                ]
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         await client.configureBenchResponse(
@@ -5336,7 +5500,7 @@ struct RuntimeViewModelTests {
         )
 
         await viewModel.start()
-        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.updateSelectedServerSessionModelID("melix-dev-text-lora")
         viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         viewModel.selectedBenchContextLengths = [4096, 1024, 1024]
         viewModel.selectedBenchBatchSizes = [4, 2, 4]
@@ -5367,7 +5531,11 @@ struct RuntimeViewModelTests {
         await client.configureSnapshot(
             makeSnapshot(
                 serverState: .serverReady,
-                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         await client.configureDoctorResponse("# <b>Doctor</b> [open](file:///tmp/melix)")
@@ -5418,6 +5586,16 @@ struct RuntimeViewModelTests {
     @MainActor
     func benchmarkSelectionStateFallsBackAndGuardRailsSurfaceLocalErrors() async throws {
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
         let viewModel = RuntimeViewModel(client: client)
         viewModel.selectedBenchmarkModelID = "missing-model"
         viewModel.selectedBenchmarkSuiteIDs = ["unknown-suite"]
@@ -5426,7 +5604,7 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
 
-        #expect(viewModel.selectedBenchmarkModelID == "melix-dev-text")
+        #expect(viewModel.selectedBenchmarkModelID == testReadyModelID)
         #expect(viewModel.selectedBenchmarkSuiteIDs == ["smoke"])
         #expect(viewModel.selectedBenchmarkHistoryJobID.isEmpty)
         #expect(viewModel.selectedBenchmarkMetricName.isEmpty)
@@ -5449,7 +5627,8 @@ struct RuntimeViewModelTests {
         await imageOnlyClient.configureSnapshot(
             makeSnapshot(
                 serverState: .serverReady,
-                models: [makeMenuBarImageModelSummary()]
+                models: [makeMenuBarImageModelSummary()],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         let imageOnlyViewModel = RuntimeViewModel(client: imageOnlyClient)
@@ -5458,9 +5637,8 @@ struct RuntimeViewModelTests {
 
         await imageOnlyViewModel.runBench()
 
-        let imageBenchRequest = try #require(await imageOnlyClient.recordedBenchRequests.last)
-        #expect(imageBenchRequest.modelID == "melix-dev-image")
-        #expect(imageOnlyViewModel.lastError == nil)
+        #expect(await imageOnlyClient.recordedBenchRequests.isEmpty)
+        #expect(imageOnlyViewModel.lastError == "Select a local running server before running Benchmark.")
     }
 
     @Test("benchmark and evaluation control normalization fills defaults and preserves toggle state")
@@ -5506,33 +5684,499 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedBenchBatchSizes == [2])
         viewModel.toggleBenchBatchSize(4)
         #expect(viewModel.selectedBenchBatchSizes == [2, 4])
+
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationScoringMode = "multiple_choice_accuracy"
+        viewModel.toggleEvaluationSuite("mmlu")
+        viewModel.toggleEvaluationSuite("event_extraction")
+        #expect(viewModel.selectedEvaluationSuiteIDs == ["mmlu"])
+        #expect(viewModel.evaluationScoringMode == "multiple_choice_accuracy")
+
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.toggleEvaluationSuite("mmlu")
+        viewModel.toggleEvaluationSuite("event_extraction")
+        #expect(viewModel.selectedEvaluationSuiteIDs == ["mmlu"])
+        #expect(viewModel.evaluationScoringMode == "multiple_choice_accuracy")
     }
 
-    @Test("benchmark direct repo mode dispatches hf repo ids and infers multimodal suite family")
+    @Test("diagnostics targets include running local servers configured remote servers and start new server")
     @MainActor
-    func benchmarkDirectRepoModeDispatchesHFRepoIDs() async throws {
+    func diagnosticsTargetsIncludeRunningLocalServersConfiguredRemoteServersAndStartNewServer() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let localModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: localModelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "bitdeer-gemma-4-31b-it",
+                    title: "Bitdeer Gemma 4 31B IT",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://api-inference.bitdeer.ai/v1",
+                    defaultModelID: "google/gemma-4-31B-it",
+                    timeoutSeconds: 120,
+                    rateLimitPerMinute: 30,
+                    credentialRef: RemoteServerStore.credentialRef(for: "bitdeer-gemma-4-31b-it"),
+                    apiKeyHint: "sk-b...31b"
+                ),
+            ]
+        )
+        let viewModel = RuntimeViewModel(client: client, remoteServerStore: remoteStore)
+
+        await viewModel.start()
+
+        #expect(viewModel.serverTargets.map(\.kind) == [
+            .localServer,
+            .remoteServer,
+        ])
+        #expect(viewModel.serverTargets.map(\.badgeText) == [
+            "Local",
+            "Remote",
+        ])
+        #expect(viewModel.diagnosticsServerTargets.map(\.kind) == [
+            .localServer,
+            .remoteServer,
+            .startNewServer,
+        ])
+        #expect(viewModel.diagnosticsServerTargets.contains { target in
+            target.kind == .localServer
+                && target.modelID == localModelID
+                && target.detailText.contains("127.0.0.1")
+        })
+        #expect(viewModel.diagnosticsServerTargets.contains { target in
+            target.kind == .remoteServer
+                && target.modelID == "google/gemma-4-31B-it"
+                && target.detailText.contains("api-inference.bitdeer.ai")
+        })
+
+        let remoteTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .remoteServer })
+        viewModel.selectDiagnosticsServerTarget(id: remoteTarget.id)
+        #expect(viewModel.diagnosticsBenchmarkUnavailableText == "Remote Server benchmark is not supported yet; select a local running server.")
+
+        await viewModel.runBench()
+
+        #expect(await client.recordedBenchRequests.isEmpty)
+        #expect(viewModel.lastError == "Remote Server benchmark is not supported yet; select a local running server.")
+
+        let startNewTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .startNewServer })
+        let serverSessionCount = viewModel.serverSessions.count
+        viewModel.selectDiagnosticsServerTarget(id: startNewTarget.id)
+
+        #expect(viewModel.selectedSurface == .server)
+        #expect(viewModel.isCreatingServerTarget)
+        #expect(viewModel.selectedServerCreationKind == .localServer)
+        #expect(viewModel.serverSessions.count == serverSessionCount)
+        #expect(await client.recordedBenchRequests.isEmpty)
+    }
+
+    @Test("diagnostics local server target drives benchmark matrix and evaluation requests")
+    @MainActor
+    func diagnosticsLocalServerTargetDrivesBenchmarkMatrixAndEvaluationRequests() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let localModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let alternateModelID = "mlx-community/Qwen3.5-1.5B-OptiQ-4bit"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: localModelID, state: .modelWarm),
+                    makeModelSummary(modelID: alternateModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let localTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .localServer })
+        viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        viewModel.selectedBenchmarkModelID = alternateModelID
+        viewModel.selectedEvaluationModelID = alternateModelID
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        await viewModel.runBench()
+        let benchRequest = try #require(await client.recordedBenchRequests.last)
+        #expect(benchRequest.modelID == localModelID)
+        #expect(benchRequest.hfRepoID.isEmpty)
+
+        await viewModel.runBenchMatrix()
+        let matrixRequest = try #require(await client.recordedBenchMatrixRequests.last)
+        #expect(matrixRequest.modelID == localModelID)
+        #expect(matrixRequest.hfRepoID.isEmpty)
+
+        await viewModel.runEvaluation()
+        let evaluationRequest = try #require(await client.recordedEvaluationRequests.last)
+        #expect(evaluationRequest.modelID == localModelID)
+        #expect(evaluationRequest.hfRepoID.isEmpty)
+        #expect(evaluationRequest.remoteTarget == nil)
+    }
+
+    @Test("server model options hide placeholders and create from ready registry models")
+    @MainActor
+    func serverModelOptionsHidePlaceholdersAndCreateFromReadyRegistryModels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-vlm",
+                        kind: "vlm",
+                        state: .modelWarm,
+                        features: ["vlm", "text", "chat"]
+                    ),
+                ]
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeEvaluationRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        #expect(viewModel.serverModelOptions.map(\.modelID) == [
+            "unsloth/gemma-4-E4B-it-MLX-8bit",
+        ])
+        #expect(viewModel.diagnosticsServerTargets.contains { target in
+            target.modelID == "melix-dev-text" || target.modelID == "melix-dev-vlm"
+        } == false)
+
+        viewModel.createServerSession()
+
+        #expect(viewModel.selectedServerSession?.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(viewModel.serverTargets.contains { target in
+            target.kind == .localServer && target.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit"
+        })
+    }
+
+    @Test("local server creation refreshes ready model options from registry when catalog is empty")
+    @MainActor
+    func localServerCreationRefreshesReadyModelOptionsFromRegistryWhenCatalogIsEmpty() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-server-model-refresh-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let runningModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let restoredServerSession = DesktopServerSessionState(
+            id: "server-session-qwen",
+            title: "Primary Session",
+            modelID: runningModelID,
+            lifecycle: .running
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .chat,
+                selectedServerSessionID: restoredServerSession.id,
+                serverSessions: [restoredServerSession]
+            )
+        )
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(makeSnapshot(serverState: .serverReady, models: []))
+        await client.configureModelOperationDelay(.milliseconds(40))
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeEvaluationRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let viewModel = RuntimeViewModel(client: client, operatorSessionStore: operatorSessionStore)
+        await viewModel.start()
+
+        #expect(viewModel.serverModelOptions.isEmpty)
+
+        viewModel.beginServerCreation(kind: .localServer)
+
+        #expect(viewModel.isRefreshingServerModelOptions)
+        try await Task.sleep(for: .milliseconds(80))
+
+        #expect(viewModel.isRefreshingServerModelOptions == false)
+        #expect(viewModel.serverModelOptions.map(\.modelID) == [
+            "unsloth/gemma-4-E4B-it-MLX-8bit",
+        ])
+        #expect(viewModel.newLocalServerModelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        let request = try #require(await client.recordedModelOperationRequests.first {
+            $0.operation == "registry_snapshot"
+        })
+        #expect(request.modelID == runningModelID)
+        #expect(request.ext["melix.registry_rescan"] == "true")
+    }
+
+    @Test("local server draft requires a non-empty session name before submit")
+    @MainActor
+    func localServerDraftRequiresNonEmptySessionNameBeforeSubmit() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let modelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: modelID, state: .modelWarm)]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.beginServerCreation()
+        viewModel.newLocalServerTitleDraft = "   "
+        viewModel.newLocalServerModelID = modelID
+        let sessionCount = viewModel.serverSessions.count
+        let targetCount = viewModel.serverTargets.count
+
+        viewModel.createLocalServerFromDraft()
+
+        #expect(viewModel.serverSessions.count == sessionCount)
+        #expect(viewModel.serverTargets.count == targetCount)
+        #expect(viewModel.isCreatingServerTarget)
+        #expect(viewModel.lastError == "Local Server requires a session name.")
+    }
+
+    @Test("server target rows expose session model endpoint and runtime summary")
+    @MainActor
+    func serverTargetRowsExposeSessionModelEndpointAndRuntimeSummary() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let modelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        var model = makeModelSummary(modelID: modelID, state: .modelWarm)
+        model.settings.alias = "Qwen 3.5 0.8B"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.createServerSession(
+            title: "Qwen Local",
+            modelID: modelID,
+            host: "127.0.0.1",
+            port: 18080
+        )
+
+        let selectedServerID = try #require(viewModel.selectedServerSession?.id)
+        let target = try #require(viewModel.serverTargets.first { $0.kind == .localServer && $0.serverID == selectedServerID })
+        #expect(target.title == "Qwen Local")
+        #expect(target.badgeText == "Local")
+        #expect(target.detailText == "Qwen 3.5 0.8B • 127.0.0.1:18080")
+        #expect(target.statusText == "Draft • None • Context 256")
+        #expect(target.loraActiveText.isEmpty)
+        #expect(target.accelerationModeText == "None")
+        #expect(target.contextText == "Context 256")
+    }
+
+    @Test("server adapter options expose activated derived models without implicit activation")
+    @MainActor
+    func serverAdapterOptionsExposeActivatedDerivedModelsWithoutImplicitActivation() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let baseModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let derivedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit-lora"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: baseModelID, state: .modelWarm),
+                    makeModelSummary(modelID: derivedModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/qwen35",
+                    activationStatus: "activated",
+                    derivedModelID: derivedModelID,
+                    derivedModelPath: "/tmp/melix/qwen35-lora"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        let option = try #require(viewModel.serverAdapterOptions.first)
+        #expect(option.derivedModelID == derivedModelID)
+        #expect(option.isServeable)
+        #expect(option.actionTitle == "Serve")
+
+        viewModel.applyServerAdapterPackage(id: option.id)
+
+        #expect(viewModel.selectedServerSession?.modelID == derivedModelID)
+        #expect(await client.recordedModelOperationRequests.filter { $0.operation == "activate_adapter" }.isEmpty)
+    }
+
+    @Test("diagnostics remote server target drives supported remote evaluation only")
+    @MainActor
+    func diagnosticsRemoteServerTargetDrivesSupportedRemoteEvaluationOnly() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "bitdeer-gemma-4-31b-it",
+                    title: "Bitdeer Gemma 4 31B IT",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://api-inference.bitdeer.ai/v1",
+                    defaultModelID: "google/gemma-4-31B-it",
+                    timeoutSeconds: 120,
+                    rateLimitPerMinute: 30,
+                    credentialRef: RemoteServerStore.credentialRef(for: "bitdeer-gemma-4-31b-it"),
+                    apiKeyHint: "sk-b...31b"
+                ),
+            ],
+            apiKeys: [
+                "bitdeer-gemma-4-31b-it": "sk-test-gemma4",
+            ]
+        )
+        let viewModel = RuntimeViewModel(
+            client: client,
+            remoteServerStore: remoteStore,
+            evaluationPromptStore: FakeEvaluationPromptStore()
+        )
+        await viewModel.start()
+        let remoteTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .remoteServer })
+        viewModel.selectDiagnosticsServerTarget(id: remoteTarget.id)
+
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        #expect(viewModel.diagnosticsEvaluationUnavailableText == "Remote Server evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running server.")
+        await viewModel.runEvaluation()
+        #expect(await client.recordedEvaluationRequests.isEmpty)
+
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(request.modelID.isEmpty)
+        #expect(request.hfRepoID.isEmpty)
+        #expect(request.remoteTarget?.remoteServerID == "bitdeer-gemma-4-31b-it")
+        #expect(request.remoteTarget?.modelID == "google/gemma-4-31B-it")
+    }
+
+    @Test("evaluation model picker includes text capable VLM catalog models")
+    @MainActor
+    func evaluationModelPickerIncludesTextCapableVLMCatalogModels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let gemma4 = makeCapabilityModelSummary(
+            modelID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+            kind: "vlm",
+            state: .modelWarm,
+            features: ["vlm", "chat"]
+        )
+        let audioOnlyModel = makeCapabilityModelSummary(
+            modelID: "melix-dev-audio",
+            kind: "audio",
+            state: .modelWarm,
+            features: ["transcribe"]
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    gemma4,
+                    audioOnlyModel,
+                ]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        #expect(viewModel.evaluationModels.map(\.modelID).contains("unsloth/gemma-4-E4B-it-MLX-8bit"))
+        #expect(viewModel.evaluationModels.map(\.modelID).contains("melix-dev-audio") == false)
+    }
+
+    @Test("evaluation model picker includes downloaded registry Gemma 4 models")
+    @MainActor
+    func evaluationModelPickerIncludesDownloadedRegistryGemma4Models() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeEvaluationRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        #expect(viewModel.evaluationModels.map(\.modelID).contains("unsloth/gemma-4-E4B-it-MLX-8bit"))
+        #expect(viewModel.modelRegistryEntries.contains { entry in
+            entry.id == "local:unsloth/gemma-4-E4B-it-MLX-8bit"
+                && entry.availabilityGroup == .readyToRun
+        })
+        #expect(viewModel.diagnosticsServerTargets.contains { target in
+            target.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit"
+        } == false)
+    }
+
+    @Test("benchmark requires a running server and ignores hub discovery targets")
+    @MainActor
+    func benchmarkRequiresRunningServerAndIgnoresHubDiscoveryTargets() async throws {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
-        viewModel.benchmarkHFRepoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
         viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
 
-        #expect(viewModel.benchmarkTargetTaskKind == "image-text-to-text")
-        #expect(viewModel.benchmarkSuites.map(\.title).contains("Docs Images VLM Smoke"))
+        #expect(viewModel.benchmarkTargetTaskKind == "text-generation")
+        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local server for Benchmark.")
 
         await viewModel.runBench()
 
-        let request = try #require(await client.recordedBenchRequests.last)
-        #expect(request.modelID.isEmpty)
-        #expect(request.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
-        #expect(Set(request.suites) == Set(["smoke", "latency"]))
+        #expect(await client.recordedBenchRequests.isEmpty)
+        #expect(viewModel.lastError == "Select a local running server before running Benchmark.")
     }
 
-    @Test("benchmark target summaries and task inference cover catalog fallback and repo families")
+    @Test("benchmark target summaries and task inference cover missing running server fallback")
     @MainActor
-    func benchmarkTargetSummariesAndTaskInferenceCoverFallbacksAndRepoFamilies() async throws {
+    func benchmarkTargetSummariesAndTaskInferenceCoverMissingRunningServerFallback() async throws {
         let client = FakeControlPlaneXPCClient()
         let audioOnlyModel = makeCapabilityModelSummary(
             modelID: "melix-dev-audio",
@@ -5550,26 +6194,7 @@ struct RuntimeViewModelTests {
         await viewModel.start()
 
         #expect(viewModel.benchmarkTargetTaskKind == "text-generation")
-        #expect(viewModel.benchmarkTargetSummaryText == "Select a benchmark-capable catalog model.")
-
-        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
-        #expect(viewModel.benchmarkTargetSummaryText == "Enter a Hugging Face repo to detect a supported benchmark task.")
-
-        viewModel.benchmarkHFRepoID = "google/paligemma2-3b-ft-docci-448"
-        #expect(viewModel.benchmarkTargetTaskKind == "image-text-to-text")
-        #expect(viewModel.benchmarkTargetTaskTitle == "Image + Text to Text")
-
-        viewModel.benchmarkHFRepoID = "mlx-community/ocr-demo"
-        #expect(viewModel.benchmarkTargetTaskKind == "image-to-text")
-        #expect(viewModel.benchmarkTargetTaskTitle == "Image to Text")
-
-        viewModel.benchmarkHFRepoID = "mlx-community/sdxl-edit"
-        #expect(viewModel.benchmarkTargetTaskKind == "image-text-to-image")
-        #expect(viewModel.benchmarkTargetTaskTitle == "Image + Text to Image")
-
-        viewModel.benchmarkHFRepoID = "black-forest-labs/FLUX.1-schnell"
-        #expect(viewModel.benchmarkTargetTaskKind == "text-to-image")
-        #expect(viewModel.benchmarkTargetTaskTitle == "Text to Image")
+        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local server for Benchmark.")
     }
 
     @Test("benchmark task inference covers catalog OCR and image model families")
@@ -5600,10 +6225,10 @@ struct RuntimeViewModelTests {
         viewModel.selectedBenchmarkModelID = "melix-dev-image"
         #expect(viewModel.benchmarkTargetTaskKind == "image-text-to-image")
         #expect(viewModel.benchmarkTargetTaskTitle == "Image + Text to Image")
-        #expect(viewModel.benchmarkTargetSummaryText.contains("melix-dev-image"))
+        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local server for Benchmark.")
     }
 
-    @Test("benchmark run guard rails require an explicit catalog model or Hugging Face repo target")
+    @Test("benchmark run guard rails require a local running server target")
     @MainActor
     func benchmarkRunGuardRailsRequireExplicitTargets() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -5624,13 +6249,9 @@ struct RuntimeViewModelTests {
 
         viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         await viewModel.runBench()
-        #expect(viewModel.lastError == "Select a benchmark-capable model before running Benchmark.")
+        #expect(viewModel.lastError == "Select a local running server before running Benchmark.")
 
-        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
-        viewModel.benchmarkHFRepoID = ""
-        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
-        await viewModel.runBench()
-        #expect(viewModel.lastError == "Enter a Hugging Face repo before running Benchmark.")
+        #expect(await client.recordedBenchRequests.isEmpty)
     }
 
     @Test("benchmark history refresh and csv export surface export failures and empty rows")
@@ -5671,7 +6292,8 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
-                ]
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         var matrixJob = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
@@ -5731,7 +6353,7 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         viewModel.selectedBenchmarkPresentationMode = .matrix
-        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.updateSelectedServerSessionModelID("melix-dev-text-lora")
         viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
         viewModel.selectedBenchContextLengths = [4096, 1024, 1024]
         viewModel.selectedBenchGenerationLengths = [256, 128, 256]
@@ -5741,6 +6363,7 @@ struct RuntimeViewModelTests {
         viewModel.selectedBenchMatrixStructuredOutputModes = ["json_schema", "off", "json_schema"]
         viewModel.selectedBenchMatrixConcurrencyLevels = [2, 1, 2]
         viewModel.benchMatrixRepeats = "4"
+        viewModel.benchMatrixAllowLargeMatrix = true
         viewModel.selectedBenchmarkMatrixLoadBudgetMode = .requests
         viewModel.benchMatrixRequests = "12"
 
@@ -5793,43 +6416,51 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.bench_matrix_export_requests_csv_ms"] != nil)
     }
 
-    @Test("benchmark matrix supports direct repo duration mode and local guard rails")
+    @Test("benchmark matrix uses running server duration mode and local guard rails")
     @MainActor
-    func benchmarkMatrixDirectRepoDurationModeAndGuardRails() async throws {
+    func benchmarkMatrixUsesRunningServerDurationModeAndGuardRails() async throws {
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
         viewModel.selectedBenchmarkPresentationMode = .matrix
-        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
-        viewModel.benchmarkHFRepoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
         viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         viewModel.selectedBenchmarkMatrixLoadBudgetMode = .durationSeconds
         viewModel.benchMatrixDurationSeconds = "60"
 
         await viewModel.runBenchMatrix()
 
-        let directRepoRequest = try #require(await client.recordedBenchMatrixRequests.last)
-        #expect(directRepoRequest.modelID.isEmpty)
-        #expect(directRepoRequest.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
-        #expect(directRepoRequest.taskKind == "image-text-to-text")
-        #expect(directRepoRequest.requests == 0)
-        #expect(directRepoRequest.durationSeconds == 60)
+        let runningServerRequest = try #require(await client.recordedBenchMatrixRequests.last)
+        #expect(runningServerRequest.modelID == testReadyModelID)
+        #expect(runningServerRequest.hfRepoID.isEmpty)
+        #expect(runningServerRequest.taskKind == "text-generation")
+        #expect(runningServerRequest.requests == 0)
+        #expect(runningServerRequest.durationSeconds == 60)
 
         let missingRepoClient = FakeControlPlaneXPCClient()
         let missingRepoViewModel = RuntimeViewModel(client: missingRepoClient)
         await missingRepoViewModel.start()
         missingRepoViewModel.selectedBenchmarkPresentationMode = .matrix
-        missingRepoViewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
         missingRepoViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         await missingRepoViewModel.runBenchMatrix()
-        #expect(missingRepoViewModel.lastError == "Enter a Hugging Face repo before running Matrix.")
+        #expect(missingRepoViewModel.lastError == "Select a local running server before running Benchmark.")
 
         let imageClient = FakeControlPlaneXPCClient()
         await imageClient.configureSnapshot(
             makeSnapshot(
                 serverState: .serverReady,
-                models: [makeMenuBarImageModelSummary()]
+                models: [makeMenuBarImageModelSummary()],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         let imageViewModel = RuntimeViewModel(client: imageClient)
@@ -5837,9 +6468,19 @@ struct RuntimeViewModelTests {
         imageViewModel.selectedBenchmarkPresentationMode = .matrix
         imageViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         await imageViewModel.runBenchMatrix()
-        #expect(imageViewModel.lastError == "Benchmark matrix supports only text-generation, image-to-text, and image-text-to-text targets.")
+        #expect(imageViewModel.lastError == "Select a local running server before running Benchmark.")
 
         let requestsClient = FakeControlPlaneXPCClient()
+        await requestsClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
         let requestsViewModel = RuntimeViewModel(client: requestsClient)
         await requestsViewModel.start()
         requestsViewModel.selectedBenchmarkPresentationMode = .matrix
@@ -5857,7 +6498,11 @@ struct RuntimeViewModelTests {
         await client.configureSnapshot(
             makeSnapshot(
                 serverState: .serverReady,
-                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -5906,7 +6551,8 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
-                ]
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         await client.configureExportResult(
@@ -5914,7 +6560,7 @@ struct RuntimeViewModelTests {
         )
 
         await viewModel.start()
-        viewModel.selectedEvaluationModelID = "melix-dev-text-lora"
+        viewModel.updateSelectedServerSessionModelID("melix-dev-text-lora")
         viewModel.selectedEvaluationSuiteIDs = ["mmlu", "gsm8k"]
         viewModel.evaluationSampleSize = "12"
         viewModel.evaluationBatchFactor = "2"
@@ -6010,6 +6656,16 @@ struct RuntimeViewModelTests {
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
 
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
         await runnerClient.configureBenchResponse(
             ControlPlaneBenchResult(
                 reportPath: "/tmp/melix/bench/runs/bench-newer/bench-report.md",
@@ -6054,9 +6710,8 @@ struct RuntimeViewModelTests {
         )
 
         await viewModel.start()
-        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.updateSelectedServerSessionModelID("melix-dev-text-lora")
         viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
-        viewModel.selectedEvaluationModelID = "melix-dev-text-lora"
         viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
 
         await viewModel.runBench()
@@ -6096,7 +6751,7 @@ struct RuntimeViewModelTests {
         let initialServerSession = DesktopServerSessionState(
             id: "server-session-1",
             title: "Primary Server",
-            modelID: "melix-dev-text",
+            modelID: testReadyModelID,
             host: "127.0.0.1",
             port: 18_080
         )
@@ -6114,7 +6769,9 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
-                ]
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         await directClient.configureExportResult(
@@ -6162,7 +6819,7 @@ struct RuntimeViewModelTests {
             case .modelRootsRescan:
                 return .success("{\"operation\":\"registry_snapshot\"}\n")
             case .serverSessionUpdate(let options):
-                return .success(sessionJSON(modelID: options.modelID.isEmpty ? "melix-dev-text" : options.modelID))
+                return .success(sessionJSON(modelID: options.modelID.isEmpty ? testReadyModelID : options.modelID))
             case .serverSessionSelect:
                 return .success(sessionJSON(modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
             case .serverStart(let options):
@@ -6479,7 +7136,7 @@ struct RuntimeViewModelTests {
         await directClient.configureSnapshot(
             makeSnapshot(
                 serverState: .serverReady,
-                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)]
             )
         )
         await workflowRunner.configureHandler { command in
@@ -6668,7 +7325,8 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
-                ]
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         await client.configureExportResult(
@@ -6676,7 +7334,7 @@ struct RuntimeViewModelTests {
         )
 
         await viewModel.start()
-        viewModel.selectedEvaluationModelID = "melix-dev-text-lora"
+        viewModel.updateSelectedServerSessionModelID("melix-dev-text-lora")
         viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
         viewModel.evaluationSampleSize = "12"
         viewModel.evaluationBatchFactor = "2"
@@ -6725,7 +7383,11 @@ struct RuntimeViewModelTests {
         await client.configureSnapshot(
             makeSnapshot(
                 serverState: .serverReady,
-                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
 
@@ -6779,7 +7441,11 @@ struct RuntimeViewModelTests {
         await client.configureSnapshot(
             makeSnapshot(
                 serverState: .serverReady,
-                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         await viewModel.start()
@@ -6802,6 +7468,8 @@ struct RuntimeViewModelTests {
         viewModel.reloadRemoteServers()
         viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
         viewModel.evaluationSemanticJudgeModelID = "judge-model"
+        let localTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .localServer })
+        viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
         viewModel.selectedEvaluationMode = .compare
         viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
         viewModel.evaluationScoringMode = "multiple_choice_accuracy"
@@ -6856,7 +7524,9 @@ struct RuntimeViewModelTests {
                 serverState: .serverReady,
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
-                ]
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         await client.configureExportResult(
@@ -6864,7 +7534,7 @@ struct RuntimeViewModelTests {
         )
 
         await viewModel.start()
-        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationModelID = testReadyModelID
         viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
         viewModel.evaluationDatasetSourceKind = .localCSV
         viewModel.evaluationSourcePath = "/tmp/eval/mmlu.csv"
@@ -6893,6 +7563,38 @@ struct RuntimeViewModelTests {
         #expect(request.profile.threshold == 1.0)
     }
 
+    @Test("event extraction builtin evaluation uses the top20 dataset package")
+    @MainActor
+    func eventExtractionBuiltinEvaluationUsesTop20DatasetPackage() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = testReadyModelID
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationDatasetSourceKind = .builtinPackage
+        viewModel.evaluationScoringMode = "multiple_choice_accuracy"
+
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(request.datasetID == "top200.event-extraction.top20.v1")
+        #expect(request.sampleSize == 20)
+        #expect(request.source.kind == .builtinPackage)
+        #expect(request.profile.scoringMode == "event_extraction_weighted_f1")
+        #expect(request.parameters["scoring_mode"] == "event_extraction_weighted_f1")
+    }
+
     @Test("evaluation compare supports custom JSONL dataset sources")
     @MainActor
     func evaluationCompareSupportsCustomJSONLDatasetSources() async throws {
@@ -6904,7 +7606,8 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
-                ]
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
 
@@ -6937,10 +7640,20 @@ struct RuntimeViewModelTests {
         #expect(request.parameters["compare_target_model_ids"] == "melix-dev-text-lora")
     }
 
-    @Test("evaluation selection state and guard rails cover catalog and direct repo flows")
+    @Test("evaluation selection state and guard rails cover running server and remote flows")
     @MainActor
-    func evaluationSelectionStateAndGuardRailsCoverCatalogAndDirectRepoFlows() async throws {
+    func evaluationSelectionStateAndGuardRailsCoverRunningServerAndRemoteFlows() async throws {
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
         let viewModel = RuntimeViewModel(client: client)
         viewModel.selectedEvaluationModelID = "missing-model"
         viewModel.selectedEvaluationSuiteIDs = ["unknown-suite"]
@@ -6948,7 +7661,7 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
 
-        #expect(viewModel.selectedEvaluationModelID == "melix-dev-text")
+        #expect(viewModel.selectedEvaluationModelID == testReadyModelID)
         #expect(viewModel.selectedEvaluationSuiteIDs == ["mmlu"])
         #expect(viewModel.selectedEvaluationHistoryJobID.isEmpty)
 
@@ -6961,19 +7674,67 @@ struct RuntimeViewModelTests {
         await viewModel.runEvaluation()
         #expect(viewModel.lastError == "Select at least one evaluation suite before running Evaluation.")
 
-        viewModel.selectedEvaluationTargetMode = .huggingFaceRepo
-        viewModel.evaluationHFRepoID = ""
         viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
         await viewModel.runEvaluation()
-        #expect(viewModel.lastError == "Enter a Hugging Face repo before running Evaluation.")
-
-        viewModel.evaluationHFRepoID = "meta-llama/Llama-3.2-1B-Instruct"
-        await viewModel.runEvaluation()
-
         let request = try #require(await client.recordedEvaluationRequests.last)
-        #expect(request.modelID.isEmpty)
-        #expect(request.hfRepoID == "meta-llama/Llama-3.2-1B-Instruct")
-        #expect(viewModel.evaluationTargetSummaryText.contains("meta-llama/Llama-3.2-1B-Instruct"))
+        #expect(request.modelID == testReadyModelID)
+        #expect(request.hfRepoID.isEmpty)
+        #expect(viewModel.evaluationTargetSummaryText.contains(testReadyModelID))
+
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "bitdeer-gemma-4-31b-it",
+                    title: "Bitdeer Gemma 4 31B IT",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://api-inference.bitdeer.ai/v1",
+                    defaultModelID: "google/gemma-4-31B-it",
+                    timeoutSeconds: 120,
+                    rateLimitPerMinute: 30,
+                    credentialRef: RemoteServerStore.credentialRef(for: "bitdeer-gemma-4-31b-it"),
+                    apiKeyHint: "sk-b...31b"
+                ),
+            ],
+            apiKeys: [
+                "bitdeer-gemma-4-31b-it": "sk-test-gemma4",
+            ]
+        )
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            if case .evalRun = command {
+                return .success(makeCLIEvaluationRunJSON())
+            }
+            return .success("{}\n")
+        }
+        let remoteViewModel = RuntimeViewModel(
+            client: client,
+            cliWorkflowRunner: workflowRunner,
+            remoteServerStore: remoteStore
+        )
+        await remoteViewModel.start()
+        let remoteTarget = try #require(remoteViewModel.diagnosticsServerTargets.first { $0.kind == .remoteServer })
+        remoteViewModel.selectDiagnosticsServerTarget(id: remoteTarget.id)
+        remoteViewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+
+        await remoteViewModel.runEvaluation()
+
+        let recordedCommands = await workflowRunner.snapshotRecordedCommands()
+        let evalRun = try #require(recordedCommands.compactMap { command -> EvalRunOptions? in
+            if case .evalRun(let options) = command {
+                return options
+            }
+            return nil
+        }.last)
+        #expect(evalRun.modelID.isEmpty)
+        #expect(evalRun.hfRepoID.isEmpty)
+        #expect(evalRun.remoteTargets == [
+            EvalRemoteTargetOptions(
+                remoteServerID: "bitdeer-gemma-4-31b-it",
+                remoteModelID: "google/gemma-4-31B-it"
+            ),
+        ])
+        #expect(remoteViewModel.evaluationTargetSummaryText.contains("Bitdeer Gemma 4 31B IT"))
 
         let audioOnlyClient = FakeControlPlaneXPCClient()
         let audioOnlyModel = makeCapabilityModelSummary(
@@ -6994,7 +7755,7 @@ struct RuntimeViewModelTests {
 
         await audioOnlyViewModel.runEvaluation()
 
-        #expect(audioOnlyViewModel.lastError == "Select a text-generation model before running Evaluation.")
+        #expect(audioOnlyViewModel.lastError == "Select a running server before running Evaluation.")
     }
 
     @Test("lora training and activation dispatch the configured dataset source hyperparameters and derived alias")
@@ -7184,7 +7945,8 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
-                ]
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
             )
         )
         await runnerClient.configureSnapshot(
@@ -7264,7 +8026,6 @@ struct RuntimeViewModelTests {
         viewModel.loraActivationMode = .adapterBackedRuntime
         await viewModel.trainPrimaryModel()
         await viewModel.activateLatestAdapter()
-        viewModel.selectedEvaluationTargetMode = .catalogModel
         viewModel.selectedEvaluationModelID = "melix-dev-text"
         viewModel.selectedEvaluationMode = .compare
         viewModel.selectedEvaluationCompareTargetModelIDs = ["melix-dev-text-lora"]
@@ -7303,6 +8064,13 @@ struct RuntimeViewModelTests {
     @MainActor
     func loraRemoveAndCompareGuardRailsRequireConcreteTargets() async throws {
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
@@ -7454,6 +8222,16 @@ struct RuntimeViewModelTests {
     @MainActor
     func modelToolFailuresSurfaceLocalErrors() async throws {
         let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
@@ -7629,9 +8407,9 @@ struct RuntimeViewModelTests {
         #expect(removeViewModel.registryRootSummaryText == "Control-plane override active • no roots configured")
     }
 
-    @Test("registry root guard rails no-op for missing models invalid drafts duplicate roots and invalid moves")
+    @Test("registry root guard rails allow app-wide registry refresh and no-op invalid drafts duplicate roots and invalid moves")
     @MainActor
-    func registryRootGuardRailsNoOpForMissingModelsInvalidDraftsDuplicateRootsAndInvalidMoves() async throws {
+    func registryRootGuardRailsAllowAppWideRegistryRefreshAndNoOpInvalidDraftsDuplicateRootsAndInvalidMoves() async throws {
         let imageOnlyClient = FakeControlPlaneXPCClient()
         var imageOnlySnapshot = Melix_Controlplane_V1_ServerSnapshot()
         imageOnlySnapshot.serverState = .serverReady
@@ -7644,7 +8422,14 @@ struct RuntimeViewModelTests {
         await imageOnlyViewModel.addRegistryRoot()
         await imageOnlyViewModel.removeRegistryRoot(rootID: "missing-root")
         await imageOnlyViewModel.moveRegistryRootUp(rootID: "missing-root")
-        #expect(await imageOnlyClient.recordedModelOperationRequests.isEmpty)
+        let imageOnlyRequests = await imageOnlyClient.recordedModelOperationRequests.filter {
+            $0.operation == "registry_snapshot"
+        }
+        #expect(imageOnlyRequests.count == 2)
+        #expect(imageOnlyRequests.allSatisfy { $0.modelID == "melix-dev-image" })
+        #expect(imageOnlyRequests[0].ext["melix.registry_rescan"] == "true")
+        #expect(imageOnlyRequests[1].ext["melix.registry_roots_json"] == #"["/tmp/no-text-root"]"#)
+        #expect(imageOnlyRequests[1].ext["melix.registry_rescan"] == "true")
 
         let client = FakeControlPlaneXPCClient()
         await client.configureModelOperation(
@@ -10347,6 +11132,49 @@ private func makeRegistrySnapshotManifest(
           "status": "\#(derivedModelID.isEmpty ? "" : "activated")"
         }
       ]
+    }
+    """#
+}
+
+private func makeEvaluationRegistrySnapshotManifest() -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "jobs": [],
+      "adapters": [],
+      "experiment_groups": [],
+      "model_registry": {
+        "roots": [
+          {
+            "root_id": "root-hf-cache",
+            "root_path": "/Users/ChenYu/.cache/huggingface/hub",
+            "root_order": 2,
+            "accessible": true,
+            "error_code": "",
+            "error_message": "",
+            "discovered_model_ids": [
+              "unsloth/gemma-4-E4B-it-MLX-8bit"
+            ]
+          }
+        ],
+        "models": [
+          {
+            "model_id": "unsloth/gemma-4-E4B-it-MLX-8bit",
+            "model_path": "/Users/ChenYu/.cache/huggingface/hub/models--unsloth--gemma-4-E4B-it-MLX-8bit/snapshots/main",
+            "model_kind": "vlm",
+            "revision": "main",
+            "max_context": 8192,
+            "ext": {
+              "melix.hf_repo_id": "unsloth/gemma-4-E4B-it-MLX-8bit",
+              "melix.capability.supported_modalities": "text,image",
+              "melix.capability.supported_tasks": "vlm,generate",
+              "melix.capability.class": "vlm",
+              "melix.source_kind": "hf_cache_snapshot",
+              "vision_family_id": "gemma4-v1"
+            }
+          }
+        ]
+      }
     }
     """#
 }

@@ -1495,7 +1495,7 @@ def test_command_json_probe_executes_probe_command_and_parses_metrics(tmp_path: 
         coverage_command="true",
         probe_impl="command_json",
         probe_command=(
-            "python3 -c \"import json; "
+            "python -c \"import json; "
             "print(json.dumps({'elapsed_ms_mean': 12.5, 'iteration_count': 3}))\""
         ),
         metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),

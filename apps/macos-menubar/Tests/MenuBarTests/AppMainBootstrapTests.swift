@@ -488,6 +488,7 @@ struct AppMainBootstrapTests {
         let presenter = RecordingDesktopFoundationPresenter()
         let bootstrap = MelixMenuBarBootstrap(
             client: client,
+            startupSurface: .tray,
             metrics: metrics,
             desktopFoundationPresenterFactory: { _, _ in presenter },
             statusMenuFactory: { _, openConsole, _ in
@@ -524,6 +525,44 @@ struct AppMainBootstrapTests {
         #expect(presenter.showCount == 0)
     }
 
+    @Test("bootstrap defaults to opening the workspace on app launch")
+    @MainActor
+    func bootstrapDefaultsToOpeningWorkspaceOnAppLaunch() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let menu = RecordingInstallStatusMenu()
+        let presenter = RecordingDesktopFoundationPresenter()
+        let bootstrap = MelixMenuBarBootstrap(
+            client: client,
+            desktopFoundationPresenterFactory: { _, _ in presenter },
+            statusMenuFactory: { _, _, _ in menu }
+        )
+
+        bootstrap.start()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(menu.installCount == 1)
+        #expect(presenter.showCount == 1)
+    }
+
+    @Test("bootstrap opens startup workspace before hydration can delay presentation")
+    @MainActor
+    func bootstrapOpensStartupWorkspaceBeforeHydrationCanDelayPresentation() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let menu = RecordingInstallStatusMenu()
+        let presenter = RecordingDesktopFoundationPresenter()
+        let bootstrap = MelixMenuBarBootstrap(
+            client: client,
+            startupSurface: .console,
+            desktopFoundationPresenterFactory: { _, _ in presenter },
+            statusMenuFactory: { _, _, _ in menu }
+        )
+
+        bootstrap.start()
+
+        #expect(menu.installCount == 1)
+        #expect(presenter.showCount == 1)
+    }
+
     @Test("bootstrap auto-opens the workspace when startup surface is console")
     @MainActor
     func bootstrapAutoOpensWorkspaceWhenStartupSurfaceIsConsole() async throws {
@@ -555,6 +594,7 @@ struct AppMainBootstrapTests {
         var capturedViewModel: RuntimeViewModel?
         let bootstrap = MelixMenuBarBootstrap(
             client: client,
+            startupSurface: .tray,
             metrics: metrics,
             desktopFoundationPresenterFactory: { viewModel, _ in
                 capturedViewModel = viewModel
@@ -637,7 +677,7 @@ struct AppMainBootstrapTests {
         )
         #expect(environment.pythonWorkerSocketPath == "/tmp/melix-worker.sock")
         #expect(environment.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
-        #expect(environment.startupSurface == .tray)
+        #expect(environment.startupSurface == .console)
         #expect(environment.presentationMode == .tray)
         #expect(environment.terminationMode == .terminate)
     }
@@ -745,6 +785,45 @@ struct AppMainBootstrapTests {
 
         #expect(recorder.terminateApplicationCallCount == 1)
         #expect(recorder.devDownRequests.count == 1)
+    }
+
+    @Test("termination coordinator terminates bundled worker pids once")
+    @MainActor
+    func terminationCoordinatorTerminatesBundledWorkerPIDsOnce() {
+        let recorder = TerminationCoordinatorRecorder()
+        let coordinator = MenuBarTerminationCoordinator(
+            mode: .terminate,
+            repoRoot: "/tmp/melix-repo",
+            runtimeDirectory: "/tmp/melix-runtime",
+            workerProcessIDs: [321, 654],
+            terminateApplication: { recorder.terminateApplicationCallCount += 1 },
+            terminateWorkerProcess: { pid in
+                recorder.workerTerminationRequests.append(pid)
+            },
+            launchDevDownScript: { repoRoot, runtimeDirectory in
+                recorder.devDownRequests.append((repoRoot, runtimeDirectory))
+            }
+        )
+
+        coordinator.requestTermination()
+        coordinator.requestTermination()
+
+        #expect(recorder.workerTerminationRequests == [321, 654])
+        #expect(recorder.terminateApplicationCallCount == 1)
+        #expect(recorder.devDownRequests.isEmpty)
+    }
+
+    @Test("termination coordinator parses packaged worker pids from environment")
+    @MainActor
+    func terminationCoordinatorParsesPackagedWorkerPIDsFromEnvironment() {
+        let workerPIDs = MenuBarTerminationCoordinator.bundledWorkerProcessIDs(
+            environment: [
+                "MELIX_SWIFT_WORKER_PID": "321",
+                "MELIX_PYTHON_WORKER_PID": "654",
+            ]
+        )
+
+        #expect(workerPIDs == [321, 654])
     }
 
     @Test("dev-down launcher spawns the shutdown script with MELIX_RUNTIME_DIR")
@@ -1050,6 +1129,7 @@ private final class RecordingNSApplication: NSApplicationControlling {
 private final class TerminationCoordinatorRecorder {
     var terminateApplicationCallCount = 0
     var devDownRequests: [(String, String?)] = []
+    var workerTerminationRequests: [pid_t] = []
 }
 
 @MainActor
