@@ -1073,6 +1073,33 @@ def test_registry_snapshot_does_not_stat_plain_local_manifest_after_tree_scan(
 
 
 
+def test_registry_snapshot_skips_invalid_depth_manifests_without_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    invalid_manifest_dir = root / "manifest-model"
+    valid_manifest_dir = root / "provider" / "org" / "demo" / "q4"
+    _write_registry_manifest(invalid_manifest_dir, model_id="invalid-manifest")
+    _write_registry_manifest(valid_manifest_dir, model_id="provider/org/demo/q4")
+
+    original_parse_registry_manifest = WorkerModelCatalog._parse_registry_manifest
+    parsed_manifest_paths: list[Path] = []
+
+    def tracking_parse_registry_manifest(self: WorkerModelCatalog, manifest_path: Path):
+        parsed_manifest_paths.append(manifest_path.resolve())
+        return original_parse_registry_manifest(self, manifest_path)
+
+    monkeypatch.setattr(WorkerModelCatalog, "_parse_registry_manifest", tracking_parse_registry_manifest)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
+
+    assert [model.model_id for model in catalog.registry_snapshot().models] == ["provider/org/demo/q4"]
+    assert invalid_manifest_dir.resolve() / "manifest.json" not in parsed_manifest_paths
+    assert parsed_manifest_paths == [valid_manifest_dir.resolve() / "manifest.json"]
+
+
+
 def test_registry_snapshot_skips_plain_local_config_dirs_without_weights(tmp_path: Path) -> None:
     root = tmp_path / "root"
     model_dir = root / "plain-model"

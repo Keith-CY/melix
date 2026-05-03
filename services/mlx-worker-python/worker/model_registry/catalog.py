@@ -1050,13 +1050,15 @@ class WorkerModelCatalog:
             accepted_model_ids: list[str] = []
             manifest_paths, plain_local_model_dirs, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
             for manifest_path in manifest_paths:
+                relative_path = manifest_path.parent.relative_to(root)
+                if _path_derived_registry_identity(relative_path.parts) is None:
+                    continue
                 parsed = self._parse_registry_manifest(manifest_path)
                 if parsed is None:
                     continue
                 model_id, model = parsed
                 if model_id in discovered_models or model_id in self._seed_models:
                     continue
-                relative_path = manifest_path.parent.relative_to(root)
                 if not _apply_registry_identity_metadata(
                     model,
                     relative_parts=relative_path.parts,
