@@ -460,8 +460,7 @@ def _iter_sorted_matching_files(parent: Path, *, prefix: str, suffix: str) -> tu
 
 
 def _load_json_object(path: Path) -> dict[str, object]:
-    with path.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
+    payload = json.loads(path.read_bytes())
     if not isinstance(payload, dict):
         raise TypeError(f"expected JSON object in {path}")
     return payload
