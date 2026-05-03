@@ -451,7 +451,6 @@ public struct TextRequestShaper: Sendable {
                     parts[index].text = stripped.text
                     stripCount += stripped.count
                 }
-                break
             }
 
             return NormalizedTextMessage(
