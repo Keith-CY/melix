@@ -569,23 +569,37 @@ def _probe_benchmark_evaluation_report(repo_root: Path) -> dict[str, float]:
     )
     baseline = _build_large_benchmark_bundle(base_value=100.0)
     candidate = _build_large_benchmark_bundle(base_value=108.0)
+    sample_count = 5
+    load_samples: list[float] = []
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
     row_count = 0.0
-    for _ in range(3):
-        gc.collect()
-        tracemalloc.start()
-        started = time.perf_counter()
-        report = module.build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
-        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
-        _, peak_bytes = tracemalloc.get_traced_memory()
-        peak_samples.append(float(peak_bytes))
-        tracemalloc.stop()
-        row_count = float(len(report.get("rows", [])))
+    with tempfile.TemporaryDirectory(prefix="melix-benchmark-report-input-") as temp_dir:
+        input_path = Path(temp_dir) / "benchmark-evaluation-export.json"
+        input_path.write_text(json.dumps(baseline) + "\n", encoding="utf-8")
+        for _ in range(sample_count):
+            gc.collect()
+            load_started = time.perf_counter()
+            loaded_baseline = module.load_report_input(input_path)
+            load_samples.append((time.perf_counter() - load_started) * 1000.0)
+
+            tracemalloc.start()
+            started = time.perf_counter()
+            report = module.build_benchmark_evaluation_report(
+                baseline=loaded_baseline,
+                candidate=candidate,
+            )
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            _, peak_bytes = tracemalloc.get_traced_memory()
+            peak_samples.append(float(peak_bytes))
+            tracemalloc.stop()
+            row_count = float(len(report.get("rows", [])))
     return {
-        "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 3),
-        "peak_bytes_mean": round(sum(peak_samples) / len(peak_samples), 1),
+        "load_input_ms_mean": round(sum(load_samples) / len(load_samples), 6),
+        "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
+        "peak_bytes_mean": round(sum(peak_samples) / len(peak_samples), 3),
         "row_count": row_count,
+        "sample_count": float(sample_count),
     }
 
 
