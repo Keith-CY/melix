@@ -551,6 +551,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "model-ops-bundle-artifact-byte-accounting",
     }
     registry_probe = None
+    maintenance_probe = None
     swift_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
@@ -559,6 +560,8 @@ def test_registered_probes_expose_focused_commands() -> None:
         assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
         if probe.probe_id == "model-registry-plain-local-manifest-stat-elision":
             registry_probe = probe
+        if probe.probe_id == "maintenance-percentile-vector-reuse":
+            maintenance_probe = probe
         if probe.probe_id == "swift-cli-json-envelope-encoding":
             swift_probe = probe
 
@@ -573,6 +576,12 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.coverage_command
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.coverage_command
     assert "scripts/changed_scope_coverage.py" in registry_probe.coverage_command
+
+    assert maintenance_probe is not None
+    assert "test_measure_vlm_latency_metrics_reuse_single_sorted_total_latency_vector" in maintenance_probe.test_command
+    assert "test_image_latency_metrics_reuse_single_sorted_job_latency_vector" in maintenance_probe.test_command
+    assert "test_measure_vlm_latency_metrics_reuse_single_sorted_total_latency_vector" in maintenance_probe.coverage_command
+    assert "test_image_latency_metrics_reuse_single_sorted_job_latency_vector" in maintenance_probe.coverage_command
 
     assert swift_probe is not None
     assert "MelixCLIRunnerTests/(" in swift_probe.test_command

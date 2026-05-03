@@ -2830,17 +2830,18 @@ class MaintenanceCore:
         )
         if suite.suite_id == "latency":
             total_latencies = [sample.total_latency_ms for sample in samples]
+            image_p50_ms, image_p95_ms = self._percentiles(total_latencies, 50.0, 95.0)
             return [
                 BenchMetricSpec(
                     suite=suite.suite_id,
                     name="bench.latency.image_p50_ms",
-                    value=self._percentile(total_latencies, 50.0),
+                    value=image_p50_ms,
                     unit="ms",
                 ),
                 BenchMetricSpec(
                     suite=suite.suite_id,
                     name="bench.latency.image_p95_ms",
-                    value=self._percentile(total_latencies, 95.0),
+                    value=image_p95_ms,
                     unit="ms",
                 ),
             ] + fast_path_metrics
@@ -3532,17 +3533,18 @@ class MaintenanceCore:
         artifact_publish = [sample.artifact_publish_ms for sample in samples]
         output_bytes = [float(sample.output_bytes) for sample in samples]
         if suite.suite_id == "latency":
+            image_job_p50_ms, image_job_p95_ms = self._percentiles(latencies, 50.0, 95.0)
             return [
                 BenchMetricSpec(
                     suite=suite.suite_id,
                     name="bench.latency.image_job_p50_ms",
-                    value=self._percentile(latencies, 50.0),
+                    value=image_job_p50_ms,
                     unit="ms",
                 ),
                 BenchMetricSpec(
                     suite=suite.suite_id,
                     name="bench.latency.image_job_p95_ms",
-                    value=self._percentile(latencies, 95.0),
+                    value=image_job_p95_ms,
                     unit="ms",
                 ),
             ]
