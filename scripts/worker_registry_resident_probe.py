@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 from pathlib import Path
 import statistics
@@ -22,6 +23,8 @@ def main() -> int:
     elapsed_samples: list[float] = []
     resident_samples: list[float] = []
     request_stats_elapsed_samples: list[float] = []
+    loaded_model_listing_elapsed_samples: list[float] = []
+    loaded_model_listing_sort_calls: list[float] = []
     preloaded_count = 2000
     loop_count = 250
     request_count = 3000
@@ -36,6 +39,32 @@ def main() -> int:
             resident_samples.append(float(registry.runtime_stats().model_resident_bytes))
             registry.unload_model(loaded.handle)
         elapsed_samples.append((time.perf_counter() - started) * 1000.0 / loop_count)
+
+        listing_registry = build_registry()
+        for _ in range(preloaded_count):
+            listing_registry.load_model(spec)
+        listing_sort_calls = 0
+        original_sorted = builtins.sorted
+
+        def tracked_sorted(*args, **kwargs):
+            nonlocal listing_sort_calls
+            listing_sort_calls += 1
+            return original_sorted(*args, **kwargs)
+
+        builtins.sorted = tracked_sorted
+        try:
+            started = time.perf_counter()
+            for _ in range(loop_count):
+                handles = listing_registry.list_loaded_models()
+                summaries = listing_registry.list_loaded_model_summaries()
+                if len(handles) != preloaded_count or len(summaries) != preloaded_count:
+                    raise AssertionError("loaded model listing counts drifted during the probe")
+                if summaries[0].model_handle != handles[0] or summaries[-1].model_handle != handles[-1]:
+                    raise AssertionError("loaded model listing order drifted during the probe")
+            loaded_model_listing_elapsed_samples.append((time.perf_counter() - started) * 1000.0 / loop_count)
+        finally:
+            builtins.sorted = original_sorted
+        loaded_model_listing_sort_calls.append(float(listing_sort_calls))
 
         request_registry = build_registry()
         for index in range(request_count):
@@ -61,6 +90,12 @@ def main() -> int:
         json.dumps(
             {
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
+                "loaded_model_listing_elapsed_ms_mean": round(
+                    statistics.fmean(loaded_model_listing_elapsed_samples), 6
+                ),
+                "loaded_model_listing_sort_calls_mean": round(
+                    statistics.fmean(loaded_model_listing_sort_calls), 6
+                ),
                 "loop_count": float(loop_count),
                 "preloaded_model_count": float(preloaded_count),
                 "request_count": float(request_count),

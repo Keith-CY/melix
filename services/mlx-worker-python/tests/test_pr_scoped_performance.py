@@ -553,6 +553,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     }
     registry_probe = None
     maintenance_probe = None
+    worker_registry_probe = None
     swift_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
@@ -563,8 +564,16 @@ def test_registered_probes_expose_focused_commands() -> None:
             registry_probe = probe
         if probe.probe_id == "maintenance-percentile-vector-reuse":
             maintenance_probe = probe
+        if probe.probe_id == "worker-registry-resident-bytes-accumulator":
+            worker_registry_probe = probe
         if probe.probe_id == "swift-cli-json-envelope-encoding":
             swift_probe = probe
+
+    assert worker_registry_probe is not None
+    assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.test_command
+    assert "test_load_model_returns_handle_and_lists_model" in worker_registry_probe.test_command
+    assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.coverage_command
+    assert "test_load_model_returns_handle_and_lists_model" in worker_registry_probe.coverage_command
 
     assert registry_probe is not None
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.test_command
@@ -1149,6 +1158,8 @@ def test_worker_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert excinfo.value.code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["elapsed_ms_mean"] > 0
+    assert payload["loaded_model_listing_elapsed_ms_mean"] > 0
+    assert payload["loaded_model_listing_sort_calls_mean"] > 0
     assert payload["preloaded_model_count"] == 2000.0
     assert payload["loop_count"] == 250.0
     assert payload["request_count"] == 3000.0

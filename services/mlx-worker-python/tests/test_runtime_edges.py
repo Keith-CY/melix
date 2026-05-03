@@ -358,6 +358,38 @@ def test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes() ->
     assert registry.runtime_stats().model_resident_bytes == 0
 
 
+
+def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = build_registry()
+    for _ in range(3):
+        registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    sorted_calls = 0
+    original_sorted = sorted
+
+    def tracked_sorted(*args, **kwargs):
+        nonlocal sorted_calls
+        sorted_calls += 1
+        return original_sorted(*args, **kwargs)
+
+    monkeypatch.setattr("builtins.sorted", tracked_sorted)
+
+    handles = registry.list_loaded_models()
+    summaries = registry.list_loaded_model_summaries()
+    repeated_handles = registry.list_loaded_models()
+
+    assert repeated_handles == handles
+    assert [summary.model_handle for summary in summaries] == handles
+    assert sorted_calls == 1
+
+    registry.unload_model(handles[0])
+    invalidated_handles = registry.list_loaded_models()
+
+    assert len(invalidated_handles) == 2
+    assert sorted_calls == 2
+
+
+
 def test_registry_capabilities_and_request_lifecycle() -> None:
     registry = build_registry()
 
