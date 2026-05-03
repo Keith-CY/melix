@@ -7,6 +7,9 @@ import MelixCLICore
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
+private let desktopTestReadyModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+private let desktopTestReadyLoRAModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit-lora"
+
 @Suite("Desktop Foundation View", .serialized)
 struct DesktopFoundationViewTests {
     @Test("root view renders the desktop foundation shell")
@@ -109,6 +112,60 @@ struct DesktopFoundationViewTests {
         #expect(DesktopLoRAVisualPolish.metricSurfaceOpacity == 0.032)
         #expect(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity == MelixDesignTokens.AccentOpacity.selected)
         #expect(DesktopLoRAVisualPolish.chartFillOpacity == 0.24)
+    }
+
+    @Test("command center visuals track design-system and Apple-style inputs")
+    func commandCenterVisualsTrackDesignInputs() {
+        #expect(DesktopCommandCenterVisuals.visualDirection == "Digital Broadsheet Command Center")
+        #expect(DesktopCommandCenterVisuals.operatorLabel == "Melix Operator")
+        #expect(DesktopCommandCenterVisuals.windowTitle == "Command Center")
+        #expect(DesktopCommandCenterVisuals.runtimeSectionTitle == "Runtime")
+        #expect(DesktopCommandCenterVisuals.pressureSectionTitle == "Resource And Queue Pressure")
+        #expect(DesktopCommandCenterVisuals.recoverySectionTitle == "Recovery")
+        #expect(DesktopCommandCenterVisuals.workflowSectionTitle == "Workflow")
+        #expect(DesktopCommandCenterVisuals.activitySectionTitle == "Recent Activity")
+        #expect(DesktopCommandCenterVisuals.sessionSummarySectionTitle == "Session Summary")
+        #expect(DesktopCommandCenterVisuals.primaryModelTitle == "Primary Model")
+        #expect(DesktopCommandCenterVisuals.repositoryDesignSystemPath == "docs/design-system/README.md")
+        #expect(DesktopCommandCenterVisuals.appleLayoutGuidanceURL.contains("human-interface-guidelines/layout"))
+        #expect(DesktopCommandCenterVisuals.maxContentWidth == 1120)
+        #expect(DesktopCommandCenterVisuals.primaryColumnMinimumWidth > DesktopCommandCenterVisuals.secondaryColumnWidth)
+        #expect(DesktopCommandCenterVisuals.panelCornerRadius == MelixDesignTokens.Radius.xl)
+        #expect(DesktopCommandCenterVisuals.statusSymbolName == "command.circle")
+        #expect(DesktopCommandCenterVisuals.recoverySymbolName == "arrow.clockwise.circle")
+    }
+
+    @Test("command center health is derived from foundation state semantics")
+    func commandCenterHealthUsesSemanticFoundationState() {
+        func foundation(
+            serverState: Melix_Controlplane_V1_ServerState,
+            lastError: String? = nil
+        ) -> DesktopFoundationState {
+            var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+            snapshot.serverState = serverState
+            return DesktopFoundationState.build(
+                statusTitle: "Melix Ready",
+                serverStateText: "Localized server copy",
+                connectionStateText: "Localized connection copy",
+                connectionDetailText: "Snapshot hydrated",
+                snapshot: snapshot,
+                protocolVersion: "melix.controlplane.v1",
+                serverVersion: "0.1.0",
+                daemonInstanceID: "daemon-command-center-health",
+                features: ["xpc"],
+                productUpdateSummary: nil,
+                productUpdateDetail: nil,
+                lastError: lastError,
+                recentEvents: []
+            )
+        }
+
+        #expect(foundation(serverState: .serverReady).healthState == .runtimeReady)
+        #expect(foundation(serverState: .serverDegraded).healthState == .runtimeWarning)
+        #expect(foundation(serverState: .serverDraining).healthState == .runtimeWarning)
+        #expect(foundation(serverState: .serverStopped).healthState == .recoveryAvailable)
+        #expect(foundation(serverState: .serverFailed).healthState == .needsAttention)
+        #expect(foundation(serverState: .serverReady, lastError: "Handshake failed").healthState == .needsAttention)
     }
 
     @Test("logo svg resource mirrors the design system asset")
@@ -316,7 +373,7 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
         var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
         runtimeSession.serverSessionID = "server-session-1"
         runtimeSession.lifecycleState = .ready
@@ -329,7 +386,7 @@ struct DesktopFoundationViewTests {
         listener.requestedPort = 18080
         listener.effectiveHost = "127.0.0.1"
         listener.effectivePort = 11_434
-        listener.servedModelID = "melix-dev-text"
+        listener.servedModelID = desktopTestReadyModelID
         listener.rateLimitPerMinute = 240
         listener.timeoutSeconds = 90
         listener.source = .operatorOverride
@@ -338,7 +395,7 @@ struct DesktopFoundationViewTests {
         snapshot.gatewayConfig.listeners = [listener]
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
         servingDefaults.serverSessionID = "server-session-1"
-        servingDefaults.servedModelID = "melix-dev-text"
+        servingDefaults.servedModelID = desktopTestReadyModelID
         servingDefaults.requestedTemperature = 0.33
         servingDefaults.requestedTopP = 0.92
         servingDefaults.requestedMaxTokens = 384
@@ -389,11 +446,11 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
         snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
         servingDefaults.serverSessionID = "server-session-1"
-        servingDefaults.servedModelID = "melix-dev-text"
+        servingDefaults.servedModelID = desktopTestReadyModelID
         servingDefaults.requestedTemperature = 0.44
         servingDefaults.requestedTopP = 0.91
         servingDefaults.requestedMaxTokens = 320
@@ -435,7 +492,7 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
         snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let store = FakeRemoteServerStore(servers: [
@@ -493,7 +550,7 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
         snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
@@ -527,6 +584,13 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(view.subviews.isEmpty == false)
+        #expect(DesktopCommandCenterVisuals.operatorLabel == "Melix Operator")
+        #expect(DesktopCommandCenterVisuals.windowTitle == "Command Center")
+        #expect(DesktopCommandCenterVisuals.runtimeSectionTitle == "Runtime")
+        #expect(DesktopCommandCenterVisuals.pressureSectionTitle == "Resource And Queue Pressure")
+        #expect(DesktopCommandCenterVisuals.recoverySectionTitle == "Recovery")
+        #expect(DesktopCommandCenterVisuals.activitySectionTitle == "Recent Activity")
+        #expect(DesktopCommandCenterVisuals.sessionSummarySectionTitle == "Session Summary")
     }
 
     @Test("command center renders state-first recovery and workflow summaries")
@@ -600,6 +664,10 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.desktopFoundationState.models.isEmpty == false)
         #expect(viewModel.recoverableDownloads.count == 3)
         #expect(viewModel.desktopSignalStates.contains { $0.title == "Download Recovery Available" })
+        #expect(DesktopCommandCenterVisuals.recoverySectionTitle == "Recovery")
+        #expect(viewModel.recoverableDownloads.first?.resumeActionTitle == "Resume Download")
+        #expect(DesktopCommandCenterView.downloadRecoveryOverflowActionTitle == "View All Downloads")
+        #expect(DesktopCommandCenterVisuals.workflowSectionTitle == "Workflow")
         #expect(DesktopCommandCenterView.downloadRecoveryOverflowText(totalCount: 2) == nil)
         #expect(DesktopCommandCenterView.downloadRecoveryOverflowText(totalCount: 3) == "+1 more stalled download")
         #expect(DesktopCommandCenterView.downloadRecoveryOverflowActionTitle == "View All Downloads")
@@ -799,6 +867,18 @@ struct DesktopFoundationViewTests {
                 to: "private struct DesktopRegistryRootsSectionView: View"
             )
         )
+        let serverSidebarSource = try #require(
+            shellSource.slice(
+                from: "private struct DesktopServerSessionSidebar: View",
+                to: "private struct DesktopRemoteServerEditor: View"
+            )
+        )
+        let serverEditorSource = try #require(
+            shellSource.slice(
+                from: "private struct DesktopServerLoRAAdapterSection: View",
+                to: "private struct DesktopServerSessionInspector: View"
+            )
+        )
 
         #expect(modelsTabSource.contains("List(") == false)
         #expect(modelsTabSource.contains("GroupBox(") == false)
@@ -807,14 +887,71 @@ struct DesktopFoundationViewTests {
         #expect(modelsTabSource.contains("MelixSectionCard(\"Model Settings\")") == false)
         #expect(registrySource.contains("MelixSectionCard(\"Unified Model List\")") == false)
         #expect(registrySource.contains("MelixSectionCard(\"Model Card\")") == false)
+        #expect(shellSource.contains("Benchmark Target") == false)
+        #expect(shellSource.contains("Evaluation Target") == false)
+        #expect(shellSource.contains("\"Running Server\""))
+        #expect(shellSource.contains("Text(\"Servers\")"))
+        #expect(shellSource.contains("LoRA Adapter"))
+        #expect(shellSource.contains("Color.accentColor") == false)
+        #expect(shellSource.contains("selectedServerCreationKind"))
+        #expect(shellSource.contains("\"Session Name\""))
+        #expect(shellSource.contains("Button(\"Add Local Server\")"))
+        #expect(shellSource.contains("Button(\"Add Remote Server\")"))
+        #expect(shellSource.contains("MelixSectionCard(\"New Local Session\")"))
+        #expect(shellSource.contains("\"Server Type\"") == false)
+        #expect(shellSource.contains("Button(\"Create Local Server\")") == false)
+        #expect(shellSource.contains(".disabled(viewModel.canCreateLocalServerFromDraft == false)"))
+        #expect(shellSource.contains(".disabled(viewModel.canSaveRemoteServerDraft == false)"))
+        #expect(shellSource.contains("Scanning Ready to Run Models"))
+        #expect(serverSidebarSource.contains("Text(target.title)"))
+        #expect(serverSidebarSource.contains("Text(target.detailText)"))
+        #expect(serverSidebarSource.contains("Text(target.statusText)"))
+        #expect(serverSidebarSource.components(separatedBy: ".lineLimit(1)").count >= 4)
+        #expect(serverSidebarSource.contains(".lineLimit(2)") == false)
+        #expect(serverEditorSource.contains("(\"None\", \"baseline\")"))
+        #expect(serverEditorSource.contains("(\"Sparse Prefill\", \"sparse_prefill\")"))
+        #expect(serverEditorSource.contains("\"Acceleration Mode\""))
+        #expect(serverEditorSource.contains("\"Baseline\"") == false)
         #expect(modelsSource.contains("MelixSectionCard(\"Registry Roots\")") == false)
         #expect(modelsTabSource.contains("DesktopRegistryBroadsheetSection(\"Model Registry\")"))
         #expect(modelsTabSource.contains("DesktopRegistryBroadsheetSection(\"Model Settings\")"))
-        #expect(registrySource.contains("DesktopRegistryBroadsheetSection(\"Unified Model List\")"))
+        #expect(registrySource.contains("registryGroup(.readyToRun, title: \"Ready to Run\")"))
+        #expect(registrySource.contains("registryGroup(.discoverAndDownload, title: \"Discover & Download\")"))
         #expect(registrySource.contains("DesktopRegistryInspectorPane(\"Model Card\")"))
         #expect(modelsSource.contains("DesktopRegistryBroadsheetSection(\"Registry Roots\")"))
         #expect(registrySource.contains("DesktopRegistryRowBackground"))
         #expect(registrySource.contains("Run Suitability"))
+    }
+
+    @Test("desktop workspace reserves titlebar chrome space")
+    func desktopWorkspaceReservesTitlebarChromeSpace() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let chromeSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
+        )
+        let shellSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift"
+        )
+        let chromeSource = try String(contentsOf: chromeSourceURL, encoding: .utf8)
+        let shellSource = try String(contentsOf: shellSourceURL, encoding: .utf8)
+
+        #expect(chromeSource.contains("workspaceTitleBarContentTopInset"))
+        #expect(shellSource.contains(".padding(.top, DesktopShellChromeMetrics.workspaceTitleBarContentTopInset)"))
+        #expect(
+            DesktopShellChromeMetrics.workspaceTitleBarContentTopInset
+            >= DesktopShellChromeMetrics.titleBarTabHeightBudget + 24
+        )
+    }
+
+    @Test("server sidebar rows opt out of appkit focus rings")
+    func serverSidebarRowsOptOutOfAppKitFocusRings() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let shellSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift"
+        )
+        let shellSource = try String(contentsOf: shellSourceURL, encoding: .utf8)
+
+        #expect(shellSource.contains(".buttonStyle(.plain)\n                            .focusable(false)"))
     }
 
     @Test("models tab renders Hugging Face hub ingress state")
@@ -1455,7 +1592,7 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        snapshot.models = [makeMenuBarModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
         snapshot.runtimeSessions = [
             makeDesktopRuntimeSession(
                 lifecycleState: .paused,
@@ -1495,7 +1632,7 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        snapshot.models = [makeMenuBarModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
         snapshot.runtimeSessions = [
             makeDesktopRuntimeSession(
                 lifecycleState: .stopped,
@@ -1523,7 +1660,7 @@ struct DesktopFoundationViewTests {
         #expect(session.canWake == false)
         #expect(session.canStop == false)
         #expect(notice.title.contains("Stopped"))
-        #expect(notice.detail.contains("serve melix-dev-text"))
+        #expect(notice.detail.contains("serve \(desktopTestReadyModelID)"))
     }
 
     @Test("tools workspace renders lora training controls for local and Hugging Face datasets")
@@ -2074,6 +2211,7 @@ struct DesktopFoundationViewTests {
             serverStateText: "Ready",
             connectionStateText: "Connected",
             connectionDetailText: "Snapshot hydrated",
+            healthState: .runtimeReady,
             dashboardCards: [],
             queueLanes: [],
             models: [],
@@ -2624,6 +2762,11 @@ struct DesktopFoundationViewTests {
     @MainActor
     func toolsTabButtonsDispatchActions() async throws {
         let client = FakeControlPlaneXPCClient()
+        var snapshot = makeAudioSetupSnapshot(
+            models: [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
+        )
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
         await client.configureModelOperation(
             makeNamedModelOperationResult(
                 operation: "registry_snapshot",
@@ -2680,17 +2823,17 @@ struct DesktopFoundationViewTests {
         await tab.uploadPrimaryModel()
 
         let actions = await client.recordedActions
-        #expect(actions.contains("info:melix-dev-text"))
-        #expect(actions.contains("operation:registry_snapshot:melix-dev-text"))
+        #expect(actions.contains("info:\(desktopTestReadyModelID)"))
+        #expect(actions.contains("operation:registry_snapshot:\(desktopTestReadyModelID)"))
         #expect(actions.contains("doctor"))
         #expect(actions.contains("bench"))
-        #expect(actions.contains("operation:convert:melix-dev-text"))
-        #expect(actions.contains("operation:quantize:melix-dev-text"))
-        #expect(actions.contains("operation:train_lora:melix-dev-text"))
-        #expect(actions.contains("operation:activate_adapter:melix-dev-text"))
-        #expect(actions.contains("operation:download:melix-dev-text"))
-        #expect(actions.contains("operation:upload:melix-dev-text"))
-        #expect(viewModel.selectedModelInfo?.modelID == "melix-dev-text")
+        #expect(actions.contains("operation:convert:\(desktopTestReadyModelID)"))
+        #expect(actions.contains("operation:quantize:\(desktopTestReadyModelID)"))
+        #expect(actions.contains("operation:train_lora:\(desktopTestReadyModelID)"))
+        #expect(actions.contains("operation:activate_adapter:\(desktopTestReadyModelID)"))
+        #expect(actions.contains("operation:download:\(desktopTestReadyModelID)"))
+        #expect(actions.contains("operation:upload:\(desktopTestReadyModelID)"))
+        #expect(viewModel.selectedModelInfo?.modelID == desktopTestReadyModelID)
         #expect(viewModel.lastDoctorReport?.markdown.contains("Melix Doctor") == true)
         #expect(viewModel.lastBenchReport?.markdown.contains("Melix Bench") == true)
         #expect(viewModel.lastModelOperation?.operation == "upload")
@@ -2727,7 +2870,7 @@ struct DesktopFoundationViewTests {
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         let renderedTexts = renderedTextValues(in: view)
         let selectedRunIndex = try #require(renderedTexts.firstIndex(where: { $0.contains("Selected run ") }))
-        let configIndex = try #require(renderedTexts.firstIndex(of: "Catalog Model"))
+        let configIndex = try #require(renderedTexts.firstIndex(of: "Start New Server..."))
 
         #expect(view.subviews.isEmpty == false)
         #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .benchmark)
@@ -2824,7 +2967,7 @@ struct DesktopFoundationViewTests {
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         let renderedTexts = renderedTextValues(in: view)
         let selectedRunIndex = try #require(renderedTexts.firstIndex(where: { $0.contains("Selected matrix run ") }))
-        let configIndex = try #require(renderedTexts.firstIndex(of: "Catalog Model"))
+        let configIndex = try #require(renderedTexts.firstIndex(of: "Start New Server..."))
 
         #expect(view.subviews.isEmpty == false)
         #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .matrix)
@@ -2844,6 +2987,14 @@ struct DesktopFoundationViewTests {
     @MainActor
     func diagnosticsToolSectionActionHelpersDispatchBenchmarkOperations() async throws {
         let client = FakeControlPlaneXPCClient()
+        var snapshot = makeAudioSetupSnapshot(
+            models: [
+                ModelCatalog.devTextModel(),
+                makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
+            ]
+        )
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
         await client.configureModelOperation(
             makeNamedModelOperationResult(
                 operation: "registry_snapshot",
@@ -2886,12 +3037,12 @@ struct DesktopFoundationViewTests {
         let actions = await client.recordedActions
 
         #expect(view.subviews.isEmpty == false)
-        #expect(actions.contains("info:melix-dev-text"))
+        #expect(actions.contains("info:\(desktopTestReadyModelID)"))
         #expect(actions.contains("doctor"))
         #expect(actions.contains("bench"))
         #expect(actions.contains("eval"))
         #expect(actions.contains("bench.export"))
-        #expect(actions.contains("operation:registry_snapshot:melix-dev-text"))
+        #expect(actions.contains("operation:registry_snapshot:\(desktopTestReadyModelID)"))
         #expect(viewModel.lastBenchmarkCSVExport?.rowCount == 3)
         #expect(viewModel.lastEvaluationExport?.rowCount == 2)
         #expect(viewModel.selectedBenchmarkHistoryJobID == "bench-older")
@@ -2899,20 +3050,73 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedBenchmarkSuiteIDs.contains("latency"))
     }
 
+    @Test("diagnostics evaluation renders CLI workflow failures inline")
+    @MainActor
+    func diagnosticsEvaluationRendersCLIWorkflowFailuresInline() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        var snapshot = makeAudioSetupSnapshot(
+            models: [
+                ModelCatalog.devTextModel(),
+                makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
+            ]
+        )
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .evalRun:
+                return .failure(
+                    .processFailed(
+                        commandID: "eval.run",
+                        surface: .subprocess,
+                        exitCode: 2,
+                        stderr: "dataset top200.event-extraction.top20.v1 was not found"
+                    )
+                )
+            default:
+                return .success("{}\n")
+            }
+        }
+        let viewModel = RuntimeViewModel(
+            client: client,
+            cliWorkflowRunner: workflowRunner
+        )
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.preferredDiagnosticsStage = .evaluation
+
+        await viewModel.runEvaluation()
+
+        let view = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Evaluation Command Failed"))
+        #expect(renderedTexts.contains { $0.contains("eval.run") })
+        #expect(renderedTexts.contains { $0.contains("dataset top200.event-extraction.top20.v1 was not found") })
+    }
+
     @Test("workspace diagnostics renders evaluation compare controls")
     @MainActor
     func workspaceDiagnosticsRendersEvaluationCompareControls() async throws {
         let client = FakeControlPlaneXPCClient()
-        var derivedModel = ModelCatalog.devTextModel()
-        derivedModel.modelID = "melix-dev-text-lora"
-        await client.configureSnapshot(
-            makeAudioSetupSnapshot(
-                models: [
-                    ModelCatalog.devTextModel(),
-                    derivedModel,
-                ]
-            )
+        let derivedModel = makeMenuBarModelSummary(modelID: desktopTestReadyLoRAModelID, state: .modelWarm)
+        var snapshot = makeAudioSetupSnapshot(
+            models: [
+                ModelCatalog.devTextModel(),
+                makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
+                derivedModel,
+            ]
         )
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
         await client.configureExportResult(
             ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
         )
@@ -2930,29 +3134,29 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Compare"))
         #expect(renderedTexts.contains("multiple_choice_accuracy"))
         #expect(renderedTexts.contains("sandboxed"))
-        #expect(viewModel.evaluationCompareTargetModels.map(\.modelID) == ["melix-dev-text-lora"])
+        #expect(viewModel.evaluationCompareTargetModels.map(\.modelID) == [desktopTestReadyLoRAModelID])
     }
 
     @Test("diagnostics tool section runComparison helper dispatches compare parameters through shared state")
     @MainActor
     func diagnosticsToolSectionRunComparisonDispatchesCompareParameters() async throws {
         let client = FakeControlPlaneXPCClient()
-        var derivedModel = ModelCatalog.devTextModel()
-        derivedModel.modelID = "melix-dev-text-lora"
-        await client.configureSnapshot(
-            makeAudioSetupSnapshot(
-                models: [
-                    ModelCatalog.devTextModel(),
-                    derivedModel,
-                ]
-            )
+        let derivedModel = makeMenuBarModelSummary(modelID: desktopTestReadyLoRAModelID, state: .modelWarm)
+        var snapshot = makeAudioSetupSnapshot(
+            models: [
+                ModelCatalog.devTextModel(),
+                makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
+                derivedModel,
+            ]
         )
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
 
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
-        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationModelID = desktopTestReadyModelID
         viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
-        viewModel.selectedEvaluationCompareTargetModelIDs = ["melix-dev-text-lora"]
+        viewModel.selectedEvaluationCompareTargetModelIDs = [desktopTestReadyLoRAModelID]
         let section = DesktopDiagnosticsToolSectionView(
             viewModel: viewModel,
             foundation: viewModel.desktopFoundationState
@@ -2962,15 +3166,23 @@ struct DesktopFoundationViewTests {
 
         let request = try #require(await client.recordedEvaluationRequests.last)
         #expect(viewModel.selectedEvaluationMode == .compare)
-        #expect(request.modelID == "melix-dev-text")
+        #expect(request.modelID == desktopTestReadyModelID)
         #expect(request.parameters["compare_mode"] == "base_vs_targets")
-        #expect(request.parameters["compare_target_model_ids"] == "melix-dev-text-lora")
+        #expect(request.parameters["compare_target_model_ids"] == desktopTestReadyLoRAModelID)
     }
 
     @Test("diagnostics tool section runComparison helper requires an explicit compare target")
     @MainActor
     func diagnosticsToolSectionRunComparisonRequiresExplicitTarget() async throws {
         let client = FakeControlPlaneXPCClient()
+        var snapshot = makeAudioSetupSnapshot(
+            models: [
+                ModelCatalog.devTextModel(),
+                makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
+            ]
+        )
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
         viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
@@ -3033,6 +3245,14 @@ struct DesktopFoundationViewTests {
         await client.configureExportResult(
             ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
         )
+        var snapshot = makeAudioSetupSnapshot(
+            models: [
+                ModelCatalog.devTextModel(),
+                makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
+            ]
+        )
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
         viewModel.selectSurface(.tools)
@@ -3112,34 +3332,39 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.benchmarkModels.isEmpty)
     }
 
-    @Test("diagnostics tool section renders the direct Hugging Face repo benchmark target input")
+    @Test("diagnostics tool section does not render hub repository benchmark targets")
     @MainActor
-    func diagnosticsToolSectionRendersDirectHFRepoBenchmarkInput() async throws {
+    func diagnosticsToolSectionDoesNotRenderHubRepositoryBenchmarkTargets() async throws {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
         viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.diagnostics)
-        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
-        viewModel.benchmarkHFRepoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
 
         let section = DesktopDiagnosticsToolSectionView(
             viewModel: viewModel,
             foundation: viewModel.desktopFoundationState
         )
         let view = hostView(section)
+        let renderedTexts = renderedTextValues(in: view)
 
         #expect(view.subviews.isEmpty == false)
-        #expect(viewModel.benchmarkTargetSummaryText.contains("unsloth/gemma-4-E4B-it-MLX-8bit"))
+        #expect(renderedTexts.contains("Hugging Face Repo") == false)
+        #expect(viewModel.benchmarkTargetSummaryText.contains("unsloth/gemma-4-E4B-it-MLX-8bit") == false)
     }
 
     @Test("workspace diagnostics renders canonical benchmark and evaluation controls")
     @MainActor
     func workspaceDiagnosticsRendersCanonicalBenchmarkAndEvaluationControls() async throws {
         let client = FakeControlPlaneXPCClient()
-        await client.configureSnapshot(
-            makeAudioSetupSnapshot(models: [ModelCatalog.devTextModel()])
+        var snapshot = makeAudioSetupSnapshot(
+            models: [
+                ModelCatalog.devTextModel(),
+                makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
+            ]
         )
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
         viewModel.selectSurface(.tools)
@@ -3153,9 +3378,9 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Benchmark"))
         #expect(renderedTexts.contains("Matrix"))
         #expect(renderedTexts.contains("Evaluation"))
-        #expect(renderedTexts.contains("Catalog Model"))
-        #expect(renderedTexts.contains("Hugging Face Repo"))
-        #expect(renderedTexts.contains("Melix Text • melix-dev-text"))
+        #expect(renderedTexts.contains("Primary Server"))
+        #expect(renderedTexts.contains("Catalog Model") == false)
+        #expect(renderedTexts.contains("Hugging Face Repo") == false)
         #expect(renderedTexts.contains("3"))
         #expect(renderedTexts.contains("Partial Prefix"))
         #expect(renderedTexts.contains("Enabled"))
@@ -3182,7 +3407,7 @@ struct DesktopFoundationViewTests {
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         let renderedTexts = renderedTextValues(in: view)
         let selectedEvalIndex = try #require(renderedTexts.firstIndex(where: { $0.contains("Selected eval ") }))
-        let configIndex = try #require(renderedTexts.firstIndex(of: "Catalog Model"))
+        let configIndex = try #require(renderedTexts.firstIndex(of: "Start New Server..."))
 
         #expect(view.subviews.isEmpty == false)
         #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .evaluation)
@@ -3290,9 +3515,9 @@ struct DesktopFoundationViewTests {
         #expect(view.categoryAndSubjectText == "math • arithmetic")
     }
 
-    @Test("workspace diagnostics covers evaluation helper actions and direct repo configuration")
+    @Test("workspace diagnostics covers evaluation helper actions and running server configuration")
     @MainActor
-    func workspaceDiagnosticsCoversEvaluationHelperActionsAndDirectRepoConfiguration() async throws {
+    func workspaceDiagnosticsCoversEvaluationHelperActionsAndRunningServerConfiguration() async throws {
         let client = FakeControlPlaneXPCClient()
         await client.configureExportResult(
             ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
@@ -3315,12 +3540,10 @@ struct DesktopFoundationViewTests {
         section.selectEvaluationHistory(jobID: "eval-newer")
         #expect(viewModel.selectedEvaluationHistoryEntry?.jobID == "eval-newer")
 
-        viewModel.selectedEvaluationTargetMode = .huggingFaceRepo
-        viewModel.evaluationHFRepoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
         let hosted = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
 
         #expect(hosted.subviews.isEmpty == false)
-        #expect(viewModel.evaluationTargetSummaryText.contains("unsloth/gemma-4-E4B-it-MLX-8bit"))
+        #expect(viewModel.evaluationTargetSummaryText.contains("unsloth/gemma-4-E4B-it-MLX-8bit") == false)
     }
 
     @Test("tools tab renders pending adapter registry and history rows")
@@ -4674,6 +4897,22 @@ struct DesktopFoundationViewTests {
         #expect(source.contains(".focusable(false)"))
     }
 
+    @Test("desktop shell chrome opts titlebar buttons out of focus ring and root sets app tint")
+    func desktopShellChromeOptsTitlebarButtonsOutOfFocusRingAndRootSetsAppTint() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let shellChrome = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
+        )
+        let rootView = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift"
+        )
+        let chromeSource = try String(contentsOf: shellChrome, encoding: .utf8)
+        let rootSource = try String(contentsOf: rootView, encoding: .utf8)
+
+        #expect(chromeSource.contains(".focusable(false)"))
+        #expect(rootSource.contains(".tint(MelixDesignTokens.accent)"))
+    }
+
     @Test("chat session branch display hides main but keeps fork labels")
     @MainActor
     func chatSessionBranchDisplayHidesMainButKeepsForkLabels() throws {
@@ -5628,6 +5867,8 @@ struct Phase8WindowUIAcceptanceRunnerTests {
             withIntermediateDirectories: true
         )
         try Data("{\"ok\":true}\n".utf8).write(to: cliBundlePath)
+        let materializedModelID = "melix-dev-qwen-local"
+        let derivedModelID = "\(materializedModelID)-lora-adapter"
 
         let client = FakeControlPlaneXPCClient()
         await client.configureExportResult(
@@ -5639,7 +5880,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         var baseModel = ModelCatalog.devTextModel()
         baseModel.modelID = "melix-dev-text"
         var derivedModel = ModelCatalog.devTextModel()
-        derivedModel.modelID = "melix-dev-text-lora"
+        derivedModel.modelID = derivedModelID
         snapshot.models = [baseModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
         runtimeSession.serverSessionID = "server-session-1"
@@ -5647,6 +5888,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         runtimeSession.powerState = .active
         snapshot.runtimeSessions = [runtimeSession]
         await client.configureSnapshot(snapshot)
+        await configurePhase8ReadyRegistrySnapshot(client, modelID: materializedModelID)
 
         let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
         await workflowRunner.configureHandler { command in
@@ -5671,7 +5913,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
             case .serverStart(let options):
                 return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
             case .chatRun(let options):
-                let assistantText = options.modelID == "melix-dev-text-lora" ? "DERIVED_OK" : "BASE_OK"
+                let assistantText = options.modelID == derivedModelID ? "DERIVED_OK" : "BASE_OK"
                 return .success(
                     """
                     {
@@ -5683,30 +5925,30 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                     }
                     """
                 )
-            case .loraTrain:
+            case .loraTrain(let options):
                 return .success(
                     """
                     {
                       "operation": "train_lora",
                       "job_id": "model-ops-0001",
-                      "source_model": "melix-dev-text",
+                      "source_model": "\(options.modelID)",
                       "output_path": "/tmp/melix-train-lora/model-ops-0001/adapters.safetensors",
                       "adapter_name": "phase8-acceptance",
                       "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
                     }
                     """
                 )
-            case .loraActivate:
+            case .loraActivate(let options):
                 return .success(
                     """
                     {
                       "operation": "activate_adapter",
                       "job_id": "model-ops-0002",
-                      "source_model": "melix-dev-text",
+                      "source_model": "\(options.modelID)",
                       "output_path": "/tmp/melix-activate/model-ops-0002/manifest.json",
                       "adapter_name": "phase8-acceptance",
                       "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
-                      "derived_model_id": "melix-dev-text-lora",
+                      "derived_model_id": "\(derivedModelID)",
                       "derived_model_path": "/tmp/melix-activate/model-ops-0002/derived"
                     }
                     """
@@ -5784,7 +6026,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
             config: .init(
                 repoRoot: tempRoot.path,
                 melixHome: tempRoot.appendingPathComponent("melix-home", isDirectory: true).path,
-                modelID: "melix-dev-text",
+                modelID: materializedModelID,
                 localModelPath: tempRoot.appendingPathComponent("fixture-model", isDirectory: true).path,
                 trainingFixture: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
                 benchSuites: ["smoke"],
@@ -5875,19 +6117,60 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         snapshot.serverState = .serverReady
         var fallbackTextModel = ModelCatalog.devTextModel()
         fallbackTextModel.modelID = "melix-dev-text"
-        var importedModel = ModelCatalog.devTextModel()
-        importedModel.modelID = materializedModelID
-        importedModel.kind = "embedding"
-        importedModel.features = ["embed"]
         var derivedModel = ModelCatalog.devTextModel()
         derivedModel.modelID = derivedModelID
-        snapshot.models = [fallbackTextModel, importedModel, derivedModel]
+        snapshot.models = [fallbackTextModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
         runtimeSession.serverSessionID = "server-session-1"
         runtimeSession.lifecycleState = .ready
         runtimeSession.powerState = .active
         snapshot.runtimeSessions = [runtimeSession]
         await client.configureSnapshot(snapshot)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: #"""
+                {
+                  "operation": "registry_snapshot",
+                  "jobs": [],
+                  "adapters": [],
+                  "derived_models": [],
+                  "model_registry": {
+                    "scanned_at_unix_ms": 1712300000000,
+                    "roots": [
+                      {
+                        "root_id": "root-managed",
+                        "root_path": "/tmp/melix-managed",
+                        "root_order": 0,
+                        "accessible": true,
+                        "error_code": "",
+                        "error_message": "",
+                        "discovered_model_ids": ["\#(materializedModelID)"]
+                      }
+                    ],
+                    "models": [
+                      {
+                        "model_id": "\#(materializedModelID)",
+                        "model_path": "/tmp/melix-managed/\#(materializedModelID)",
+                        "model_kind": "text",
+                        "revision": "main",
+                        "max_context": 4096,
+                        "ext": {
+                          "melix.registry_model_name": "Qwen Local",
+                          "melix.capability.supported_modalities": "text",
+                          "melix.capability.supported_tasks": "generate",
+                          "melix.capability.class": "text",
+                          "melix.source_kind": "managed_import"
+                        }
+                      }
+                    ]
+                  }
+                }
+                """#
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
 
         let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
         await workflowRunner.configureHandler { command in
@@ -6126,8 +6409,9 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         fallbackTextModel.modelID = "melix-dev-text"
         var importedModel = ModelCatalog.devTextModel()
         importedModel.modelID = materializedModelID
-        importedModel.kind = "embedding"
-        importedModel.features = ["embed"]
+        importedModel.kind = "text"
+        importedModel.features = ["chat"]
+        importedModel.settings.alias = "Qwen Local"
         var derivedModel = ModelCatalog.devTextModel()
         derivedModel.modelID = "\(materializedModelID)-lora-adapter"
         snapshot.models = [fallbackTextModel, importedModel, derivedModel]
@@ -6137,6 +6421,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         runtimeSession.powerState = .active
         snapshot.runtimeSessions = [runtimeSession]
         await client.configureSnapshot(snapshot)
+        await configurePhase8ReadyRegistrySnapshot(client, modelID: materializedModelID)
 
         let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
         await workflowRunner.configureHandler { command in
@@ -6241,6 +6526,8 @@ struct Phase8WindowUIAcceptanceRunnerTests {
             withIntermediateDirectories: true
         )
         try Data("{\"ok\":true}\n".utf8).write(to: cliBundlePath)
+        let materializedModelID = "melix-dev-qwen-local"
+        let derivedModelID = "\(materializedModelID)-lora-adapter"
 
         let client = FakeControlPlaneXPCClient()
         await client.configureExportResult(
@@ -6251,6 +6538,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         snapshot.models = [ModelCatalog.devTextModel()]
         snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
+        await configurePhase8ReadyRegistrySnapshot(client, modelID: materializedModelID)
 
         let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
         await workflowRunner.configureHandler { command in
@@ -6284,30 +6572,30 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                     }
                     """
                 )
-            case .loraTrain:
+            case .loraTrain(let options):
                 return .success(
                     """
                     {
                       "operation": "train_lora",
                       "job_id": "model-ops-0001",
-                      "source_model": "melix-dev-text",
+                      "source_model": "\(options.modelID)",
                       "output_path": "/tmp/melix-train-lora/model-ops-0001/adapters.safetensors",
                       "adapter_name": "phase8-acceptance",
                       "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
                     }
                     """
                 )
-            case .loraActivate:
+            case .loraActivate(let options):
                 return .success(
                     """
                     {
                       "operation": "activate_adapter",
                       "job_id": "model-ops-0002",
-                      "source_model": "melix-dev-text",
+                      "source_model": "\(options.modelID)",
                       "output_path": "/tmp/melix-activate/model-ops-0002/manifest.json",
                       "adapter_name": "phase8-acceptance",
                       "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
-                      "derived_model_id": "melix-dev-text-lora",
+                      "derived_model_id": "\(derivedModelID)",
                       "derived_model_path": "/tmp/melix-activate/model-ops-0002/derived"
                     }
                     """
@@ -6383,7 +6671,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
             config: .init(
                 repoRoot: tempRoot.path,
                 melixHome: tempRoot.appendingPathComponent("melix-home", isDirectory: true).path,
-                modelID: "melix-dev-text",
+                modelID: materializedModelID,
                 localModelPath: tempRoot.appendingPathComponent("fixture-model", isDirectory: true).path,
                 trainingFixture: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
                 benchSuites: ["smoke"],
@@ -6668,6 +6956,71 @@ private func makeNamedModelOperationResult(
         result.artifact.runtime = "mlx_text"
     }
     return result
+}
+
+private func configurePhase8ReadyRegistrySnapshot(
+    _ client: FakeControlPlaneXPCClient,
+    modelID: String,
+    modelName: String = "Qwen Local",
+    rootPath: String = "/tmp/melix-managed"
+) async {
+    await client.configureModelOperation(
+        makeNamedModelOperationResult(
+            operation: "registry_snapshot",
+            outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+            manifestJSON: makePhase8ReadyRegistrySnapshotManifest(
+                modelID: modelID,
+                modelName: modelName,
+                rootPath: rootPath
+            )
+        ),
+        forNamedOperation: "registry_snapshot"
+    )
+}
+
+private func makePhase8ReadyRegistrySnapshotManifest(
+    modelID: String,
+    modelName: String,
+    rootPath: String
+) -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "jobs": [],
+      "adapters": [],
+      "derived_models": [],
+      "model_registry": {
+        "scanned_at_unix_ms": 1712300000000,
+        "roots": [
+          {
+            "root_id": "root-managed",
+            "root_path": "\#(rootPath)",
+            "root_order": 0,
+            "accessible": true,
+            "error_code": "",
+            "error_message": "",
+            "discovered_model_ids": ["\#(modelID)"]
+          }
+        ],
+        "models": [
+          {
+            "model_id": "\#(modelID)",
+            "model_path": "\#(rootPath)/\#(modelID)",
+            "model_kind": "text",
+            "revision": "main",
+            "max_context": 4096,
+            "ext": {
+              "melix.registry_model_name": "\#(modelName)",
+              "melix.capability.supported_modalities": "text",
+              "melix.capability.supported_tasks": "generate",
+              "melix.capability.class": "text",
+              "melix.source_kind": "managed_import"
+            }
+          }
+        ]
+      }
+    }
+    """#
 }
 
 private func makeMenuBarModelSummary(

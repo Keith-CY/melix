@@ -179,6 +179,7 @@ state from `.runtime`.
 - For non-trivial work, start from an explicit plan under `docs/plans/` or update the active plan before broad implementation.
 - During design, do not anchor on minimal change or implementation cost. Optimize for the best end-state architecture, best practices, and the most reasonable long-term choice for Melix.
 - During design, define the performance probes, measurement points, and success metrics for the code path being changed.
+- For material UI/UX changes, use the interactive walkthrough workflow in `docs/runbooks/agent-ui-walkthrough.md` before broad App implementation when feasible: create or update a `.runtime/walkthrough/` HTML artifact, review it with the operator in the in-app browser, record decisions in a paired runtime note, then implement after the direction is confirmed.
 - Prefer small, verifiable slices over broad speculative rewrites.
 - Do not claim completion without running the relevant verification commands and reporting the result.
 - Before any commit, ensure measured automated test coverage for the repository scope touched by the change is at least 95 percent. If coverage is not currently measurable for that scope, add or update the coverage command before committing.

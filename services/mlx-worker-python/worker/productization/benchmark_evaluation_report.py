@@ -62,6 +62,16 @@ _EVALUATION_SAMPLE_PROBE_KEYS = (
     "raw_response_chars",
     "extracted_result_chars",
 )
+_MATRIX_SUMMARY_METRIC_KEYS = (
+    "request_latency_mean_ms",
+    "request_latency_p95_ms",
+    "ttft_mean_ms",
+    "ttft_p95_ms",
+    "throughput_tokens_per_second",
+    "success_rate",
+    "failed_count",
+)
+_EVALUATION_SUMMARY_METRIC_KEYS = ("failure_count", "duration_seconds")
 _LOWER_IS_BETTER_METRIC_FRAGMENTS = (
     "latency",
     "ttft",
@@ -308,15 +318,7 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
     )
     for row in _dict_rows(bundle.get("benchmark_matrix_summary_rows", [])):
         label = _matrix_label(row, label_cache=label_cache)
-        for key in (
-            "request_latency_mean_ms",
-            "request_latency_p95_ms",
-            "ttft_mean_ms",
-            "ttft_p95_ms",
-            "throughput_tokens_per_second",
-            "success_rate",
-            "failed_count",
-        ):
+        for key in _MATRIX_SUMMARY_METRIC_KEYS:
             value = _float_or_none(row.get(key))
             if value is not None:
                 metrics[f"bench.matrix.{label}.{key}"] = value
@@ -332,7 +334,7 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
         score_value = _float_or_none(row.get("primary_score_value"))
         if score_value is not None:
             metrics[f"eval.{suite_id}.{score_name}"] = score_value
-        for key in ("failure_count", "duration_seconds"):
+        for key in _EVALUATION_SUMMARY_METRIC_KEYS:
             value = _float_or_none(row.get(key))
             if value is not None:
                 metrics[f"eval.{suite_id}.{key}"] = value
@@ -516,8 +518,8 @@ def _collect_evaluation_sample_probe_metrics(
                 failure_stage_counts.get((suite_id, failure_stage), 0) + 1
             )
     for (suite_id, key), aggregate in aggregates_by_suite_and_key.items():
-        _, value = _finalize_numeric_aggregate(key, aggregate)
-        metrics[f"eval.sample.{suite_id}.{key}_mean"] = value
+        total, count = aggregate
+        metrics[f"eval.sample.{suite_id}.{key}_mean"] = total / count
     for (suite_id, failure_stage), count in failure_stage_counts.items():
         metrics[f"eval.sample.{suite_id}.failure_stage.{failure_stage}.failure_count"] = float(count)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import math
 from pathlib import Path
@@ -92,35 +93,94 @@ def test_job_registry_restore_scans_manifest_directories_once(monkeypatch: pytes
     assert len(scan_calls) <= 9
 
 
-def test_restore_manifest_jobs_reuses_sorted_manifest_paths_without_resorting(
-    monkeypatch: pytest.MonkeyPatch,
+def test_restore_manifest_jobs_preserves_collected_manifest_order_without_resorting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     registry = ModelOpsJobRegistry()
-    manifest_paths = [
-        Path("/tmp/train_lora/model-ops-0001/train_lora.adapter.json"),
-        Path("/tmp/train_lora/model-ops-0002/train_lora.adapter.json"),
-    ]
+    first_manifest = tmp_path / "train_lora" / "model-ops-0002" / "train_lora.adapter.json"
+    second_manifest = tmp_path / "train_lora" / "model-ops-0001" / "train_lora.adapter.json"
+    first_manifest.parent.mkdir(parents=True)
+    second_manifest.parent.mkdir(parents=True)
+    first_manifest.write_bytes(
+        json.dumps(
+            {
+                "job_id": "model-ops-0002",
+                "operation": "train_lora",
+                "source_model": "src-2",
+            }
+        ).encode("utf-8")
+    )
+    second_manifest.write_bytes(
+        json.dumps(
+            {
+                "job_id": "model-ops-0001",
+                "operation": "train_lora",
+                "source_model": "src-1",
+            }
+        ).encode("utf-8")
+    )
+    ordered_manifest_paths = (first_manifest, second_manifest)
+    original_sorted = builtins.sorted
 
-    def fail_sorted(*args: object, **kwargs: object) -> list[Path]:  # pragma: no cover - regression guard
-        raise AssertionError("_restore_manifest_jobs should reuse already-sorted manifest paths")
+    class RestoreResortDetected(Exception):
+        pass
 
-    def fake_read_manifest_dict(path: Path) -> dict[str, object]:
-        return {
-            "job_id": path.parent.name,
-            "operation": "train_lora",
-            "source_model": "melix-dev-text",
-        }
+    def fail_on_restore_resort(iterable, *args, **kwargs):
+        iterated_values = tuple(iterable)
+        if iterated_values == ordered_manifest_paths:
+            raise RestoreResortDetected(
+                "_restore_manifest_jobs should not resort ordered manifest paths"
+            )
+        return original_sorted(iterated_values, *args, **kwargs)
 
-    monkeypatch.setattr("worker.model_ops.job_registry.sorted", fail_sorted, raising=False)
-    monkeypatch.setattr(registry, "_read_manifest_dict", fake_read_manifest_dict)
+    monkeypatch.setattr(builtins, "sorted", fail_on_restore_resort)
+
+    with pytest.raises(RestoreResortDetected):
+        sorted(list(ordered_manifest_paths))
 
     registry._restore_manifest_jobs(
         operation="train_lora",
-        manifest_paths=manifest_paths,
+        manifest_paths=ordered_manifest_paths,
         pct=0.97,
     )
 
-    assert list(registry._jobs) == ["model-ops-0001", "model-ops-0002"]
+    assert list(registry._jobs) == ["model-ops-0002", "model-ops-0001"]
+
+
+
+def test_job_registry_restore_reads_manifest_bytes_without_text_decode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    jobs_root = tmp_path / "jobs"
+    manifest_path = jobs_root / "train_lora" / "model-ops-0001" / "train_lora.adapter.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "job_id": "model-ops-0001",
+                "operation": "train_lora",
+                "source_model": "melix-dev-text",
+            }
+        ).encode("utf-8")
+    )
+
+    read_bytes_calls: list[Path] = []
+    original_read_bytes = Path.read_bytes
+
+    def tracked_read_bytes(self: Path) -> bytes:
+        read_bytes_calls.append(self)
+        return original_read_bytes(self)
+
+    def forbidden_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        raise AssertionError(f"restore manifests should be read as bytes: {self}")  # pragma: no cover
+
+    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
+    monkeypatch.setattr(Path, "read_text", forbidden_read_text)
+
+    registry = ModelOpsJobRegistry(jobs_root=jobs_root)
+
+    assert "model-ops-0001" in registry._jobs
+    assert read_bytes_calls == [manifest_path]
 
 
 def test_json_safe_reuses_clean_containers_and_copies_only_changed_branch() -> None:

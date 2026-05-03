@@ -7,6 +7,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import tempfile
+from collections.abc import Iterable, Iterator
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -504,26 +507,12 @@ def _materialize_evaluation_rows(
             details={key: str(value) for key, value in source_metadata.items()},
         )
 
-    serialized_samples: list[dict[str, Any]] = []
-    for index, row in enumerate(rows, start=1):
-        serialized_samples.append(
-            {
-                "id": _string_field(row, field_mapping.sample_id_path) or f"sample-{index}",
-                "system": _string_field(row, field_mapping.system_path),
-                "input": {
-                    "text": _required_string_field(row, field_mapping.input_text_path, "input_text_path"),
-                },
-                "target": _required_value(row, field_mapping.target_path, "target_path"),
-            }
-        )
-
-    package_path.mkdir(parents=True, exist_ok=True)
     manifest_payload = {
         "schema_version": "melix.evaluation_dataset_package.v2",
         "dataset_id": dataset_id,
         "suite_id": suite_id,
         "version": "2026-04-14",
-        "sample_count": len(serialized_samples),
+        "sample_count": len(rows),
         "split": "validation",
         "task_kind": "text-generation",
         "input_modalities": ["text"],
@@ -542,19 +531,61 @@ def _materialize_evaluation_rows(
         },
         **source_metadata,
     }
-    manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
-    _write_jsonl_rows(samples_path, serialized_samples)
+    _write_materialized_package(
+        cache_root=cache_root,
+        package_path=package_path,
+        manifest_payload=manifest_payload,
+        serialized_samples=_iter_serialized_samples(rows, field_mapping),
+    )
     return MaterializedEvaluationDataset(package_path=package_path, cache_key=cache_key, cache_hit=False)
 
 
-def _write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
+def _write_materialized_package(
+    *,
+    cache_root: Path,
+    package_path: Path,
+    manifest_payload: dict[str, Any],
+    serialized_samples: Iterable[dict[str, Any]],
+) -> None:
+    staging_path = Path(tempfile.mkdtemp(prefix=f".{package_path.name}.tmp-", dir=cache_root))
+    try:
+        _write_jsonl_rows(staging_path / "samples.jsonl", serialized_samples)
+        (staging_path / "manifest.json").write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
+        if package_path.exists():
+            manifest_path = package_path / "manifest.json"
+            samples_path = package_path / "samples.jsonl"
+            if manifest_path.is_file() and samples_path.is_file():
+                return
+            shutil.rmtree(package_path)
+        staging_path.replace(package_path)
+    finally:
+        shutil.rmtree(staging_path, ignore_errors=True)
+
+
+def _iter_serialized_samples(
+    rows: list[dict[str, Any]],
+    field_mapping: EvaluationFieldMapping,
+) -> Iterator[dict[str, Any]]:
+    for index, row in enumerate(rows, start=1):
+        yield {
+            "id": _string_field(row, field_mapping.sample_id_path) or f"sample-{index}",
+            "system": _string_field(row, field_mapping.system_path),
+            "input": {
+                "text": _required_string_field(row, field_mapping.input_text_path, "input_text_path"),
+            },
+            "target": _required_value(row, field_mapping.target_path, "target_path"),
+        }
+
+
+def _write_jsonl_rows(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
-        if not rows:
-            handle.write("\n")
-            return
+        wrote_row = False
         for row in rows:
+            wrote_row = True
             handle.write(json.dumps(row))
+            handle.write("\n")
+        if not wrote_row:
             handle.write("\n")
 
 

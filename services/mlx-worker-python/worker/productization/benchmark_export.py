@@ -532,16 +532,36 @@ def _collect_benchmark_matrix_run(
     summary_rows: list[dict[str, object]],
     request_rows: list[dict[str, object]],
 ) -> None:
-    job_path = run_root / "bench-matrix-job.json"
-    if job_path.is_file():
+    job_path: Path | None = None
+    summary_path: Path | None = None
+    requests_path: Path | None = None
+
+    try:
+        with os.scandir(run_root) as entries:
+            for entry in entries:
+                name = entry.name
+                try:
+                    if not entry.is_file():
+                        continue
+                except OSError:
+                    continue
+                path = run_root / name
+                if name == "bench-matrix-job.json":
+                    job_path = path
+                elif name == "bench-matrix-summary.jsonl":
+                    summary_path = path
+                elif name == "bench-matrix-requests.jsonl":
+                    requests_path = path
+    except OSError:
+        return
+
+    if job_path is not None:
         jobs.append(_load_json_object(job_path))
 
-    summary_path = run_root / "bench-matrix-summary.jsonl"
-    if summary_path.is_file():
+    if summary_path is not None:
         summary_rows.extend(_iter_jsonl_dict_rows(summary_path))
 
-    requests_path = run_root / "bench-matrix-requests.jsonl"
-    if requests_path.is_file():
+    if requests_path is not None:
         request_rows.extend(_iter_jsonl_dict_rows(requests_path))
 
 

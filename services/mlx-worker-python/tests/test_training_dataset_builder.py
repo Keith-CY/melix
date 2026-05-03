@@ -222,6 +222,78 @@ def test_load_training_dataset_package_stops_reading_after_sample_limit(
     assert package.normalized_samples == [{"text": "alpha"}]
 
 
+def test_load_training_dataset_package_supports_preference_pair_samples(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "preference-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "preference-package",
+                "format": "preference_pair",
+                "sample_count": 2,
+                "version": "1",
+                "validation_sample_count": 1,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        '{"prompt": "Choose a greeting.", "chosen": "Hello.", "rejected": "Goodbye."}\n'
+        '{"prompt": "Pick the safer answer.", "chosen": "Use the guide.", "rejected": "Guess."}\n',
+        encoding="utf-8",
+    )
+    (package_path / "valid.jsonl").write_text(
+        '{"prompt": "Holdout?", "chosen": "Yes.", "rejected": "No."}\n',
+        encoding="utf-8",
+    )
+
+    package = load_training_dataset_package(str(package_path))
+
+    assert package.format == "preference_pair"
+    assert package.response_only_supported is False
+    assert package.normalized_samples == [
+        {"prompt": "Choose a greeting.", "chosen": "Hello.", "rejected": "Goodbye."},
+        {"prompt": "Pick the safer answer.", "chosen": "Use the guide.", "rejected": "Guess."},
+    ]
+    assert package.normalized_validation_samples == [
+        {"prompt": "Holdout?", "chosen": "Yes.", "rejected": "No."}
+    ]
+
+
+def test_load_training_dataset_package_rejects_incomplete_preference_pair_samples(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "invalid-preference-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "invalid-preference-package",
+                "format": "preference_pair",
+                "sample_count": 1,
+                "version": "1",
+                "validation_sample_count": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        '{"prompt": "Choose.", "chosen": "A"}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        load_training_dataset_package(str(package_path))
+
+    assert exc.value.code == "invalid_dataset_package"
+
+
 
 def test_iter_dataset_package_jsonl_rows_enforces_sample_limit_before_invalid_tail(
     tmp_path: Path,
@@ -349,6 +421,60 @@ def test_build_training_dataset_artifact_converts_alpaca_rows_and_records_qualit
     assert package.validation_sample_count == 1
 
 
+def test_build_training_dataset_artifact_converts_preference_pair_rows(
+    tmp_path: Path,
+) -> None:
+    dataset_path = _write_jsonl(
+        tmp_path / "preferences.jsonl",
+        [
+            {
+                "prompt": "Choose the concise answer.",
+                "chosen": "Use the short answer.",
+                "rejected": "Add unrelated details.",
+            },
+            {
+                "prompt": "Choose the concise answer.",
+                "chosen": "Use the short answer.",
+                "rejected": "Add unrelated details.",
+            },
+            {
+                "prompt": "Pick the better answer.",
+                "chosen": "same",
+                "rejected": "same",
+            },
+        ],
+    )
+
+    result = build_training_dataset_artifact(
+        {
+            "dataset_uri": str(dataset_path),
+            "template": "auto",
+            "dataset_id": "melix-preference-demo",
+            "validation_ratio": "0.34",
+        },
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "built-preference-dataset",
+        source_model_id="melix-dev-text",
+    )
+
+    payload = result.manifest_payload
+    package = load_training_dataset_package(str(result.package_path))
+
+    assert payload["schema_version"] == "melix.training_dataset_package.v1"
+    assert payload["format"] == "preference_pair"
+    assert payload["conversion_template"] == "preference_pair"
+    assert payload["response_only_supported"] is False
+    assert payload["quality"]["duplicate_count"] == 1
+    assert payload["quality"]["dirty_count"] == 1
+    assert payload["quality"]["dirty_samples"] == [
+        {"index": 2, "reasons": ["duplicate_preference_pair"]}
+    ]
+    assert payload["token_stats"]["prompt_tokens_max"] >= 4
+    assert payload["token_stats"]["completion_tokens_max"] >= 6
+    assert package.format == "preference_pair"
+    assert package.validation_sample_count == 1
+
+
 def test_build_training_dataset_artifact_inspects_sharegpt_rows_without_writing_a_package(
     tmp_path: Path,
 ) -> None:
@@ -465,6 +591,70 @@ def test_build_training_dataset_artifact_materializes_hf_source_and_clears_stale
     assert stale_valid.exists() is False
 
 
+def test_hf_preference_pair_schema_inference_and_mapping() -> None:
+    default_reference = HFDatasetReference(
+        dataset_path="melix/preferences",
+        dataset_name="default",
+        dataset_revision="main",
+        train_split="train",
+        chat_feature="",
+        prompt_feature="",
+        completion_feature="",
+        text_feature="",
+    )
+    default_rows = [
+        {
+            "prompt": "Choose.",
+            "chosen": "A.",
+            "rejected": "B.",
+        }
+    ]
+    assert training_dataset_module._infer_hf_dataset_format(
+        default_reference,
+        default_rows,
+    ) == "preference_pair"
+    assert training_dataset_module._map_hf_row_to_training_sample(
+        default_rows[0],
+        "preference_pair",
+        default_reference,
+    ) == {"prompt": "Choose.", "chosen": "A.", "rejected": "B."}
+
+    configured_reference = HFDatasetReference(
+        dataset_path="melix/preferences",
+        dataset_name="default",
+        dataset_revision="main",
+        train_split="train",
+        chat_feature="",
+        prompt_feature="question",
+        completion_feature="",
+        text_feature="",
+        chosen_feature="accepted",
+        rejected_feature="rejected_answer",
+    )
+    configured_row = {
+        "question": "Pick.",
+        "accepted": "Use this.",
+        "rejected_answer": "Avoid this.",
+    }
+    assert training_dataset_module._infer_hf_dataset_format(
+        configured_reference,
+        [configured_row],
+    ) == "preference_pair"
+    assert training_dataset_module._map_hf_row_to_training_sample(
+        configured_row,
+        "preference_pair",
+        configured_reference,
+    ) == {"prompt": "Pick.", "chosen": "Use this.", "rejected": "Avoid this."}
+
+    with pytest.raises(ModelOperationError) as missing_column:
+        training_dataset_module._map_hf_row_to_training_sample(
+            {"question": "Pick.", "accepted": "Use this."},
+            "preference_pair",
+            configured_reference,
+        )
+    assert missing_column.value.code == "hf_dataset_fetch_failed"
+
+
 def test_build_training_dataset_artifact_loads_existing_package_and_helper_branches(
     tmp_path: Path,
 ) -> None:
@@ -550,6 +740,10 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
     ) == "alpaca"
     assert training_dataset_module._resolve_local_conversion_template(
         "auto",
+        {"prompt": "Choose", "chosen": "A", "rejected": "B"},
+    ) == "preference_pair"
+    assert training_dataset_module._resolve_local_conversion_template(
+        "auto",
         {"conversation": []},
     ) == "sharegpt"
     with pytest.raises(ModelOperationError) as invalid_template:
@@ -563,6 +757,10 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
         [{"text": "hello world"}],
         "text_completion",
     ) == ("text_completion", [{"text": "hello world"}])
+    assert training_dataset_module._convert_local_rows(
+        [{"prompt": "Choose", "chosen": "A", "rejected": "B"}],
+        "preference_pair",
+    ) == ("preference_pair", [{"prompt": "Choose", "chosen": "A", "rejected": "B"}])
     with pytest.raises(ModelOperationError) as bad_sharegpt_shape:
         training_dataset_module._convert_local_rows(
             [{"conversations": "bad"}],
@@ -936,6 +1134,24 @@ def test_build_quality_and_token_stats_falls_back_to_generic_digest_for_non_norm
         "dirty_samples": [],
     }
     assert token_stats["sample_count"] == 2
+
+
+def test_summarize_token_values_preserves_input_order_by_default() -> None:
+    values = [4, 1, 3, 2]
+
+    summary = training_dataset_module._summarize_token_values(values, total=10)
+
+    assert summary == {"mean": 2.5, "p50": 2, "p95": 3, "max": 4}
+    assert values == [4, 1, 3, 2]
+
+
+def test_summarize_token_values_can_sort_temporary_lists_in_place() -> None:
+    values = [4, 1, 3, 2]
+
+    summary = training_dataset_module._summarize_token_values(values, total=10, sort_in_place=True)
+
+    assert summary == {"mean": 2.5, "p50": 2, "p95": 3, "max": 4}
+    assert values == [1, 2, 3, 4]
 
 
 def test_resolve_dataset_build_source_reuses_existing_package_sample_lists(

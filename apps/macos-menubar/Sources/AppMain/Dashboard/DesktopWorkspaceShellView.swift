@@ -56,6 +56,7 @@ struct DesktopWorkspaceShellView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(DesktopWorkspacePaneAnimation.animation, value: viewModel.desktopPaneVisibility)
         }
+        .padding(.top, DesktopShellChromeMetrics.workspaceTitleBarContentTopInset)
         .sheet(item: Binding(
             get: { viewModel.pendingAudioSetupPrompt },
             set: { newValue in
@@ -272,237 +273,58 @@ struct DesktopCommandCenterView: View {
         let serverSessions = liveServerSessions
 
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Command Center")
-                    .font(.largeTitle.weight(.semibold))
+            VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
+                DesktopCommandCenterHeaderView(
+                    foundation: foundation,
+                    lastError: viewModel?.lastError
+                )
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
-                    GroupBox("Runtime Health") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(foundation.serverStateText)
-                                .font(.headline)
-                            Text(foundation.connectionStateText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(foundation.connectionDetailText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: DesktopCommandCenterVisuals.columnSpacing) {
+                        VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
+                            DesktopCommandCenterRuntimePanel(foundation: foundation)
+                            DesktopCommandCenterPressurePanel(foundation: foundation)
+                            DesktopCommandCenterActivityPanel(foundation: foundation)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(minWidth: DesktopCommandCenterVisuals.primaryColumnMinimumWidth)
+
+                        VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
+                            DesktopCommandCenterRecoveryPanel(
+                                viewModel: viewModel,
+                                serverSessions: serverSessions
+                            )
+                            DesktopCommandCenterWorkflowPanel(viewModel: viewModel)
+                            DesktopCommandCenterSessionSummaryPanel(
+                                chatSessions: chatSessions,
+                                serverSessions: serverSessions
+                            )
+                        }
+                        .frame(width: DesktopCommandCenterVisuals.secondaryColumnWidth)
                     }
 
-                    GroupBox("Primary Model") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            if let model = foundation.models.first {
-                                Text(model.displayName)
-                                    .font(.headline)
-                                    .lineLimit(1)
-                                Text("\(model.modelID) • \(model.stateText) • \(model.memoryPolicyText)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(model.memoryText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            } else {
-                                Text("No model discovered.")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
+                        DesktopCommandCenterRuntimePanel(foundation: foundation)
+                        DesktopCommandCenterRecoveryPanel(
+                            viewModel: viewModel,
+                            serverSessions: serverSessions
+                        )
+                        DesktopCommandCenterPressurePanel(foundation: foundation)
+                        DesktopCommandCenterWorkflowPanel(viewModel: viewModel)
+                        DesktopCommandCenterActivityPanel(foundation: foundation)
+                        DesktopCommandCenterSessionSummaryPanel(
+                            chatSessions: chatSessions,
+                            serverSessions: serverSessions
+                        )
                     }
-
-                    if let viewModel, viewModel.recoverableDownloads.isEmpty == false {
-                        GroupBox("Download Recovery") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(viewModel.recoverableDownloads.prefix(2)) { entry in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(entry.sourceModel)
-                                            .font(.headline)
-                                            .lineLimit(1)
-                                        Text(entry.progressText)
-                                            .font(.caption.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                        Button("Resume Download") {
-                                            Task { await viewModel.resumeDownload(jobID: entry.jobID) }
-                                        }
-                                        .buttonStyle(.borderedProminent)
-                                        .controlSize(.small)
-                                    }
-                                }
-                                if let overflowText = Self.downloadRecoveryOverflowText(
-                                    totalCount: viewModel.recoverableDownloads.count
-                                ) {
-                                    HStack {
-                                        Text(overflowText)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                        Button(Self.downloadRecoveryOverflowActionTitle) {
-                                            viewModel.selectSurface(.tools)
-                                            viewModel.selectToolSection(.downloads)
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-
-                    if let operation = viewModel?.lastModelOperation {
-                        GroupBox("Last Operation") {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(operation.operation)
-                                    .font(.headline)
-                                Text(operation.modelID)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(operation.outputPath)
-                                    .font(.caption2.monospaced())
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(2)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-
-                    if let lastError = viewModel?.lastError {
-                        GroupBox("Latest Error") {
-                            Text(lastError)
-                                .foregroundStyle(MelixDesignTokens.StatusColor.error)
-                                .lineLimit(3)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
-
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
-                    ForEach(foundation.dashboardCards.filter { ["server", "connection", "backpressure", "memory"].contains($0.id) }) { card in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(card.title)
-                                .font(.headline)
-                            Text(card.value)
-                                .font(.title3.weight(.semibold))
-                            Text(card.detail)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
-                    }
-                }
-
-                HStack(alignment: .top, spacing: 16) {
-                    GroupBox("Resource And Queue Pressure") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(foundation.queueLanes) { lane in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack {
-                                        Text(lane.id)
-                                            .font(.headline)
-                                        Spacer()
-                                        Text("bp \(String(format: "%.2f", lane.backpressure))")
-                                            .font(.caption.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Text("\(lane.laneClass) • active \(lane.activeRequests) • queued \(lane.queuedRequests)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            if foundation.queueLanes.isEmpty {
-                                Text("No active queue pressure.")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    GroupBox("Recovery Items") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(serverSessions.filter { $0.lifecycle == .error || $0.lifecycle == .stopped || $0.lifecycle == .unavailable }) { session in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(session.title)
-                                        .font(.headline)
-                                    Text("\(session.lifecycle.rawValue) • \(session.effectiveBaseURL)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    if !session.lastError.isEmpty {
-                                        Text(session.lastError)
-                                            .font(.caption)
-                                            .foregroundStyle(MelixDesignTokens.StatusColor.error)
-                                    }
-                                }
-                            }
-                            if serverSessions.contains(where: { $0.lifecycle == .error || $0.lifecycle == .stopped || $0.lifecycle == .unavailable }) == false {
-                                Text("No recovery items.")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-
-                GroupBox("Recent Activity") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(foundation.logs.prefix(8)) { entry in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(entry.kind)
-                                        .font(.caption2)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(.quaternary, in: Capsule())
-                                    Spacer()
-                                    Text(entry.level.uppercased())
-                                        .font(.caption2)
-                                        .foregroundStyle(entry.level == "error" ? MelixDesignTokens.StatusColor.error : .secondary)
-                                }
-                                Text(entry.message)
-                                    .font(.body)
-                                Text(entry.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        if foundation.logs.isEmpty {
-                            Text("No recent activity.")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                GroupBox("Session Summary") {
-                    HStack(alignment: .top, spacing: 24) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Chat Sessions")
-                                .font(.headline)
-                            Text("\(chatSessions.count)")
-                                .font(.title3.weight(.semibold))
-                            Text(chatSessions.first?.summaryText ?? "No chat sessions")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Server Sessions")
-                                .font(.headline)
-                            Text("\(serverSessions.count)")
-                                .font(.title3.weight(.semibold))
-                            Text(serverSessions.first?.effectiveListenerLabel ?? "No listener configured")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(20)
+            .padding(DesktopCommandCenterVisuals.contentPadding)
+            .frame(
+                maxWidth: DesktopCommandCenterVisuals.maxContentWidth,
+                alignment: .leading
+            )
         }
+        .background(MelixDesignTokens.Palette.backgroundBase.color)
     }
 
     private var liveFoundation: DesktopFoundationState {
@@ -515,6 +337,561 @@ struct DesktopCommandCenterView: View {
 
     private var liveServerSessions: [DesktopServerSessionState] {
         viewModel?.serverSessions ?? serverSessions
+    }
+}
+
+enum DesktopCommandCenterVisuals {
+    static let repositoryDesignSystemPath = "docs/design-system/README.md"
+    static let appleLayoutGuidanceURL = "https://developer.apple.com/design/human-interface-guidelines/layout"
+    static let visualDirection = "Digital Broadsheet Command Center"
+    static let operatorLabel = "Melix Operator"
+    static let windowTitle = "Command Center"
+    static let runtimeSectionTitle = "Runtime"
+    static let pressureSectionTitle = "Resource And Queue Pressure"
+    static let recoverySectionTitle = "Recovery"
+    static let workflowSectionTitle = "Workflow"
+    static let activitySectionTitle = "Recent Activity"
+    static let sessionSummarySectionTitle = "Session Summary"
+    static let primaryModelTitle = "Primary Model"
+    static let maxContentWidth: CGFloat = 1120
+    static let primaryColumnMinimumWidth: CGFloat = 520
+    static let secondaryColumnWidth: CGFloat = 320
+    static let contentPadding = MelixDesignTokens.Spacing.huge
+    static let sectionSpacing = MelixDesignTokens.Spacing.xl
+    static let columnSpacing = MelixDesignTokens.Spacing.huge
+    static let panelCornerRadius = MelixDesignTokens.Radius.xl
+    static let statusSymbolName = "command.circle"
+    static let recoverySymbolName = "arrow.clockwise.circle"
+}
+
+private struct DesktopCommandCenterHeaderView: View {
+    let foundation: DesktopFoundationState
+    let lastError: String?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.lg) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+                Text(DesktopCommandCenterVisuals.operatorLabel).melixSectionLabel()
+                Text(DesktopCommandCenterVisuals.windowTitle)
+                    .font(MelixDesignTokens.Typography.largeTitle)
+                Text(foundation.title)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: MelixDesignTokens.Spacing.lg)
+
+            HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.sm) {
+                Image(systemName: healthSymbolName)
+                    .foregroundStyle(healthTint)
+                Text(healthLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(healthTint)
+            }
+            .padding(.horizontal, MelixDesignTokens.Spacing.md)
+            .padding(.vertical, MelixDesignTokens.Spacing.sm)
+            .background(
+                healthTint.opacity(MelixDesignTokens.AccentOpacity.weak),
+                in: Capsule()
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var healthLabel: String {
+        switch resolvedHealthState {
+        case .runtimeReady:
+            return "Runtime Ready"
+        case .runtimeWarning:
+            return "Runtime Warning"
+        case .recoveryAvailable:
+            return "Recovery Available"
+        case .needsAttention:
+            return "Needs Attention"
+        case .runtimeState:
+            return "Runtime State"
+        }
+    }
+
+    private var healthSymbolName: String {
+        switch resolvedHealthState {
+        case .needsAttention:
+            return "exclamationmark.triangle.fill"
+        case .runtimeWarning:
+            return "exclamationmark.triangle"
+        case .recoveryAvailable:
+            return "pause.circle.fill"
+        case .runtimeReady, .runtimeState:
+            return DesktopCommandCenterVisuals.statusSymbolName
+        }
+    }
+
+    private var healthTint: Color {
+        switch resolvedHealthState {
+        case .needsAttention:
+            return MelixDesignTokens.StatusColor.error
+        case .runtimeWarning, .recoveryAvailable:
+            return MelixDesignTokens.StatusColor.warning
+        case .runtimeReady:
+            return MelixDesignTokens.StatusColor.success
+        case .runtimeState:
+            return MelixDesignTokens.StatusColor.info
+        }
+    }
+
+    private var resolvedHealthState: DesktopFoundationHealthState {
+        if let lastError, !lastError.isEmpty {
+            return .needsAttention
+        }
+        return foundation.healthState
+    }
+}
+
+private struct DesktopCommandCenterPanel<Content: View>: View {
+    let title: String
+    let symbolName: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, symbolName: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.symbolName = symbolName
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+            HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.sm) {
+                Image(systemName: symbolName)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.accent)
+                Text(title).melixSectionLabel()
+            }
+
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(MelixDesignTokens.Spacing.panelInset)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .melixCard(radius: DesktopCommandCenterVisuals.panelCornerRadius)
+    }
+}
+
+private struct DesktopCommandCenterRuntimePanel: View {
+    let foundation: DesktopFoundationState
+
+    var body: some View {
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.runtimeSectionTitle,
+            symbolName: "gauge.with.dots.needle.67percent"
+        ) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.lg) {
+                HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.xxl) {
+                    VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                        Text(foundation.serverStateText)
+                            .font(.title3.weight(.semibold))
+                        Text(foundation.connectionStateText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(foundation.connectionDetailText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer(minLength: MelixDesignTokens.Spacing.md)
+
+                    DesktopCommandCenterPrimaryModelView(model: foundation.models.first)
+                        .frame(maxWidth: 300, alignment: .leading)
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 118), spacing: MelixDesignTokens.Spacing.md)],
+                    spacing: MelixDesignTokens.Spacing.md
+                ) {
+                    ForEach(foundation.dashboardCards.filter { commandCenterMetricIDs.contains($0.id) }) { card in
+                        DesktopCommandCenterMetricView(card: card)
+                    }
+                }
+            }
+        }
+    }
+
+    private var commandCenterMetricIDs: Set<String> {
+        ["server", "connection", "backpressure", "memory"]
+    }
+}
+
+private struct DesktopCommandCenterPrimaryModelView: View {
+    let model: RuntimeModelRow?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            Text(DesktopCommandCenterVisuals.primaryModelTitle).melixSectionLabel()
+            if let model {
+                Text(model.displayName)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("\(model.modelID) • \(model.stateText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("\(model.memoryPolicyText) • \(model.memoryText)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            } else {
+                Text("No model discovered.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterMetricView: View {
+    let card: DesktopDashboardCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            Text(card.title).melixSectionLabel()
+            Text(card.value)
+                .font(.headline.monospacedDigit())
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text(card.detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopCommandCenterPressurePanel: View {
+    let foundation: DesktopFoundationState
+
+    var body: some View {
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.pressureSectionTitle,
+            symbolName: "waveform.path.ecg"
+        ) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+                ForEach(foundation.queueLanes) { lane in
+                    DesktopCommandCenterQueueLaneView(lane: lane)
+                }
+                if foundation.queueLanes.isEmpty {
+                    Text("No active queue pressure.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterQueueLaneView: View {
+    let lane: DesktopQueueLaneRow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(lane.id)
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer()
+                Text("bp \(String(format: "%.2f", lane.backpressure))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(lane.laneClass) • active \(lane.activeRequests) • queued \(lane.queuedRequests)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct DesktopCommandCenterRecoveryPanel: View {
+    let viewModel: RuntimeViewModel?
+    let serverSessions: [DesktopServerSessionState]
+
+    var body: some View {
+        let recoverySessions = serverSessions.filter {
+            $0.lifecycle == .error || $0.lifecycle == .stopped || $0.lifecycle == .unavailable
+        }
+        let recoverableDownloads = viewModel?.recoverableDownloads ?? []
+        let hasLatestError = (viewModel?.lastError ?? "").isEmpty == false
+        let hasRecovery = recoverableDownloads.isEmpty == false
+            || recoverySessions.isEmpty == false
+            || hasLatestError
+
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.recoverySectionTitle,
+            symbolName: DesktopCommandCenterVisuals.recoverySymbolName
+        ) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+                if let lastError = viewModel?.lastError, !lastError.isEmpty {
+                    DesktopCommandCenterAlertRow(
+                        title: "Latest Error",
+                        detail: lastError,
+                        tint: MelixDesignTokens.StatusColor.error
+                    )
+                }
+
+                ForEach(recoverableDownloads.prefix(2)) { entry in
+                    DesktopCommandCenterDownloadRecoveryRow(
+                        entry: entry,
+                        resume: {
+                            Task { await viewModel?.resumeDownload(jobID: entry.jobID) }
+                        }
+                    )
+                }
+
+                if let viewModel,
+                   let overflowText = DesktopCommandCenterView.downloadRecoveryOverflowText(
+                    totalCount: recoverableDownloads.count
+                   ) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(overflowText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(DesktopCommandCenterView.downloadRecoveryOverflowActionTitle) {
+                            viewModel.selectSurface(.tools)
+                            viewModel.selectToolSection(.downloads)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+
+                ForEach(recoverySessions) { session in
+                    DesktopCommandCenterServerRecoveryRow(session: session)
+                }
+
+                if !hasRecovery {
+                    Text("No recovery items.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterAlertRow: View {
+    let title: String
+    let detail: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.xs) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(.headline)
+            }
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(tint)
+                .lineLimit(3)
+        }
+    }
+}
+
+private struct DesktopCommandCenterDownloadRecoveryRow: View {
+    let entry: RuntimeDownloadQueueEntryState
+    let resume: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
+                VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                    Text(entry.sourceModel)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(entry.progressText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: MelixDesignTokens.Spacing.sm)
+
+                Button(action: resume) {
+                    Label(entry.resumeActionTitle, systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .fixedSize(horizontal: true, vertical: false)
+            }
+
+            if !entry.transferDetailText.isEmpty {
+                Text(entry.transferDetailText)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterServerRecoveryRow: View {
+    let session: DesktopServerSessionState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            Text(session.title)
+                .font(.headline)
+                .lineLimit(1)
+            Text("\(session.lifecycle.rawValue) • \(session.effectiveBaseURL)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if !session.lastError.isEmpty {
+                Text(session.lastError)
+                    .font(.caption2)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .lineLimit(2)
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterWorkflowPanel: View {
+    let viewModel: RuntimeViewModel?
+
+    var body: some View {
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.workflowSectionTitle,
+            symbolName: "point.3.connected.trianglepath.dotted"
+        ) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+                if let operation = viewModel?.lastModelOperation {
+                    VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                        Text(operation.operation)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text("\(operation.modelID) • \(operation.stage)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(operation.outputPath)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                } else {
+                    Text("No model operation recorded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterActivityPanel: View {
+    let foundation: DesktopFoundationState
+
+    var body: some View {
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.activitySectionTitle,
+            symbolName: "list.bullet.rectangle"
+        ) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+                ForEach(foundation.logs.prefix(8)) { entry in
+                    DesktopCommandCenterActivityRow(entry: entry)
+                }
+                if foundation.logs.isEmpty {
+                    Text("No recent activity.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopCommandCenterActivityRow: View {
+    let entry: DesktopLogEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
+                Text(entry.kind)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(entry.level)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(
+                        entry.level == "error"
+                            ? MelixDesignTokens.StatusColor.error
+                            : MelixDesignTokens.Palette.foregroundTertiary.color
+                    )
+            }
+            Text(entry.message)
+                .font(.body)
+                .lineLimit(2)
+            Text(entry.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+    }
+}
+
+private struct DesktopCommandCenterSessionSummaryPanel: View {
+    let chatSessions: [DesktopChatSessionState]
+    let serverSessions: [DesktopServerSessionState]
+
+    var body: some View {
+        DesktopCommandCenterPanel(
+            DesktopCommandCenterVisuals.sessionSummarySectionTitle,
+            symbolName: "rectangle.stack"
+        ) {
+            HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.xxl) {
+                DesktopCommandCenterSessionMetricView(
+                    title: "Chat Sessions",
+                    value: "\(chatSessions.count)",
+                    detail: chatSessions.first?.summaryText ?? "No chat sessions"
+                )
+                DesktopCommandCenterSessionMetricView(
+                    title: "Server Sessions",
+                    value: "\(serverSessions.count)",
+                    detail: serverSessions.first?.effectiveListenerLabel ?? "No listener configured"
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct DesktopCommandCenterSessionMetricView: View {
+    let title: String
+    let value: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            Text(title).melixSectionLabel()
+            Text(value)
+                .font(.title3.weight(.semibold).monospacedDigit())
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -575,7 +952,7 @@ private struct DesktopServerOverviewCardsView: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
             DesktopServerMetricCard(title: "Port", value: "\(session.effectivePort)", detail: session.gatewayConfigSourceText)
             DesktopServerMetricCard(title: "Context", value: "\(session.servingDefaults.effectiveMaxTokens)", detail: "max tokens")
-            DesktopServerMetricCard(title: "Acceleration", value: session.servingDefaults.effectiveAccelerationMode, detail: "serving mode")
+            DesktopServerMetricCard(title: "Acceleration", value: desktopAccelerationModeText(session.servingDefaults.effectiveAccelerationMode), detail: "serving mode")
             DesktopServerMetricCard(title: "State", value: session.lifecycle.rawValue, detail: session.powerState.rawValue)
             DesktopServerMetricCard(title: "Base URL", value: session.effectiveBaseURL, detail: "effective listener")
         }
@@ -611,110 +988,75 @@ private struct DesktopServerSessionSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Server Sessions")
+                Text("Servers")
                     .font(.headline)
                 Spacer()
-                Button {
-                    viewModel.createServerSession()
+                Menu {
+                    Button("Add Local Server") {
+                        viewModel.beginServerCreation(kind: .localServer)
+                    }
+                    Button("Add Remote Server") {
+                        viewModel.beginServerCreation(kind: .remoteServer)
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
-                .buttonStyle(.plain)
-                .help("New Server Session")
-                .accessibilityLabel("New Server Session")
+                .menuStyle(.borderlessButton)
+                .focusable(false)
+                .help("New Server")
+                .accessibilityLabel("New Server")
             }
 
-            if viewModel.serverSessions.isEmpty {
+            if viewModel.serverTargets.isEmpty {
                 ContentUnavailableView(
-                    "No Server Sessions",
+                    "No Servers",
                     systemImage: "network.slash",
-                    description: Text("Create a server session to bind a model to a listener.")
+                    description: Text("Create a local or remote server target.")
                 )
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(viewModel.serverSessions) { session in
+                        ForEach(viewModel.serverTargets) { target in
                             Button {
-                                viewModel.selectServerSession(id: session.id)
+                                viewModel.selectServerTarget(id: target.id)
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
-                                        Text(session.title)
+                                        Text(target.title)
                                             .font(.headline)
+                                            .lineLimit(1)
                                         Spacer()
-                                        Text(session.lifecycleSummaryText)
-                                            .font(.caption)
-                                            .foregroundStyle(session.isInteractiveReady ? MelixDesignTokens.StatusColor.success : .secondary)
+                                        Text(target.badgeText)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(MelixDesignTokens.accent)
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 3)
+                                            .background(
+                                                MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.capsule),
+                                                in: Capsule()
+                                            )
                                     }
-                                    Text("\(session.modelID) • \(session.listenerLabel)")
+                                    Text(target.detailText)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                    Text(target.statusText)
+                                        .font(.caption)
+                                        .foregroundStyle(target.isRunning ? MelixDesignTokens.StatusColor.success : .secondary)
+                                        .lineLimit(1)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
                                 .background(
-                                    viewModel.selectedServerSession?.id == session.id
+                                    viewModel.selectedServerTarget?.id == target.id
                                     ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
                                     : Color.secondary.opacity(0.06),
                                     in: RoundedRectangle(cornerRadius: 12)
                                 )
                             }
                             .buttonStyle(.plain)
+                            .focusable(false)
                         }
-                    }
-                }
-            }
-
-            Divider()
-
-            HStack {
-                Text("Remote Servers")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    viewModel.prepareNewRemoteServerDraft()
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.plain)
-                .help("New Remote Server")
-                .accessibilityLabel("New Remote Server")
-            }
-
-            if viewModel.remoteServers.isEmpty {
-                Text("No Remote Servers")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(viewModel.remoteServers, id: \.id) { server in
-                        Button {
-                            viewModel.selectRemoteServer(id: server.id)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text(server.title)
-                                        .font(.headline)
-                                    Spacer()
-                                    Text(server.healthStatus)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Text("\(server.defaultModelID) • \(server.providerKind)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                            .background(
-                                viewModel.selectedRemoteServerID == server.id
-                                ? Color.accentColor.opacity(0.14)
-                                : Color.secondary.opacity(0.06),
-                                in: RoundedRectangle(cornerRadius: 12)
-                            )
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -762,7 +1104,7 @@ private struct DesktopRemoteServerEditor: View {
                     .disabled(viewModel.isRemoteServerIDEditable == false)
 
                     TextField(
-                        "Title",
+                        "Session Name",
                         text: Binding(
                             get: { viewModel.remoteServerTitleDraft },
                             set: { viewModel.remoteServerTitleDraft = $0 }
@@ -846,6 +1188,7 @@ private struct DesktopRemoteServerEditor: View {
                         viewModel.saveRemoteServerDraft()
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.canSaveRemoteServerDraft == false)
 
                     Button("Remove") {
                         viewModel.removeSelectedRemoteServer()
@@ -860,6 +1203,216 @@ private struct DesktopRemoteServerEditor: View {
     }
 }
 
+private struct DesktopServerCreationEditor: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if viewModel.selectedServerCreationKind == .localServer {
+                MelixSectionCard("New Local Session") {
+                    localServerCreationContent
+                }
+            } else {
+                DesktopRemoteServerEditor(viewModel: viewModel)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var localServerCreationContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if viewModel.serverModelOptions.isEmpty {
+                if viewModel.isRefreshingServerModelOptions {
+                    ContentUnavailableView(
+                        "Scanning Ready to Run Models",
+                        systemImage: "magnifyingglass",
+                        description: Text("Scanning configured model roots and Hugging Face cache snapshots.")
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "No Ready to Run Models",
+                        systemImage: "shippingbox",
+                        description: Text("Rescan model roots or download a model before creating a local server.")
+                    )
+                }
+            } else {
+                TextField(
+                    "Session Name",
+                    text: Binding(
+                        get: { viewModel.newLocalServerTitleDraft },
+                        set: { viewModel.newLocalServerTitleDraft = $0 }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+
+                Picker(
+                    "Served Model",
+                    selection: Binding(
+                        get: { viewModel.newLocalServerModelID },
+                        set: { viewModel.newLocalServerModelID = $0 }
+                    )
+                ) {
+                    ForEach(viewModel.serverModelOptions, id: \.modelID) { model in
+                        Text(model.displayNameWithID).tag(model.modelID)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                HStack(alignment: .top, spacing: 12) {
+                    TextField(
+                        "Host",
+                        text: Binding(
+                            get: { viewModel.newLocalServerHostDraft },
+                            set: { viewModel.newLocalServerHostDraft = $0 }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    TextField(
+                        "Port",
+                        value: Binding(
+                            get: { viewModel.newLocalServerPortDraft },
+                            set: { viewModel.newLocalServerPortDraft = $0 }
+                        ),
+                        format: .number
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 120)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        viewModel.cancelServerCreation()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Save") {
+                        viewModel.createLocalServerFromDraft()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.canCreateLocalServerFromDraft == false)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopServerLoRAAdapterSection: View {
+    let viewModel: RuntimeViewModel
+
+    private var selectedAdapterOption: RuntimeServerAdapterOptionState? {
+        viewModel.serverAdapterOptions.first(where: \.isSelected)
+    }
+
+    var body: some View {
+        MelixSectionCard("LoRA Adapter") {
+            VStack(alignment: .leading, spacing: 12) {
+                if viewModel.serverAdapterOptions.isEmpty {
+                    Text("No LoRA adapters are available.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker(
+                        "Adapter",
+                        selection: Binding(
+                            get: { selectedAdapterOption?.id ?? "" },
+                            set: { id in
+                                guard id.isEmpty == false else {
+                                    return
+                                }
+                                viewModel.applyServerAdapterPackage(id: id)
+                            }
+                        )
+                    ) {
+                        Text("Base model").tag("")
+                        ForEach(viewModel.serverAdapterOptions) { option in
+                            Text(option.title).tag(option.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    adapterStateSummary
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var adapterStateSummary: some View {
+        if let option = selectedAdapterOption {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("Serving derived model")
+                        .font(.headline)
+                    Text("LoRA active")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(MelixDesignTokens.accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.capsule),
+                            in: Capsule()
+                        )
+                }
+                Text(option.title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(option.derivedModelID)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("Activation: \(option.activationStatusText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("The selected server model is being served directly.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(viewModel.serverAdapterOptions) { option in
+                    HStack(alignment: .center, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(option.title)
+                                .font(.caption.weight(.semibold))
+                            Text(option.detailText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer()
+                        if option.isServeable {
+                            Button(option.actionTitle) {
+                                viewModel.applyServerAdapterPackage(id: option.id)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else {
+                            Button(option.actionTitle) {
+                                viewModel.applyServerAdapterPackage(id: option.id)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
 private struct DesktopServerSessionEditor: View {
     let viewModel: RuntimeViewModel
     @Binding var showsSidebar: Bool
@@ -867,8 +1420,11 @@ private struct DesktopServerSessionEditor: View {
     @Binding var showsAdvanced: Bool
 
     private let servingAccelerationModeOptions = [
-        ("Baseline", "baseline"),
+        ("None", "baseline"),
         ("Speculative Decode", "speculative_decode"),
+        ("Accelerated Prefill", "accelerated_prefill"),
+        ("Active KV Quantized", "active_kv_quantized"),
+        ("Sparse Prefill", "sparse_prefill"),
     ]
 
     var body: some View {
@@ -879,9 +1435,12 @@ private struct DesktopServerSessionEditor: View {
                     subtitle: "Choose model, configure listener, then start the server session."
                 ) {}
 
-                DesktopRemoteServerEditor(viewModel: viewModel)
-
-                if let session = viewModel.selectedServerSession {
+                if viewModel.isCreatingServerTarget {
+                    DesktopServerCreationEditor(viewModel: viewModel)
+                } else if viewModel.selectedServerTarget?.kind == .remoteServer {
+                    DesktopRemoteServerEditor(viewModel: viewModel)
+                } else if let session = viewModel.selectedServerSession,
+                          viewModel.selectedServerTarget?.kind == .localServer {
                     if let notice = session.lifecycleBannerState {
                         DesktopInlineNoticeCardView(notice: notice)
                     }
@@ -897,9 +1456,16 @@ private struct DesktopServerSessionEditor: View {
                                     set: { viewModel.updateSelectedServerSessionModelID($0) }
                                 )
                             ) {
-                                ForEach(viewModel.serveableModels, id: \.modelID) { model in
+                                ForEach(viewModel.serverModelOptions, id: \.modelID) { model in
                                     Text(model.displayNameWithID).tag(model.modelID)
                                 }
+                            }
+                            if viewModel.serverModelOptions.isEmpty {
+                                Text(viewModel.isRefreshingServerModelOptions
+                                    ? "Scanning Ready to Run model roots..."
+                                    : "No Ready to Run models are available. Rescan model roots or download a model before starting a local server.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
 
                             HStack {
@@ -958,6 +1524,8 @@ private struct DesktopServerSessionEditor: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
+                    DesktopServerLoRAAdapterSection(viewModel: viewModel)
 
                     MelixSectionCard("Serving Defaults") {
                         VStack(alignment: .leading, spacing: 10) {
@@ -1056,9 +1624,9 @@ private struct DesktopServerSessionEditor: View {
                     }
                 } else {
                     ContentUnavailableView(
-                        "No Server Session Selected",
+                        "No Server Selected",
                         systemImage: "server.rack",
-                        description: Text("Choose a server session from the list or create a new one.")
+                        description: Text("Choose a server from the list or create a new one.")
                     )
                 }
 
@@ -1163,7 +1731,7 @@ private struct DesktopServerSessionEditor: View {
                                 }
 
                                 Picker(
-                                    "Acceleration",
+                                    "Acceleration Mode",
                                     selection: Binding(
                                         get: { viewModel.selectedServerSession?.servingDefaults.accelerationMode ?? "baseline" },
                                         set: { viewModel.updateSelectedServerSessionAccelerationMode($0) }
@@ -1173,27 +1741,12 @@ private struct DesktopServerSessionEditor: View {
                                         Text(option.0).tag(option.1)
                                     }
                                 }
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: 280, alignment: .leading)
 
-                                HStack {
-                                    TextField(
-                                        "Draft model id",
-                                        text: Binding(
-                                            get: { viewModel.selectedServerSession?.servingDefaults.draftModelID ?? "" },
-                                            set: { viewModel.updateSelectedServerSessionDraftModelID($0) }
-                                        )
-                                    )
-                                    .textFieldStyle(.roundedBorder)
-
-                                    TextField(
-                                        "Num draft tokens",
-                                        value: Binding(
-                                            get: { viewModel.selectedServerSession?.servingDefaults.numDraftTokens ?? 0 },
-                                            set: { viewModel.updateSelectedServerSessionNumDraftTokens($0) }
-                                        ),
-                                        format: .number
-                                    )
-                                    .textFieldStyle(.roundedBorder)
-                                }
+                                serverAccelerationModeConfiguration(
+                                    mode: viewModel.selectedServerSession?.servingDefaults.accelerationMode ?? session.servingDefaults.accelerationMode
+                                )
 
                                 HStack {
                                     Button("Apply Serving Defaults", action: viewModel.applySelectedServerServingDefaultsFromUI)
@@ -1201,12 +1754,63 @@ private struct DesktopServerSessionEditor: View {
 
                                     let servingDefaults = session.servingDefaults
                                     Text(
-                                        "Source: \(servingDefaults.sourceText) • Effective temp \(servingDefaults.effectiveTemperature, format: .number.precision(.fractionLength(2))) • top_p \(servingDefaults.effectiveTopP, format: .number.precision(.fractionLength(2))) • max \(servingDefaults.effectiveMaxTokens) • stream \(servingDefaults.effectiveStreamIntervalTokens) • concurrent \(servingDefaults.effectiveConcurrentProcessingEnabled ? "on" : "off") • sequences \(servingDefaults.effectiveMaxConcurrentRequests) • prefill \(servingDefaults.effectivePrefillBatchSize) • completion \(servingDefaults.effectiveCompletionBatchSize) • accel \(servingDefaults.effectiveAccelerationMode)\(servingDefaults.effectiveDraftModelID.isEmpty ? "" : " • draft \(servingDefaults.effectiveDraftModelID)")\(servingDefaults.effectiveNumDraftTokens > 0 ? " • draft tokens \(servingDefaults.effectiveNumDraftTokens)" : "")\(servingDefaults.modelOverrideApplied ? " • model override applied" : "")"
+                                        "Source: \(servingDefaults.sourceText) • Effective temp \(servingDefaults.effectiveTemperature, format: .number.precision(.fractionLength(2))) • top_p \(servingDefaults.effectiveTopP, format: .number.precision(.fractionLength(2))) • max \(servingDefaults.effectiveMaxTokens) • stream \(servingDefaults.effectiveStreamIntervalTokens) • concurrent \(servingDefaults.effectiveConcurrentProcessingEnabled ? "on" : "off") • sequences \(servingDefaults.effectiveMaxConcurrentRequests) • prefill \(servingDefaults.effectivePrefillBatchSize) • completion \(servingDefaults.effectiveCompletionBatchSize) • accel \(desktopAccelerationModeText(servingDefaults.effectiveAccelerationMode))\(servingDefaults.effectiveDraftModelID.isEmpty ? "" : " • draft \(servingDefaults.effectiveDraftModelID)")\(servingDefaults.effectiveNumDraftTokens > 0 ? " • draft tokens \(servingDefaults.effectiveNumDraftTokens)" : "")\(servingDefaults.modelOverrideApplied ? " • model override applied" : "")"
                                     )
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 }
                             }
+    }
+
+    @ViewBuilder
+    private func serverAccelerationModeConfiguration(mode: String) -> some View {
+        switch mode {
+        case "speculative_decode":
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    TextField(
+                        "Draft model id",
+                        text: Binding(
+                            get: { viewModel.selectedServerSession?.servingDefaults.draftModelID ?? "" },
+                            set: { viewModel.updateSelectedServerSessionDraftModelID($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    TextField(
+                        "Num draft tokens",
+                        value: Binding(
+                            get: { viewModel.selectedServerSession?.servingDefaults.numDraftTokens ?? 0 },
+                            set: { viewModel.updateSelectedServerSessionNumDraftTokens($0) }
+                        ),
+                        format: .number
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Text("Draft model settings apply only when Speculative Decode is selected.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        case "accelerated_prefill":
+            accelerationModeReadOnlyCard("Uses the backend accelerated prefill profile for this server session.")
+        case "active_kv_quantized":
+            accelerationModeReadOnlyCard("Uses the backend active KV quantization profile for this server session.")
+        case "sparse_prefill":
+            accelerationModeReadOnlyCard("Uses the backend sparse prefill profile for this server session.")
+        default:
+            accelerationModeReadOnlyCard("No additional acceleration settings are enabled for this server session.")
+        }
+    }
+
+    private func accelerationModeReadOnlyCard(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -3001,17 +3605,11 @@ struct DesktopDiagnosticsToolSectionView: View {
     }
 
     private var benchmarkRunDisabled: Bool {
-        (
-            viewModel.selectedBenchmarkTargetMode == .catalogModel
-            && viewModel.benchmarkModels.isEmpty
-        ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
+        viewModel.canRunDiagnosticsBenchmark == false
     }
 
     private var evaluationRunDisabled: Bool {
-        (
-            viewModel.selectedEvaluationTargetMode == .catalogModel
-            && viewModel.evaluationModels.isEmpty
-        ) || viewModel.selectedEvaluationSuiteIDs.isEmpty
+        viewModel.canRunDiagnosticsEvaluation == false
     }
 
     private func applyDiagnosticsStage(_ stage: DesktopDiagnosticsStage) {
@@ -3264,90 +3862,70 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             if selectedStage != .evaluation {
                 DesktopEditorialSectionCard(selectedStage == .matrix ? "Matrix Configuration" : "Bench Configuration") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Picker(
-                        "Benchmark Target",
-                        selection: Binding(
-                            get: { viewModel.selectedBenchmarkTargetMode },
-                            set: { viewModel.selectedBenchmarkTargetMode = $0 }
-                        )
-                    ) {
-                        ForEach(RuntimeBenchmarkTargetMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Running Server")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
 
-                    if viewModel.selectedBenchmarkTargetMode == .catalogModel {
-                        if viewModel.benchmarkModels.isEmpty {
-                            Text("No benchmark-capable catalog models are available.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Picker(
-                                "Benchmark Model",
-                                selection: Binding(
-                                    get: { viewModel.selectedBenchmarkModelID },
-                                    set: { viewModel.selectedBenchmarkModelID = $0 }
-                                )
-                            ) {
-                                ForEach(viewModel.benchmarkModels) { model in
-                                    Text(model.displayNameWithID)
-                                        .tag(model.modelID)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-                    } else {
-                        TextField(
-                            "Hugging Face Repo ID",
-                            text: Binding(
-                                get: { viewModel.benchmarkHFRepoID },
-                                set: { viewModel.benchmarkHFRepoID = $0 }
+                        Picker(
+                            "Running Server",
+                            selection: Binding(
+                                get: { viewModel.selectedDiagnosticsServerTargetID },
+                                set: { viewModel.selectDiagnosticsServerTarget(id: $0) }
                             )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                    }
-
-                    Text(viewModel.benchmarkTargetSummaryText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
-                        ForEach(viewModel.benchmarkSuites) { suite in
-                            Button {
-                                toggleBenchmarkSuiteSelection(suite.id)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack {
-                                        Text(suite.title)
-                                            .font(.headline)
-                                        Spacer()
-                                        Image(systemName: viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? "checkmark.circle.fill" : "circle")
-                                            .foregroundStyle(viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? MelixDesignTokens.accent : .secondary)
-                                    }
-                                    Text("config \(suite.datasetName) • \(suite.defaultsText)")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                    Text(suite.datasetLabel)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(
-                                    viewModel.selectedBenchmarkSuiteIDs.contains(suite.id)
-                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
-                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
-                                    in: RoundedRectangle(cornerRadius: 12)
-                                )
+                        ) {
+                            ForEach(viewModel.diagnosticsServerTargets) { target in
+                                Text(target.title).tag(target.id)
                             }
-                            .buttonStyle(.plain)
                         }
-                    }
+                        .pickerStyle(.menu)
 
-                    Divider()
+                        Text(viewModel.benchmarkTargetSummaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
-                    if viewModel.selectedBenchmarkPresentationMode == .standard {
+                        if let disabledReason = viewModel.diagnosticsBenchmarkUnavailableText {
+                            Text(disabledReason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+                            ForEach(viewModel.benchmarkSuites) { suite in
+                                Button {
+                                    toggleBenchmarkSuiteSelection(suite.id)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack {
+                                            Text(suite.title)
+                                                .font(.headline)
+                                            Spacer()
+                                            Image(systemName: viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? "checkmark.circle.fill" : "circle")
+                                                .foregroundStyle(viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? MelixDesignTokens.accent : .secondary)
+                                        }
+                                        Text("config \(suite.datasetName) • \(suite.defaultsText)")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                        Text(suite.datasetLabel)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(
+                                        viewModel.selectedBenchmarkSuiteIDs.contains(suite.id)
+                                        ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                        : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+                                        in: RoundedRectangle(cornerRadius: 12)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        Divider()
+
+                        if viewModel.selectedBenchmarkPresentationMode == .standard {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Performance Controls")
                                 .font(.caption.weight(.semibold))
@@ -4035,60 +4613,40 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             if selectedStage == .evaluation {
                 DesktopEditorialSectionCard("Evaluation Configuration") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Picker(
-                        "Evaluation Target",
-                        selection: Binding(
-                            get: { viewModel.selectedEvaluationTargetMode },
-                            set: { viewModel.selectedEvaluationTargetMode = $0 }
-                        )
-                    ) {
-                        ForEach(RuntimeBenchmarkTargetMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    if viewModel.selectedEvaluationTargetMode == .catalogModel {
-                        if viewModel.evaluationModels.isEmpty {
-                            Text("No text-generation catalog models are available.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Picker(
-                                "Evaluation Model",
-                                selection: Binding(
-                                    get: { viewModel.selectedEvaluationModelID },
-                                    set: { viewModel.selectedEvaluationModelID = $0 }
-                                )
-                            ) {
-                                ForEach(viewModel.evaluationModels) { model in
-                                    Text(model.displayNameWithID)
-                                        .tag(model.modelID)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-                    } else {
-                        TextField(
-                            "Hugging Face Repo ID",
-                            text: Binding(
-                                get: { viewModel.evaluationHFRepoID },
-                                set: { viewModel.evaluationHFRepoID = $0 }
-                            )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                    }
-
-                    Text(viewModel.evaluationTargetSummaryText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Evaluation Prompt")
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Running Server")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
+
+                        Picker(
+                            "Running Server",
+                            selection: Binding(
+                                get: { viewModel.selectedDiagnosticsServerTargetID },
+                                set: { viewModel.selectDiagnosticsServerTarget(id: $0) }
+                            )
+                        ) {
+                            ForEach(viewModel.diagnosticsServerTargets) { target in
+                                Text(target.title).tag(target.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        Text(viewModel.evaluationTargetSummaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if let disabledReason = viewModel.diagnosticsEvaluationUnavailableText {
+                            Text(disabledReason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Evaluation Prompt")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
 
                         Picker(
                             "Evaluation Prompt",
@@ -4550,6 +5108,30 @@ struct DesktopDiagnosticsToolSectionView: View {
             if selectedStage == .evaluation {
                 DesktopEditorialSectionCard("Evaluation Results") {
                 VStack(alignment: .leading, spacing: 8) {
+                    if let failure = viewModel.lastCLIWorkflowFailure,
+                       failure.commandID.contains("eval") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Evaluation Command Failed")
+                                .font(.headline)
+                                .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                                .textSelection(.enabled)
+                            Text("\(failure.commandID) • \(failure.surface.rawValue) • \(failure.failureKind.rawValue)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            Text(failure.detail)
+                                .font(.caption)
+                                .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(
+                            MelixDesignTokens.StatusColor.error.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                    }
+
                     if let selectedEntry = viewModel.selectedEvaluationHistoryEntry {
                         Text("Selected eval \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
                             .font(.headline)
@@ -5578,6 +6160,23 @@ private func gatewayAccessHeaderText(_ session: DesktopServerSessionState) -> St
         return "Header: not required until shared access is enabled"
     case .enabled:
         return "Headers: x-api-key or Authorization: Bearer"
+    }
+}
+
+private func desktopAccelerationModeText(_ rawValue: String) -> String {
+    switch rawValue {
+    case "speculative_decode":
+        return "Speculative Decode"
+    case "accelerated_prefill":
+        return "Accelerated Prefill"
+    case "active_kv_quantized":
+        return "Active KV Quantized"
+    case "sparse_prefill":
+        return "Sparse Prefill"
+    case "baseline", "":
+        return "None"
+    default:
+        return "None"
     }
 }
 

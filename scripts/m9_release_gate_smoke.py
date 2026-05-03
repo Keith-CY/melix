@@ -138,6 +138,7 @@ def _build_fixture_report(
         },
         "evaluation_compare": _build_passing_evaluation_compare_report(),
         "real_workload": _build_passing_real_workload_report(),
+        "lora_path": _build_passing_lora_path_report(),
         "m9": m9,
         "lora_path": _build_passing_lora_path_report(),
     }
@@ -307,17 +308,23 @@ def _build_passing_real_workload_report() -> dict[str, object]:
 
 
 def _build_passing_lora_path_report() -> dict[str, object]:
-    stage_names = ("dataset_build", "train", "activate", "compare", "publish")
+    stage_durations_ms = {
+        "dataset_build": 0.5,
+        "train": 1420.0,
+        "activate": 1.0,
+        "compare": 0.5,
+        "publish": 118.0,
+    }
     return {
         "stages": {
             stage_name: {
                 "success": 1.0,
-                "duration_ms": 1.0,
+                "duration_ms": duration_ms,
             }
-            for stage_name in stage_names
+            for stage_name, duration_ms in stage_durations_ms.items()
         },
         "summary": {
-            "stages_success_count": float(len(stage_names)),
+            "stages_success_count": float(len(stage_durations_ms)),
             "stages_failure_count": 0.0,
             "full_path_success": 1.0,
         },

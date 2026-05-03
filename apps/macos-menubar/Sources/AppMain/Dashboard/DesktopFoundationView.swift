@@ -11,6 +11,7 @@ public struct DesktopFoundationRootView: View {
     public var body: some View {
         DesktopWorkspaceShellView(viewModel: viewModel)
             .frame(minWidth: 980, minHeight: 680)
+            .tint(MelixDesignTokens.accent)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     DesktopWorkspaceTitleBarTabsView(viewModel: viewModel)
@@ -558,14 +559,23 @@ struct DesktopModelRegistryEntriesView: View {
     }
 
     private var registryList: some View {
-        DesktopRegistryBroadsheetSection("Unified Model List") {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+            registryGroup(.readyToRun, title: "Ready to Run")
+            registryGroup(.discoverAndDownload, title: "Discover & Download")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func registryGroup(_ group: RuntimeRegistryAvailabilityGroup, title: String) -> some View {
+        let groupEntries = entries.filter { $0.availabilityGroup == group }
+        return DesktopRegistryBroadsheetSection(title) {
             VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
-                if entries.isEmpty {
-                    Text("No registry entries.")
+                if groupEntries.isEmpty {
+                    Text(group == .readyToRun ? "No ready models found." : "No discoveries yet.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(entries) { entry in
+                    ForEach(groupEntries) { entry in
                         DesktopRegistryEntryRowView(
                             entry: entry,
                             localModel: localModel(for: entry),

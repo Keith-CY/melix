@@ -9,7 +9,7 @@ repository design system while preserving the existing control-plane and worker 
 
 ## Design Inputs
 
-- `/Users/ChenYu/Downloads/Melix Design System.pdf`
+- Uploaded `Melix Design System.pdf` design reference
 - `docs/design-system/README.md`
 - `docs/design-system/ui_kits/macos-app/`
 - `docs/plans/2026-04-18-window-menubar-ui-optimization.md`
@@ -25,6 +25,13 @@ repository design system while preserving the existing control-plane and worker 
   a sheet before invoking install or download remediation.
 - [ ] Derive one runtime endpoint/model projection from the selected server session and use it for
   callable API, Chat, Command Center, and agent integration output.
+- [x] Redesign Command Center as a standalone Apple-style utility window using the uploaded PDF,
+  repository design system, and existing state-first operator plan:
+  - replace default `GroupBox`-heavy layout with lightweight broadsheet sections and quiet tiles;
+  - keep global health, pressure, recovery, workflow, error, activity, and session summaries visible
+    without moving object-local editing into the window;
+  - preserve the existing `RuntimeViewModel` data and recovery actions while improving scan order,
+    spacing, typography, SF Symbol usage, and compact/wide adaptability.
 - [ ] Replace nested API quick-start and agent integration `GroupBox` layouts with lightweight
   section cards so accessibility exposes one logical copy of each group/control.
 - [ ] Polish Server, Tools, API, Downloads, Diagnostics, and Image so primary actions stay visible
@@ -81,6 +88,20 @@ swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|Des
 python3 scripts/m15_desktop_polish_smoke.py --json
 ```
 
+Latest Command Center redesign evidence:
+
+- `swift test --package-path apps/macos-menubar --filter DesktopFoundationViewTests`: passed,
+  173 Swift Testing cases.
+- `swift test --package-path apps/macos-menubar --filter DesktopPolishSmokeTests`: passed, 1
+  Swift Testing case; emitted canonical M15 desktop polish metrics.
+- `python3 scripts/m15_desktop_polish_smoke.py --json`: passed with `ok: true`,
+  `grounded_surface_count: 5`, `grounded_tool_section_count: 6`,
+  `top_banner_title: "Download Recovery Available"`.
+- `git diff --check`: passed.
+- Review follow-up: removed production references to the local PDF path, moved Command Center
+  health presentation onto `DesktopFoundationHealthState` semantics, and reused the shared
+  `melixCard()` modifier for broadsheet panel surfaces.
+
 Manual evidence:
 
 - Rebuild/open the macOS app and review Chat, Server, Tools, Downloads, Image, and API with
@@ -90,6 +111,9 @@ Manual evidence:
 - Confirm collapsed side panes do not leave restore rails in the content area.
 - Confirm API quick starts and copy controls are no longer duplicated in the accessibility tree.
 - Confirm callable API/agent export URLs use the same effective listener URL.
+- Confirm Command Center opens as a standalone utility-style window, shows state-first global
+  health/recovery/workflow summaries, uses design-system broadsheet sections instead of default
+  `GroupBox` chrome, and keeps recovery/download actions reachable.
 - Confirm Chat opens without the empty transcript copy, the default branch chip, transcript-side
   model/request IDs, runtime request metadata, or a highlighted new chat button; new sessions must
   choose a server/provider before Send is enabled, and the inspector should show capability readiness
@@ -118,3 +142,6 @@ Manual evidence:
   registry sync. The text-route correction reuses existing scheduler/HTTP route metrics and adds no
   new inference hot-path metrics.
 - UI evidence: focused Swift tests, desktop polish smoke JSON, and Computer Use visual/AX review.
+- Command Center redesign metrics: runtime probes N/A because the change is a SwiftUI layout and
+  composition update over existing read models and actions; UI evidence is the focused Swift view
+  suite plus desktop polish smoke checks listed above.

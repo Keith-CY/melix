@@ -76,6 +76,7 @@ class RegistrySnapshot:
 class _PlainLocalModelScan:
     model_dir: Path
     has_model_weight_files: bool
+    has_generation_config: bool
 
 
 def _normalized(value: str | None) -> str:
@@ -134,8 +135,13 @@ def _merge_generation_config_metadata(
     *,
     ext: dict[str, str],
     json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    known_present: bool | None = None,
 ) -> None:
     generation_config_path = model_dir / "generation_config.json"
+    if known_present is False:
+        if json_cache is not None:
+            json_cache.pop(generation_config_path, None)
+        return
     payload = _load_json_dict_file(generation_config_path, json_cache=json_cache)
     if not payload:
         return
@@ -170,8 +176,17 @@ def _load_model_config_payload(
 
 
 def _has_model_weight_files(model_dir: Path) -> bool:
-    if (model_dir / "model.safetensors.index.json").is_file():
-        return True
+    index_path = model_dir / "model.safetensors.index.json"
+    if index_path.is_file():
+        payload = _load_json_dict_file(index_path)
+        weight_map = payload.get("weight_map")
+        if not isinstance(weight_map, Mapping) or not weight_map:
+            return False
+        shard_names = {str(shard).strip() for shard in weight_map.values()}
+        shard_names.discard("")
+        if not shard_names:
+            return False
+        return all((model_dir / shard_name).is_file() for shard_name in shard_names)
     try:
         with os.scandir(os.fspath(model_dir)) as entries:
             for entry in entries:
@@ -261,10 +276,15 @@ def _has_mlx_signal(
         return True
 
     for metadata_filename in ("README.md", "config.json", "model_index.json"):
-        if metadata_filename == "config.json" and config_payload is not None:
-            if config_payload and _metadata_payload_has_mlx_signal(config_payload):
-                return True
-            continue
+        if metadata_filename == "config.json" and config_payload is not None and config_payload:
+            try:
+                config_payload_text = json.dumps(config_payload, sort_keys=True).lower()
+            except (TypeError, ValueError):
+                config_payload_text = ""
+            else:
+                if _metadata_text_has_mlx_signal(config_payload_text):
+                    return True
+                continue
         metadata_text = _read_text_prefix(
             model_dir / metadata_filename,
             text_prefix_cache=text_prefix_cache,
@@ -1045,13 +1065,15 @@ class WorkerModelCatalog:
             accepted_model_ids: list[str] = []
             manifest_paths, plain_local_model_dirs, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
             for manifest_path in manifest_paths:
+                relative_path = manifest_path.parent.relative_to(root)
+                if _path_derived_registry_identity(relative_path.parts) is None:
+                    continue
                 parsed = self._parse_registry_manifest(manifest_path)
                 if parsed is None:
                     continue
                 model_id, model = parsed
                 if model_id in discovered_models or model_id in self._seed_models:
                     continue
-                relative_path = manifest_path.parent.relative_to(root)
                 if not _apply_registry_identity_metadata(
                     model,
                     relative_parts=relative_path.parts,
@@ -1189,6 +1211,8 @@ class WorkerModelCatalog:
                 revision="local",
                 source_kind="local_mlx_directory",
                 metadata={},
+                config_payload=config_payload,
+                has_generation_config=plain_local_model.has_generation_config,
             )
             self._apply_root_metadata(
                 model,
@@ -1248,6 +1272,7 @@ class WorkerModelCatalog:
                         "melix.hf_repo_id": repo_id,
                         "melix.hf_revision": revision,
                     },
+                    config_payload=config_payload,
                 )
 
     @staticmethod
@@ -1273,6 +1298,7 @@ class WorkerModelCatalog:
                     child_names: list[str] = []
                     has_manifest = False
                     has_config = False
+                    has_generation_config = False
                     has_model_weight_files = False
                     for entry in entries:
                         try:
@@ -1281,6 +1307,9 @@ class WorkerModelCatalog:
                                 continue
                             if entry.name == "config.json" and entry.is_file():
                                 has_config = True
+                                continue
+                            if entry.name == "generation_config.json" and entry.is_file():
+                                has_generation_config = True
                                 continue
                             if entry.name == "model.safetensors.index.json" and entry.is_file():
                                 has_model_weight_files = True
@@ -1307,6 +1336,7 @@ class WorkerModelCatalog:
                     _PlainLocalModelScan(
                         model_dir=current,
                         has_model_weight_files=has_model_weight_files,
+                        has_generation_config=has_generation_config,
                     )
                 )
                 continue
@@ -1345,6 +1375,8 @@ class WorkerModelCatalog:
         revision: str,
         source_kind: str,
         metadata: dict[str, str],
+        config_payload: Mapping[str, object] | None = None,
+        has_generation_config: bool | None = None,
     ) -> common_pb2.ModelSpec:
         json_cache = getattr(self, "_json_file_cache", None)
         if json_cache is None:
@@ -1356,7 +1388,8 @@ class WorkerModelCatalog:
             "melix.source_kind": source_kind,
             "melix.model_path": runtime_model_path,
         }
-        config_payload = _load_model_config_payload(model_dir, json_cache=json_cache)
+        if config_payload is None:
+            config_payload = _load_model_config_payload(model_dir, json_cache=json_cache)
         ext.update(dflash_draft_metadata(config_payload))
         model_kind = "vlm" if _is_gemma4_vlm_config(config_payload) else "text"
         if model_kind == "text":
@@ -1378,7 +1411,12 @@ class WorkerModelCatalog:
                     json_cache=json_cache,
                 )
             )
-        _merge_generation_config_metadata(model_dir, ext=ext, json_cache=json_cache)
+        _merge_generation_config_metadata(
+            model_dir,
+            ext=ext,
+            json_cache=json_cache,
+            known_present=has_generation_config,
+        )
         return common_pb2.ModelSpec(
             model_id=model_id,
             model_path=runtime_model_path,

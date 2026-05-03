@@ -97,7 +97,7 @@ def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
     if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
         return cached[2]
 
-    payload = json.loads(path_obj.read_text(encoding="utf-8"))
+    payload = json.loads(path_obj.read_bytes())
     if not isinstance(payload, list):
         raise ValueError("probe registry must be a JSON list")
     probes: list[ProbeDefinition] = []
@@ -162,13 +162,14 @@ def build_scope_report(
     changed_files: list[str],
 ) -> dict[str, object]:
     probes = load_probe_registry_for_scope(registry_path)
-    changed_paths = tuple(sorted({path for path in changed_files if path}))
-    force_all = any(_path_matches_force_all(path) for path in changed_paths)
+    changed_path_set = {path for path in changed_files if path}
+    force_all = any(_path_matches_force_all(path) for path in changed_path_set)
     if force_all:
         selected = probes
     else:
-        matched_probe_indexes = _match_probe_indexes(changed_paths=changed_paths, probes=probes)
+        matched_probe_indexes = _match_probe_indexes(changed_paths=changed_path_set, probes=probes)
         selected = tuple(probe for index, probe in enumerate(probes) if index in matched_probe_indexes)
+    changed_paths = tuple(sorted(changed_path_set))
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
@@ -493,9 +494,11 @@ def _probe_pr_scoped_performance_registry_cache(repo_root: Path) -> dict[str, fl
         "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
     ]
     load_iterations = 400
+    cold_load_iterations = 60
     scope_iterations = 200
     sample_count = 6
     load_samples: list[float] = []
+    cold_load_samples: list[float] = []
     scope_samples: list[float] = []
     cache = getattr(module, "_PROBE_REGISTRY_CACHE", None)
 
@@ -507,6 +510,13 @@ def _probe_pr_scoped_performance_registry_cache(repo_root: Path) -> dict[str, fl
             module.load_probe_registry(registry_path)
         load_samples.append((time.perf_counter() - started) * 1000.0)
 
+        started = time.perf_counter()
+        for _ in range(cold_load_iterations):
+            if isinstance(cache, dict):
+                cache.clear()
+            module.load_probe_registry(registry_path)
+        cold_load_samples.append((time.perf_counter() - started) * 1000.0)
+
         if isinstance(cache, dict):
             cache.clear()
         started = time.perf_counter()
@@ -517,6 +527,8 @@ def _probe_pr_scoped_performance_registry_cache(repo_root: Path) -> dict[str, fl
     return {
         "load_probe_registry_iterations": float(load_iterations),
         "load_probe_registry_ms_mean": round(sum(load_samples) / len(load_samples), 6),
+        "cold_load_probe_registry_iterations": float(cold_load_iterations),
+        "cold_load_probe_registry_ms_mean": round(sum(cold_load_samples) / len(cold_load_samples), 6),
         "build_scope_report_iterations": float(scope_iterations),
         "build_scope_report_ms_mean": round(sum(scope_samples) / len(scope_samples), 6),
         "sample_count": float(sample_count),
@@ -667,14 +679,16 @@ def _probe_benchmark_queue_cache(repo_root: Path) -> dict[str, float]:
         tracked_loads = 0
         original_loads = module.json.loads
 
-        def counting_loads(raw: str, *args: object, **kwargs: object) -> object:
+        def counting_loads(raw: str | bytes, *args: object, **kwargs: object) -> object:
             nonlocal tracked_loads
             tracked_loads += 1
             return original_loads(raw, *args, **kwargs)
 
         module.json.loads = counting_loads
         try:
+            cold_started = time.perf_counter()
             cold_records = store.list_records(queue_root=queue_root)
+            cold_elapsed_ms = (time.perf_counter() - cold_started) * 1000.0
             if len(cold_records) != record_count:
                 raise ValueError("benchmark queue probe produced an unexpected benchmark queue record count")
             cold_json_loads = tracked_loads
@@ -691,6 +705,7 @@ def _probe_benchmark_queue_cache(repo_root: Path) -> dict[str, float]:
         finally:
             module.json.loads = original_loads
     return {
+        "cold_elapsed_ms": round(cold_elapsed_ms, 6),
         "cold_json_loads": float(cold_json_loads),
         "record_count": float(record_count),
         "warm_elapsed_ms_mean": round(sum(warm_elapsed_samples) / len(warm_elapsed_samples), 6),
@@ -1951,11 +1966,16 @@ def _float_or_none(value: object) -> float | None:
     return None
 
 
-def _match_probe_indexes(*, changed_paths: tuple[str, ...], probes: tuple[ProbeDefinition, ...]) -> set[int]:
+def _match_probe_indexes(*, changed_paths: set[str] | frozenset[str] | tuple[str, ...], probes: tuple[ProbeDefinition, ...]) -> set[int]:
     exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
     matched_probe_indexes: set[int] = set()
+    if not isinstance(changed_paths, (set, frozenset)):
+        changed_paths = set(changed_paths)
+    for path in exact_path_to_probe_indexes.keys() & changed_paths:
+        matched_probe_indexes.update(exact_path_to_probe_indexes[path])
+    if not wildcard_glob_matchers:
+        return matched_probe_indexes
     for path in changed_paths:
-        matched_probe_indexes.update(exact_path_to_probe_indexes.get(path, ()))
         for prefix, pattern, probe_indexes in wildcard_glob_matchers:
             if prefix and not path.startswith(prefix):
                 continue

@@ -6917,7 +6917,10 @@ public actor MelixCLIRunner {
     }
 
     private static func defaultEvaluationDatasetID(for suiteID: String) -> String {
-        "\(suiteID).dev.v1"
+        if suiteID == "event_extraction" {
+            return "top200.event-extraction.top20.v1"
+        }
+        return "\(suiteID).dev.v1"
     }
 }
 

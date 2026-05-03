@@ -36,6 +36,11 @@ This slice keeps the existing registry and probe shape intact. The affected path
 - Keep exact-path force-all matching first so common exact infra/script paths still return without invoking wildcard matching.
 - Keep selection semantics unchanged; this only changes matcher setup reuse in the scope-report hot path.
 
+## Slice update: exact changed-path intersection
+- Reuse the deduplicated changed-path set for force-all checks and probe matching, delaying only the stable output sort until the response is built.
+- Match exact watch globs through dictionary-key set intersection before wildcard scanning. Current registered probe watch lists are exact-path heavy, so large synthetic changed-file sets avoid one dictionary miss per changed path while preserving selected-probe ordering through the existing probe-order projection.
+- Keep the wildcard matcher path unchanged except for receiving the same deduplicated changed-path set.
+
 ## Performance probe
 - Probe target: `build_scope_report(...)` on a synthetic large changed-file set and current probe registry.
 - Primary metrics:

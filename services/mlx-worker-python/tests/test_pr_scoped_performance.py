@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -127,6 +128,31 @@ def test_scope_report_selects_evaluation_store_probe() -> None:
     }
 
 
+def test_scope_report_selects_evaluation_final_result_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/evaluation_final_result.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "evaluation-final-result-materialization-streaming"
+
+
+def test_dispatch_probe_impl_supports_evaluation_final_result_probe() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-final-result-materialization-streaming"
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["sample_count"] == 15000.0
+
+
+
 def test_scope_report_selects_worker_registry_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -135,6 +161,17 @@ def test_scope_report_selects_worker_registry_probe() -> None:
 
     assert scope["selected_count"] == 1
     assert scope["selected_probes"][0]["id"] == "worker-registry-resident-bytes-accumulator"
+
+
+def test_scope_report_selects_pr_scoped_scope_script_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/pr_scoped_performance_scope.py"],
+    )
+
+    selected_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["force_all"] is True
+    assert "pr-scoped-performance-scope-json-read-bytes" in selected_ids
 
 
 def test_scope_report_selects_job_registry_probe() -> None:
@@ -148,6 +185,26 @@ def test_scope_report_selects_job_registry_probe() -> None:
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
     ]
+
+
+def test_scope_report_selects_mlx_lm_runner_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/mlx_lm_runner.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-lm-structured-result-tail-parse"
+
+
+def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-vlm-family-config-cache"
 
 
 def test_scope_report_selects_model_registry_catalog_probe() -> None:
@@ -228,6 +285,16 @@ def test_scope_report_selects_bench_report_probe() -> None:
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
     assert "maintenance-bench-report-readback" in probe_ids
+
+
+def test_scope_report_selects_maintenance_percentile_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/maintenance_core.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "maintenance-percentile-vector-reuse" in probe_ids
 
 
 def test_scope_report_selects_upload_receipt_published_files_probe() -> None:
@@ -366,6 +433,40 @@ def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
     assert matched == {0, 1, 2}
 
 
+def test_match_probe_indexes_exact_only_intersects_changed_paths() -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/a.py", "shared.py"),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+        ProbeDefinition(
+            probe_id="beta",
+            name="Beta",
+            runner="ubuntu-latest",
+            watch_globs=("services/b.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+
+    matched = _match_probe_indexes(
+        changed_paths={"shared.py", "docs/readme.md", "services/b.py"},
+        probes=probes,
+    )
+
+    assert matched == {0, 1}
+
+
 def test_match_probe_indexes_skips_prefix_misses_before_regex(monkeypatch: pytest.MonkeyPatch) -> None:
     probes = (
         ProbeDefinition(
@@ -425,16 +526,21 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
+        "evaluation-final-result-materialization-streaming",
         "evaluation-sample-probe-aggregation",
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
+        "mlx-lm-structured-result-tail-parse",
+        "mlx-vlm-family-config-cache",
         "model-registry-plain-local-manifest-stat-elision",
         "package-macos-resolve-fallback-scandir",
+        "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
+        "maintenance-percentile-vector-reuse",
         "phase8-metrics-closure-audit-reuse",
         "pr-scoped-performance-registry-cache",
         "swift-cli-json-envelope-encoding",
@@ -444,11 +550,26 @@ def test_registered_probes_expose_focused_commands() -> None:
         "pr-scoped-performance-report-results-scandir",
         "model-ops-bundle-artifact-byte-accounting",
     }
+    registry_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
         assert probe.probe_command
         assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
+        if probe.probe_id == "model-registry-plain-local-manifest-stat-elision":
+            registry_probe = probe
+
+    assert registry_probe is not None
+    assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.test_command
+    assert "test_raw_model_spec_loads_config_payload_when_not_supplied" in registry_probe.test_command
+    assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.test_command
+    assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.test_command
+    assert "scripts/changed_scope_coverage.py" in registry_probe.watch_globs
+    assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.coverage_command
+    assert "test_raw_model_spec_loads_config_payload_when_not_supplied" in registry_probe.coverage_command
+    assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.coverage_command
+    assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.coverage_command
+    assert "scripts/changed_scope_coverage.py" in registry_probe.coverage_command
 
 
 def test_load_probe_registry_uses_absolute_cache_key_without_resolving(
@@ -541,15 +662,19 @@ def test_load_probe_registry_reuses_cached_payload_when_file_is_unchanged(
         encoding="utf-8",
     )
     read_calls = 0
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
 
-    def tracked_read_text(self: Path, *args: object, **kwargs: object) -> str:
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("load_probe_registry should read JSON bytes without text decoding")
+
+    def tracked_read_bytes(self: Path, *args: object, **kwargs: object) -> bytes:
         nonlocal read_calls
         if self == registry_path:
             read_calls += 1
-        return original_read_text(self, *args, **kwargs)
+        return original_read_bytes(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", tracked_read_text)
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
 
     first = load_probe_registry(registry_path)
     second = load_probe_registry(registry_path)
@@ -578,15 +703,15 @@ def test_load_probe_registry_refreshes_cache_when_file_changes(
         encoding="utf-8",
     )
     read_calls = 0
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
 
-    def tracked_read_text(self: Path, *args: object, **kwargs: object) -> str:
+    def tracked_read_bytes(self: Path, *args: object, **kwargs: object) -> bytes:
         nonlocal read_calls
         if self == registry_path:
             read_calls += 1
-        return original_read_text(self, *args, **kwargs)
+        return original_read_bytes(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", tracked_read_text)
+    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
 
     first = load_probe_registry(registry_path)
     time.sleep(0.001)
@@ -897,6 +1022,7 @@ def test_dispatch_probe_impl_supports_benchmark_queue_probe() -> None:
 
     metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
 
+    assert metrics["cold_elapsed_ms"] >= 0
     assert metrics["cold_json_loads"] == 128.0
     assert metrics["record_count"] == 128.0
     assert metrics["warm_json_loads_mean"] == 0.0
@@ -948,8 +1074,11 @@ def test_job_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[s
     payload = json.loads(capsys.readouterr().out)
     assert payload["active_manifest_elapsed_ms_mean"] > 0
     assert payload["resolve_target_elapsed_ms_mean"] > 0
+    assert payload["restore_elapsed_ms_mean"] > 0
+    assert payload["restore_elapsed_ms_min"] > 0
     assert payload["active_manifest_count"] == 960.0
     assert payload["removed_count"] == 240.0
+    assert payload["restored_job_count"] == 880.0
     assert payload["sample_count"] == 6.0
 
 
@@ -1195,6 +1324,7 @@ def test_dispatch_probe_impl_supports_registry_cache_probe() -> None:
     metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["load_probe_registry_ms_mean"] > 0
+    assert metrics["cold_load_probe_registry_ms_mean"] > 0
     assert metrics["build_scope_report_ms_mean"] > 0
     assert metrics["sample_count"] == 6.0
 
@@ -1384,7 +1514,7 @@ def test_command_json_probe_executes_probe_command_and_parses_metrics(tmp_path: 
         coverage_command="true",
         probe_impl="command_json",
         probe_command=(
-            "python3 -c \"import json; "
+            "python -c \"import json; "
             "print(json.dumps({'elapsed_ms_mean': 12.5, 'iteration_count': 3}))\""
         ),
         metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
@@ -1406,8 +1536,80 @@ def test_model_registry_catalog_probe_command_emits_metrics() -> None:
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["manifest_is_file_calls_mean"] == 0.0
+    assert metrics["config_load_calls_mean"] == 800.0
+    assert metrics["manifest_parse_calls_mean"] == 0.0
     assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 800.0
     assert metrics["sample_count"] == 3.0
+
+
+def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-lm-structured-result-tail-parse"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["payload_value"] == 42.0
+    assert metrics["line_count"] == 50002.0
+    assert metrics["sample_count"] == 5.0
+
+
+def test_mlx_vlm_family_config_probe_script_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-vlm-family-config-cache"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["resolve_calls_mean"] >= 1.0
+    assert metrics["prompt_token_count"] == 3.0
+    assert metrics["iteration_count"] == 200.0
+    assert metrics["sample_count"] == 5.0
+
+
+def test_mlx_lm_result_tail_probe_script_main_covers_checked_in_file(capsys: pytest.CaptureFixture[str]) -> None:
+    script_path = REPO_ROOT / "scripts" / "mlx_lm_result_tail_probe.py"
+    spec = importlib.util.spec_from_file_location("mlx_lm_result_tail_probe_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.NOISE_LINE_COUNT = 32
+    module.ITERATION_COUNT = 2
+    module.SAMPLE_COUNT = 2
+
+    assert module.main() == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert payload["payload_value"] == 42.0
+    assert payload["sample_count"] == 2.0
+    assert payload["line_count"] == 34.0
+
+
+def test_mlx_vlm_family_config_probe_script_main_covers_checked_in_file(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "mlx_vlm_family_config_probe.py"
+    spec = importlib.util.spec_from_file_location("mlx_vlm_family_config_probe_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.ITERATION_COUNT = 8
+    module.SAMPLE_COUNT = 2
+
+    assert module.main() == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert payload["prompt_token_count"] == 3.0
+    assert payload["iteration_count"] == 8.0
+    assert payload["sample_count"] == 2.0
+    assert payload["resolve_calls_mean"] >= 1.0
 
 
 def test_command_json_probe_rejects_missing_command_and_non_numeric_metrics(tmp_path: Path) -> None:
@@ -1845,6 +2047,27 @@ def test_report_script_preserves_exact_sticky_comment_body_on_markdown_stdout(
     assert (report_dir / "report.md").read_text(encoding="utf-8") == expected_markdown
     assert (report_dir / "pr-comment.md").read_text(encoding="utf-8") == expected_sticky
 
+
+
+def test_scope_cli_loads_changed_files_with_binary_json_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    changed_files_path = tmp_path / "changed-files.json"
+    changed_files_path.write_text(json.dumps(["scripts/pr_scoped_performance_scope.py"]), encoding="utf-8")
+    scope_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_scope.py"))
+    load_changed_files = scope_script["load_changed_files"]
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        raise AssertionError("scope changed-files loader should use read_bytes()")  # pragma: no cover
+
+    monkeypatch.setattr(scope_script["Path"], "read_text", fail_read_text)
+
+    assert load_changed_files(changed_files_path) == ["scripts/pr_scoped_performance_scope.py"]
+
+    changed_files_path.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="changed files payload must be a JSON list"):
+        load_changed_files(changed_files_path)
 
 
 def test_cli_scripts_smoke(tmp_path: Path, benchmark_scope: dict[str, object], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

@@ -295,7 +295,7 @@ class ModelOpsJobRegistry:
     @staticmethod
     def _read_manifest_dict(path: Path) -> dict[str, Any]:
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(path.read_bytes())
         except (OSError, json.JSONDecodeError):
             return {}
         return payload if isinstance(payload, dict) else {}

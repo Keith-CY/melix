@@ -47,6 +47,10 @@ class LoRATrainingConfig:
     target_repo: str
     chunked_training: bool
     chunk_size: int
+    training_objective: str = "supervised_finetuning"
+    adapter_algorithm: str = "lora"
+    preference_loss: str = ""
+    dataset_contract: str = "sft"
 
 
 _DENSE_ATTENTION_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]
@@ -71,6 +75,14 @@ _UNSAFE_QUANTIZED_LORA_TARGETS = {
 }
 _CONFIRMED_EXPERT_COUNT_SOURCES = {"config"}
 _QUANTIZED_MODEL_PATTERN = re.compile(r"(?<![a-z0-9])(?:4bit|8bit|q4|q8|optiq)(?![a-z0-9])")
+_SFT_TRAINING_MODES = {"lora", "qlora", "dora"}
+_PREFERENCE_TRAINING_MODES = {"dpo", "orpo"}
+_CPT_TRAINING_MODES = {"cpt"}
+_SUPPORTED_TRAINING_MODES = (
+    _SFT_TRAINING_MODES
+    | _PREFERENCE_TRAINING_MODES
+    | _CPT_TRAINING_MODES
+)
 
 _FAMILY_PROFILES: dict[str, dict[str, object]] = {
     "llama": {
@@ -305,11 +317,12 @@ def normalize_training_config(
         )
 
     training_mode = ext.get("training_mode", "lora").strip().lower() or "lora"
-    if training_mode not in {"lora", "qlora"}:
+    if training_mode not in _SUPPORTED_TRAINING_MODES:
         raise ModelOperationError(
             code="unsupported_training_mode",
             message=f"Unsupported training_mode: {training_mode}",
         )
+    mode_contract = _resolve_training_mode_contract(training_mode, dataset_format)
     quantized_base_model = _is_quantized_base_model(source_model)
     if training_mode == "qlora" and quantized_base_model is False:
         raise ModelOperationError(
@@ -531,7 +544,66 @@ def normalize_training_config(
         target_repo=ext.get("target_repo", "").strip(),
         chunked_training=chunked_training,
         chunk_size=chunk_size,
+        training_objective=mode_contract["training_objective"],
+        adapter_algorithm=mode_contract["adapter_algorithm"],
+        preference_loss=mode_contract["preference_loss"],
+        dataset_contract=mode_contract["dataset_contract"],
     )
+
+
+def _resolve_training_mode_contract(training_mode: str, dataset_format: str) -> dict[str, str]:
+    if training_mode in _SFT_TRAINING_MODES:
+        if dataset_format == "preference_pair":
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="SFT training modes require supervised training datasets.",
+                details={
+                    "training_mode": training_mode,
+                    "required_format": "chat_messages,prompt_completion,text_completion",
+                    "actual_format": dataset_format,
+                },
+            )
+        return {
+            "training_objective": "supervised_finetuning",
+            "adapter_algorithm": "dora" if training_mode == "dora" else "lora",
+            "preference_loss": "",
+            "dataset_contract": "sft",
+        }
+
+    if training_mode in _PREFERENCE_TRAINING_MODES:
+        if dataset_format != "preference_pair":
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="Preference training modes require preference_pair datasets.",
+                details={
+                    "training_mode": training_mode,
+                    "required_format": "preference_pair",
+                    "actual_format": dataset_format,
+                },
+            )
+        return {
+            "training_objective": "preference",
+            "adapter_algorithm": "lora",
+            "preference_loss": training_mode,
+            "dataset_contract": "preference_pair",
+        }
+
+    if dataset_format != "text_completion":
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Continual pretraining requires text_completion datasets.",
+            details={
+                "training_mode": training_mode,
+                "required_format": "text_completion",
+                "actual_format": dataset_format,
+            },
+        )
+    return {
+        "training_objective": "continual_pretraining",
+        "adapter_algorithm": "lora",
+        "preference_loss": "",
+        "dataset_contract": "text_completion",
+    }
 
 
 def _resolve_training_preset(preset_id: str) -> dict[str, object]:

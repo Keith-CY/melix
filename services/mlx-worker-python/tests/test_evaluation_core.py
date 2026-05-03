@@ -15,6 +15,7 @@ from worker.engine.evaluation_core import EvaluationCore
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.productization.event_extraction import EventExtractionClientResult
 from worker.productization.evaluation_schemas import EvaluationCompareJob, build_evaluation_sample_record
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
@@ -245,6 +246,8 @@ class FakeEvaluationRegistry:
 
 
 class ProbeRuntime:
+    runtime_name = "probe-live-runtime"
+
     def __init__(self, response: str, probe: object) -> None:
         self._response = response
         self._probe = probe
@@ -1118,6 +1121,69 @@ def test_run_local_suite_records_vlm_probe_for_live_evaluation(tmp_path: Path) -
 
     assert run.samples[0].extracted_result == "Paris"
     assert registry.vision_probes == [("vlm", {"images": 1})]
+
+
+def test_event_extraction_weighted_f1_can_use_local_loaded_model(
+    tmp_path: Path,
+) -> None:
+    source_jsonl = tmp_path / "event-samples.jsonl"
+    source_jsonl.write_text(
+        json.dumps(
+            {
+                "dialogue_id": "1",
+                "dialogue": ["speaker_1: 周末去南京出差"],
+                "events": [
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["周末"],
+                        "location": ["南京"],
+                        "action": ["出差"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    registry = FakeEvaluationRegistry(
+        runtime=ProbeRuntime(
+            '{"events":[{"actor":["speaker_1"],"time":["周末"],"location":["南京"],"action":["出差"]}]}',
+            {"images": 0},
+        ),
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+        runtime_kind="vlm",
+    )
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "event", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+        model_handle=registry.handle,
+        suite_id="event_extraction",
+        dataset_root=tmp_path,
+        sample_size=1,
+        scoring_mode="event_extraction_weighted_f1",
+        parameters={
+            "dataset_id": "local.event.v1",
+            "event_source_jsonl": str(source_jsonl),
+            "require_live_model": "true",
+        },
+    )
+
+    metrics = {metric.name: metric.value for metric in run.result.metrics}
+
+    assert run.job.model_id == "unsloth/gemma-4-E4B-it-MLX-8bit"
+    assert run.job.task_kind == "image-text-to-text"
+    assert run.job.dataset_id == "local.event.v1"
+    assert run.job.parameters["runtime_live_model"] == "true"
+    assert run.job.parameters["runtime_kind"] == "vlm"
+    assert run.job.parameters["runtime_model_handle"] == registry.handle
+    assert run.job.parameters["remote_model_id"] == "unsloth/gemma-4-E4B-it-MLX-8bit"
+    assert registry.started_requests[0][1] == "vlm"
+    assert registry.finished_requests == [registry.started_requests[0][0]]
+    assert registry.vision_probes == [("vlm", {"images": 0})]
+    assert metrics["eval.event_extraction.overall_weighted_f1"] == 1.0
+    assert run.result.primary_score_value == 1.0
 
 
 def test_run_local_suite_supports_multimodal_live_evaluation_and_persists_media_evidence(
@@ -2343,6 +2409,120 @@ def test_worker_maintenance_service_run_evaluation_maps_compare_results(
     assert result_metrics["mmlu:melix-dev-text-lora-a"]["eval.compare.win_count"] == 1.0
     assert result_metrics["mmlu:melix-dev-text-lora-b"]["eval.compare.loss_count"] == 1.0
     assert result_metrics["mmlu:melix-dev-text-lora-b"]["eval.compare.delta_typed_score_mean"] == -0.5
+
+
+def test_event_extraction_top20_builtin_fixture_has_confirmed_dialogue_ids() -> None:
+    dataset_id = "top200.event-extraction.top20.v1"
+    dataset_root = WorkerMaintenanceService._default_dataset_root(dataset_id)
+
+    manifest = json.loads((dataset_root / "manifest.json").read_text(encoding="utf-8"))
+    rows = [
+        json.loads(line)
+        for line in (dataset_root / "samples.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert manifest["schema_version"] == "melix.evaluation_dataset_package.v2"
+    assert manifest["dataset_id"] == dataset_id
+    assert manifest["suite_id"] == "event_extraction"
+    assert manifest["sample_count"] == 20
+    assert [row["dialogue_id"] for row in rows] == [
+        "1",
+        "2",
+        "3",
+        "4",
+        "6",
+        "8",
+        "9",
+        "10",
+        "12",
+        "15",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "25",
+        "27",
+        "29",
+    ]
+    assert all(isinstance(row.get("dialogue"), list) and row["dialogue"] for row in rows)
+    assert all(isinstance(row.get("events"), list) and row["events"] for row in rows)
+
+
+def test_worker_maintenance_service_event_extraction_uses_builtin_top20_dataset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_id = "top200.event-extraction.top20.v1"
+
+    class FakeClient:
+        def extract_events(self, dialogue, dialogue_id=""):
+            assert dialogue_id == "1"
+            assert isinstance(dialogue, list)
+            return EventExtractionClientResult(
+                events=[
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["周末"],
+                        "location": ["南京"],
+                        "action": ["出差"],
+                    }
+                ],
+                raw_response='{"events":[]}',
+            )
+
+    monkeypatch.setattr(
+        evaluation_core_module,
+        "make_event_extraction_client",
+        lambda target, prompt_spec=None: FakeClient(),
+    )
+
+    service = WorkerMaintenanceService(
+        WorkerRegistry(model_catalog=WorkerModelCatalog()),
+        jobs_root=tmp_path / "model-ops",
+    )
+    request = maintenance_pb2.RunEvaluationRequest(
+        suite_id="event_extraction",
+        dataset_id=dataset_id,
+        sample_size=1,
+        scoring_mode="event_extraction_weighted_f1",
+    )
+    request.remote_target.remote_server_id = "sub2api"
+    request.remote_target.provider_kind = "openai-compatible"
+    request.remote_target.base_url = "https://sub2api.example/v1"
+    request.remote_target.api_key = "sk-test"
+    request.remote_target.model_id = "gemini-2.5-flash"
+
+    response = service.RunEvaluation(request, context=None)
+
+    assert response.ok is True
+    assert response.job.dataset_id == dataset_id
+    assert response.job.sample_size == 1
+    assert response.job.parameters["event_source_jsonl"].endswith(
+        "services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.top20.v1/samples.jsonl"
+    )
+    assert response.results[0].dataset_id == dataset_id
+
+
+def test_default_dataset_root_prefers_bundled_melix_repo_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundled_repo_root = tmp_path / "Melix.app/Contents/Resources/repo"
+    monkeypatch.setenv("MELIX_REPO_ROOT", str(bundled_repo_root))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+
+    dataset_root = WorkerMaintenanceService._default_dataset_root("top200.event-extraction.top20.v1")
+
+    assert dataset_root == (
+        bundled_repo_root
+        / "services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.top20.v1"
+    ).resolve()
 
 
 def _write_dataset_package(

@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 from worker.model_ops.errors import ModelOperationError
 
-_SUPPORTED_FORMATS = {"chat_messages", "prompt_completion", "text_completion"}
+_SUPPORTED_FORMATS = {"chat_messages", "prompt_completion", "text_completion", "preference_pair"}
 _SUPPORTED_ROLES = {"system", "user", "assistant", "tool"}
 _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
 _QUALITY_REPORT_SAMPLE_LIMIT = 10
@@ -63,6 +63,8 @@ class HFDatasetReference:
     completion_feature: str
     text_feature: str
     valid_split: str = ""
+    chosen_feature: str = ""
+    rejected_feature: str = ""
 
 
 @dataclass(frozen=True)
@@ -336,6 +338,8 @@ def resolve_training_dataset_package(
         completion_feature=request_ext.get("completion_feature", "").strip(),
         text_feature=request_ext.get("text_feature", "").strip(),
         valid_split=request_ext.get("hf_valid_split", "").strip(),
+        chosen_feature=request_ext.get("chosen_feature", "").strip(),
+        rejected_feature=request_ext.get("rejected_feature", "").strip(),
     )
     if not reference.dataset_path:
         raise ModelOperationError(
@@ -634,6 +638,8 @@ def materialize_hf_training_dataset_package(
         "prompt_feature": resolved_reference.prompt_feature,
         "completion_feature": resolved_reference.completion_feature,
         "text_feature": resolved_reference.text_feature,
+        "chosen_feature": resolved_reference.chosen_feature,
+        "rejected_feature": resolved_reference.rejected_feature,
     }
     manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
     _write_jsonl_rows(samples_path, serialized_samples)
@@ -729,6 +735,21 @@ def _normalize_sample(
             "completion": _truncate_text(completion, max_characters_per_sample),
         }
 
+    if format_name == "preference_pair":
+        prompt = str(sample.get("prompt", "")).strip()
+        chosen = str(sample.get("chosen", "")).strip()
+        rejected = str(sample.get("rejected", "")).strip()
+        if not prompt or not chosen or not rejected:
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="preference_pair samples must include prompt, chosen, and rejected text.",
+            )
+        return {
+            "prompt": _truncate_text(prompt, max_characters_per_sample),
+            "chosen": _truncate_text(chosen, max_characters_per_sample),
+            "rejected": _truncate_text(rejected, max_characters_per_sample),
+        }
+
     text = str(sample.get("text", "")).strip()
     if not text:
         raise ModelOperationError(
@@ -792,6 +813,8 @@ def _reference_from_cached_manifest(
         completion_feature=str(payload.get("completion_feature", reference.completion_feature)),
         text_feature=str(payload.get("text_feature", reference.text_feature)),
         valid_split=str(payload.get("hf_valid_split", reference.valid_split)),
+        chosen_feature=str(payload.get("chosen_feature", reference.chosen_feature)),
+        rejected_feature=str(payload.get("rejected_feature", reference.rejected_feature)),
     )
 
 
@@ -878,6 +901,8 @@ def _fetch_hf_dataset_rows(
 def _infer_hf_dataset_format(reference: HFDatasetReference, rows: list[dict[str, Any]]) -> str:
     if reference.chat_feature:
         return "chat_messages"
+    if reference.chosen_feature or reference.rejected_feature:
+        return "preference_pair"
     if reference.prompt_feature or reference.completion_feature:
         return "prompt_completion"
     if reference.text_feature:
@@ -886,6 +911,8 @@ def _infer_hf_dataset_format(reference: HFDatasetReference, rows: list[dict[str,
     sample = rows[0]
     if isinstance(sample.get("messages"), list):
         return "chat_messages"
+    if "prompt" in sample and "chosen" in sample and "rejected" in sample:
+        return "preference_pair"
     if "prompt" in sample and "completion" in sample:
         return "prompt_completion"
     if "text" in sample:
@@ -931,6 +958,27 @@ def _map_hf_row_to_training_sample(
             "completion": row[completion_field],
         }
 
+    if format_name == "preference_pair":
+        prompt_field = reference.prompt_feature or "prompt"
+        chosen_field = reference.chosen_feature or "chosen"
+        rejected_field = reference.rejected_feature or "rejected"
+        if prompt_field not in row or chosen_field not in row or rejected_field not in row:
+            raise ModelOperationError(
+                code="hf_dataset_fetch_failed",
+                message="Hugging Face dataset preference_pair rows are missing configured columns.",
+                details={
+                    "hf_dataset_path": reference.dataset_path,
+                    "prompt_feature": prompt_field,
+                    "chosen_feature": chosen_field,
+                    "rejected_feature": rejected_field,
+                },
+            )
+        return {
+            "prompt": row[prompt_field],
+            "chosen": row[chosen_field],
+            "rejected": row[rejected_field],
+        }
+
     text_field = reference.text_feature or "text"
     if text_field not in row:
         raise ModelOperationError(
@@ -965,6 +1013,8 @@ def _hf_materialization_cache_key(reference: HFDatasetReference) -> str:
                 "prompt_feature": reference.prompt_feature,
                 "completion_feature": reference.completion_feature,
                 "text_feature": reference.text_feature,
+                "chosen_feature": reference.chosen_feature,
+                "rejected_feature": reference.rejected_feature,
                 "valid_split": reference.valid_split,
             },
             sort_keys=True,
@@ -1020,6 +1070,8 @@ def _resolve_dataset_build_source(
                 "hf_dataset_revision": resolved.hf_reference.dataset_revision if resolved.hf_reference else "",
                 "hf_train_split": resolved.hf_reference.train_split if resolved.hf_reference else "",
                 "hf_valid_split": resolved.hf_reference.valid_split if resolved.hf_reference else "",
+                "chosen_feature": resolved.hf_reference.chosen_feature if resolved.hf_reference else "",
+                "rejected_feature": resolved.hf_reference.rejected_feature if resolved.hf_reference else "",
             },
         }
 
@@ -1127,6 +1179,7 @@ def _resolve_local_conversion_template(template: str, sample_row: dict[str, Any]
             "chat_messages",
             "prompt_completion",
             "text_completion",
+            "preference_pair",
             "alpaca",
             "sharegpt",
         }:
@@ -1138,6 +1191,8 @@ def _resolve_local_conversion_template(template: str, sample_row: dict[str, Any]
 
     if isinstance(sample_row.get("messages"), list):
         return "chat_messages"
+    if "prompt" in sample_row and "chosen" in sample_row and "rejected" in sample_row:
+        return "preference_pair"
     if "prompt" in sample_row and "completion" in sample_row:
         return "prompt_completion"
     if "text" in sample_row:
@@ -1159,6 +1214,8 @@ def _local_conversion_format(template: str) -> str:
         return "prompt_completion"
     if template == "text_completion":
         return "text_completion"
+    if template == "preference_pair":
+        return "preference_pair"
     raise ModelOperationError(
         code="invalid_dataset_source",
         message=f"Unsupported dataset conversion template: {template}",
@@ -1178,6 +1235,12 @@ def _convert_local_row(
         }
     if template == "text_completion":
         return {"text": row.get("text")}
+    if template == "preference_pair":
+        return {
+            "prompt": row.get("prompt"),
+            "chosen": row.get("chosen"),
+            "rejected": row.get("rejected"),
+        }
     if template == "alpaca":
         instruction = str(row.get("instruction", "")).strip()
         input_text = str(row.get("input", "")).strip()
@@ -1345,9 +1408,9 @@ def _build_quality_and_token_stats(
         completion_tokens_append(completion_count)
         total_tokens_append(prompt_count + completion_count)
 
-    finalized_prompt_summary = _summarize_token_values(prompt_tokens)
-    finalized_completion_summary = _summarize_token_values(completion_tokens)
-    finalized_total_summary = _summarize_token_values(total_tokens)
+    finalized_prompt_summary = _summarize_token_values(prompt_tokens, sort_in_place=True)
+    finalized_completion_summary = _summarize_token_values(completion_tokens, sort_in_place=True)
+    finalized_total_summary = _summarize_token_values(total_tokens, sort_in_place=True)
 
     return (
         {
@@ -1409,9 +1472,9 @@ def _collect_token_stats(samples: Iterable[dict[str, Any]], format_name: str) ->
             completion_tokens_append(completion_count)
             total_tokens_append(prompt_count + completion_count)
 
-    prompt_summary = _summarize_token_values(prompt_tokens, total=prompt_token_sum)
-    completion_summary = _summarize_token_values(completion_tokens, total=completion_token_sum)
-    total_summary = _summarize_token_values(total_tokens, total=total_token_sum)
+    prompt_summary = _summarize_token_values(prompt_tokens, total=prompt_token_sum, sort_in_place=True)
+    completion_summary = _summarize_token_values(completion_tokens, total=completion_token_sum, sort_in_place=True)
+    total_summary = _summarize_token_values(total_tokens, total=total_token_sum, sort_in_place=True)
 
     return {
         "estimator": "whitespace_v1",
@@ -1488,6 +1551,14 @@ def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int,
             _whitespace_token_count(str(sample.get("completion", ""))),
         )
 
+    if format_name == "preference_pair":
+        return (
+            _whitespace_token_count(str(sample.get("prompt", ""))),
+            _whitespace_token_count(
+                f"{sample.get('chosen', '')} {sample.get('rejected', '')}"
+            ),
+        )
+
     return 0, _whitespace_token_count(str(sample.get("text", "")))
 
 
@@ -1503,6 +1574,11 @@ def _dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:
         completion = str(sample.get("completion", "")).strip()
         if prompt and completion and prompt == completion:
             reasons.append("duplicate_prompt_completion")
+    if "prompt" in sample and "chosen" in sample and "rejected" in sample:
+        chosen = str(sample.get("chosen", "")).strip()
+        rejected = str(sample.get("rejected", "")).strip()
+        if chosen and rejected and chosen == rejected:
+            reasons.append("duplicate_preference_pair")
 
     if "messages" in sample:
         messages = sample.get("messages")
@@ -1550,6 +1626,12 @@ def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
                 for message in messages
                 if isinstance(message, dict)
             ]
+    if "prompt" in sample and ("chosen" in sample or "rejected" in sample):
+        return [
+            str(sample.get("prompt", "")),
+            str(sample.get("chosen", "")),
+            str(sample.get("rejected", "")),
+        ]
     if "prompt" in sample or "completion" in sample:
         return [str(sample.get("prompt", "")), str(sample.get("completion", ""))]
     return [str(sample.get("text", ""))]
@@ -1586,8 +1668,11 @@ def _mean_value(values: list[int]) -> float:
     return round(sum(values) / len(values), 3)
 
 
-def _summarize_token_values(values: list[int], *, total: int | None = None) -> dict[str, float | int]:
-    ordered = sorted(values)
+def _summarize_token_values(
+    values: list[int], *, total: int | None = None, sort_in_place: bool = False
+) -> dict[str, float | int]:
+    ordered = values if sort_in_place else list(values)
+    ordered.sort()
     return {
         "mean": _mean_value_from_total(total if total is not None else sum(values), len(values)),
         "p50": _sorted_percentile_value(ordered, 0.50),

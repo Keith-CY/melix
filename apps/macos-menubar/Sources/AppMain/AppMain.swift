@@ -14,7 +14,7 @@ public enum MenuBarStartupSurface: String {
         let normalized = environmentValue?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
-        self = MenuBarStartupSurface(rawValue: normalized) ?? .tray
+        self = MenuBarStartupSurface(rawValue: normalized) ?? .console
     }
 }
 
@@ -112,7 +112,9 @@ public final class MenuBarTerminationCoordinator: NSObject {
     private let mode: MenuBarTerminationMode
     private let repoRoot: String
     private let runtimeDirectory: String?
+    private let workerProcessIDs: [pid_t]
     private let terminateApplication: @MainActor @Sendable () -> Void
+    private let terminateWorkerProcess: @MainActor @Sendable (pid_t) -> Void
     private let launchDevDownScript: @MainActor @Sendable (String, String?) -> Void
     private var isTerminationRequested = false
 
@@ -120,13 +122,19 @@ public final class MenuBarTerminationCoordinator: NSObject {
         mode: MenuBarTerminationMode,
         repoRoot: String,
         runtimeDirectory: String?,
+        workerProcessIDs: [pid_t]? = nil,
         terminateApplication: @escaping @MainActor @Sendable () -> Void = { NSApplication.shared.terminate(nil) },
+        terminateWorkerProcess: @escaping @MainActor @Sendable (pid_t) -> Void = { pid in
+            _ = Darwin.kill(pid, SIGTERM)
+        },
         launchDevDownScript: (@MainActor @Sendable (String, String?) -> Void)? = nil
     ) {
         self.mode = mode
         self.repoRoot = repoRoot
         self.runtimeDirectory = runtimeDirectory
+        self.workerProcessIDs = workerProcessIDs ?? MenuBarTerminationCoordinator.bundledWorkerProcessIDs()
         self.terminateApplication = terminateApplication
+        self.terminateWorkerProcess = terminateWorkerProcess
         self.launchDevDownScript = launchDevDownScript ?? { repoRoot, runtimeDirectory in
             MenuBarTerminationCoordinator.launchDevDownProcess(
                 repoRoot: repoRoot,
@@ -147,10 +155,34 @@ public final class MenuBarTerminationCoordinator: NSObject {
         }
 
         isTerminationRequested = true
+        for workerProcessID in workerProcessIDs {
+            terminateWorkerProcess(workerProcessID)
+        }
         if mode == .devDownScript {
             launchDevDownScript(repoRoot, runtimeDirectory)
         }
         terminateApplication()
+    }
+
+    static func bundledWorkerProcessIDs(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [pid_t] {
+        var seenProcessIDs = Set<pid_t>()
+        return [
+            "MELIX_SWIFT_WORKER_PID",
+            "MELIX_PYTHON_WORKER_PID",
+        ].compactMap { key in
+            guard
+                let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                let processID = pid_t(rawValue),
+                processID > 0,
+                seenProcessIDs.insert(processID).inserted
+            else {
+                return nil
+            }
+
+            return processID
+        }
     }
 
     static func launchDevDownProcess(repoRoot: String, runtimeDirectory: String?) {
@@ -384,7 +416,7 @@ public final class MelixMenuBarBootstrap {
 
     public init(
         client: any ControlPlaneXPCClient,
-        startupSurface: MenuBarStartupSurface = .tray,
+        startupSurface: MenuBarStartupSurface = .console,
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
         melixHome: MelixHome = MelixHome(),
         operatorSessionStore: (any OperatorSessionStoring)? = nil,

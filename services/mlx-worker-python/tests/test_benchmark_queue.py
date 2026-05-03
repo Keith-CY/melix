@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -408,6 +409,46 @@ def test_list_records_reuses_cached_decoded_records_for_unchanged_files(
     assert [record.queue_item_id for record in first] == ["queue-1"]
     assert [record.queue_item_id for record in second] == ["queue-1"]
     assert loads == 1
+
+
+def test_list_records_decodes_uncached_records_from_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / "queue"
+    queue_root.mkdir()
+    payload = BenchmarkQueueRecord(
+        queue_item_id="queue-1",
+        job_kind="benchmark",
+        model_id="melix-dev-text",
+        suite_ids=("smoke",),
+        parameters={"sample_size": "32"},
+        status="queued",
+        created_at_unix_ms=100,
+        updated_at_unix_ms=100,
+    ).to_dict()
+    path = queue_root / "queue-1.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    store = BenchmarkQueueStore()
+    read_bytes_calls = 0
+    original_read_bytes = Path.read_bytes
+
+    def tracked_read_bytes(self: Path) -> bytes:
+        nonlocal read_bytes_calls
+        if self == path:
+            read_bytes_calls += 1
+        return original_read_bytes(self)
+
+    read_text_mock = Mock(side_effect=AssertionError("uncached queue records should be decoded from bytes"))
+
+    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
+    monkeypatch.setattr(Path, "read_text", read_text_mock)
+
+    records = store.list_records(queue_root=queue_root)
+
+    assert [record.queue_item_id for record in records] == ["queue-1"]
+    assert read_bytes_calls == 1
+    read_text_mock.assert_not_called()
 
 
 def test_list_records_reload_changed_files_and_transition_refreshes_cache(
