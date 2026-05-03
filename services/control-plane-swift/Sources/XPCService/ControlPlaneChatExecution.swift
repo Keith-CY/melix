@@ -63,6 +63,9 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
 
     public let modelID: String
     public let messages: [Message]
+    public let enableThinking: Bool?
+    public let reasoningEffort: String?
+    public let chatTemplateKwargs: ChatTemplateRequestConfiguration?
     public let resumeRequestID: String?
     public let temperature: Double?
     public let topP: Double?
@@ -72,6 +75,9 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
     public init(
         modelID: String,
         messages: [Message],
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
+        chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil,
         resumeRequestID: String? = nil,
         temperature: Double? = nil,
         topP: Double? = nil,
@@ -80,6 +86,9 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
     ) {
         self.modelID = modelID
         self.messages = messages
+        self.enableThinking = enableThinking
+        self.reasoningEffort = reasoningEffort
+        self.chatTemplateKwargs = chatTemplateKwargs
         self.resumeRequestID = resumeRequestID
         self.temperature = temperature
         self.topP = topP

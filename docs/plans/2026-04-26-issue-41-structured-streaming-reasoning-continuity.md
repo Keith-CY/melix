@@ -7,7 +7,7 @@ Make shipped text streaming deterministic, request-scoped, reasoning-aware, tool
 ## Scope
 
 - preserve raw generation text separately from display-cleaned text
-- resolve reasoning controls through one shared policy path across shipped text endpoints
+- resolve reasoning controls through one shared policy path across shipped text endpoints and operator-driven chat dispatch
 - assemble content, reasoning, and tool-call fragments with request-local parser state
 - suppress incompatible tool parsing for JSON-only structured-output requests without explicit tools
 - preserve hidden reasoning continuity for session follow-up turns without exposing hidden channels in operator-visible output
@@ -23,7 +23,7 @@ Out of scope:
 
 1. Add regression tests for reasoning policy parity, structured-output gating, stream assembler isolation, replay-safe tool-call deltas, JSON reasoning-prefix cleanup, and hidden continuity sanitization.
 2. Extend worker protobuf schema with raw text and parser observability fields, then regenerate Swift and Python protocol artifacts.
-3. Add a Swift `ReasoningPolicyResolver` used by all shipped text request normalizers. Preserve top-level `enable_thinking`, `reasoning_effort`, Messages `thinking`, template kwargs, model/operator defaults, auto-detected family capability, and suppressions in deterministic precedence order.
+3. Add a Swift `ReasoningPolicyResolver` used by all shipped text request normalizers and the operator `startChat` path. Preserve top-level `enable_thinking`, `reasoning_effort`, Messages `thinking`, template kwargs, model/operator defaults, auto-detected family capability, and suppressions in deterministic precedence order.
 4. Add request-scoped Python stream assembly that parses `raw_text || text`, emits unseen deltas only, separates content/reasoning/tool fragments, and skips recoverable malformed tool fragments.
 5. Add session reasoning-continuity metadata in the control plane keyed by session/branch/request. Rehydrate supported follow-up turns through execution metadata/template kwargs while keeping raw hidden content out of SSE and public session state.
 6. Add cache-scope/fingerprint metadata for reasoning mode, reasoning effort, parser mode, template kwargs, and continuity presence.
@@ -44,6 +44,9 @@ Out of scope:
 - `stream_parser_request_context_mode`, `tool_call_markup_leak_count`, and
   `reasoning_channel_recovery_count` make parser context, visible markup leaks,
   and recovered malformed reasoning channels observable.
+- `resolved_stop_token_count`, `reasoning_flag_source`, and
+  `turn_boundary_stop_reason` make the pre-decode turn-boundary stop contract
+  observable in streaming completion evidence.
 
 ## Verification
 
@@ -60,4 +63,6 @@ Out of scope:
 - short visible streaming replies are not swallowed by marker-prefix buffering
 - JSON-only structured-output streams are not contaminated by hidden reasoning prefixes or generic tool parsing
 - repeated session turns preserve supported hidden reasoning continuity while public output remains sanitized
+- turn-boundary stop sequences are resolved before decode from request stop lists,
+  tokenizer EOS metadata, and model/registry stop overrides
 - metrics and docs explain how to reproduce the stream-pipeline evidence

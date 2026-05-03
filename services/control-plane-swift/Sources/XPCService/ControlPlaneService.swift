@@ -358,10 +358,13 @@ public actor ControlPlaneService {
                 messages: request.messages.map {
                     OpenAIChatCompletionsRequest.Message(role: $0.role, content: $0.content)
                 },
+                enableThinking: request.enableThinking,
+                reasoningEffort: request.reasoningEffort,
                 stream: true,
                 temperature: request.temperature,
                 topP: request.topP,
-                maxTokens: request.maxTokens
+                maxTokens: request.maxTokens,
+                chatTemplateKwargs: request.chatTemplateKwargs
             )
         )
         let modelHandle: String
