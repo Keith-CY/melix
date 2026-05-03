@@ -683,6 +683,60 @@ def test_load_probe_registry_reuses_cached_payload_when_file_is_unchanged(
     assert second is first
 
 
+def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registry_path = tmp_path / "probe-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "demo",
+                    "name": "Demo",
+                    "watch_globs": [
+                        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py"
+                    ],
+                    "probe_impl": "command_json",
+                    "probe_command": "python3 -c \"import json; print(json.dumps({'elapsed_ms_mean': 1.0}))\"",
+                    "metrics": [{"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    stat_calls = 0
+    original_stat = Path.stat
+    cache = pr_scoped_performance_module._PROBE_REGISTRY_CACHE
+    pr_scoped_performance_module._load_probe_registry_for_scope_cached.cache_clear()
+    cache.clear()
+
+    def tracked_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        nonlocal stat_calls
+        if self == registry_path:
+            stat_calls += 1
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", tracked_stat)
+
+    try:
+        first = build_scope_report(
+            registry_path=registry_path,
+            changed_files=["services/mlx-worker-python/worker/productization/pr_scoped_performance.py"],
+        )
+        second = build_scope_report(
+            registry_path=registry_path,
+            changed_files=["services/mlx-worker-python/worker/productization/pr_scoped_performance.py"],
+        )
+    finally:
+        pr_scoped_performance_module._load_probe_registry_for_scope_cached.cache_clear()
+        cache.clear()
+
+    assert stat_calls == 2
+    assert first["selected_count"] == 1
+    assert second["selected_probes"] == first["selected_probes"]
+
+
 def test_load_probe_registry_refreshes_cache_when_file_changes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

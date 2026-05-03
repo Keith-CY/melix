@@ -89,15 +89,7 @@ def _probe_registry_cache_key(path: str | Path) -> str:
     return os.path.abspath(os.fspath(path))
 
 
-def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
-    path_obj = Path(path)
-    cache_key = _probe_registry_cache_key(path_obj)
-    stat_result = path_obj.stat()
-    cached = _PROBE_REGISTRY_CACHE.get(cache_key)
-    if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
-        return cached[2]
-
-    payload = json.loads(path_obj.read_bytes())
+def _parse_probe_registry_payload(payload: object) -> tuple[ProbeDefinition, ...]:
     if not isinstance(payload, list):
         raise ValueError("probe registry must be a JSON list")
     probes: list[ProbeDefinition] = []
@@ -131,9 +123,35 @@ def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
                 coverage_replays_tests=bool(raw_probe.get("coverage_replays_tests", False)),
             )
         )
-    probe_tuple = tuple(probes)
-    _PROBE_REGISTRY_CACHE[cache_key] = (stat_result.st_mtime_ns, stat_result.st_size, probe_tuple)
+    return tuple(probes)
+
+
+def _load_probe_registry_uncached(
+    *,
+    path_obj: Path,
+    cache_key: str,
+    mtime_ns: int,
+    size: int,
+) -> tuple[ProbeDefinition, ...]:
+    probe_tuple = _parse_probe_registry_payload(json.loads(path_obj.read_bytes()))
+    _PROBE_REGISTRY_CACHE[cache_key] = (mtime_ns, size, probe_tuple)
     return probe_tuple
+
+
+def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
+    path_obj = Path(path)
+    cache_key = _probe_registry_cache_key(path_obj)
+    stat_result = path_obj.stat()
+    cached = _PROBE_REGISTRY_CACHE.get(cache_key)
+    if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
+        return cached[2]
+
+    return _load_probe_registry_uncached(
+        path_obj=path_obj,
+        cache_key=cache_key,
+        mtime_ns=stat_result.st_mtime_ns,
+        size=stat_result.st_size,
+    )
 
 
 def load_probe_registry_for_scope(path: str | Path) -> tuple[ProbeDefinition, ...]:
@@ -150,10 +168,19 @@ def load_probe_registry_for_scope(path: str | Path) -> tuple[ProbeDefinition, ..
 @lru_cache(maxsize=None)
 def _load_probe_registry_for_scope_cached(
     registry_path: str,
-    _mtime_ns: int,
-    _size: int,
+    mtime_ns: int,
+    size: int,
 ) -> tuple[ProbeDefinition, ...]:
-    return load_probe_registry(registry_path)
+    cached = _PROBE_REGISTRY_CACHE.get(registry_path)
+    if cached is not None and cached[0] == mtime_ns and cached[1] == size:
+        return cached[2]
+
+    return _load_probe_registry_uncached(
+        path_obj=Path(registry_path),
+        cache_key=registry_path,
+        mtime_ns=mtime_ns,
+        size=size,
+    )
 
 
 def build_scope_report(
