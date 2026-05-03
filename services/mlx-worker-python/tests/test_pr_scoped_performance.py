@@ -389,9 +389,10 @@ def test_scope_report_large_changed_set_preserves_exact_selection_semantics() ->
         "benchmark-export-run-scan-single-pass",
         "evaluation-job-id-high-water-mark",
         "evaluation-sample-probe-aggregation",
+        "evaluation-latency-percentile-vector-reuse",
         "download-pipeline-directory-size-single-stat",
     ]
-    assert scope["selected_count"] == 4
+    assert scope["selected_count"] == 5
 
 
 def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
