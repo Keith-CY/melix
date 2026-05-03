@@ -169,6 +169,16 @@ def test_scope_report_selects_mlx_lm_runner_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "mlx-lm-structured-result-tail-parse"
 
 
+def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-vlm-family-config-cache"
+
+
 def test_scope_report_selects_model_registry_catalog_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -449,6 +459,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
         "mlx-lm-structured-result-tail-parse",
+        "mlx-vlm-family-config-cache",
         "model-registry-plain-local-manifest-stat-elision",
         "package-macos-resolve-fallback-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
@@ -1457,6 +1468,21 @@ def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:
     assert metrics["sample_count"] == 5.0
 
 
+def test_mlx_vlm_family_config_probe_script_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-vlm-family-config-cache"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["resolve_calls_mean"] >= 1.0
+    assert metrics["prompt_token_count"] == 3.0
+    assert metrics["iteration_count"] == 200.0
+    assert metrics["sample_count"] == 5.0
+
 
 def test_mlx_lm_result_tail_probe_script_main_covers_checked_in_file(capsys: pytest.CaptureFixture[str]) -> None:
     script_path = REPO_ROOT / "scripts" / "mlx_lm_result_tail_probe.py"
@@ -1475,6 +1501,25 @@ def test_mlx_lm_result_tail_probe_script_main_covers_checked_in_file(capsys: pyt
     assert payload["sample_count"] == 2.0
     assert payload["line_count"] == 34.0
 
+
+def test_mlx_vlm_family_config_probe_script_main_covers_checked_in_file(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "mlx_vlm_family_config_probe.py"
+    spec = importlib.util.spec_from_file_location("mlx_vlm_family_config_probe_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.ITERATION_COUNT = 8
+    module.SAMPLE_COUNT = 2
+
+    assert module.main() == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert payload["prompt_token_count"] == 3.0
+    assert payload["iteration_count"] == 8.0
+    assert payload["sample_count"] == 2.0
+    assert payload["resolve_calls_mean"] >= 1.0
 
 
 def test_command_json_probe_rejects_missing_command_and_non_numeric_metrics(tmp_path: Path) -> None:
