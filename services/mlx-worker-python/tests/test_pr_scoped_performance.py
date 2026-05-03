@@ -238,6 +238,16 @@ def test_scope_report_selects_bench_report_probe() -> None:
     assert "maintenance-bench-report-readback" in probe_ids
 
 
+def test_scope_report_selects_maintenance_percentile_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/maintenance_core.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "maintenance-percentile-vector-reuse" in probe_ids
+
+
 def test_scope_report_selects_upload_receipt_published_files_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -443,6 +453,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "pr-scoped-performance-scope-matcher",
         "training-dataset-token-percentiles-single-sort",
         "maintenance-bench-report-readback",
+        "maintenance-percentile-vector-reuse",
         "phase8-metrics-closure-audit-reuse",
         "pr-scoped-performance-registry-cache",
         "swift-cli-json-envelope-encoding",

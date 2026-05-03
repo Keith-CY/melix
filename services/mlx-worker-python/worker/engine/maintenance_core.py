@@ -1224,8 +1224,7 @@ class MaintenanceCore:
                     }
                 )
             )
-            request_p50_ms = self._percentile(text_request_latencies, 50.0)
-            request_p95_ms = self._percentile(text_request_latencies, 95.0)
+            request_p50_ms, request_p95_ms = self._percentiles(text_request_latencies, 50.0, 95.0)
             generation_length = self._benchmark_generation_length(parameters)
             repeats = self._benchmark_repeats(parameters)
             cache_profile = self._benchmark_cache_profile(parameters)
@@ -1544,6 +1543,13 @@ class MaintenanceCore:
                                                 else 0.0
                                             )
                                             decode_mean = self._mean(decode_values)
+                                            ttft_p50_ms, ttft_p95_ms = self._percentiles(ttft_values, 50.0, 95.0)
+                                            request_latency_p50_ms, request_latency_p95_ms = self._percentiles(
+                                                request_latencies,
+                                                50.0,
+                                                95.0,
+                                            )
+
                                             summary_rows.append(
                                                 build_benchmark_matrix_summary_row(
                                                     job_id=job.job_id,
@@ -1585,10 +1591,10 @@ class MaintenanceCore:
                                                     cell_wall_ms=round((time.perf_counter() - cell_started_at) * 1_000.0, 2),
                                                     completed_count=len(completed_rows),
                                                     failed_count=len(cell_rows) - len(completed_rows),
-                                                    ttft_p50_ms=self._percentile(ttft_values, 50.0),
-                                                    ttft_p95_ms=self._percentile(ttft_values, 95.0),
-                                                    request_latency_p50_ms=self._percentile(request_latencies, 50.0),
-                                                    request_latency_p95_ms=self._percentile(request_latencies, 95.0),
+                                                    ttft_p50_ms=ttft_p50_ms,
+                                                    ttft_p95_ms=ttft_p95_ms,
+                                                    request_latency_p50_ms=request_latency_p50_ms,
+                                                    request_latency_p95_ms=request_latency_p95_ms,
                                                     created_at_unix_ms=queued_at,
                                                 )
                                             )
@@ -2429,18 +2435,19 @@ class MaintenanceCore:
                         )
 
         if suite.suite_id == "latency":
+            request_latency_p50_ms, request_latency_p95_ms = self._percentiles(request_latencies, 50.0, 95.0)
             return (
                 [
                     BenchMetricSpec(
                         suite=suite.suite_id,
                         name="bench.latency.p50_ms",
-                        value=self._percentile(request_latencies, 50.0),
+                        value=request_latency_p50_ms,
                         unit="ms",
                     ),
                     BenchMetricSpec(
                         suite=suite.suite_id,
                         name="bench.latency.p95_ms",
-                        value=self._percentile(request_latencies, 95.0),
+                        value=request_latency_p95_ms,
                         unit="ms",
                     ),
                 ],
@@ -3574,7 +3581,19 @@ class MaintenanceCore:
     def _percentile(values: list[float], percentile: float) -> float:
         if not values:
             return 0.0
+        return MaintenanceCore._ordered_percentile(sorted(values), percentile)
+
+    @staticmethod
+    def _percentiles(values: list[float], *percentiles: float) -> tuple[float, ...]:
+        if not percentiles:
+            return ()
+        if not values:
+            return tuple(0.0 for _ in percentiles)
         ordered = sorted(values)
+        return tuple(MaintenanceCore._ordered_percentile(ordered, percentile) for percentile in percentiles)
+
+    @staticmethod
+    def _ordered_percentile(ordered: list[float], percentile: float) -> float:
         if len(ordered) == 1:
             return round(ordered[0], 2)
         rank = (len(ordered) - 1) * max(0.0, min(percentile, 100.0)) / 100.0
