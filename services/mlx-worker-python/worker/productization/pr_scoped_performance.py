@@ -162,13 +162,14 @@ def build_scope_report(
     changed_files: list[str],
 ) -> dict[str, object]:
     probes = load_probe_registry_for_scope(registry_path)
-    changed_paths = tuple(sorted({path for path in changed_files if path}))
-    force_all = any(_path_matches_force_all(path) for path in changed_paths)
+    changed_path_set = {path for path in changed_files if path}
+    force_all = any(_path_matches_force_all(path) for path in changed_path_set)
     if force_all:
         selected = probes
     else:
-        matched_probe_indexes = _match_probe_indexes(changed_paths=changed_paths, probes=probes)
+        matched_probe_indexes = _match_probe_indexes(changed_paths=changed_path_set, probes=probes)
         selected = tuple(probe for index, probe in enumerate(probes) if index in matched_probe_indexes)
+    changed_paths = tuple(sorted(changed_path_set))
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
@@ -1965,11 +1966,16 @@ def _float_or_none(value: object) -> float | None:
     return None
 
 
-def _match_probe_indexes(*, changed_paths: tuple[str, ...], probes: tuple[ProbeDefinition, ...]) -> set[int]:
+def _match_probe_indexes(*, changed_paths: set[str] | frozenset[str] | tuple[str, ...], probes: tuple[ProbeDefinition, ...]) -> set[int]:
     exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
     matched_probe_indexes: set[int] = set()
+    if not isinstance(changed_paths, (set, frozenset)):
+        changed_paths = set(changed_paths)
+    for path in exact_path_to_probe_indexes.keys() & changed_paths:
+        matched_probe_indexes.update(exact_path_to_probe_indexes[path])
+    if not wildcard_glob_matchers:
+        return matched_probe_indexes
     for path in changed_paths:
-        matched_probe_indexes.update(exact_path_to_probe_indexes.get(path, ()))
         for prefix, pattern, probe_indexes in wildcard_glob_matchers:
             if prefix and not path.startswith(prefix):
                 continue

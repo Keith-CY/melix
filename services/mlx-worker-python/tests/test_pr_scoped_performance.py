@@ -395,6 +395,40 @@ def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
     assert matched == {0, 1, 2}
 
 
+def test_match_probe_indexes_exact_only_intersects_changed_paths() -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/a.py", "shared.py"),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+        ProbeDefinition(
+            probe_id="beta",
+            name="Beta",
+            runner="ubuntu-latest",
+            watch_globs=("services/b.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+
+    matched = _match_probe_indexes(
+        changed_paths={"shared.py", "docs/readme.md", "services/b.py"},
+        probes=probes,
+    )
+
+    assert matched == {0, 1}
+
+
 def test_match_probe_indexes_skips_prefix_misses_before_regex(monkeypatch: pytest.MonkeyPatch) -> None:
     probes = (
         ProbeDefinition(
