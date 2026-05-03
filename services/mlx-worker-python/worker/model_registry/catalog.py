@@ -242,7 +242,7 @@ def _metadata_text_has_mlx_signal(metadata_text: str) -> bool:
 
 def _metadata_payload_has_mlx_signal(metadata_payload: Mapping[str, object]) -> bool:
     try:
-        metadata_text = json.dumps(metadata_payload, sort_keys=True).lower()
+        metadata_text = json.dumps(metadata_payload).lower()
     except (TypeError, ValueError):
         return False
     return _metadata_text_has_mlx_signal(metadata_text)

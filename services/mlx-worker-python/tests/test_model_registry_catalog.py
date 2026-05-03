@@ -363,6 +363,21 @@ def test_metadata_payload_has_mlx_signal_returns_false_for_unserializable_payloa
 
 
 
+def test_metadata_payload_has_mlx_signal_does_not_sort_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+    original_dumps = json.dumps
+
+    def tracked_dumps(payload: object, *args: object, **kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        return original_dumps(payload, *args, **kwargs)
+
+    monkeypatch.setattr(catalog_module.json, "dumps", tracked_dumps)
+
+    assert _metadata_payload_has_mlx_signal({"library_name": "mlx", "tags": ["mlx"]}) is True
+    assert calls == [{}]
+
+
+
 def test_has_model_weight_files_uses_os_scandir_single_pass_without_path_glob_or_iterdir(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
