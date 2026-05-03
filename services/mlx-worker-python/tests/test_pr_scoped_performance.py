@@ -108,9 +108,10 @@ def test_scope_report_selects_evaluation_probes() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert probe_ids == {
         "evaluation-job-id-high-water-mark",
+        "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
     }
 
@@ -388,9 +389,10 @@ def test_scope_report_large_changed_set_preserves_exact_selection_semantics() ->
         "benchmark-export-run-scan-single-pass",
         "evaluation-job-id-high-water-mark",
         "evaluation-sample-probe-aggregation",
+        "evaluation-latency-percentile-vector-reuse",
         "download-pipeline-directory-size-single-stat",
     ]
-    assert scope["selected_count"] == 4
+    assert scope["selected_count"] == 5
 
 
 def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
@@ -528,6 +530,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
         "evaluation-final-result-materialization-streaming",
+        "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-store-samples-csv-streaming",
@@ -966,7 +969,7 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert evaluation_store_metrics["csv_line_count"] == 10001.0
     assert scope_matcher_metrics["build_scope_report_ms_mean"] > 0
     assert scope_matcher_metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
-    assert scope_matcher_metrics["selected_probe_count_mean"] == 4.0
+    assert scope_matcher_metrics["selected_probe_count_mean"] == 5.0
     assert scope_matcher_metrics["force_all_selected_mean"] == 0.0
     assert training_dataset_metrics["elapsed_ms_mean"] > 0
     assert training_dataset_metrics["peak_bytes_mean"] > 0
@@ -1272,7 +1275,7 @@ def test_dispatch_probe_impl_supports_pr_scoped_scope_matcher_probe() -> None:
 
     assert metrics["build_scope_report_ms_mean"] > 0
     assert metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
-    assert metrics["selected_probe_count_mean"] == 4.0
+    assert metrics["selected_probe_count_mean"] == 5.0
     assert metrics["force_all_selected_mean"] == 0.0
 
 
@@ -1663,6 +1666,22 @@ def test_command_json_probe_executes_probe_command_and_parses_metrics(tmp_path: 
     metrics = _probe_command_json(probe=probe, repo_root=tmp_path)
 
     assert metrics == {"elapsed_ms_mean": 12.5, "iteration_count": 3.0}
+
+
+def test_evaluation_latency_percentile_probe_command_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-latency-percentile-vector-reuse"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["sorted_calls_mean"] == 1.0
+    assert metrics["sample_count"] == 12000.0
+    assert metrics["iteration_count"] == 160.0
+    assert metrics["p95"] >= metrics["p50"]
 
 
 def test_model_registry_catalog_probe_command_emits_metrics() -> None:

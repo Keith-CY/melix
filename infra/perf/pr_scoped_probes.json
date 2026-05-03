@@ -265,6 +265,37 @@
     ]
   },
   {
+    "id": "evaluation-latency-percentile-vector-reuse",
+    "name": "Evaluation latency percentile vector reuse",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/engine/evaluation_core.py",
+      "services/mlx-worker-python/tests/test_evaluation_core.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "infra/perf/pr_scoped_probes.json",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_evaluation_core.py::test_percentile_preserves_interpolated_results services/mlx-worker-python/tests/test_evaluation_core.py::test_latency_stats_reuse_single_sorted_vector services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_probes services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_evaluation_latency_percentile_probe_command_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_evaluation_core.py::test_percentile_preserves_interpolated_results services/mlx-worker-python/tests/test_evaluation_core.py::test_latency_stats_reuse_single_sorted_vector services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_probes services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_evaluation_latency_percentile_probe_command_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/engine/evaluation_core.py services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 - <<'PY'\nimport builtins\nimport json\nimport random\nimport sys\nimport time\nfrom pathlib import Path\n\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / 'services/mlx-worker-python'))\nfrom worker.engine.evaluation_core import EvaluationCore\n\nseed = 7\nlatency_count = 12000\niteration_count = 160\nrng = random.Random(seed)\nvalues = [rng.random() * 1000.0 for _ in range(latency_count)]\noriginal_sorted = builtins.sorted\n\nelapsed_samples = []\nsorted_calls = []\nfor _ in range(3):\n    call_counter = [0]\n\n    def counting_sorted(*args, **kwargs):\n        call_counter[0] += 1\n        return original_sorted(*args, **kwargs)\n\n    builtins.sorted = counting_sorted\n    try:\n        started = time.perf_counter()\n        stats = None\n        for _ in range(iteration_count):\n            stats = EvaluationCore._latency_stats(values)\n        elapsed_samples.append((time.perf_counter() - started) * 1000.0)\n        sorted_calls.append(call_counter[0] / iteration_count)\n    finally:\n        builtins.sorted = original_sorted\n\nassert stats is not None\nprint(json.dumps({\n    'elapsed_ms_mean': round(sum(elapsed_samples) / len(elapsed_samples), 6),\n    'sorted_calls_mean': round(sum(sorted_calls) / len(sorted_calls), 6),\n    'sample_count': float(latency_count),\n    'iteration_count': float(iteration_count),\n    'p50': float(stats['p50']),\n    'p95': float(stats['p95']),\n}, sort_keys=True))\nPY",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "sorted_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "evaluation-store-compare-summary-csv-streaming",
     "name": "Evaluation store compare summary CSV streaming",
     "runner": "ubuntu-latest",
