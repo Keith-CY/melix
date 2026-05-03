@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -156,6 +157,16 @@ def test_scope_report_selects_job_registry_probe() -> None:
 
     assert scope["selected_count"] == 1
     assert scope["selected_probes"][0]["id"] == "job-registry-derived-model-single-pass"
+
+
+def test_scope_report_selects_mlx_lm_runner_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/mlx_lm_runner.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-lm-structured-result-tail-parse"
 
 
 def test_scope_report_selects_model_registry_catalog_probe() -> None:
@@ -437,6 +448,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
+        "mlx-lm-structured-result-tail-parse",
         "model-registry-plain-local-manifest-stat-elision",
         "package-macos-resolve-fallback-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
@@ -1427,6 +1439,42 @@ def test_model_registry_catalog_probe_command_emits_metrics() -> None:
     assert metrics["manifest_parse_calls_mean"] == 0.0
     assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 800.0
     assert metrics["sample_count"] == 3.0
+
+
+def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-lm-structured-result-tail-parse"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["payload_value"] == 42.0
+    assert metrics["line_count"] == 50002.0
+    assert metrics["sample_count"] == 5.0
+
+
+
+def test_mlx_lm_result_tail_probe_script_main_covers_checked_in_file(capsys: pytest.CaptureFixture[str]) -> None:
+    script_path = REPO_ROOT / "scripts" / "mlx_lm_result_tail_probe.py"
+    spec = importlib.util.spec_from_file_location("mlx_lm_result_tail_probe_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.NOISE_LINE_COUNT = 32
+    module.ITERATION_COUNT = 2
+    module.SAMPLE_COUNT = 2
+
+    assert module.main() == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert payload["payload_value"] == 42.0
+    assert payload["sample_count"] == 2.0
+    assert payload["line_count"] == 34.0
+
 
 
 def test_command_json_probe_rejects_missing_command_and_non_numeric_metrics(tmp_path: Path) -> None:

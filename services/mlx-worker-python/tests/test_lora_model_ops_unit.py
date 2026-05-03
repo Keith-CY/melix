@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import types
 
@@ -105,6 +106,72 @@ def test_checkpoint_summary_handles_empty_or_missing_directories(tmp_path: Path)
 
     assert mlx_lm_runner_module._checkpoint_summary(adapter_dir) == (0, "")
     assert mlx_lm_runner_module._checkpoint_summary(tmp_path / "missing") == (0, "")
+
+
+def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_text("{}\n", encoding="utf-8")
+    runner = MLXLMRunner()
+    structured_payload = {"weights_path": "/tmp/adapters.safetensors", "metrics": {"loss_final": 0.1}}
+    class NoSplitlinesStr(str):
+        def splitlines(self, *args: object, **kwargs: object) -> list[str]:  # pragma: no cover - defensive guard
+            del args, kwargs
+            raise AssertionError("_run_subprocess should avoid stdout.splitlines()")
+
+    stdout = NoSplitlinesStr(
+        "noisy prefix mentioning __MELIX_MLX_RESULT__=not-a-line\n"
+        "worker log\n"
+        f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps({'ignored': True})}\n"
+        f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps(structured_payload)}"
+    )
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del args, kwargs
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(mlx_lm_runner_module.subprocess, "run", fake_run)
+
+    assert runner._run_subprocess("train", payload_path, error_code="backend_training_failure") == structured_payload
+
+
+def test_run_subprocess_rejects_missing_structured_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_text("{}\n", encoding="utf-8")
+    runner = MLXLMRunner()
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del args, kwargs
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="worker log only\n", stderr="")
+
+    monkeypatch.setattr(mlx_lm_runner_module.subprocess, "run", fake_run)
+
+    with pytest.raises(ModelOperationError, match="structured result"):
+        runner._run_subprocess("train", payload_path, error_code="backend_training_failure")
+
+
+def test_extract_structured_result_payload_accepts_carriage_return_line_end() -> None:
+    payload = {"manifest_path": "/tmp/manifest.json"}
+    stdout = (
+        "leading noise\r\n"
+        f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps(payload)}\r\n"
+        "tail noise"
+    )
+
+    assert mlx_lm_runner_module._extract_structured_result_payload(stdout) == payload
+
+
+
+def test_extract_structured_result_payload_skips_embedded_prefix_and_finds_prior_line() -> None:
+    payload = {"value": 7}
+    stdout = (
+        f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps(payload)}\n"
+        "trailing log __MELIX_MLX_RESULT__=not-a-result-line"
+    )
+
+    assert mlx_lm_runner_module._extract_structured_result_payload(stdout) == payload
 
 
 class _UnexpectedActivationRunner(MLXLMRunner):
