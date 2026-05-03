@@ -176,18 +176,21 @@ def build_benchmark_evaluation_report(
             candidate=candidate_metrics.get(metric_name),
         )
         rows.append(row)
-        match row["status"]:
-            case "warning":
-                warning_count += 1
-            case "missing":
-                missing_count += 1
-            case "not_comparable":
-                not_comparable_count += 1
-    status = "warning" if warning_count else "ok"
-    if missing_count and status == "ok":
+        row_status = row["status"]
+        if row_status == "warning":
+            warning_count += 1
+        elif row_status == "missing":
+            missing_count += 1
+        elif row_status == "not_comparable":
+            not_comparable_count += 1
+    if warning_count:
+        status = "warning"
+    elif missing_count:
         status = "missing"
-    if not_comparable_count and status == "ok":
+    elif not_comparable_count:
         status = "not_comparable"
+    else:
+        status = "ok"
     return {
         "schema_version": "melix.benchmark_evaluation_report.v1",
         "summary": {

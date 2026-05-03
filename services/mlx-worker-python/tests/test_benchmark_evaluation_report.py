@@ -704,6 +704,40 @@ def test_report_builder_reports_missing_metrics_and_non_numeric_status() -> None
     assert rows_by_metric["bench.runtime.runtime_model_id"]["status"] == "not_comparable"
 
 
+def test_report_builder_counts_statuses_in_one_pass() -> None:
+    report = build_benchmark_evaluation_report(
+        baseline={
+            "benchmark_jobs": [{"parameters": {"runtime_model_id": "base"}}],
+            "benchmark_results": [
+                {
+                    "metrics": [
+                        {"name": "bench.smoke.ttft_ms", "value": 100.0},
+                        {"name": "bench.smoke.tokens_per_second", "value": 100.0},
+                    ]
+                }
+            ],
+        },
+        candidate={
+            "benchmark_jobs": [{"parameters": {"runtime_model_id": "candidate"}}],
+            "benchmark_results": [
+                {
+                    "metrics": [
+                        {"name": "bench.smoke.ttft_ms", "value": 106.0},
+                    ]
+                }
+            ],
+        },
+    )
+
+    assert report["summary"] == {
+        "status": "warning",
+        "metric_count": 3,
+        "warning_count": 1,
+        "missing_count": 1,
+        "not_comparable_count": 1,
+    }
+
+
 def test_report_builder_ignores_non_list_row_sets() -> None:
     report = build_benchmark_evaluation_report(
         baseline={"benchmark_results": {"metrics": []}},
