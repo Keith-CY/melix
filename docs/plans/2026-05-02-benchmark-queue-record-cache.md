@@ -18,6 +18,7 @@ Probe ID: `benchmark-queue-decoded-record-cache`
 Measure repeated `BenchmarkQueueStore.list_records()` scans across a synthetic queue directory with many stable JSON records.
 
 Success metrics:
+- lower `cold_elapsed_ms` for uncached queue record loads in Task 2
 - lower `warm_elapsed_ms_mean`
 - lower `warm_json_loads_mean`
 - preserve `record_count`
@@ -42,6 +43,17 @@ Requirements:
 - preserve current sort order and failure behavior when files disappear or become unreadable
 - add focused tests proving unchanged files avoid redundant JSON loads while changed files still reload
 - register a PR-scoped performance probe for the touched path with focused test and changed-scope coverage commands
+
+## Task 2
+
+Decode uncached queue records from bytes instead of text.
+
+Requirements:
+- keep the persisted JSON format unchanged
+- use `Path.read_bytes()` for uncached queue record payloads so JSON parsing can consume bytes directly without an intermediate Unicode decode in Python code
+- preserve metadata-keyed cache behavior from Task 1
+- extend the registered probe to report cold read elapsed time for this slice while keeping the warm cache metrics
+- add focused regression coverage proving uncached loads avoid `Path.read_text()`
 
 ## Verification Commands
 

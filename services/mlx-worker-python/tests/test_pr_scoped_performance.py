@@ -924,6 +924,7 @@ def test_dispatch_probe_impl_supports_benchmark_queue_probe() -> None:
 
     metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
 
+    assert metrics["cold_elapsed_ms"] >= 0
     assert metrics["cold_json_loads"] == 128.0
     assert metrics["record_count"] == 128.0
     assert metrics["warm_json_loads_mean"] == 0.0

@@ -678,14 +678,16 @@ def _probe_benchmark_queue_cache(repo_root: Path) -> dict[str, float]:
         tracked_loads = 0
         original_loads = module.json.loads
 
-        def counting_loads(raw: str, *args: object, **kwargs: object) -> object:
+        def counting_loads(raw: str | bytes, *args: object, **kwargs: object) -> object:
             nonlocal tracked_loads
             tracked_loads += 1
             return original_loads(raw, *args, **kwargs)
 
         module.json.loads = counting_loads
         try:
+            cold_started = time.perf_counter()
             cold_records = store.list_records(queue_root=queue_root)
+            cold_elapsed_ms = (time.perf_counter() - cold_started) * 1000.0
             if len(cold_records) != record_count:
                 raise ValueError("benchmark queue probe produced an unexpected benchmark queue record count")
             cold_json_loads = tracked_loads
@@ -702,6 +704,7 @@ def _probe_benchmark_queue_cache(repo_root: Path) -> dict[str, float]:
         finally:
             module.json.loads = original_loads
     return {
+        "cold_elapsed_ms": round(cold_elapsed_ms, 6),
         "cold_json_loads": float(cold_json_loads),
         "record_count": float(record_count),
         "warm_elapsed_ms_mean": round(sum(warm_elapsed_samples) / len(warm_elapsed_samples), 6),
