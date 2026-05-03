@@ -21,9 +21,10 @@ This slice is limited to the Python worker and PR-scoped performance configurati
 2. Route the repeated p50/p95 maintenance paths through that helper:
    - top-level `RunBench` request latency summary
    - matrix summary `ttft` and request latency summaries
-   - latency-suite metric emission
+   - VLM latency-suite `bench.latency.image_p50_ms`/`bench.latency.image_p95_ms`
+   - image latency-suite `bench.latency.image_job_p50_ms`/`bench.latency.image_job_p95_ms`
 3. Add focused regression tests that prove these paths no longer fall back to repeated percentile helper calls.
-4. Register a dedicated PR-scoped performance probe for the maintenance percentile path.
+4. Keep the scoped PR performance probe aligned with the touched maintenance branches and changed-scope coverage gate.
 
 ## Performance probe
 
@@ -48,6 +49,8 @@ Probe definition:
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest -q \
   services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_latency_and_summary_reuse_single_sorted_request_latency_vector \
   services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_matrix_reuses_single_sorted_latency_vectors \
+  services/mlx-worker-python/tests/test_maintenance_service.py::test_measure_vlm_latency_metrics_reuse_single_sorted_total_latency_vector \
+  services/mlx-worker-python/tests/test_maintenance_service.py::test_image_latency_metrics_reuse_single_sorted_job_latency_vector \
   services/mlx-worker-python/tests/test_maintenance_service.py::test_percentiles_reuse_one_sorted_vector_and_preserve_interpolation \
   services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_measures_runtime_behavior_from_loaded_backend \
   services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_matrix_returns_summary_rows_and_persists_matrix_artifacts \
@@ -57,6 +60,8 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest -q \
   services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_latency_and_summary_reuse_single_sorted_request_latency_vector \
   services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_matrix_reuses_single_sorted_latency_vectors \
+  services/mlx-worker-python/tests/test_maintenance_service.py::test_measure_vlm_latency_metrics_reuse_single_sorted_total_latency_vector \
+  services/mlx-worker-python/tests/test_maintenance_service.py::test_image_latency_metrics_reuse_single_sorted_job_latency_vector \
   services/mlx-worker-python/tests/test_maintenance_service.py::test_percentiles_reuse_one_sorted_vector_and_preserve_interpolation \
   services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_measures_runtime_behavior_from_loaded_backend \
   services/mlx-worker-python/tests/test_maintenance_service.py::test_run_bench_matrix_returns_summary_rows_and_persists_matrix_artifacts \

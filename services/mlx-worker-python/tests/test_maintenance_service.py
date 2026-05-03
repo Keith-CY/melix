@@ -56,7 +56,7 @@ from worker.productization.benchmark_schemas import (
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.engine.maintenance_core import BenchSample, MaintenanceCore
+from worker.engine.maintenance_core import BenchSample, ImageBenchSample, MaintenanceCore
 from worker.engine import maintenance_core as maintenance_core_module
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime
@@ -4253,6 +4253,63 @@ def test_run_bench_matrix_reuses_single_sorted_latency_vectors(
     )
 
     assert len(response.summary_rows) == 2
+
+
+def test_measure_vlm_latency_metrics_reuse_single_sorted_total_latency_vector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    samples = [
+        BenchSample(ttft_ms=12.0, total_latency_ms=40.0, completion_tokens=8),
+        BenchSample(ttft_ms=14.0, total_latency_ms=80.0, completion_tokens=8),
+        BenchSample(ttft_ms=18.0, total_latency_ms=120.0, completion_tokens=8),
+        BenchSample(ttft_ms=20.0, total_latency_ms=160.0, completion_tokens=8),
+    ]
+    monkeypatch.setattr(
+        core,
+        "_measure_vlm_bench_sample",
+        lambda **_kwargs: samples.pop(0),
+    )
+    monkeypatch.setattr(
+        MaintenanceCore,
+        "_percentile",
+        staticmethod(lambda values, percentile: (_ for _ in ()).throw(AssertionError("legacy percentile helper should not run"))),
+    )
+
+    metrics = core._measure_vlm_bench_metrics(
+        loaded_model=SimpleNamespace(runtime_model={}),
+        suite=SimpleNamespace(suite_id="latency", cases=(object(), object(), object(), object())),
+        parameters={},
+    )
+
+    metric_values = {metric.name: metric.value for metric in metrics}
+    assert metric_values["bench.latency.image_p50_ms"] == 100.0
+    assert metric_values["bench.latency.image_p95_ms"] == 154.0
+
+
+def test_image_latency_metrics_reuse_single_sorted_job_latency_vector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    monkeypatch.setattr(
+        MaintenanceCore,
+        "_percentile",
+        staticmethod(lambda values, percentile: (_ for _ in ()).throw(AssertionError("legacy percentile helper should not run"))),
+    )
+
+    metrics = core._image_metrics_for_suite(
+        suite=SimpleNamespace(suite_id="latency"),
+        samples=[
+            ImageBenchSample(latency_ms=12.0, artifact_publish_ms=2.0, output_bytes=256),
+            ImageBenchSample(latency_ms=20.0, artifact_publish_ms=3.0, output_bytes=512),
+            ImageBenchSample(latency_ms=28.0, artifact_publish_ms=4.0, output_bytes=768),
+            ImageBenchSample(latency_ms=40.0, artifact_publish_ms=5.0, output_bytes=1024),
+        ],
+    )
+
+    metric_values = {metric.name: metric.value for metric in metrics}
+    assert metric_values["bench.latency.image_job_p50_ms"] == 24.0
+    assert metric_values["bench.latency.image_job_p95_ms"] == 38.2
 
 
 def test_run_bench_require_live_model_rejects_deterministic_runtime(tmp_path: Path) -> None:
