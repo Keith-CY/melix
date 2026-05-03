@@ -968,7 +968,7 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert evaluation_store_metrics["csv_line_count"] == 10001.0
     assert scope_matcher_metrics["build_scope_report_ms_mean"] > 0
     assert scope_matcher_metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
-    assert scope_matcher_metrics["selected_probe_count_mean"] == 4.0
+    assert scope_matcher_metrics["selected_probe_count_mean"] == 5.0
     assert scope_matcher_metrics["force_all_selected_mean"] == 0.0
     assert training_dataset_metrics["elapsed_ms_mean"] > 0
     assert training_dataset_metrics["peak_bytes_mean"] > 0
@@ -1274,7 +1274,7 @@ def test_dispatch_probe_impl_supports_pr_scoped_scope_matcher_probe() -> None:
 
     assert metrics["build_scope_report_ms_mean"] > 0
     assert metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
-    assert metrics["selected_probe_count_mean"] == 4.0
+    assert metrics["selected_probe_count_mean"] == 5.0
     assert metrics["force_all_selected_mean"] == 0.0
 
 
