@@ -314,6 +314,43 @@
     ]
   },
   {
+    "id": "evaluation-final-result-materialization-streaming",
+    "name": "Evaluation final-result materialization streaming",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/evaluation_final_result.py",
+      "services/mlx-worker-python/tests/test_evaluation_final_result.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "infra/perf/pr_scoped_probes.json",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_evaluation_final_result.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_final_result_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_evaluation_final_result_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_evaluation_final_result.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_final_result_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_evaluation_final_result_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/evaluation_final_result.py services/mlx-worker-python/tests/test_evaluation_final_result.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 -c \"import json, statistics, tempfile, time, tracemalloc; from pathlib import Path; from worker.productization.evaluation_final_result import EvaluationFieldMapping, EvaluationMaterializationRequest, EvaluationProfileDefinition, materialize_local_evaluation_dataset; sample_count = 15000; elapsed_samples = []; peak_samples = []; profile = EvaluationProfileDefinition(profile_type='final_result', result_kind='text', extraction_mode='heuristic_final', scoring_mode='normalized_exact_match', threshold=1.0); field_mapping = EvaluationFieldMapping(system_path='meta.sys', input_text_path='payload.question', target_path='payload.target', sample_id_path='sample.id');\nwith tempfile.TemporaryDirectory() as tmpdir:\n    root = Path(tmpdir); source_path = root / 'source.jsonl'; source_path.write_text(''.join(json.dumps({'meta': {'sys': 'Return the final answer only.'}, 'payload': {'question': f'Question {index}?', 'target': f'Answer {index}'}, 'sample': {'id': f'sample-{index}'}}) + '\\\\n' for index in range(sample_count)), encoding='utf-8');\n    for iteration in range(5):\n        cache_root = root / f'cache-{iteration}'; tracemalloc.start(); started = time.perf_counter(); materialized = materialize_local_evaluation_dataset(request=EvaluationMaterializationRequest(source_kind='jsonl', source_path=source_path, profile=profile, field_mapping=field_mapping, dataset_id='synthetic.final-result.dev.v1', suite_id='synthetic-final-result'), cache_root=cache_root); elapsed_samples.append((time.perf_counter() - started) * 1000.0); peak_samples.append(tracemalloc.get_traced_memory()[1]); tracemalloc.stop(); manifest = json.loads((materialized.package_path / 'manifest.json').read_text(encoding='utf-8')); assert manifest['sample_count'] == sample_count;\nprint(json.dumps({'elapsed_ms_mean': round(statistics.fmean(elapsed_samples), 4), 'peak_bytes_mean': round(statistics.fmean(peak_samples), 4), 'sample_count': float(sample_count)}, sort_keys=True))\"",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "sample_count",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "training-dataset-token-percentiles-single-sort",
     "name": "Training dataset quality/token summary",
     "runner": "ubuntu-latest",

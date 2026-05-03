@@ -127,6 +127,31 @@ def test_scope_report_selects_evaluation_store_probe() -> None:
     }
 
 
+def test_scope_report_selects_evaluation_final_result_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/evaluation_final_result.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "evaluation-final-result-materialization-streaming"
+
+
+def test_dispatch_probe_impl_supports_evaluation_final_result_probe() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-final-result-materialization-streaming"
+    )
+
+    metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["sample_count"] == 15000.0
+
+
+
 def test_scope_report_selects_worker_registry_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -433,6 +458,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
+        "evaluation-final-result-materialization-streaming",
         "evaluation-sample-probe-aggregation",
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-store-samples-csv-streaming",
