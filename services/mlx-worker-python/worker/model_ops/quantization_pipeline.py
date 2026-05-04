@@ -20,7 +20,6 @@ from worker.model_ops.quantization_profiles import (
     strategy_metadata_for_request,
 )
 from worker.model_ops.errors import ModelOperationError
-from worker.model_ops.training_dataset import load_training_dataset_package
 from worker.registry import WorkerRegistry
 
 _BUNDLE_SCHEMA_VERSION = "melix.quantized_bundle.v1"
@@ -357,25 +356,73 @@ def _calibration_evidence_for_request(
     dataset_uri = request.ext.get("calibration_dataset_uri", "").strip()
     if not dataset_uri:
         return {}
-    package = load_training_dataset_package(dataset_uri)
-    if package.format != "calibration":
+    package_path = Path(dataset_uri).expanduser().resolve()
+    manifest_path = package_path / "manifest.json"
+    samples_path = package_path / "samples.jsonl"
+    if not manifest_path.is_file() or not samples_path.is_file():
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset package must contain manifest.json and samples.jsonl.",
+            details={"dataset_uri": dataset_uri},
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Could not read training dataset manifest.",
+            details={"dataset_uri": dataset_uri},
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset manifest is not valid JSON.",
+            details={"dataset_uri": dataset_uri},
+        ) from exc
+    if not isinstance(manifest, dict):
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset manifest must be a JSON object.",
+            details={"dataset_uri": dataset_uri},
+        )
+    missing_fields = [
+        field
+        for field in ("schema_version", "dataset_id", "format", "sample_count", "version")
+        if field not in manifest
+    ]
+    if missing_fields:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset manifest is missing required fields.",
+            details={"missing_fields": ",".join(missing_fields)},
+        )
+    dataset_format = str(manifest["format"])
+    if dataset_format != "calibration":
         raise ModelOperationError(
             code="invalid_calibration_dataset",
             message="Quantization calibration datasets must use format=calibration.",
             details={
                 "dataset_uri": dataset_uri,
                 "required_format": "calibration",
-                "actual_format": package.format,
+                "actual_format": dataset_format,
             },
         )
+    try:
+        sample_count = int(manifest["sample_count"])
+    except (TypeError, ValueError) as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset sample_count must be an integer.",
+            details={"dataset_uri": dataset_uri},
+        ) from exc
     return {
         "dataset_uri": dataset_uri,
-        "dataset_id": package.dataset_id,
-        "dataset_version": package.version,
-        "dataset_format": package.format,
-        "sample_count": package.sample_count,
-        "manifest_path": str(package.manifest_path),
-        "package_path": str(package.package_path),
+        "dataset_id": str(manifest["dataset_id"]),
+        "dataset_version": str(manifest["version"]),
+        "dataset_format": dataset_format,
+        "sample_count": sample_count,
+        "manifest_path": str(manifest_path),
+        "package_path": str(package_path),
     }
 
 

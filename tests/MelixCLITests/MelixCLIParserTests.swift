@@ -2454,6 +2454,16 @@ struct MelixCLIParserTests {
         )
         try assertError(
             for: [
+                "lora", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "demo",
+                "--training-mode", "dpo",
+            ],
+            equals: .usage("Invalid value for --training-mode. For alignment training modes (dpo, orpo, cpo, grpo, rlhf), use `melix alignment train --algorithm <mode>`.")
+        )
+        try assertError(
+            for: [
                 "lora", "activate",
                 "--adapter-path", "/tmp/melix/adapter/train_lora.adapter.json",
             ],

@@ -13,10 +13,11 @@ from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.response_only_boundary import ResponseOnlyBoundaryAggregate
-from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest
-from worker.model_ops.training_config import normalize_training_config
+from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest, TrainingResult
+from worker.model_ops.training_config import LoRATrainingConfig, normalize_training_config
 from worker.model_ops.training_dataset import (
     HFDatasetFetcher,
+    ResolvedTrainingDatasetPackage,
     resolve_training_dataset_package,
     write_normalized_dataset_snapshot,
 )
@@ -308,8 +309,8 @@ def _write_alignment_trace(path: Path, samples: list[dict[str, Any]]) -> None:
             handle.write(json.dumps(sample) + "\n")
 
 
-def _validate_alignment_inputs(*, config: Any, samples: list[dict[str, Any]]) -> None:
-    alignment = getattr(config, "alignment", None)
+def _validate_alignment_inputs(*, config: LoRATrainingConfig, samples: list[dict[str, Any]]) -> None:
+    alignment = config.alignment
     if alignment is None:
         return
     if alignment.alignment_algorithm == "grpo":
@@ -358,14 +359,16 @@ def _alignment_manifest_payload(
     *,
     job_id: str,
     source_model: common_pb2.ModelSpec,
-    config: Any,
-    dataset: Any,
-    training_result: Any,
+    config: LoRATrainingConfig,
+    dataset: ResolvedTrainingDatasetPackage,
+    training_result: TrainingResult,
     adapter_manifest_path: Path,
     candidate_trace_path: str,
     created_at_unix_ms: int,
 ) -> dict[str, Any]:
     alignment = config.alignment
+    assert alignment is not None
+    assert config.dataset_contract == alignment.dataset_contract
     metrics = {
         "training_duration_ms": training_result.metrics.job_duration_ms,
         "loss_final": training_result.metrics.loss_final,
@@ -373,7 +376,7 @@ def _alignment_manifest_payload(
         "tokens_seen": training_result.metrics.tokens_seen,
         "examples_seen": training_result.metrics.examples_seen,
     }
-    if config.dataset_contract == "preference_pair":
+    if alignment.dataset_contract == "preference_pair":
         metrics.update(
             {
                 "preference_loss": config.preference_loss,
@@ -475,11 +478,18 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
 def _percentile_value(ordered_values: list[float], percentile: float) -> float:
     if len(ordered_values) == 1:
         return ordered_values[0]
-    index = min(
+    position = min(
         len(ordered_values) - 1,
-        max(0, round((len(ordered_values) - 1) * percentile)),
+        max(0.0, (len(ordered_values) - 1) * percentile),
     )
-    return ordered_values[index]
+    lower_index = int(position)
+    upper_index = min(len(ordered_values) - 1, lower_index + 1)
+    if lower_index == upper_index:
+        return ordered_values[lower_index]
+    weight = position - lower_index
+    return ordered_values[lower_index] + (
+        ordered_values[upper_index] - ordered_values[lower_index]
+    ) * weight
 
 
 _CONTENT_HASH_CHUNK_SIZE = 1024 * 1024

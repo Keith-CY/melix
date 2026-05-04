@@ -2236,8 +2236,13 @@ public enum MelixCLIParser {
             if let experimentGroupID = values.single["--experiment-group"] {
                 parameters["experiment_group_id"] = experimentGroupID
             }
-            let trainingMode = values.single["--training-mode"] ?? ""
+            let trainingMode = (values.single["--training-mode"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if !trainingMode.isEmpty, ["lora", "qlora", "dora"].contains(trainingMode) == false {
+                if ["dpo", "orpo", "cpo", "grpo", "rlhf"].contains(trainingMode) {
+                    throw MelixCLIError.usage(
+                        "Invalid value for --training-mode. For alignment training modes (dpo, orpo, cpo, grpo, rlhf), use `melix alignment train --algorithm <mode>`."
+                    )
+                }
                 throw MelixCLIError.usage("Invalid value for --training-mode. Expected one of: lora, qlora, dora.")
             }
             for flag in ["--response-only", "--mask-prompt", "--gradient-checkpointing"] where values.flags.contains(flag) {
@@ -4505,6 +4510,10 @@ public actor MelixCLIRunner {
         switch operation {
         case "train_lora":
             let trainingMode = ext["training_mode"] ?? ext["alignment_algorithm"] ?? ""
+            // Older desktop drafts and direct model-operation calls persisted
+            // alignment algorithms under training_mode while still using the
+            // train_lora operation; route those through the public alignment
+            // command so saved GRPO/RLHF/etc. jobs stay forward-compatible.
             if ["dpo", "orpo", "cpo", "grpo", "rlhf"].contains(trainingMode) {
                 var arguments = ["alignment", "train", "--model-id", modelID]
                 let datasetSourceKind = ext["dataset_source_kind"] ?? "local_package"

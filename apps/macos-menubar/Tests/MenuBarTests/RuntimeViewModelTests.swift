@@ -7805,6 +7805,9 @@ struct RuntimeViewModelTests {
         viewModel.loraKLPenalty = "0.02"
         viewModel.loraRank = "16"
         viewModel.loraBatchSize = "2"
+        viewModel.loraMaxSteps = "3"
+        viewModel.loraSampleLimit = "8"
+        viewModel.loraGradientAccumulation = "4"
 
         await viewModel.trainPrimaryModel()
 
@@ -7830,9 +7833,61 @@ struct RuntimeViewModelTests {
         #expect(alignmentOptions.parameters["kl_penalty"] == "0.02")
         #expect(alignmentOptions.parameters["rank"] == "16")
         #expect(alignmentOptions.parameters["batch_size"] == "2")
+        #expect(alignmentOptions.parameters["max_steps"] == "3")
+        #expect(alignmentOptions.parameters["sample_limit"] == "8")
+        #expect(alignmentOptions.parameters["gradient_accumulation"] == "4")
         #expect(alignmentOptions.parameters["training_mode"] == nil)
         #expect(store.savedRecords.contains { $0.config.trainingMode == "grpo" })
         #expect(store.savedRecords.contains { $0.config.grpoCandidateCount == "4" })
+    }
+
+    @Test("desktop legacy alignment training mode drafts promote to alignment train")
+    @MainActor
+    func desktopLegacyAlignmentTrainingModeDraftsPromoteToAlignmentTrain() async throws {
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            if case .alignmentTrain = command {
+                return .success(
+                    """
+                    {
+                      "operation": "train_alignment",
+                      "job_id": "legacy-alignment-job",
+                      "source_model": "melix-dev-text",
+                      "output_path": "/tmp/melix-alignment/legacy-grpo.adapter.json",
+                      "adapter_name": "legacy-grpo-adapter",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/prompt-candidate.v1"
+                    }
+                    """
+                )
+            }
+            return .success("{}\n")
+        }
+        let config = makeDesktopLoraTrainingConfig(trainingMode: "grpo", adapterName: "legacy-grpo-adapter")
+        let job = makeDesktopLoraTrainingJobRecord(id: "legacy-grpo-job", title: "Legacy GRPO", config: config)
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            cliWorkflowRunner: workflowRunner,
+            loraTrainingJobStore: store
+        )
+
+        viewModel.loadSelectedLoraTrainingJob()
+        await viewModel.start()
+        await viewModel.trainPrimaryModel()
+
+        let recordedCommands = await workflowRunner.snapshotRecordedCommands()
+        let alignmentOptions = try #require(recordedCommands.compactMap { command -> AlignmentTrainOptions? in
+            if case .alignmentTrain(let options) = command {
+                return options
+            }
+            return nil
+        }.last)
+        #expect(alignmentOptions.algorithm == "grpo")
+        #expect(alignmentOptions.adapterName == "legacy-grpo-adapter")
+        #expect(recordedCommands.contains {
+            if case .loraTrain = $0 { return true }
+            return false
+        } == false)
     }
 
     @Test("lora training and activation dispatch the configured dataset source hyperparameters and derived alias")
@@ -7875,8 +7930,11 @@ struct RuntimeViewModelTests {
         viewModel.loraNumLayers = "24"
         viewModel.loraBatchSize = "4"
         viewModel.loraEpochs = "2"
+        viewModel.loraMaxSteps = "12"
         viewModel.loraLearningRate = "0.0002"
         viewModel.loraMaxSeqLength = "8192"
+        viewModel.loraSampleLimit = "64"
+        viewModel.loraGradientAccumulation = "3"
         viewModel.loraResponseOnly = true
         viewModel.loraMaskPrompt = true
         viewModel.loraGradientCheckpointing = true
@@ -7908,8 +7966,11 @@ struct RuntimeViewModelTests {
         #expect(trainRequest.ext["num_layers"] == "24")
         #expect(trainRequest.ext["batch_size"] == "4")
         #expect(trainRequest.ext["epochs"] == "2")
+        #expect(trainRequest.ext["max_steps"] == "12")
         #expect(trainRequest.ext["learning_rate"] == "0.0002")
         #expect(trainRequest.ext["max_seq_length"] == "8192")
+        #expect(trainRequest.ext["sample_limit"] == "64")
+        #expect(trainRequest.ext["gradient_accumulation"] == "3")
         #expect(trainRequest.ext["response_only"] == "true")
         #expect(trainRequest.ext["mask_prompt"] == "true")
         #expect(trainRequest.ext["gradient_checkpointing"] == "true")
@@ -7972,6 +8033,9 @@ struct RuntimeViewModelTests {
         #expect(viewModel.loraReferenceModelPath == "/tmp/melix/reference-model")
         #expect(viewModel.loraRewardModelManifestPath == "/tmp/melix/reward-model/manifest.json")
         #expect(viewModel.loraKLPenalty == "0.02")
+        #expect(viewModel.loraMaxSteps == "12")
+        #expect(viewModel.loraSampleLimit == "64")
+        #expect(viewModel.loraGradientAccumulation == "3")
         #expect(viewModel.loraGradientCheckpointing)
 
         viewModel.loraRank = "64"
@@ -9569,8 +9633,11 @@ struct RuntimeViewModelTests {
         viewModel.loraDropout = "0.9"
         viewModel.loraBatchSize = "9"
         viewModel.loraEpochs = "9"
+        viewModel.loraMaxSteps = "90"
         viewModel.loraLearningRate = "0.9"
         viewModel.loraMaxSeqLength = "999"
+        viewModel.loraSampleLimit = "900"
+        viewModel.loraGradientAccumulation = "9"
         viewModel.loraGradientCheckpointing = true
 
         viewModel.applyLoraTrainingPreset(.custom)
@@ -9580,8 +9647,11 @@ struct RuntimeViewModelTests {
         #expect(viewModel.loraDropout == "0.9")
         #expect(viewModel.loraBatchSize == "9")
         #expect(viewModel.loraEpochs == "9")
+        #expect(viewModel.loraMaxSteps == "90")
         #expect(viewModel.loraLearningRate == "0.9")
         #expect(viewModel.loraMaxSeqLength == "999")
+        #expect(viewModel.loraSampleLimit == "900")
+        #expect(viewModel.loraGradientAccumulation == "9")
         #expect(viewModel.loraGradientCheckpointing)
 
         viewModel.applyLoraTrainingPreset(.debugFast)
@@ -9591,8 +9661,11 @@ struct RuntimeViewModelTests {
         #expect(viewModel.loraDropout == "0.0")
         #expect(viewModel.loraBatchSize == "1")
         #expect(viewModel.loraEpochs == "1")
+        #expect(viewModel.loraMaxSteps.isEmpty)
         #expect(viewModel.loraLearningRate == "0.0001")
         #expect(viewModel.loraMaxSeqLength == "1024")
+        #expect(viewModel.loraSampleLimit.isEmpty)
+        #expect(viewModel.loraGradientAccumulation.isEmpty)
         #expect(viewModel.loraGradientCheckpointing == false)
 
         viewModel.applyLoraTrainingPreset(.balancedAdapter)
@@ -9602,8 +9675,11 @@ struct RuntimeViewModelTests {
         #expect(viewModel.loraDropout == "0.05")
         #expect(viewModel.loraBatchSize == "2")
         #expect(viewModel.loraEpochs == "2")
+        #expect(viewModel.loraMaxSteps.isEmpty)
         #expect(viewModel.loraLearningRate == "0.0001")
         #expect(viewModel.loraMaxSeqLength == "2048")
+        #expect(viewModel.loraSampleLimit.isEmpty)
+        #expect(viewModel.loraGradientAccumulation.isEmpty)
         #expect(viewModel.loraGradientCheckpointing)
 
         viewModel.applyLoraTrainingPreset(.qualityAdapter)
@@ -9613,8 +9689,11 @@ struct RuntimeViewModelTests {
         #expect(viewModel.loraDropout == "0.05")
         #expect(viewModel.loraBatchSize == "1")
         #expect(viewModel.loraEpochs == "4")
+        #expect(viewModel.loraMaxSteps.isEmpty)
         #expect(viewModel.loraLearningRate == "0.00005")
         #expect(viewModel.loraMaxSeqLength == "2048")
+        #expect(viewModel.loraSampleLimit.isEmpty)
+        #expect(viewModel.loraGradientAccumulation.isEmpty)
         #expect(viewModel.loraGradientCheckpointing)
     }
 
@@ -11808,8 +11887,11 @@ private func makeDesktopLoraTrainingConfig(
         numLayers: "24",
         batchSize: "4",
         epochs: "3",
+        maxSteps: "12",
         learningRate: "2e-4",
         maxSeqLength: "8192",
+        sampleLimit: "64",
+        gradientAccumulation: "3",
         responseOnly: true,
         maskPrompt: true,
         gradientCheckpointing: true,

@@ -55,8 +55,11 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
     public var numLayers: String
     public var batchSize: String
     public var epochs: String
+    public var maxSteps: String
     public var learningRate: String
     public var maxSeqLength: String
+    public var sampleLimit: String
+    public var gradientAccumulation: String
     public var responseOnly: Bool
     public var maskPrompt: Bool
     public var gradientCheckpointing: Bool
@@ -94,8 +97,11 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         numLayers: String = "",
         batchSize: String = "",
         epochs: String = "",
+        maxSteps: String = "",
         learningRate: String = "",
         maxSeqLength: String = "",
+        sampleLimit: String = "",
+        gradientAccumulation: String = "",
         responseOnly: Bool = true,
         maskPrompt: Bool = false,
         gradientCheckpointing: Bool = false,
@@ -132,8 +138,11 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         self.numLayers = numLayers
         self.batchSize = batchSize
         self.epochs = epochs
+        self.maxSteps = maxSteps
         self.learningRate = learningRate
         self.maxSeqLength = maxSeqLength
+        self.sampleLimit = sampleLimit
+        self.gradientAccumulation = gradientAccumulation
         self.responseOnly = responseOnly
         self.maskPrompt = maskPrompt
         self.gradientCheckpointing = gradientCheckpointing
@@ -172,8 +181,11 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         case numLayers = "num_layers"
         case batchSize = "batch_size"
         case epochs
+        case maxSteps = "max_steps"
         case learningRate = "learning_rate"
         case maxSeqLength = "max_seq_length"
+        case sampleLimit = "sample_limit"
+        case gradientAccumulation = "gradient_accumulation"
         case responseOnly = "response_only"
         case maskPrompt = "mask_prompt"
         case gradientCheckpointing = "gradient_checkpointing"
@@ -218,8 +230,11 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
             numLayers: try container.decodeIfPresent(String.self, forKey: .numLayers) ?? "",
             batchSize: try container.decodeIfPresent(String.self, forKey: .batchSize) ?? "",
             epochs: try container.decodeIfPresent(String.self, forKey: .epochs) ?? "",
+            maxSteps: try container.decodeIfPresent(String.self, forKey: .maxSteps) ?? "",
             learningRate: try container.decodeIfPresent(String.self, forKey: .learningRate) ?? "",
             maxSeqLength: try container.decodeIfPresent(String.self, forKey: .maxSeqLength) ?? "",
+            sampleLimit: try container.decodeIfPresent(String.self, forKey: .sampleLimit) ?? "",
+            gradientAccumulation: try container.decodeIfPresent(String.self, forKey: .gradientAccumulation) ?? "",
             responseOnly: try container.decodeIfPresent(Bool.self, forKey: .responseOnly) ?? true,
             maskPrompt: try container.decodeIfPresent(Bool.self, forKey: .maskPrompt) ?? false,
             gradientCheckpointing: try container.decodeIfPresent(Bool.self, forKey: .gradientCheckpointing) ?? false,

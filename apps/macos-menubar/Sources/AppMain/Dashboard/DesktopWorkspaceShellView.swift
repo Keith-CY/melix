@@ -2880,9 +2880,11 @@ struct DesktopTrainingToolSectionView: View {
                             }
                         }
 
-                        DesktopEditorialField("KL Penalty") {
-                            TextField("Optional KL penalty", text: stringBinding(\.loraKLPenalty))
-                                .textFieldStyle(.roundedBorder)
+                        if viewModel.loraTrainingMode == .grpo || viewModel.loraTrainingMode == .rlhf {
+                            DesktopEditorialField("KL Penalty") {
+                                TextField("Optional KL penalty", text: stringBinding(\.loraKLPenalty))
+                                    .textFieldStyle(.roundedBorder)
+                            }
                         }
                     }
                 }
@@ -2995,12 +2997,24 @@ struct DesktopTrainingToolSectionView: View {
                     TextField("Epochs", text: stringBinding(\.loraEpochs))
                         .textFieldStyle(.roundedBorder)
                 }
+                DesktopEditorialField("Max Steps") {
+                    TextField("Optional max steps", text: stringBinding(\.loraMaxSteps))
+                        .textFieldStyle(.roundedBorder)
+                }
                 DesktopEditorialField("Learning Rate") {
                     TextField("Learning Rate", text: stringBinding(\.loraLearningRate))
                         .textFieldStyle(.roundedBorder)
                 }
                 DesktopEditorialField("Max Seq Length") {
                     TextField("Max Seq Length", text: stringBinding(\.loraMaxSeqLength))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Sample Limit") {
+                    TextField("Optional sample limit", text: stringBinding(\.loraSampleLimit))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Gradient Accumulation") {
+                    TextField("Optional accumulation steps", text: stringBinding(\.loraGradientAccumulation))
                         .textFieldStyle(.roundedBorder)
                 }
                 DesktopEditorialField("Target Modules") {

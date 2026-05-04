@@ -56,6 +56,8 @@ evidence.
 - Extend quantization manifests with `quantization_mode`,
   `source_artifact_kind`, and release-gate evidence fields.
 - Add negative validation for unsupported QAT source artifacts.
+- Record calibration dataset lineage from manifest metadata without loading the
+  full calibration JSONL package on the quantize hot path.
 
 ### Excluded
 

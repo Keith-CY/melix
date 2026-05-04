@@ -489,6 +489,149 @@ def test_quantize_job_records_calibration_dataset_lineage(tmp_path: Path) -> Non
     }
 
 
+def test_quantize_job_uses_manifest_only_calibration_evidence(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    calibration_dataset = _write_dataset_package(
+        tmp_path / "calibration-dataset-manifest-only",
+        format="calibration",
+        samples=[{"text": "calibration prompt one"}, {"text": "calibration prompt two"}],
+    )
+    (calibration_dataset / "samples.jsonl").write_text("{not-json\n", encoding="utf-8")
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "calibration_dataset_uri": str(calibration_dataset),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    manifest_payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+
+    assert events[-1].HasField("completed")
+    assert manifest_payload["calibration_dataset"]["sample_count"] == 2
+    assert manifest_payload["calibration_dataset"]["manifest_path"] == str(calibration_dataset / "manifest.json")
+
+
+def test_quantize_job_reports_unreadable_calibration_manifest_as_structured_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    calibration_dataset = _write_dataset_package(
+        tmp_path / "calibration-dataset-unreadable-manifest",
+        format="calibration",
+        samples=[{"text": "calibration prompt"}],
+    )
+    manifest_path = calibration_dataset / "manifest.json"
+    original_read_text = Path.read_text
+
+    def fail_manifest_read(path: Path, *args: object, **kwargs: object) -> str:
+        if path == manifest_path:
+            raise OSError("permission denied")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_manifest_read)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "calibration_dataset_uri": str(calibration_dataset),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "invalid_dataset_package"
+    assert events[-1].failed.error.message == "Could not read training dataset manifest."
+
+
+@pytest.mark.parametrize(
+    ("manifest_json", "samples_jsonl", "expected_message"),
+    [
+        (None, None, "must contain manifest.json and samples.jsonl"),
+        ("{not-json", "{}\n", "manifest is not valid JSON"),
+        (json.dumps([]), "{}\n", "manifest must be a JSON object"),
+        (
+            json.dumps({"schema_version": "melix.training_dataset_package.v1"}),
+            "{}\n",
+            "manifest is missing required fields",
+        ),
+        (
+            json.dumps(
+                {
+                    "schema_version": "melix.training_dataset_package.v1",
+                    "dataset_id": "bad-calibration",
+                    "format": "calibration",
+                    "sample_count": "many",
+                    "version": "1",
+                }
+            ),
+            "{}\n",
+            "sample_count must be an integer",
+        ),
+    ],
+)
+def test_quantize_job_rejects_invalid_calibration_manifest_evidence(
+    tmp_path: Path,
+    manifest_json: str | None,
+    samples_jsonl: str | None,
+    expected_message: str,
+) -> None:
+    service = build_service(tmp_path)
+    calibration_dataset = tmp_path / "bad-calibration-dataset"
+    calibration_dataset.mkdir(parents=True)
+    if manifest_json is not None:
+        (calibration_dataset / "manifest.json").write_text(
+            manifest_json + "\n",
+            encoding="utf-8",
+        )
+    if samples_jsonl is not None:
+        (calibration_dataset / "samples.jsonl").write_text(
+            samples_jsonl,
+            encoding="utf-8",
+        )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "calibration_dataset_uri": str(calibration_dataset),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "invalid_dataset_package"
+    assert expected_message in events[-1].failed.error.message
+
+
 def test_quantize_job_rejects_non_calibration_dataset_lineage(tmp_path: Path) -> None:
     service = build_service(tmp_path)
     sft_dataset = _write_dataset_package(

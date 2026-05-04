@@ -1777,6 +1777,17 @@ struct DesktopFoundationViewTests {
         let rlhfTexts = renderedTextValues(in: rlhfView)
         #expect(rlhfTexts.contains("RLHF"))
         #expect(rlhfTexts.contains("/tmp/melix/reward-model/manifest.json"))
+        #expect(rlhfTexts.contains("0.02"))
+
+        viewModel.loraTrainingMode = .dpo
+        let dpoView = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let dpoTexts = renderedTextValues(in: dpoView)
+        #expect(dpoTexts.contains("DPO"))
+        #expect(dpoTexts.contains("Alignment Controls"))
+        #expect(dpoTexts.contains("0.02") == false)
     }
 
     @Test("training core setup uses editorial field groups instead of one large form slab")

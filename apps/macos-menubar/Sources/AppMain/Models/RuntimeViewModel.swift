@@ -2019,8 +2019,11 @@ public final class RuntimeViewModel {
     public var loraNumLayers = ""
     public var loraBatchSize = "1"
     public var loraEpochs = "1"
+    public var loraMaxSteps = ""
     public var loraLearningRate = "0.0001"
     public var loraMaxSeqLength = "2048"
+    public var loraSampleLimit = ""
+    public var loraGradientAccumulation = ""
     public var loraResponseOnly = true
     public var loraMaskPrompt = false
     public var loraGradientCheckpointing = false
@@ -10419,8 +10422,11 @@ public final class RuntimeViewModel {
             loraDropout = "0.0"
             loraBatchSize = "1"
             loraEpochs = "1"
+            loraMaxSteps = ""
             loraLearningRate = "0.0001"
             loraMaxSeqLength = "1024"
+            loraSampleLimit = ""
+            loraGradientAccumulation = ""
             loraGradientCheckpointing = false
         case .balancedAdapter:
             loraRank = "16"
@@ -10428,8 +10434,11 @@ public final class RuntimeViewModel {
             loraDropout = "0.05"
             loraBatchSize = "2"
             loraEpochs = "2"
+            loraMaxSteps = ""
             loraLearningRate = "0.0001"
             loraMaxSeqLength = "2048"
+            loraSampleLimit = ""
+            loraGradientAccumulation = ""
             loraGradientCheckpointing = true
         case .qualityAdapter:
             loraRank = "32"
@@ -10437,8 +10446,11 @@ public final class RuntimeViewModel {
             loraDropout = "0.05"
             loraBatchSize = "1"
             loraEpochs = "4"
+            loraMaxSteps = ""
             loraLearningRate = "0.00005"
             loraMaxSeqLength = "2048"
+            loraSampleLimit = ""
+            loraGradientAccumulation = ""
             loraGradientCheckpointing = true
         }
     }
@@ -10475,8 +10487,11 @@ public final class RuntimeViewModel {
             numLayers: loraNumLayers,
             batchSize: loraBatchSize,
             epochs: loraEpochs,
+            maxSteps: loraMaxSteps,
             learningRate: loraLearningRate,
             maxSeqLength: loraMaxSeqLength,
+            sampleLimit: loraSampleLimit,
+            gradientAccumulation: loraGradientAccumulation,
             responseOnly: loraResponseOnly,
             maskPrompt: loraMaskPrompt,
             gradientCheckpointing: loraGradientCheckpointing,
@@ -10527,8 +10542,11 @@ public final class RuntimeViewModel {
         loraNumLayers = config.numLayers
         loraBatchSize = config.batchSize
         loraEpochs = config.epochs
+        loraMaxSteps = config.maxSteps
         loraLearningRate = config.learningRate
         loraMaxSeqLength = config.maxSeqLength
+        loraSampleLimit = config.sampleLimit
+        loraGradientAccumulation = config.gradientAccumulation
         loraResponseOnly = config.responseOnly
         loraMaskPrompt = config.maskPrompt
         loraGradientCheckpointing = config.gradientCheckpointing
@@ -10589,8 +10607,11 @@ public final class RuntimeViewModel {
         Self.assignOptional(loraNumLayers, for: "num_layers", into: &ext)
         Self.assignOptional(loraBatchSize, for: "batch_size", into: &ext)
         Self.assignOptional(loraEpochs, for: "epochs", into: &ext)
+        Self.assignOptional(loraMaxSteps, for: "max_steps", into: &ext)
         Self.assignOptional(loraLearningRate, for: "learning_rate", into: &ext)
         Self.assignOptional(loraMaxSeqLength, for: "max_seq_length", into: &ext)
+        Self.assignOptional(loraSampleLimit, for: "sample_limit", into: &ext)
+        Self.assignOptional(loraGradientAccumulation, for: "gradient_accumulation", into: &ext)
         Self.assignOptional(loraDerivedModelAlias, for: "derived_model_alias", into: &ext)
         ext["response_only"] = loraResponseOnly ? "true" : "false"
         ext["mask_prompt"] = loraMaskPrompt ? "true" : "false"
@@ -10616,8 +10637,11 @@ public final class RuntimeViewModel {
             "num_layers",
             "batch_size",
             "epochs",
+            "max_steps",
             "learning_rate",
             "max_seq_length",
+            "sample_limit",
+            "gradient_accumulation",
             "hf_dataset_path",
             "hf_dataset_name",
             "hf_dataset_revision",

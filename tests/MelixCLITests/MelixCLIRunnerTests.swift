@@ -4501,6 +4501,48 @@ struct MelixCLIRunnerTests {
         #expect(commands[2] == ["lora", "list", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", "--json"])
     }
 
+    @Test("subprocess-backed legacy alignment training mode uses alignment train")
+    func subprocessBackedLegacyAlignmentTrainingModeUsesAlignmentTrain() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                #"{"operation":"train_alignment","job_id":"alignment-job-1","output_path":"/tmp/melix/train_lora/alignment-job-1","adapter_name":"demo-grpo-adapter"}"#,
+            ]
+        )
+        let runner = MelixCLIRunner(
+            client: client,
+            commandExecutor: executor.run
+        )
+
+        _ = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "train_lora",
+            outputDir: "",
+            ext: [
+                "dataset_source_kind": "local_package",
+                "dataset_uri": "/tmp/datasets/prompt-candidate",
+                "adapter_name": "demo-grpo-adapter",
+                "training_mode": "grpo",
+                "max_steps": "3",
+                "sample_limit": "8",
+                "gradient_accumulation": "4",
+                "grpo_candidate_count": "4",
+            ]
+        )
+
+        let commands = await executor.commands
+        #expect(commands.count == 1)
+        #expect(Array(commands[0].prefix(2)) == ["alignment", "train"])
+        #expect(commands[0].contains("--algorithm"))
+        #expect(commands[0].contains("grpo"))
+        #expect(commands[0].contains("--max-steps"))
+        #expect(commands[0].contains("3"))
+        #expect(commands[0].contains("--sample-limit"))
+        #expect(commands[0].contains("8"))
+        #expect(commands[0].contains("--gradient-accumulation"))
+        #expect(commands[0].contains("4"))
+    }
+
     @Test("subprocess-backed lora publish builds explicit adapter and merged publish arguments")
     func subprocessBackedLoraPublishBuildsExplicitArguments() async throws {
         let client = StubControlPlaneXPCClient()

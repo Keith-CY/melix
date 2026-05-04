@@ -2022,6 +2022,40 @@ def test_quantize_job_conflict_lock_blocks_parallel_quantization_on_same_scope(t
     assert "quantization lock" in second_events[-1].failed.error.message
 
 
+def test_quantize_job_reports_unstructured_pipeline_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    def raise_unstructured_failure(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("calibration reader exploded")
+
+    monkeypatch.setattr(
+        service._core._quantization_pipeline,
+        "run",
+        raise_unstructured_failure,
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                ext={"operation": "quantize"},
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "quantization_failure"
+    assert events[-1].failed.error.message == "calibration reader exploded"
+
+
 def test_quantize_job_conflict_lock_blocks_upload_on_same_linked_quantization_scope(
     tmp_path: Path,
 ) -> None:

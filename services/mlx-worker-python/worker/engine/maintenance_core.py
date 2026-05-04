@@ -428,6 +428,18 @@ class MaintenanceCore:
                         )
                     )
                     return
+                except Exception as exc:
+                    error_code = "quantization_failure"
+                    self._job_registry.fail(job.job_id, error_code, str(exc))
+                    yield maintenance_pb2.ConvertModelEvent(
+                        failed=maintenance_pb2.ConvertFailed(
+                            error=common_pb2.ErrorStatus(
+                                code=error_code,
+                                message=str(exc),
+                            )
+                        )
+                    )
+                    return
                 manifest_payload = dict(result.manifest_payload)
                 manifest_payload["job_id"] = job.job_id
                 manifest_payload["artifact_bytes"] = result.artifact_bytes

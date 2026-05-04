@@ -24,6 +24,11 @@ quantization, or real-runtime acceptance requirements.
   - `reference_model_path`
   - `reward_model_manifest_path`
   - `kl_penalty`
+- Add desktop state and persisted draft fields for shared CLI training
+  controls used by both LoRA and alignment runs:
+  - `max_steps`
+  - `sample_limit`
+  - `gradient_accumulation`
 - Show alignment-specific parameter inputs in the training draft form when an
   alignment mode is selected.
 - Route DPO, ORPO, CPO, GRPO, and RLHF through `MelixCLICommand.alignmentTrain`

@@ -60,6 +60,17 @@ def test_checkpoint_order_key_uses_last_numeric_token() -> None:
     )
 
 
+def test_alignment_percentile_uses_interpolation_and_upper_bound() -> None:
+    assert lora_training_pipeline_module._percentile_value(
+        [0.4, 0.7],
+        0.5,
+    ) == pytest.approx(0.55)
+    assert lora_training_pipeline_module._percentile_value(
+        [0.4, 0.7],
+        1.0,
+    ) == pytest.approx(0.7)
+
+
 def test_latest_checkpoint_from_directory_prefers_last_numeric_token(tmp_path: Path) -> None:
     older = (
         tmp_path / "model-ops-999" / "adapter" / "checkpoint-2" / "adapters.safetensors"
@@ -939,6 +950,7 @@ def test_train_lora_supports_rl_alignment_mode_contracts(
     if training_mode == "grpo":
         assert alignment_payload["grpo_candidate_count"] == 2
         assert alignment_payload["reference_model_path"] == "/tmp/reference-model"
+        assert metrics["reward_p50"] == pytest.approx(0.55)
         assert metrics["candidate_group_count"] == 1
         assert metrics["candidate_group_reward_margin_mean"] == pytest.approx(0.3)
         assert metrics["candidate_group_reward_variance_mean"] == pytest.approx(0.0225)
@@ -1477,6 +1489,81 @@ def test_train_lora_rejects_sft_mode_with_preference_pair_dataset(tmp_path: Path
         "chat_messages,prompt_completion,text_completion"
     )
     assert events[-1].failed.error.details["actual_format"] == "preference_pair"
+
+
+def test_train_lora_rejects_sft_mode_with_prompt_candidate_dataset(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-sft-prompt-candidate",
+        format="prompt_candidate",
+        samples=[
+            {
+                "prompt": "Choose.",
+                "candidates": ["A.", "B."],
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-sft-prompt-candidate"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "lora",
+                    "adapter_name": "melix-invalid-sft-prompt-candidate",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_dataset_package"
+    assert events[-1].failed.error.details["training_mode"] == "lora"
+    assert events[-1].failed.error.details["required_format"] == (
+        "chat_messages,prompt_completion,text_completion"
+    )
+    assert events[-1].failed.error.details["actual_format"] == "prompt_candidate"
+
+
+def test_train_lora_accepts_sft_mode_with_text_completion_dataset(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-sft-text-completion",
+        format="text_completion",
+        samples=[
+            {"text": "Domain note one."},
+            {"text": "Domain note two."},
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-sft-text-completion"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "lora",
+                    "adapter_name": "melix-sft-text-completion",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    assert events[-1].HasField("completed")
+    assert payload["training_mode"] == "lora"
+    assert payload["dataset_format"] == "text_completion"
+    assert payload["dataset_contract"] == "sft"
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.dataset_contract == "sft"
 
 
 def test_train_lora_resolves_qwen_attention_preset_and_catalog_support_metadata(tmp_path: Path) -> None:
