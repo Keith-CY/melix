@@ -66,6 +66,12 @@ _PREFERRED_PROBE_TEXT_FILES = (
 )
 _TEXT_SEARCH_ROOTS = ("docs", "scripts", "services", "tests", "README.md", "progress.md", "task_plan.md")
 _TEXT_FILE_SUFFIXES = (".md", ".py", ".swift", ".json", ".txt", ".yaml", ".yml")
+_PROBE_SOURCE_SCAN_CHUNK_SIZE = 8192
+_MAX_PROBE_NAME_LENGTH = max(
+    len(probe_name)
+    for probe_names in _REQUIRED_PROBES.values()
+    for probe_name in probe_names
+)
 _FINDING_SEVERITY_PRIORITY = {
     "blocker": 0,
     "evidence_gap": 1,
@@ -414,15 +420,43 @@ def _scan_probe_source_file(
     if relative_path in scanned_relative_paths:
         return
     scanned_relative_paths.add(relative_path)
-    contents = file_path.read_text(encoding="utf-8", errors="ignore")
+    matched_probe_names = _matched_probe_names_in_file(
+        file_path=file_path,
+        probe_names=pending_probe_names,
+    )
     next_pending_probe_names: list[str] = []
     for probe_name in pending_probe_names:
         matches = probe_sources[probe_name]
-        if probe_name in contents:
+        if probe_name in matched_probe_names:
             matches.append(relative_path)
         if len(matches) < 3:
             next_pending_probe_names.append(probe_name)
     pending_probe_names[:] = next_pending_probe_names
+
+
+def _matched_probe_names_in_file(*, file_path: Path, probe_names: list[str]) -> set[str]:
+    if not probe_names:
+        return set()
+    matched_probe_names: set[str] = set()
+    remaining_probe_names = set(probe_names)
+    carry = ""
+    carry_limit = max(_MAX_PROBE_NAME_LENGTH - 1, 0)
+    with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
+        while remaining_probe_names:
+            chunk = handle.read(_PROBE_SOURCE_SCAN_CHUNK_SIZE)
+            if not chunk:
+                break
+            haystack = carry + chunk
+            matched_in_chunk = {
+                probe_name for probe_name in remaining_probe_names if probe_name in haystack
+            }
+            if matched_in_chunk:
+                matched_probe_names.update(matched_in_chunk)
+                remaining_probe_names.difference_update(matched_in_chunk)
+                if not remaining_probe_names:
+                    break
+            carry = haystack[-carry_limit:] if carry_limit else ""
+    return matched_probe_names
 
 
 def _probe_sources_complete(probe_sources: dict[str, list[str]]) -> bool:

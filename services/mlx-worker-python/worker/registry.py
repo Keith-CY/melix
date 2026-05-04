@@ -119,6 +119,7 @@ class WorkerRegistry:
         self._lock = Lock()
         self._next_model_handle = 1
         self._loaded_models: dict[str, LoadedModel] = {}
+        self._sorted_loaded_model_handles: tuple[str, ...] | None = None
         self._loaded_model_resident_bytes = 0
         self._reserved_model_resident_bytes = 0
         self._requests: dict[str, RequestState] = {}
@@ -253,6 +254,7 @@ class WorkerRegistry:
                 residency=residency,
             )
             self._loaded_models[handle] = loaded
+            self._invalidate_loaded_model_order_locked()
             self._loaded_model_resident_bytes += estimated
             if runtime_kind in {"transcription", "speech"}:
                 self._last_audio_model_load_latency_ms = float(getattr(runtime_model, "load_latency_ms", 0.0))
@@ -278,8 +280,19 @@ class WorkerRegistry:
             loaded = self._loaded_models.pop(handle, None)
             if loaded is None:
                 return False
+            self._invalidate_loaded_model_order_locked()
             self._loaded_model_resident_bytes = max(0, self._loaded_model_resident_bytes - loaded.estimated_resident_bytes)
             return True
+
+    def _invalidate_loaded_model_order_locked(self) -> None:
+        self._sorted_loaded_model_handles = None
+
+    def _sorted_loaded_model_handles_locked(self) -> tuple[str, ...]:
+        cached_handles = self._sorted_loaded_model_handles
+        if cached_handles is None:
+            cached_handles = tuple(sorted(self._loaded_models))
+            self._sorted_loaded_model_handles = cached_handles
+        return cached_handles
 
     def warmup_model(self, handle: str, synthetic_messages=None) -> int | None:
         loaded = self.get_loaded_model(handle)
@@ -335,11 +348,13 @@ class WorkerRegistry:
 
     def list_loaded_models(self) -> list[str]:
         with self._lock:
-            return sorted(self._loaded_models)
+            return list(self._sorted_loaded_model_handles_locked())
 
     def list_loaded_model_summaries(self) -> list[runtime_pb2.LoadedModelSummary]:
         with self._lock:
-            loaded_models = [self._loaded_models[handle] for handle in sorted(self._loaded_models)]
+            loaded_models = [
+                self._loaded_models[handle] for handle in self._sorted_loaded_model_handles_locked()
+            ]
         return [self._loaded_model_summary(loaded) for loaded in loaded_models]
 
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:

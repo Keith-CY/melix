@@ -579,14 +579,16 @@ def _iter_serialized_samples(
 
 def _write_jsonl_rows(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    json_dumps = json.dumps
     with path.open("w", encoding="utf-8") as handle:
+        handle_write = handle.write
         wrote_row = False
         for row in rows:
             wrote_row = True
-            handle.write(json.dumps(row))
-            handle.write("\n")
+            handle_write(json_dumps(row))
+            handle_write("\n")
         if not wrote_row:
-            handle.write("\n")
+            handle_write("\n")
 
 
 def _validate_field_mapping(field_mapping: EvaluationFieldMapping) -> None:

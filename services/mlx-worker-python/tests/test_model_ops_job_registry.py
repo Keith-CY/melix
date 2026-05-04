@@ -147,12 +147,12 @@ def test_restore_manifest_jobs_preserves_collected_manifest_order_without_resort
     assert list(registry._jobs) == ["model-ops-0002", "model-ops-0001"]
     restored_job = registry._jobs["model-ops-0002"]
     assert restored_job.manifest_cached is True
+    assert restored_job.manifest_json == ""
     assert restored_job.manifest == {
         "job_id": "model-ops-0002",
         "operation": "train_lora",
         "source_model": "src-2",
     }
-    assert json.loads(restored_job.manifest_json) == restored_job.manifest
 
 
 
@@ -205,7 +205,7 @@ def test_json_safe_reuses_clean_containers_and_copies_only_changed_branch() -> N
     assert safe["other"] is unsafe["other"]
 
 
-def test_job_manifest_handles_empty_registry_snapshot_and_uncached_json() -> None:
+def test_job_manifest_handles_empty_registry_snapshot_and_uncached_empty_manifest_json() -> None:
     registry_snapshot_job = ModelOpsJobRegistry._job_manifest(
         ModelOpsJob(
             job_id="model-ops-0001",
@@ -220,13 +220,78 @@ def test_job_manifest_handles_empty_registry_snapshot_and_uncached_json() -> Non
             operation="activate_adapter",
             source_model="melix-dev-text",
             output_dir="/runtime/activate",
-            manifest_json=json.dumps({"derived_model_id": "melix-dev-active"}),
+            manifest_json="",
             manifest_cached=False,
         )
     )
 
     assert registry_snapshot_job == {}
-    assert uncached_manifest == {"derived_model_id": "melix-dev-active"}
+    assert uncached_manifest == {}
+
+
+def test_job_manifest_returns_cached_manifest_for_restored_job_with_empty_manifest_json() -> None:
+    restored_manifest = {
+        "job_id": "model-ops-0007",
+        "operation": "activate_adapter",
+        "derived_model_id": "melix-dev-active",
+    }
+
+    manifest = ModelOpsJobRegistry._job_manifest(
+        ModelOpsJob(
+            job_id="model-ops-0007",
+            operation="activate_adapter",
+            source_model="melix-dev-text",
+            output_dir="/runtime/activate",
+            manifest_json="",
+            manifest=restored_manifest,
+            manifest_cached=True,
+        )
+    )
+
+    assert manifest == restored_manifest
+
+
+def test_snapshot_job_handles_empty_manifest_for_uncached_non_snapshot_job() -> None:
+    snapshot = ModelOpsJobRegistry._snapshot_job(
+        ModelOpsJob(
+            job_id="model-ops-0008",
+            operation="train_lora",
+            source_model="melix-dev-text",
+            output_dir="/runtime/train",
+            manifest_json="",
+            manifest_cached=False,
+            stage_history=[("write_manifest", 0.97)],
+            output_path="/runtime/train/model-ops-0008/train_lora.adapter.json",
+            status="completed",
+        )
+    )
+
+    assert snapshot["manifest"] == {}
+
+
+def test_snapshot_job_returns_cached_manifest_for_restored_job_with_empty_manifest_json() -> None:
+    restored_manifest = {
+        "job_id": "model-ops-0009",
+        "operation": "train_lora",
+        "adapter_name": "adapter-a",
+    }
+
+    snapshot = ModelOpsJobRegistry._snapshot_job(
+        ModelOpsJob(
+            job_id="model-ops-0009",
+            operation="train_lora",
+            source_model="melix-dev-text",
+            output_dir="/runtime/train",
+            manifest_json="",
+            manifest=restored_manifest,
+            manifest_cached=True,
+            stage_history=[("write_manifest", 0.97)],
+            output_path="/runtime/train/model-ops-0009/train_lora.adapter.json",
+            status="completed",
+        )
+    )
+
+    assert snapshot["manifest"] == restored_manifest
 
 
 def test_active_derived_model_manifests_avoids_full_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:

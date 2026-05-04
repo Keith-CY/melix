@@ -108,9 +108,10 @@ def test_scope_report_selects_evaluation_probes() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert probe_ids == {
         "evaluation-job-id-high-water-mark",
+        "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
     }
 
@@ -388,9 +389,10 @@ def test_scope_report_large_changed_set_preserves_exact_selection_semantics() ->
         "benchmark-export-run-scan-single-pass",
         "evaluation-job-id-high-water-mark",
         "evaluation-sample-probe-aggregation",
+        "evaluation-latency-percentile-vector-reuse",
         "download-pipeline-directory-size-single-stat",
     ]
-    assert scope["selected_count"] == 4
+    assert scope["selected_count"] == 5
 
 
 def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
@@ -528,6 +530,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
         "evaluation-final-result-materialization-streaming",
+        "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-store-samples-csv-streaming",
@@ -553,18 +556,28 @@ def test_registered_probes_expose_focused_commands() -> None:
     }
     registry_probe = None
     maintenance_probe = None
+    worker_registry_probe = None
     swift_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
         assert probe.probe_command
+        assert "uv run --project services/mlx-worker-python bash -lc" not in probe.probe_command
         assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
         if probe.probe_id == "model-registry-plain-local-manifest-stat-elision":
             registry_probe = probe
         if probe.probe_id == "maintenance-percentile-vector-reuse":
             maintenance_probe = probe
+        if probe.probe_id == "worker-registry-resident-bytes-accumulator":
+            worker_registry_probe = probe
         if probe.probe_id == "swift-cli-json-envelope-encoding":
             swift_probe = probe
+
+    assert worker_registry_probe is not None
+    assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.test_command
+    assert "test_load_model_returns_handle_and_lists_model" in worker_registry_probe.test_command
+    assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.coverage_command
+    assert "test_load_model_returns_handle_and_lists_model" in worker_registry_probe.coverage_command
 
     assert registry_probe is not None
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.test_command
@@ -929,6 +942,7 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert benchmark_queue_metrics["warm_json_loads_mean"] == 0.0
     assert benchmark_queue_metrics["warm_elapsed_ms_mean"] >= 0
     assert closure_metrics["elapsed_ms_mean"] > 0
+    assert closure_metrics["peak_bytes_mean"] > 0
     assert closure_metrics["probe_file_reads_mean"] > 0
     assert closure_metrics["finding_count"] > 0
     assert rerank_metrics["elapsed_ms_mean"] > 0
@@ -956,7 +970,7 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert evaluation_store_metrics["csv_line_count"] == 10001.0
     assert scope_matcher_metrics["build_scope_report_ms_mean"] > 0
     assert scope_matcher_metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
-    assert scope_matcher_metrics["selected_probe_count_mean"] == 4.0
+    assert scope_matcher_metrics["selected_probe_count_mean"] == 5.0
     assert scope_matcher_metrics["force_all_selected_mean"] == 0.0
     assert training_dataset_metrics["elapsed_ms_mean"] > 0
     assert training_dataset_metrics["peak_bytes_mean"] > 0
@@ -1149,6 +1163,8 @@ def test_worker_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert excinfo.value.code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["elapsed_ms_mean"] > 0
+    assert payload["loaded_model_listing_elapsed_ms_mean"] > 0
+    assert payload["loaded_model_listing_sort_calls_mean"] > 0
     assert payload["preloaded_model_count"] == 2000.0
     assert payload["loop_count"] == 250.0
     assert payload["request_count"] == 3000.0
@@ -1260,7 +1276,7 @@ def test_dispatch_probe_impl_supports_pr_scoped_scope_matcher_probe() -> None:
 
     assert metrics["build_scope_report_ms_mean"] > 0
     assert metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
-    assert metrics["selected_probe_count_mean"] == 4.0
+    assert metrics["selected_probe_count_mean"] == 5.0
     assert metrics["force_all_selected_mean"] == 0.0
 
 
@@ -1653,6 +1669,22 @@ def test_command_json_probe_executes_probe_command_and_parses_metrics(tmp_path: 
     assert metrics == {"elapsed_ms_mean": 12.5, "iteration_count": 3.0}
 
 
+def test_evaluation_latency_percentile_probe_command_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-latency-percentile-vector-reuse"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["sorted_calls_mean"] == 1.0
+    assert metrics["sample_count"] == 12000.0
+    assert metrics["iteration_count"] == 160.0
+    assert metrics["p95"] >= metrics["p50"]
+
+
 def test_model_registry_catalog_probe_command_emits_metrics() -> None:
     probe = next(
         probe
@@ -1925,6 +1957,25 @@ def test_performance_report_script_load_results_handles_missing_directory() -> N
     report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
 
     assert report_script["_load_results"](REPO_ROOT / "missing-results-dir") == []
+
+
+def test_performance_report_script_load_results_avoids_exists_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "result.json").write_text(json.dumps({"probe": {"id": "result"}}), encoding="utf-8")
+
+    def fail_exists(self: Path):  # pragma: no cover - sentinel
+        raise AssertionError("_load_results should let os.scandir perform the existence check")
+
+    monkeypatch.setattr(Path, "exists", fail_exists)
+    report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
+
+    loaded = report_script["_load_results"](results_dir)
+
+    assert loaded == [{"probe": {"id": "result"}}]
 
 
 

@@ -42,6 +42,7 @@ _REQUEST_PROBE_KEYS = (
     "dflash_rollback_count",
     "dflash_target_hidden_layers",
 )
+_REQUEST_PROBE_KEY_SET = frozenset(_REQUEST_PROBE_KEYS)
 _COUNT_PROBE_KEYS = {
     "speculative_accepted_tokens",
     "speculative_rejected_tokens",
@@ -413,6 +414,7 @@ def _build_metric_row(
     }
 
 
+@lru_cache(maxsize=None)
 def _metric_direction(metric_name: str) -> str:
     return _metric_key_direction(metric_name.rsplit(".", maxsplit=1)[-1])
 
@@ -463,10 +465,9 @@ def _collect_benchmark_probe_metrics(
     matrix_label_cache: dict[tuple[object, object, object, object, object], str] = {}
     for row in _dict_rows(rows):
         label = ""
-        for key in _REQUEST_PROBE_KEYS:
-            if key not in row:
+        for key, raw_value in row.items():
+            if key not in _REQUEST_PROBE_KEY_SET:
                 continue
-            raw_value = row[key]
             raw_value_type = type(raw_value)
             if raw_value_type is float:
                 value = raw_value

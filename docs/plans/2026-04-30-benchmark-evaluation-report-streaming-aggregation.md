@@ -20,6 +20,10 @@ A second follow-up Linux-verifiable slice extends the exact-type numeric fast pa
 
 This Linux-verifiable slice keeps the report loader behavior unchanged while decoding benchmark/evaluation export JSON directly from `Path.read_bytes()`. The registered benchmark-evaluation report probe now records `load_input_ms_mean` around `load_report_input()` before report construction, so this removes the intermediate UTF-8 string decode and lets `json.loads` consume bytes directly. The regression test forbids `Path.read_text()` on the loader path while preserving malformed, missing, non-object, and directory fallback behavior.
 
+## 2026-05-03 benchmark probe key iteration slice
+
+This Linux-verifiable slice keeps benchmark/evaluation report output unchanged while iterating the actual keys present in each benchmark probe row and filtering them through a module-level probe-key set. The previous hot path checked every known probe key against every sparse row before reading values. The registered benchmark-evaluation report probe exercises the benchmark context and matrix request row collectors, so the slice removes avoidable fixed-key membership scans while preserving label construction, aggregate suffixes, and metric names. The sparse-row regression test now fails on fixed-key membership scans as well as fixed-key `get()` calls.
+
 ## Touched Files
 
 - `services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py`

@@ -277,7 +277,6 @@ class ModelOpsJobRegistry:
                 source_model=str(payload.get("source_model", "")),
                 output_dir=str(output_dir),
                 stage_history=[("write_manifest", pct)],
-                manifest_json=json.dumps(payload),
                 manifest=payload,
                 manifest_cached=True,
                 output_path=str(manifest_path),
@@ -398,10 +397,12 @@ class ModelOpsJobRegistry:
 
     @classmethod
     def _job_manifest(cls, job: ModelOpsJob) -> dict[str, Any]:
-        if job.operation == "registry_snapshot" or not job.manifest_json:
+        if job.operation == "registry_snapshot":
             return {}
         if job.manifest_cached:
             return job.manifest
+        if not job.manifest_json:
+            return {}
         return cls._decode_manifest_json(job.manifest_json)
 
     @classmethod
@@ -559,10 +560,10 @@ class ModelOpsJobRegistry:
             stage, pct = job.stage_history[-1]
 
         manifest: dict[str, Any] = {}
-        if job.operation != "registry_snapshot" and job.manifest_json:
+        if job.operation != "registry_snapshot":
             if job.manifest_cached:
                 manifest = job.manifest
-            else:
+            elif job.manifest_json:
                 manifest = ModelOpsJobRegistry._decode_manifest_json(job.manifest_json)
 
         return {
