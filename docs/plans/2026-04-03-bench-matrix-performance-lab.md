@@ -62,6 +62,14 @@ Add a parallel `bench matrix` path with:
 - Window UI can start, inspect, and export matrix runs without regressing the existing `bench run` surface
 - changed-line coverage is at or above `95%` for the touched executable scope before each commit
 
+## Performance Follow-up Slices
+
+- 2026-05-04: The benchmark export run-scan slice treats `_scan_directory()` as the
+  canonical ordering point for run-local artifact names. `_collect_benchmark_run()`
+  should consume `matching_file_paths()` directly instead of re-sorting the already
+  sorted tuple, with the registered `benchmark-export-run-scan-single-pass` probe as
+  the local and CI validation gate.
+
 ## Risks
 
 - matrix execution can create combinatorial expansion, so preflight guardrails are required before worker dispatch
