@@ -16,7 +16,6 @@ from worker.model_ops.response_only_boundary import ResponseOnlyBoundaryAggregat
 from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest
 from worker.model_ops.training_config import (
     normalize_training_config,
-    LoRATrainingConfig,
     _PREFERENCE_TRAINING_MODES,
     _RL_TRAINING_MODES,
 )
@@ -430,7 +429,7 @@ def _default_experiment_group_id(source_model_id: str, adapter_name: str) -> str
 def _build_alignment_run_manifest(
     *,
     job_id: str,
-    config: LoRATrainingConfig,
+    config: Any,
     source_model: common_pb2.ModelSpec,
     manifest: dict[str, Any],
     request_ext: dict[str, str],
