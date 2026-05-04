@@ -689,7 +689,7 @@ def _collect_benchmark_run(
     job_path = scan.file_path("bench-job.json")
     context_path = scan.file_path("bench-context-rows.jsonl")
     batch_path = scan.file_path("bench-batch-rows.jsonl")
-    result_paths = list(scan.matching_file_paths(prefix="bench-result-", suffix=".json"))
+    result_paths = scan.matching_file_paths(prefix="bench-result-", suffix=".json")
 
     if summary_path is not None:
         summary_row = _try_load_json_object(summary_path)
@@ -710,7 +710,7 @@ def _collect_benchmark_run(
     if batch_path is not None:
         batch_rows.extend(_try_iter_jsonl_dict_rows(batch_path))
 
-    for result_path in sorted(result_paths):
+    for result_path in result_paths:
         result_row = _try_load_json_object(result_path)
         if result_row is not None:
             results.append(result_row)

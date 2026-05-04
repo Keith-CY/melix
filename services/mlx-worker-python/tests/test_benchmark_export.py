@@ -58,6 +58,44 @@ def test_load_json_object_reads_bytes_without_text_file_wrapper(monkeypatch: pyt
     assert binary_open_count == 1
 
 
+def test_collect_benchmark_run_reuses_scan_result_order_without_resorting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class UnsortablePath:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def __lt__(self, other: object) -> bool:
+            raise AssertionError("benchmark result paths are already sorted by _scan_directory")  # pragma: no cover
+
+    class FakeScan:
+        directory = tmp_path
+
+        def file_path(self, name: str) -> None:
+            return None
+
+        def matching_file_paths(self, *, prefix: str, suffix: str) -> tuple[UnsortablePath, ...]:
+            return (UnsortablePath("bench-result-a.json"), UnsortablePath("bench-result-b.json"))
+
+    def fake_load_json_object(path: UnsortablePath) -> dict[str, object]:
+        return {"schema_version": "melix.serving_benchmark_result.v1", "result_name": path.name}
+
+    monkeypatch.setattr(benchmark_export_module, "_try_load_json_object", fake_load_json_object)
+
+    results: list[dict[str, object]] = []
+    _collect_benchmark_run(
+        tmp_path,
+        summary_rows=[],
+        context_rows=[],
+        batch_rows=[],
+        results=results,
+        scanned_entries=FakeScan(),
+    )
+
+    assert [row["result_name"] for row in results] == ["bench-result-a.json", "bench-result-b.json"]
+
+
 class _CountingMetricList(list[dict[str, float | str]]):
     def __init__(self, items: list[dict[str, float | str]]) -> None:
         super().__init__(items)
