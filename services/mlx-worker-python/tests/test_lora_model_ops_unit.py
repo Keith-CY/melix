@@ -12,6 +12,7 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
+from worker.model_ops.deterministic_lora_runner import DeterministicLoRARunner
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops import mlx_lm_runner as mlx_lm_runner_module
 from worker.model_ops import training_config as training_config_module
@@ -106,6 +107,97 @@ def test_checkpoint_summary_handles_empty_or_missing_directories(tmp_path: Path)
 
     assert mlx_lm_runner_module._checkpoint_summary(adapter_dir) == (0, "")
     assert mlx_lm_runner_module._checkpoint_summary(tmp_path / "missing") == (0, "")
+
+
+def test_mlx_lora_namespace_uses_dora_fine_tune_type(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "dora"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-dora",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="chat_messages",
+    )
+
+    assert mlx_lm_runner_module._mlx_lora_namespace(request).fine_tune_type == "dora"
+
+
+def test_mlx_lm_runner_rejects_alignment_without_backend_before_mlx_execution(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "dpo"},
+        dataset_format="preference_pair",
+        response_only_supported=False,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-dpo",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="preference_pair",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        mlx_lm_runner_module.MLXLMRunner().train(request)
+
+    assert exc.value.code == "unsupported_alignment_trainer"
+    assert exc.value.details["training_mode"] == "dpo"
+    assert exc.value.details["alignment_algorithm"] == "dpo"
+    assert exc.value.details["available_backend"] == "mlx_lm_lora_supervised"
+    assert not request.adapter_output_dir.exists()
+
+
+def test_deterministic_lora_runner_declares_alignment_contract_support(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "orpo"},
+        dataset_format="preference_pair",
+        response_only_supported=False,
+        sample_count=2,
+    )
+
+    assert DeterministicLoRARunner().supports_alignment_training(config) is True
+
+
+def test_training_request_deserialization_restores_alignment_config(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "cpo"},
+        dataset_format="preference_pair",
+        response_only_supported=False,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-cpo",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="preference_pair",
+    )
+
+    restored = mlx_lm_runner_module._deserialize_training_request(
+        mlx_lm_runner_module._serialize_training_request(request)
+    )
+
+    assert isinstance(restored.config.alignment, training_config_module.AlignmentTrainingConfig)
+    assert restored.config.alignment.alignment_algorithm == "cpo"
+    assert restored.config.alignment.dataset_contract == "preference_pair"
 
 
 def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
@@ -475,7 +567,7 @@ def test_training_config_rejects_non_positive_gradient_accumulation(bad_value: s
 
 
 def test_training_config_rejects_non_numeric_gradient_accumulation() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ModelOperationError) as exc:
         training_config_module.normalize_training_config(
             source_model=_text_model(),
             ext={"gradient_accumulation": "abc"},
@@ -483,6 +575,11 @@ def test_training_config_rejects_non_numeric_gradient_accumulation() -> None:
             response_only_supported=True,
             sample_count=1,
         )
+
+    assert exc.value.code == "invalid_argument"
+    assert exc.value.message == "gradient_accumulation must be an integer."
+    assert exc.value.details["field"] == "gradient_accumulation"
+    assert exc.value.details["raw_value"] == "abc"
 
 
 def test_training_config_defaults_chunked_training_off() -> None:

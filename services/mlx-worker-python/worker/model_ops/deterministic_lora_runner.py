@@ -16,6 +16,10 @@ from worker.model_ops.mlx_lm_runner import (
 
 
 class DeterministicLoRARunner(MLXLMRunner):
+    def supports_alignment_training(self, config) -> bool:
+        del config
+        return True
+
     def train_native(self, request: TrainingRequest) -> TrainingResult:
         request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
         weights_path = request.adapter_output_dir / "adapters.safetensors"

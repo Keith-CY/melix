@@ -41,6 +41,10 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
     public var targetRepo: String
     public var experimentGroupID: String
     public var resumeManifestPath: String
+    public var grpoCandidateCount: String
+    public var referenceModelPath: String
+    public var rewardModelManifestPath: String
+    public var klPenalty: String
     public var trainingMode: String
     public var presetID: String
     public var activationMode: String
@@ -51,8 +55,11 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
     public var numLayers: String
     public var batchSize: String
     public var epochs: String
+    public var maxSteps: String
     public var learningRate: String
     public var maxSeqLength: String
+    public var sampleLimit: String
+    public var gradientAccumulation: String
     public var responseOnly: Bool
     public var maskPrompt: Bool
     public var gradientCheckpointing: Bool
@@ -76,6 +83,10 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         targetRepo: String = "",
         experimentGroupID: String = "",
         resumeManifestPath: String = "",
+        grpoCandidateCount: String = "",
+        referenceModelPath: String = "",
+        rewardModelManifestPath: String = "",
+        klPenalty: String = "",
         trainingMode: String,
         presetID: String = "",
         activationMode: String,
@@ -86,8 +97,11 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         numLayers: String = "",
         batchSize: String = "",
         epochs: String = "",
+        maxSteps: String = "",
         learningRate: String = "",
         maxSeqLength: String = "",
+        sampleLimit: String = "",
+        gradientAccumulation: String = "",
         responseOnly: Bool = true,
         maskPrompt: Bool = false,
         gradientCheckpointing: Bool = false,
@@ -110,6 +124,10 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         self.targetRepo = targetRepo
         self.experimentGroupID = experimentGroupID
         self.resumeManifestPath = resumeManifestPath
+        self.grpoCandidateCount = grpoCandidateCount
+        self.referenceModelPath = referenceModelPath
+        self.rewardModelManifestPath = rewardModelManifestPath
+        self.klPenalty = klPenalty
         self.trainingMode = trainingMode
         self.presetID = presetID
         self.activationMode = activationMode
@@ -120,8 +138,11 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         self.numLayers = numLayers
         self.batchSize = batchSize
         self.epochs = epochs
+        self.maxSteps = maxSteps
         self.learningRate = learningRate
         self.maxSeqLength = maxSeqLength
+        self.sampleLimit = sampleLimit
+        self.gradientAccumulation = gradientAccumulation
         self.responseOnly = responseOnly
         self.maskPrompt = maskPrompt
         self.gradientCheckpointing = gradientCheckpointing
@@ -146,6 +167,10 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         case targetRepo = "target_repo"
         case experimentGroupID = "experiment_group_id"
         case resumeManifestPath = "resume_manifest_path"
+        case grpoCandidateCount = "grpo_candidate_count"
+        case referenceModelPath = "reference_model_path"
+        case rewardModelManifestPath = "reward_model_manifest_path"
+        case klPenalty = "kl_penalty"
         case trainingMode = "training_mode"
         case presetID = "preset_id"
         case activationMode = "activation_mode"
@@ -156,8 +181,11 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         case numLayers = "num_layers"
         case batchSize = "batch_size"
         case epochs
+        case maxSteps = "max_steps"
         case learningRate = "learning_rate"
         case maxSeqLength = "max_seq_length"
+        case sampleLimit = "sample_limit"
+        case gradientAccumulation = "gradient_accumulation"
         case responseOnly = "response_only"
         case maskPrompt = "mask_prompt"
         case gradientCheckpointing = "gradient_checkpointing"
@@ -188,6 +216,10 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
             targetRepo: try container.decodeIfPresent(String.self, forKey: .targetRepo) ?? "",
             experimentGroupID: try container.decodeIfPresent(String.self, forKey: .experimentGroupID) ?? "",
             resumeManifestPath: try container.decodeIfPresent(String.self, forKey: .resumeManifestPath) ?? "",
+            grpoCandidateCount: try container.decodeIfPresent(String.self, forKey: .grpoCandidateCount) ?? "",
+            referenceModelPath: try container.decodeIfPresent(String.self, forKey: .referenceModelPath) ?? "",
+            rewardModelManifestPath: try container.decodeIfPresent(String.self, forKey: .rewardModelManifestPath) ?? "",
+            klPenalty: try container.decodeIfPresent(String.self, forKey: .klPenalty) ?? "",
             trainingMode: try container.decodeIfPresent(String.self, forKey: .trainingMode) ?? "lora",
             presetID: try container.decodeIfPresent(String.self, forKey: .presetID) ?? "",
             activationMode: try container.decodeIfPresent(String.self, forKey: .activationMode) ?? "fused_derived_model",
@@ -198,8 +230,11 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
             numLayers: try container.decodeIfPresent(String.self, forKey: .numLayers) ?? "",
             batchSize: try container.decodeIfPresent(String.self, forKey: .batchSize) ?? "",
             epochs: try container.decodeIfPresent(String.self, forKey: .epochs) ?? "",
+            maxSteps: try container.decodeIfPresent(String.self, forKey: .maxSteps) ?? "",
             learningRate: try container.decodeIfPresent(String.self, forKey: .learningRate) ?? "",
             maxSeqLength: try container.decodeIfPresent(String.self, forKey: .maxSeqLength) ?? "",
+            sampleLimit: try container.decodeIfPresent(String.self, forKey: .sampleLimit) ?? "",
+            gradientAccumulation: try container.decodeIfPresent(String.self, forKey: .gradientAccumulation) ?? "",
             responseOnly: try container.decodeIfPresent(Bool.self, forKey: .responseOnly) ?? true,
             maskPrompt: try container.decodeIfPresent(Bool.self, forKey: .maskPrompt) ?? false,
             gradientCheckpointing: try container.decodeIfPresent(Bool.self, forKey: .gradientCheckpointing) ?? false,

@@ -355,6 +355,12 @@ struct MelixCLIParserTests {
             "--quant-profile-id", "q4",
             "--weight-quant", "q4",
             "--kv-quant", "q8",
+            "--quantization-mode", "qat",
+            "--source-artifact-kind", "merged_adapter",
+            "--source-artifact-path", "/tmp/melix-export/merged",
+            "--calibration-dataset-uri", "/tmp/melix-datasets/calibration",
+            "--quality-delta", "-0.01",
+            "--latency-delta", "-0.15",
             "--json",
         ])
         let uploadCommand = try MelixCLIParser.parse([
@@ -395,6 +401,12 @@ struct MelixCLIParserTests {
         #expect(quantizeOptions.quantProfileID == "q4")
         #expect(quantizeOptions.weightQuant == "q4")
         #expect(quantizeOptions.kvQuant == "q8")
+        #expect(quantizeOptions.quantizationMode == "qat")
+        #expect(quantizeOptions.sourceArtifactKind == "merged_adapter")
+        #expect(quantizeOptions.sourceArtifactPath == "/tmp/melix-export/merged")
+        #expect(quantizeOptions.calibrationDatasetURI == "/tmp/melix-datasets/calibration")
+        #expect(quantizeOptions.qualityDelta == "-0.01")
+        #expect(quantizeOptions.latencyDelta == "-0.15")
         #expect(quantizeOptions.json)
         #expect(uploadOptions.modelID == "melix-dev-text")
         #expect(uploadOptions.outputDir == "/tmp/melix-upload")
@@ -527,6 +539,26 @@ struct MelixCLIParserTests {
                 json: true
             )
         ))
+
+        let alignmentCommand = MelixCLICommand.alignmentTrain(
+            .init(
+                modelID: "model",
+                datasetSourceKind: "hf_dataset",
+                datasetURI: "",
+                adapterName: "aligned",
+                algorithm: "grpo",
+                parameters: [
+                    "hf_dataset_path": "org/preference",
+                    "grpo_candidate_count": "4",
+                    "kl_penalty": "0.02",
+                ],
+                json: true
+            )
+        )
+        let alignmentArguments = try MelixCLICommandCodec.arguments(for: alignmentCommand)
+        #expect(alignmentArguments.contains("--hf-dataset-path"))
+        #expect(alignmentArguments.contains("org/preference"))
+        #expect(try MelixCLIParser.parse(alignmentArguments) == alignmentCommand)
     }
 
     @Test("command codec exposes stable ids and supported argv mappings")
@@ -534,7 +566,7 @@ struct MelixCLIParserTests {
         let allCommands: [(MelixCLICommand, String)] = [
             (.doctor(.init()), "doctor"),
             (.convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)), "convert"),
-            (.quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", json: true)), "quantize"),
+            (.quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", json: true)), "quantize"),
             (.upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)), "upload"),
             (.modelList(.init(json: true)), "model.list"),
             (.modelInspect(.init(modelID: "model", json: true)), "model.inspect"),
@@ -571,6 +603,7 @@ struct MelixCLIParserTests {
             (.chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
             (.loraList(.init(modelID: "model", json: true)), "lora.list"),
             (.loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)), "lora.train"),
+            (.alignmentTrain(.init(modelID: "model", datasetURI: "/tmp/preference.jsonl", adapterName: "aligned", algorithm: "dpo", json: true)), "alignment.train"),
             (.loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl", json: true)), "lora.dataset.inspect"),
             (.loraDatasetBuild(.init(modelID: "model", datasetURI: "/tmp/data.jsonl", outputDir: "/tmp/out", json: true)), "lora.dataset.build"),
             (.loraActivate(.init(modelID: "model", adapterPath: "/tmp/adapter.json", derivedModelAlias: "derived", activationMode: "adapter_backed_runtime", json: true)), "lora.activate"),
@@ -614,7 +647,7 @@ struct MelixCLIParserTests {
         let supportedCommands: [MelixCLICommand] = [
             .doctor(.init(json: true)),
             .convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)),
-            .quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", json: true)),
+            .quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", json: true)),
             .upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)),
             .modelImport(.init(path: "/tmp/model", modelID: "model", modelKind: "text", revision: "main", json: true)),
             .modelHubDownload(.init(repoID: "mlx/qwen", revision: "main", json: true)),
@@ -641,6 +674,7 @@ struct MelixCLIParserTests {
             .chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
             .chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
             .loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)),
+            .alignmentTrain(.init(modelID: "model", datasetURI: "/tmp/preference.jsonl", adapterName: "aligned", algorithm: "dpo", json: true)),
             .loraActivate(.init(modelID: "model", adapterPath: "/tmp/adapter.json", derivedModelAlias: "derived", activationMode: "adapter_backed_runtime", json: true)),
             .loraPublish(.init(modelID: "model", targetRepo: "melix/adapter", exportKind: .adapterExport, artifactPath: "/tmp/adapter/manifest.json", artifactManifestPath: "/tmp/adapter/manifest.json", json: true)),
             .benchRun(.init(modelID: "model", suites: ["smoke"], contextLengths: [1024], generationLength: 128, batchSizes: [1], repeats: 2, cacheProfile: "cold", reasoningMode: "disabled", structuredOutputMode: "disabled", parameters: ["sample_size": "4", "batch_factor": "1"], json: true)),
@@ -1083,6 +1117,7 @@ struct MelixCLIParserTests {
             "--dataset-uri", "/tmp/data/alpaca.jsonl",
             "--adapter-name", "demo-adapter",
             "--target-repo", "melix/demo-adapter",
+            "--training-mode", "dora",
             "--preset", "balanced_adapter",
             "--experiment-group", "nightly-qwen35",
             "--rank", "8",
@@ -1110,6 +1145,7 @@ struct MelixCLIParserTests {
         #expect(options.datasetURI == "/tmp/data/alpaca.jsonl")
         #expect(options.adapterName == "demo-adapter")
         #expect(options.targetRepo == "melix/demo-adapter")
+        #expect(options.trainingMode == "dora")
         #expect(options.parameters["preset_id"] == "balanced_adapter")
         #expect(options.parameters["experiment_group_id"] == "nightly-qwen35")
         #expect(options.parameters["rank"] == "8")
@@ -1225,6 +1261,57 @@ struct MelixCLIParserTests {
         #expect(options.parameters["mask_prompt"] == "true")
         #expect(options.parameters["derived_model_alias"] == "melix-dev-text-ultrachat")
         #expect(options.trainingMode == "qlora")
+    }
+
+    @Test("parses alignment train with preference and RL parameters")
+    func parsesAlignmentTrainCommand() throws {
+        #expect(MelixCLIParser.usageText.contains("melix alignment train"))
+
+        let command = try MelixCLIParser.parse([
+            "alignment",
+            "train",
+            "--model-id", "melix-dev-text",
+            "--dataset-uri", "/tmp/data/preference.jsonl",
+            "--adapter-name", "aligned-adapter",
+            "--algorithm", "grpo",
+            "--grpo-candidate-count", "4",
+            "--reference-model-path", "/tmp/reference-model",
+            "--reward-model-manifest-path", "/tmp/reward/manifest.json",
+            "--sample-limit", "8",
+            "--max-steps", "3",
+            "--json",
+        ])
+
+        guard case .alignmentTrain(let options) = command else {
+            Issue.record("Expected alignmentTrain command")
+            return
+        }
+
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.datasetSourceKind == "local_package")
+        #expect(options.datasetURI == "/tmp/data/preference.jsonl")
+        #expect(options.adapterName == "aligned-adapter")
+        #expect(options.algorithm == "grpo")
+        #expect(options.parameters["grpo_candidate_count"] == "4")
+        #expect(options.parameters["reference_model_path"] == "/tmp/reference-model")
+        #expect(options.parameters["reward_model_manifest_path"] == "/tmp/reward/manifest.json")
+        #expect(options.parameters["sample_limit"] == "8")
+        #expect(options.parameters["max_steps"] == "3")
+        #expect(options.json)
+    }
+
+    @Test("alignment train rejects unsupported algorithms")
+    func alignmentTrainRejectsUnsupportedAlgorithms() throws {
+        try assertError(
+            for: [
+                "alignment", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "aligned-adapter",
+                "--algorithm", "ppo",
+            ],
+            equals: .usage("Invalid value for --algorithm. Expected one of: dpo, orpo, cpo, grpo, rlhf.")
+        )
     }
 
     @Test("parses lora dataset inspect with local source conversion and preview controls")
@@ -2310,6 +2397,22 @@ struct MelixCLIParserTests {
             equals: .missingRequired("--model-id is required for melix quantize.")
         )
         try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--quantization-mode", "mystery",
+            ],
+            equals: .usage("Invalid value for --quantization-mode. Expected one of: ptq, qat.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--source-artifact-kind", "checkpoint",
+            ],
+            equals: .usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
+        )
+        try assertError(
             for: ["upload", "--model-id", "melix-dev-text"],
             equals: .missingRequired("--target-repo is required for melix upload.")
         )
@@ -2347,7 +2450,17 @@ struct MelixCLIParserTests {
                 "--adapter-name", "demo",
                 "--training-mode", "mystery",
             ],
-            equals: .usage("Invalid value for --training-mode. Expected one of: lora, qlora.")
+            equals: .usage("Invalid value for --training-mode. Expected one of: lora, qlora, dora.")
+        )
+        try assertError(
+            for: [
+                "lora", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "demo",
+                "--training-mode", "dpo",
+            ],
+            equals: .usage("Invalid value for --training-mode. For alignment training modes (dpo, orpo, cpo, grpo, rlhf), use `melix alignment train --algorithm <mode>`.")
         )
         try assertError(
             for: [

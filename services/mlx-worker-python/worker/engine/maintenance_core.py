@@ -409,11 +409,37 @@ class MaintenanceCore:
                 if hold_ms := int(request.ext.get("test_hold_ms", "0") or "0"):
                     time.sleep(hold_ms / 1000.0)
 
-                result = self._quantization_pipeline.run(
-                    request,
-                    job_id=job.job_id,
-                    output_dir=output_dir,
-                )
+                try:
+                    result = self._quantization_pipeline.run(
+                        request,
+                        job_id=job.job_id,
+                        output_dir=output_dir,
+                    )
+                except ModelOperationError as exc:
+                    self._job_registry.fail(job.job_id, exc.code, exc.message)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        failed=maintenance_pb2.ConvertFailed(
+                            error=common_pb2.ErrorStatus(
+                                code=exc.code,
+                                message=exc.message,
+                                retriable=exc.retriable,
+                                details=exc.details,
+                            )
+                        )
+                    )
+                    return
+                except Exception as exc:
+                    error_code = "quantization_failure"
+                    self._job_registry.fail(job.job_id, error_code, str(exc))
+                    yield maintenance_pb2.ConvertModelEvent(
+                        failed=maintenance_pb2.ConvertFailed(
+                            error=common_pb2.ErrorStatus(
+                                code=error_code,
+                                message=str(exc),
+                            )
+                        )
+                    )
+                    return
                 manifest_payload = dict(result.manifest_payload)
                 manifest_payload["job_id"] = job.job_id
                 manifest_payload["artifact_bytes"] = result.artifact_bytes

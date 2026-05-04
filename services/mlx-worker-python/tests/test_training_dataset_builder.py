@@ -294,6 +294,265 @@ def test_load_training_dataset_package_rejects_incomplete_preference_pair_sample
     assert exc.value.code == "invalid_dataset_package"
 
 
+@pytest.mark.parametrize(
+    ("format_name", "sample", "expected"),
+    [
+        (
+            "prompt_candidate",
+            {
+                "prompt": "Generate options.",
+                "candidates": [
+                    {"text": "Candidate A", "score": 0.7},
+                    {"text": "Candidate B", "score": 0.5},
+                ],
+            },
+            {
+                "prompt": "Generate options.",
+                "candidates": [
+                    {"text": "Candidate A", "score": 0.7},
+                    {"text": "Candidate B", "score": 0.5},
+                ],
+            },
+        ),
+        (
+            "reward_scored",
+            {
+                "prompt": "Rate this.",
+                "response": "A helpful response.",
+                "reward_score": 0.83,
+            },
+            {
+                "prompt": "Rate this.",
+                "response": "A helpful response.",
+                "reward_score": 0.83,
+            },
+        ),
+        (
+            "calibration",
+            {"text": "Calibration sample text."},
+            {"text": "Calibration sample text."},
+        ),
+    ],
+)
+def test_load_training_dataset_package_supports_alignment_and_calibration_contracts(
+    tmp_path: Path,
+    format_name: str,
+    sample: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    package_path = tmp_path / f"{format_name}-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": f"{format_name}-package",
+                "format": format_name,
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        json.dumps(sample) + "\n",
+        encoding="utf-8",
+    )
+
+    package = load_training_dataset_package(str(package_path))
+
+    assert package.format == format_name
+    assert package.response_only_supported is False
+    assert package.normalized_samples == [expected]
+
+
+@pytest.mark.parametrize(
+    ("format_name", "sample"),
+    [
+        ("prompt_candidate", {"prompt": "Only one.", "candidates": [{"text": "A"}]}),
+        ("prompt_candidate", {"prompt": "Bad score.", "candidates": [{"text": "A", "score": "bad"}, {"text": "B"}]}),
+        ("prompt_candidate", {"prompt": "Bad candidate.", "candidates": [1, {"text": "B"}]}),
+        ("prompt_candidate", {"prompt": "Null candidate.", "candidates": [None, {"text": "B"}]}),
+        ("prompt_candidate", {"prompt": "Blank candidate.", "candidates": ["", {"text": "B"}]}),
+        ("reward_scored", {"prompt": "Missing score.", "response": "A"}),
+        ("reward_scored", {"prompt": "Bad score.", "response": "A", "reward_score": "bad"}),
+        ("calibration", {"prompt": ""}),
+    ],
+)
+def test_load_training_dataset_package_rejects_incomplete_alignment_and_calibration_contracts(
+    tmp_path: Path,
+    format_name: str,
+    sample: dict[str, object],
+) -> None:
+    package_path = tmp_path / f"invalid-{format_name}-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": f"invalid-{format_name}-package",
+                "format": format_name,
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        json.dumps(sample) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        load_training_dataset_package(str(package_path))
+
+    assert exc.value.code == "invalid_dataset_package"
+
+
+def test_load_training_dataset_package_reports_null_prompt_candidate(tmp_path: Path) -> None:
+    package_path = tmp_path / "invalid-null-prompt-candidate-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "invalid-null-prompt-candidate-package",
+                "format": "prompt_candidate",
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        json.dumps({"prompt": "Choose.", "candidates": [None, {"text": "B"}]}) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        load_training_dataset_package(str(package_path))
+
+    assert exc.value.code == "invalid_dataset_package"
+    assert exc.value.message == "prompt_candidate candidates cannot be null."
+    assert exc.value.details["candidate_index"] == "0"
+
+
+@pytest.mark.parametrize(
+    ("row", "expected_format", "expected_samples"),
+    [
+        (
+            {
+                "prompt": "Choose.",
+                "candidates": ["Candidate A", {"text": "Candidate B", "score": 0.5}],
+            },
+            "prompt_candidate",
+            [
+                {
+                    "prompt": "Choose.",
+                    "candidates": [{"text": "Candidate A"}, {"score": 0.5, "text": "Candidate B"}],
+                }
+            ],
+        ),
+        (
+            {"prompt": "Rate.", "response": "Helpful.", "reward_score": "0.75"},
+            "reward_scored",
+            [{"prompt": "Rate.", "response": "Helpful.", "reward_score": 0.75}],
+        ),
+        (
+            {"text": "Calibration text."},
+            "text_completion",
+            [{"text": "Calibration text."}],
+        ),
+    ],
+)
+def test_resolve_local_training_samples_infers_alignment_contracts(
+    tmp_path: Path,
+    row: dict[str, object],
+    expected_format: str,
+    expected_samples: list[dict[str, object]],
+) -> None:
+    rows_path = tmp_path / "rows.jsonl"
+    rows_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    samples, format_name, resolved_template = training_dataset_module._resolve_local_training_samples(
+        rows_path,
+        template="auto",
+        sample_limit=0,
+    )
+
+    assert format_name == expected_format
+    assert resolved_template == expected_format
+    assert samples == expected_samples
+
+
+@pytest.mark.parametrize(
+    ("template", "row", "expected_format", "expected_sample"),
+    [
+        (
+            "prompt_candidate",
+            {
+                "prompt": "Choose.",
+                "candidates": [{"text": "Candidate A"}, {"text": "Candidate B"}],
+            },
+            "prompt_candidate",
+            {
+                "prompt": "Choose.",
+                "candidates": [{"text": "Candidate A"}, {"text": "Candidate B"}],
+            },
+        ),
+        (
+            "reward_scored",
+            {"prompt": "Rate.", "response": "Helpful.", "reward_score": 0.75},
+            "reward_scored",
+            {"prompt": "Rate.", "response": "Helpful.", "reward_score": 0.75},
+        ),
+        (
+            "calibration",
+            {"text": "Calibration text."},
+            "calibration",
+            {"text": "Calibration text."},
+        ),
+    ],
+)
+def test_convert_local_rows_supports_explicit_alignment_and_calibration_templates(
+    template: str,
+    row: dict[str, object],
+    expected_format: str,
+    expected_sample: dict[str, object],
+) -> None:
+    format_name, converted = training_dataset_module._convert_local_rows([row], template)
+
+    assert format_name == expected_format
+    assert converted == [expected_sample]
+
+
+def test_alignment_dataset_token_counts_and_text_segments() -> None:
+    prompt_candidate = {
+        "prompt": "two words",
+        "candidates": ["first answer", {"text": "second answer"}],
+    }
+    reward_scored = {
+        "prompt": "rate this",
+        "response": "good answer",
+        "reward_score": 0.7,
+    }
+
+    assert training_dataset_module._sample_token_counts(prompt_candidate, "prompt_candidate") == (2, 4)
+    assert training_dataset_module._sample_token_counts(reward_scored, "reward_scored") == (2, 2)
+    assert training_dataset_module._sample_text_segments(prompt_candidate) == [
+        "two words",
+        "first answer",
+        "second answer",
+    ]
+    assert training_dataset_module._sample_text_segments(reward_scored) == [
+        "rate this",
+        "good answer",
+    ]
+
+
 
 def test_iter_dataset_package_jsonl_rows_enforces_sample_limit_before_invalid_tail(
     tmp_path: Path,

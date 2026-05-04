@@ -12,3 +12,5 @@ __pycache__/
 .coverage
 *.profraw
 .worktrees/
+artifacts/lora-marketing-screenshots/
+artifacts/model-registry-local-fit/

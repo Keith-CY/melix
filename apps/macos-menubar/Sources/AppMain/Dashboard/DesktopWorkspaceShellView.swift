@@ -2833,14 +2833,14 @@ struct DesktopTrainingToolSectionView: View {
                     }
 
                     DesktopEditorialField("Training Mode") {
-                        Picker("Training Mode", selection: trainingModeBinding()) {
-                            ForEach(RuntimeLoraTrainingMode.allCases) { mode in
-                                Text(mode.title).tag(mode)
-                            }
+                        ViewThatFits(in: .horizontal) {
+                            trainingModePicker
+                                .pickerStyle(.segmented)
+                                .frame(maxWidth: 640, alignment: .leading)
+                            trainingModePicker
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: 220, alignment: .leading)
                         }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 340, alignment: .leading)
                     }
 
                     DesktopEditorialField("Preset") {
@@ -2851,6 +2851,41 @@ struct DesktopTrainingToolSectionView: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
+                    }
+                }
+            }
+
+            if viewModel.loraTrainingMode.isAlignmentMode {
+                DesktopEditorialFieldGroup(
+                    "Alignment Controls",
+                    detail: "Capture policy-alignment lineage and mode-specific controls for preference or reward-backed runs."
+                ) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        DesktopEditorialField("Reference Model Path") {
+                            TextField("Optional reference model path", text: stringBinding(\.loraReferenceModelPath))
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        if viewModel.loraTrainingMode == .grpo {
+                            DesktopEditorialField("GRPO Candidate Count") {
+                                TextField("Candidates per prompt", text: stringBinding(\.loraGRPOCandidateCount))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if viewModel.loraTrainingMode == .rlhf {
+                            DesktopEditorialField("Reward Model Manifest") {
+                                TextField("Reward model manifest path", text: stringBinding(\.loraRewardModelManifestPath))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if viewModel.loraTrainingMode == .grpo || viewModel.loraTrainingMode == .rlhf {
+                            DesktopEditorialField("KL Penalty") {
+                                TextField("Optional KL penalty", text: stringBinding(\.loraKLPenalty))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
                     }
                 }
             }
@@ -2930,6 +2965,15 @@ struct DesktopTrainingToolSectionView: View {
         }
     }
 
+    private var trainingModePicker: some View {
+        Picker("Training Mode", selection: trainingModeBinding()) {
+            ForEach(RuntimeLoraTrainingMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .labelsHidden()
+    }
+
     private var advancedParametersContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 12) {
@@ -2953,12 +2997,24 @@ struct DesktopTrainingToolSectionView: View {
                     TextField("Epochs", text: stringBinding(\.loraEpochs))
                         .textFieldStyle(.roundedBorder)
                 }
+                DesktopEditorialField("Max Steps") {
+                    TextField("Optional max steps", text: stringBinding(\.loraMaxSteps))
+                        .textFieldStyle(.roundedBorder)
+                }
                 DesktopEditorialField("Learning Rate") {
                     TextField("Learning Rate", text: stringBinding(\.loraLearningRate))
                         .textFieldStyle(.roundedBorder)
                 }
                 DesktopEditorialField("Max Seq Length") {
                     TextField("Max Seq Length", text: stringBinding(\.loraMaxSeqLength))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Sample Limit") {
+                    TextField("Optional sample limit", text: stringBinding(\.loraSampleLimit))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Gradient Accumulation") {
+                    TextField("Optional accumulation steps", text: stringBinding(\.loraGradientAccumulation))
                         .textFieldStyle(.roundedBorder)
                 }
                 DesktopEditorialField("Target Modules") {

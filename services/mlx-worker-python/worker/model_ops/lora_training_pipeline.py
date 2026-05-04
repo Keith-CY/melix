@@ -13,10 +13,11 @@ from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.response_only_boundary import ResponseOnlyBoundaryAggregate
-from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest
-from worker.model_ops.training_config import normalize_training_config
+from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest, TrainingResult
+from worker.model_ops.training_config import LoRATrainingConfig, normalize_training_config
 from worker.model_ops.training_dataset import (
     HFDatasetFetcher,
+    ResolvedTrainingDatasetPackage,
     resolve_training_dataset_package,
     write_normalized_dataset_snapshot,
 )
@@ -73,6 +74,10 @@ class LoRATrainingPipeline:
             response_only_supported=dataset.package.response_only_supported,
             sample_count=dataset.package.sample_count,
             validation_sample_count=dataset.package.validation_sample_count,
+        )
+        _validate_alignment_inputs(
+            config=config,
+            samples=dataset.package.normalized_samples,
         )
 
         emit("prepare_training_data", 0.5)
@@ -256,6 +261,31 @@ class LoRATrainingPipeline:
             )
         manifest_path = output_dir / "train_lora.adapter.json"
         manifest["artifact_path"] = str(manifest_path)
+        if config.alignment is not None:
+            alignment_manifest_path = output_dir / "train_lora.alignment.json"
+            candidate_trace_path = ""
+            if config.alignment.dataset_contract in {"prompt_candidate", "reward_scored"}:
+                candidate_trace_path = str(output_dir / "train_lora.candidates.jsonl")
+                _write_alignment_trace(
+                    Path(candidate_trace_path),
+                    dataset.package.normalized_samples,
+                )
+            manifest["alignment_run_manifest_path"] = str(alignment_manifest_path)
+            manifest["alignment_algorithm"] = config.alignment.alignment_algorithm
+            alignment_manifest = _alignment_manifest_payload(
+                job_id=job_id,
+                source_model=source_model,
+                config=config,
+                dataset=dataset,
+                training_result=training_result,
+                adapter_manifest_path=manifest_path,
+                candidate_trace_path=candidate_trace_path,
+                created_at_unix_ms=persisted_at_unix_ms,
+            )
+            alignment_manifest_path.write_text(
+                json.dumps(alignment_manifest, indent=2) + "\n",
+                encoding="utf-8",
+            )
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         self._experiment_store.persist_training_run(
             jobs_root=jobs_root,
@@ -270,6 +300,196 @@ def _int_ext(ext: dict[str, str], key: str) -> int:
     if not raw_value:
         return 0
     return int(raw_value)
+
+
+def _write_alignment_trace(path: Path, samples: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for sample in samples:
+            handle.write(json.dumps(sample) + "\n")
+
+
+def _validate_alignment_inputs(*, config: LoRATrainingConfig, samples: list[dict[str, Any]]) -> None:
+    alignment = config.alignment
+    if alignment is None:
+        return
+    if alignment.alignment_algorithm == "grpo":
+        for sample_index, sample in enumerate(samples):
+            candidates = sample.get("candidates")
+            candidate_count = len(candidates) if isinstance(candidates, list) else 0
+            if candidate_count < alignment.grpo_candidate_count:
+                raise ModelOperationError(
+                    code="invalid_alignment_dataset",
+                    message="GRPO samples must include at least grpo_candidate_count candidates.",
+                    details={
+                        "sample_index": str(sample_index),
+                        "candidate_count": str(candidate_count),
+                        "grpo_candidate_count": str(alignment.grpo_candidate_count),
+                    },
+                )
+    if alignment.alignment_algorithm == "rlhf":
+        _validate_reward_model_manifest(alignment.reward_model_manifest_path)
+
+
+def _validate_reward_model_manifest(manifest_path: str) -> None:
+    path = Path(manifest_path).expanduser()
+    if not path.is_file():
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="reward_model_manifest_path must point to a readable reward model manifest.",
+            details={"reward_model_manifest_path": manifest_path},
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="reward_model_manifest_path must point to a readable JSON manifest.",
+            details={"reward_model_manifest_path": manifest_path},
+        ) from exc
+    if not isinstance(payload, dict) or not str(payload.get("schema_version", "")).strip():
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="reward model manifest must include schema_version.",
+            details={"reward_model_manifest_path": manifest_path},
+        )
+
+
+def _alignment_manifest_payload(
+    *,
+    job_id: str,
+    source_model: common_pb2.ModelSpec,
+    config: LoRATrainingConfig,
+    dataset: ResolvedTrainingDatasetPackage,
+    training_result: TrainingResult,
+    adapter_manifest_path: Path,
+    candidate_trace_path: str,
+    created_at_unix_ms: int,
+) -> dict[str, Any]:
+    alignment = config.alignment
+    assert alignment is not None
+    assert config.dataset_contract == alignment.dataset_contract
+    metrics = {
+        "training_duration_ms": training_result.metrics.job_duration_ms,
+        "loss_final": training_result.metrics.loss_final,
+        "loss_best": training_result.metrics.loss_best,
+        "tokens_seen": training_result.metrics.tokens_seen,
+        "examples_seen": training_result.metrics.examples_seen,
+    }
+    if alignment.dataset_contract == "preference_pair":
+        metrics.update(
+            {
+                "preference_loss": config.preference_loss,
+                "chosen_rejected_margin": 0.0,
+                "win_rate_proxy": 0.0,
+            }
+        )
+    reward_summary = _reward_summary(dataset.package.normalized_samples)
+    if reward_summary:
+        metrics.update(reward_summary)
+
+    return {
+        "schema_version": "melix.alignment_run.v1",
+        "operation": "train_alignment",
+        "job_id": job_id,
+        "source_model": source_model.model_id,
+        "source_model_revision": source_model.revision,
+        "source_model_path": source_model.model_path,
+        "training_backend": training_result.execution_backend,
+        "training_mode": config.training_mode,
+        "training_objective": config.training_objective,
+        "alignment_algorithm": alignment.alignment_algorithm,
+        "dataset_contract": alignment.dataset_contract,
+        "dataset_uri": dataset.dataset_uri,
+        "dataset_format": dataset.package.format,
+        "adapter_manifest_path": str(adapter_manifest_path),
+        "reference_model_path": alignment.reference_model_path,
+        "reward_model_manifest_path": alignment.reward_model_manifest_path,
+        "candidate_trace_path": candidate_trace_path,
+        "grpo_candidate_count": alignment.grpo_candidate_count,
+        "kl_penalty": alignment.kl_penalty,
+        "adapter_set_hash": _content_hash(
+            training_result.weights_path,
+            training_result.adapter_config_path,
+        ),
+        "checkpoint_count": training_result.metrics.checkpoint_count,
+        "latest_checkpoint_path": training_result.metrics.latest_checkpoint_path,
+        "metrics": metrics,
+        "created_at_unix_ms": created_at_unix_ms,
+        "updated_at_unix_ms": created_at_unix_ms,
+    }
+
+
+def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
+    scores: list[float] = []
+    candidate_group_margins: list[float] = []
+    candidate_group_variances: list[float] = []
+    for sample in samples:
+        if "reward_score" in sample:
+            scores.append(float(sample["reward_score"]))
+        candidates = sample.get("candidates")
+        candidate_scores: list[float] = []
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                if isinstance(candidate, dict) and "score" in candidate:
+                    candidate_scores.append(float(candidate["score"]))
+        if candidate_scores:
+            scores.extend(candidate_scores)
+        if len(candidate_scores) >= 2:
+            ordered_candidate_scores = sorted(candidate_scores)
+            group_mean = sum(candidate_scores) / len(candidate_scores)
+            candidate_group_margins.append(
+                ordered_candidate_scores[-1] - ordered_candidate_scores[0]
+            )
+            candidate_group_variances.append(
+                sum((score - group_mean) ** 2 for score in candidate_scores)
+                / len(candidate_scores)
+            )
+    if not scores:
+        return {}
+    ordered = sorted(scores)
+    summary: dict[str, float | int] = {
+        "reward_mean": sum(ordered) / len(ordered),
+        "reward_p50": _percentile_value(ordered, 0.5),
+        "reward_p95": _percentile_value(ordered, 0.95),
+    }
+    if candidate_group_margins:
+        ordered_margins = sorted(candidate_group_margins)
+        summary.update(
+            {
+                "candidate_group_count": len(candidate_group_margins),
+                "candidate_group_reward_margin_mean": sum(candidate_group_margins)
+                / len(candidate_group_margins),
+                "candidate_group_reward_margin_p50": _percentile_value(
+                    ordered_margins,
+                    0.5,
+                ),
+                "candidate_group_reward_margin_p95": _percentile_value(
+                    ordered_margins,
+                    0.95,
+                ),
+                "candidate_group_reward_variance_mean": sum(candidate_group_variances)
+                / len(candidate_group_variances),
+            }
+        )
+    return summary
+
+
+def _percentile_value(ordered_values: list[float], percentile: float) -> float:
+    if len(ordered_values) == 1:
+        return ordered_values[0]
+    position = min(
+        len(ordered_values) - 1,
+        max(0.0, (len(ordered_values) - 1) * percentile),
+    )
+    lower_index = int(position)
+    upper_index = min(len(ordered_values) - 1, lower_index + 1)
+    if lower_index == upper_index:
+        return ordered_values[lower_index]
+    weight = position - lower_index
+    return ordered_values[lower_index] + (
+        ordered_values[upper_index] - ordered_values[lower_index]
+    ) * weight
 
 
 _CONTENT_HASH_CHUNK_SIZE = 1024 * 1024

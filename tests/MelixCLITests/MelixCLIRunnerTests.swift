@@ -1828,6 +1828,12 @@ struct MelixCLIRunnerTests {
                     quantProfileID: "q4",
                     weightQuant: "q4",
                     kvQuant: "q8",
+                    quantizationMode: "qat",
+                    sourceArtifactKind: "merged_adapter",
+                    sourceArtifactPath: "/tmp/melix-export/merged",
+                    calibrationDatasetURI: "/tmp/melix-datasets/calibration",
+                    qualityDelta: "-0.01",
+                    latencyDelta: "-0.15",
                     json: true
                 )
             )
@@ -1867,6 +1873,12 @@ struct MelixCLIRunnerTests {
         #expect(quantizeCall.quantProfileID == "q4")
         #expect(quantizeCall.weightQuant == "q4")
         #expect(quantizeCall.kvQuant == "q8")
+        #expect(quantizeCall.ext["quantization_mode"] == "qat")
+        #expect(quantizeCall.ext["source_artifact_kind"] == "merged_adapter")
+        #expect(quantizeCall.ext["source_artifact_path"] == "/tmp/melix-export/merged")
+        #expect(quantizeCall.ext["calibration_dataset_uri"] == "/tmp/melix-datasets/calibration")
+        #expect(quantizeCall.ext["quality_delta"] == "-0.01")
+        #expect(quantizeCall.ext["latency_delta"] == "-0.15")
         #expect(uploadPayload["job_id"] as? String == "upload-job-1")
         #expect(uploadCall.operation == "upload")
         #expect(uploadCall.outputDir == "/tmp/melix-upload")
@@ -3968,6 +3980,46 @@ struct MelixCLIRunnerTests {
         #expect(output == #"{"job_id":"job-1","status":"completed"}"#)
     }
 
+    @Test("alignment train forwards algorithm and alignment-specific parameters")
+    func alignmentTrainForwardsExpectedOperationPayload() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/melix/train_lora/alignment-job",
+            manifestJSON: #"{"schema_version":"melix.alignment_run.v1","job_id":"alignment-job"}"#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .alignmentTrain(
+                .init(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    datasetSourceKind: "local_package",
+                    datasetURI: "/tmp/datasets/preference.jsonl",
+                    adapterName: "aligned-adapter",
+                    algorithm: "grpo",
+                    parameters: [
+                        "grpo_candidate_count": "4",
+                        "reference_model_path": "/tmp/reference-model",
+                        "reward_model_manifest_path": "/tmp/reward/manifest.json",
+                    ],
+                    json: true
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(output == #"{"schema_version":"melix.alignment_run.v1","job_id":"alignment-job"}"#)
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(call.operation == "train_lora")
+        #expect(call.ext["dataset_source_kind"] == "local_package")
+        #expect(call.ext["dataset_uri"] == "/tmp/datasets/preference.jsonl")
+        #expect(call.ext["adapter_name"] == "aligned-adapter")
+        #expect(call.ext["training_mode"] == "grpo")
+        #expect(call.ext["alignment_algorithm"] == "grpo")
+        #expect(call.ext["grpo_candidate_count"] == "4")
+        #expect(call.ext["reference_model_path"] == "/tmp/reference-model")
+        #expect(call.ext["reward_model_manifest_path"] == "/tmp/reward/manifest.json")
+    }
+
     @Test("lora dataset inspect forwards local source options and renders a dataset summary")
     func loraDatasetInspectForwardsExpectedOperationPayload() async throws {
         let client = StubControlPlaneXPCClient()
@@ -4449,6 +4501,48 @@ struct MelixCLIRunnerTests {
         #expect(commands[2] == ["lora", "list", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", "--json"])
     }
 
+    @Test("subprocess-backed legacy alignment training mode uses alignment train")
+    func subprocessBackedLegacyAlignmentTrainingModeUsesAlignmentTrain() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                #"{"operation":"train_alignment","job_id":"alignment-job-1","output_path":"/tmp/melix/train_lora/alignment-job-1","adapter_name":"demo-grpo-adapter"}"#,
+            ]
+        )
+        let runner = MelixCLIRunner(
+            client: client,
+            commandExecutor: executor.run
+        )
+
+        _ = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "train_lora",
+            outputDir: "",
+            ext: [
+                "dataset_source_kind": "local_package",
+                "dataset_uri": "/tmp/datasets/prompt-candidate",
+                "adapter_name": "demo-grpo-adapter",
+                "training_mode": "grpo",
+                "max_steps": "3",
+                "sample_limit": "8",
+                "gradient_accumulation": "4",
+                "grpo_candidate_count": "4",
+            ]
+        )
+
+        let commands = await executor.commands
+        #expect(commands.count == 1)
+        #expect(Array(commands[0].prefix(2)) == ["alignment", "train"])
+        #expect(commands[0].contains("--algorithm"))
+        #expect(commands[0].contains("grpo"))
+        #expect(commands[0].contains("--max-steps"))
+        #expect(commands[0].contains("3"))
+        #expect(commands[0].contains("--sample-limit"))
+        #expect(commands[0].contains("8"))
+        #expect(commands[0].contains("--gradient-accumulation"))
+        #expect(commands[0].contains("4"))
+    }
+
     @Test("subprocess-backed lora publish builds explicit adapter and merged publish arguments")
     func subprocessBackedLoraPublishBuildsExplicitArguments() async throws {
         let client = StubControlPlaneXPCClient()
@@ -4763,7 +4857,15 @@ struct MelixCLIRunnerTests {
             outputDir: "/tmp/melix-quantize",
             quantProfileID: "q4",
             weightQuant: "q4",
-            kvQuant: "q8"
+            kvQuant: "q8",
+            ext: [
+                "quantization_mode": "qat",
+                "source_artifact_kind": "merged_adapter",
+                "source_artifact_path": "/tmp/melix-export/merged",
+                "calibration_dataset_uri": "/tmp/melix-datasets/calibration",
+                "quality_delta": "-0.01",
+                "latency_delta": "-0.15",
+            ]
         )
         let uploadResult = try await runner.performModelOperation(
             modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -4790,6 +4892,18 @@ struct MelixCLIRunnerTests {
         #expect(commands[1].contains("--quant-profile-id"))
         #expect(commands[1].contains("--weight-quant"))
         #expect(commands[1].contains("--kv-quant"))
+        #expect(commands[1].contains("--quantization-mode"))
+        #expect(commands[1].contains("qat"))
+        #expect(commands[1].contains("--source-artifact-kind"))
+        #expect(commands[1].contains("merged_adapter"))
+        #expect(commands[1].contains("--source-artifact-path"))
+        #expect(commands[1].contains("/tmp/melix-export/merged"))
+        #expect(commands[1].contains("--calibration-dataset-uri"))
+        #expect(commands[1].contains("/tmp/melix-datasets/calibration"))
+        #expect(commands[1].contains("--quality-delta"))
+        #expect(commands[1].contains("-0.01"))
+        #expect(commands[1].contains("--latency-delta"))
+        #expect(commands[1].contains("-0.15"))
         #expect(commands[2].starts(with: ["upload", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"]))
         #expect(commands[2].contains("--target-repo"))
         #expect(commands[2].contains("--artifact-path"))

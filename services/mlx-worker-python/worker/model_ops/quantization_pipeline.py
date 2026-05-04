@@ -19,6 +19,7 @@ from worker.model_ops.quantization_profiles import (
     source_format_metadata_for_request,
     strategy_metadata_for_request,
 )
+from worker.model_ops.errors import ModelOperationError
 from worker.registry import WorkerRegistry
 
 _BUNDLE_SCHEMA_VERSION = "melix.quantized_bundle.v1"
@@ -49,6 +50,19 @@ class OQQuantizationPipeline:
     ) -> QuantizationPipelineResult:
         source_model = self._resolve_source_model(request.source_model)
         profile = normalize_quantization_profile(request)
+        quantization_mode = _quantization_mode_for_request(request)
+        source_artifact_kind = _source_artifact_kind_for_request(request)
+        source_artifact_path = _source_artifact_path_for_request(
+            request,
+            source_model=source_model,
+            source_artifact_kind=source_artifact_kind,
+        )
+        _validate_quantization_source(
+            quantization_mode=quantization_mode,
+            source_artifact_kind=source_artifact_kind,
+            source_artifact_path=source_artifact_path,
+        )
+        calibration_evidence = _calibration_evidence_for_request(request)
         calibration = calibration_plan_for_profile(
             profile,
             source_model=request.source_model,
@@ -105,6 +119,10 @@ class OQQuantizationPipeline:
             hybrid_layout=hybrid_layout_metadata_for_request(request),
             planning=planning_metadata_for_request(request),
             compensation=compensation_metadata_for_request(request),
+            quantization_mode=quantization_mode,
+            source_artifact_kind=source_artifact_kind,
+            source_artifact_path=source_artifact_path,
+            calibration_evidence=calibration_evidence,
             bundle_path=bundle_path,
             manifest_path=manifest_path,
             artifact_bytes=artifact_bytes,
@@ -177,6 +195,10 @@ class OQQuantizationPipeline:
         hybrid_layout: dict[str, str] | None,
         planning: dict[str, object] | None,
         compensation: dict[str, object] | None,
+        quantization_mode: str,
+        source_artifact_kind: str,
+        source_artifact_path: str,
+        calibration_evidence: dict[str, Any],
         bundle_path: Path,
         manifest_path: Path,
         artifact_bytes: int,
@@ -200,10 +222,19 @@ class OQQuantizationPipeline:
             "manifest_path": str(manifest_path),
             "artifact_bytes": artifact_bytes,
             "manifest_bytes": 0,
+            "quantization_mode": quantization_mode,
+            "source_artifact_kind": source_artifact_kind,
+            "source_artifact_path": source_artifact_path,
+            "calibration_dataset_uri": calibration_evidence.get("dataset_uri", ""),
+            "quantized_artifact_bytes": artifact_bytes,
             "weight_quant": request.weight_quant,
             "kv_quant": request.kv_quant,
             "quant_profile": profile.to_manifest_dict(),
             "calibration": calibration.to_dict(),
+            "release_gate": _release_gate_for_request(
+                request,
+                smoke_test_passed=smoke_test_passed,
+            ),
             "strategy": strategy,
             "source_format": source_format,
             "compatibility": {
@@ -224,6 +255,12 @@ class OQQuantizationPipeline:
             payload["planning"] = planning
         if compensation is not None:
             payload["compensation"] = compensation
+        if calibration_evidence:
+            payload["calibration_dataset"] = calibration_evidence
+        if quantization_mode == "qat":
+            payload["qat"] = {
+                "fake_quant": request.ext.get("qat_fake_quant", "").strip() or "recorded",
+            }
         return payload
 
     @staticmethod
@@ -251,3 +288,169 @@ class OQQuantizationPipeline:
             encoded = OQQuantizationPipeline._encode_manifest(payload)
         path.write_bytes(encoded)
         return len(encoded)
+
+
+def _quantization_mode_for_request(request: maintenance_pb2.ConvertModelRequest) -> str:
+    quantization_mode = request.ext.get("quantization_mode", "").strip().lower() or "ptq"
+    if quantization_mode not in {"ptq", "qat"}:
+        raise ModelOperationError(
+            code="unsupported_quantization_mode",
+            message=f"Unsupported quantization_mode: {quantization_mode}",
+            details={"quantization_mode": quantization_mode},
+        )
+    return quantization_mode
+
+
+def _source_artifact_kind_for_request(request: maintenance_pb2.ConvertModelRequest) -> str:
+    source_artifact_kind = request.ext.get("source_artifact_kind", "").strip().lower() or "base_model"
+    if source_artifact_kind not in {"base_model", "merged_adapter", "adapter_export"}:
+        raise ModelOperationError(
+            code="unsupported_source_artifact_kind",
+            message=f"Unsupported source_artifact_kind: {source_artifact_kind}",
+            details={"source_artifact_kind": source_artifact_kind},
+        )
+    return source_artifact_kind
+
+
+def _source_artifact_path_for_request(
+    request: maintenance_pb2.ConvertModelRequest,
+    *,
+    source_model: common_pb2.ModelSpec,
+    source_artifact_kind: str,
+) -> str:
+    source_artifact_path = request.ext.get("source_artifact_path", "").strip()
+    if source_artifact_path:
+        return source_artifact_path
+    if source_artifact_kind == "base_model":
+        return source_model.model_path
+    return ""
+
+
+def _validate_quantization_source(
+    *,
+    quantization_mode: str,
+    source_artifact_kind: str,
+    source_artifact_path: str,
+) -> None:
+    if source_artifact_kind != "base_model" and not source_artifact_path:
+        raise ModelOperationError(
+            code="missing_source_artifact_path",
+            message="Adapter-derived quantization requires source_artifact_path.",
+            details={"source_artifact_kind": source_artifact_kind},
+        )
+    if quantization_mode == "qat" and source_artifact_kind == "base_model":
+        raise ModelOperationError(
+            code="unsupported_quantization_mode",
+            message="QAT quantization requires an adapter-derived source artifact.",
+            details={
+                "quantization_mode": quantization_mode,
+                "source_artifact_kind": source_artifact_kind,
+                "supported_source_artifact_kinds": "merged_adapter,adapter_export",
+            },
+        )
+
+
+def _calibration_evidence_for_request(
+    request: maintenance_pb2.ConvertModelRequest,
+) -> dict[str, Any]:
+    dataset_uri = request.ext.get("calibration_dataset_uri", "").strip()
+    if not dataset_uri:
+        return {}
+    package_path = Path(dataset_uri).expanduser().resolve()
+    manifest_path = package_path / "manifest.json"
+    samples_path = package_path / "samples.jsonl"
+    if not manifest_path.is_file() or not samples_path.is_file():
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset package must contain manifest.json and samples.jsonl.",
+            details={"dataset_uri": dataset_uri},
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Could not read training dataset manifest.",
+            details={"dataset_uri": dataset_uri},
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset manifest is not valid JSON.",
+            details={"dataset_uri": dataset_uri},
+        ) from exc
+    if not isinstance(manifest, dict):
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset manifest must be a JSON object.",
+            details={"dataset_uri": dataset_uri},
+        )
+    missing_fields = [
+        field
+        for field in ("schema_version", "dataset_id", "format", "sample_count", "version")
+        if field not in manifest
+    ]
+    if missing_fields:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset manifest is missing required fields.",
+            details={"missing_fields": ",".join(missing_fields)},
+        )
+    dataset_format = str(manifest["format"])
+    if dataset_format != "calibration":
+        raise ModelOperationError(
+            code="invalid_calibration_dataset",
+            message="Quantization calibration datasets must use format=calibration.",
+            details={
+                "dataset_uri": dataset_uri,
+                "required_format": "calibration",
+                "actual_format": dataset_format,
+            },
+        )
+    try:
+        sample_count = int(manifest["sample_count"])
+    except (TypeError, ValueError) as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Training dataset sample_count must be an integer.",
+            details={"dataset_uri": dataset_uri},
+        ) from exc
+    return {
+        "dataset_uri": dataset_uri,
+        "dataset_id": str(manifest["dataset_id"]),
+        "dataset_version": str(manifest["version"]),
+        "dataset_format": dataset_format,
+        "sample_count": sample_count,
+        "manifest_path": str(manifest_path),
+        "package_path": str(package_path),
+    }
+
+
+def _release_gate_for_request(
+    request: maintenance_pb2.ConvertModelRequest,
+    *,
+    smoke_test_passed: bool,
+) -> dict[str, Any]:
+    if request.run_smoke_test:
+        smoke_result = "passed" if smoke_test_passed else "failed"
+    else:
+        smoke_result = "not_requested"
+    return {
+        "quality_delta": _float_ext(request, "quality_delta"),
+        "latency_delta": _float_ext(request, "latency_delta"),
+        "local_inference_smoke_result": smoke_result,
+    }
+
+
+def _float_ext(request: maintenance_pb2.ConvertModelRequest, key: str) -> float:
+    raw_value = request.ext.get(key, "").strip()
+    if not raw_value:
+        return 0.0
+    try:
+        return float(raw_value)
+    except ValueError as exc:
+        raise ModelOperationError(
+            code="invalid_quantization_release_gate",
+            message=f"{key} must be numeric.",
+            details={"field": key, "value": raw_value},
+        ) from exc

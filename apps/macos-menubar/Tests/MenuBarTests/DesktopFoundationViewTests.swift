@@ -1673,9 +1673,11 @@ struct DesktopFoundationViewTests {
         viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.training)
         viewModel.loraDatasetSourceKind = .localPackage
-        _ = hostView(DesktopWorkspaceShellView(viewModel: viewModel), size: CGSize(width: 1200, height: 1400))
+        let localView = hostView(DesktopWorkspaceShellView(viewModel: viewModel), size: CGSize(width: 1200, height: 1400))
+        let localTexts = renderedTextValues(in: localView)
 
         viewModel.loraDatasetSourceKind = .huggingFaceDataset
+        viewModel.loraTrainingMode = .qlora
         let hfView = hostView(
             DesktopWorkspaceShellView(viewModel: viewModel),
             size: CGSize(width: 1200, height: 1400)
@@ -1687,7 +1689,7 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Local Package"))
         #expect(renderedTexts.contains("Hugging Face"))
         #expect(renderedTexts.contains("QLoRA"))
-        #expect(renderedTexts.contains("LoRA"))
+        #expect(localTexts.contains("LoRA"))
         #expect(DesktopTrainingWorkspaceDefaults.showsAdvancedParameters == false)
         #expect(DesktopTrainingWorkspaceDefaults.advancedParametersTitle == "Advanced Training Parameters")
     }
@@ -1737,6 +1739,55 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Alpha") == false)
         #expect(renderedTexts.contains("Dropout") == false)
         #expect(renderedTexts.contains(RuntimeLoraActivationMode.adapterBackedRuntime.title))
+    }
+
+    @Test("training exposes issue 365 alignment modes and mode-specific controls")
+    @MainActor
+    func trainingExposesIssue365AlignmentModesAndModeSpecificControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let modeTitles = RuntimeLoraTrainingMode.allCases.map(\.title)
+        #expect(modeTitles.contains("CPO"))
+        #expect(modeTitles.contains("GRPO"))
+        #expect(modeTitles.contains("RLHF"))
+
+        viewModel.loraTrainingMode = .grpo
+        viewModel.loraGRPOCandidateCount = "4"
+        viewModel.loraReferenceModelPath = "/tmp/melix/reference-model"
+        viewModel.loraKLPenalty = "0.02"
+        let grpoView = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let grpoTexts = renderedTextValues(in: grpoView)
+        #expect(grpoTexts.contains("Alignment Controls"))
+        #expect(grpoTexts.contains("GRPO"))
+        #expect(grpoTexts.contains("/tmp/melix/reference-model"))
+        #expect(grpoTexts.contains("4"))
+        #expect(grpoTexts.contains("0.02"))
+
+        viewModel.loraTrainingMode = .rlhf
+        viewModel.loraRewardModelManifestPath = "/tmp/melix/reward-model/manifest.json"
+        let rlhfView = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let rlhfTexts = renderedTextValues(in: rlhfView)
+        #expect(rlhfTexts.contains("RLHF"))
+        #expect(rlhfTexts.contains("/tmp/melix/reward-model/manifest.json"))
+        #expect(rlhfTexts.contains("0.02"))
+
+        viewModel.loraTrainingMode = .dpo
+        let dpoView = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let dpoTexts = renderedTextValues(in: dpoView)
+        #expect(dpoTexts.contains("DPO"))
+        #expect(dpoTexts.contains("Alignment Controls"))
+        #expect(dpoTexts.contains("0.02") == false)
     }
 
     @Test("training core setup uses editorial field groups instead of one large form slab")

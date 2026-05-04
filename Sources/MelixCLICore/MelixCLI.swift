@@ -43,6 +43,37 @@ public struct LoraTrainOptions: Equatable, Sendable {
     }
 }
 
+public struct AlignmentTrainOptions: Equatable, Sendable {
+    public let modelID: String
+    public let datasetSourceKind: String
+    public let datasetURI: String
+    public let adapterName: String
+    public let targetRepo: String
+    public let algorithm: String
+    public let parameters: [String: String]
+    public let json: Bool
+
+    public init(
+        modelID: String,
+        datasetSourceKind: String = "local_package",
+        datasetURI: String,
+        adapterName: String,
+        targetRepo: String = "",
+        algorithm: String,
+        parameters: [String: String] = [:],
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.datasetSourceKind = datasetSourceKind
+        self.datasetURI = datasetURI
+        self.adapterName = adapterName
+        self.targetRepo = targetRepo
+        self.algorithm = algorithm
+        self.parameters = parameters
+        self.json = json
+    }
+}
+
 public struct LoraDatasetInspectOptions: Equatable, Sendable {
     public let modelID: String
     public let datasetSourceKind: String
@@ -791,6 +822,12 @@ public struct QuantizeOptions: Equatable, Sendable {
     public let quantProfileID: String
     public let weightQuant: String
     public let kvQuant: String
+    public let quantizationMode: String
+    public let sourceArtifactKind: String
+    public let sourceArtifactPath: String
+    public let calibrationDatasetURI: String
+    public let qualityDelta: String
+    public let latencyDelta: String
     public let json: Bool
 
     public init(
@@ -799,6 +836,12 @@ public struct QuantizeOptions: Equatable, Sendable {
         quantProfileID: String = "",
         weightQuant: String = "",
         kvQuant: String = "",
+        quantizationMode: String = "",
+        sourceArtifactKind: String = "",
+        sourceArtifactPath: String = "",
+        calibrationDatasetURI: String = "",
+        qualityDelta: String = "",
+        latencyDelta: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -806,6 +849,12 @@ public struct QuantizeOptions: Equatable, Sendable {
         self.quantProfileID = quantProfileID
         self.weightQuant = weightQuant
         self.kvQuant = kvQuant
+        self.quantizationMode = quantizationMode
+        self.sourceArtifactKind = sourceArtifactKind
+        self.sourceArtifactPath = sourceArtifactPath
+        self.calibrationDatasetURI = calibrationDatasetURI
+        self.qualityDelta = qualityDelta
+        self.latencyDelta = latencyDelta
         self.json = json
     }
 }
@@ -1214,6 +1263,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case chatRun(ChatRunOptions)
     case loraList(LoraListOptions)
     case loraTrain(LoraTrainOptions)
+    case alignmentTrain(AlignmentTrainOptions)
     case loraDatasetInspect(LoraDatasetInspectOptions)
     case loraDatasetBuild(LoraDatasetBuildOptions)
     case loraActivate(LoraActivateOptions)
@@ -1323,6 +1373,8 @@ public enum MelixCLIParser {
             return try parseChat(tail)
         case "lora":
             return try parseLora(tail)
+        case "alignment":
+            return try parseAlignment(tail)
         case "bench":
             return try parseBench(tail)
         case "eval":
@@ -1338,7 +1390,7 @@ public enum MelixCLIParser {
     Usage:
       melix doctor [--json]
       melix convert --model-id MODEL_ID [--output-dir PATH] [--target-format FORMAT] [--json]
-      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--json]
+      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--quantization-mode (ptq|qat)] [--source-artifact-kind (base_model|merged_adapter|adapter_export)] [--source-artifact-path PATH] [--calibration-dataset-uri PATH] [--quality-delta N] [--latency-delta N] [--json]
       melix upload --model-id MODEL_ID --target-repo REPO [--output-dir PATH] [--artifact-path PATH] [--artifact-kind KIND] [--artifact-manifest-path PATH] [--json]
       melix model list [--json]
       melix model inspect --model-id MODEL_ID [--json]
@@ -1373,7 +1425,8 @@ public enum MelixCLIParser {
       melix remote-server test --remote-server-id ID [--model MODEL] [--json]
       melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
-      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
+      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
+      melix alignment train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --algorithm dpo|orpo|cpo|grpo|rlhf [--target-repo REPO] [--grpo-candidate-count N] [--reference-model-path PATH] [--reward-model-manifest-path PATH] [--kl-penalty N] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--json]
       melix lora dataset inspect --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora dataset build --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--output-dir PATH] [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
@@ -1468,6 +1521,14 @@ public enum MelixCLIParser {
         guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
             throw MelixCLIError.missingRequired("--model-id is required for melix quantize.")
         }
+        let quantizationMode = values.single["--quantization-mode"] ?? ""
+        if !quantizationMode.isEmpty, ["ptq", "qat"].contains(quantizationMode) == false {
+            throw MelixCLIError.usage("Invalid value for --quantization-mode. Expected one of: ptq, qat.")
+        }
+        let sourceArtifactKind = values.single["--source-artifact-kind"] ?? ""
+        if !sourceArtifactKind.isEmpty, ["base_model", "merged_adapter", "adapter_export"].contains(sourceArtifactKind) == false {
+            throw MelixCLIError.usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
+        }
         return .quantize(
             .init(
                 modelID: modelID,
@@ -1475,6 +1536,12 @@ public enum MelixCLIParser {
                 quantProfileID: values.single["--quant-profile-id"] ?? "",
                 weightQuant: values.single["--weight-quant"] ?? "",
                 kvQuant: values.single["--kv-quant"] ?? "",
+                quantizationMode: quantizationMode,
+                sourceArtifactKind: sourceArtifactKind,
+                sourceArtifactPath: values.single["--source-artifact-path"] ?? "",
+                calibrationDatasetURI: values.single["--calibration-dataset-uri"] ?? "",
+                qualityDelta: values.single["--quality-delta"] ?? "",
+                latencyDelta: values.single["--latency-delta"] ?? "",
                 json: values.flags.contains("--json")
             )
         )
@@ -2013,6 +2080,88 @@ public enum MelixCLIParser {
         return trimmedBaseURL
     }
 
+    private static func parseAlignment(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let cursor = ArgumentCursor(arguments: Array(arguments.dropFirst()))
+        switch action {
+        case "train":
+            let values = try cursor.parse()
+            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model-id is required for melix alignment train.")
+            }
+            let datasetURI = values.single["--dataset-uri"] ?? ""
+            let hfDatasetPath = values.single["--hf-dataset-path"] ?? ""
+            guard !datasetURI.isEmpty || !hfDatasetPath.isEmpty else {
+                throw MelixCLIError.missingRequired("Either --dataset-uri or --hf-dataset-path is required for melix alignment train.")
+            }
+            guard let adapterName = values.single["--adapter-name"], !adapterName.isEmpty else {
+                throw MelixCLIError.missingRequired("--adapter-name is required for melix alignment train.")
+            }
+            let algorithm = (values.single["--algorithm"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !algorithm.isEmpty else {
+                throw MelixCLIError.missingRequired("--algorithm is required for melix alignment train.")
+            }
+            if ["dpo", "orpo", "cpo", "grpo", "rlhf"].contains(algorithm) == false {
+                throw MelixCLIError.usage("Invalid value for --algorithm. Expected one of: dpo, orpo, cpo, grpo, rlhf.")
+            }
+            let datasetSourceKind = datasetURI.isEmpty ? "hf_dataset" : "local_package"
+            var parameters: [String: String] = [:]
+            for option in [
+                "--rank",
+                "--alpha",
+                "--dropout",
+                "--target-modules",
+                "--num-layers",
+                "--batch-size",
+                "--epochs",
+                "--max-steps",
+                "--learning-rate",
+                "--max-seq-length",
+                "--sample-limit",
+                "--gradient-accumulation",
+                "--hf-dataset-path",
+                "--hf-dataset-name",
+                "--hf-dataset-revision",
+                "--hf-train-split",
+                "--hf-valid-split",
+                "--chat-feature",
+                "--prompt-feature",
+                "--completion-feature",
+                "--text-feature",
+                "--grpo-candidate-count",
+                "--reference-model-path",
+                "--reward-model-manifest-path",
+                "--kl-penalty",
+            ] {
+                if let value = values.single[option] {
+                    parameters[normalizedParameterKey(option)] = value
+                }
+            }
+            if let presetID = values.single["--preset"] {
+                parameters["preset_id"] = presetID
+            }
+            if let experimentGroupID = values.single["--experiment-group"] {
+                parameters["experiment_group_id"] = experimentGroupID
+            }
+            return .alignmentTrain(
+                AlignmentTrainOptions(
+                    modelID: modelID,
+                    datasetSourceKind: datasetSourceKind,
+                    datasetURI: datasetURI,
+                    adapterName: adapterName,
+                    targetRepo: values.single["--target-repo"] ?? "",
+                    algorithm: algorithm,
+                    parameters: parameters,
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
     private static func parseLora(_ arguments: [String]) throws -> MelixCLICommand {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
@@ -2087,9 +2236,14 @@ public enum MelixCLIParser {
             if let experimentGroupID = values.single["--experiment-group"] {
                 parameters["experiment_group_id"] = experimentGroupID
             }
-            let trainingMode = values.single["--training-mode"] ?? ""
-            if !trainingMode.isEmpty, ["lora", "qlora"].contains(trainingMode) == false {
-                throw MelixCLIError.usage("Invalid value for --training-mode. Expected one of: lora, qlora.")
+            let trainingMode = (values.single["--training-mode"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !trainingMode.isEmpty, ["lora", "qlora", "dora"].contains(trainingMode) == false {
+                if ["dpo", "orpo", "cpo", "grpo", "rlhf"].contains(trainingMode) {
+                    throw MelixCLIError.usage(
+                        "Invalid value for --training-mode. For alignment training modes (dpo, orpo, cpo, grpo, rlhf), use `melix alignment train --algorithm <mode>`."
+                    )
+                }
+                throw MelixCLIError.usage("Invalid value for --training-mode. Expected one of: lora, qlora, dora.")
             }
             for flag in ["--response-only", "--mask-prompt", "--gradient-checkpointing"] where values.flags.contains(flag) {
                 parameters[normalizedParameterKey(flag)] = "true"
@@ -3511,13 +3665,33 @@ public actor MelixCLIRunner {
             )
             return options.json ? result.manifestJson : result.outputPath + "\n"
         case .quantize(let options):
+            var ext: [String: String] = [:]
+            if !options.quantizationMode.isEmpty {
+                ext["quantization_mode"] = options.quantizationMode
+            }
+            if !options.sourceArtifactKind.isEmpty {
+                ext["source_artifact_kind"] = options.sourceArtifactKind
+            }
+            if !options.sourceArtifactPath.isEmpty {
+                ext["source_artifact_path"] = options.sourceArtifactPath
+            }
+            if !options.calibrationDatasetURI.isEmpty {
+                ext["calibration_dataset_uri"] = options.calibrationDatasetURI
+            }
+            if !options.qualityDelta.isEmpty {
+                ext["quality_delta"] = options.qualityDelta
+            }
+            if !options.latencyDelta.isEmpty {
+                ext["latency_delta"] = options.latencyDelta
+            }
             let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "quantize",
                 outputDir: options.outputDir,
                 quantProfileID: options.quantProfileID,
                 weightQuant: options.weightQuant,
-                kvQuant: options.kvQuant
+                kvQuant: options.kvQuant,
+                ext: ext
             )
             return options.json ? result.manifestJson : result.outputPath + "\n"
         case .upload(let options):
@@ -4002,6 +4176,25 @@ public actor MelixCLIRunner {
                 ext: ext
             )
             return options.json ? result.manifestJson : result.outputPath
+        case .alignmentTrain(let options):
+            var ext = options.parameters
+            ext["adapter_name"] = options.adapterName
+            ext["dataset_source_kind"] = options.datasetSourceKind
+            ext["training_mode"] = options.algorithm
+            ext["alignment_algorithm"] = options.algorithm
+            if !options.datasetURI.isEmpty {
+                ext["dataset_uri"] = options.datasetURI
+            }
+            if !options.targetRepo.isEmpty {
+                ext["target_repo"] = options.targetRepo
+            }
+            let result = try await performModelOperation(
+                modelID: options.modelID,
+                operation: "train_lora",
+                outputDir: "",
+                ext: ext
+            )
+            return options.json ? result.manifestJson : result.outputPath
         case .loraDatasetInspect(let options):
             var ext = options.parameters
             ext["dataset_source_kind"] = options.datasetSourceKind
@@ -4316,6 +4509,51 @@ public actor MelixCLIRunner {
     ) -> [String]? {
         switch operation {
         case "train_lora":
+            let trainingMode = ext["training_mode"] ?? ext["alignment_algorithm"] ?? ""
+            // Older desktop drafts and direct model-operation calls persisted
+            // alignment algorithms under training_mode while still using the
+            // train_lora operation; route those through the public alignment
+            // command so saved GRPO/RLHF/etc. jobs stay forward-compatible.
+            if ["dpo", "orpo", "cpo", "grpo", "rlhf"].contains(trainingMode) {
+                var arguments = ["alignment", "train", "--model-id", modelID]
+                let datasetSourceKind = ext["dataset_source_kind"] ?? "local_package"
+                if datasetSourceKind == "hf_dataset" {
+                    appendOption("--hf-dataset-path", value: ext["hf_dataset_path"], into: &arguments)
+                } else {
+                    appendOption("--dataset-uri", value: ext["dataset_uri"], into: &arguments)
+                }
+                appendOption("--adapter-name", value: ext["adapter_name"], into: &arguments)
+                appendOption("--algorithm", value: trainingMode, into: &arguments)
+                appendOption("--target-repo", value: ext["target_repo"], into: &arguments)
+                appendOption("--preset", value: ext["preset_id"], into: &arguments)
+                appendOption("--experiment-group", value: ext["experiment_group_id"], into: &arguments)
+                appendOption("--hf-dataset-name", value: ext["hf_dataset_name"], into: &arguments)
+                appendOption("--hf-dataset-revision", value: ext["hf_dataset_revision"], into: &arguments)
+                appendOption("--hf-train-split", value: ext["hf_train_split"], into: &arguments)
+                appendOption("--hf-valid-split", value: ext["hf_valid_split"], into: &arguments)
+                appendOption("--text-feature", value: ext["text_feature"], into: &arguments)
+                appendOption("--prompt-feature", value: ext["prompt_feature"], into: &arguments)
+                appendOption("--completion-feature", value: ext["completion_feature"], into: &arguments)
+                appendOption("--chat-feature", value: ext["chat_feature"], into: &arguments)
+                appendOption("--rank", value: ext["rank"], into: &arguments)
+                appendOption("--alpha", value: ext["alpha"], into: &arguments)
+                appendOption("--dropout", value: ext["dropout"], into: &arguments)
+                appendOption("--target-modules", value: ext["target_modules"], into: &arguments)
+                appendOption("--num-layers", value: ext["num_layers"], into: &arguments)
+                appendOption("--batch-size", value: ext["batch_size"], into: &arguments)
+                appendOption("--epochs", value: ext["epochs"], into: &arguments)
+                appendOption("--max-steps", value: ext["max_steps"], into: &arguments)
+                appendOption("--learning-rate", value: ext["learning_rate"], into: &arguments)
+                appendOption("--max-seq-length", value: ext["max_seq_length"], into: &arguments)
+                appendOption("--sample-limit", value: ext["sample_limit"], into: &arguments)
+                appendOption("--gradient-accumulation", value: ext["gradient_accumulation"], into: &arguments)
+                appendOption("--grpo-candidate-count", value: ext["grpo_candidate_count"], into: &arguments)
+                appendOption("--reference-model-path", value: ext["reference_model_path"], into: &arguments)
+                appendOption("--reward-model-manifest-path", value: ext["reward_model_manifest_path"], into: &arguments)
+                appendOption("--kl-penalty", value: ext["kl_penalty"], into: &arguments)
+                arguments.append("--json")
+                return arguments
+            }
             var arguments = ["lora", "train", "--model-id", modelID]
             let datasetSourceKind = ext["dataset_source_kind"] ?? "local_package"
             if datasetSourceKind == "hf_dataset" {
@@ -4428,6 +4666,12 @@ public actor MelixCLIRunner {
             appendOption("--quant-profile-id", value: quantProfileID, into: &arguments)
             appendOption("--weight-quant", value: weightQuant, into: &arguments)
             appendOption("--kv-quant", value: kvQuant, into: &arguments)
+            appendOption("--quantization-mode", value: ext["quantization_mode"], into: &arguments)
+            appendOption("--source-artifact-kind", value: ext["source_artifact_kind"], into: &arguments)
+            appendOption("--source-artifact-path", value: ext["source_artifact_path"], into: &arguments)
+            appendOption("--calibration-dataset-uri", value: ext["calibration_dataset_uri"], into: &arguments)
+            appendOption("--quality-delta", value: ext["quality_delta"], into: &arguments)
+            appendOption("--latency-delta", value: ext["latency_delta"], into: &arguments)
             arguments.append("--json")
             return arguments
         case "upload":
@@ -4693,6 +4937,7 @@ public actor MelixCLIRunner {
              .serverStart,
              .loraList,
              .loraTrain,
+             .alignmentTrain,
              .loraActivate,
              .loraRemoveDerived,
              .loraExperimentsList,

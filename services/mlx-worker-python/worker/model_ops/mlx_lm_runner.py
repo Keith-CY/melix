@@ -19,7 +19,7 @@ from worker.model_ops.response_only_boundary import (
     aggregate_response_only_boundaries,
     compute_response_only_boundary,
 )
-from worker.model_ops.training_config import LoRATrainingConfig
+from worker.model_ops.training_config import AlignmentTrainingConfig, LoRATrainingConfig
 from worker.model_ops.training_dataset_chunker import (
     ChunkStats,
     chunk_long_samples,
@@ -109,14 +109,53 @@ class NativeExecutionUnavailable(RuntimeError):
     pass
 
 
+def _requires_alignment_trainer(config: LoRATrainingConfig) -> bool:
+    return (
+        config.training_objective in {"preference", "alignment_rl"}
+        or config.alignment is not None
+    )
+
+
+def _alignment_trainer_unavailable_error(config: LoRATrainingConfig) -> ModelOperationError:
+    alignment_algorithm = (
+        config.alignment.alignment_algorithm
+        if config.alignment is not None
+        else config.training_mode
+    )
+    return ModelOperationError(
+        code="unsupported_alignment_trainer",
+        message=(
+            f"training_mode={config.training_mode} requires a real alignment "
+            "trainer backend; the default MLX-LM runner only supports "
+            "supervised LoRA/QLoRA/DoRA execution."
+        ),
+        details={
+            "training_mode": config.training_mode,
+            "training_objective": config.training_objective,
+            "alignment_algorithm": alignment_algorithm,
+            "required_backend": "alignment_trainer",
+            "available_backend": "mlx_lm_lora_supervised",
+        },
+    )
+
+
 class MLXLMRunner:
     def train(self, request: TrainingRequest) -> TrainingResult:
+        if (
+            _requires_alignment_trainer(request.config)
+            and not self.supports_alignment_training(request.config)
+        ):
+            raise _alignment_trainer_unavailable_error(request.config)
         try:
             result = self.train_native(request)
             return replace(result, execution_backend="native")
         except NativeExecutionUnavailable as exc:
             result = self.train_subprocess(request, exc)
             return replace(result, execution_backend="subprocess")
+
+    def supports_alignment_training(self, config: LoRATrainingConfig) -> bool:
+        del config
+        return False
 
     def activate(self, request: ActivationRequest) -> ActivationResult:
         try:
@@ -345,7 +384,9 @@ def _mlx_lora_namespace(request: TrainingRequest):
         train=True,
         data=str(request.normalized_dataset_dir),
         model=str(request.model_path),
-        fine_tune_type="lora",
+        fine_tune_type=(
+            "dora" if request.config.adapter_algorithm == "dora" else "lora"
+        ),
         optimizer="adam",
         optimizer_config={"adam": {}, "adamw": {}, "muon": {}, "sgd": {}, "adafactor": {}},
         num_layers=request.config.num_layers,
@@ -402,6 +443,9 @@ def _serialize_training_request(request: TrainingRequest) -> dict:
 
 def _deserialize_training_request(payload: dict) -> TrainingRequest:
     config_payload = dict(payload["config"])
+    alignment_payload = config_payload.get("alignment")
+    if isinstance(alignment_payload, dict):
+        config_payload["alignment"] = AlignmentTrainingConfig(**alignment_payload)
     config = LoRATrainingConfig(**config_payload)
     return TrainingRequest(
         job_id=str(payload["job_id"]),

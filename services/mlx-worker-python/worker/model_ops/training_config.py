@@ -11,6 +11,16 @@ from worker.model_ops.errors import ModelOperationError
 
 
 @dataclass(frozen=True)
+class AlignmentTrainingConfig:
+    alignment_algorithm: str
+    dataset_contract: str
+    reference_model_path: str = ""
+    reward_model_manifest_path: str = ""
+    grpo_candidate_count: int = 0
+    kl_penalty: float = 0.0
+
+
+@dataclass(frozen=True)
 class LoRATrainingConfig:
     training_mode: str
     quantization_mode: str
@@ -51,6 +61,7 @@ class LoRATrainingConfig:
     adapter_algorithm: str = "lora"
     preference_loss: str = ""
     dataset_contract: str = "sft"
+    alignment: AlignmentTrainingConfig | None = None
 
 
 _DENSE_ATTENTION_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]
@@ -76,11 +87,13 @@ _UNSAFE_QUANTIZED_LORA_TARGETS = {
 _CONFIRMED_EXPERT_COUNT_SOURCES = {"config"}
 _QUANTIZED_MODEL_PATTERN = re.compile(r"(?<![a-z0-9])(?:4bit|8bit|q4|q8|optiq)(?![a-z0-9])")
 _SFT_TRAINING_MODES = {"lora", "qlora", "dora"}
-_PREFERENCE_TRAINING_MODES = {"dpo", "orpo"}
+_PREFERENCE_TRAINING_MODES = {"dpo", "orpo", "cpo"}
+_RL_TRAINING_MODES = {"grpo", "rlhf"}
 _CPT_TRAINING_MODES = {"cpt"}
 _SUPPORTED_TRAINING_MODES = (
     _SFT_TRAINING_MODES
     | _PREFERENCE_TRAINING_MODES
+    | _RL_TRAINING_MODES
     | _CPT_TRAINING_MODES
 )
 
@@ -323,6 +336,11 @@ def normalize_training_config(
             message=f"Unsupported training_mode: {training_mode}",
         )
     mode_contract = _resolve_training_mode_contract(training_mode, dataset_format)
+    alignment = _resolve_alignment_config(
+        training_mode=training_mode,
+        dataset_contract=mode_contract["dataset_contract"],
+        ext=ext,
+    )
     quantized_base_model = _is_quantized_base_model(source_model)
     if training_mode == "qlora" and quantized_base_model is False:
         raise ModelOperationError(
@@ -548,12 +566,13 @@ def normalize_training_config(
         adapter_algorithm=mode_contract["adapter_algorithm"],
         preference_loss=mode_contract["preference_loss"],
         dataset_contract=mode_contract["dataset_contract"],
+        alignment=alignment,
     )
 
 
 def _resolve_training_mode_contract(training_mode: str, dataset_format: str) -> dict[str, str]:
     if training_mode in _SFT_TRAINING_MODES:
-        if dataset_format == "preference_pair":
+        if dataset_format not in {"chat_messages", "prompt_completion", "text_completion"}:
             raise ModelOperationError(
                 code="invalid_dataset_package",
                 message="SFT training modes require supervised training datasets.",
@@ -588,7 +607,43 @@ def _resolve_training_mode_contract(training_mode: str, dataset_format: str) -> 
             "dataset_contract": "preference_pair",
         }
 
-    if dataset_format != "text_completion":
+    if training_mode == "grpo":
+        if dataset_format != "prompt_candidate":
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="GRPO alignment requires prompt_candidate datasets.",
+                details={
+                    "training_mode": training_mode,
+                    "required_format": "prompt_candidate",
+                    "actual_format": dataset_format,
+                },
+            )
+        return {
+            "training_objective": "alignment_rl",
+            "adapter_algorithm": "lora",
+            "preference_loss": "",
+            "dataset_contract": "prompt_candidate",
+        }
+
+    if training_mode == "rlhf":
+        if dataset_format != "reward_scored":
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="RLHF alignment requires reward_scored datasets.",
+                details={
+                    "training_mode": training_mode,
+                    "required_format": "reward_scored",
+                    "actual_format": dataset_format,
+                },
+            )
+        return {
+            "training_objective": "alignment_rl",
+            "adapter_algorithm": "lora",
+            "preference_loss": "",
+            "dataset_contract": "reward_scored",
+        }
+
+    if training_mode in _CPT_TRAINING_MODES and dataset_format != "text_completion":
         raise ModelOperationError(
             code="invalid_dataset_package",
             message="Continual pretraining requires text_completion datasets.",
@@ -604,6 +659,60 @@ def _resolve_training_mode_contract(training_mode: str, dataset_format: str) -> 
         "preference_loss": "",
         "dataset_contract": "text_completion",
     }
+
+
+def _resolve_alignment_config(
+    *,
+    training_mode: str,
+    dataset_contract: str,
+    ext: dict[str, str],
+) -> AlignmentTrainingConfig | None:
+    if training_mode not in (_PREFERENCE_TRAINING_MODES | _RL_TRAINING_MODES):
+        return None
+
+    grpo_candidate_count = 0
+    if training_mode == "grpo":
+        raw_candidate_count = ext.get("grpo_candidate_count", "").strip()
+        if not raw_candidate_count:
+            raise ModelOperationError(
+                code="invalid_alignment_config",
+                message="training_mode=grpo requires grpo_candidate_count.",
+                details={
+                    "training_mode": training_mode,
+                    "missing_field": "grpo_candidate_count",
+                },
+            )
+        grpo_candidate_count = _int_value(
+            raw_candidate_count,
+            default=0,
+            minimum=2,
+            field_name="grpo_candidate_count",
+        )
+
+    reward_model_manifest_path = ext.get("reward_model_manifest_path", "").strip()
+    if training_mode == "rlhf" and not reward_model_manifest_path:
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="training_mode=rlhf requires reward_model_manifest_path.",
+            details={
+                "training_mode": training_mode,
+                "missing_field": "reward_model_manifest_path",
+            },
+        )
+
+    return AlignmentTrainingConfig(
+        alignment_algorithm=training_mode,
+        dataset_contract=dataset_contract,
+        reference_model_path=ext.get("reference_model_path", "").strip(),
+        reward_model_manifest_path=reward_model_manifest_path,
+        grpo_candidate_count=grpo_candidate_count,
+        kl_penalty=_float_value(
+            ext.get("kl_penalty", ""),
+            default=0.0,
+            minimum=0.0,
+            field_name="kl_penalty",
+        ),
+    )
 
 
 def _resolve_training_preset(preset_id: str) -> dict[str, object]:
@@ -797,21 +906,37 @@ def _is_quantized_base_model(source_model: common_pb2.ModelSpec) -> bool:
 
 
 def _int_value(raw_value: str, *, default: int, minimum: int, field_name: str) -> int:
-    value = default if not raw_value else int(raw_value)
+    try:
+        value = default if not raw_value else int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ModelOperationError(
+            code="invalid_argument",
+            message=f"{field_name} must be an integer.",
+            details={"field": field_name, "raw_value": str(raw_value)},
+        ) from exc
     if value < minimum:
         raise ModelOperationError(
             code="invalid_argument",
             message=f"{field_name} must be at least {minimum}.",
+            details={"field": field_name, "minimum": str(minimum)},
         )
     return value
 
 
 def _float_value(raw_value: str, *, default: float, minimum: float, field_name: str) -> float:
-    value = default if not raw_value else float(raw_value)
+    try:
+        value = default if not raw_value else float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ModelOperationError(
+            code="invalid_argument",
+            message=f"{field_name} must be a number.",
+            details={"field": field_name, "raw_value": str(raw_value)},
+        ) from exc
     if value < minimum:
         raise ModelOperationError(
             code="invalid_argument",
             message=f"{field_name} must be at least {minimum}.",
+            details={"field": field_name, "minimum": str(minimum)},
         )
     return value
 
