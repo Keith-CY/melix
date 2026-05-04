@@ -942,6 +942,7 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert benchmark_queue_metrics["warm_json_loads_mean"] == 0.0
     assert benchmark_queue_metrics["warm_elapsed_ms_mean"] >= 0
     assert closure_metrics["elapsed_ms_mean"] > 0
+    assert closure_metrics["peak_bytes_mean"] > 0
     assert closure_metrics["probe_file_reads_mean"] > 0
     assert closure_metrics["finding_count"] > 0
     assert rerank_metrics["elapsed_ms_mean"] > 0
