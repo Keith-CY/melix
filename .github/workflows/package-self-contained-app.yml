@@ -50,30 +50,35 @@ jobs:
       - uses: astral-sh/setup-uv@v7
 
       - name: Bootstrap Python worker environment
-        run: make bootstrap
+        run: bash scripts/ci_progress.sh "Package app bootstrap" make bootstrap
+
+      - name: Build CLI executable
+        run: bash scripts/ci_progress.sh "Package app CLI build" swift build --product melix --disable-automatic-resolution
 
       - name: Build Swift text worker
-        run: swift build --package-path services/mlx-text-worker-swift --disable-automatic-resolution
+        run: bash scripts/ci_progress.sh "Package app Swift text worker build" swift build --package-path services/mlx-text-worker-swift --disable-automatic-resolution
 
       - name: Build menu bar app executable
-        run: swift build --package-path apps/macos-menubar --disable-automatic-resolution
+        run: bash scripts/ci_progress.sh "Package app menubar build" swift build --package-path apps/macos-menubar --disable-automatic-resolution
 
       - name: Packaging smoke checks
-        run: make package-smoke
+        run: bash scripts/ci_progress.sh "Package app smoke checks" make package-smoke
 
       - name: Prepare packaging Python runtime
         run: |
-          UV_PROJECT_ENVIRONMENT="$GITHUB_WORKSPACE/.venv-package" \
-          UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
-          uv sync --project services/mlx-worker-python --extra mlx --no-dev --frozen
+          bash scripts/ci_progress.sh "Package app Python runtime sync" \
+            env UV_PROJECT_ENVIRONMENT="$GITHUB_WORKSPACE/.venv-package" \
+            UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
+            uv sync --project services/mlx-worker-python --extra mlx --no-dev --frozen
 
       - name: Compute build metadata
         id: compute-build-metadata
         run: |
-          PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
-          UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
-          uv run --project services/mlx-worker-python \
-          python scripts/compute_build_metadata.py \
+          bash scripts/ci_progress.sh "Package app build metadata" \
+            env PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
+            UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
+            uv run --project services/mlx-worker-python \
+            python scripts/compute_build_metadata.py \
             --repo-root "$GITHUB_WORKSPACE" \
             --ref-type "${GITHUB_REF_TYPE:-branch}" \
             --ref-name "${GITHUB_REF_NAME:-}" \
@@ -87,8 +92,9 @@ jobs:
           PACKAGE_PYTHON="$GITHUB_WORKSPACE/.venv-package/bin/python"
           PYTHON_RUNTIME_ROOT="$(dirname "$(dirname "$(realpath "$PACKAGE_PYTHON")")")"
           PYTHON_SITE_PACKAGES="$("$PACKAGE_PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-          PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
-          "$PACKAGE_PYTHON" scripts/package_macos_menubar_app.py \
+          bash scripts/ci_progress.sh "Package app bundle assembly" \
+            env PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
+            "$PACKAGE_PYTHON" scripts/package_macos_menubar_app.py \
             --repo-root "$GITHUB_WORKSPACE" \
             --output-path "$RUNNER_TEMP/Melix.app" \
             --archive-path "$RUNNER_TEMP/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip" \

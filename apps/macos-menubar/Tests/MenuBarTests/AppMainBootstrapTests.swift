@@ -975,11 +975,58 @@ struct AppMainBootstrapTests {
         #expect(type(of: bootstrap) == MelixMenuBarBootstrap.self)
     }
 
+    @Test("lora training job store defaults through bootstrap persistence wiring")
+    @MainActor
+    func loraTrainingJobStoreDefaultsThroughBootstrapPersistenceWiring() {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-bootstrap-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let bootstrap = MelixMenuBarBootstrap(
+            client: FakeControlPlaneXPCClient(),
+            startupSurface: .tray,
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path]),
+            loraTrainingJobStore: nil,
+            statusMenuFactory: { _, _, _ in RecordingInstallStatusMenu() }
+        )
+
+        bootstrap.viewModel.loraAdapterName = "bootstrap-adapter"
+        bootstrap.viewModel.saveCurrentLoraTrainingJobDraft()
+
+        #expect(bootstrap.viewModel.loraTrainingJobs.first?.config.adapterName == "bootstrap-adapter")
+    }
+
     @Test("MelixHome live bootstrap resolves MELIX_HOME-backed stores")
     @MainActor
     func melixHomeLiveBootstrapResolvesMelixHomeBackedStores() {
         let bootstrap = MelixMenuBarBootstrap.live()
         #expect(type(of: bootstrap) == MelixMenuBarBootstrap.self)
+    }
+
+    @Test("lora live bootstrap resolves MELIX_HOME-backed training job store")
+    @MainActor
+    func loraLiveBootstrapResolvesMelixHomeBackedTrainingJobStore() {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-live-bootstrap-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        let environment = MenuBarBootstrapEnvironment(
+            environment: [
+                "MELIX_REPO_ROOT": FileManager.default.currentDirectoryPath,
+                "MELIX_HOME": temporaryRoot.path,
+                "MELIX_CLI": "/tmp/melix-cli",
+                "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-worker.sock",
+                "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
+            ]
+        )
+
+        let bootstrap = MelixMenuBarBootstrap.live(
+            environment: environment,
+            cliProcessExecutor: RecordingCLIProcessExecutor()
+        )
+        bootstrap.viewModel.loraAdapterName = "live-bootstrap-adapter"
+        bootstrap.viewModel.saveCurrentLoraTrainingJobDraft()
+
+        #expect(bootstrap.viewModel.loraTrainingJobs.first?.config.adapterName == "live-bootstrap-adapter")
     }
 
     @Test("live bootstrap injects the subprocess cli workflow runner")

@@ -1277,16 +1277,20 @@ class EvaluationCore:
     def _latency_stats(cls, values: list[float]) -> dict[str, float]:
         if not values:
             return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "max": 0.0}
+        sorted_values = sorted(values)
         return {
             "mean": cls._round_ms(sum(values) / len(values)),
-            "p50": cls._round_ms(cls._percentile(values, 50.0)),
-            "p95": cls._round_ms(cls._percentile(values, 95.0)),
+            "p50": cls._round_ms(cls._ordered_percentile(sorted_values, 50.0)),
+            "p95": cls._round_ms(cls._ordered_percentile(sorted_values, 95.0)),
             "max": cls._round_ms(max(values)),
         }
 
     @staticmethod
     def _percentile(values: list[float], percentile: float) -> float:
-        sorted_values = sorted(values)
+        return EvaluationCore._ordered_percentile(sorted(values), percentile)
+
+    @staticmethod
+    def _ordered_percentile(sorted_values: list[float], percentile: float) -> float:
         if len(sorted_values) == 1:
             return sorted_values[0]
         index = (len(sorted_values) - 1) * (percentile / 100.0)

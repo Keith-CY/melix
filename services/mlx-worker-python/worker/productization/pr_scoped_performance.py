@@ -907,6 +907,7 @@ def _probe_closure_audit(repo_root: Path) -> dict[str, float]:
     with tempfile.TemporaryDirectory(prefix="melix-pr-perf-closure-audit-") as temp_dir:
         seeded_root = _seed_closure_audit_repo(Path(temp_dir))
         elapsed_samples: list[float] = []
+        peak_samples: list[float] = []
         read_samples: list[float] = []
         finding_count = 0.0
         for _ in range(3):
@@ -921,16 +922,21 @@ def _probe_closure_audit(repo_root: Path) -> dict[str, float]:
                 return original_read_text(path, *args, **kwargs)
 
             Path.read_text = tracked_read_text  # type: ignore[method-assign]
+            tracemalloc.start()
             try:
                 started = time.perf_counter()
                 report = module.build_closure_audit(seeded_root, created_at_unix_ms=7)
                 elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+                _, peak_bytes = tracemalloc.get_traced_memory()
+                peak_samples.append(float(peak_bytes))
             finally:
+                tracemalloc.stop()
                 Path.read_text = original_read_text  # type: ignore[method-assign]
             read_samples.append(float(read_count))
             finding_count = float(len(report.findings))
     return {
         "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 3),
+        "peak_bytes_mean": round(sum(peak_samples) / len(peak_samples), 3),
         "probe_file_reads_mean": round(sum(read_samples) / len(read_samples), 3),
         "finding_count": finding_count,
     }
@@ -1899,7 +1905,7 @@ def _seed_closure_audit_repo(root: Path) -> Path:
             ]
         ),
     )
-    _write(repo_root / "progress.md", probe_text + "\n")
+    _write(repo_root / "progress.md", probe_text + "\n" + ("noise file\n" * 20000))
     docs_root = repo_root / "docs"
     for index in range(250):
         _write(docs_root / f"a-noise-{index:03d}.md", f"noise file {index}\n")

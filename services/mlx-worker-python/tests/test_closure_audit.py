@@ -200,32 +200,21 @@ def test_collect_probe_sources_stops_checking_saturated_probe_names(
     remaining_probe_names = probe_names[1:]
     for index in range(3):
         (docs_root / f"a-saturated-{index}.md").write_text(f"{saturated_probe}\n", encoding="utf-8")
-    (docs_root / "b-fill-remaining.md").write_text(
+    fill_rest = docs_root / "b-fill-remaining.md"
+    fill_rest.write_text(
         "\n".join(remaining_probe_names) + "\n",
         encoding="utf-8",
     )
 
-    contains_checks: list[tuple[str, str]] = []
-    original_read_text = Path.read_text
+    seen_probe_names: list[tuple[str, tuple[str, ...]]] = []
+    original_matcher = closure_audit_module._matched_probe_names_in_file
 
-    class TrackingText(str):
-        def __new__(cls, value: str, *, relative_path: str):
-            instance = super().__new__(cls, value)
-            instance.relative_path = relative_path
-            return instance
+    def tracked_matcher(*, file_path: Path, probe_names: list[str]) -> set[str]:
+        if file_path == fill_rest:
+            seen_probe_names.append((file_path.relative_to(repo_root).as_posix(), tuple(probe_names)))
+        return original_matcher(file_path=file_path, probe_names=probe_names)
 
-        def __contains__(self, item: object) -> bool:
-            if isinstance(item, str):
-                contains_checks.append((self.relative_path, item))
-            return super().__contains__(item)
-
-    def tracked_read_text(self: Path, *args, **kwargs) -> str:
-        return TrackingText(
-            original_read_text(self, *args, **kwargs),
-            relative_path=self.relative_to(repo_root).as_posix(),
-        )
-
-    monkeypatch.setattr(Path, "read_text", tracked_read_text)
+    monkeypatch.setattr(closure_audit_module, "_matched_probe_names_in_file", tracked_matcher)
 
     probe_sources = closure_audit_module._collect_probe_sources(repo_root)
 
@@ -234,14 +223,9 @@ def test_collect_probe_sources_stops_checking_saturated_probe_names(
         "docs/a-saturated-1.md",
         "docs/a-saturated-2.md",
     ]
-    assert (
-        "docs/b-fill-remaining.md",
-        saturated_probe,
-    ) not in contains_checks
-    assert (
-        "docs/b-fill-remaining.md",
-        remaining_probe_names[0],
-    ) in contains_checks
+    assert seen_probe_names == [
+        ("docs/b-fill-remaining.md", tuple(remaining_probe_names)),
+    ]
 
 
 def test_collect_probe_sources_prefers_curated_evidence_files_before_full_scan(
@@ -319,6 +303,90 @@ def test_collect_probe_sources_prefers_curated_evidence_files_before_full_scan(
         "docs/runbooks/connection-lifecycle.md",
         "progress.md",
     ]
+
+
+def test_collect_probe_sources_streams_preferred_probe_files_without_read_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = _seed_repo(tmp_path)
+    all_probe_names = [
+        probe_name
+        for probe_group in closure_audit_module._REQUIRED_PROBES.values()
+        for probe_name in probe_group
+    ]
+    large_progress = repo_root / "progress.md"
+    large_progress.write_text(
+        "\n".join(all_probe_names) + "\n" + ("noise\n" * 20000),
+        encoding="utf-8",
+    )
+
+    original_read_text = Path.read_text
+
+    def fail_read_text(self: Path, *args, **kwargs) -> str:
+        if self == large_progress:
+            raise AssertionError("probe source scan should stream preferred evidence files")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert (repo_root / "scripts/m9_shared_access_smoke.py").read_text(encoding="utf-8")
+    probe_sources = closure_audit_module._collect_probe_sources(repo_root)
+
+    assert probe_sources["gateway.accepted_api_key_count"] == [
+        "progress.md",
+        "scripts/m9_shared_access_smoke.py",
+    ]
+
+
+def test_matched_probe_names_in_file_stops_after_first_matching_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file_path = tmp_path / "progress.md"
+    file_path.write_text("placeholder\n", encoding="utf-8")
+    probe_names = [
+        "gateway.accepted_api_key_count",
+        "shared_access.accepted_client_count",
+    ]
+    first_chunk = "\n".join(probe_names) + "\n"
+
+    class ChunkReader:
+        def __init__(self) -> None:
+            self.read_calls = 0
+
+        def read(self, size: int = -1) -> str:
+            self.read_calls += 1
+            if self.read_calls == 1:
+                return first_chunk
+            raise AssertionError("probe source scan should stop once all pending probe names are matched")
+
+        def __enter__(self) -> "ChunkReader":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    chunk_reader = ChunkReader()
+    original_open = Path.open
+
+    def tracked_open(self: Path, *args, **kwargs):
+        if self == file_path:
+            return chunk_reader
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(closure_audit_module, "_PROBE_SOURCE_SCAN_CHUNK_SIZE", 8)
+    monkeypatch.setattr(Path, "open", tracked_open)
+
+    assert closure_audit_module._matched_probe_names_in_file(
+        file_path=file_path,
+        probe_names=probe_names,
+    ) == set(probe_names)
+    extra_file = tmp_path / "other.md"
+    extra_file.write_text("other\n", encoding="utf-8")
+    with extra_file.open(encoding="utf-8") as handle:
+        assert handle.read() == "other\n"
+    with pytest.raises(AssertionError, match="stop once all pending probe names are matched"):
+        chunk_reader.read()
+    assert chunk_reader.read_calls == 2
 
 
 def test_collect_probe_sources_uses_iterator_order_without_resorting(

@@ -7737,6 +7737,49 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertTrue(plan.usesOnlineSoftmax)
     }
 
+    func testVendoredFusedQ4AttentionLaunchPlanTracksScaleBiasLoadReduction() throws {
+        let cases: [(groupSize: Int, expectedLoadLaneCount: Int, expectedReduction: Bool)] = [
+            (128, 1, true),
+            (64, 2, true),
+            (32, 4, true),
+            (8, 16, false),
+        ]
+
+        for testCase in cases {
+            let plan = try XCTUnwrap(turboQuantFusedAttentionLaunchPlan(
+                batchCount: 2,
+                queryHeadCount: 4,
+                kvHeadCount: 2,
+                sequenceLength: 64,
+                headDimension: 128,
+                groupSize: testCase.groupSize
+            ))
+
+            XCTAssertEqual(plan.scoreReductionLaneCount, 16)
+            XCTAssertEqual(plan.scaleBiasLoadLaneCount, testCase.expectedLoadLaneCount)
+            XCTAssertEqual(plan.usesReducedScaleBiasLoads, testCase.expectedReduction)
+        }
+    }
+
+    func testVendoredFusedQ4AttentionLaunchPlanRejectsInvalidPackedScaleBiasGroups() throws {
+        XCTAssertNil(turboQuantFusedAttentionLaunchPlan(
+            batchCount: 1,
+            queryHeadCount: 1,
+            kvHeadCount: 1,
+            sequenceLength: 1,
+            headDimension: 128,
+            groupSize: 4
+        ))
+        XCTAssertNil(turboQuantFusedAttentionLaunchPlan(
+            batchCount: 1,
+            queryHeadCount: 1,
+            kvHeadCount: 1,
+            sequenceLength: 1,
+            headDimension: 128,
+            groupSize: 24
+        ))
+    }
+
     func testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs() async throws {
         try await withTemporaryDefaultMetallib {
             let sequenceLength = 3

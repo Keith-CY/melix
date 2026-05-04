@@ -128,6 +128,8 @@ def test_stream_assembler_emits_only_unseen_tool_call_tails_for_cumulative_chunk
     ]
     assert [delta.tool_call.tool_name for delta in third if delta.tool_call] == []
     assert assembler.completed().metrics["duplicate_tool_delta_count"] == 0
+    assert assembler.completed().metrics["stream_parser_request_context_mode"] == "tool_parser"
+    assert assembler.completed().metrics["tool_call_markup_leak_count"] == 0
 
 
 def test_json_structured_output_strips_reasoning_prefix_before_first_json_delimiter() -> None:
@@ -147,6 +149,35 @@ def test_json_structured_output_strips_reasoning_prefix_before_first_json_delimi
     completed = assembler.completed()
     assert completed.assistant_text == '{"answer": "done"}'
     assert completed.reasoning_text == ""
+    assert completed.metrics["reasoning_leak_count"] == 0
+
+
+def test_explicit_tool_parser_survives_structured_json_mode() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-json-tools",
+        reasoning_enabled=True,
+        structured_output_mode="json_schema",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                '<think>plan</think>'
+                '<tool_call>{"name":"search","arguments":{"q":"json"}}</tool_call>'
+                '{"answer":"done"}'
+            )
+        )
+    )
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["plan"]
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+    assert [call.tool_name for call in calls] == ["search"]
+    assert [delta.content_text for delta in deltas if delta.content_text] == ['{"answer":"done"}']
+    assert completed.assistant_text == '{"answer":"done"}'
+    assert completed.metrics["stream_parser_request_context_mode"] == "tool_parser"
+    assert completed.metrics["tool_call_markup_leak_count"] == 0
     assert completed.metrics["reasoning_leak_count"] == 0
 
 
@@ -218,7 +249,7 @@ def test_json_structured_output_without_json_delimiter_drops_hidden_prefix_on_co
         request_id="req-json-prefix",
         reasoning_enabled=False,
         structured_output_mode="json_schema",
-        tool_parser_mode="qwen",
+        tool_parser_mode="",
     )
 
     assert assembler.accept(StreamFragment(raw_text="<think>hidden preamble")) == []
@@ -322,6 +353,7 @@ def test_truncated_reasoning_is_recoverable_and_not_public_content() -> None:
     assert completed.assistant_text == ""
     assert completed.reasoning_text == ""
     assert completed.metrics["malformed_reasoning_count"] == 1
+    assert completed.metrics["reasoning_channel_recovery_count"] == 1
     assert completed.metrics["malformed_tool_fragment_count"] == 0
 
 
@@ -348,6 +380,7 @@ def test_malformed_non_object_and_nameless_tool_calls_are_skipped() -> None:
     assert [delta.tool_call for delta in deltas if delta.tool_call] == []
     assert [delta.content_text for delta in deltas if delta.content_text] == ["visible"]
     assert completed.metrics["malformed_tool_fragment_count"] == 3
+    assert completed.metrics["tool_call_markup_leak_count"] == 0
 
 
 def test_duplicate_tool_call_fragments_are_skipped_when_raw_stream_replays_out_of_order() -> None:
@@ -422,3 +455,28 @@ def test_first_json_delimiter_prefers_array_when_it_appears_first() -> None:
     )
 
     assert assembler._first_json_delimiter("prefix [1, 2]{\"later\": true}") == 7
+
+
+def test_request_context_mode_marks_structured_json_and_plain_streams() -> None:
+    structured = RequestStreamAssembler(
+        request_id="req-structured-context",
+        reasoning_enabled=False,
+        structured_output_mode="json_schema",
+        tool_parser_mode="",
+    )
+    structured_with_tools = RequestStreamAssembler(
+        request_id="req-structured-tool-context",
+        reasoning_enabled=False,
+        structured_output_mode="json_schema",
+        tool_parser_mode="qwen",
+    )
+    plain = RequestStreamAssembler(
+        request_id="req-plain-context",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    assert structured.completed().metrics["stream_parser_request_context_mode"] == "structured_json"
+    assert structured_with_tools.completed().metrics["stream_parser_request_context_mode"] == "tool_parser"
+    assert plain.completed().metrics["stream_parser_request_context_mode"] == "plain"

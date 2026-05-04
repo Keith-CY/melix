@@ -36,7 +36,7 @@ class AssemblyCompletion:
     assistant_text: str
     reasoning_text: str
     raw_text: str
-    metrics: dict[str, int]
+    metrics: dict[str, int | str]
 
 
 class RequestStreamAssembler:
@@ -65,7 +65,7 @@ class RequestStreamAssembler:
         self._reasoning_parts: list[str] = []
         self._tool_fragment_index = 0
         self._emitted_tool_keys: set[tuple[str, str]] = set()
-        self._metrics: dict[str, int] = {
+        self._metrics: dict[str, int | str] = {
             "parser_state_bleed_count": 0,
             "duplicate_tool_delta_count": 0,
             "reasoning_leak_count": 0,
@@ -75,6 +75,9 @@ class RequestStreamAssembler:
             "suppressed_reasoning_count": 0,
             "stream_prefix_hold_chars": 0,
             "stream_short_reply_flush_count": 0,
+            "stream_parser_request_context_mode": self._request_context_mode,
+            "tool_call_markup_leak_count": 0,
+            "reasoning_channel_recovery_count": 0,
         }
 
     def accept(self, fragment: StreamFragment) -> list[AssemblyDelta]:
@@ -86,14 +89,14 @@ class RequestStreamAssembler:
         if not delta:
             return []
 
-        if self._is_json_structured_output:
+        if self._is_json_only_structured_output:
             return self._accept_json_structured_output(delta)
 
         self._buffer += delta
         return self._drain_buffer(final=False)
 
     def completed(self) -> AssemblyCompletion:
-        if self._is_json_structured_output:
+        if self._is_json_only_structured_output:
             if not self._json_started:
                 self._metrics["reasoning_leak_count"] += int("<think" in self._buffer)
                 self._buffer = ""
@@ -111,8 +114,22 @@ class RequestStreamAssembler:
         return self._structured_output_mode in {"json_object", "json_schema"}
 
     @property
+    def _is_json_only_structured_output(self) -> bool:
+        return self._is_json_structured_output and not self._tool_parser_mode
+
+    @property
     def _tool_parsing_enabled(self) -> bool:
-        return bool(self._tool_parser_mode) and not self._is_json_structured_output
+        return bool(self._tool_parser_mode)
+
+    @property
+    def _request_context_mode(self) -> str:
+        if self._tool_parsing_enabled:
+            return "tool_parser"
+        if self._is_json_structured_output:
+            return "structured_json"
+        if self._reasoning_enabled:
+            return "reasoning_only"
+        return "plain"
 
     @property
     def _structural_tag_prefixes(self) -> tuple[str, ...]:
@@ -192,6 +209,7 @@ class RequestStreamAssembler:
                 if close_index < 0:
                     if final:
                         self._metrics["malformed_reasoning_count"] += 1
+                        self._metrics["reasoning_channel_recovery_count"] += 1
                         self._buffer = ""
                     break
                 body = self._buffer[len(self._THINK_OPEN) : close_index]
@@ -252,6 +270,8 @@ class RequestStreamAssembler:
         )
 
     def _content_delta(self, content: str) -> AssemblyDelta:
+        if self._tool_parsing_enabled and "<tool_call" in content:
+            self._metrics["tool_call_markup_leak_count"] += 1
         self._assistant_parts.append(content)
         return AssemblyDelta(content_text=content, raw_text=content)
 

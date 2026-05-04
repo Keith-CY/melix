@@ -13,6 +13,10 @@ public struct TurboQuantFusedAttentionLaunchPlan: Equatable {
     /// Lane 0 owns the online softmax state; raising the sequence limit will
     /// require a two-pass or parallel softmax reduction plan.
     public let softmaxLaneCount: Int
+    public let scaleBiasLoadLaneCount: Int
+    public var usesReducedScaleBiasLoads: Bool {
+        scaleBiasLoadLaneCount < scoreReductionLaneCount
+    }
     public let usesThreadgroupSharedScores: Bool
     public let usesThreadgroupParallelScoreReduction: Bool
     public let usesOnlineSoftmax: Bool
@@ -35,7 +39,7 @@ public func turboQuantFusedAttentionLaunchPlan(
         headDimension <= 256,
         headDimension % 8 == 0,
         headDimension % 32 == 0,
-        groupSize > 0,
+        groupSize >= 8,
         groupSize % 8 == 0,
         headDimension % groupSize == 0,
         queryHeadCount % kvHeadCount == 0
@@ -44,6 +48,7 @@ public func turboQuantFusedAttentionLaunchPlan(
     }
 
     let packedWordsPerToken = headDimension / 8
+    let groupCount = headDimension / groupSize
     return TurboQuantFusedAttentionLaunchPlan(
         gridX: 32,
         gridY: queryHeadCount,
@@ -54,6 +59,7 @@ public func turboQuantFusedAttentionLaunchPlan(
         scoreReductionLaneCount: min(32, packedWordsPerToken),
         scoreReductionSimdgroupCount: 1,
         softmaxLaneCount: 1,
+        scaleBiasLoadLaneCount: groupCount,
         usesThreadgroupSharedScores: false,
         usesThreadgroupParallelScoreReduction: true,
         usesOnlineSoftmax: true
@@ -95,7 +101,7 @@ public func fusedQ4AffineKeyValueQuantizedForDecode(
         tokenCount == 1,
         headDimension > 0,
         headDimension % 8 == 0,
-        groupSize > 0,
+        groupSize >= 8,
         groupSize % 8 == 0,
         headDimension % groupSize == 0
     else {
@@ -254,8 +260,6 @@ public func fusedQ4ScaledDotProductAttention(
     let kvHeadCount = quantizedKeys.0.dim(1)
     let storageSequenceLength = quantizedKeys.0.dim(2)
     let effectiveSequenceLength = sequenceLength ?? storageSequenceLength
-    let packedWordsPerToken = headDimension / 8
-    let groupCount = (headDimension + groupSize - 1) / groupSize
     guard let launchPlan = turboQuantFusedAttentionLaunchPlan(
         batchCount: batchCount,
         queryHeadCount: queryHeadCount,
@@ -275,7 +279,7 @@ public func fusedQ4ScaledDotProductAttention(
         storageSequenceLength >= effectiveSequenceLength,
         headDimension > 0,
         headDimension % 8 == 0,
-        groupSize > 0,
+        groupSize >= 8,
         groupSize % 8 == 0,
         headDimension % groupSize == 0,
         queryHeadCount % kvHeadCount == 0
@@ -283,6 +287,8 @@ public func fusedQ4ScaledDotProductAttention(
         return nil
     }
 
+    let packedWordsPerToken = headDimension / 8
+    let groupCount = headDimension / groupSize
     guard quantizedKeys.0.shape == [batchCount, kvHeadCount, storageSequenceLength, packedWordsPerToken],
         quantizedValues.0.shape == [batchCount, kvHeadCount, storageSequenceLength, packedWordsPerToken],
         quantizedKeys.1.shape == [batchCount, kvHeadCount, storageSequenceLength, groupCount],
@@ -312,6 +318,13 @@ public func fusedQ4ScaledDotProductAttention(
             ],
             outputNames: ["output"],
             source: """
+                static_assert(PACKED_WORDS_PER_TOKEN <= 32,
+                    "TurboQuant fused attention assumes one token fits in one simdgroup");
+                static_assert(PACKED_WORDS_PER_GROUP > 0,
+                    "TurboQuant fused attention requires at least one packed word per q4 group");
+                static_assert(PACKED_WORDS_PER_TOKEN % PACKED_WORDS_PER_GROUP == 0,
+                    "TurboQuant fused attention requires q4 groups to divide the head dimension");
+
                 uint packedWordLane = thread_position_in_threadgroup.x;
                 uint queryHead = thread_position_in_grid.y;
                 uint batch = thread_position_in_grid.z;
@@ -320,6 +333,9 @@ public func fusedQ4ScaledDotProductAttention(
                 uint sequenceLength = uint(sequenceLengthInput[0]);
                 bool activeLane = packedWordLane < PACKED_WORDS_PER_TOKEN;
                 uint dimBase = packedWordLane << 3;
+                uint groupLaneOffset = packedWordLane % PACKED_WORDS_PER_GROUP;
+                uint groupStartLane = packedWordLane - groupLaneOffset;
+                bool scaleBiasLeaderLane = activeLane && groupLaneOffset == 0;
 
                 float accumulators[8];
                 float queryValues[8];
@@ -335,10 +351,16 @@ public func fusedQ4ScaledDotProductAttention(
                         uint keyWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)
                             * PACKED_WORDS_PER_TOKEN + packedWordLane;
                         uint keyWord = packedKeys[keyWordIndex];
-                        uint keyScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)
-                            * GROUP_COUNT + (dimBase / GROUP_SIZE);
-                        float keyScale = keyScales[keyScaleIndex];
-                        float keyBias = keyBiases[keyScaleIndex];
+                        float keyScale = 0.0f;
+                        float keyBias = 0.0f;
+                        if (scaleBiasLeaderLane) {
+                            uint keyScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)
+                                * GROUP_COUNT + (packedWordLane / PACKED_WORDS_PER_GROUP);
+                            keyScale = keyScales[keyScaleIndex];
+                            keyBias = keyBiases[keyScaleIndex];
+                        }
+                        keyScale = simd_shuffle(keyScale, ushort(groupStartLane));
+                        keyBias = simd_shuffle(keyBias, ushort(groupStartLane));
                         partialScore += queryValues[0] * (float((keyWord >> 0) & 0x0f) * keyScale + keyBias);
                         partialScore += queryValues[1] * (float((keyWord >> 4) & 0x0f) * keyScale + keyBias);
                         partialScore += queryValues[2] * (float((keyWord >> 8) & 0x0f) * keyScale + keyBias);
@@ -369,10 +391,16 @@ public func fusedQ4ScaledDotProductAttention(
                         uint valueWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)
                             * PACKED_WORDS_PER_TOKEN + packedWordLane;
                         uint valueWord = packedValues[valueWordIndex];
-                        uint valueScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)
-                            * GROUP_COUNT + (dimBase / GROUP_SIZE);
-                        float valueScale = valueScales[valueScaleIndex];
-                        float valueBias = valueBiases[valueScaleIndex];
+                        float valueScale = 0.0f;
+                        float valueBias = 0.0f;
+                        if (scaleBiasLeaderLane) {
+                            uint valueScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)
+                                * GROUP_COUNT + (packedWordLane / PACKED_WORDS_PER_GROUP);
+                            valueScale = valueScales[valueScaleIndex];
+                            valueBias = valueBiases[valueScaleIndex];
+                        }
+                        valueScale = simd_shuffle(valueScale, ushort(groupStartLane));
+                        valueBias = simd_shuffle(valueBias, ushort(groupStartLane));
                         accumulators[0] = accumulators[0] * rescale
                             + weight * (float((valueWord >> 0) & 0x0f) * valueScale + valueBias);
                         accumulators[1] = accumulators[1] * rescale
@@ -421,6 +449,7 @@ public func fusedQ4ScaledDotProductAttention(
                 ("KV_HEAD_COUNT", kvHeadCount),
                 ("QUERY_REPEATS", queryRepeats),
                 ("PACKED_WORDS_PER_TOKEN", packedWordsPerToken),
+                ("PACKED_WORDS_PER_GROUP", groupSize / 8),
                 ("CACHE_SEQUENCE_LENGTH", storageSequenceLength),
                 ("GROUP_SIZE", groupSize),
                 ("GROUP_COUNT", groupCount),

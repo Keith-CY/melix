@@ -218,6 +218,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let reasoningEffort: String?
     public let reasoningAutoDetectModelFamily: String?
     public let reasoningContinuityRehydrated: Bool
+    public let reasoningHistoryStripCount: Int
     public let structuredOutput: StructuredOutputConfiguration?
     public let toolParser: ToolParserSelection?
     public let toolParserSuppressedReason: String?
@@ -1637,6 +1638,8 @@ public struct ChatRequestTranslator: Sendable {
         }
         generateRequest.execution.ext["melix.reasoning.continuity_rehydrated"] =
             shapedRequest.reasoningContinuityRehydrated ? "true" : "false"
+        generateRequest.execution.ext["melix.reasoning.history_strip_count"] =
+            String(shapedRequest.reasoningHistoryStripCount)
         generateRequest.execution.reasoning = Melix_Worker_V1_ReasoningConfig()
         generateRequest.execution.reasoning.mode = shapedRequest.reasoningMode
         generateRequest.execution.reasoning.modeSource = shapedRequest.reasoningSource

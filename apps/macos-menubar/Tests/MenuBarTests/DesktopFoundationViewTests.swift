@@ -1673,10 +1673,13 @@ struct DesktopFoundationViewTests {
         viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.training)
         viewModel.loraDatasetSourceKind = .localPackage
-        _ = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        _ = hostView(DesktopWorkspaceShellView(viewModel: viewModel), size: CGSize(width: 1200, height: 1400))
 
         viewModel.loraDatasetSourceKind = .huggingFaceDataset
-        let hfView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let hfView = hostView(
+            DesktopWorkspaceShellView(viewModel: viewModel),
+            size: CGSize(width: 1200, height: 1400)
+        )
         let renderedTexts = renderedTextValues(in: hfView)
 
         #expect(hfView.subviews.isEmpty == false)
@@ -1771,6 +1774,7 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(renderedTexts.contains("Primary Model"))
         #expect(renderedTexts.contains("Workflow Snapshot"))
+        #expect(renderedTexts.contains("Saved Jobs"))
         #expect(renderedTexts.contains("Run Draft"))
         #expect(renderedTexts.contains("Adapter Registry"))
         #expect(renderedTexts.contains("Experiment Groups"))
@@ -1781,6 +1785,75 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Adapter Activation") == false)
         #expect(renderedTexts.contains("Saved Adapters") == false)
         #expect(renderedTexts.contains("Training Jobs") == false)
+    }
+
+    @Test("training surface renders saved lora job detail and follow-up actions")
+    @MainActor
+    func trainingSurfaceRendersSavedLoraJobDetailAndFollowUpActions() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "local_package",
+            datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            adapterName: "saved-adapter",
+            targetRepo: "melix/adapters/saved-adapter",
+            experimentGroupID: "saved-group",
+            trainingMode: "qlora",
+            presetID: "balanced_adapter",
+            activationMode: "adapter_backed_runtime",
+            rank: "16",
+            alpha: "32",
+            batchSize: "2",
+            epochs: "2",
+            responseOnly: true,
+            maskPrompt: true,
+            gradientCheckpointing: true,
+            derivedModelAlias: "melix-dev-text-lora"
+        )
+        let job = LoraTrainingJobRecord(
+            id: "saved-job",
+            title: "Saved Adapter",
+            config: config,
+            status: .succeeded,
+            lastRunJobID: "model-ops-0001",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"{"operation":"train_lora"}"#,
+            terminalMessage: "Training completed.",
+            followUpArtifacts: .init(
+                adapterManifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+                derivedModelID: "melix-dev-text-lora",
+                quantizedArtifactPath: "/tmp/melix-quantize/saved-adapter/quantized.artifact",
+                convertedArtifactPath: "/tmp/melix-convert/saved-adapter/converted.artifact",
+                benchmarkJobID: "bench-saved-adapter",
+                evaluationJobID: "eval-saved-adapter"
+            )
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 2200)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Saved Jobs"))
+        #expect(renderedTexts.contains("Saved Adapter"))
+        #expect(renderedTexts.contains { $0.contains("model-ops-0001") })
+        #expect(renderedTexts.contains("Follow-up Actions"))
+        #expect(renderedTexts.contains("Follow-up Artifacts"))
+        #expect(renderedTexts.contains("Quantized Artifact"))
+        #expect(renderedTexts.contains("Converted Artifact"))
+        #expect(renderedTexts.contains("Benchmark Job"))
+        #expect(renderedTexts.contains("Evaluation Job"))
+        #expect(renderedTexts.contains("Activation"))
+        #expect(renderedTexts.contains("Quantization"))
+        #expect(renderedTexts.contains("Benchmark"))
+        #expect(renderedTexts.contains("Evaluation"))
+        #expect(renderedTexts.contains("Import Config Path"))
+        #expect(renderedTexts.contains("Export Config Path"))
     }
 
     @Test("training keeps Hugging Face dataset mapping fields folded behind a secondary reveal by default")
@@ -3703,6 +3776,26 @@ struct DesktopFoundationViewTests {
         #expect(hosted.subviews.isEmpty == false)
         #expect(hosted.fittingSize.height <= DesktopDownloadsLayoutMetrics.compactAudioNoticeHeightBudget)
         #expect(action.detail.contains("melix-audio-runtime-pack"))
+    }
+
+    @Test("downloads section exposes saved lora packaging target")
+    @MainActor
+    func downloadsSectionExposesSavedLoRAPackagingTarget() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+        viewModel.selectedModelOperationTargetModelID = "melix-dev-text-lora"
+
+        let view = hostView(
+            DesktopWorkspaceShellView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1000)
+        )
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.hasExplicitModelOperationTarget)
+        #expect(viewModel.modelOperationTargetModelID == "melix-dev-text-lora")
+        #expect(viewModel.modelOperationTargetDetailText.contains("Saved LoRA job"))
     }
 
     @Test("tools tab renders typed convert operation metadata")
