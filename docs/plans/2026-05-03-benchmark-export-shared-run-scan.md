@@ -41,6 +41,7 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_benchmark_export_probe \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_benchmark_export_run_scan_rejects_unexpected_job_count \
+  services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_benchmark_export_run_scan_rejects_unexpected_evaluation_job_count \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_benchmark_export_run_scan_rejects_unexpected_result_count \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_benchmark_export_run_scan_rejects_unexpected_summary_csv_count
 
@@ -51,6 +52,7 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dispatch_probe_impl_supports_benchmark_export_probe \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_benchmark_export_run_scan_rejects_unexpected_job_count \
+  services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_benchmark_export_run_scan_rejects_unexpected_evaluation_job_count \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_benchmark_export_run_scan_rejects_unexpected_result_count \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_benchmark_export_run_scan_rejects_unexpected_summary_csv_count
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage json -o coverage.json

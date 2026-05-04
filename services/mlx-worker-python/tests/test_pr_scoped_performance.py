@@ -1076,97 +1076,75 @@ def test_dispatch_probe_impl_supports_benchmark_export_probe() -> None:
     assert metrics["result_file_count"] == 723.0
 
 
-def test_probe_benchmark_export_run_scan_rejects_unexpected_job_count(monkeypatch: pytest.MonkeyPatch) -> None:
+def _fake_benchmark_export_module(
+    *,
+    benchmark_job_count: int = 241,
+    evaluation_job_count: int = 241,
+    benchmark_result_count: int = 723,
+    evaluation_result_count: int = 241,
+    evaluation_sample_count: int = 241,
+    summary_csv_job_count: int = 241,
+) -> type[object]:
     class FakeBenchmarkExportModule:
         @staticmethod
         def build_export_bundle(path: Path) -> dict[str, object]:
             del path
             return {
-                "benchmark_jobs": [],
-                "evaluation_jobs": [object()] * 241,
-                "benchmark_results": [object()] * 723,
-                "evaluation_results": [object()] * 241,
-                "evaluation_samples": [object()] * 241,
+                "benchmark_jobs": [object()] * benchmark_job_count,
+                "evaluation_jobs": [object()] * evaluation_job_count,
+                "benchmark_results": [object()] * benchmark_result_count,
+                "evaluation_results": [object()] * evaluation_result_count,
+                "evaluation_samples": [object()] * evaluation_sample_count,
             }
 
         @staticmethod
         def build_benchmark_summary_csv(artifacts: dict[str, object]) -> str:
             del artifacts
-            return "job_id\n" + "\n".join(f"bench-{index}" for index in range(241)) + "\n"
+            return "job_id\n" + "\n".join(f"bench-{index}" for index in range(summary_csv_job_count)) + (
+                "\n" if summary_csv_job_count else ""
+            )
 
-    monkeypatch.setattr(pr_scoped_performance_module, "_load_repo_module", lambda path, unique_name: FakeBenchmarkExportModule)
+    return FakeBenchmarkExportModule
+
+
+def _patch_benchmark_export_probe_module(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_module: type[object],
+) -> None:
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_load_repo_module",
+        lambda path, unique_name: fake_module,
+    )
+
+
+def test_probe_benchmark_export_run_scan_rejects_unexpected_job_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_module = _fake_benchmark_export_module(benchmark_job_count=0)
+    _patch_benchmark_export_probe_module(monkeypatch, fake_module)
 
     with pytest.raises(ValueError, match="unexpected benchmark job count"):
         _probe_benchmark_export_run_scan(REPO_ROOT)
 
 
 def test_probe_benchmark_export_run_scan_rejects_unexpected_evaluation_job_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeBenchmarkExportModule:
-        @staticmethod
-        def build_export_bundle(path: Path) -> dict[str, object]:
-            del path
-            return {
-                "benchmark_jobs": [object()] * 241,
-                "evaluation_jobs": [],
-                "benchmark_results": [object()] * 723,
-                "evaluation_results": [object()] * 241,
-                "evaluation_samples": [object()] * 241,
-            }
-
-        @staticmethod
-        def build_benchmark_summary_csv(artifacts: dict[str, object]) -> str:
-            del artifacts
-            return "job_id\n" + "\n".join(f"bench-{index}" for index in range(241)) + "\n"
-
-    monkeypatch.setattr(pr_scoped_performance_module, "_load_repo_module", lambda path, unique_name: FakeBenchmarkExportModule)
+    fake_module = _fake_benchmark_export_module(evaluation_job_count=0)
+    _patch_benchmark_export_probe_module(monkeypatch, fake_module)
 
     with pytest.raises(ValueError, match="unexpected evaluation job count"):
         _probe_benchmark_export_run_scan(REPO_ROOT)
 
 
 def test_probe_benchmark_export_run_scan_rejects_unexpected_result_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeBenchmarkExportModule:
-        @staticmethod
-        def build_export_bundle(path: Path) -> dict[str, object]:
-            del path
-            return {
-                "benchmark_jobs": [object()] * 241,
-                "evaluation_jobs": [object()] * 241,
-                "benchmark_results": [],
-                "evaluation_results": [object()] * 241,
-                "evaluation_samples": [object()] * 241,
-            }
-
-        @staticmethod
-        def build_benchmark_summary_csv(artifacts: dict[str, object]) -> str:
-            del artifacts
-            return "job_id\n" + "\n".join(f"bench-{index}" for index in range(241)) + "\n"
-
-    monkeypatch.setattr(pr_scoped_performance_module, "_load_repo_module", lambda path, unique_name: FakeBenchmarkExportModule)
+    fake_module = _fake_benchmark_export_module(benchmark_result_count=0)
+    _patch_benchmark_export_probe_module(monkeypatch, fake_module)
 
     with pytest.raises(ValueError, match="unexpected benchmark result count"):
         _probe_benchmark_export_run_scan(REPO_ROOT)
 
 
 def test_probe_benchmark_export_run_scan_rejects_unexpected_summary_csv_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeBenchmarkExportModule:
-        @staticmethod
-        def build_export_bundle(path: Path) -> dict[str, object]:
-            del path
-            return {
-                "benchmark_jobs": [object()] * 241,
-                "evaluation_jobs": [object()] * 241,
-                "benchmark_results": [object()] * 723,
-                "evaluation_results": [object()] * 241,
-                "evaluation_samples": [object()] * 241,
-            }
-
-        @staticmethod
-        def build_benchmark_summary_csv(artifacts: dict[str, object]) -> str:
-            del artifacts
-            return "job_id\r\n"
-
-    monkeypatch.setattr(pr_scoped_performance_module, "_load_repo_module", lambda path, unique_name: FakeBenchmarkExportModule)
+    fake_module = _fake_benchmark_export_module(summary_csv_job_count=0)
+    _patch_benchmark_export_probe_module(monkeypatch, fake_module)
 
     with pytest.raises(ValueError, match="unexpected summary CSV line count"):
         _probe_benchmark_export_run_scan(REPO_ROOT)

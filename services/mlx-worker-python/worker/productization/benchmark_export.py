@@ -245,7 +245,11 @@ def _collect_shared_export_artifacts(
 
     matrix_roots: list[tuple[Path, _ScannedDirectoryEntries | None]] = [(shared_root, shared_scan)]
     nested_bench_root = shared_root / "bench"
-    if nested_bench_root.is_dir() and nested_bench_root != shared_root:
+    if shared_scan is not None and shared_scan.directory == shared_root:
+        has_nested_bench_dir = shared_scan.has_dir("bench")
+    else:
+        has_nested_bench_dir = nested_bench_root.is_dir()
+    if has_nested_bench_dir and nested_bench_root != shared_root:
         matrix_roots.append((nested_bench_root, None))
     for matrix_root, matrix_scan in matrix_roots:
         has_matrix_root_artifacts = False
@@ -263,6 +267,7 @@ def _collect_shared_export_artifacts(
                 matrix_root,
                 job_filename="bench-matrix-job.json",
                 summary_filename="bench-matrix-summary.jsonl",
+                scanned_entries=matrix_scan,
             )
         if has_matrix_root_artifacts:
             _collect_benchmark_matrix_run(

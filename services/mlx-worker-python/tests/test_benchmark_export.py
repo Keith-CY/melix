@@ -13,6 +13,7 @@ from worker.productization.benchmark_export import (
     _collect_benchmark_matrix_run,
     _collect_benchmark_run,
     _collect_evaluation_run,
+    _collect_shared_export_artifacts,
     _iter_jsonl_dict_rows,
     _iter_sorted_child_directories,
     _iter_sorted_matching_files,
@@ -1307,6 +1308,20 @@ def test_build_export_bundle_reuses_shared_run_directory_scans_for_mixed_artifac
     assert scandir_counts[tmp_path] == 1
     assert scandir_counts[bench_run_root] == 1
     assert scandir_counts[eval_run_root] == 1
+
+
+def test_collect_shared_export_artifacts_falls_back_for_nested_bench_without_scan(tmp_path: Path) -> None:
+    _write_bench_matrix_run_fixture(tmp_path / "bench", job_id="bench-matrix-1")
+
+    benchmark, evaluation = _collect_shared_export_artifacts(
+        shared_root=tmp_path,
+        shared_scan=None,
+    )
+
+    assert len(benchmark["benchmark_matrix_jobs"]) == 1
+    assert len(benchmark["benchmark_matrix_summary_rows"]) == 1
+    assert len(benchmark["benchmark_matrix_request_rows"]) == 1
+    assert evaluation["evaluation_jobs"] == []
 
 
 
