@@ -62,6 +62,9 @@ Out of scope:
 - no malformed or duplicated streamed tool-call payloads in repository-owned fixtures
 - short visible streaming replies are not swallowed by marker-prefix buffering
 - JSON-only structured-output streams are not contaminated by hidden reasoning prefixes or generic tool parsing
+- structured-output streams with an explicit tool parser keep request-local
+  tool-call assembly enabled instead of falling through the JSON-only display
+  cleanup path
 - repeated session turns preserve supported hidden reasoning continuity while public output remains sanitized
 - turn-boundary stop sequences are resolved before decode from request stop lists,
   tokenizer EOS metadata, and model/registry stop overrides
