@@ -7899,6 +7899,56 @@ struct RuntimeViewModelTests {
         #expect(store.deletedIDs.contains(importedID))
     }
 
+    @Test("lora saved job selection helpers notify and protect auto selected records")
+    @MainActor
+    func loraSavedJobSelectionHelpersNotifyAndProtectAutoSelectedRecords() throws {
+        let originalConfig = makeDesktopLoraTrainingConfig(adapterName: "saved-adapter")
+        let job = makeDesktopLoraTrainingJobRecord(
+            id: "saved-job",
+            title: "Saved Adapter",
+            config: originalConfig
+        )
+        let alternateConfig = makeDesktopLoraTrainingConfig(adapterName: "alternate-adapter")
+        var alternateJob = makeDesktopLoraTrainingJobRecord(
+            id: "alternate-job",
+            title: "Alternate Adapter",
+            config: alternateConfig
+        )
+        alternateJob.updatedAt = Date(timeIntervalSince1970: 1_714_000_050)
+        let store = FakeLoraTrainingJobStore(jobs: [job, alternateJob])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: store
+        )
+        let notifications = NotificationCounter()
+        viewModel.onStateChanged = {
+            notifications.increment()
+        }
+
+        #expect(viewModel.selectedLoraTrainingJobID == "saved-job")
+        viewModel.selectQuantizationProfile("q6")
+        viewModel.selectQuantizationProfile("q9")
+        viewModel.selectLoraTrainingJob(id: " alternate-job ")
+
+        #expect(viewModel.selectedQuantizationProfileID == "q6")
+        #expect(notifications.value == 2)
+        #expect(viewModel.selectedLoraTrainingJobID == "alternate-job")
+
+        viewModel.loraRank = "99"
+        viewModel.loraExperimentGroupID = ""
+        viewModel.loraAdapterName = "new-draft-adapter"
+        viewModel.saveCurrentLoraTrainingJobDraft()
+
+        let original = try #require(store.jobs.first { $0.id == "alternate-job" })
+        let draft = try #require(store.savedRecords.last)
+        #expect(original.config.rank == alternateConfig.rank)
+        #expect(original.config.adapterName == alternateConfig.adapterName)
+        #expect(draft.id != "alternate-job")
+        #expect(draft.config.rank == "99")
+        #expect(draft.config.adapterName == "new-draft-adapter")
+        #expect(viewModel.selectedLoraTrainingJobID == draft.id)
+    }
+
     @Test("null lora training job store round trips configs and reports missing duplicates")
     @MainActor
     func nullLoraTrainingJobStoreRoundTripsConfigsAndReportsMissingDuplicates() throws {
@@ -11677,6 +11727,23 @@ private func makeDesktopLoraTrainingJobRecord(
             adapterManifestPath: status == .draft ? "" : "/tmp/melix-train-lora/train_lora.adapter.json"
         )
     )
+}
+
+private final class NotificationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+    }
 }
 
 private func makeRuntimeDownloadQueueEntryState(

@@ -2072,7 +2072,7 @@ struct DesktopDownloadsToolSectionView: View {
                         "Quant Profile",
                         selection: Binding(
                             get: { viewModel.selectedQuantizationProfileID },
-                            set: { viewModel.selectedQuantizationProfileID = $0 }
+                            set: { viewModel.selectQuantizationProfile($0) }
                         )
                     ) {
                         ForEach(viewModel.availableQuantizationProfileIDs, id: \.self) { profileID in
@@ -2604,7 +2604,7 @@ struct DesktopTrainingToolSectionView: View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(viewModel.loraTrainingJobs) { job in
                 Button {
-                    viewModel.selectedLoraTrainingJobID = job.id
+                    viewModel.selectLoraTrainingJob(id: job.id)
                 } label: {
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(alignment: .firstTextBaseline) {
@@ -3675,21 +3675,34 @@ private struct DesktopPassiveCaptionLabel: View {
     }
 
     var body: some View {
-        if let foregroundStyle {
-            caption
-                .foregroundStyle(foregroundStyle)
-        } else {
-            caption
-                .foregroundStyle(.secondary)
-        }
+        DesktopPassiveStaticTextLabel(
+            title: title,
+            font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+            textColor: foregroundStyle.map(NSColor.init) ?? .secondaryLabelColor
+        )
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopPassiveStaticTextLabel: NSViewRepresentable {
+    let title: String
+    let font: NSFont
+    let textColor: NSColor
+
+    func makeNSView(context: Context) -> NSTextField {
+        let label = NSTextField(labelWithString: title)
+        label.font = font
+        label.textColor = textColor
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return label
     }
 
-    private var caption: some View {
-        TextField("", text: .constant(title))
-            .textFieldStyle(.plain)
-            .allowsHitTesting(false)
-            .font(.caption.weight(.semibold))
-            .frame(maxWidth: .infinity, alignment: .leading)
+    func updateNSView(_ label: NSTextField, context: Context) {
+        label.stringValue = title
+        label.font = font
+        label.textColor = textColor
     }
 }
 

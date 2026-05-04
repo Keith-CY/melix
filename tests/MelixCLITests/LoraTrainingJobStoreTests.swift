@@ -129,6 +129,63 @@ struct LoraTrainingJobStoreTests {
         }
     }
 
+    @Test("skips job records with unsupported config schema")
+    func skipsJobRecordsWithUnsupportedConfigSchema() throws {
+        let home = temporaryMelixHome()
+        defer { try? FileManager.default.removeItem(at: home.rootURL) }
+        let store = LoraTrainingJobStore(melixHome: home)
+        let valid = LoraTrainingJobRecord(
+            id: "valid-job",
+            title: "Valid Job",
+            config: sampleConfig(adapterName: "valid-adapter")
+        )
+        var unsupported = LoraTrainingJobRecord(
+            id: "unsupported-job",
+            title: "Unsupported Job",
+            config: sampleConfig(adapterName: "unsupported-adapter")
+        )
+        unsupported.config.schemaVersion = "melix.desktop_lora_training_config.v0"
+        try write(TestLoraTrainingJobsDocument(jobs: [unsupported, valid]), to: home.loraTrainingJobsFileURL)
+
+        let jobs = try store.list()
+
+        #expect(jobs.map(\.id) == ["valid-job"])
+        #expect(jobs.first?.config.adapterName == "valid-adapter")
+    }
+
+    @Test("serializes concurrent draft mutations")
+    func serializesConcurrentDraftMutations() async throws {
+        let home = temporaryMelixHome()
+        defer { try? FileManager.default.removeItem(at: home.rootURL) }
+        let store = LoraTrainingJobStore(melixHome: home)
+        let inputs = (0..<40).map { index in
+            (
+                title: "Concurrent \(index)",
+                config: sampleConfig(adapterName: "adapter-\(index)")
+            )
+        }
+
+        let savedIDs = try await withThrowingTaskGroup(of: String.self) { group in
+            for input in inputs {
+                group.addTask {
+                    try store.createDraft(title: input.title, config: input.config).id
+                }
+            }
+            var ids: [String] = []
+            for try await id in group {
+                ids.append(id)
+            }
+            return ids
+        }
+
+        let jobs = try store.list()
+
+        #expect(Set(savedIDs).count == inputs.count)
+        #expect(jobs.count == inputs.count)
+        #expect(Set(jobs.map(\.id)) == Set(savedIDs))
+        #expect(Set(jobs.map(\.config.adapterName)) == Set(inputs.map(\.config.adapterName)))
+    }
+
     @Test("config import export round trip preserves every supported field")
     func configImportExportRoundTripPreservesEverySupportedField() throws {
         let home = temporaryMelixHome()

@@ -340,20 +340,121 @@ private struct LoraTrainingJobsDocument: Codable {
         }
         self.init(
             schemaVersion: schemaVersion,
-            jobs: try container.decodeIfPresent([LoraTrainingJobRecord].self, forKey: .jobs) ?? []
+            jobs: try container.decodeIfPresent([LossyLoraTrainingJobRecord].self, forKey: .jobs)?
+                .compactMap(\.record) ?? []
         )
+    }
+}
+
+private struct LossyLoraTrainingJobRecord: Decodable {
+    var record: LoraTrainingJobRecord?
+
+    init(from decoder: any Decoder) throws {
+        record = try? LoraTrainingJobRecord(from: decoder)
+    }
+}
+
+private final class LoraTrainingJobStoreLock: @unchecked Sendable {
+    private let lock = NSLock()
+
+    func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
     }
 }
 
 public struct LoraTrainingJobStore: Sendable {
     private let melixHome: MelixHome
+    private let lock: LoraTrainingJobStoreLock
 
     public init(melixHome: MelixHome) {
         self.melixHome = melixHome
+        self.lock = LoraTrainingJobStoreLock()
     }
 
     public func list() throws -> [LoraTrainingJobRecord] {
-        try loadDocument().jobs.sorted { lhs, rhs in
+        try lock.withLock {
+            try listUnlocked()
+        }
+    }
+
+    public func get(id: String) throws -> LoraTrainingJobRecord? {
+        let normalizedID = try Self.normalizedRequired(id, fieldName: "job_id")
+        return try lock.withLock {
+            try getUnlocked(id: normalizedID)
+        }
+    }
+
+    @discardableResult
+    public func save(_ record: LoraTrainingJobRecord) throws -> LoraTrainingJobRecord {
+        try lock.withLock {
+            try saveUnlocked(record)
+        }
+    }
+
+    @discardableResult
+    public func createDraft(title: String, config: LoraTrainingJobConfig) throws -> LoraTrainingJobRecord {
+        try lock.withLock {
+            let now = Date()
+            let record = LoraTrainingJobRecord(
+                id: Self.makeJobID(title: title, config: config),
+                title: Self.normalizedTitle(title, config: config),
+                config: config,
+                status: .draft,
+                createdAt: now,
+                updatedAt: now
+            )
+            return try saveUnlocked(record)
+        }
+    }
+
+    @discardableResult
+    public func duplicate(id: String) throws -> LoraTrainingJobRecord {
+        let normalizedID = try Self.normalizedRequired(id, fieldName: "job_id")
+        return try lock.withLock {
+            guard let source = try getUnlocked(id: normalizedID) else {
+                throw MelixCLIError.missingRequired("LoRA training job \(id) was not found.")
+            }
+            let now = Date()
+            let copy = LoraTrainingJobRecord(
+                id: Self.makeJobID(title: "\(source.title) Copy", config: source.config),
+                title: "\(source.title) Copy",
+                config: source.config,
+                status: .draft,
+                createdAt: now,
+                updatedAt: now
+            )
+            return try saveUnlocked(copy)
+        }
+    }
+
+    public func delete(id: String) throws {
+        let normalizedID = try Self.normalizedRequired(id, fieldName: "job_id")
+        try lock.withLock {
+            var document = try loadDocumentUnlocked()
+            document.jobs.removeAll { $0.id == normalizedID }
+            try saveDocumentUnlocked(document)
+        }
+    }
+
+    @discardableResult
+    public func importConfig(from fileURL: URL) throws -> LoraTrainingJobConfig {
+        try lock.withLock {
+            let data = try Data(contentsOf: fileURL)
+            return try Self.decoder.decode(LoraTrainingJobConfig.self, from: data)
+        }
+    }
+
+    public func exportConfig(_ config: LoraTrainingJobConfig, to fileURL: URL) throws {
+        try lock.withLock {
+            let data = try Self.encoder.encode(config)
+            try melixHome.writeAtomically(data, to: fileURL)
+        }
+    }
+
+    private func listUnlocked() throws -> [LoraTrainingJobRecord] {
+        try loadDocumentUnlocked().jobs.sorted { lhs, rhs in
             if lhs.updatedAt == rhs.updatedAt {
                 return lhs.title < rhs.title
             }
@@ -361,13 +462,12 @@ public struct LoraTrainingJobStore: Sendable {
         }
     }
 
-    public func get(id: String) throws -> LoraTrainingJobRecord? {
-        let normalizedID = try Self.normalizedRequired(id, fieldName: "job_id")
-        return try list().first { $0.id == normalizedID }
+    private func getUnlocked(id: String) throws -> LoraTrainingJobRecord? {
+        try listUnlocked().first { $0.id == id }
     }
 
     @discardableResult
-    public func save(_ record: LoraTrainingJobRecord) throws -> LoraTrainingJobRecord {
+    private func saveUnlocked(_ record: LoraTrainingJobRecord) throws -> LoraTrainingJobRecord {
         let normalizedID = try Self.normalizedRequired(record.id, fieldName: "job_id")
         let normalizedTitle = Self.normalizedTitle(record.title, config: record.config)
         var updated = record
@@ -375,64 +475,15 @@ public struct LoraTrainingJobStore: Sendable {
         updated.title = normalizedTitle
         updated.updatedAt = Date()
 
-        var document = try loadDocument()
+        var document = try loadDocumentUnlocked()
         document.jobs.removeAll { $0.id == normalizedID }
         document.jobs.append(updated)
         document.jobs.sort { $0.updatedAt > $1.updatedAt }
-        try saveDocument(document)
+        try saveDocumentUnlocked(document)
         return updated
     }
 
-    @discardableResult
-    public func createDraft(title: String, config: LoraTrainingJobConfig) throws -> LoraTrainingJobRecord {
-        let now = Date()
-        let record = LoraTrainingJobRecord(
-            id: Self.makeJobID(title: title, config: config),
-            title: Self.normalizedTitle(title, config: config),
-            config: config,
-            status: .draft,
-            createdAt: now,
-            updatedAt: now
-        )
-        return try save(record)
-    }
-
-    @discardableResult
-    public func duplicate(id: String) throws -> LoraTrainingJobRecord {
-        guard let source = try get(id: id) else {
-            throw MelixCLIError.missingRequired("LoRA training job \(id) was not found.")
-        }
-        let now = Date()
-        let copy = LoraTrainingJobRecord(
-            id: Self.makeJobID(title: "\(source.title) Copy", config: source.config),
-            title: "\(source.title) Copy",
-            config: source.config,
-            status: .draft,
-            createdAt: now,
-            updatedAt: now
-        )
-        return try save(copy)
-    }
-
-    public func delete(id: String) throws {
-        let normalizedID = try Self.normalizedRequired(id, fieldName: "job_id")
-        var document = try loadDocument()
-        document.jobs.removeAll { $0.id == normalizedID }
-        try saveDocument(document)
-    }
-
-    @discardableResult
-    public func importConfig(from fileURL: URL) throws -> LoraTrainingJobConfig {
-        let data = try Data(contentsOf: fileURL)
-        return try Self.decoder.decode(LoraTrainingJobConfig.self, from: data)
-    }
-
-    public func exportConfig(_ config: LoraTrainingJobConfig, to fileURL: URL) throws {
-        let data = try Self.encoder.encode(config)
-        try melixHome.writeAtomically(data, to: fileURL)
-    }
-
-    private func loadDocument() throws -> LoraTrainingJobsDocument {
+    private func loadDocumentUnlocked() throws -> LoraTrainingJobsDocument {
         guard FileManager.default.fileExists(atPath: melixHome.loraTrainingJobsFileURL.path) else {
             return LoraTrainingJobsDocument()
         }
@@ -440,7 +491,7 @@ public struct LoraTrainingJobStore: Sendable {
         return try Self.decoder.decode(LoraTrainingJobsDocument.self, from: data)
     }
 
-    private func saveDocument(_ document: LoraTrainingJobsDocument) throws {
+    private func saveDocumentUnlocked(_ document: LoraTrainingJobsDocument) throws {
         let data = try Self.encoder.encode(document)
         try melixHome.writeAtomically(data, to: melixHome.loraTrainingJobsFileURL)
     }

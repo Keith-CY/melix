@@ -2347,6 +2347,7 @@ public final class RuntimeViewModel {
     private var modelOperationAllowsSelectedLoraFallback = false
     private var evaluationPromptEditingFrozenRevisionAsDraft = false
     private var activeDesktopLoraTrainingJobID = ""
+    private var selectedLoraTrainingJobLoadedForEditing = false
     private var lastAppliedGatewaySessionID = ""
     private var lastAppliedGatewayPrimaryKey = ""
     private var gatewayApplyTask: Task<Void, Never>?
@@ -3014,14 +3015,36 @@ public final class RuntimeViewModel {
         do {
             let jobs = try loraTrainingJobStore.list()
             loraTrainingJobs = jobs
+            let previousSelectedJobID = selectedLoraTrainingJobID
             if selectedLoraTrainingJobID.isEmpty
                 || jobs.contains(where: { $0.id == selectedLoraTrainingJobID }) == false
             {
                 selectedLoraTrainingJobID = jobs.first?.id ?? ""
             }
+            if selectedLoraTrainingJobID.isEmpty || selectedLoraTrainingJobID != previousSelectedJobID {
+                selectedLoraTrainingJobLoadedForEditing = false
+            }
         } catch {
             recordLoraTrainingJobPersistFailure("LoRA training jobs load failed: \(error)")
         }
+    }
+
+    public func selectLoraTrainingJob(id: String) {
+        let normalizedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if selectedLoraTrainingJobID != normalizedID {
+            selectedLoraTrainingJobID = normalizedID
+            selectedLoraTrainingJobLoadedForEditing = false
+        }
+        notifyStateChanged()
+    }
+
+    public func selectQuantizationProfile(_ profileID: String) {
+        let normalizedProfileID = profileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard availableQuantizationProfileIDs.contains(normalizedProfileID) else {
+            return
+        }
+        selectedQuantizationProfileID = normalizedProfileID
+        notifyStateChanged()
     }
 
     public func saveCurrentLoraTrainingJobDraft() {
@@ -3029,7 +3052,10 @@ public final class RuntimeViewModel {
             let config = currentLoraTrainingConfig(modelID: resolvedLoraModelID())
             let title = currentLoraTrainingJobTitle(config: config)
             let saved: LoraTrainingJobRecord
-            if let selected = selectedLoraTrainingJob, selected.status.allowsMutation {
+            if selectedLoraTrainingJobLoadedForEditing,
+               let selected = selectedLoraTrainingJob,
+               selected.status.allowsMutation
+            {
                 var updated = selected
                 if updated.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     updated.title = title
@@ -3050,6 +3076,7 @@ public final class RuntimeViewModel {
             }
             reloadLoraTrainingJobs()
             selectedLoraTrainingJobID = saved.id
+            selectedLoraTrainingJobLoadedForEditing = true
             notifyStateChanged()
         } catch {
             recordLoraTrainingJobPersistFailure("LoRA training job save failed: \(error)")
@@ -3068,6 +3095,8 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
+        selectedLoraTrainingJobID = job.id
+        selectedLoraTrainingJobLoadedForEditing = true
         applyLoraTrainingConfig(job.config)
         notifyStateChanged()
     }
@@ -3082,6 +3111,7 @@ public final class RuntimeViewModel {
             let copy = try loraTrainingJobStore.duplicate(id: job.id)
             reloadLoraTrainingJobs()
             selectedLoraTrainingJobID = copy.id
+            selectedLoraTrainingJobLoadedForEditing = true
             applyLoraTrainingConfig(copy.config)
             notifyStateChanged()
         } catch {
@@ -3102,6 +3132,7 @@ public final class RuntimeViewModel {
             return
         }
         selectedLoraTrainingJobID = job.id
+        selectedLoraTrainingJobLoadedForEditing = true
         applyLoraTrainingConfig(job.config)
         await trainPrimaryModel()
     }
@@ -3168,6 +3199,7 @@ public final class RuntimeViewModel {
             )
             reloadLoraTrainingJobs()
             selectedLoraTrainingJobID = saved.id
+            selectedLoraTrainingJobLoadedForEditing = true
             notifyStateChanged()
         } catch {
             recordLoraTrainingJobPersistFailure("LoRA training config import failed: \(error)")
@@ -10525,7 +10557,10 @@ public final class RuntimeViewModel {
             let config = currentLoraTrainingConfig(modelID: modelID)
             let now = Date()
             var record: LoraTrainingJobRecord
-            if let selected = selectedLoraTrainingJob, selected.status != .running {
+            if selectedLoraTrainingJobLoadedForEditing,
+               let selected = selectedLoraTrainingJob,
+               selected.status != .running
+            {
                 record = selected
                 if record.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     record.title = currentLoraTrainingJobTitle(config: config)
@@ -10554,6 +10589,7 @@ public final class RuntimeViewModel {
             reloadLoraTrainingJobs()
             selectedLoraTrainingJobID = saved.id
             activeDesktopLoraTrainingJobID = saved.id
+            selectedLoraTrainingJobLoadedForEditing = true
             return saved
         } catch {
             recordLoraTrainingJobPersistFailure("LoRA training job launch persistence failed: \(error)")

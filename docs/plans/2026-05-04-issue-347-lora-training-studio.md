@@ -53,11 +53,24 @@ forward into existing activation and post-training surfaces.
   after loading the saved config into the form. Activation, publish, quantize,
   convert, benchmark, and evaluation follow-up actions select or route existing
   UI/command surfaces instead of inventing new execution paths.
+- Treat list selection as inspection-only until the operator explicitly loads,
+  duplicates, reruns, imports, or saves a draft from the current form. This
+  prevents a startup-selected saved job from being overwritten by a default form.
+- Decode saved job records lossily within a supported jobs document so one
+  future-version or corrupt record does not prevent every other saved job from
+  loading.
+- Serialize LoRA job store read-modify-write operations at the store boundary so
+  concurrent desktop actions cannot lose updates in the shared JSON file.
 
 ## Performance And Metrics
 
 - Persistence is a single small JSON file loaded at view-model startup and
   rewritten atomically after desktop job mutations.
+- Store mutation determinism is measured by concurrent draft creation retaining
+  every saved job id and config.
+- UI selection determinism is measured by saved-job list selection and
+  quantization-profile selection both notifying state changes, while selection
+  alone cannot overwrite a saved job that has not been explicitly loaded.
 - Success metrics:
   - 100 percent of desktop LoRA training launches create or update a saved job
     record before execution starts.
@@ -101,3 +114,14 @@ forward into existing activation and post-training surfaces.
   - `RuntimeViewModelTests.swift`: 100.00% (637/637)
   - `TestSupport.swift`: 100.00% (85/85)
   - Total: 97.11% (1849/1904)
+- Review follow-up verification:
+  - `swift test --enable-code-coverage --filter LoraTrainingJobStoreTests`
+    passed 10 tests.
+  - `swift test --package-path apps/macos-menubar --scratch-path
+    /private/tmp/melix-menubar-review-build --enable-code-coverage --filter
+    "lora|Lora|LoRA|quantizeActionStoresTypedQuantizationSummary|downloadsSectionExposesSavedLoRAPackagingTarget"`
+    passed 37 tests.
+  - `git diff --check` passed.
+- Review follow-up changed-line coverage:
+  - Root LoRA store scope: 100.00% (140/140).
+  - macOS menubar review scope: 98.29% (115/117).
