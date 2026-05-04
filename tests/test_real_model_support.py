@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 from pathlib import Path
 
@@ -238,6 +239,40 @@ def test_real_small_model_source_can_fallback_to_last_hf_cache_snapshot(tmp_path
     assert source.local_model_path == str(latest_snapshot.resolve())
     assert source.source_resolution_mode == "hf_cache_snapshot"
     assert "refs/main was unavailable" in source.warnings[0]
+
+
+def test_real_small_model_source_fallback_tracks_latest_snapshot_without_sorting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    for snapshot_name in ("bbb", "zzz", "aaa", "mno"):
+        (snapshots_root / snapshot_name).mkdir(parents=True)
+    (snapshots_root / "not-a-directory").write_text("ignored\n", encoding="utf-8")
+
+    def fail_sorted(*args, **kwargs):  # pragma: no cover - regression sentinel
+        raise AssertionError("HF cache fallback should not sort every snapshot name")
+
+    monkeypatch.setattr(builtins, "sorted", fail_sorted)
+
+    source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert source.live is False
+    assert source.local_model_path == str((snapshots_root / "zzz").resolve())
+    assert source.source_resolution_mode == "hf_cache_snapshot"
+    assert "using lexicographically last snapshot directory" in source.warnings[0]
 
 
 def test_runtime_model_preflight_marks_real_local_weights(tmp_path: Path) -> None:
