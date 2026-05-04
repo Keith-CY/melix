@@ -221,6 +221,56 @@ def test_generate_streams_reasoning_tool_and_content_channels_from_raw_text() ->
     assert completed.parser_metrics["duplicate_tool_delta_count"] == "0"
 
 
+def test_generate_stream_preserves_explicit_tool_parser_with_structured_json_mode() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=StructuredStreamingBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-structured-tools"),
+            model_handle=load_response.model_handle,
+            ext={
+                "melix.reasoning.mode": "enabled",
+                "melix.structured_output.mode": "json_schema",
+                "melix.tool_parser.mode": "qwen",
+            },
+            reasoning=common_pb2.ReasoningConfig(
+                enabled=True,
+                mode_source="request_enable_thinking",
+                effort="low",
+            ),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Use a tool")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    tool_call = next(event.tool_call_delta for event in events if event.HasField("tool_call_delta"))
+    token = next(event.token_delta for event in events if event.HasField("token_delta"))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert tool_call.tool_name == "search"
+    assert tool_call.arguments_json_fragment == '{"q":"one"}'
+    assert token.text == "visible"
+    assert completed.assistant_text == "visible"
+    assert completed.parser_metrics["stream_parser_request_context_mode"] == "tool_parser"
+    assert completed.parser_metrics["tool_call_markup_leak_count"] == "0"
+    assert completed.parser_metrics["reasoning_leak_count"] == "0"
+
+
 def test_generate_stream_flushes_short_visible_prefix_before_marker_hold() -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=ShortPrefixStreamingBackend()),

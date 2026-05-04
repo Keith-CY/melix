@@ -12,6 +12,8 @@ Make shipped text streaming deterministic, request-scoped, reasoning-aware, tool
 - suppress incompatible tool parsing for JSON-only structured-output requests without explicit tools
 - preserve hidden reasoning continuity for session follow-up turns without exposing hidden channels in operator-visible output
 - expose stream-pipeline metrics and regression evidence
+- keep operator chat presentation responsive for bursty stream deltas and make
+  long Swift CI runs report their current test stage
 
 Out of scope:
 
@@ -62,6 +64,13 @@ Out of scope:
 - no malformed or duplicated streamed tool-call payloads in repository-owned fixtures
 - short visible streaming replies are not swallowed by marker-prefix buffering
 - JSON-only structured-output streams are not contaminated by hidden reasoning prefixes or generic tool parsing
+- structured-output streams with an explicit tool parser keep request-local
+  tool-call assembly enabled instead of falling through the JSON-only display
+  cleanup path
+- macOS operator chat surfaces the first bursty visible delta promptly while
+  preserving final transcript fidelity
+- Swift CI emits package/specifier stage start and completion lines during the
+  long `make swift-test` run
 - repeated session turns preserve supported hidden reasoning continuity while public output remains sanitized
 - turn-boundary stop sequences are resolved before decode from request stop lists,
   tokenizer EOS metadata, and model/registry stop overrides

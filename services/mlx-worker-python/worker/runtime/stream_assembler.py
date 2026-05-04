@@ -89,14 +89,14 @@ class RequestStreamAssembler:
         if not delta:
             return []
 
-        if self._is_json_structured_output:
+        if self._is_json_only_structured_output:
             return self._accept_json_structured_output(delta)
 
         self._buffer += delta
         return self._drain_buffer(final=False)
 
     def completed(self) -> AssemblyCompletion:
-        if self._is_json_structured_output:
+        if self._is_json_only_structured_output:
             if not self._json_started:
                 self._metrics["reasoning_leak_count"] += int("<think" in self._buffer)
                 self._buffer = ""
@@ -114,15 +114,19 @@ class RequestStreamAssembler:
         return self._structured_output_mode in {"json_object", "json_schema"}
 
     @property
+    def _is_json_only_structured_output(self) -> bool:
+        return self._is_json_structured_output and not self._tool_parser_mode
+
+    @property
     def _tool_parsing_enabled(self) -> bool:
-        return bool(self._tool_parser_mode) and not self._is_json_structured_output
+        return bool(self._tool_parser_mode)
 
     @property
     def _request_context_mode(self) -> str:
-        if self._is_json_structured_output:
-            return "structured_json"
         if self._tool_parsing_enabled:
             return "tool_parser"
+        if self._is_json_structured_output:
+            return "structured_json"
         if self._reasoning_enabled:
             return "reasoning_only"
         return "plain"

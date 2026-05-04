@@ -27,11 +27,14 @@ def find_named_workflow_step(workflow: str, name: str) -> re.Match[str]:
 def find_run_workflow_step(workflow: str, name: str, command: str) -> re.Match[str]:
     match = re.search(
         rf"^[ \t]*-[ \t]+name:[ \t]+{re.escape(name)}[ \t]*\n"
-        rf"^[ \t]*run:[ \t]+{re.escape(command)}[ \t]*$",
+        r"(?P<body>.*?)(?=^[ \t]*-[ \t]+name:|\Z)",
         workflow,
-        flags=re.MULTILINE,
+        flags=re.MULTILINE | re.DOTALL,
     )
     assert match is not None, f"Workflow run step not found: {name}"
+    step = match.group(0)
+    assert re.search(r"^[ \t]*run:", step, flags=re.MULTILINE), f"Workflow run step missing run: {name}"
+    assert command in step, f"Workflow run step missing command: {name}"
     return match
 
 
@@ -218,9 +221,28 @@ def test_package_workflow_builds_required_swift_products_before_packaging_app() 
 
     previous_step_end = 0
     for build_step in build_steps:
-        assert previous_step_end < build_step.start()
+        assert previous_step_end <= build_step.start()
         assert build_step.end() < package_step.start()
+        assert "scripts/ci_progress.sh" in build_step.group(0)
         previous_step_end = build_step.end()
+
+
+def test_package_workflow_wraps_long_packaging_steps_with_ci_progress() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    progress_labels = [
+        "Package app bootstrap",
+        "Package app CLI build",
+        "Package app Swift text worker build",
+        "Package app menubar build",
+        "Package app smoke checks",
+        "Package app Python runtime sync",
+        "Package app build metadata",
+        "Package app bundle assembly",
+    ]
+
+    for label in progress_labels:
+        assert f'bash scripts/ci_progress.sh "{label}"' in workflow
 
 
 def test_main_resolves_default_build_outputs_and_prints_app_path(

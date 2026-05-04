@@ -115,6 +115,9 @@ For JSON-only requests without explicit tools:
 4. Confirm completed assistant text starts at the first JSON delimiter and has no reasoning preamble.
 
 If an explicit tool parser was requested, the parser must remain enabled.
+Completed stream metrics should report `stream_parser_request_context_mode` as
+`tool_parser`, and `tool_call_markup_leak_count` should stay `0`, even when
+`melix.structured_output.mode` is `json_object` or `json_schema`.
 
 ## Continuity Checks
 

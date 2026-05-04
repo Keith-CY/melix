@@ -10975,6 +10975,9 @@ public final class RuntimeViewModel {
                 )
             )
         }
+        if chatPresentationTask == nil {
+            _ = flushNextChatPresentationChunk(forceComplete: false)
+        }
         startChatPresentationLoopIfNeeded()
     }
 
