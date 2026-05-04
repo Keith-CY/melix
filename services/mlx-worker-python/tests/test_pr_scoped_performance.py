@@ -79,6 +79,16 @@ def benchmark_scope() -> dict[str, object]:
     )
 
 
+def test_scope_report_selects_stream_assembler_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/stream_assembler.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "stream-assembler-parser-mode-cache"
+
+
 def test_scope_report_selects_only_matching_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -666,6 +676,7 @@ def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "benchmark-evaluation-report-running-aggregates",
+        "stream-assembler-parser-mode-cache",
         "benchmark-export-run-scan-single-pass",
         "benchmark-queue-decoded-record-cache",
         "benchmark-store-matrix-streaming",
