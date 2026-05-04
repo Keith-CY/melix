@@ -1297,7 +1297,7 @@ struct DesktopToolsTabView: View {
                                 "Quant Profile",
                                 selection: Binding(
                                     get: { viewModel.selectedQuantizationProfileID },
-                                    set: { viewModel.selectedQuantizationProfileID = $0 }
+                                    set: { viewModel.selectQuantizationProfile($0) }
                                 )
                             ) {
                                 ForEach(viewModel.availableQuantizationProfileIDs, id: \.self) { profileID in

@@ -7908,6 +7908,58 @@ struct ControlPlaneServiceTests {
         #expect(generated.execution.ext["melix.gateway.completion_batch_size"] == "3")
     }
 
+    @Test("startChat propagates explicit reasoning and template flags before worker dispatch")
+    func startChatPropagatesExplicitReasoningAndTemplateFlagsBeforeWorkerDispatch() async throws {
+        let modelCatalog = ModelCatalog()
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-reasoning-template"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-reasoning-template",
+                finishReason: "stop",
+                assistant: "done",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-reasoning-template" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "Use explicit prompt policy.")],
+                enableThinking: true,
+                reasoningEffort: " high ",
+                chatTemplateKwargs: ChatTemplateRequestConfiguration(values: [
+                    "enable_thinking": .bool(false),
+                    "chat_template": .string("operator-template"),
+                ])
+            )
+        )
+
+        _ = try await Array(execution.stream)
+        let generated = try #require(await textClient.lastGenerateRequest)
+
+        #expect(generated.execution.reasoning.enabled)
+        #expect(generated.execution.reasoning.mode == "enabled")
+        #expect(generated.execution.reasoning.modeSource == "request")
+        #expect(generated.execution.reasoning.effort == "high")
+        #expect(generated.execution.ext["melix.reasoning.mode_source"] == "request")
+        #expect(generated.execution.ext["melix.reasoning.effort"] == "high")
+        #expect(generated.execution.ext["melix.chat_template_kwargs.source"] == "request")
+        #expect(
+            generated.execution.ext["melix.chat_template_kwargs.effective_json"]
+                == "{\"chat_template\":\"operator-template\",\"enable_thinking\":false}"
+        )
+        #expect(generated.execution.scope.reasoningMode == "enabled")
+        #expect(generated.execution.scope.reasoningEffort == "high")
+        #expect(generated.execution.scope.chatTemplateKwargsHash ==
+            generated.execution.ext["melix.cache.fingerprint.chat_template_kwargs"])
+    }
+
     @Test("startChat auto injects MCP tool metadata into worker requests")
     func startChatAutoInjectsMCPToolMetadataIntoWorkerRequests() async throws {
         let modelCatalog = ModelCatalog()

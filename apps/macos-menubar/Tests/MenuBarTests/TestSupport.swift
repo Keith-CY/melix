@@ -271,6 +271,123 @@ final class FakeEvaluationPromptStore: EvaluationPromptStoring, @unchecked Senda
     }
 }
 
+final class FakeLoraTrainingJobStore: LoraTrainingJobStoring, @unchecked Sendable {
+    enum StoreError: Error, Equatable {
+        case list
+        case save
+        case duplicate
+        case delete
+        case importConfig
+        case exportConfig
+    }
+
+    private(set) var savedRecords: [LoraTrainingJobRecord] = []
+    private(set) var deletedIDs: [String] = []
+    private(set) var exportedConfigs: [(config: LoraTrainingJobConfig, path: String)] = []
+    var importedConfig: LoraTrainingJobConfig?
+    var jobs: [LoraTrainingJobRecord]
+    var listError: StoreError?
+    var saveError: StoreError?
+    var duplicateError: StoreError?
+    var deleteError: StoreError?
+    var importError: StoreError?
+    var exportError: StoreError?
+
+    init(jobs: [LoraTrainingJobRecord] = []) {
+        self.jobs = jobs
+    }
+
+    func list() throws -> [LoraTrainingJobRecord] {
+        if let listError {
+            throw listError
+        }
+        return jobs.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    func get(id: String) throws -> LoraTrainingJobRecord? {
+        jobs.first { $0.id == id }
+    }
+
+    @discardableResult
+    func save(_ record: LoraTrainingJobRecord) throws -> LoraTrainingJobRecord {
+        if let saveError {
+            throw saveError
+        }
+        var saved = record
+        saved.updatedAt = Date()
+        savedRecords.append(saved)
+        jobs.removeAll { $0.id == saved.id }
+        jobs.append(saved)
+        return saved
+    }
+
+    @discardableResult
+    func createDraft(title: String, config: LoraTrainingJobConfig) throws -> LoraTrainingJobRecord {
+        if let saveError {
+            throw saveError
+        }
+        let now = Date()
+        let record = LoraTrainingJobRecord(
+            id: "desktop-\(jobs.count + 1)",
+            title: title,
+            config: config,
+            status: .draft,
+            createdAt: now,
+            updatedAt: now
+        )
+        savedRecords.append(record)
+        jobs.append(record)
+        return record
+    }
+
+    @discardableResult
+    func duplicate(id: String) throws -> LoraTrainingJobRecord {
+        if let duplicateError {
+            throw duplicateError
+        }
+        guard let source = jobs.first(where: { $0.id == id }) else {
+            throw StoreError.duplicate
+        }
+        let now = Date()
+        let copy = LoraTrainingJobRecord(
+            id: "\(source.id)-copy",
+            title: "\(source.title) Copy",
+            config: source.config,
+            status: .draft,
+            createdAt: now,
+            updatedAt: now
+        )
+        jobs.append(copy)
+        return copy
+    }
+
+    func delete(id: String) throws {
+        if let deleteError {
+            throw deleteError
+        }
+        deletedIDs.append(id)
+        jobs.removeAll { $0.id == id }
+    }
+
+    func importConfig(from fileURL: URL) throws -> LoraTrainingJobConfig {
+        if let importError {
+            throw importError
+        }
+        if let importedConfig {
+            return importedConfig
+        }
+        let data = try Data(contentsOf: fileURL)
+        return try JSONDecoder().decode(LoraTrainingJobConfig.self, from: data)
+    }
+
+    func exportConfig(_ config: LoraTrainingJobConfig, to fileURL: URL) throws {
+        if let exportError {
+            throw exportError
+        }
+        exportedConfigs.append((config: config, path: fileURL.path))
+    }
+}
+
 actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     struct ScheduledChatEvent: Equatable, Sendable {
         let delay: Duration
