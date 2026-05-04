@@ -906,21 +906,37 @@ def _is_quantized_base_model(source_model: common_pb2.ModelSpec) -> bool:
 
 
 def _int_value(raw_value: str, *, default: int, minimum: int, field_name: str) -> int:
-    value = default if not raw_value else int(raw_value)
+    try:
+        value = default if not raw_value else int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ModelOperationError(
+            code="invalid_argument",
+            message=f"{field_name} must be an integer.",
+            details={"field": field_name, "raw_value": str(raw_value)},
+        ) from exc
     if value < minimum:
         raise ModelOperationError(
             code="invalid_argument",
             message=f"{field_name} must be at least {minimum}.",
+            details={"field": field_name, "minimum": str(minimum)},
         )
     return value
 
 
 def _float_value(raw_value: str, *, default: float, minimum: float, field_name: str) -> float:
-    value = default if not raw_value else float(raw_value)
+    try:
+        value = default if not raw_value else float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ModelOperationError(
+            code="invalid_argument",
+            message=f"{field_name} must be a number.",
+            details={"field": field_name, "raw_value": str(raw_value)},
+        ) from exc
     if value < minimum:
         raise ModelOperationError(
             code="invalid_argument",
             message=f"{field_name} must be at least {minimum}.",
+            details={"field": field_name, "minimum": str(minimum)},
         )
     return value
 

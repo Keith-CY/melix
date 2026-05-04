@@ -367,24 +367,59 @@ def _alignment_manifest_payload(
     }
 
 
-def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float]:
+def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
     scores: list[float] = []
+    candidate_group_margins: list[float] = []
+    candidate_group_variances: list[float] = []
     for sample in samples:
         if "reward_score" in sample:
             scores.append(float(sample["reward_score"]))
         candidates = sample.get("candidates")
+        candidate_scores: list[float] = []
         if isinstance(candidates, list):
             for candidate in candidates:
                 if isinstance(candidate, dict) and "score" in candidate:
-                    scores.append(float(candidate["score"]))
+                    candidate_scores.append(float(candidate["score"]))
+        if candidate_scores:
+            scores.extend(candidate_scores)
+        if len(candidate_scores) >= 2:
+            ordered_candidate_scores = sorted(candidate_scores)
+            group_mean = sum(candidate_scores) / len(candidate_scores)
+            candidate_group_margins.append(
+                ordered_candidate_scores[-1] - ordered_candidate_scores[0]
+            )
+            candidate_group_variances.append(
+                sum((score - group_mean) ** 2 for score in candidate_scores)
+                / len(candidate_scores)
+            )
     if not scores:
         return {}
     ordered = sorted(scores)
-    return {
+    summary: dict[str, float | int] = {
         "reward_mean": sum(ordered) / len(ordered),
         "reward_p50": _percentile_value(ordered, 0.5),
         "reward_p95": _percentile_value(ordered, 0.95),
     }
+    if candidate_group_margins:
+        ordered_margins = sorted(candidate_group_margins)
+        summary.update(
+            {
+                "candidate_group_count": len(candidate_group_margins),
+                "candidate_group_reward_margin_mean": sum(candidate_group_margins)
+                / len(candidate_group_margins),
+                "candidate_group_reward_margin_p50": _percentile_value(
+                    ordered_margins,
+                    0.5,
+                ),
+                "candidate_group_reward_margin_p95": _percentile_value(
+                    ordered_margins,
+                    0.95,
+                ),
+                "candidate_group_reward_variance_mean": sum(candidate_group_variances)
+                / len(candidate_group_variances),
+            }
+        )
+    return summary
 
 
 def _percentile_value(ordered_values: list[float], percentile: float) -> float:

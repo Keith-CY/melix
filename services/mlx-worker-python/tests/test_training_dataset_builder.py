@@ -373,6 +373,7 @@ def test_load_training_dataset_package_supports_alignment_and_calibration_contra
         ("prompt_candidate", {"prompt": "Only one.", "candidates": [{"text": "A"}]}),
         ("prompt_candidate", {"prompt": "Bad score.", "candidates": [{"text": "A", "score": "bad"}, {"text": "B"}]}),
         ("prompt_candidate", {"prompt": "Bad candidate.", "candidates": [1, {"text": "B"}]}),
+        ("prompt_candidate", {"prompt": "Null candidate.", "candidates": [None, {"text": "B"}]}),
         ("prompt_candidate", {"prompt": "Blank candidate.", "candidates": ["", {"text": "B"}]}),
         ("reward_scored", {"prompt": "Missing score.", "response": "A"}),
         ("reward_scored", {"prompt": "Bad score.", "response": "A", "reward_score": "bad"}),
@@ -408,6 +409,35 @@ def test_load_training_dataset_package_rejects_incomplete_alignment_and_calibrat
         load_training_dataset_package(str(package_path))
 
     assert exc.value.code == "invalid_dataset_package"
+
+
+def test_load_training_dataset_package_reports_null_prompt_candidate(tmp_path: Path) -> None:
+    package_path = tmp_path / "invalid-null-prompt-candidate-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "invalid-null-prompt-candidate-package",
+                "format": "prompt_candidate",
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        json.dumps({"prompt": "Choose.", "candidates": [None, {"text": "B"}]}) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        load_training_dataset_package(str(package_path))
+
+    assert exc.value.code == "invalid_dataset_package"
+    assert exc.value.message == "prompt_candidate candidates cannot be null."
+    assert exc.value.details["candidate_index"] == "0"
 
 
 @pytest.mark.parametrize(

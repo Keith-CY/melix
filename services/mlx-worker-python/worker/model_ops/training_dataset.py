@@ -770,7 +770,13 @@ def _normalize_sample(
         for candidate_index, candidate in enumerate(candidates):
             candidate_text = ""
             candidate_payload: dict[str, Any] = {}
-            if isinstance(candidate, str):
+            if candidate is None:
+                raise ModelOperationError(
+                    code="invalid_dataset_package",
+                    message="prompt_candidate candidates cannot be null.",
+                    details={"candidate_index": str(candidate_index)},
+                )
+            elif isinstance(candidate, str):
                 candidate_text = candidate.strip()
             elif isinstance(candidate, dict):
                 candidate_text = str(candidate.get("text", "")).strip()

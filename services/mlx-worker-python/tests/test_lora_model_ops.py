@@ -919,11 +919,16 @@ def test_train_lora_supports_rl_alignment_mode_contracts(
     assert alignment_payload["alignment_algorithm"] == training_mode
     assert alignment_payload["dataset_contract"] == expected_contract
     assert alignment_payload["candidate_trace_path"].endswith("train_lora.candidates.jsonl")
+    metrics = alignment_payload["metrics"]
     if training_mode == "grpo":
         assert alignment_payload["grpo_candidate_count"] == 2
         assert alignment_payload["reference_model_path"] == "/tmp/reference-model"
+        assert metrics["candidate_group_count"] == 1
+        assert metrics["candidate_group_reward_margin_mean"] == pytest.approx(0.3)
+        assert metrics["candidate_group_reward_variance_mean"] == pytest.approx(0.0225)
     else:
         assert alignment_payload["reward_model_manifest_path"] == "/tmp/reward-model/manifest.json"
+        assert metrics["reward_mean"] == pytest.approx(0.9)
     assert runner.last_train_request is not None
     assert runner.last_train_request.config.alignment is not None
     assert runner.last_train_request.config.alignment.alignment_algorithm == training_mode
@@ -1118,6 +1123,42 @@ def test_train_lora_rejects_grpo_without_candidate_count(tmp_path: Path) -> None
     assert events[-1].failed.error.code == "invalid_alignment_config"
     assert events[-1].failed.error.details["training_mode"] == "grpo"
     assert events[-1].failed.error.details["missing_field"] == "grpo_candidate_count"
+
+
+def test_train_lora_rejects_grpo_with_non_integer_candidate_count(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-grpo-count-type",
+        format="prompt_candidate",
+        samples=[
+            {
+                "prompt": "Draft two options.",
+                "candidates": [{"text": "A."}, {"text": "B."}],
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-grpo-count-type"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "grpo",
+                    "adapter_name": "melix-invalid-grpo-count-type",
+                    "dataset_uri": str(dataset_dir),
+                    "grpo_candidate_count": "four",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_argument"
+    assert events[-1].failed.error.message == "grpo_candidate_count must be an integer."
+    assert events[-1].failed.error.details["field"] == "grpo_candidate_count"
+    assert events[-1].failed.error.details["raw_value"] == "four"
 
 
 def test_train_lora_rejects_rlhf_without_reward_scored_dataset(tmp_path: Path) -> None:
@@ -1899,9 +1940,19 @@ def test_training_config_helper_resolution_paths_and_limits() -> None:
         training_config_module._int_value("0", default=1, minimum=1, field_name="rank")
     assert int_error.value.code == "invalid_argument"
 
+    with pytest.raises(Exception) as int_parse_error:
+        training_config_module._int_value("two", default=1, minimum=1, field_name="rank")
+    assert int_parse_error.value.code == "invalid_argument"
+    assert int_parse_error.value.details["field"] == "rank"
+
     with pytest.raises(Exception) as float_error:
         training_config_module._float_value("-0.5", default=0.0, minimum=0.0, field_name="dropout")
     assert float_error.value.code == "invalid_argument"
+
+    with pytest.raises(Exception) as float_parse_error:
+        training_config_module._float_value("wide", default=0.0, minimum=0.0, field_name="dropout")
+    assert float_parse_error.value.code == "invalid_argument"
+    assert float_parse_error.value.details["field"] == "dropout"
 
 
 def test_quantized_lora_target_safety_uses_exact_leaf_names() -> None:
