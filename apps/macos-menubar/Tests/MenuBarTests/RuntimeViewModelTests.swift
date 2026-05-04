@@ -5908,7 +5908,13 @@ struct RuntimeViewModelTests {
         viewModel.beginServerCreation(kind: .localServer)
 
         #expect(viewModel.isRefreshingServerModelOptions)
-        try await Task.sleep(for: .milliseconds(80))
+        try await waitForRuntimeViewModelCondition("expected registry-backed server model options to refresh") {
+            viewModel.isRefreshingServerModelOptions == false
+                && viewModel.serverModelOptions.map(\.modelID) == [
+                    "unsloth/gemma-4-E4B-it-MLX-8bit",
+                ]
+                && viewModel.newLocalServerModelID == "unsloth/gemma-4-E4B-it-MLX-8bit"
+        }
 
         #expect(viewModel.isRefreshingServerModelOptions == false)
         #expect(viewModel.serverModelOptions.map(\.modelID) == [
