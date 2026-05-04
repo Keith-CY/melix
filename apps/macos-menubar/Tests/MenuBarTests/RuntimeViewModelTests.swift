@@ -9751,13 +9751,14 @@ struct RuntimeViewModelTests {
     @MainActor
     func chatPromptSmoothsBurstyDeltasWhilePreservingFinalTranscriptFidelity() async throws {
         let client = FakeControlPlaneXPCClient()
+        let assistantText = String(repeating: "Assistant response chunk. ", count: 80)
         await client.configureScheduledChatEvents([
             .init(delay: .zero, event: .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0)),
             .init(delay: .zero, event: .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5)),
-            .init(delay: .zero, event: .tokenDelta("Assistant response")),
-            .init(delay: .milliseconds(80), event: .completed(
+            .init(delay: .zero, event: .tokenDelta(assistantText)),
+            .init(delay: .seconds(3), event: .completed(
                 finishReason: "stop",
-                assistantText: "Assistant response",
+                assistantText: assistantText,
                 reasoningText: ""
             )),
         ])
@@ -9774,20 +9775,20 @@ struct RuntimeViewModelTests {
 
         try await waitForRuntimeViewModelCondition("chat smoothing should present a partial assistant row") {
             viewModel.chatTranscript.contains { entry in
-                entry.kind == .assistant && entry.body.isEmpty == false && entry.body != "Assistant response"
+                entry.kind == .assistant && entry.body.isEmpty == false && entry.body != assistantText
             }
         }
 
         let partialAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
         #expect(partialAssistantEntry.body.isEmpty == false)
-        #expect(partialAssistantEntry.body != "Assistant response")
+        #expect(partialAssistantEntry.body != assistantText)
         #expect(viewModel.isChatStreaming)
 
         await submitTask.value
 
         let finalAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
         let metricsSnapshot = await metrics.snapshot()
-        #expect(finalAssistantEntry.body == "Assistant response")
+        #expect(finalAssistantEntry.body == assistantText)
         #expect(metricsSnapshot["menu.chat_presentation_lag_ms"] != nil)
         #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) > 1)
     }
