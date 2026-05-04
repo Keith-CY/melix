@@ -157,14 +157,14 @@ jobs:
           python-version: "3.12"
 
       - name: Download scope artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: pr-scoped-performance-scope
           path: artifacts/scope
 
       - name: Download probe artifacts
         if: needs.scope.outputs.selected_count != '0'
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: pr-scoped-performance-probe-*
           path: artifacts/probes
