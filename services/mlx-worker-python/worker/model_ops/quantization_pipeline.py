@@ -182,11 +182,16 @@ class OQQuantizationPipeline:
         artifact_bytes: int,
         smoke_test_passed: bool,
     ) -> dict[str, Any]:
+        ext = dict(request.ext)
+        quantization_mode = ext.get("quantization_mode", "ptq").strip().lower() or "ptq"
+        source_artifact_kind = ext.get("source_artifact_kind", "base_model").strip() or "base_model"
         payload = {
             "schema_version": _BUNDLE_SCHEMA_VERSION,
             "artifact_kind": "quantized_model_bundle",
             "job_id": job_id,
             "operation": "quantize",
+            "quantization_mode": quantization_mode,
+            "source_artifact_kind": source_artifact_kind,
             "source_model": request.source_model,
             "source_model_spec": {
                 "model_id": source_model.model_id,
@@ -212,11 +217,16 @@ class OQQuantizationPipeline:
                 "smoke_test_requested": request.run_smoke_test,
                 "smoke_test_passed": smoke_test_passed,
             },
+            "release_gate": {
+                "quality_delta": _parse_optional_float(ext.get("quality_delta", "")),
+                "latency_delta": _parse_optional_float(ext.get("latency_delta", "")),
+                "local_inference_smoke_result": ext.get("local_inference_smoke_result", ""),
+            },
             "protected_scope": protected_scope_for_request(
                 request,
                 source_model_spec=source_model,
             ),
-            "ext": dict(request.ext),
+            "ext": ext,
         }
         if hybrid_layout is not None:
             payload["hybrid_layout"] = hybrid_layout
@@ -251,3 +261,13 @@ class OQQuantizationPipeline:
             encoded = OQQuantizationPipeline._encode_manifest(payload)
         path.write_bytes(encoded)
         return len(encoded)
+
+
+def _parse_optional_float(raw: str) -> float | None:
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
