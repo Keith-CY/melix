@@ -77,7 +77,7 @@ swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'Ru
 python3 scripts/swift_changed_line_coverage.py \
   --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests \
   --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata \
-  Sources/MelixCLICore/LoraTrainingJobStore.swift \
+  --diff-from origin/main \
   apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift \
   apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift \
   apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift \
@@ -86,6 +86,14 @@ python3 scripts/swift_changed_line_coverage.py \
 
 Expected changed-line coverage target: at least 95 percent for the changed
 Swift scope.
+
+## Implementation Evidence
+
+- Menubar coverage run after rebase:
+  `424 tests` passed.
+- Menubar changed-line coverage:
+  `99.51% (409/411)`.
+- `git diff --check`: passed.
 
 ## Remaining Issue 365 Gaps
 

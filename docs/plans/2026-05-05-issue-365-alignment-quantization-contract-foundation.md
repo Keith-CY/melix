@@ -100,32 +100,38 @@ Success metrics:
 Targeted commands:
 
 ```bash
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_quantization_pipeline.py
-swift test --filter MelixCLIParserTests
-swift test --filter MelixCLIRunnerTests
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_quantization_pipeline.py services/mlx-worker-python/tests/test_maintenance_service.py
+swift test --enable-code-coverage --filter 'MelixCLIParserTests|MelixCLIRunnerTests|LoraTrainingJobStoreTests'
 git diff --check
 ```
 
 Coverage and metrics:
 
 ```bash
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_quantization_pipeline.py
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage json -o /tmp/issue365-contract-coverage.json
-python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-contract-coverage.json services/mlx-worker-python/worker/model_ops/training_config.py services/mlx-worker-python/worker/model_ops/training_dataset.py services/mlx-worker-python/worker/model_ops/lora_training_pipeline.py services/mlx-worker-python/worker/model_ops/quantization_pipeline.py services/mlx-worker-python/worker/engine/maintenance_core.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_quantization_pipeline.py services/mlx-worker-python/tests/test_maintenance_service.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage json -o /tmp/issue365-review-post-rebase-coverage.json
+python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-review-post-rebase-coverage.json --diff-from origin/main services/mlx-worker-python/worker/model_ops/training_config.py services/mlx-worker-python/worker/model_ops/training_dataset.py services/mlx-worker-python/worker/model_ops/lora_training_pipeline.py services/mlx-worker-python/worker/model_ops/quantization_pipeline.py services/mlx-worker-python/worker/engine/maintenance_core.py
+python3 scripts/swift_changed_line_coverage.py \
+  --binary .build/arm64-apple-macosx/debug/melixPackageTests.xctest/Contents/MacOS/melixPackageTests \
+  --profdata .build/arm64-apple-macosx/debug/codecov/default.profdata \
+  --diff-from origin/main \
+  Sources/MelixCLICore/LoraTrainingJobStore.swift \
+  Sources/MelixCLICore/MelixCLI.swift \
+  tests/MelixCLITests/MelixCLIParserTests.swift \
+  tests/MelixCLITests/MelixCLIRunnerTests.swift \
+  tests/MelixCLITests/LoraTrainingJobStoreTests.swift
 ```
 
 ## Implementation Evidence
 
-- Targeted Python regression:
-  `126 passed in 2.93s`.
-- Coverage run:
-  `126 passed in 2.83s`.
+- Targeted Python coverage run after rebase:
+  `295 passed in 10.56s`.
 - Python changed-line coverage:
-  `100.00% (188/188)`.
-- CLI parser tests:
-  `63 tests` passed.
-- CLI runner tests:
-  `147 tests` passed.
+  `100.00% (290/290)`.
+- CLI parser/runner/store coverage run after rebase:
+  `221 tests` passed.
+- CLI changed-line coverage:
+  `96.67% (435/450)`.
 - `git diff --check`: passed.
 
 ## Remaining Issue 365 Gaps
