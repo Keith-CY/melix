@@ -2833,14 +2833,14 @@ struct DesktopTrainingToolSectionView: View {
                     }
 
                     DesktopEditorialField("Training Mode") {
-                        Picker("Training Mode", selection: trainingModeBinding()) {
-                            ForEach(RuntimeLoraTrainingMode.allCases) { mode in
-                                Text(mode.title).tag(mode)
-                            }
+                        ViewThatFits(in: .horizontal) {
+                            trainingModePicker
+                                .pickerStyle(.segmented)
+                                .frame(maxWidth: 640, alignment: .leading)
+                            trainingModePicker
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: 220, alignment: .leading)
                         }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 340, alignment: .leading)
                     }
 
                     DesktopEditorialField("Preset") {
@@ -2851,6 +2851,39 @@ struct DesktopTrainingToolSectionView: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
+                    }
+                }
+            }
+
+            if viewModel.loraTrainingMode.isAlignmentMode {
+                DesktopEditorialFieldGroup(
+                    "Alignment Controls",
+                    detail: "Capture policy-alignment lineage and mode-specific controls for preference or reward-backed runs."
+                ) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        DesktopEditorialField("Reference Model Path") {
+                            TextField("Optional reference model path", text: stringBinding(\.loraReferenceModelPath))
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        if viewModel.loraTrainingMode == .grpo {
+                            DesktopEditorialField("GRPO Candidate Count") {
+                                TextField("Candidates per prompt", text: stringBinding(\.loraGRPOCandidateCount))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if viewModel.loraTrainingMode == .rlhf {
+                            DesktopEditorialField("Reward Model Manifest") {
+                                TextField("Reward model manifest path", text: stringBinding(\.loraRewardModelManifestPath))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        DesktopEditorialField("KL Penalty") {
+                            TextField("Optional KL penalty", text: stringBinding(\.loraKLPenalty))
+                                .textFieldStyle(.roundedBorder)
+                        }
                     }
                 }
             }
@@ -2928,6 +2961,15 @@ struct DesktopTrainingToolSectionView: View {
                 }
             }
         }
+    }
+
+    private var trainingModePicker: some View {
+        Picker("Training Mode", selection: trainingModeBinding()) {
+            ForEach(RuntimeLoraTrainingMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .labelsHidden()
     }
 
     private var advancedParametersContent: some View {

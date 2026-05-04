@@ -1060,6 +1060,9 @@ public enum RuntimeLoraTrainingMode: String, CaseIterable, Identifiable, Sendabl
     case dora = "dora"
     case dpo = "dpo"
     case orpo = "orpo"
+    case cpo = "cpo"
+    case grpo = "grpo"
+    case rlhf = "rlhf"
     case cpt = "cpt"
 
     public var id: String {
@@ -1078,8 +1081,23 @@ public enum RuntimeLoraTrainingMode: String, CaseIterable, Identifiable, Sendabl
             return "DPO"
         case .orpo:
             return "ORPO"
+        case .cpo:
+            return "CPO"
+        case .grpo:
+            return "GRPO"
+        case .rlhf:
+            return "RLHF"
         case .cpt:
             return "CPT"
+        }
+    }
+
+    public var isAlignmentMode: Bool {
+        switch self {
+        case .dpo, .orpo, .cpo, .grpo, .rlhf:
+            return true
+        case .lora, .qlora, .dora, .cpt:
+            return false
         }
     }
 }
@@ -1990,6 +2008,10 @@ public final class RuntimeViewModel {
     public var loraTargetRepo = "melix/adapters/melix-dev-adapter"
     public var loraExperimentGroupID = ""
     public var loraResumeFromManifestPath = ""
+    public var loraGRPOCandidateCount = ""
+    public var loraReferenceModelPath = ""
+    public var loraRewardModelManifestPath = ""
+    public var loraKLPenalty = ""
     public var loraRank = "8"
     public var loraAlpha = "16"
     public var loraDropout = "0.0"
@@ -6414,26 +6436,42 @@ public final class RuntimeViewModel {
         }
         if let cliWorkflowRunner {
             let startedAt = Date()
-            beginLoraWorkflow(.trainLoRA, detail: loraTrainingWorkflowDetail())
-            do {
-                let output = try await cliWorkflowRunner.run(
-                    .loraTrain(
-                        .init(
-                            modelID: modelID,
-                            datasetSourceKind: loraTrainingExt()["dataset_source_kind"] ?? "local_package",
-                            datasetURI: loraTrainingExt()["dataset_uri"] ?? "",
-                            adapterName: loraTrainingExt()["adapter_name"] ?? "melix-dev-adapter",
-                            targetRepo: loraTrainingExt()["target_repo"] ?? "",
-                            trainingMode: loraTrainingExt()["training_mode"] ?? "",
-                            parameters: loraTrainingCLIParameters(),
-                            json: true
-                        )
+            let trainingExt = loraTrainingExt()
+            let command: MelixCLICommand
+            if loraTrainingMode.isAlignmentMode {
+                command = .alignmentTrain(
+                    .init(
+                        modelID: modelID,
+                        datasetSourceKind: trainingExt["dataset_source_kind"] ?? "local_package",
+                        datasetURI: trainingExt["dataset_uri"] ?? "",
+                        adapterName: trainingExt["adapter_name"] ?? "melix-dev-adapter",
+                        targetRepo: trainingExt["target_repo"] ?? "",
+                        algorithm: loraTrainingMode.rawValue,
+                        parameters: alignmentTrainingCLIParameters(),
+                        json: true
                     )
                 )
+            } else {
+                command = .loraTrain(
+                    .init(
+                        modelID: modelID,
+                        datasetSourceKind: trainingExt["dataset_source_kind"] ?? "local_package",
+                        datasetURI: trainingExt["dataset_uri"] ?? "",
+                        adapterName: trainingExt["adapter_name"] ?? "melix-dev-adapter",
+                        targetRepo: trainingExt["target_repo"] ?? "",
+                        trainingMode: trainingExt["training_mode"] ?? "",
+                        parameters: loraTrainingCLIParameters(),
+                        json: true
+                    )
+                )
+            }
+            beginLoraWorkflow(.trainLoRA, detail: loraTrainingWorkflowDetail())
+            do {
+                let output = try await cliWorkflowRunner.run(command)
                 let manifest = try decodeMelixCLIJSON(
                     MelixCLIModelOperationManifestPayload.self,
                     output: output,
-                    command: .loraTrain(.init(modelID: modelID, datasetURI: "", adapterName: "", json: true)),
+                    command: command,
                     surface: cliWorkflowRunner.surface
                 )
                 clearCLIWorkflowFailure()
@@ -10423,6 +10461,10 @@ public final class RuntimeViewModel {
             targetRepo: loraTargetRepo,
             experimentGroupID: loraExperimentGroupID,
             resumeManifestPath: loraResumeFromManifestPath,
+            grpoCandidateCount: loraGRPOCandidateCount,
+            referenceModelPath: loraReferenceModelPath,
+            rewardModelManifestPath: loraRewardModelManifestPath,
+            klPenalty: loraKLPenalty,
             trainingMode: loraTrainingMode.rawValue,
             presetID: selectedLoraTrainingPreset.rawValue,
             activationMode: loraActivationMode.rawValue,
@@ -10474,6 +10516,10 @@ public final class RuntimeViewModel {
         loraTargetRepo = config.targetRepo
         loraExperimentGroupID = config.experimentGroupID
         loraResumeFromManifestPath = config.resumeManifestPath
+        loraGRPOCandidateCount = config.grpoCandidateCount
+        loraReferenceModelPath = config.referenceModelPath
+        loraRewardModelManifestPath = config.rewardModelManifestPath
+        loraKLPenalty = config.klPenalty
         loraRank = config.rank
         loraAlpha = config.alpha
         loraDropout = config.dropout
@@ -10529,6 +10575,13 @@ public final class RuntimeViewModel {
         Self.assignOptional(loraTargetRepo, for: "target_repo", into: &ext)
         Self.assignOptional(loraExperimentGroupID, for: "experiment_group_id", into: &ext)
         Self.assignOptional(loraResumeFromManifestPath, for: "resume_manifest_path", into: &ext)
+        if loraTrainingMode.isAlignmentMode {
+            ext["alignment_algorithm"] = loraTrainingMode.rawValue
+            Self.assignOptional(loraGRPOCandidateCount, for: "grpo_candidate_count", into: &ext)
+            Self.assignOptional(loraReferenceModelPath, for: "reference_model_path", into: &ext)
+            Self.assignOptional(loraRewardModelManifestPath, for: "reward_model_manifest_path", into: &ext)
+            Self.assignOptional(loraKLPenalty, for: "kl_penalty", into: &ext)
+        }
         Self.assignOptional(loraRank, for: "rank", into: &ext)
         Self.assignOptional(loraAlpha, for: "alpha", into: &ext)
         Self.assignOptional(loraDropout, for: "dropout", into: &ext)
@@ -10549,6 +10602,38 @@ public final class RuntimeViewModel {
         let ext = loraTrainingExt()
         return ext.filter { key, _ in
             ["adapter_name", "dataset_source_kind", "dataset_uri", "target_repo", "training_mode"].contains(key) == false
+        }
+    }
+
+    private func alignmentTrainingCLIParameters() -> [String: String] {
+        let allowedKeys: Set<String> = [
+            "preset_id",
+            "experiment_group_id",
+            "rank",
+            "alpha",
+            "dropout",
+            "target_modules",
+            "num_layers",
+            "batch_size",
+            "epochs",
+            "learning_rate",
+            "max_seq_length",
+            "hf_dataset_path",
+            "hf_dataset_name",
+            "hf_dataset_revision",
+            "hf_train_split",
+            "hf_valid_split",
+            "chat_feature",
+            "prompt_feature",
+            "completion_feature",
+            "text_feature",
+            "grpo_candidate_count",
+            "reference_model_path",
+            "reward_model_manifest_path",
+            "kl_penalty",
+        ]
+        return loraTrainingExt().filter { key, _ in
+            allowedKeys.contains(key)
         }
     }
 

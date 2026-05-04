@@ -7758,6 +7758,77 @@ struct RuntimeViewModelTests {
         #expect(audioOnlyViewModel.lastError == "Select a running server before running Evaluation.")
     }
 
+    @Test("desktop alignment training routes CLI backed runs through alignment train")
+    @MainActor
+    func desktopAlignmentTrainingRoutesCLIBackedRunsThroughAlignmentTrain() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            if case .alignmentTrain = command {
+                return .success(
+                    """
+                    {
+                      "operation": "train_alignment",
+                      "job_id": "alignment-job-1",
+                      "source_model": "melix-dev-text",
+                      "output_path": "/tmp/melix-alignment/grpo.adapter.json",
+                      "adapter_name": "aligned-adapter",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+                    }
+                    """
+                )
+            }
+            return .success("{}\n")
+        }
+        let store = FakeLoraTrainingJobStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            cliWorkflowRunner: workflowRunner,
+            loraTrainingJobStore: store
+        )
+
+        await viewModel.start()
+        viewModel.selectedLoraModelID = "melix-dev-text"
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "aligned-adapter"
+        viewModel.loraTargetRepo = "melix/adapters/aligned-adapter"
+        viewModel.loraTrainingMode = .grpo
+        viewModel.loraGRPOCandidateCount = "4"
+        viewModel.loraReferenceModelPath = "/tmp/melix/reference-model"
+        viewModel.loraKLPenalty = "0.02"
+        viewModel.loraRank = "16"
+        viewModel.loraBatchSize = "2"
+
+        await viewModel.trainPrimaryModel()
+
+        let recordedCommands = await workflowRunner.snapshotRecordedCommands()
+        #expect(recordedCommands.contains {
+            if case .loraTrain = $0 { return true }
+            return false
+        } == false)
+        let alignmentOptions = try #require(recordedCommands.compactMap { command -> AlignmentTrainOptions? in
+            if case .alignmentTrain(let options) = command {
+                return options
+            }
+            return nil
+        }.last)
+        #expect(alignmentOptions.modelID == "melix-dev-text")
+        #expect(alignmentOptions.datasetSourceKind == "local_package")
+        #expect(alignmentOptions.datasetURI == "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1")
+        #expect(alignmentOptions.adapterName == "aligned-adapter")
+        #expect(alignmentOptions.targetRepo == "melix/adapters/aligned-adapter")
+        #expect(alignmentOptions.algorithm == "grpo")
+        #expect(alignmentOptions.parameters["grpo_candidate_count"] == "4")
+        #expect(alignmentOptions.parameters["reference_model_path"] == "/tmp/melix/reference-model")
+        #expect(alignmentOptions.parameters["kl_penalty"] == "0.02")
+        #expect(alignmentOptions.parameters["rank"] == "16")
+        #expect(alignmentOptions.parameters["batch_size"] == "2")
+        #expect(alignmentOptions.parameters["training_mode"] == nil)
+        #expect(store.savedRecords.contains { $0.config.trainingMode == "grpo" })
+        #expect(store.savedRecords.contains { $0.config.grpoCandidateCount == "4" })
+    }
+
     @Test("lora training and activation dispatch the configured dataset source hyperparameters and derived alias")
     @MainActor
     func loraTrainingAndActivationDispatchConfiguredPayloads() async throws {
@@ -7847,6 +7918,33 @@ struct RuntimeViewModelTests {
         #expect(activateRequest.ext["activation_mode"] == "adapter_backed_runtime")
     }
 
+    @Test("desktop alignment training forwards alignment ext through the direct control plane")
+    @MainActor
+    func desktopAlignmentTrainingForwardsAlignmentExtThroughDirectControlPlane() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.selectedLoraModelID = "melix-dev-text"
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/reward-scored.v1"
+        viewModel.loraAdapterName = "rlhf-adapter"
+        viewModel.loraTrainingMode = .rlhf
+        viewModel.loraRewardModelManifestPath = "/tmp/melix/reward-model/manifest.json"
+        viewModel.loraReferenceModelPath = "/tmp/melix/reference"
+        viewModel.loraKLPenalty = "0.01"
+
+        await viewModel.trainPrimaryModel()
+
+        let trainRequest = try #require(await client.recordedModelOperationRequests.first(where: { $0.operation == "train_lora" }))
+        #expect(trainRequest.modelID == "melix-dev-text")
+        #expect(trainRequest.ext["training_mode"] == "rlhf")
+        #expect(trainRequest.ext["alignment_algorithm"] == "rlhf")
+        #expect(trainRequest.ext["reward_model_manifest_path"] == "/tmp/melix/reward-model/manifest.json")
+        #expect(trainRequest.ext["reference_model_path"] == "/tmp/melix/reference")
+        #expect(trainRequest.ext["kl_penalty"] == "0.01")
+    }
+
     @Test("lora saved jobs load edit duplicate cancel delete and import export configs")
     @MainActor
     func loraSavedJobsLoadEditDuplicateCancelDeleteAndImportExportConfigs() throws {
@@ -7864,6 +7962,10 @@ struct RuntimeViewModelTests {
         #expect(viewModel.loraTrainingMode == .dora)
         #expect(viewModel.loraActivationMode == .adapterBackedRuntime)
         #expect(viewModel.loraRank == "32")
+        #expect(viewModel.loraGRPOCandidateCount == "4")
+        #expect(viewModel.loraReferenceModelPath == "/tmp/melix/reference-model")
+        #expect(viewModel.loraRewardModelManifestPath == "/tmp/melix/reward-model/manifest.json")
+        #expect(viewModel.loraKLPenalty == "0.02")
         #expect(viewModel.loraGradientCheckpointing)
 
         viewModel.loraRank = "64"
@@ -7886,6 +7988,7 @@ struct RuntimeViewModelTests {
         viewModel.exportSelectedLoraTrainingJobConfigToPath()
         #expect(store.exportedConfigs.last?.path == "/tmp/saved-adapter.lora-config.json")
         #expect(store.exportedConfigs.last?.config.adapterName == "saved-adapter")
+        #expect(store.exportedConfigs.last?.config.rewardModelManifestPath == "/tmp/melix/reward-model/manifest.json")
 
         let importedConfig = makeDesktopLoraTrainingConfig(trainingMode: "cpt", adapterName: "imported-adapter")
         store.importedConfig = importedConfig
@@ -11684,6 +11787,10 @@ private func makeDesktopLoraTrainingConfig(
         targetRepo: "melix/adapters/\(adapterName)",
         experimentGroupID: "nightly-qwen35",
         resumeManifestPath: "/tmp/prior/train_lora.adapter.json",
+        grpoCandidateCount: "4",
+        referenceModelPath: "/tmp/melix/reference-model",
+        rewardModelManifestPath: "/tmp/melix/reward-model/manifest.json",
+        klPenalty: "0.02",
         trainingMode: trainingMode,
         presetID: "balanced_adapter",
         activationMode: "adapter_backed_runtime",

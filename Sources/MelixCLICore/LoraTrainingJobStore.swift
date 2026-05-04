@@ -41,6 +41,10 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
     public var targetRepo: String
     public var experimentGroupID: String
     public var resumeManifestPath: String
+    public var grpoCandidateCount: String
+    public var referenceModelPath: String
+    public var rewardModelManifestPath: String
+    public var klPenalty: String
     public var trainingMode: String
     public var presetID: String
     public var activationMode: String
@@ -76,6 +80,10 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         targetRepo: String = "",
         experimentGroupID: String = "",
         resumeManifestPath: String = "",
+        grpoCandidateCount: String = "",
+        referenceModelPath: String = "",
+        rewardModelManifestPath: String = "",
+        klPenalty: String = "",
         trainingMode: String,
         presetID: String = "",
         activationMode: String,
@@ -110,6 +118,10 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         self.targetRepo = targetRepo
         self.experimentGroupID = experimentGroupID
         self.resumeManifestPath = resumeManifestPath
+        self.grpoCandidateCount = grpoCandidateCount
+        self.referenceModelPath = referenceModelPath
+        self.rewardModelManifestPath = rewardModelManifestPath
+        self.klPenalty = klPenalty
         self.trainingMode = trainingMode
         self.presetID = presetID
         self.activationMode = activationMode
@@ -146,6 +158,10 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
         case targetRepo = "target_repo"
         case experimentGroupID = "experiment_group_id"
         case resumeManifestPath = "resume_manifest_path"
+        case grpoCandidateCount = "grpo_candidate_count"
+        case referenceModelPath = "reference_model_path"
+        case rewardModelManifestPath = "reward_model_manifest_path"
+        case klPenalty = "kl_penalty"
         case trainingMode = "training_mode"
         case presetID = "preset_id"
         case activationMode = "activation_mode"
@@ -188,6 +204,10 @@ public struct LoraTrainingJobConfig: Codable, Equatable, Sendable {
             targetRepo: try container.decodeIfPresent(String.self, forKey: .targetRepo) ?? "",
             experimentGroupID: try container.decodeIfPresent(String.self, forKey: .experimentGroupID) ?? "",
             resumeManifestPath: try container.decodeIfPresent(String.self, forKey: .resumeManifestPath) ?? "",
+            grpoCandidateCount: try container.decodeIfPresent(String.self, forKey: .grpoCandidateCount) ?? "",
+            referenceModelPath: try container.decodeIfPresent(String.self, forKey: .referenceModelPath) ?? "",
+            rewardModelManifestPath: try container.decodeIfPresent(String.self, forKey: .rewardModelManifestPath) ?? "",
+            klPenalty: try container.decodeIfPresent(String.self, forKey: .klPenalty) ?? "",
             trainingMode: try container.decodeIfPresent(String.self, forKey: .trainingMode) ?? "lora",
             presetID: try container.decodeIfPresent(String.self, forKey: .presetID) ?? "",
             activationMode: try container.decodeIfPresent(String.self, forKey: .activationMode) ?? "fused_derived_model",
