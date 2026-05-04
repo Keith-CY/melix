@@ -200,6 +200,185 @@ def test_training_request_deserialization_restores_alignment_config(tmp_path: Pa
     assert restored.config.alignment.dataset_contract == "preference_pair"
 
 
+def test_training_metrics_serializes_preference_fields(tmp_path: Path) -> None:
+    metrics = mlx_lm_runner_module.TrainingMetrics(
+        job_duration_ms=10.0,
+        tokens_seen=4,
+        examples_seen=2,
+        loss_final=0.4,
+        loss_best=0.3,
+        learning_rate_final=1e-4,
+        preference_loss_final=0.2,
+        chosen_logprob_mean=-1.5,
+        rejected_logprob_mean=-2.0,
+        chosen_rejected_margin=0.5,
+        win_rate_proxy=1.0,
+    )
+    result = mlx_lm_runner_module.TrainingResult(
+        weights_path=tmp_path / "adapters.safetensors",
+        adapter_config_path=tmp_path / "adapter_config.json",
+        metrics=metrics,
+        execution_backend="native",
+    )
+
+    restored = mlx_lm_runner_module._deserialize_training_result(
+        mlx_lm_runner_module._serialize_training_result(result)
+    )
+
+    assert restored.metrics.preference_loss_final == pytest.approx(0.2)
+    assert restored.metrics.chosen_logprob_mean == pytest.approx(-1.5)
+    assert restored.metrics.rejected_logprob_mean == pytest.approx(-2.0)
+    assert restored.metrics.chosen_rejected_margin == pytest.approx(0.5)
+    assert restored.metrics.win_rate_proxy == pytest.approx(1.0)
+
+
+def test_preference_training_loads_preference_pairs(tmp_path: Path) -> None:
+    from worker.model_ops.preference_training import load_preference_pairs
+
+    dataset_dir = tmp_path / "normalized"
+    dataset_dir.mkdir()
+    (dataset_dir / "train.jsonl").write_text(
+        "\n" + json.dumps(
+            {
+                "prompt": "Choose.",
+                "chosen": "Helpful.",
+                "rejected": "Unsafe.",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    pairs = load_preference_pairs(dataset_dir)
+
+    assert len(pairs) == 1
+    assert pairs[0].prompt == "Choose."
+    assert pairs[0].chosen == "Helpful."
+    assert pairs[0].rejected == "Unsafe."
+
+
+def test_preference_training_rejects_missing_or_empty_train_file(tmp_path: Path) -> None:
+    from worker.model_ops.preference_training import load_preference_pairs
+
+    missing_dir = tmp_path / "missing"
+    missing_dir.mkdir()
+    with pytest.raises(ModelOperationError) as missing_exc:
+        load_preference_pairs(missing_dir)
+
+    assert missing_exc.value.code == "invalid_dataset_package"
+    assert missing_exc.value.details["path"].endswith("train.jsonl")
+
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    (empty_dir / "train.jsonl").write_text("\n", encoding="utf-8")
+    with pytest.raises(ModelOperationError) as empty_exc:
+        load_preference_pairs(empty_dir)
+
+    assert empty_exc.value.code == "invalid_dataset_package"
+    assert "at least one" in empty_exc.value.message
+
+
+def test_preference_training_rejects_missing_pair_fields(tmp_path: Path) -> None:
+    from worker.model_ops.preference_training import load_preference_pairs
+
+    dataset_dir = tmp_path / "normalized"
+    dataset_dir.mkdir()
+    (dataset_dir / "train.jsonl").write_text(
+        json.dumps({"prompt": "Choose.", "chosen": "Helpful."}) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        load_preference_pairs(dataset_dir)
+
+    assert exc.value.code == "invalid_dataset_package"
+    assert exc.value.details["missing_field"] == "rejected"
+
+
+def test_preference_training_resolves_default_and_configured_beta(tmp_path: Path) -> None:
+    from worker.model_ops.preference_training import resolve_preference_objective
+
+    default_config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "dpo"},
+        dataset_format="preference_pair",
+        response_only_supported=False,
+        sample_count=2,
+    )
+    configured_config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={
+            "training_mode": "cpo",
+            "kl_penalty": "0.35",
+            "preference_margin_target": "0.25",
+        },
+        dataset_format="preference_pair",
+        response_only_supported=False,
+        sample_count=2,
+    )
+
+    assert resolve_preference_objective(default_config).beta == pytest.approx(0.1)
+    configured = resolve_preference_objective(configured_config)
+    assert configured.algorithm == "cpo"
+    assert configured.beta == pytest.approx(0.35)
+    assert configured.margin_target == pytest.approx(0.25)
+
+
+def test_preference_training_rejects_objective_without_alignment(tmp_path: Path) -> None:
+    from worker.model_ops.preference_training import resolve_preference_objective
+
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "lora"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        resolve_preference_objective(config)
+
+    assert exc.value.code == "invalid_alignment_config"
+
+
+@pytest.mark.parametrize(
+    ("policy_margin", "reference_margin", "expected_order"),
+    [
+        (2.0, 0.0, "lower"),
+        (-2.0, 0.0, "higher"),
+    ],
+)
+def test_dpo_loss_value_prefers_policy_margin(
+    policy_margin: float,
+    reference_margin: float,
+    expected_order: str,
+) -> None:
+    from worker.model_ops.preference_training import dpo_loss_value
+
+    neutral = dpo_loss_value(0.0, reference_margin, beta=0.1)
+    observed = dpo_loss_value(policy_margin, reference_margin, beta=0.1)
+
+    if expected_order == "lower":
+        assert observed < neutral
+    else:
+        assert observed > neutral
+
+
+def test_orpo_and_cpo_loss_values_reward_positive_margins() -> None:
+    from worker.model_ops.preference_training import cpo_loss_value, orpo_loss_value
+
+    assert orpo_loss_value(chosen_nll=0.5, policy_margin=2.0, beta=0.1) < orpo_loss_value(
+        chosen_nll=0.5,
+        policy_margin=-2.0,
+        beta=0.1,
+    )
+    assert cpo_loss_value(policy_margin=2.0, beta=0.1, margin_target=0.0) < cpo_loss_value(
+        policy_margin=-2.0,
+        beta=0.1,
+        margin_target=0.0,
+    )
+
+
 def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
