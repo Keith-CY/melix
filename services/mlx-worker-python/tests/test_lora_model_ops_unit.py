@@ -475,7 +475,7 @@ def test_training_config_rejects_non_positive_gradient_accumulation(bad_value: s
 
 
 def test_training_config_rejects_non_numeric_gradient_accumulation() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ModelOperationError) as exc:
         training_config_module.normalize_training_config(
             source_model=_text_model(),
             ext={"gradient_accumulation": "abc"},
@@ -483,6 +483,11 @@ def test_training_config_rejects_non_numeric_gradient_accumulation() -> None:
             response_only_supported=True,
             sample_count=1,
         )
+
+    assert exc.value.code == "invalid_argument"
+    assert exc.value.message == "gradient_accumulation must be an integer."
+    assert exc.value.details["field"] == "gradient_accumulation"
+    assert exc.value.details["raw_value"] == "abc"
 
 
 def test_training_config_defaults_chunked_training_off() -> None:
