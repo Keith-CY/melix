@@ -104,18 +104,35 @@ swift-build-integration-prereqs:
 
 swift-test:
 	/bin/zsh -lc 'set -e; \
+	run_swift_stage() { \
+		local label="$$1"; \
+		shift; \
+		local started_at; \
+		started_at="$$(date +%s)"; \
+		printf "[melix-ci] swift-test stage started: %s\n" "$$label" >&2; \
+		set +e; \
+		"$$@"; \
+		local status="$$?"; \
+		set -e; \
+		local finished_at; \
+		finished_at="$$(date +%s)"; \
+		local elapsed; \
+		elapsed=$$((finished_at - started_at)); \
+		printf "[melix-ci] swift-test stage completed: %s rc=%s elapsed=%ss\n" "$$label" "$$status" "$$elapsed" >&2; \
+		return "$$status"; \
+	}; \
 	mkdir -p "$(PROTOCOL_SWIFT_HOME)" "$(TEXT_WORKER_SWIFT_HOME)" "$(CONTROL_PLANE_SWIFT_HOME)" "$(MENUBAR_SWIFT_HOME)"; \
 	mkdir -p "$(PROTOCOL_MODULE_CACHE_PATH)" "$(TEXT_WORKER_MODULE_CACHE_PATH)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)" "$(MENUBAR_MODULE_CACHE_PATH)"; \
-	HOME="$(PROTOCOL_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(PROTOCOL_MODULE_CACHE_PATH)" xcrun swift test --package-path packages/protocol/swift; \
-	HOME="$(TEXT_WORKER_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(TEXT_WORKER_MODULE_CACHE_PATH)" xcrun swift test --package-path services/mlx-text-worker-swift; \
-	HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_CONTROL)"; \
+	run_swift_stage "protocol package" env HOME="$(PROTOCOL_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(PROTOCOL_MODULE_CACHE_PATH)" xcrun swift test --package-path packages/protocol/swift; \
+	run_swift_stage "text worker package" env HOME="$(TEXT_WORKER_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(TEXT_WORKER_MODULE_CACHE_PATH)" xcrun swift test --package-path services/mlx-text-worker-swift; \
+	run_swift_stage "control-plane core groups" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_CONTROL)"; \
 	for specifier in $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_A) $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_B) $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_C) $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_D) $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_E); do \
-		HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$$specifier"; \
+		run_swift_stage "control-plane request coordinator $$specifier" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$$specifier"; \
 	done; \
-	HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_OPENAI)"; \
-	HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_HTTP_REST)"; \
-	HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_WORKER)"; \
-	HOME="$(MENUBAR_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(MENUBAR_MODULE_CACHE_PATH)" xcrun swift test --package-path apps/macos-menubar'
+	run_swift_stage "control-plane OpenAI handler" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_OPENAI)"; \
+	run_swift_stage "control-plane REST compatibility" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_HTTP_REST)"; \
+	run_swift_stage "control-plane worker clients" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_WORKER)"; \
+	run_swift_stage "macOS menubar package" env HOME="$(MENUBAR_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(MENUBAR_MODULE_CACHE_PATH)" xcrun swift test --package-path apps/macos-menubar'
 
 py-test:
 	mkdir -p "$(UV_CACHE_DIR)"
