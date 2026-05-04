@@ -169,6 +169,10 @@ class SuccessfulRunner(MLXLMRunner):
         self.last_train_request: TrainingRequest | None = None
         self.last_activation_request: ActivationRequest | None = None
 
+    def supports_alignment_training(self, config) -> bool:
+        del config
+        return True
+
     def train_native(self, request: TrainingRequest) -> TrainingResult:
         self.native_train_calls += 1
         self.last_train_request = request
