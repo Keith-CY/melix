@@ -2056,6 +2056,41 @@ struct DesktopDownloadsToolSectionView: View {
             Text("Model ingress and artifact publishing stay under Tools, not Server.")
                 .foregroundStyle(.secondary)
 
+            MelixSectionCard("Packaging Target") {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(viewModel.modelOperationTargetModelID.isEmpty ? "No model selected" : viewModel.modelOperationTargetModelID)
+                            .font(.headline)
+                        Text(viewModel.modelOperationTargetDetailText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    Picker(
+                        "Quant Profile",
+                        selection: Binding(
+                            get: { viewModel.selectedQuantizationProfileID },
+                            set: { viewModel.selectedQuantizationProfileID = $0 }
+                        )
+                    ) {
+                        ForEach(viewModel.availableQuantizationProfileIDs, id: \.self) { profileID in
+                            Text(profileID).tag(profileID)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 120)
+
+                    if viewModel.hasExplicitModelOperationTarget {
+                        Button("Use Primary Model") {
+                            viewModel.usePrimaryModelOperationTarget()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+
             if viewModel.audioSetupActions.isEmpty == false {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(viewModel.audioSetupActions) { action in
@@ -2069,6 +2104,12 @@ struct DesktopDownloadsToolSectionView: View {
             }
 
             HStack {
+                Button("Quantize Model") {
+                    Task { await viewModel.quantizePrimaryModel() }
+                }
+                .buttonStyle(.bordered)
+                .fixedSize(horizontal: true, vertical: false)
+
                 Button("Convert Model") {
                     Task { await viewModel.convertPrimaryModel() }
                 }
@@ -2285,6 +2326,10 @@ struct DesktopTrainingToolSectionView: View {
                 workflowSnapshotContent
             }
 
+            DesktopEditorialSectionCard("Saved Jobs") {
+                savedJobsContent
+            }
+
             DesktopEditorialSectionCard("Run Draft") {
                 trainingConfigurationContent
             }
@@ -2481,6 +2526,253 @@ struct DesktopTrainingToolSectionView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var savedJobsContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            savedJobsActionBar
+
+            if viewModel.loraTrainingJobs.isEmpty {
+                DesktopInlineEmptyStateView(
+                    title: "No Saved LoRA Jobs",
+                    detail: "Save the current run draft to make it reusable across app restarts.",
+                    symbolName: "tray.and.arrow.down"
+                )
+            } else {
+                HStack(alignment: .top, spacing: 14) {
+                    savedJobsList
+                        .frame(minWidth: 240, maxWidth: .infinity, alignment: .topLeading)
+                    savedJobDetail
+                        .frame(minWidth: 280, maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+
+            Divider()
+
+            importExportContent
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var savedJobsActionBar: some View {
+        HStack(spacing: 10) {
+            Button("Save Draft") {
+                viewModel.saveCurrentLoraTrainingJobDraft()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(viewModel.isLoraWorkflowActionInProgress)
+
+            Button("Load Job") {
+                viewModel.loadSelectedLoraTrainingJob()
+            }
+            .buttonStyle(.bordered)
+            .disabled(viewModel.selectedLoraTrainingJob == nil || viewModel.isLoraWorkflowActionInProgress)
+
+            Button("Duplicate") {
+                viewModel.duplicateSelectedLoraTrainingJob()
+            }
+            .buttonStyle(.bordered)
+            .disabled(viewModel.selectedLoraTrainingJob == nil || viewModel.isLoraWorkflowActionInProgress)
+
+            Button("Rerun") {
+                startRerunSavedJobTask()
+            }
+            .buttonStyle(.bordered)
+            .disabled(viewModel.selectedLoraTrainingJob == nil || viewModel.isLoraWorkflowActionInProgress)
+
+            Menu {
+                Button("Cancel Job") {
+                    viewModel.cancelSelectedLoraTrainingJob()
+                }
+                .disabled(viewModel.selectedLoraTrainingJob == nil || viewModel.isLoraWorkflowActionInProgress)
+
+                Button("Delete Job") {
+                    viewModel.deleteSelectedLoraTrainingJob()
+                }
+                .disabled(viewModel.selectedLoraTrainingJob == nil || viewModel.isLoraWorkflowActionInProgress)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("More Saved Job Actions")
+            .accessibilityLabel("More Saved Job Actions")
+        }
+    }
+
+    private var savedJobsList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(viewModel.loraTrainingJobs) { job in
+                Button {
+                    viewModel.selectedLoraTrainingJobID = job.id
+                } label: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(alignment: .firstTextBaseline) {
+                            DesktopPassiveHeadlineButton(title: job.title)
+                            Spacer()
+                            DesktopPassiveCaptionLabel(
+                                title: job.status.rawValue.capitalized,
+                                foregroundStyle: savedJobStatusColor(job.status)
+                            )
+                        }
+                        Text("\(job.config.trainingMode.uppercased()) • \(job.config.adapterName)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(savedJobDatasetText(job))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(
+                        viewModel.selectedLoraTrainingJobID == job.id
+                            ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                            : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+                        in: RoundedRectangle(cornerRadius: 12)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var savedJobDetail: some View {
+        if let job = viewModel.selectedLoraTrainingJob {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    DesktopPassiveHeadlineButton(title: job.title)
+                    Spacer()
+                    Text(job.id)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+
+                Text(savedJobSummaryText(job))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if !job.lastRunJobID.isEmpty {
+                    DesktopPassiveCaptionLabel(title: "Last run: \(job.lastRunJobID)")
+                }
+
+                if !job.outputPath.isEmpty || !job.manifestPath.isEmpty {
+                    DisclosureGroup("Output And Manifest") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            if !job.outputPath.isEmpty {
+                                Text(job.outputPath)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            if !job.manifestPath.isEmpty, job.manifestPath != job.outputPath {
+                                Text(job.manifestPath)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                    .font(.caption)
+                }
+
+                if !job.terminalMessage.isEmpty {
+                    Text(job.terminalMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !job.latestOutputText.isEmpty {
+                    DisclosureGroup("Latest Output") {
+                        Text(job.latestOutputText)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(8)
+                            .padding(.top, 4)
+                    }
+                    .font(.caption)
+                }
+
+                let followUpArtifacts = savedJobFollowUpArtifactItems(job)
+                if followUpArtifacts.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 6) {
+                        DesktopPassiveCaptionLabel(title: "Follow-up Artifacts")
+                        ForEach(followUpArtifacts) { item in
+                            VStack(alignment: .leading, spacing: 2) {
+                                DesktopPassiveCaptionLabel(title: item.title)
+                                Text(item.value)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
+
+                followUpActionsContent
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+        } else {
+            DesktopInlineEmptyStateView(
+                title: "No Saved Job Selected",
+                detail: "Select a saved LoRA job to inspect its config and output state.",
+                symbolName: "sidebar.leading"
+            )
+        }
+    }
+
+    private var followUpActionsContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            DesktopPassiveCaptionLabel(title: "Follow-up Actions")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
+                ForEach(RuntimeLoraTrainingJobFollowUpAction.allCases) { action in
+                    Button {
+                        viewModel.prepareSelectedLoraTrainingJobFollowUp(action)
+                    } label: {
+                        DesktopPassiveCaptionLabel(title: action.title)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private var importExportContent: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                DesktopPassiveCaptionLabel(title: "Import Config Path")
+                HStack(spacing: 8) {
+                    TextField("Import Config Path", text: stringBinding(\.loraTrainingJobImportPath))
+                        .textFieldStyle(.roundedBorder)
+                    Button("Import") {
+                        viewModel.importLoraTrainingJobConfigFromPath()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            VStack(alignment: .leading, spacing: 6) {
+                DesktopPassiveCaptionLabel(title: "Export Config Path")
+                HStack(spacing: 8) {
+                    TextField("Export Config Path", text: stringBinding(\.loraTrainingJobExportPath))
+                        .textFieldStyle(.roundedBorder)
+                    Button("Export") {
+                        viewModel.exportSelectedLoraTrainingJobConfigToPath()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.selectedLoraTrainingJob == nil)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
     }
 
     private var coreTrainingSetupContent: some View {
@@ -3029,6 +3321,50 @@ struct DesktopTrainingToolSectionView: View {
         return "\(config) • train \(train) • valid \(valid)"
     }
 
+    private func savedJobStatusColor(_ status: LoraTrainingJobStatus) -> Color {
+        switch status {
+        case .draft:
+            return .secondary
+        case .running:
+            return MelixDesignTokens.accent
+        case .succeeded:
+            return MelixDesignTokens.StatusColor.success
+        case .failed:
+            return MelixDesignTokens.StatusColor.error
+        case .canceled:
+            return MelixDesignTokens.StatusColor.warning
+        }
+    }
+
+    private func savedJobDatasetText(_ job: LoraTrainingJobRecord) -> String {
+        if job.config.datasetSourceKind == RuntimeLoraDatasetSourceKind.huggingFaceDataset.rawValue {
+            return job.config.hfDatasetPath.isEmpty ? "HF dataset pending" : job.config.hfDatasetPath
+        }
+        return job.config.datasetURI.isEmpty ? "Dataset pending" : job.config.datasetURI
+    }
+
+    private func savedJobSummaryText(_ job: LoraTrainingJobRecord) -> String {
+        let model = job.config.modelID.isEmpty ? "No base model" : job.config.modelID
+        let activation = job.config.activationMode.replacingOccurrences(of: "_", with: " ")
+        return "\(model) • \(job.config.trainingMode.uppercased()) • \(activation)"
+    }
+
+    private func savedJobFollowUpArtifactItems(_ job: LoraTrainingJobRecord) -> [DesktopTrainingSummaryItem] {
+        let artifacts = job.followUpArtifacts
+        return [
+            DesktopTrainingSummaryItem(title: "Adapter Manifest", value: artifacts.adapterManifestPath, detail: ""),
+            DesktopTrainingSummaryItem(title: "Derived Model", value: artifacts.derivedModelID, detail: ""),
+            DesktopTrainingSummaryItem(title: "Derived Model Path", value: artifacts.derivedModelPath, detail: ""),
+            DesktopTrainingSummaryItem(title: "Quantized Artifact", value: artifacts.quantizedArtifactPath, detail: ""),
+            DesktopTrainingSummaryItem(title: "Converted Artifact", value: artifacts.convertedArtifactPath, detail: ""),
+            DesktopTrainingSummaryItem(title: "Benchmark Job", value: artifacts.benchmarkJobID, detail: ""),
+            DesktopTrainingSummaryItem(title: "Evaluation Job", value: artifacts.evaluationJobID, detail: ""),
+            DesktopTrainingSummaryItem(title: "Published Repo", value: artifacts.publishedRepo, detail: ""),
+        ].filter { item in
+            item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+    }
+
     private func stringBinding(_ keyPath: ReferenceWritableKeyPath<RuntimeViewModel, String>) -> Binding<String> {
         Binding(
             get: { viewModel[keyPath: keyPath] },
@@ -3089,6 +3425,10 @@ struct DesktopTrainingToolSectionView: View {
 
     private func startTrainLoRATask() {
         Task { await trainLoRA() }
+    }
+
+    private func startRerunSavedJobTask() {
+        Task { await viewModel.rerunSelectedLoraTrainingJob() }
     }
 
     private func startActivateAdapterTask() {
@@ -3321,6 +3661,34 @@ private struct DesktopPassiveHeadlineButton: View {
             .allowsHitTesting(false)
             .font(.headline)
             .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopPassiveCaptionLabel: View {
+    let title: String
+    let foregroundStyle: Color?
+
+    init(title: String, foregroundStyle: Color? = nil) {
+        self.title = title
+        self.foregroundStyle = foregroundStyle
+    }
+
+    var body: some View {
+        if let foregroundStyle {
+            caption
+                .foregroundStyle(foregroundStyle)
+        } else {
+            caption
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var caption: some View {
+        TextField("", text: .constant(title))
+            .textFieldStyle(.plain)
+            .allowsHitTesting(false)
+            .font(.caption.weight(.semibold))
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

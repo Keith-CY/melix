@@ -425,6 +425,7 @@ public final class MelixMenuBarBootstrap {
         serverSessionAPIKeyStore: (any ServerSessionAPIKeyStoring)? = nil,
         remoteServerStore: (any RemoteServerStoring)? = nil,
         evaluationPromptStore: (any EvaluationPromptStoring)? = nil,
+        loraTrainingJobStore: (any LoraTrainingJobStoring)? = nil,
         huggingFaceTokenStore: (any HuggingFaceTokenStoring)? = nil,
         desktopFoundationPresenterFactory: @MainActor @escaping (
             RuntimeViewModel,
@@ -463,6 +464,7 @@ public final class MelixMenuBarBootstrap {
         let resolvedServerSessionAPIKeyStore = serverSessionAPIKeyStore ?? ServerSessionAPIKeyStore(melixHome: melixHome)
         let resolvedRemoteServerStore = remoteServerStore ?? RemoteServerStore(melixHome: melixHome)
         let resolvedEvaluationPromptStore = evaluationPromptStore ?? EvaluationPromptStore(melixHome: melixHome)
+        let resolvedLoraTrainingJobStore = loraTrainingJobStore ?? LoraTrainingJobStore(melixHome: melixHome)
         let resolvedHuggingFaceTokenStore = huggingFaceTokenStore ?? HuggingFaceTokenStore(melixHome: melixHome)
         let viewModel = RuntimeViewModel(
             client: client,
@@ -473,6 +475,7 @@ public final class MelixMenuBarBootstrap {
             serverSessionAPIKeyStore: resolvedServerSessionAPIKeyStore,
             remoteServerStore: resolvedRemoteServerStore,
             evaluationPromptStore: resolvedEvaluationPromptStore,
+            loraTrainingJobStore: resolvedLoraTrainingJobStore,
             huggingFaceTokenStore: resolvedHuggingFaceTokenStore
         )
         let desktopFoundationPresenter = desktopFoundationPresenterFactory(viewModel, metrics)
@@ -550,6 +553,7 @@ public final class MelixMenuBarBootstrap {
             serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome),
             remoteServerStore: RemoteServerStore(melixHome: melixHome),
             evaluationPromptStore: EvaluationPromptStore(melixHome: melixHome),
+            loraTrainingJobStore: LoraTrainingJobStore(melixHome: melixHome),
             terminationHandler: terminationHandler
         )
     }
