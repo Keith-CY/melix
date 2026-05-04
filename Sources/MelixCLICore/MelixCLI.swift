@@ -822,6 +822,12 @@ public struct QuantizeOptions: Equatable, Sendable {
     public let quantProfileID: String
     public let weightQuant: String
     public let kvQuant: String
+    public let quantizationMode: String
+    public let sourceArtifactKind: String
+    public let sourceArtifactPath: String
+    public let calibrationDatasetURI: String
+    public let qualityDelta: String
+    public let latencyDelta: String
     public let json: Bool
 
     public init(
@@ -830,6 +836,12 @@ public struct QuantizeOptions: Equatable, Sendable {
         quantProfileID: String = "",
         weightQuant: String = "",
         kvQuant: String = "",
+        quantizationMode: String = "",
+        sourceArtifactKind: String = "",
+        sourceArtifactPath: String = "",
+        calibrationDatasetURI: String = "",
+        qualityDelta: String = "",
+        latencyDelta: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -837,6 +849,12 @@ public struct QuantizeOptions: Equatable, Sendable {
         self.quantProfileID = quantProfileID
         self.weightQuant = weightQuant
         self.kvQuant = kvQuant
+        self.quantizationMode = quantizationMode
+        self.sourceArtifactKind = sourceArtifactKind
+        self.sourceArtifactPath = sourceArtifactPath
+        self.calibrationDatasetURI = calibrationDatasetURI
+        self.qualityDelta = qualityDelta
+        self.latencyDelta = latencyDelta
         self.json = json
     }
 }
@@ -1372,7 +1390,7 @@ public enum MelixCLIParser {
     Usage:
       melix doctor [--json]
       melix convert --model-id MODEL_ID [--output-dir PATH] [--target-format FORMAT] [--json]
-      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--json]
+      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--quantization-mode (ptq|qat)] [--source-artifact-kind (base_model|merged_adapter|adapter_export)] [--source-artifact-path PATH] [--calibration-dataset-uri PATH] [--quality-delta N] [--latency-delta N] [--json]
       melix upload --model-id MODEL_ID --target-repo REPO [--output-dir PATH] [--artifact-path PATH] [--artifact-kind KIND] [--artifact-manifest-path PATH] [--json]
       melix model list [--json]
       melix model inspect --model-id MODEL_ID [--json]
@@ -1503,6 +1521,14 @@ public enum MelixCLIParser {
         guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
             throw MelixCLIError.missingRequired("--model-id is required for melix quantize.")
         }
+        let quantizationMode = values.single["--quantization-mode"] ?? ""
+        if !quantizationMode.isEmpty, ["ptq", "qat"].contains(quantizationMode) == false {
+            throw MelixCLIError.usage("Invalid value for --quantization-mode. Expected one of: ptq, qat.")
+        }
+        let sourceArtifactKind = values.single["--source-artifact-kind"] ?? ""
+        if !sourceArtifactKind.isEmpty, ["base_model", "merged_adapter", "adapter_export"].contains(sourceArtifactKind) == false {
+            throw MelixCLIError.usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
+        }
         return .quantize(
             .init(
                 modelID: modelID,
@@ -1510,6 +1536,12 @@ public enum MelixCLIParser {
                 quantProfileID: values.single["--quant-profile-id"] ?? "",
                 weightQuant: values.single["--weight-quant"] ?? "",
                 kvQuant: values.single["--kv-quant"] ?? "",
+                quantizationMode: quantizationMode,
+                sourceArtifactKind: sourceArtifactKind,
+                sourceArtifactPath: values.single["--source-artifact-path"] ?? "",
+                calibrationDatasetURI: values.single["--calibration-dataset-uri"] ?? "",
+                qualityDelta: values.single["--quality-delta"] ?? "",
+                latencyDelta: values.single["--latency-delta"] ?? "",
                 json: values.flags.contains("--json")
             )
         )
@@ -3628,13 +3660,33 @@ public actor MelixCLIRunner {
             )
             return options.json ? result.manifestJson : result.outputPath + "\n"
         case .quantize(let options):
+            var ext: [String: String] = [:]
+            if !options.quantizationMode.isEmpty {
+                ext["quantization_mode"] = options.quantizationMode
+            }
+            if !options.sourceArtifactKind.isEmpty {
+                ext["source_artifact_kind"] = options.sourceArtifactKind
+            }
+            if !options.sourceArtifactPath.isEmpty {
+                ext["source_artifact_path"] = options.sourceArtifactPath
+            }
+            if !options.calibrationDatasetURI.isEmpty {
+                ext["calibration_dataset_uri"] = options.calibrationDatasetURI
+            }
+            if !options.qualityDelta.isEmpty {
+                ext["quality_delta"] = options.qualityDelta
+            }
+            if !options.latencyDelta.isEmpty {
+                ext["latency_delta"] = options.latencyDelta
+            }
             let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "quantize",
                 outputDir: options.outputDir,
                 quantProfileID: options.quantProfileID,
                 weightQuant: options.weightQuant,
-                kvQuant: options.kvQuant
+                kvQuant: options.kvQuant,
+                ext: ext
             )
             return options.json ? result.manifestJson : result.outputPath + "\n"
         case .upload(let options):
@@ -4605,6 +4657,12 @@ public actor MelixCLIRunner {
             appendOption("--quant-profile-id", value: quantProfileID, into: &arguments)
             appendOption("--weight-quant", value: weightQuant, into: &arguments)
             appendOption("--kv-quant", value: kvQuant, into: &arguments)
+            appendOption("--quantization-mode", value: ext["quantization_mode"], into: &arguments)
+            appendOption("--source-artifact-kind", value: ext["source_artifact_kind"], into: &arguments)
+            appendOption("--source-artifact-path", value: ext["source_artifact_path"], into: &arguments)
+            appendOption("--calibration-dataset-uri", value: ext["calibration_dataset_uri"], into: &arguments)
+            appendOption("--quality-delta", value: ext["quality_delta"], into: &arguments)
+            appendOption("--latency-delta", value: ext["latency_delta"], into: &arguments)
             arguments.append("--json")
             return arguments
         case "upload":

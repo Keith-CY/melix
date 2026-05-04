@@ -1828,6 +1828,12 @@ struct MelixCLIRunnerTests {
                     quantProfileID: "q4",
                     weightQuant: "q4",
                     kvQuant: "q8",
+                    quantizationMode: "qat",
+                    sourceArtifactKind: "merged_adapter",
+                    sourceArtifactPath: "/tmp/melix-export/merged",
+                    calibrationDatasetURI: "/tmp/melix-datasets/calibration",
+                    qualityDelta: "-0.01",
+                    latencyDelta: "-0.15",
                     json: true
                 )
             )
@@ -1867,6 +1873,12 @@ struct MelixCLIRunnerTests {
         #expect(quantizeCall.quantProfileID == "q4")
         #expect(quantizeCall.weightQuant == "q4")
         #expect(quantizeCall.kvQuant == "q8")
+        #expect(quantizeCall.ext["quantization_mode"] == "qat")
+        #expect(quantizeCall.ext["source_artifact_kind"] == "merged_adapter")
+        #expect(quantizeCall.ext["source_artifact_path"] == "/tmp/melix-export/merged")
+        #expect(quantizeCall.ext["calibration_dataset_uri"] == "/tmp/melix-datasets/calibration")
+        #expect(quantizeCall.ext["quality_delta"] == "-0.01")
+        #expect(quantizeCall.ext["latency_delta"] == "-0.15")
         #expect(uploadPayload["job_id"] as? String == "upload-job-1")
         #expect(uploadCall.operation == "upload")
         #expect(uploadCall.outputDir == "/tmp/melix-upload")
@@ -4803,7 +4815,15 @@ struct MelixCLIRunnerTests {
             outputDir: "/tmp/melix-quantize",
             quantProfileID: "q4",
             weightQuant: "q4",
-            kvQuant: "q8"
+            kvQuant: "q8",
+            ext: [
+                "quantization_mode": "qat",
+                "source_artifact_kind": "merged_adapter",
+                "source_artifact_path": "/tmp/melix-export/merged",
+                "calibration_dataset_uri": "/tmp/melix-datasets/calibration",
+                "quality_delta": "-0.01",
+                "latency_delta": "-0.15",
+            ]
         )
         let uploadResult = try await runner.performModelOperation(
             modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -4830,6 +4850,18 @@ struct MelixCLIRunnerTests {
         #expect(commands[1].contains("--quant-profile-id"))
         #expect(commands[1].contains("--weight-quant"))
         #expect(commands[1].contains("--kv-quant"))
+        #expect(commands[1].contains("--quantization-mode"))
+        #expect(commands[1].contains("qat"))
+        #expect(commands[1].contains("--source-artifact-kind"))
+        #expect(commands[1].contains("merged_adapter"))
+        #expect(commands[1].contains("--source-artifact-path"))
+        #expect(commands[1].contains("/tmp/melix-export/merged"))
+        #expect(commands[1].contains("--calibration-dataset-uri"))
+        #expect(commands[1].contains("/tmp/melix-datasets/calibration"))
+        #expect(commands[1].contains("--quality-delta"))
+        #expect(commands[1].contains("-0.01"))
+        #expect(commands[1].contains("--latency-delta"))
+        #expect(commands[1].contains("-0.15"))
         #expect(commands[2].starts(with: ["upload", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"]))
         #expect(commands[2].contains("--target-repo"))
         #expect(commands[2].contains("--artifact-path"))

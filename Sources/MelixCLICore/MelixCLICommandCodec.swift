@@ -182,6 +182,12 @@ public enum MelixCLICommandCodec {
             appendOption("--quant-profile-id", value: options.quantProfileID, into: &arguments)
             appendOption("--weight-quant", value: options.weightQuant, into: &arguments)
             appendOption("--kv-quant", value: options.kvQuant, into: &arguments)
+            appendOption("--quantization-mode", value: options.quantizationMode, into: &arguments)
+            appendOption("--source-artifact-kind", value: options.sourceArtifactKind, into: &arguments)
+            appendOption("--source-artifact-path", value: options.sourceArtifactPath, into: &arguments)
+            appendOption("--calibration-dataset-uri", value: options.calibrationDatasetURI, into: &arguments)
+            appendOption("--quality-delta", value: options.qualityDelta, into: &arguments)
+            appendOption("--latency-delta", value: options.latencyDelta, into: &arguments)
             json = options.json
         case .upload(let options):
             arguments = ["upload"]

@@ -23,6 +23,32 @@ def build_service(tmp_path: Path) -> WorkerMaintenanceService:
     return WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
 
 
+def _write_dataset_package(
+    root: Path,
+    *,
+    format: str,
+    samples: list[dict[str, object]],
+) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "melix-calibration-dev",
+                "format": format,
+                "sample_count": len(samples),
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with (root / "samples.jsonl").open("w", encoding="utf-8") as handle:
+        for sample in samples:
+            handle.write(json.dumps(sample) + "\n")
+    return root
+
+
 def test_quantize_job_writes_bundle_directory_and_versioned_manifest(tmp_path: Path) -> None:
     service = build_service(tmp_path)
 
@@ -67,6 +93,9 @@ def test_quantize_job_writes_bundle_directory_and_versioned_manifest(tmp_path: P
     assert manifest_payload["artifact_kind"] == "quantized_model_bundle"
     assert manifest_payload["quantization_mode"] == "ptq"
     assert manifest_payload["source_artifact_kind"] == "base_model"
+    assert manifest_payload["source_artifact_path"]
+    assert manifest_payload["calibration_dataset_uri"] == ""
+    assert manifest_payload["quantized_artifact_bytes"] == manifest_payload["artifact_bytes"]
     assert manifest_payload["release_gate"] == {
         "quality_delta": 0.0,
         "latency_delta": 0.0,
@@ -259,6 +288,8 @@ def test_quantize_job_uses_typed_quant_profile_when_provided(tmp_path: Path) -> 
 
 def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp_path: Path) -> None:
     service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "merged-adapter"
+    source_artifact_path.mkdir()
 
     events = list(
         service.ConvertModel(
@@ -273,6 +304,7 @@ def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp
                     "operation": "quantize",
                     "quantization_mode": "qat",
                     "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
                     "quality_delta": "-0.0125",
                     "latency_delta": "-0.2",
                     "qat_fake_quant": "enabled",
@@ -286,6 +318,7 @@ def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp
 
     assert manifest_payload["quantization_mode"] == "qat"
     assert manifest_payload["source_artifact_kind"] == "merged_adapter"
+    assert manifest_payload["source_artifact_path"] == str(source_artifact_path)
     assert manifest_payload["release_gate"] == {
         "quality_delta": -0.0125,
         "latency_delta": -0.2,
@@ -368,6 +401,30 @@ def test_quantize_job_rejects_unknown_source_artifact_kind(tmp_path: Path) -> No
     assert events[-1].failed.error.details["source_artifact_kind"] == "checkpoint"
 
 
+def test_quantize_job_rejects_adapter_artifact_source_without_path(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "source_artifact_kind": "adapter_export",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "missing_source_artifact_path"
+    assert events[-1].failed.error.details["source_artifact_kind"] == "adapter_export"
+
+
 def test_quantize_job_rejects_non_numeric_release_gate_values(tmp_path: Path) -> None:
     service = build_service(tmp_path)
 
@@ -391,6 +448,75 @@ def test_quantize_job_rejects_non_numeric_release_gate_values(tmp_path: Path) ->
     assert events[-1].failed.error.code == "invalid_quantization_release_gate"
     assert events[-1].failed.error.details["field"] == "quality_delta"
     assert events[-1].failed.error.details["value"] == "bad"
+
+
+def test_quantize_job_records_calibration_dataset_lineage(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    calibration_dataset = _write_dataset_package(
+        tmp_path / "calibration-dataset",
+        format="calibration",
+        samples=[{"text": "calibration prompt one"}, {"text": "calibration prompt two"}],
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "calibration_dataset_uri": str(calibration_dataset),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    manifest_payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+
+    assert manifest_payload["calibration_dataset_uri"] == str(calibration_dataset)
+    assert manifest_payload["calibration_dataset"] == {
+        "dataset_uri": str(calibration_dataset),
+        "dataset_id": "melix-calibration-dev",
+        "dataset_version": "1",
+        "dataset_format": "calibration",
+        "sample_count": 2,
+        "manifest_path": str(calibration_dataset / "manifest.json"),
+        "package_path": str(calibration_dataset),
+    }
+
+
+def test_quantize_job_rejects_non_calibration_dataset_lineage(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    sft_dataset = _write_dataset_package(
+        tmp_path / "sft-dataset",
+        format="prompt_completion",
+        samples=[{"prompt": "hello", "completion": "world"}],
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "calibration_dataset_uri": str(sft_dataset),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_calibration_dataset"
+    assert events[-1].failed.error.details["required_format"] == "calibration"
+    assert events[-1].failed.error.details["actual_format"] == "prompt_completion"
 
 
 def test_quantize_job_supports_oq2_to_oq8_profiles_with_calibration_metadata(tmp_path: Path) -> None:
