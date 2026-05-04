@@ -159,8 +159,7 @@ class MLXLMRunner:
             return replace(result, execution_backend="subprocess")
 
     def supports_alignment_training(self, config: LoRATrainingConfig) -> bool:
-        del config
-        return False
+        return config.training_objective == "preference"
 
     def activate(self, request: ActivationRequest) -> ActivationResult:
         try:
@@ -171,6 +170,11 @@ class MLXLMRunner:
             return replace(result, execution_backend="subprocess")
 
     def train_native(self, request: TrainingRequest) -> TrainingResult:
+        if request.config.training_objective == "preference":
+            from worker.model_ops.preference_training import train_preference_native
+
+            return train_preference_native(request)
+
         try:
             from mlx_lm.lora import train_model
             from mlx_lm.tuner.callbacks import TrainingCallback

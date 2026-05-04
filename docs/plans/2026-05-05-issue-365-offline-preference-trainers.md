@@ -248,14 +248,14 @@ Run the same pytest command. Expected: targeted tests pass.
 - Modify: `services/mlx-worker-python/worker/model_ops/preference_training.py`
 - Test: `services/mlx-worker-python/tests/test_lora_model_ops_unit.py`
 
-- [ ] **Step 1: Write failing routing test**
+- [x] **Step 1: Write failing routing test**
 
 Add a test that monkeypatches `preference_training.train_preference_native` to
 write adapter files and return metrics. Assert `MLXLMRunner().train(...)` for
 `training_mode=dpo` returns `execution_backend="native"` and does not raise
 `unsupported_alignment_trainer`.
 
-- [ ] **Step 2: Run the failing test**
+- [x] **Step 2: Run the failing test**
 
 Run:
 
@@ -265,7 +265,7 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" 
 
 Expected: fails with `unsupported_alignment_trainer`.
 
-- [ ] **Step 3: Implement routing**
+- [x] **Step 3: Implement routing**
 
 In `MLXLMRunner.supports_alignment_training`, return true only for
 `training_objective == "preference"`. Keep `alignment_rl` guarded.
@@ -279,7 +279,7 @@ if request.config.training_objective == "preference":
     return train_preference_native(request)
 ```
 
-- [ ] **Step 4: Verify routing test passes**
+- [x] **Step 4: Verify routing test passes**
 
 Run the same pytest command. Expected: `1 passed`.
 
@@ -332,14 +332,14 @@ def cpo_loss_value(policy_margin: float, beta: float, margin_target: float) -> f
     return -_log_sigmoid(beta * (policy_margin - margin_target))
 ```
 
-- [ ] **Step 4: Implement MLX loss closure**
+- [x] **Step 4: Implement MLX loss closure**
 
 Add MLX equivalents that compute chosen/rejected sequence logprobs from model
 logits and select DPO/ORPO/CPO based on `PreferenceObjectiveConfig.algorithm`.
 The loss closure must return `(loss, token_count)` in the shape expected by
 `mlx_lm.tuner.trainer.train`.
 
-- [ ] **Step 5: Verify tests pass**
+- [x] **Step 5: Verify tests pass**
 
 Run the same pytest command. Expected: loss tests pass.
 
@@ -389,7 +389,7 @@ Run the same pytest command. Expected: `3 passed`.
 
 - Modify: `docs/plans/2026-05-05-issue-365-offline-preference-trainers.md`
 
-- [ ] **Step 1: Run focused regression**
+- [x] **Step 1: Run focused regression**
 
 Run:
 
@@ -399,7 +399,7 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" 
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Run coverage**
+- [x] **Step 2: Run coverage**
 
 Run:
 
@@ -411,7 +411,7 @@ python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-of
 
 Expected: changed-line coverage is at least `95.00%`.
 
-- [ ] **Step 3: Run diff check**
+- [x] **Step 3: Run diff check**
 
 Run:
 
@@ -421,7 +421,7 @@ git diff --check
 
 Expected: no output.
 
-- [ ] **Step 4: Update implementation evidence**
+- [x] **Step 4: Update implementation evidence**
 
 Append the exact command outcomes under a new `## Implementation Evidence`
 section in this plan.
@@ -453,6 +453,22 @@ section in this plan.
 - Python changed-line coverage:
   `100.00% (464/464)`.
 - `git diff --check`: passed.
+- Failing preference routing test:
+  failed because `worker.model_ops.preference_training` had no
+  `train_preference_native` entry point.
+- Targeted preference routing and alignment-RL guard tests after implementation:
+  `2 passed in 0.05s`.
+- Targeted MLX preference loss and objective metrics tests:
+  `4 passed, 64 deselected in 1.60s`.
+- Native preference trainer wiring test with patched MLX-LM trainer:
+  `1 passed, 2 warnings in 0.86s`.
+- Focused Python regression after native preference trainer routing:
+  `134 passed, 2 warnings in 2.91s`.
+- Coverage run after native preference trainer routing:
+  `134 passed, 2 warnings in 3.44s`.
+- Python changed-line coverage after native preference trainer routing:
+  `96.22% (764/794)`.
+- `git diff --check` after native preference trainer routing: passed.
 
 ## Remaining Issue 365 Gaps After This Plan
 

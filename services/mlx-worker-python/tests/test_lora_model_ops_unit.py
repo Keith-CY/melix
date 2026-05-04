@@ -131,7 +131,41 @@ def test_mlx_lora_namespace_uses_dora_fine_tune_type(tmp_path: Path) -> None:
     assert mlx_lm_runner_module._mlx_lora_namespace(request).fine_tune_type == "dora"
 
 
-def test_mlx_lm_runner_rejects_alignment_without_backend_before_mlx_execution(tmp_path: Path) -> None:
+def test_mlx_lm_runner_rejects_alignment_rl_without_backend_before_mlx_execution(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "grpo", "grpo_candidate_count": "4"},
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="preference_pair",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        mlx_lm_runner_module.MLXLMRunner().train(request)
+
+    assert exc.value.code == "unsupported_alignment_trainer"
+    assert exc.value.details["training_mode"] == "grpo"
+    assert exc.value.details["alignment_algorithm"] == "grpo"
+    assert exc.value.details["available_backend"] == "mlx_lm_lora_supervised"
+    assert not request.adapter_output_dir.exists()
+
+
+def test_mlx_lm_runner_routes_preference_training_to_preference_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from worker.model_ops import preference_training
+
     config = training_config_module.normalize_training_config(
         source_model=_text_model(model_path=str(tmp_path / "base-model")),
         ext={"training_mode": "dpo"},
@@ -150,14 +184,45 @@ def test_mlx_lm_runner_rejects_alignment_without_backend_before_mlx_execution(tm
         dataset_format="preference_pair",
     )
 
-    with pytest.raises(ModelOperationError) as exc:
-        mlx_lm_runner_module.MLXLMRunner().train(request)
+    def fake_train_preference_native(
+        observed_request: mlx_lm_runner_module.TrainingRequest,
+    ) -> mlx_lm_runner_module.TrainingResult:
+        assert observed_request is request
+        observed_request.adapter_output_dir.mkdir(parents=True)
+        weights_path = observed_request.adapter_output_dir / "adapters.safetensors"
+        adapter_config_path = observed_request.adapter_output_dir / "adapter_config.json"
+        weights_path.write_bytes(b"preference-adapter")
+        adapter_config_path.write_text('{"fine_tune_type":"lora"}\n', encoding="utf-8")
+        return mlx_lm_runner_module.TrainingResult(
+            weights_path=weights_path,
+            adapter_config_path=adapter_config_path,
+            metrics=mlx_lm_runner_module.TrainingMetrics(
+                job_duration_ms=10.0,
+                tokens_seen=8,
+                examples_seen=2,
+                loss_final=0.2,
+                loss_best=0.2,
+                learning_rate_final=1e-4,
+                preference_loss_final=0.2,
+                chosen_logprob_mean=-1.5,
+                rejected_logprob_mean=-2.0,
+                chosen_rejected_margin=0.5,
+                win_rate_proxy=1.0,
+            ),
+            execution_backend="native",
+        )
 
-    assert exc.value.code == "unsupported_alignment_trainer"
-    assert exc.value.details["training_mode"] == "dpo"
-    assert exc.value.details["alignment_algorithm"] == "dpo"
-    assert exc.value.details["available_backend"] == "mlx_lm_lora_supervised"
-    assert not request.adapter_output_dir.exists()
+    monkeypatch.setattr(
+        preference_training,
+        "train_preference_native",
+        fake_train_preference_native,
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().train(request)
+
+    assert result.execution_backend == "native"
+    assert result.weights_path.read_bytes() == b"preference-adapter"
+    assert result.metrics.chosen_rejected_margin == pytest.approx(0.5)
 
 
 def test_deterministic_lora_runner_declares_alignment_contract_support(tmp_path: Path) -> None:
@@ -377,6 +442,288 @@ def test_orpo_and_cpo_loss_values_reward_positive_margins() -> None:
         beta=0.1,
         margin_target=0.0,
     )
+
+
+def test_preference_training_mlx_loss_components_reward_chosen_sequence() -> None:
+    mx = pytest.importorskip("mlx.core")
+    np = pytest.importorskip("numpy")
+    from worker.model_ops.preference_training import (
+        PreferenceObjectiveConfig,
+        make_preference_loss,
+        preference_loss_components,
+    )
+
+    class StaticLogitModel:
+        def __call__(self, inputs):  # noqa: ANN001
+            logits = np.zeros((inputs.shape[0], inputs.shape[1], 5), dtype=np.float32)
+            logits[:, :, 2] = 4.0
+            logits[:, :, 3] = -4.0
+            return mx.array(logits)
+
+    class NeutralReferenceModel:
+        def __call__(self, inputs):  # noqa: ANN001
+            return mx.zeros((inputs.shape[0], inputs.shape[1], 5))
+
+    chosen_batch = mx.array([[0, 2, 2]], dtype=mx.int32)
+    chosen_lengths = mx.array([[1, 3]], dtype=mx.int32)
+    rejected_batch = mx.array([[0, 3, 3]], dtype=mx.int32)
+    rejected_lengths = mx.array([[1, 3]], dtype=mx.int32)
+    objective = PreferenceObjectiveConfig(algorithm="dpo", beta=0.1)
+
+    loss_values, token_count, chosen_logprob, rejected_logprob = preference_loss_components(
+        model=StaticLogitModel(),
+        chosen_batch=chosen_batch,
+        chosen_lengths=chosen_lengths,
+        rejected_batch=rejected_batch,
+        rejected_lengths=rejected_lengths,
+        objective=objective,
+        reference_model=NeutralReferenceModel(),
+    )
+    loss, loss_token_count = make_preference_loss(
+        objective,
+        reference_model=NeutralReferenceModel(),
+    )(
+        StaticLogitModel(),
+        chosen_batch,
+        chosen_lengths,
+        rejected_batch,
+        rejected_lengths,
+    )
+
+    assert float(np.array(chosen_logprob).reshape(-1)[0]) > float(
+        np.array(rejected_logprob).reshape(-1)[0]
+    )
+    assert float(np.array(loss_values).reshape(-1)[0]) > 0.0
+    assert float(np.array(token_count).reshape(-1)[0]) == pytest.approx(4.0)
+    assert float(np.array(loss).reshape(-1)[0]) == pytest.approx(
+        float(np.array(loss_values).reshape(-1)[0])
+    )
+    assert float(np.array(loss_token_count).reshape(-1)[0]) == pytest.approx(4.0)
+
+
+@pytest.mark.parametrize("algorithm", ["dpo", "orpo", "cpo"])
+def test_preference_training_evaluates_mlx_metrics_for_objectives(algorithm: str) -> None:
+    mx = pytest.importorskip("mlx.core")
+    np = pytest.importorskip("numpy")
+    from worker.model_ops.preference_training import (
+        PreferenceObjectiveConfig,
+        PreferencePair,
+        PreferenceTokenDataset,
+        evaluate_preference_metrics,
+        iterate_preference_batches,
+    )
+
+    class SimpleTokenizer:
+        eos_token_id = 4
+
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            del add_special_tokens
+            return {
+                "Prompt": [0],
+                "Good": [2, 2],
+                "Bad": [3, 3],
+            }[text]
+
+    class StaticLogitModel:
+        def __call__(self, inputs):  # noqa: ANN001
+            logits = np.zeros((inputs.shape[0], inputs.shape[1], 5), dtype=np.float32)
+            logits[:, :, 2] = 4.0
+            logits[:, :, 3] = -4.0
+            return mx.array(logits)
+
+    class NeutralReferenceModel:
+        def __call__(self, inputs):  # noqa: ANN001
+            return mx.zeros((inputs.shape[0], inputs.shape[1], 5))
+
+    dataset = PreferenceTokenDataset(
+        [
+            PreferencePair(prompt="Prompt", chosen="Good", rejected="Bad"),
+            PreferencePair(prompt="Prompt", chosen="Good", rejected="Bad"),
+        ],
+        SimpleTokenizer(),
+    )
+    batch = next(
+        iterate_preference_batches(dataset, batch_size=2, max_seq_length=16)
+    )
+    reference_model = NeutralReferenceModel() if algorithm == "dpo" else None
+    metrics = evaluate_preference_metrics(
+        model=StaticLogitModel(),
+        dataset=dataset,
+        objective=PreferenceObjectiveConfig(algorithm=algorithm, beta=0.1),
+        batch_size=2,
+        max_seq_length=16,
+        reference_model=reference_model,
+    )
+
+    assert batch[0].shape == batch[2].shape
+    assert metrics.preference_loss_final > 0.0
+    assert metrics.chosen_logprob_mean > metrics.rejected_logprob_mean
+    assert metrics.chosen_rejected_margin > 0.0
+    assert metrics.win_rate_proxy == pytest.approx(1.0)
+
+
+def test_train_preference_native_wires_mlx_lm_trainer_and_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("mlx.core")
+    from worker.model_ops import preference_training
+    import mlx.optimizers as mlx_optimizers
+    import mlx_lm.tuner.trainer as trainer_module
+    import mlx_lm.tuner.utils as tuner_utils_module
+    import mlx_lm.utils as mlx_utils_module
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.layers = [object(), object()]
+            self.freeze_count = 0
+            self.eval_count = 0
+            self.loaded_weights = ""
+
+        def freeze(self) -> None:
+            self.freeze_count += 1
+
+        def eval(self) -> None:
+            self.eval_count += 1
+
+        def load_weights(self, path: str, strict: bool = False) -> None:
+            assert strict is False
+            self.loaded_weights = path
+
+    class FakeTokenizer:
+        eos_token_id = 4
+
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            del add_special_tokens
+            return {
+                "Prompt": [0],
+                "Good": [2, 2],
+                "Bad": [3, 3],
+            }[text]
+
+    class FakeAdam:
+        def __init__(self, learning_rate: float) -> None:
+            self.learning_rate = learning_rate
+
+    calls: dict[str, object] = {"load_paths": []}
+
+    def fake_load(path: str, lazy: bool = False):  # noqa: ANN001
+        assert lazy is False
+        calls["load_paths"].append(path)
+        return FakeModel(), FakeTokenizer()
+
+    def fake_save_config(payload: dict[str, object], path: Path) -> None:
+        path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+    def fake_linear_to_lora_layers(
+        model: FakeModel,
+        num_layers: int,
+        lora_parameters: dict[str, object],
+        use_dora: bool = False,
+    ) -> None:
+        assert model.freeze_count == 1
+        assert num_layers == 2
+        assert lora_parameters["rank"] == 8
+        assert use_dora is False
+        calls["lora_converted"] = True
+
+    def fake_train(
+        *,
+        model: FakeModel,
+        args,
+        optimizer: FakeAdam,
+        train_dataset,
+        val_dataset,
+        loss,
+        iterate_batches,
+        training_callback,
+    ) -> None:
+        del model, optimizer, train_dataset, val_dataset, loss, iterate_batches
+        Path(args.adapter_file).write_bytes(b"trained-preference-adapter")
+        training_callback.on_train_loss_report(
+            {
+                "train_loss": 0.31,
+                "learning_rate": 0.0002,
+                "trained_tokens": 12,
+                "tokens_per_second": 34.0,
+            }
+        )
+        calls["trainer_args"] = args
+
+    monkeypatch.setattr(mlx_utils_module, "load", fake_load)
+    monkeypatch.setattr(mlx_utils_module, "save_config", fake_save_config)
+    monkeypatch.setattr(
+        tuner_utils_module,
+        "linear_to_lora_layers",
+        fake_linear_to_lora_layers,
+    )
+    monkeypatch.setattr(
+        tuner_utils_module,
+        "print_trainable_parameters",
+        lambda model: None,
+    )
+    monkeypatch.setattr(trainer_module, "train", fake_train)
+    monkeypatch.setattr(mlx_optimizers, "Adam", FakeAdam)
+    monkeypatch.setattr(
+        preference_training,
+        "evaluate_preference_metrics",
+        lambda **kwargs: preference_training.PreferenceMetricSnapshot(
+            preference_loss_final=0.2,
+            chosen_logprob_mean=-1.5,
+            rejected_logprob_mean=-2.0,
+            chosen_rejected_margin=0.5,
+            win_rate_proxy=1.0,
+        ),
+    )
+
+    dataset_dir = tmp_path / "normalized"
+    dataset_dir.mkdir()
+    (dataset_dir / "train.jsonl").write_text(
+        json.dumps({"prompt": "Prompt", "chosen": "Good", "rejected": "Bad"}) + "\n",
+        encoding="utf-8",
+    )
+    resume_path = tmp_path / "resume.safetensors"
+    resume_path.write_bytes(b"resume")
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={
+            "training_mode": "dpo",
+            "batch_size": "1",
+            "iters": "1",
+            "learning_rate": "0.0002",
+            "reference_model_path": str(tmp_path / "reference-model"),
+        },
+        dataset_format="preference_pair",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-dpo-native",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=dataset_dir,
+        config=config,
+        dataset_format="preference_pair",
+        resume_source_path=resume_path,
+    )
+
+    result = preference_training.train_preference_native(request)
+
+    assert calls["load_paths"] == [
+        str(tmp_path / "base-model"),
+        str(tmp_path / "reference-model"),
+    ]
+    assert calls["lora_converted"] is True
+    assert calls["trainer_args"].batch_size == 1
+    assert result.weights_path.read_bytes() == b"trained-preference-adapter"
+    assert result.adapter_config_path.is_file()
+    assert result.metrics.tokens_seen == 12
+    assert result.metrics.learning_rate_final == pytest.approx(0.0002)
+    assert result.metrics.preference_loss_final == pytest.approx(0.2)
+    assert result.metrics.chosen_rejected_margin == pytest.approx(0.5)
+    assert result.metrics.resume_source_path == str(resume_path)
 
 
 def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
