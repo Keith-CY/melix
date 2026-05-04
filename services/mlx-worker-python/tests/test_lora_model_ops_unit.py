@@ -444,6 +444,16 @@ def test_orpo_and_cpo_loss_values_reward_positive_margins() -> None:
     )
 
 
+def test_preference_metrics_collector_records_validation_loss() -> None:
+    from worker.model_ops.preference_training import PreferenceMetricsCollector
+
+    collector = PreferenceMetricsCollector()
+
+    collector.on_val_loss_report({"val_loss": 0.27})
+
+    assert collector.losses == [pytest.approx(0.27)]
+
+
 def test_preference_training_mlx_loss_components_reward_chosen_sequence() -> None:
     mx = pytest.importorskip("mlx.core")
     np = pytest.importorskip("numpy")
@@ -499,6 +509,51 @@ def test_preference_training_mlx_loss_components_reward_chosen_sequence() -> Non
         float(np.array(loss_values).reshape(-1)[0])
     )
     assert float(np.array(loss_token_count).reshape(-1)[0]) == pytest.approx(4.0)
+
+
+def test_preference_training_mlx_loss_components_reject_missing_dpo_reference() -> None:
+    mx = pytest.importorskip("mlx.core")
+    np = pytest.importorskip("numpy")
+    from worker.model_ops.preference_training import PreferenceObjectiveConfig, preference_loss_components
+
+    class StaticLogitModel:
+        def __call__(self, inputs):  # noqa: ANN001
+            return mx.array(np.zeros((inputs.shape[0], inputs.shape[1], 5), dtype=np.float32))
+
+    with pytest.raises(ModelOperationError) as exc:
+        preference_loss_components(
+            model=StaticLogitModel(),
+            chosen_batch=mx.array([[0, 2, 2]], dtype=mx.int32),
+            chosen_lengths=mx.array([[1, 3]], dtype=mx.int32),
+            rejected_batch=mx.array([[0, 3, 3]], dtype=mx.int32),
+            rejected_lengths=mx.array([[1, 3]], dtype=mx.int32),
+            objective=PreferenceObjectiveConfig(algorithm="dpo", beta=0.1),
+            reference_model=None,
+        )
+
+    assert exc.value.code == "invalid_alignment_config"
+
+
+def test_preference_training_sequence_logprobs_accepts_tuple_logits() -> None:
+    mx = pytest.importorskip("mlx.core")
+    np = pytest.importorskip("numpy")
+    from worker.model_ops.preference_training import sequence_logprobs
+
+    class TupleLogitModel:
+        def __call__(self, inputs):  # noqa: ANN001
+            logits = np.zeros((inputs.shape[0], inputs.shape[1], 5), dtype=np.float32)
+            logits[:, :, 2] = 3.0
+            return mx.array(logits), {"ignored": True}
+
+    sequence_logprob, token_count, chosen_nll = sequence_logprobs(
+        TupleLogitModel(),
+        mx.array([[0, 2, 2]], dtype=mx.int32),
+        mx.array([[1, 3]], dtype=mx.int32),
+    )
+
+    assert float(np.array(sequence_logprob).reshape(-1)[0]) < 0.0
+    assert float(np.array(token_count).reshape(-1)[0]) == pytest.approx(2.0)
+    assert float(np.array(chosen_nll).reshape(-1)[0]) > 0.0
 
 
 @pytest.mark.parametrize("algorithm", ["dpo", "orpo", "cpo"])
@@ -560,6 +615,66 @@ def test_preference_training_evaluates_mlx_metrics_for_objectives(algorithm: str
     assert metrics.chosen_logprob_mean > metrics.rejected_logprob_mean
     assert metrics.chosen_rejected_margin > 0.0
     assert metrics.win_rate_proxy == pytest.approx(1.0)
+
+
+def test_preference_training_iterate_batches_rejects_too_small_dataset() -> None:
+    pytest.importorskip("mlx.core")
+    from worker.model_ops.preference_training import (
+        PreferencePair,
+        PreferenceTokenDataset,
+        iterate_preference_batches,
+    )
+
+    class SimpleTokenizer:
+        eos_token_id = 4
+
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            del add_special_tokens
+            return {
+                "Prompt": [0],
+                "Good": [2],
+                "Bad": [3],
+            }[text]
+
+    dataset = PreferenceTokenDataset(
+        [PreferencePair(prompt="Prompt", chosen="Good", rejected="Bad")],
+        SimpleTokenizer(),
+    )
+
+    with pytest.raises(ValueError, match="batch_size=2"):
+        next(iterate_preference_batches(dataset, batch_size=2, max_seq_length=16))
+
+
+def test_preference_training_tokenizes_chat_template_and_text_fallbacks() -> None:
+    from worker.model_ops.preference_training import PreferencePair, PreferenceTokenDataset
+
+    class ChatTokenizer:
+        eos_token_id = 9
+
+        def apply_chat_template(self, messages, **kwargs):  # noqa: ANN001
+            if kwargs.get("add_generation_prompt"):
+                return [1, 2, 3]
+            return [1, 2, 3, len(messages[-1]["content"])]
+
+    class TextTokenizer:
+        eos_token_id = None
+
+        def encode(self, text: str) -> list[int]:
+            return [len(text)]
+
+    chat_dataset = PreferenceTokenDataset(
+        [PreferencePair(prompt="Prompt", chosen="Good", rejected="Bad")],
+        ChatTokenizer(),
+    )
+    text_dataset = PreferenceTokenDataset(
+        [PreferencePair(prompt="Prompt", chosen="Good", rejected="Bad")],
+        TextTokenizer(),
+    )
+
+    assert chat_dataset[0].chosen_tokens == [1, 2, 3, 4, 9]
+    assert chat_dataset[0].chosen_offset == 3
+    assert text_dataset[0].chosen_tokens == [6, 4]
+    assert text_dataset[0].chosen_offset == 1
 
 
 def test_train_preference_native_wires_mlx_lm_trainer_and_metrics(

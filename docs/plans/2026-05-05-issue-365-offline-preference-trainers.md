@@ -21,10 +21,10 @@ returns objective-specific metrics that the alignment manifest records.
 
 ## Completion Boundary
 
-This plan does not close #365. It covers only Slice 2: offline DPO, ORPO, and
-CPO trainer execution. GRPO, RLHF/#366, PTQ/QAT real local inference evidence,
-full CLI chain acceptance, and Window real-runtime acceptance remain separate
-Issue 365 slices.
+This plan does not complete all #365 acceptance criteria. It covers only Slice
+2: offline DPO, ORPO, and CPO trainer execution. GRPO, RLHF/#366, PTQ/QAT real
+local inference evidence, full CLI chain acceptance, and Window real-runtime
+acceptance remain separate Issue 365 slices.
 
 ## Files
 
@@ -463,11 +463,12 @@ section in this plan.
 - Native preference trainer wiring test with patched MLX-LM trainer:
   `1 passed, 2 warnings in 0.86s`.
 - Focused Python regression after native preference trainer routing:
-  `134 passed, 2 warnings in 2.91s`.
+  `139 passed, 2 warnings in 3.13s`.
 - Coverage run after native preference trainer routing:
-  `134 passed, 2 warnings in 3.44s`.
+  `139 passed, 2 warnings in 3.44s`.
 - Python changed-line coverage after native preference trainer routing:
-  `96.22% (764/794)`.
+  `97.21% (557/573)` after refreshing `origin/main` to include merged
+  PR #368.
 - `git diff --check` after native preference trainer routing: passed.
 
 ## Remaining Issue 365 Gaps After This Plan
