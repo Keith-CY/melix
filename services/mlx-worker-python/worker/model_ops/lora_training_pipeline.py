@@ -14,11 +14,7 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.response_only_boundary import ResponseOnlyBoundaryAggregate
 from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest
-from worker.model_ops.training_config import (
-    normalize_training_config,
-    _PREFERENCE_TRAINING_MODES,
-    _RL_TRAINING_MODES,
-)
+from worker.model_ops.training_config import normalize_training_config
 from worker.model_ops.training_dataset import (
     HFDatasetFetcher,
     resolve_training_dataset_package,
@@ -261,24 +257,6 @@ class LoRATrainingPipeline:
         manifest_path = output_dir / "train_lora.adapter.json"
         manifest["artifact_path"] = str(manifest_path)
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-
-        if config.alignment_algorithm:
-            alignment_manifest_path = output_dir / "train_alignment.alignment_run.json"
-            alignment_manifest = _build_alignment_run_manifest(
-                job_id=job_id,
-                config=config,
-                source_model=source_model,
-                manifest=manifest,
-                request_ext=request_ext,
-                alignment_manifest_path=alignment_manifest_path,
-                persisted_at_unix_ms=persisted_at_unix_ms,
-            )
-            alignment_manifest_path.write_text(
-                json.dumps(alignment_manifest, indent=2) + "\n", encoding="utf-8"
-            )
-            manifest["alignment_run_manifest_path"] = str(alignment_manifest_path)
-            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-
         self._experiment_store.persist_training_run(
             jobs_root=jobs_root,
             manifest=manifest,
@@ -424,91 +402,3 @@ def _default_experiment_group_id(source_model_id: str, adapter_name: str) -> str
     normalized_source_model_id = source_model_id.strip() or "model"
     normalized_adapter_name = adapter_name.strip() or "adapter"
     return f"{normalized_source_model_id}:{normalized_adapter_name}"
-
-
-def _build_alignment_run_manifest(
-    *,
-    job_id: str,
-    config: Any,
-    source_model: common_pb2.ModelSpec,
-    manifest: dict[str, Any],
-    request_ext: dict[str, str],
-    alignment_manifest_path: Path,
-    persisted_at_unix_ms: int,
-) -> dict[str, Any]:
-    is_rl_mode = config.training_mode in _RL_TRAINING_MODES
-    alignment_manifest: dict[str, Any] = {
-        "schema_version": "melix.alignment_run.v1",
-        "job_id": job_id,
-        "operation": "train_alignment",
-        "source_model": source_model.model_id,
-        "source_model_revision": source_model.revision,
-        "source_model_path": source_model.model_path,
-        "input_artifact_paths": [source_model.model_path],
-        "output_artifact_path": manifest.get("weights_path", ""),
-        "training_backend": manifest.get("training_backend", ""),
-        "created_at_unix_ms": persisted_at_unix_ms,
-        "training_mode": config.training_mode,
-        "training_objective": config.training_objective,
-        "adapter_algorithm": config.adapter_algorithm,
-        "preference_loss": config.preference_loss,
-        "dataset_contract": config.dataset_contract,
-        "dataset_uri": manifest.get("dataset_uri", ""),
-        "dataset_format": manifest.get("dataset_format", ""),
-        "adapter_set_hash": manifest.get("adapter_set_hash", ""),
-        "checkpoint_count": manifest.get("checkpoint_count", 0),
-        "latest_checkpoint_path": manifest.get("latest_checkpoint_path", ""),
-        "alignment_algorithm": config.alignment_algorithm,
-        "metrics": {
-            "loss_final": manifest.get("training.loss_final"),
-            "loss_best": manifest.get("training.loss_best"),
-            "tokens_per_second": manifest.get("training.tokens_per_second"),
-            "training_duration_ms": manifest.get("training.job_duration_ms"),
-        },
-        "artifact_path": str(alignment_manifest_path),
-    }
-
-    if config.reference_model_path:
-        alignment_manifest["reference_model_path"] = config.reference_model_path
-
-    if config.reward_model_manifest_path:
-        alignment_manifest["reward_model_manifest_path"] = config.reward_model_manifest_path
-
-    if is_rl_mode:
-        alignment_manifest["candidate_trace_path"] = request_ext.get("candidate_trace_path", "")
-        kl_penalty_raw = request_ext.get("kl_penalty", "").strip()
-        if kl_penalty_raw:
-            try:
-                alignment_manifest["kl_penalty"] = float(kl_penalty_raw)
-            except ValueError:
-                pass
-        if config.grpo_candidate_count > 0:
-            alignment_manifest["grpo_candidate_count"] = config.grpo_candidate_count
-
-    if config.training_mode in _PREFERENCE_TRAINING_MODES:
-        chosen_margin_raw = request_ext.get("chosen_rejected_margin", "").strip()
-        if chosen_margin_raw:
-            try:
-                alignment_manifest["chosen_rejected_margin"] = float(chosen_margin_raw)
-            except ValueError:
-                pass
-        win_rate_raw = request_ext.get("win_rate_proxy", "").strip()
-        if win_rate_raw:
-            try:
-                alignment_manifest["win_rate_proxy"] = float(win_rate_raw)
-            except ValueError:
-                pass
-
-    for stat_key in ("reward_mean", "reward_p50", "reward_p95"):
-        raw = request_ext.get(stat_key, "").strip()
-        if raw:
-            try:
-                alignment_manifest[stat_key] = float(raw)
-            except ValueError:
-                pass
-
-    failure_reason = request_ext.get("failure_reason", "").strip()
-    if failure_reason:
-        alignment_manifest["failure_reason"] = failure_reason
-
-    return alignment_manifest
