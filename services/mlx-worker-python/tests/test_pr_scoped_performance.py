@@ -935,8 +935,12 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert benchmark_metrics["row_count"] > 0
     assert benchmark_export_metrics["elapsed_ms_mean"] > 0
     assert benchmark_export_metrics["per_run_ms_mean"] > 0
+    assert benchmark_export_metrics["benchmark_job_count"] == 241.0
+    assert benchmark_export_metrics["evaluation_job_count"] == 241.0
+    assert benchmark_export_metrics["evaluation_result_count"] == 241.0
+    assert benchmark_export_metrics["evaluation_sample_count"] == 241.0
     assert benchmark_export_metrics["run_directory_count"] == 240.0
-    assert benchmark_export_metrics["result_file_count"] == 720.0
+    assert benchmark_export_metrics["result_file_count"] == 723.0
     assert benchmark_queue_metrics["cold_json_loads"] == 128.0
     assert benchmark_queue_metrics["record_count"] == 128.0
     assert benchmark_queue_metrics["warm_json_loads_mean"] == 0.0
@@ -1064,49 +1068,83 @@ def test_dispatch_probe_impl_supports_benchmark_export_probe() -> None:
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["per_run_ms_mean"] > 0
+    assert metrics["benchmark_job_count"] == 241.0
+    assert metrics["evaluation_job_count"] == 241.0
+    assert metrics["evaluation_result_count"] == 241.0
+    assert metrics["evaluation_sample_count"] == 241.0
     assert metrics["run_directory_count"] == 240.0
-    assert metrics["result_file_count"] == 720.0
+    assert metrics["result_file_count"] == 723.0
+
+
+def _fake_benchmark_export_module(
+    *,
+    benchmark_job_count: int = 241,
+    evaluation_job_count: int = 241,
+    benchmark_result_count: int = 723,
+    evaluation_result_count: int = 241,
+    evaluation_sample_count: int = 241,
+    summary_csv_job_count: int = 241,
+) -> type[object]:
+    class FakeBenchmarkExportModule:
+        @staticmethod
+        def build_export_bundle(path: Path) -> dict[str, object]:
+            del path
+            return {
+                "benchmark_jobs": [object()] * benchmark_job_count,
+                "evaluation_jobs": [object()] * evaluation_job_count,
+                "benchmark_results": [object()] * benchmark_result_count,
+                "evaluation_results": [object()] * evaluation_result_count,
+                "evaluation_samples": [object()] * evaluation_sample_count,
+            }
+
+        @staticmethod
+        def build_benchmark_summary_csv(artifacts: dict[str, object]) -> str:
+            del artifacts
+            return "job_id\n" + "\n".join(f"bench-{index}" for index in range(summary_csv_job_count)) + (
+                "\n" if summary_csv_job_count else ""
+            )
+
+    return FakeBenchmarkExportModule
+
+
+def _patch_benchmark_export_probe_module(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_module: type[object],
+) -> None:
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_load_repo_module",
+        lambda path, unique_name: fake_module,
+    )
 
 
 def test_probe_benchmark_export_run_scan_rejects_unexpected_job_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeBenchmarkExportModule:
-        @staticmethod
-        def collect_benchmark_artifacts(path: Path) -> dict[str, object]:
-            del path
-            return {"benchmark_jobs": [], "benchmark_results": [object()] * 720}
-
-    monkeypatch.setattr(pr_scoped_performance_module, "_load_repo_module", lambda path, unique_name: FakeBenchmarkExportModule)
+    fake_module = _fake_benchmark_export_module(benchmark_job_count=0)
+    _patch_benchmark_export_probe_module(monkeypatch, fake_module)
 
     with pytest.raises(ValueError, match="unexpected benchmark job count"):
         _probe_benchmark_export_run_scan(REPO_ROOT)
 
 
-def test_probe_benchmark_export_run_scan_rejects_unexpected_result_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeBenchmarkExportModule:
-        @staticmethod
-        def collect_benchmark_artifacts(path: Path) -> dict[str, object]:
-            del path
-            return {"benchmark_jobs": [object()] * 240, "benchmark_results": []}
+def test_probe_benchmark_export_run_scan_rejects_unexpected_evaluation_job_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_module = _fake_benchmark_export_module(evaluation_job_count=0)
+    _patch_benchmark_export_probe_module(monkeypatch, fake_module)
 
-    monkeypatch.setattr(pr_scoped_performance_module, "_load_repo_module", lambda path, unique_name: FakeBenchmarkExportModule)
+    with pytest.raises(ValueError, match="unexpected evaluation job count"):
+        _probe_benchmark_export_run_scan(REPO_ROOT)
+
+
+def test_probe_benchmark_export_run_scan_rejects_unexpected_result_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_module = _fake_benchmark_export_module(benchmark_result_count=0)
+    _patch_benchmark_export_probe_module(monkeypatch, fake_module)
 
     with pytest.raises(ValueError, match="unexpected benchmark result count"):
         _probe_benchmark_export_run_scan(REPO_ROOT)
 
 
 def test_probe_benchmark_export_run_scan_rejects_unexpected_summary_csv_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeBenchmarkExportModule:
-        @staticmethod
-        def collect_benchmark_artifacts(path: Path) -> dict[str, object]:
-            del path
-            return {"benchmark_jobs": [object()] * 240, "benchmark_results": [object()] * 720}
-
-        @staticmethod
-        def build_benchmark_summary_csv(artifacts: dict[str, object]) -> str:
-            del artifacts
-            return "job_id\r\n"
-
-    monkeypatch.setattr(pr_scoped_performance_module, "_load_repo_module", lambda path, unique_name: FakeBenchmarkExportModule)
+    fake_module = _fake_benchmark_export_module(summary_csv_job_count=0)
+    _patch_benchmark_export_probe_module(monkeypatch, fake_module)
 
     with pytest.raises(ValueError, match="unexpected summary CSV line count"):
         _probe_benchmark_export_run_scan(REPO_ROOT)
