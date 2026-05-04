@@ -125,3 +125,15 @@ forward into existing activation and post-training surfaces.
 - Review follow-up changed-line coverage:
   - Root LoRA store scope: 100.00% (140/140).
   - macOS menubar review scope: 98.29% (115/117).
+- Post-review CI stabilization verification:
+  - `swift test --package-path apps/macos-menubar --enable-code-coverage
+    --filter localServerCreationRefreshesReadyModelOptionsFromRegistryWhenCatalogIsEmpty`
+    passed 1 test.
+  - `swift test --package-path apps/macos-menubar --enable-code-coverage
+    --filter "RuntimeViewModelTests|DesktopFoundationViewTests"`
+    passed 420 tests.
+  - `make swift-test` passed.
+  - `git diff --check` passed.
+- Post-review CI stabilization changed-line coverage:
+  - Follow-up scope: 100.00% (7/7 executable changed lines; plan document
+    lines are non-executable).
