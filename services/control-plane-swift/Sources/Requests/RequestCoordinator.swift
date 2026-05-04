@@ -712,6 +712,13 @@ public actor RequestCoordinator {
         }
         await hub.testingDetachAllConsumersWithoutLifecycleCallback()
     }
+
+    func testingExecutionHubHasConsumers(requestID: String) async -> Bool {
+        guard let hub = executionHubs[requestID] else {
+            return false
+        }
+        return await hub.hasConsumers()
+    }
 #endif
 
     public func startChatCompletion(
@@ -1116,9 +1123,7 @@ public actor RequestCoordinator {
             forKey: "disconnect.resume_success_rate"
         )
         await metricsStore.increment("disconnect.terminal_failure_count")
-        if let workerClient = activeWorkerClients[requestID] {
-            _ = try? await workerClient.abort(requestID: requestID)
-        }
+        let workerClient = activeWorkerClients[requestID]
         let errorEvent = makeLifecycleFailureEvent(
             requestID: requestID,
             code: "stream_disconnect_timeout",
@@ -1128,6 +1133,7 @@ public actor RequestCoordinator {
         await hub.emitLifecycle(.terminalFailure(code: "stream_disconnect_timeout", message: "The client disconnected and the resume grace period expired."))
         await hub.finish()
         await finishRequestTracking(requestID: requestID, phase: .requestFailed)
+        _ = try? await workerClient?.abort(requestID: requestID)
     }
 
     private func makeLifecycleFailureEvent(
