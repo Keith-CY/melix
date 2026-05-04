@@ -39,6 +39,9 @@ This slice does not add:
   provision Python or `uv`, so worker-client bridge tests fail even when the Swift code is valid.
 - `package-app` fails under Xcode 16.4 concurrency checks because a cached `NSImage` static
   property is not isolated to the main actor.
+- `package-app` builds the menu bar executable and Swift text worker before bundle packaging, but
+  does not build the root `melix` CLI product that `scripts/package_macos_menubar_app.py` bundles
+  into `Melix.app`.
 - `swift-tests` expose a timing-sensitive request coordinator test that assumes disconnect-grace
   expiry has already completed after a fixed sleep.
 - `validate_pr_evidence.py` currently accepts empty fenced code blocks and loose placeholder text
@@ -73,6 +76,8 @@ This slice does not add:
 - Provision Python, `uv`, and the locked worker environment before running `make swift-test`.
 - Move protocol generation to repository-pinned toolchains so `proto-drift` is deterministic across
   runs.
+- Build the root `melix` CLI product before the self-contained app packaging step resolves bundled
+  Swift executables.
 - Reduce packaging workflow permissions to `contents: read` by default and isolate release-asset
   publication in a tag-only write-scoped job.
 - Separate scheduled and push-triggered release-gate workflow concurrency keys on `main`.
@@ -124,6 +129,8 @@ Measurement points for this remediation:
   gate during the transition period, and the deterministic smoke fixture remains green.
 - Protocol generation determinism: the same repository-locked protobuf toolchain is used in CI and
   local regeneration paths.
+- Packaging workflow prerequisites: `melix`, `melix-menubar`, and `melix-text-worker-swift` build
+  products exist before the bundle writer resolves inputs.
 - Packaging workflow permissions: pull request execution paths stay read-only.
 - Workflow scheduling isolation: scheduled and push-triggered release-gate runs do not cancel each
   other on `main`.
@@ -149,6 +156,7 @@ uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-work
 xcrun swift test --package-path services/control-plane-swift --filter "HTTPGatewayTests.RequestCoordinatorTests/disconnectGraceExpiryAbortsTheWorkerAndRecordsATerminalLifecycleFailure()"
 xcrun swift test --package-path apps/macos-menubar
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python python -m grpc_tools.protoc --version
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py::test_package_workflow_builds_cli_before_packaging_app -q
 HOME="$PWD/.swift-home/protocol" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex/protocol" xcrun swift build --package-path packages/protocol/swift --product protoc-gen-swift --disable-automatic-resolution
 HOME="$PWD/.swift-home/protocol" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex/protocol" xcrun swift build --package-path packages/protocol/swift --product protoc-gen-grpc-swift-2 --disable-automatic-resolution
 ```
@@ -177,4 +185,6 @@ This remediation is complete when:
 - swift test CI provisions the Python bridge runtime dependencies before worker-client tests launch
 - sandboxed Python code evaluation succeeds on runner-compatible interpreter paths
 - the menu bar app package builds under the current Xcode concurrency checks
+- the packaging workflow builds the root `melix` CLI product before invoking the bundle packaging
+  script
 - the request coordinator disconnect-grace test no longer depends on a fixed sleep race

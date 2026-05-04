@@ -14,6 +14,27 @@ MODULE_PATH = REPO_ROOT / "scripts" / "package_macos_menubar_app.py"
 PACKAGE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "package-self-contained-app.yml"
 
 
+def find_named_workflow_step(workflow: str, name: str) -> re.Match[str]:
+    match = re.search(
+        rf"^[ \t]*-[ \t]+name:[ \t]+{re.escape(name)}[ \t]*$",
+        workflow,
+        flags=re.MULTILINE,
+    )
+    assert match is not None, f"Workflow step not found: {name}"
+    return match
+
+
+def find_run_workflow_step(workflow: str, name: str, command: str) -> re.Match[str]:
+    match = re.search(
+        rf"^[ \t]*-[ \t]+name:[ \t]+{re.escape(name)}[ \t]*\n"
+        rf"^[ \t]*run:[ \t]+{re.escape(command)}[ \t]*$",
+        workflow,
+        flags=re.MULTILINE,
+    )
+    assert match is not None, f"Workflow run step not found: {name}"
+    return match
+
+
 def load_package_macos_app_module():
     assert MODULE_PATH.exists(), f"Expected package_macos_menubar_app entrypoint at {MODULE_PATH}"
     spec = importlib.util.spec_from_file_location("melix_package_macos_app", MODULE_PATH)
@@ -171,6 +192,35 @@ def test_package_workflow_uses_runtime_only_python_environment_for_bundle() -> N
     assert "$PYTHON_RUNTIME_ROOT" in workflow
     assert "--python-site-packages-path" in workflow
     assert "$PYTHON_SITE_PACKAGES" in workflow
+
+
+def test_package_workflow_builds_required_swift_products_before_packaging_app() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    build_steps = [
+        find_run_workflow_step(
+            workflow,
+            "Build CLI executable",
+            "swift build --product melix --disable-automatic-resolution",
+        ),
+        find_run_workflow_step(
+            workflow,
+            "Build Swift text worker",
+            "swift build --package-path services/mlx-text-worker-swift --disable-automatic-resolution",
+        ),
+        find_run_workflow_step(
+            workflow,
+            "Build menu bar app executable",
+            "swift build --package-path apps/macos-menubar --disable-automatic-resolution",
+        ),
+    ]
+    package_step = find_named_workflow_step(workflow, "Package self-contained Melix.app")
+
+    previous_step_end = 0
+    for build_step in build_steps:
+        assert previous_step_end < build_step.start()
+        assert build_step.end() < package_step.start()
+        previous_step_end = build_step.end()
 
 
 def test_main_resolves_default_build_outputs_and_prints_app_path(
