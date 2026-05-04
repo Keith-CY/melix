@@ -584,11 +584,15 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_raw_model_spec_loads_config_payload_when_not_supplied" in registry_probe.test_command
     assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.test_command
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.test_command
+    assert "test_metadata_payload_has_mlx_signal_does_not_request_sorted_json" in registry_probe.test_command
+    assert "test_has_mlx_signal_config_payload_fast_path_does_not_request_sorted_json" in registry_probe.test_command
     assert "scripts/changed_scope_coverage.py" in registry_probe.watch_globs
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.coverage_command
     assert "test_raw_model_spec_loads_config_payload_when_not_supplied" in registry_probe.coverage_command
     assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.coverage_command
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.coverage_command
+    assert "test_metadata_payload_has_mlx_signal_does_not_request_sorted_json" in registry_probe.coverage_command
+    assert "test_has_mlx_signal_config_payload_fast_path_does_not_request_sorted_json" in registry_probe.coverage_command
     assert "scripts/changed_scope_coverage.py" in registry_probe.coverage_command
 
     assert maintenance_probe is not None
