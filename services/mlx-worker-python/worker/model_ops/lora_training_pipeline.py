@@ -74,6 +74,10 @@ class LoRATrainingPipeline:
             sample_count=dataset.package.sample_count,
             validation_sample_count=dataset.package.validation_sample_count,
         )
+        _validate_alignment_inputs(
+            config=config,
+            samples=dataset.package.normalized_samples,
+        )
 
         emit("prepare_training_data", 0.5)
         normalized_snapshot = write_normalized_dataset_snapshot(dataset.package, output_dir=output_dir)
@@ -302,6 +306,52 @@ def _write_alignment_trace(path: Path, samples: list[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for sample in samples:
             handle.write(json.dumps(sample) + "\n")
+
+
+def _validate_alignment_inputs(*, config: Any, samples: list[dict[str, Any]]) -> None:
+    alignment = getattr(config, "alignment", None)
+    if alignment is None:
+        return
+    if alignment.alignment_algorithm == "grpo":
+        for sample_index, sample in enumerate(samples):
+            candidates = sample.get("candidates")
+            candidate_count = len(candidates) if isinstance(candidates, list) else 0
+            if candidate_count < alignment.grpo_candidate_count:
+                raise ModelOperationError(
+                    code="invalid_alignment_dataset",
+                    message="GRPO samples must include at least grpo_candidate_count candidates.",
+                    details={
+                        "sample_index": str(sample_index),
+                        "candidate_count": str(candidate_count),
+                        "grpo_candidate_count": str(alignment.grpo_candidate_count),
+                    },
+                )
+    if alignment.alignment_algorithm == "rlhf":
+        _validate_reward_model_manifest(alignment.reward_model_manifest_path)
+
+
+def _validate_reward_model_manifest(manifest_path: str) -> None:
+    path = Path(manifest_path).expanduser()
+    if not path.is_file():
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="reward_model_manifest_path must point to a readable reward model manifest.",
+            details={"reward_model_manifest_path": manifest_path},
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="reward_model_manifest_path must point to a readable JSON manifest.",
+            details={"reward_model_manifest_path": manifest_path},
+        ) from exc
+    if not isinstance(payload, dict) or not str(payload.get("schema_version", "")).strip():
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="reward model manifest must include schema_version.",
+            details={"reward_model_manifest_path": manifest_path},
+        )
 
 
 def _alignment_manifest_payload(

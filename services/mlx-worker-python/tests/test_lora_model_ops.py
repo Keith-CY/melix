@@ -882,6 +882,22 @@ def test_train_lora_supports_rl_alignment_mode_contracts(
     extra_ext: dict[str, str],
     expected_contract: str,
 ) -> None:
+    extra_ext = dict(extra_ext)
+    if training_mode == "rlhf":
+        reward_manifest_path = tmp_path / "reward-model" / "manifest.json"
+        reward_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        reward_manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "melix.reward_model_adapter.v1",
+                    "reward_model_id": "reward-model",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        extra_ext["reward_model_manifest_path"] = str(reward_manifest_path)
+
     dataset_dir = _write_dataset_package(
         tmp_path / f"dataset-{training_mode}",
         format=dataset_format,
@@ -927,7 +943,7 @@ def test_train_lora_supports_rl_alignment_mode_contracts(
         assert metrics["candidate_group_reward_margin_mean"] == pytest.approx(0.3)
         assert metrics["candidate_group_reward_variance_mean"] == pytest.approx(0.0225)
     else:
-        assert alignment_payload["reward_model_manifest_path"] == "/tmp/reward-model/manifest.json"
+        assert alignment_payload["reward_model_manifest_path"] == extra_ext["reward_model_manifest_path"]
         assert metrics["reward_mean"] == pytest.approx(0.9)
     assert runner.last_train_request is not None
     assert runner.last_train_request.config.alignment is not None
@@ -1161,6 +1177,42 @@ def test_train_lora_rejects_grpo_with_non_integer_candidate_count(tmp_path: Path
     assert events[-1].failed.error.details["raw_value"] == "four"
 
 
+def test_train_lora_rejects_grpo_candidate_count_above_dataset_group_size(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-grpo-group-size",
+        format="prompt_candidate",
+        samples=[
+            {
+                "prompt": "Draft two options.",
+                "candidates": [{"text": "A."}, {"text": "B."}],
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-grpo-group-size"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "grpo",
+                    "adapter_name": "melix-invalid-grpo-group-size",
+                    "dataset_uri": str(dataset_dir),
+                    "grpo_candidate_count": "3",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_alignment_dataset"
+    assert events[-1].failed.error.details["sample_index"] == "0"
+    assert events[-1].failed.error.details["candidate_count"] == "2"
+    assert events[-1].failed.error.details["grpo_candidate_count"] == "3"
+
+
 def test_train_lora_rejects_rlhf_without_reward_scored_dataset(tmp_path: Path) -> None:
     dataset_dir = _write_dataset_package(
         tmp_path / "dataset-invalid-rlhf-format",
@@ -1231,6 +1283,126 @@ def test_train_lora_rejects_rlhf_without_reward_model_manifest(tmp_path: Path) -
     assert events[-1].failed.error.code == "invalid_alignment_config"
     assert events[-1].failed.error.details["training_mode"] == "rlhf"
     assert events[-1].failed.error.details["missing_field"] == "reward_model_manifest_path"
+
+
+def test_train_lora_rejects_rlhf_with_missing_reward_model_manifest_file(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-rlhf-reward-manifest",
+        format="reward_scored",
+        samples=[
+            {
+                "prompt": "Rate this.",
+                "response": "Helpful.",
+                "reward_score": 0.75,
+            }
+        ],
+    )
+    reward_manifest_path = tmp_path / "missing-reward-model" / "manifest.json"
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-rlhf-reward-manifest"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "rlhf",
+                    "adapter_name": "melix-invalid-rlhf-reward-manifest",
+                    "dataset_uri": str(dataset_dir),
+                    "reward_model_manifest_path": str(reward_manifest_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_alignment_config"
+    assert events[-1].failed.error.details["reward_model_manifest_path"] == str(
+        reward_manifest_path
+    )
+
+
+def test_train_lora_rejects_rlhf_with_malformed_reward_model_manifest(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-rlhf-reward-manifest-json",
+        format="reward_scored",
+        samples=[
+            {
+                "prompt": "Rate this.",
+                "response": "Helpful.",
+                "reward_score": 0.75,
+            }
+        ],
+    )
+    reward_manifest_path = tmp_path / "reward-model" / "manifest.json"
+    reward_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    reward_manifest_path.write_text("{not-json", encoding="utf-8")
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-rlhf-reward-manifest-json"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "rlhf",
+                    "adapter_name": "melix-invalid-rlhf-reward-manifest-json",
+                    "dataset_uri": str(dataset_dir),
+                    "reward_model_manifest_path": str(reward_manifest_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_alignment_config"
+    assert (
+        events[-1].failed.error.message
+        == "reward_model_manifest_path must point to a readable JSON manifest."
+    )
+
+
+def test_train_lora_rejects_rlhf_reward_model_manifest_without_schema_version(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-rlhf-reward-manifest-schema",
+        format="reward_scored",
+        samples=[
+            {
+                "prompt": "Rate this.",
+                "response": "Helpful.",
+                "reward_score": 0.75,
+            }
+        ],
+    )
+    reward_manifest_path = tmp_path / "reward-model-schema" / "manifest.json"
+    reward_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    reward_manifest_path.write_text(
+        json.dumps({"reward_model_id": "reward-model"}) + "\n",
+        encoding="utf-8",
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-rlhf-reward-manifest-schema"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "rlhf",
+                    "adapter_name": "melix-invalid-rlhf-reward-manifest-schema",
+                    "dataset_uri": str(dataset_dir),
+                    "reward_model_manifest_path": str(reward_manifest_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_alignment_config"
+    assert events[-1].failed.error.message == "reward model manifest must include schema_version."
 
 
 def test_train_lora_rejects_cpt_without_text_completion_dataset(tmp_path: Path) -> None:

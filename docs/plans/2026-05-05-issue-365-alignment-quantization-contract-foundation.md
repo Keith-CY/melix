@@ -49,6 +49,8 @@ evidence.
   manifests when prompt-candidate samples include scored candidate groups.
 - Return explicit validation errors for malformed scalar alignment arguments and
   null prompt-candidate entries.
+- Validate GRPO candidate-count consistency against prompt-candidate samples and
+  validate that RLHF reward-model references point to readable JSON manifests.
 - Add `melix alignment train` as a distinct CLI command group that forwards
   alignment parameters to the worker operation.
 - Extend quantization manifests with `quantization_mode`,
