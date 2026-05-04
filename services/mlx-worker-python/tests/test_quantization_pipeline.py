@@ -65,6 +65,13 @@ def test_quantize_job_writes_bundle_directory_and_versioned_manifest(tmp_path: P
     assert json.loads(manifest_path.read_text()) == manifest_payload
     assert manifest_payload["schema_version"] == "melix.quantized_bundle.v1"
     assert manifest_payload["artifact_kind"] == "quantized_model_bundle"
+    assert manifest_payload["quantization_mode"] == "ptq"
+    assert manifest_payload["source_artifact_kind"] == "base_model"
+    assert manifest_payload["release_gate"] == {
+        "quality_delta": 0.0,
+        "latency_delta": 0.0,
+        "local_inference_smoke_result": "not_requested",
+    }
     assert manifest_payload["quant_profile"] == {
         "algorithm": "oq",
         "schema_version": "melix.quant_profile.v1",
@@ -116,6 +123,7 @@ def test_quantize_job_records_successful_smoke_validation(tmp_path: Path) -> Non
 
     assert manifest_payload["compatibility"]["smoke_test_requested"] is True
     assert manifest_payload["compatibility"]["smoke_test_passed"] is True
+    assert manifest_payload["release_gate"]["local_inference_smoke_result"] == "passed"
     assert manifest_payload["artifact_bytes"] > 0
     assert manifest_payload["manifest_bytes"] > 0
     assert manifest_event.artifact.smoke_test_requested is True
@@ -247,6 +255,142 @@ def test_quantize_job_uses_typed_quant_profile_when_provided(tmp_path: Path) -> 
     assert manifest_event.quant_profile.ext["quant_group_size"] == "128"
     assert manifest_payload["quant_profile"]["quant_profile_id"] == "q6"
     assert manifest_payload["quant_profile"]["ext"] == {"quant_group_size": "128"}
+
+
+def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                run_smoke_test=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_mode": "qat",
+                    "source_artifact_kind": "merged_adapter",
+                    "quality_delta": "-0.0125",
+                    "latency_delta": "-0.2",
+                    "qat_fake_quant": "enabled",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    manifest_payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+
+    assert manifest_payload["quantization_mode"] == "qat"
+    assert manifest_payload["source_artifact_kind"] == "merged_adapter"
+    assert manifest_payload["release_gate"] == {
+        "quality_delta": -0.0125,
+        "latency_delta": -0.2,
+        "local_inference_smoke_result": "passed",
+    }
+    assert manifest_payload["qat"] == {"fake_quant": "enabled"}
+
+
+def test_quantize_job_rejects_qat_for_base_model_sources(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_mode": "qat",
+                    "source_artifact_kind": "base_model",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "unsupported_quantization_mode"
+    assert events[-1].failed.error.details["quantization_mode"] == "qat"
+    assert events[-1].failed.error.details["source_artifact_kind"] == "base_model"
+
+
+def test_quantize_job_rejects_unknown_quantization_mode(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_mode": "mystery",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "unsupported_quantization_mode"
+    assert events[-1].failed.error.details["quantization_mode"] == "mystery"
+
+
+def test_quantize_job_rejects_unknown_source_artifact_kind(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "source_artifact_kind": "checkpoint",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "unsupported_source_artifact_kind"
+    assert events[-1].failed.error.details["source_artifact_kind"] == "checkpoint"
+
+
+def test_quantize_job_rejects_non_numeric_release_gate_values(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quality_delta": "bad",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_quantization_release_gate"
+    assert events[-1].failed.error.details["field"] == "quality_delta"
+    assert events[-1].failed.error.details["value"] == "bad"
 
 
 def test_quantize_job_supports_oq2_to_oq8_profiles_with_calibration_metadata(tmp_path: Path) -> None:

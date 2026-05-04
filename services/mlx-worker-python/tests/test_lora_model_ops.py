@@ -772,7 +772,7 @@ def test_train_lora_supports_dora_mode_contract_and_manifest(tmp_path: Path) -> 
     assert runner.last_train_request.config.training_objective == "supervised_finetuning"
 
 
-@pytest.mark.parametrize("training_mode", ["dpo", "orpo"])
+@pytest.mark.parametrize("training_mode", ["dpo", "orpo", "cpo"])
 def test_train_lora_supports_preference_mode_contracts(
     tmp_path: Path,
     training_mode: str,
@@ -823,12 +823,110 @@ def test_train_lora_supports_preference_mode_contracts(
     assert payload["adapter_algorithm"] == "lora"
     assert payload["preference_loss"] == training_mode
     assert payload["dataset_contract"] == "preference_pair"
+    assert payload["alignment_run_manifest_path"].endswith("train_lora.alignment.json")
     assert payload["dora_enabled"] is False
+    alignment_payload = json.loads(Path(payload["alignment_run_manifest_path"]).read_text(encoding="utf-8"))
+    assert alignment_payload["schema_version"] == "melix.alignment_run.v1"
+    assert alignment_payload["alignment_algorithm"] == training_mode
+    assert alignment_payload["dataset_contract"] == "preference_pair"
+    assert alignment_payload["adapter_manifest_path"] == payload["artifact_path"]
+    assert "chosen_rejected_margin" in alignment_payload["metrics"]
+    assert "win_rate_proxy" in alignment_payload["metrics"]
     assert normalized_dataset_payload["format"] == "preference_pair"
     assert runner.last_train_request is not None
     assert runner.last_train_request.dataset_format == "preference_pair"
     assert runner.last_train_request.config.preference_loss == training_mode
     assert runner.last_train_request.config.training_objective == "preference"
+    assert runner.last_train_request.config.alignment is not None
+    assert runner.last_train_request.config.alignment.alignment_algorithm == training_mode
+
+
+@pytest.mark.parametrize(
+    ("training_mode", "dataset_format", "samples", "extra_ext", "expected_contract"),
+    [
+        (
+            "grpo",
+            "prompt_candidate",
+            [
+                {
+                    "prompt": "Draft two summaries.",
+                    "candidates": [
+                        {"text": "Short summary.", "score": 0.7},
+                        {"text": "Verbose summary.", "score": 0.4},
+                    ],
+                }
+            ],
+            {"grpo_candidate_count": "2", "reference_model_path": "/tmp/reference-model"},
+            "prompt_candidate",
+        ),
+        (
+            "rlhf",
+            "reward_scored",
+            [
+                {
+                    "prompt": "Rate this answer.",
+                    "response": "Helpful answer.",
+                    "reward_score": 0.9,
+                }
+            ],
+            {"reward_model_manifest_path": "/tmp/reward-model/manifest.json"},
+            "reward_scored",
+        ),
+    ],
+)
+def test_train_lora_supports_rl_alignment_mode_contracts(
+    tmp_path: Path,
+    training_mode: str,
+    dataset_format: str,
+    samples: list[dict],
+    extra_ext: dict[str, str],
+    expected_contract: str,
+) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / f"dataset-{training_mode}",
+        format=dataset_format,
+        samples=samples,
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / f"train-{training_mode}"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": training_mode,
+                    "adapter_name": f"melix-{training_mode}-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    **extra_ext,
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    alignment_payload = json.loads(Path(payload["alignment_run_manifest_path"]).read_text(encoding="utf-8"))
+
+    assert payload["training_mode"] == training_mode
+    assert payload["training_objective"] == "alignment_rl"
+    assert payload["dataset_contract"] == expected_contract
+    assert payload["alignment_run_manifest_path"].endswith("train_lora.alignment.json")
+    assert alignment_payload["schema_version"] == "melix.alignment_run.v1"
+    assert alignment_payload["alignment_algorithm"] == training_mode
+    assert alignment_payload["dataset_contract"] == expected_contract
+    assert alignment_payload["candidate_trace_path"].endswith("train_lora.candidates.jsonl")
+    if training_mode == "grpo":
+        assert alignment_payload["grpo_candidate_count"] == 2
+        assert alignment_payload["reference_model_path"] == "/tmp/reference-model"
+    else:
+        assert alignment_payload["reward_model_manifest_path"] == "/tmp/reward-model/manifest.json"
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.alignment is not None
+    assert runner.last_train_request.config.alignment.alignment_algorithm == training_mode
 
 
 def test_train_lora_supports_continual_pretraining_contract(tmp_path: Path) -> None:
@@ -911,7 +1009,7 @@ def test_train_lora_rejects_qlora_for_non_quantized_base_model(tmp_path: Path) -
     assert events[-1].failed.error.code == "unsupported_training_mode"
 
 
-@pytest.mark.parametrize("training_mode", ["dpo", "orpo"])
+@pytest.mark.parametrize("training_mode", ["dpo", "orpo", "cpo"])
 def test_train_lora_rejects_preference_modes_without_preference_pair_dataset(
     tmp_path: Path,
     training_mode: str,
@@ -949,6 +1047,149 @@ def test_train_lora_rejects_preference_modes_without_preference_pair_dataset(
     assert events[-1].failed.error.details["training_mode"] == training_mode
     assert events[-1].failed.error.details["required_format"] == "preference_pair"
     assert events[-1].failed.error.details["actual_format"] == "chat_messages"
+
+
+def test_train_lora_rejects_grpo_without_prompt_candidate_dataset(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-grpo",
+        format="preference_pair",
+        samples=[
+            {
+                "prompt": "Choose.",
+                "chosen": "A.",
+                "rejected": "B.",
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-grpo"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "grpo",
+                    "adapter_name": "melix-invalid-grpo",
+                    "dataset_uri": str(dataset_dir),
+                    "grpo_candidate_count": "2",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_dataset_package"
+    assert events[-1].failed.error.details["training_mode"] == "grpo"
+    assert events[-1].failed.error.details["required_format"] == "prompt_candidate"
+    assert events[-1].failed.error.details["actual_format"] == "preference_pair"
+
+
+def test_train_lora_rejects_grpo_without_candidate_count(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-grpo-count",
+        format="prompt_candidate",
+        samples=[
+            {
+                "prompt": "Draft two options.",
+                "candidates": [{"text": "A."}, {"text": "B."}],
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-grpo-count"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "grpo",
+                    "adapter_name": "melix-invalid-grpo-count",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_alignment_config"
+    assert events[-1].failed.error.details["training_mode"] == "grpo"
+    assert events[-1].failed.error.details["missing_field"] == "grpo_candidate_count"
+
+
+def test_train_lora_rejects_rlhf_without_reward_scored_dataset(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-rlhf-format",
+        format="preference_pair",
+        samples=[
+            {
+                "prompt": "Choose.",
+                "chosen": "A.",
+                "rejected": "B.",
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-rlhf-format"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "rlhf",
+                    "adapter_name": "melix-invalid-rlhf-format",
+                    "dataset_uri": str(dataset_dir),
+                    "reward_model_manifest_path": "/tmp/reward/manifest.json",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_dataset_package"
+    assert events[-1].failed.error.details["training_mode"] == "rlhf"
+    assert events[-1].failed.error.details["required_format"] == "reward_scored"
+    assert events[-1].failed.error.details["actual_format"] == "preference_pair"
+
+
+def test_train_lora_rejects_rlhf_without_reward_model_manifest(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-invalid-rlhf",
+        format="reward_scored",
+        samples=[
+            {
+                "prompt": "Rate this.",
+                "response": "Helpful.",
+                "reward_score": 0.75,
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-invalid-rlhf"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "rlhf",
+                    "adapter_name": "melix-invalid-rlhf",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_alignment_config"
+    assert events[-1].failed.error.details["training_mode"] == "rlhf"
+    assert events[-1].failed.error.details["missing_field"] == "reward_model_manifest_path"
 
 
 def test_train_lora_rejects_cpt_without_text_completion_dataset(tmp_path: Path) -> None:

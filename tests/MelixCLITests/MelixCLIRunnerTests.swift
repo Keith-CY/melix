@@ -3968,6 +3968,46 @@ struct MelixCLIRunnerTests {
         #expect(output == #"{"job_id":"job-1","status":"completed"}"#)
     }
 
+    @Test("alignment train forwards algorithm and alignment-specific parameters")
+    func alignmentTrainForwardsExpectedOperationPayload() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/melix/train_lora/alignment-job",
+            manifestJSON: #"{"schema_version":"melix.alignment_run.v1","job_id":"alignment-job"}"#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .alignmentTrain(
+                .init(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    datasetSourceKind: "local_package",
+                    datasetURI: "/tmp/datasets/preference.jsonl",
+                    adapterName: "aligned-adapter",
+                    algorithm: "grpo",
+                    parameters: [
+                        "grpo_candidate_count": "4",
+                        "reference_model_path": "/tmp/reference-model",
+                        "reward_model_manifest_path": "/tmp/reward/manifest.json",
+                    ],
+                    json: true
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(output == #"{"schema_version":"melix.alignment_run.v1","job_id":"alignment-job"}"#)
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(call.operation == "train_lora")
+        #expect(call.ext["dataset_source_kind"] == "local_package")
+        #expect(call.ext["dataset_uri"] == "/tmp/datasets/preference.jsonl")
+        #expect(call.ext["adapter_name"] == "aligned-adapter")
+        #expect(call.ext["training_mode"] == "grpo")
+        #expect(call.ext["alignment_algorithm"] == "grpo")
+        #expect(call.ext["grpo_candidate_count"] == "4")
+        #expect(call.ext["reference_model_path"] == "/tmp/reference-model")
+        #expect(call.ext["reward_model_manifest_path"] == "/tmp/reward/manifest.json")
+    }
+
     @Test("lora dataset inspect forwards local source options and renders a dataset summary")
     func loraDatasetInspectForwardsExpectedOperationPayload() async throws {
         let client = StubControlPlaneXPCClient()

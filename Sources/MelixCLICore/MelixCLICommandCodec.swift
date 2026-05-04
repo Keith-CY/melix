@@ -80,6 +80,8 @@ public enum MelixCLICommandCodec {
             return "lora.list"
         case .loraTrain:
             return "lora.train"
+        case .alignmentTrain:
+            return "alignment.train"
         case .loraDatasetInspect:
             return "lora.dataset.inspect"
         case .loraDatasetBuild:
@@ -319,13 +321,29 @@ public enum MelixCLICommandCodec {
             appendOption("--model-id", value: options.modelID, into: &arguments)
             appendOption("--adapter-name", value: options.adapterName, into: &arguments)
             if options.datasetSourceKind == "huggingface" || options.datasetSourceKind == "hf_dataset" {
-                appendOption("--hf-dataset-path", value: options.datasetURI, into: &arguments)
+                let datasetPath = options.datasetURI.isEmpty ? options.parameters["hf_dataset_path"] : options.datasetURI
+                appendOption("--hf-dataset-path", value: datasetPath, into: &arguments)
             } else {
                 appendOption("--dataset-uri", value: options.datasetURI, into: &arguments)
             }
             appendOption("--target-repo", value: options.targetRepo, into: &arguments)
             appendOption("--training-mode", value: options.trainingMode, into: &arguments)
             appendTrainingParameters(options.parameters, into: &arguments)
+            json = options.json
+        case .alignmentTrain(let options):
+            arguments = ["alignment", "train"]
+            appendOption("--model-id", value: options.modelID, into: &arguments)
+            appendOption("--adapter-name", value: options.adapterName, into: &arguments)
+            if options.datasetSourceKind == "huggingface" || options.datasetSourceKind == "hf_dataset" {
+                let datasetPath = options.datasetURI.isEmpty ? options.parameters["hf_dataset_path"] : options.datasetURI
+                appendOption("--hf-dataset-path", value: datasetPath, into: &arguments)
+            } else {
+                appendOption("--dataset-uri", value: options.datasetURI, into: &arguments)
+            }
+            appendOption("--algorithm", value: options.algorithm, into: &arguments)
+            appendOption("--target-repo", value: options.targetRepo, into: &arguments)
+            appendTrainingParameters(options.parameters, into: &arguments)
+            appendAlignmentParameters(options.parameters, into: &arguments)
             json = options.json
         case .loraActivate(let options):
             arguments = ["lora", "activate"]
@@ -613,6 +631,18 @@ public enum MelixCLICommandCodec {
         appendBooleanFlag("--response-only", value: parameters["response_only"], into: &arguments)
         appendBooleanFlag("--mask-prompt", value: parameters["mask_prompt"], into: &arguments)
         appendBooleanFlag("--gradient-checkpointing", value: parameters["gradient_checkpointing"], into: &arguments)
+    }
+
+    private static func appendAlignmentParameters(_ parameters: [String: String], into arguments: inout [String]) {
+        let mapping: [(String, String)] = [
+            ("grpo_candidate_count", "--grpo-candidate-count"),
+            ("reference_model_path", "--reference-model-path"),
+            ("reward_model_manifest_path", "--reward-model-manifest-path"),
+            ("kl_penalty", "--kl-penalty"),
+        ]
+        for (key, option) in mapping {
+            appendOption(option, value: parameters[key], into: &arguments)
+        }
     }
 
     private static func appendEvalParameters(_ parameters: [String: String], into arguments: inout [String]) {

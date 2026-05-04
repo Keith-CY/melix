@@ -15,7 +15,15 @@ from urllib.request import Request, urlopen
 
 from worker.model_ops.errors import ModelOperationError
 
-_SUPPORTED_FORMATS = {"chat_messages", "prompt_completion", "text_completion", "preference_pair"}
+_SUPPORTED_FORMATS = {
+    "chat_messages",
+    "prompt_completion",
+    "text_completion",
+    "preference_pair",
+    "prompt_candidate",
+    "reward_scored",
+    "calibration",
+}
 _SUPPORTED_ROLES = {"system", "user", "assistant", "tool"}
 _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
 _QUALITY_REPORT_SAMPLE_LIMIT = 10
@@ -750,6 +758,80 @@ def _normalize_sample(
             "rejected": _truncate_text(rejected, max_characters_per_sample),
         }
 
+    if format_name == "prompt_candidate":
+        prompt = str(sample.get("prompt", "")).strip()
+        candidates = sample.get("candidates")
+        if not prompt or not isinstance(candidates, list) or len(candidates) < 2:
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="prompt_candidate samples must include prompt text and at least two candidates.",
+            )
+        normalized_candidates: list[dict[str, Any]] = []
+        for candidate_index, candidate in enumerate(candidates):
+            candidate_text = ""
+            candidate_payload: dict[str, Any] = {}
+            if isinstance(candidate, str):
+                candidate_text = candidate.strip()
+            elif isinstance(candidate, dict):
+                candidate_text = str(candidate.get("text", "")).strip()
+                if "score" in candidate:
+                    try:
+                        candidate_payload["score"] = float(candidate["score"])
+                    except (TypeError, ValueError) as exc:
+                        raise ModelOperationError(
+                            code="invalid_dataset_package",
+                            message="prompt_candidate candidate scores must be numeric.",
+                            details={"candidate_index": str(candidate_index)},
+                        ) from exc
+            else:
+                raise ModelOperationError(
+                    code="invalid_dataset_package",
+                    message="prompt_candidate candidates must be strings or JSON objects.",
+                    details={"candidate_index": str(candidate_index)},
+                )
+            if not candidate_text:
+                raise ModelOperationError(
+                    code="invalid_dataset_package",
+                    message="prompt_candidate candidates must include non-empty text.",
+                    details={"candidate_index": str(candidate_index)},
+                )
+            candidate_payload["text"] = _truncate_text(candidate_text, max_characters_per_sample)
+            normalized_candidates.append(candidate_payload)
+        return {
+            "prompt": _truncate_text(prompt, max_characters_per_sample),
+            "candidates": normalized_candidates,
+        }
+
+    if format_name == "reward_scored":
+        prompt = str(sample.get("prompt", "")).strip()
+        response = str(sample.get("response", "")).strip()
+        if not prompt or not response or "reward_score" not in sample:
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="reward_scored samples must include prompt, response, and reward_score.",
+            )
+        try:
+            reward_score = float(sample["reward_score"])
+        except (TypeError, ValueError) as exc:
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="reward_scored reward_score must be numeric.",
+            ) from exc
+        return {
+            "prompt": _truncate_text(prompt, max_characters_per_sample),
+            "response": _truncate_text(response, max_characters_per_sample),
+            "reward_score": reward_score,
+        }
+
+    if format_name == "calibration":
+        text = str(sample.get("text", "")).strip()
+        if not text:
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="calibration samples must include text.",
+            )
+        return {"text": _truncate_text(text, max_characters_per_sample)}
+
     text = str(sample.get("text", "")).strip()
     if not text:
         raise ModelOperationError(
@@ -1180,6 +1262,9 @@ def _resolve_local_conversion_template(template: str, sample_row: dict[str, Any]
             "prompt_completion",
             "text_completion",
             "preference_pair",
+            "prompt_candidate",
+            "reward_scored",
+            "calibration",
             "alpaca",
             "sharegpt",
         }:
@@ -1191,6 +1276,10 @@ def _resolve_local_conversion_template(template: str, sample_row: dict[str, Any]
 
     if isinstance(sample_row.get("messages"), list):
         return "chat_messages"
+    if "prompt" in sample_row and "candidates" in sample_row:
+        return "prompt_candidate"
+    if "prompt" in sample_row and "response" in sample_row and "reward_score" in sample_row:
+        return "reward_scored"
     if "prompt" in sample_row and "chosen" in sample_row and "rejected" in sample_row:
         return "preference_pair"
     if "prompt" in sample_row and "completion" in sample_row:
@@ -1216,6 +1305,12 @@ def _local_conversion_format(template: str) -> str:
         return "text_completion"
     if template == "preference_pair":
         return "preference_pair"
+    if template == "prompt_candidate":
+        return "prompt_candidate"
+    if template == "reward_scored":
+        return "reward_scored"
+    if template == "calibration":
+        return "calibration"
     raise ModelOperationError(
         code="invalid_dataset_source",
         message=f"Unsupported dataset conversion template: {template}",
@@ -1241,6 +1336,19 @@ def _convert_local_row(
             "chosen": row.get("chosen"),
             "rejected": row.get("rejected"),
         }
+    if template == "prompt_candidate":
+        return {
+            "prompt": row.get("prompt"),
+            "candidates": row.get("candidates"),
+        }
+    if template == "reward_scored":
+        return {
+            "prompt": row.get("prompt"),
+            "response": row.get("response"),
+            "reward_score": row.get("reward_score"),
+        }
+    if template == "calibration":
+        return {"text": row.get("text")}
     if template == "alpaca":
         instruction = str(row.get("instruction", "")).strip()
         input_text = str(row.get("input", "")).strip()
@@ -1559,6 +1667,25 @@ def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int,
             ),
         )
 
+    if format_name == "prompt_candidate":
+        candidates = sample.get("candidates", [])
+        candidate_text = ""
+        if isinstance(candidates, list):
+            candidate_text = " ".join(
+                str(candidate.get("text", "") if isinstance(candidate, dict) else candidate)
+                for candidate in candidates
+            )
+        return (
+            _whitespace_token_count(str(sample.get("prompt", ""))),
+            _whitespace_token_count(candidate_text),
+        )
+
+    if format_name == "reward_scored":
+        return (
+            _whitespace_token_count(str(sample.get("prompt", ""))),
+            _whitespace_token_count(str(sample.get("response", ""))),
+        )
+
     return 0, _whitespace_token_count(str(sample.get("text", "")))
 
 
@@ -1632,6 +1759,17 @@ def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
             str(sample.get("chosen", "")),
             str(sample.get("rejected", "")),
         ]
+    if "prompt" in sample and "candidates" in sample:
+        segments = [str(sample.get("prompt", ""))]
+        candidates = sample.get("candidates")
+        if isinstance(candidates, list):
+            segments.extend(
+                str(candidate.get("text", "") if isinstance(candidate, dict) else candidate)
+                for candidate in candidates
+            )
+        return segments
+    if "prompt" in sample and "response" in sample:
+        return [str(sample.get("prompt", "")), str(sample.get("response", ""))]
     if "prompt" in sample or "completion" in sample:
         return [str(sample.get("prompt", "")), str(sample.get("completion", ""))]
     return [str(sample.get("text", ""))]

@@ -19,6 +19,7 @@ from worker.model_ops.quantization_profiles import (
     source_format_metadata_for_request,
     strategy_metadata_for_request,
 )
+from worker.model_ops.errors import ModelOperationError
 from worker.registry import WorkerRegistry
 
 _BUNDLE_SCHEMA_VERSION = "melix.quantized_bundle.v1"
@@ -49,6 +50,12 @@ class OQQuantizationPipeline:
     ) -> QuantizationPipelineResult:
         source_model = self._resolve_source_model(request.source_model)
         profile = normalize_quantization_profile(request)
+        quantization_mode = _quantization_mode_for_request(request)
+        source_artifact_kind = _source_artifact_kind_for_request(request)
+        _validate_quantization_source(
+            quantization_mode=quantization_mode,
+            source_artifact_kind=source_artifact_kind,
+        )
         calibration = calibration_plan_for_profile(
             profile,
             source_model=request.source_model,
@@ -105,6 +112,8 @@ class OQQuantizationPipeline:
             hybrid_layout=hybrid_layout_metadata_for_request(request),
             planning=planning_metadata_for_request(request),
             compensation=compensation_metadata_for_request(request),
+            quantization_mode=quantization_mode,
+            source_artifact_kind=source_artifact_kind,
             bundle_path=bundle_path,
             manifest_path=manifest_path,
             artifact_bytes=artifact_bytes,
@@ -177,6 +186,8 @@ class OQQuantizationPipeline:
         hybrid_layout: dict[str, str] | None,
         planning: dict[str, object] | None,
         compensation: dict[str, object] | None,
+        quantization_mode: str,
+        source_artifact_kind: str,
         bundle_path: Path,
         manifest_path: Path,
         artifact_bytes: int,
@@ -200,10 +211,16 @@ class OQQuantizationPipeline:
             "manifest_path": str(manifest_path),
             "artifact_bytes": artifact_bytes,
             "manifest_bytes": 0,
+            "quantization_mode": quantization_mode,
+            "source_artifact_kind": source_artifact_kind,
             "weight_quant": request.weight_quant,
             "kv_quant": request.kv_quant,
             "quant_profile": profile.to_manifest_dict(),
             "calibration": calibration.to_dict(),
+            "release_gate": _release_gate_for_request(
+                request,
+                smoke_test_passed=smoke_test_passed,
+            ),
             "strategy": strategy,
             "source_format": source_format,
             "compatibility": {
@@ -224,6 +241,10 @@ class OQQuantizationPipeline:
             payload["planning"] = planning
         if compensation is not None:
             payload["compensation"] = compensation
+        if quantization_mode == "qat":
+            payload["qat"] = {
+                "fake_quant": request.ext.get("qat_fake_quant", "").strip() or "recorded",
+            }
         return payload
 
     @staticmethod
@@ -251,3 +272,72 @@ class OQQuantizationPipeline:
             encoded = OQQuantizationPipeline._encode_manifest(payload)
         path.write_bytes(encoded)
         return len(encoded)
+
+
+def _quantization_mode_for_request(request: maintenance_pb2.ConvertModelRequest) -> str:
+    quantization_mode = request.ext.get("quantization_mode", "").strip().lower() or "ptq"
+    if quantization_mode not in {"ptq", "qat"}:
+        raise ModelOperationError(
+            code="unsupported_quantization_mode",
+            message=f"Unsupported quantization_mode: {quantization_mode}",
+            details={"quantization_mode": quantization_mode},
+        )
+    return quantization_mode
+
+
+def _source_artifact_kind_for_request(request: maintenance_pb2.ConvertModelRequest) -> str:
+    source_artifact_kind = request.ext.get("source_artifact_kind", "").strip().lower() or "base_model"
+    if source_artifact_kind not in {"base_model", "merged_adapter", "adapter_export"}:
+        raise ModelOperationError(
+            code="unsupported_source_artifact_kind",
+            message=f"Unsupported source_artifact_kind: {source_artifact_kind}",
+            details={"source_artifact_kind": source_artifact_kind},
+        )
+    return source_artifact_kind
+
+
+def _validate_quantization_source(
+    *,
+    quantization_mode: str,
+    source_artifact_kind: str,
+) -> None:
+    if quantization_mode == "qat" and source_artifact_kind == "base_model":
+        raise ModelOperationError(
+            code="unsupported_quantization_mode",
+            message="QAT quantization requires an adapter-derived source artifact.",
+            details={
+                "quantization_mode": quantization_mode,
+                "source_artifact_kind": source_artifact_kind,
+                "supported_source_artifact_kinds": "merged_adapter,adapter_export",
+            },
+        )
+
+
+def _release_gate_for_request(
+    request: maintenance_pb2.ConvertModelRequest,
+    *,
+    smoke_test_passed: bool,
+) -> dict[str, Any]:
+    if request.run_smoke_test:
+        smoke_result = "passed" if smoke_test_passed else "failed"
+    else:
+        smoke_result = "not_requested"
+    return {
+        "quality_delta": _float_ext(request, "quality_delta"),
+        "latency_delta": _float_ext(request, "latency_delta"),
+        "local_inference_smoke_result": smoke_result,
+    }
+
+
+def _float_ext(request: maintenance_pb2.ConvertModelRequest, key: str) -> float:
+    raw_value = request.ext.get(key, "").strip()
+    if not raw_value:
+        return 0.0
+    try:
+        return float(raw_value)
+    except ValueError as exc:
+        raise ModelOperationError(
+            code="invalid_quantization_release_gate",
+            message=f"{key} must be numeric.",
+            details={"field": key, "value": raw_value},
+        ) from exc
