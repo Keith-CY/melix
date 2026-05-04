@@ -218,6 +218,7 @@ struct RequestCoordinatorTests {
                 disconnectGracePeriod: 0.2
             )
         )
+        #expect(await coordinator.testingExecutionHubHasConsumers(requestID: "missing") == false)
 
         let execution = try await coordinator.startChatCompletion(
             makeTranslatedChatRequest(requestID: "req-resume-timeout")
@@ -229,9 +230,14 @@ struct RequestCoordinatorTests {
             } catch {
             }
         }
-        await Task.yield()
+        for _ in 0..<100 where !(await coordinator.testingExecutionHubHasConsumers(requestID: "req-resume-timeout")) {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
         initialConsumer.cancel()
         _ = await initialConsumer.result
+        for _ in 0..<100 where await coordinator.testingExecutionHubHasConsumers(requestID: "req-resume-timeout") {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
 
         var disconnectMetrics = await metricsStore.snapshot()
         for _ in 0..<100 where disconnectMetrics.values["http.stream_disconnect_count", default: 0] < 1 {

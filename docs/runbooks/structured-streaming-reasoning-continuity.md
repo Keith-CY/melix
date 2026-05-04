@@ -1,12 +1,13 @@
 # Structured Streaming And Reasoning Continuity Runbook
 
-Use this runbook when debugging Chat Completions, Completions, Responses, or Messages streaming behavior involving reasoning, tool calls, structured JSON output, or repeated-turn session continuity.
+Use this runbook when debugging Chat Completions, Completions, Responses, Messages, or operator `startChat` streaming behavior involving reasoning, tool calls, structured JSON output, or repeated-turn session continuity.
 
 ## Scope
 
 Covered:
 
 - shipped stream-capable text endpoints
+- operator-driven chat dispatch through the shared text translator
 - Swift request normalization and reasoning policy resolution
 - Python request-local stream assembly
 - JSON-only structured-output parser suppression
@@ -34,6 +35,10 @@ For a reasoning-enabled request, inspect the worker `GenerateRequest.execution` 
 - `ReasoningConfig.effort`
 - `ReasoningConfig.continuity_rehydrated`
 
+Operator `startChat` requests that provide explicit reasoning or template
+flags must produce the same metadata before worker dispatch as equivalent Chat
+Completions requests.
+
 Cache compatibility must include:
 
 - `melix.cache.fingerprint.reasoning_mode`
@@ -59,6 +64,9 @@ The worker stream assembler reports parser metrics on completed events:
 - `stream_parser_request_context_mode`
 - `tool_call_markup_leak_count`
 - `reasoning_channel_recovery_count`
+- `resolved_stop_token_count`
+- `reasoning_flag_source`
+- `turn_boundary_stop_reason`
 
 Expected healthy values:
 
@@ -80,6 +88,22 @@ Expected healthy values:
   `tool_parser` and keep `tool_call_markup_leak_count == 0`
 - malformed reasoning-open boundaries should increment
   `reasoning_channel_recovery_count` without emitting hidden text
+- completed stream evidence should report the pre-decode turn-boundary stop
+  contract through `resolved_stop_token_count`, `reasoning_flag_source`, and
+  `turn_boundary_stop_reason`
+
+## Turn-Boundary Stop Checks
+
+Before decode starts, the worker must resolve one request-scoped stop contract
+from explicit request stop sequences, tokenizer EOS metadata, and model or
+registry stop overrides. Inspect completed stream evidence for:
+
+1. `resolved_stop_token_count` greater than zero when any source contributes
+   a stop sequence or EOS token.
+2. `reasoning_flag_source` matching the Swift-resolved request metadata source,
+   such as `request`, `template`, `family_auto_detect`, or `unspecified`.
+3. `turn_boundary_stop_reason` set to `stop_sequence` when generation ends on a
+   resolved turn-boundary marker.
 
 ## JSON Structured Output Checks
 
