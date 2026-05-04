@@ -7847,6 +7847,664 @@ struct RuntimeViewModelTests {
         #expect(activateRequest.ext["activation_mode"] == "adapter_backed_runtime")
     }
 
+    @Test("lora saved jobs load edit duplicate cancel delete and import export configs")
+    @MainActor
+    func loraSavedJobsLoadEditDuplicateCancelDeleteAndImportExportConfigs() throws {
+        let config = makeDesktopLoraTrainingConfig(trainingMode: "dora", adapterName: "saved-adapter")
+        let job = makeDesktopLoraTrainingJobRecord(id: "saved-job", title: "Saved Adapter", config: config, status: .succeeded)
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: store
+        )
+
+        #expect(viewModel.loraTrainingJobs.map(\.id) == ["saved-job"])
+        viewModel.loadSelectedLoraTrainingJob()
+        #expect(viewModel.selectedLoraModelID == config.modelID)
+        #expect(viewModel.loraTrainingMode == .dora)
+        #expect(viewModel.loraActivationMode == .adapterBackedRuntime)
+        #expect(viewModel.loraRank == "32")
+        #expect(viewModel.loraGradientCheckpointing)
+
+        viewModel.loraRank = "64"
+        viewModel.saveCurrentLoraTrainingJobDraft()
+        #expect(store.savedRecords.last?.id == "saved-job")
+        #expect(store.savedRecords.last?.config.rank == "64")
+        #expect(store.savedRecords.last?.status == .draft)
+        #expect(store.savedRecords.last?.lastRunJobID == "")
+        #expect(store.savedRecords.last?.outputPath == "")
+        #expect(store.savedRecords.last?.followUpArtifacts.adapterManifestPath == "")
+
+        viewModel.duplicateSelectedLoraTrainingJob()
+        #expect(viewModel.selectedLoraTrainingJobID == "saved-job-copy")
+        #expect(viewModel.selectedLoraTrainingJob?.title == "Saved Adapter Copy")
+
+        viewModel.cancelSelectedLoraTrainingJob()
+        #expect(viewModel.selectedLoraTrainingJob?.status == .canceled)
+
+        viewModel.loraTrainingJobExportPath = "/tmp/saved-adapter.lora-config.json"
+        viewModel.exportSelectedLoraTrainingJobConfigToPath()
+        #expect(store.exportedConfigs.last?.path == "/tmp/saved-adapter.lora-config.json")
+        #expect(store.exportedConfigs.last?.config.adapterName == "saved-adapter")
+
+        let importedConfig = makeDesktopLoraTrainingConfig(trainingMode: "cpt", adapterName: "imported-adapter")
+        store.importedConfig = importedConfig
+        viewModel.loraTrainingJobImportPath = "/tmp/imported.lora-config.json"
+        viewModel.importLoraTrainingJobConfigFromPath()
+        #expect(viewModel.selectedLoraTrainingJob?.config == importedConfig)
+        #expect(viewModel.loraTrainingMode == .cpt)
+
+        let importedID = try #require(viewModel.selectedLoraTrainingJob?.id)
+        viewModel.deleteSelectedLoraTrainingJob()
+        #expect(store.deletedIDs.contains(importedID))
+    }
+
+    @Test("lora saved job selection helpers notify and protect auto selected records")
+    @MainActor
+    func loraSavedJobSelectionHelpersNotifyAndProtectAutoSelectedRecords() throws {
+        let originalConfig = makeDesktopLoraTrainingConfig(adapterName: "saved-adapter")
+        let job = makeDesktopLoraTrainingJobRecord(
+            id: "saved-job",
+            title: "Saved Adapter",
+            config: originalConfig
+        )
+        let alternateConfig = makeDesktopLoraTrainingConfig(adapterName: "alternate-adapter")
+        var alternateJob = makeDesktopLoraTrainingJobRecord(
+            id: "alternate-job",
+            title: "Alternate Adapter",
+            config: alternateConfig
+        )
+        alternateJob.updatedAt = Date(timeIntervalSince1970: 1_714_000_050)
+        let store = FakeLoraTrainingJobStore(jobs: [job, alternateJob])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: store
+        )
+        let notifications = NotificationCounter()
+        viewModel.onStateChanged = {
+            notifications.increment()
+        }
+
+        #expect(viewModel.selectedLoraTrainingJobID == "saved-job")
+        viewModel.selectQuantizationProfile("q6")
+        viewModel.selectQuantizationProfile("q9")
+        viewModel.selectLoraTrainingJob(id: " alternate-job ")
+
+        #expect(viewModel.selectedQuantizationProfileID == "q6")
+        #expect(notifications.value == 2)
+        #expect(viewModel.selectedLoraTrainingJobID == "alternate-job")
+
+        viewModel.loraRank = "99"
+        viewModel.loraExperimentGroupID = ""
+        viewModel.loraAdapterName = "new-draft-adapter"
+        viewModel.saveCurrentLoraTrainingJobDraft()
+
+        let original = try #require(store.jobs.first { $0.id == "alternate-job" })
+        let draft = try #require(store.savedRecords.last)
+        #expect(original.config.rank == alternateConfig.rank)
+        #expect(original.config.adapterName == alternateConfig.adapterName)
+        #expect(draft.id != "alternate-job")
+        #expect(draft.config.rank == "99")
+        #expect(draft.config.adapterName == "new-draft-adapter")
+        #expect(viewModel.selectedLoraTrainingJobID == draft.id)
+    }
+
+    @Test("null lora training job store round trips configs and reports missing duplicates")
+    @MainActor
+    func nullLoraTrainingJobStoreRoundTripsConfigsAndReportsMissingDuplicates() throws {
+        let store = NullLoraTrainingJobStore()
+        let config = makeDesktopLoraTrainingConfig(adapterName: "null-store-adapter")
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-null-lora-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        let fileURL = tempDirectory.appendingPathComponent("config.json")
+
+        let draft = try store.createDraft(title: "  ", config: config)
+        #expect(draft.title == config.adapterName)
+        #expect(try store.list().isEmpty)
+        #expect(try store.get(id: draft.id) == nil)
+        try store.exportConfig(config, to: fileURL)
+        #expect(try store.importConfig(from: fileURL) == config)
+        try store.delete(id: draft.id)
+
+        var duplicateFailureDescription = ""
+        do {
+            _ = try store.duplicate(id: "missing")
+        } catch {
+            duplicateFailureDescription = String(describing: error)
+        }
+        #expect(duplicateFailureDescription.contains("missing"))
+    }
+
+    @Test("lora saved job guard rails and store failures surface local errors")
+    @MainActor
+    func loraSavedJobGuardRailsAndStoreFailuresSurfaceLocalErrors() async throws {
+        let emptyStore = FakeLoraTrainingJobStore()
+        let emptyViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: emptyStore
+        )
+
+        emptyViewModel.loadSelectedLoraTrainingJob()
+        emptyViewModel.duplicateSelectedLoraTrainingJob()
+        await emptyViewModel.rerunSelectedLoraTrainingJob()
+        emptyViewModel.cancelSelectedLoraTrainingJob()
+        emptyViewModel.deleteSelectedLoraTrainingJob()
+        emptyViewModel.importLoraTrainingJobConfigFromPath()
+        emptyViewModel.exportSelectedLoraTrainingJobConfigToPath()
+        emptyViewModel.prepareSelectedLoraTrainingJobFollowUp(.activation)
+        #expect(emptyViewModel.lastError?.contains("follow-up") == true)
+
+        emptyViewModel.loraExperimentGroupID = "  "
+        emptyViewModel.loraAdapterName = "  "
+        emptyViewModel.saveCurrentLoraTrainingJobDraft()
+        #expect(emptyViewModel.selectedLoraTrainingJob?.title == "LoRA Training Job")
+
+        let runningJob = makeDesktopLoraTrainingJobRecord(
+            id: "running-job",
+            title: "Running Job",
+            config: makeDesktopLoraTrainingConfig(adapterName: "running-adapter"),
+            status: .running
+        )
+        let runningViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [runningJob])
+        )
+        runningViewModel.loadSelectedLoraTrainingJob()
+        await runningViewModel.rerunSelectedLoraTrainingJob()
+        runningViewModel.cancelSelectedLoraTrainingJob()
+        runningViewModel.deleteSelectedLoraTrainingJob()
+        #expect(runningViewModel.lastError?.contains("cannot be deleted") == true)
+
+        let failingJob = makeDesktopLoraTrainingJobRecord(
+            id: "failing-job",
+            title: "Failing Job",
+            config: makeDesktopLoraTrainingConfig(adapterName: "failing-adapter")
+        )
+        let failingStore = FakeLoraTrainingJobStore(jobs: [failingJob])
+        let failingViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: failingStore
+        )
+
+        failingStore.listError = .list
+        failingViewModel.reloadLoraTrainingJobs()
+        #expect(failingViewModel.lastError?.contains("load failed") == true)
+        failingStore.listError = nil
+
+        failingStore.duplicateError = .duplicate
+        failingViewModel.duplicateSelectedLoraTrainingJob()
+        #expect(failingViewModel.lastError?.contains("duplicate failed") == true)
+        failingStore.duplicateError = nil
+
+        _ = try? failingStore.duplicate(id: "missing-job")
+        failingStore.saveError = .save
+        failingViewModel.cancelSelectedLoraTrainingJob()
+        #expect(failingViewModel.lastError?.contains("cancel failed") == true)
+        failingStore.saveError = nil
+
+        failingStore.deleteError = .delete
+        failingViewModel.deleteSelectedLoraTrainingJob()
+        #expect(failingViewModel.lastError?.contains("delete failed") == true)
+        failingStore.deleteError = nil
+
+        failingViewModel.loraTrainingJobImportPath = " /tmp/failing.lora-config.json "
+        failingStore.importError = .importConfig
+        failingViewModel.importLoraTrainingJobConfigFromPath()
+        #expect(failingViewModel.lastError?.contains("import failed") == true)
+        failingStore.importError = nil
+
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-fake-lora-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        let fileURL = tempDirectory.appendingPathComponent("config.json")
+        let encodedConfig = try JSONEncoder().encode(makeDesktopLoraTrainingConfig(adapterName: "decoded-adapter"))
+        try encodedConfig.write(to: fileURL)
+        _ = try failingStore.importConfig(from: fileURL)
+
+        failingViewModel.loraTrainingJobExportPath = "  "
+        failingViewModel.exportSelectedLoraTrainingJobConfigToPath()
+        #expect(failingViewModel.lastError?.contains("export path") == true)
+
+        failingViewModel.loraTrainingJobExportPath = "/tmp/failing-export.lora-config.json"
+        failingStore.exportError = .exportConfig
+        failingViewModel.exportSelectedLoraTrainingJobConfigToPath()
+        #expect(failingViewModel.lastError?.contains("export failed") == true)
+
+        failingStore.saveError = .save
+        failingViewModel.saveCurrentLoraTrainingJobDraft()
+        #expect(failingViewModel.lastError?.contains("save failed") == true)
+    }
+
+    @Test("desktop lora training launch persists running and completed saved job state")
+    @MainActor
+    func desktopLoraTrainingLaunchPersistsRunningAndCompletedSavedJobState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+                manifestJSON: #"{"operation":"train_lora","job_id":"model-ops-0001","target_repo":"melix/adapters/persisted"}"#,
+                artifactKind: "adapter",
+                manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json"
+            ),
+            forNamedOperation: "train_lora"
+        )
+        let store = FakeLoraTrainingJobStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+        viewModel.selectedLoraModelID = "melix-dev-text"
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "persisted"
+        viewModel.loraTargetRepo = "melix/adapters/persisted"
+        viewModel.loraTrainingMode = .qlora
+
+        await viewModel.trainPrimaryModel()
+
+        let trainRequest = try #require(await client.recordedModelOperationRequests.first(where: { $0.operation == "train_lora" }))
+        #expect(trainRequest.ext["adapter_name"] == "persisted")
+        let saved = try #require(viewModel.selectedLoraTrainingJob)
+        #expect(saved.status == .succeeded)
+        #expect(saved.config.adapterName == "persisted")
+        #expect(saved.outputPath == "/tmp/melix-train-lora/train_lora.adapter.json")
+        #expect(saved.followUpArtifacts.adapterManifestPath == "/tmp/melix-train-lora/train_lora.adapter.json")
+        #expect(saved.lastRunJobID == "job-train_lora")
+        #expect(store.savedRecords.contains { $0.status == .running })
+        #expect(store.savedRecords.contains { $0.status == .succeeded })
+    }
+
+    @Test("desktop lora saved job rerun updates the selected record and preserves invalid preset fallback")
+    @MainActor
+    func desktopLoraSavedJobRerunUpdatesSelectedRecordAndPreservesInvalidPresetFallback() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/rerun.adapter.json",
+                manifestJSON: #"{"operation":"train_lora","job_id":"model-ops-rerun"}"#,
+                artifactKind: "adapter",
+                manifestPath: "/tmp/melix-train-lora/rerun.manifest.json"
+            ),
+            forNamedOperation: "train_lora"
+        )
+        var config = makeDesktopLoraTrainingConfig(adapterName: "rerun-adapter")
+        config.presetID = "legacy-preset"
+        config.experimentGroupID = ""
+        let job = makeDesktopLoraTrainingJobRecord(
+            id: "rerun-job",
+            title: "  ",
+            config: config
+        )
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+
+        await viewModel.rerunSelectedLoraTrainingJob()
+
+        let request = try #require(await client.recordedModelOperationRequests.first(where: { $0.operation == "train_lora" }))
+        #expect(request.ext["adapter_name"] == "rerun-adapter")
+        #expect(viewModel.selectedLoraTrainingPreset == .custom)
+        #expect(store.savedRecords.contains { $0.id == "rerun-job" && $0.status == .running })
+        let completed = try #require(viewModel.selectedLoraTrainingJob)
+        #expect(completed.id == "rerun-job")
+        #expect(completed.title == "rerun-adapter")
+        #expect(completed.status == .succeeded)
+        #expect(completed.manifestPath == "/tmp/melix-train-lora/rerun.manifest.json")
+        #expect(completed.followUpArtifacts.adapterManifestPath == "/tmp/melix-train-lora/rerun.manifest.json")
+    }
+
+    @Test("desktop lora training persistence and operation failures update saved job state")
+    @MainActor
+    func desktopLoraTrainingPersistenceAndOperationFailuresUpdateSavedJobState() async throws {
+        let persistenceStore = FakeLoraTrainingJobStore()
+        persistenceStore.saveError = .save
+        let persistenceViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: persistenceStore
+        )
+        await persistenceViewModel.start()
+        persistenceViewModel.selectedLoraModelID = "melix-dev-text"
+        await persistenceViewModel.trainPrimaryModel()
+        #expect(persistenceViewModel.lastError?.contains("launch persistence failed") == true)
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperationError(
+            MenuBarTestError(description: "trainer crashed"),
+            forNamedOperation: "train_lora"
+        )
+        let store = FakeLoraTrainingJobStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+        viewModel.selectedLoraModelID = "melix-dev-text"
+        viewModel.loraAdapterName = "failed-adapter"
+
+        await viewModel.trainPrimaryModel()
+
+        #expect(viewModel.lastError?.isEmpty == false)
+        let failed = try #require(viewModel.selectedLoraTrainingJob)
+        #expect(failed.status == .failed)
+        #expect(failed.terminalMessage.isEmpty == false)
+        #expect(store.savedRecords.contains { $0.status == .running })
+        #expect(store.savedRecords.contains { $0.status == .failed })
+    }
+
+    @Test("lora saved job follow-up actions route existing desktop surfaces")
+    @MainActor
+    func loraSavedJobFollowUpActionsRouteExistingDesktopSurfaces() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "quantize",
+                outputPath: "/tmp/melix-quantize/lora/quantize.artifact",
+                manifestJSON: #"{"operation":"quantize","quant_profile_id":"q4"}"#
+            ),
+            forNamedOperation: "quantize"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/lora/convert.artifact",
+                manifestJSON: #"{"operation":"convert","target_format":"melix_model_bundle"}"#
+            ),
+            forNamedOperation: "convert"
+        )
+        var job = makeDesktopLoraTrainingJobRecord(
+            id: "completed-job",
+            title: "Completed Adapter",
+            config: makeDesktopLoraTrainingConfig(adapterName: "completed-adapter"),
+            status: .succeeded
+        )
+        job.followUpArtifacts.derivedModelID = "melix-dev-text-lora"
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.benchmark)
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .diagnostics)
+        #expect(viewModel.preferredDiagnosticsStage == .benchmark)
+        #expect(viewModel.selectedBenchmarkModelID == "melix-dev-text-lora")
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.evaluation)
+        #expect(viewModel.preferredDiagnosticsStage == .evaluation)
+        #expect(viewModel.selectedEvaluationModelID == "melix-dev-text-lora")
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.activation)
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .training)
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.publish)
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .training)
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.conversion)
+        #expect(viewModel.selectedToolSection == .downloads)
+        #expect(viewModel.modelOperationTargetModelID == "melix-dev-text-lora")
+
+        await viewModel.convertPrimaryModel()
+        await viewModel.quantizePrimaryModel()
+        let modelOperationRequests = await client.recordedModelOperationRequests
+        #expect(modelOperationRequests.contains {
+            $0.operation == "convert" && $0.modelID == "melix-dev-text-lora"
+        })
+        #expect(modelOperationRequests.contains {
+            $0.operation == "quantize" && $0.modelID == "melix-dev-text-lora"
+        })
+
+        viewModel.usePrimaryModelOperationTarget()
+        #expect(viewModel.hasExplicitModelOperationTarget == false)
+        #expect(viewModel.modelOperationTargetModelID == "melix-dev-text")
+
+        job.followUpArtifacts = .init()
+        job.config.derivedModelAlias = ""
+        let fallbackStore = FakeLoraTrainingJobStore(jobs: [job])
+        let fallbackViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: fallbackStore
+        )
+        fallbackViewModel.prepareSelectedLoraTrainingJobFollowUp(.activation)
+        #expect(fallbackViewModel.selectedToolSection == .training)
+        fallbackViewModel.prepareSelectedLoraTrainingJobFollowUp(.benchmark)
+        #expect(fallbackViewModel.selectedBenchmarkModelID == "melix-dev-text")
+    }
+
+    @Test("lora saved draft fills a blank selected title from the current config")
+    @MainActor
+    func loraSavedDraftFillsBlankSelectedTitleFromCurrentConfig() async throws {
+        var config = makeDesktopLoraTrainingConfig(adapterName: "title-adapter")
+        config.experimentGroupID = ""
+        let job = makeDesktopLoraTrainingJobRecord(
+            id: "blank-title-job",
+            title: "  ",
+            config: config
+        )
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+        viewModel.loadSelectedLoraTrainingJob()
+
+        viewModel.saveCurrentLoraTrainingJobDraft()
+
+        #expect(store.savedRecords.last?.id == "blank-title-job")
+        #expect(store.savedRecords.last?.title == "title-adapter")
+    }
+
+    @Test("lora saved job follow-up receipts persist activation publish and fallback targets")
+    @MainActor
+    func loraSavedJobFollowUpReceiptsPersistActivationPublishAndFallbackTargets() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/follow-up-adapter",
+                    activationStatus: "pending_activation"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "activate_adapter",
+                outputPath: "/tmp/melix-activate/activate_adapter.derived_model.json",
+                manifestJSON: #"{"operation":"activate_adapter","job_id":"model-ops-activate","derived_model_id":"melix-dev-text-followup","derived_model_path":"/tmp/melix-derived/followup"}"#
+            ),
+            forNamedOperation: "activate_adapter"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "upload",
+                outputPath: "/tmp/melix-upload-adapter/upload.artifact",
+                manifestJSON: #"{"operation":"upload","job_id":"model-ops-upload","target_repo":"melix/adapters/follow-up-adapter"}"#
+            ),
+            forNamedOperation: "upload"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "quantize",
+                outputPath: "/tmp/melix-quantize/follow-up/quantized.artifact",
+                manifestJSON: #"{"operation":"quantize","job_id":"model-ops-quantize"}"#,
+                artifactKind: "quantized_model_bundle",
+                manifestPath: "/tmp/melix-quantize/follow-up/quantized.artifact/manifest.json"
+            ),
+            forNamedOperation: "quantize"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/follow-up/converted.artifact",
+                manifestJSON: #"{"operation":"convert","job_id":"model-ops-convert"}"#,
+                artifactKind: "converted_model_bundle",
+                manifestPath: "/tmp/melix-convert/follow-up/converted.artifact/manifest.json"
+            ),
+            forNamedOperation: "convert"
+        )
+        var benchJob = Melix_Controlplane_V1_BenchmarkJobSummary()
+        benchJob.jobID = "bench-follow-up"
+        benchJob.modelID = "melix-dev-text-lora"
+        benchJob.taskKind = "text-generation"
+        benchJob.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+        benchJob.suites = ["smoke"]
+        benchJob.status = "completed"
+        benchJob.outputDir = "/tmp/melix-bench/follow-up"
+        await client.configureBenchResponse(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix-bench/follow-up/report.md",
+                reportMarkdown: "# Bench",
+                metrics: ["bench.smoke.ttft_ms": 12],
+                job: benchJob
+            )
+        )
+        var evaluationJob = Melix_Controlplane_V1_EvaluationJobSummary()
+        evaluationJob.jobID = "eval-follow-up"
+        evaluationJob.modelID = "melix-dev-text-lora"
+        evaluationJob.taskKind = "text-generation"
+        evaluationJob.sourceRepo = "cais/mmlu"
+        evaluationJob.suiteID = "mmlu"
+        evaluationJob.datasetID = "mmlu.dev.v1"
+        evaluationJob.sampleSize = 8
+        evaluationJob.scoringMode = "multiple_choice_accuracy"
+        evaluationJob.status = "completed"
+        evaluationJob.outputDir = "/tmp/melix-eval/follow-up"
+        await client.configureEvaluationResponse(
+            ControlPlaneEvaluationResult(job: evaluationJob, results: [])
+        )
+        var config = makeDesktopLoraTrainingConfig(adapterName: "follow-up-adapter")
+        config.derivedModelAlias = "melix-dev-text-alias"
+        var job = makeDesktopLoraTrainingJobRecord(
+            id: "follow-up-job",
+            title: "Follow Up Adapter",
+            config: config,
+            status: .succeeded
+        )
+        job.manifestPath = ""
+        job.followUpArtifacts = .init()
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionModelID("melix-dev-text")
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        await viewModel.refreshModelOpsProductState()
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.benchmark)
+        #expect(viewModel.selectedBenchmarkModelID == "melix-dev-text-alias")
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.activation)
+        #expect(viewModel.selectedAdapterPackageID == "melix-dev-adapter@model-ops-0001")
+
+        await viewModel.activateLatestAdapter()
+        #expect(store.savedRecords.last?.followUpArtifacts.derivedModelID == "melix-dev-text-followup")
+        #expect(store.savedRecords.last?.followUpArtifacts.derivedModelPath == "/tmp/melix-derived/followup")
+
+        await viewModel.publishLatestAdapter()
+        #expect(store.savedRecords.last?.followUpArtifacts.publishedRepo == "melix/adapters/follow-up-adapter")
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.quantization)
+        await viewModel.quantizePrimaryModel()
+        #expect(store.savedRecords.last?.followUpArtifacts.quantizedArtifactPath == "/tmp/melix-quantize/follow-up/quantized.artifact")
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.conversion)
+        await viewModel.convertPrimaryModel()
+        #expect(store.savedRecords.last?.followUpArtifacts.convertedArtifactPath == "/tmp/melix-convert/follow-up/converted.artifact")
+
+        let diagnosticsClient = FakeControlPlaneXPCClient()
+        await diagnosticsClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        await diagnosticsClient.configureBenchResponse(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix-bench/follow-up/report.md",
+                reportMarkdown: "# Bench",
+                metrics: ["bench.smoke.ttft_ms": 12],
+                job: benchJob
+            )
+        )
+        await diagnosticsClient.configureEvaluationResponse(
+            ControlPlaneEvaluationResult(job: evaluationJob, results: [])
+        )
+        var diagnosticsJob = try #require(store.savedRecords.last)
+        diagnosticsJob.config.modelID = "melix-dev-text-lora"
+        diagnosticsJob.config.derivedModelAlias = "melix-dev-text-lora"
+        diagnosticsJob.followUpArtifacts.derivedModelID = ""
+        let diagnosticsStore = FakeLoraTrainingJobStore(jobs: [diagnosticsJob])
+        let diagnosticsRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-follow-up-diagnostics-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: diagnosticsRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: diagnosticsRoot) }
+        let diagnosticsOperatorStore = OperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": diagnosticsRoot.path])
+        )
+        let diagnosticsServerSession = DesktopServerSessionState(
+            id: "server-session-1",
+            title: "Follow-up Server",
+            modelID: "melix-dev-text-lora",
+            lifecycle: .running
+        )
+        try diagnosticsOperatorStore.save(
+            OperatorSessionState(
+                selectedSurface: .tools,
+                selectedServerSessionID: diagnosticsServerSession.id,
+                serverSessions: [diagnosticsServerSession]
+            )
+        )
+        let diagnosticsViewModel = RuntimeViewModel(
+            client: diagnosticsClient,
+            operatorSessionStore: diagnosticsOperatorStore,
+            loraTrainingJobStore: diagnosticsStore
+        )
+        await diagnosticsViewModel.start()
+        diagnosticsViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        diagnosticsViewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        #expect(diagnosticsViewModel.serverSessions.map(\.id).contains("server-session-1"))
+        #expect(diagnosticsViewModel.serverSessions.first?.lifecycle == .running)
+        #expect(diagnosticsViewModel.serverTargets.contains { $0.kind == .localServer && $0.isRunning })
+        #expect(diagnosticsViewModel.diagnosticsServerTargets.contains { $0.kind == .localServer })
+
+        diagnosticsViewModel.prepareSelectedLoraTrainingJobFollowUp(.benchmark)
+        #expect(diagnosticsViewModel.diagnosticsBenchmarkUnavailableText == nil)
+        await diagnosticsViewModel.runBench()
+        #expect(await diagnosticsClient.recordedBenchRequests.isEmpty == false)
+        #expect(diagnosticsStore.savedRecords.last?.followUpArtifacts.benchmarkJobID == "bench-follow-up")
+
+        diagnosticsViewModel.prepareSelectedLoraTrainingJobFollowUp(.evaluation)
+        #expect(diagnosticsViewModel.diagnosticsEvaluationUnavailableText == nil)
+        await diagnosticsViewModel.runEvaluation()
+        #expect(await diagnosticsClient.recordedEvaluationRequests.isEmpty == false)
+        #expect(diagnosticsStore.savedRecords.last?.followUpArtifacts.evaluationJobID == "eval-follow-up")
+    }
+
     @Test("lora activation surfaces a running workflow state before completion and a success summary afterward")
     @MainActor
     func loraActivationSurfacesRunningThenSuccessWorkflowState() async throws {
@@ -11003,6 +11661,89 @@ private func makeNamedModelOperationResult(
         result.artifact.runtime = "mlx_text"
     }
     return result
+}
+
+private func makeDesktopLoraTrainingConfig(
+    trainingMode: String = "qlora",
+    adapterName: String = "desktop-adapter"
+) -> LoraTrainingJobConfig {
+    LoraTrainingJobConfig(
+        modelID: "melix-dev-text",
+        datasetSourceKind: "hf_dataset",
+        datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+        hfDatasetPath: "HuggingFaceH4/ultrachat_200k",
+        hfDatasetName: "default",
+        hfDatasetRevision: "main",
+        hfTrainSplit: "train_sft",
+        hfValidSplit: "test_sft",
+        chatFeature: "messages",
+        promptFeature: "prompt",
+        completionFeature: "completion",
+        textFeature: "text",
+        adapterName: adapterName,
+        targetRepo: "melix/adapters/\(adapterName)",
+        experimentGroupID: "nightly-qwen35",
+        resumeManifestPath: "/tmp/prior/train_lora.adapter.json",
+        trainingMode: trainingMode,
+        presetID: "balanced_adapter",
+        activationMode: "adapter_backed_runtime",
+        rank: "32",
+        alpha: "64",
+        dropout: "0.1",
+        targetModules: "q_proj,k_proj,v_proj",
+        numLayers: "24",
+        batchSize: "4",
+        epochs: "3",
+        learningRate: "2e-4",
+        maxSeqLength: "8192",
+        responseOnly: true,
+        maskPrompt: true,
+        gradientCheckpointing: true,
+        derivedModelAlias: "melix-dev-text-lora"
+    )
+}
+
+private func makeDesktopLoraTrainingJobRecord(
+    id: String,
+    title: String,
+    config: LoraTrainingJobConfig,
+    status: LoraTrainingJobStatus = .draft
+) -> LoraTrainingJobRecord {
+    LoraTrainingJobRecord(
+        id: id,
+        title: title,
+        config: config,
+        status: status,
+        createdAt: Date(timeIntervalSince1970: 1_714_000_000),
+        updatedAt: Date(timeIntervalSince1970: 1_714_000_100),
+        startedAt: status == .draft ? nil : Date(timeIntervalSince1970: 1_714_000_050),
+        completedAt: status.isTerminal ? Date(timeIntervalSince1970: 1_714_000_100) : nil,
+        lastRunJobID: status == .draft ? "" : "model-ops-0001",
+        outputPath: status == .draft ? "" : "/tmp/melix-train-lora/train_lora.adapter.json",
+        manifestPath: status == .draft ? "" : "/tmp/melix-train-lora/train_lora.adapter.json",
+        latestOutputText: status == .draft ? "" : #"{"operation":"train_lora"}"#,
+        terminalMessage: status == .draft ? "" : "Training completed.",
+        followUpArtifacts: LoraTrainingFollowUpArtifacts(
+            adapterManifestPath: status == .draft ? "" : "/tmp/melix-train-lora/train_lora.adapter.json"
+        )
+    )
+}
+
+private final class NotificationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+    }
 }
 
 private func makeRuntimeDownloadQueueEntryState(

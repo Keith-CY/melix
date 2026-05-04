@@ -1057,6 +1057,10 @@ public enum RuntimeLoraDatasetSourceKind: String, CaseIterable, Identifiable, Se
 public enum RuntimeLoraTrainingMode: String, CaseIterable, Identifiable, Sendable {
     case lora = "lora"
     case qlora = "qlora"
+    case dora = "dora"
+    case dpo = "dpo"
+    case orpo = "orpo"
+    case cpt = "cpt"
 
     public var id: String {
         rawValue
@@ -1068,6 +1072,14 @@ public enum RuntimeLoraTrainingMode: String, CaseIterable, Identifiable, Sendabl
             return "LoRA"
         case .qlora:
             return "QLoRA"
+        case .dora:
+            return "DoRA"
+        case .dpo:
+            return "DPO"
+        case .orpo:
+            return "ORPO"
+        case .cpt:
+            return "CPT"
         }
     }
 }
@@ -1114,6 +1126,36 @@ public enum RuntimeLoraActivationMode: String, CaseIterable, Identifiable, Senda
             return "Fused Derived Model"
         case .adapterBackedRuntime:
             return "Adapter-backed Runtime"
+        }
+    }
+}
+
+public enum RuntimeLoraTrainingJobFollowUpAction: String, CaseIterable, Identifiable, Sendable {
+    case activation
+    case quantization
+    case conversion
+    case benchmark
+    case evaluation
+    case publish
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .activation:
+            return "Activation"
+        case .quantization:
+            return "Quantization"
+        case .conversion:
+            return "Conversion"
+        case .benchmark:
+            return "Benchmark"
+        case .evaluation:
+            return "Evaluation"
+        case .publish:
+            return "Publish"
         }
     }
 }
@@ -1792,6 +1834,7 @@ public final class RuntimeViewModel {
     public private(set) var adapterPackages: [RuntimeAdapterPackageState] = []
     public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
     public private(set) var loraExperimentGroups: [RuntimeLoraExperimentGroupState] = []
+    public private(set) var loraTrainingJobs: [LoraTrainingJobRecord] = []
     public private(set) var registryRoots: [RuntimeRegistryRootState] = []
     public private(set) var registryCatalogModels: [RuntimeModelRow] = []
     public private(set) var registryConfiguredRootPaths: [String] = []
@@ -1961,6 +2004,9 @@ public final class RuntimeViewModel {
     public var loraGradientCheckpointing = false
     public var loraDerivedModelAlias = ""
     public var selectedAdapterPackageID = ""
+    public var selectedLoraTrainingJobID = ""
+    public var loraTrainingJobExportPath = ""
+    public var loraTrainingJobImportPath = ""
     public var registryRootPathDraft = ""
     public var imagePromptText = ""
     public var imageEditMode: RuntimeImageEditMode = .edit
@@ -1986,6 +2032,7 @@ public final class RuntimeViewModel {
     public private(set) var imageDefaultsUpdatedAtUnixMS: Int64 = 0
     public let availableQuantizationProfileIDs = ["q2", "q3", "q4", "q5", "q6", "q7", "q8"]
     public var selectedQuantizationProfileID = "q4"
+    public var selectedModelOperationTargetModelID = ""
     public var openCommandCenterAction: (@MainActor @Sendable () -> Void)?
 
     public var onStateChanged: (@MainActor @Sendable () -> Void)?
@@ -2271,6 +2318,7 @@ public final class RuntimeViewModel {
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
     private let remoteServerStore: any RemoteServerStoring
     private let evaluationPromptStore: any EvaluationPromptStoring
+    private let loraTrainingJobStore: any LoraTrainingJobStoring
     private let huggingFaceTokenStore: any HuggingFaceTokenStoring
     private let productInstallStateProvider: any ProductInstallStateProviding
     private var subscriptionTask: Task<Void, Never>?
@@ -2295,7 +2343,11 @@ public final class RuntimeViewModel {
     private var gatewayAPIKeyPersistFailures = 0.0
     private var remoteServerPersistFailures = 0.0
     private var evaluationPromptPersistFailures = 0.0
+    private var loraTrainingJobPersistFailures = 0.0
+    private var modelOperationAllowsSelectedLoraFallback = false
     private var evaluationPromptEditingFrozenRevisionAsDraft = false
+    private var activeDesktopLoraTrainingJobID = ""
+    private var selectedLoraTrainingJobLoadedForEditing = false
     private var lastAppliedGatewaySessionID = ""
     private var lastAppliedGatewayPrimaryKey = ""
     private var gatewayApplyTask: Task<Void, Never>?
@@ -2526,6 +2578,7 @@ public final class RuntimeViewModel {
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
         remoteServerStore: any RemoteServerStoring = NullRemoteServerStore(),
         evaluationPromptStore: any EvaluationPromptStoring = NullEvaluationPromptStore(),
+        loraTrainingJobStore: any LoraTrainingJobStoring = NullLoraTrainingJobStore(),
         huggingFaceTokenStore: any HuggingFaceTokenStoring = NullHuggingFaceTokenStore(),
         productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
     ) {
@@ -2537,10 +2590,12 @@ public final class RuntimeViewModel {
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
         self.remoteServerStore = remoteServerStore
         self.evaluationPromptStore = evaluationPromptStore
+        self.loraTrainingJobStore = loraTrainingJobStore
         self.huggingFaceTokenStore = huggingFaceTokenStore
         self.productInstallStateProvider = productInstallStateProvider
         reloadRemoteServers()
         reloadEvaluationPrompts()
+        reloadLoraTrainingJobs()
         reloadHuggingFaceTokenHint()
     }
 
@@ -2954,6 +3009,266 @@ public final class RuntimeViewModel {
         evaluationPromptIDDraft = prompt.id
         evaluationPromptTitleDraft = prompt.title
         evaluationPromptSystemPromptDraft = prompt.latestRevision?.systemPrompt ?? ""
+    }
+
+    public func reloadLoraTrainingJobs() {
+        do {
+            let jobs = try loraTrainingJobStore.list()
+            loraTrainingJobs = jobs
+            let previousSelectedJobID = selectedLoraTrainingJobID
+            if selectedLoraTrainingJobID.isEmpty
+                || jobs.contains(where: { $0.id == selectedLoraTrainingJobID }) == false
+            {
+                selectedLoraTrainingJobID = jobs.first?.id ?? ""
+            }
+            if selectedLoraTrainingJobID.isEmpty || selectedLoraTrainingJobID != previousSelectedJobID {
+                selectedLoraTrainingJobLoadedForEditing = false
+            }
+        } catch {
+            recordLoraTrainingJobPersistFailure("LoRA training jobs load failed: \(error)")
+        }
+    }
+
+    public func selectLoraTrainingJob(id: String) {
+        let normalizedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if selectedLoraTrainingJobID != normalizedID {
+            selectedLoraTrainingJobID = normalizedID
+            selectedLoraTrainingJobLoadedForEditing = false
+        }
+        notifyStateChanged()
+    }
+
+    public func selectQuantizationProfile(_ profileID: String) {
+        let normalizedProfileID = profileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard availableQuantizationProfileIDs.contains(normalizedProfileID) else {
+            return
+        }
+        selectedQuantizationProfileID = normalizedProfileID
+        notifyStateChanged()
+    }
+
+    public func saveCurrentLoraTrainingJobDraft() {
+        do {
+            let config = currentLoraTrainingConfig(modelID: resolvedLoraModelID())
+            let title = currentLoraTrainingJobTitle(config: config)
+            let saved: LoraTrainingJobRecord
+            if selectedLoraTrainingJobLoadedForEditing,
+               let selected = selectedLoraTrainingJob,
+               selected.status.allowsMutation
+            {
+                var updated = selected
+                if updated.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    updated.title = title
+                }
+                updated.config = config
+                updated.status = .draft
+                updated.startedAt = nil
+                updated.completedAt = nil
+                updated.lastRunJobID = ""
+                updated.outputPath = ""
+                updated.manifestPath = ""
+                updated.latestOutputText = ""
+                updated.terminalMessage = ""
+                updated.followUpArtifacts = .init()
+                saved = try loraTrainingJobStore.save(updated)
+            } else {
+                saved = try loraTrainingJobStore.createDraft(title: title, config: config)
+            }
+            reloadLoraTrainingJobs()
+            selectedLoraTrainingJobID = saved.id
+            selectedLoraTrainingJobLoadedForEditing = true
+            notifyStateChanged()
+        } catch {
+            recordLoraTrainingJobPersistFailure("LoRA training job save failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    public func loadSelectedLoraTrainingJob() {
+        guard let job = selectedLoraTrainingJob else {
+            recordLocalError("Select a saved LoRA job before loading it.")
+            notifyStateChanged()
+            return
+        }
+        guard job.status.allowsMutation else {
+            recordLocalError("Running LoRA jobs cannot be edited in place.")
+            notifyStateChanged()
+            return
+        }
+        selectedLoraTrainingJobID = job.id
+        selectedLoraTrainingJobLoadedForEditing = true
+        applyLoraTrainingConfig(job.config)
+        notifyStateChanged()
+    }
+
+    public func duplicateSelectedLoraTrainingJob() {
+        guard let job = selectedLoraTrainingJob else {
+            recordLocalError("Select a saved LoRA job before duplicating it.")
+            notifyStateChanged()
+            return
+        }
+        do {
+            let copy = try loraTrainingJobStore.duplicate(id: job.id)
+            reloadLoraTrainingJobs()
+            selectedLoraTrainingJobID = copy.id
+            selectedLoraTrainingJobLoadedForEditing = true
+            applyLoraTrainingConfig(copy.config)
+            notifyStateChanged()
+        } catch {
+            recordLoraTrainingJobPersistFailure("LoRA training job duplicate failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    public func rerunSelectedLoraTrainingJob() async {
+        guard let job = selectedLoraTrainingJob else {
+            recordLocalError("Select a saved LoRA job before rerunning it.")
+            notifyStateChanged()
+            return
+        }
+        guard job.status != .running else {
+            recordLocalError("The selected LoRA job is already running.")
+            notifyStateChanged()
+            return
+        }
+        selectedLoraTrainingJobID = job.id
+        selectedLoraTrainingJobLoadedForEditing = true
+        applyLoraTrainingConfig(job.config)
+        await trainPrimaryModel()
+    }
+
+    public func cancelSelectedLoraTrainingJob() {
+        guard var job = selectedLoraTrainingJob else {
+            recordLocalError("Select a saved LoRA job before canceling it.")
+            notifyStateChanged()
+            return
+        }
+        guard job.status != .running else {
+            recordLocalError("Running trainer cancellation is not wired in this desktop slice.")
+            notifyStateChanged()
+            return
+        }
+        do {
+            job.status = .canceled
+            job.completedAt = Date()
+            job.terminalMessage = "Canceled from the desktop training studio."
+            let saved = try loraTrainingJobStore.save(job)
+            reloadLoraTrainingJobs()
+            selectedLoraTrainingJobID = saved.id
+            notifyStateChanged()
+        } catch {
+            recordLoraTrainingJobPersistFailure("LoRA training job cancel failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    public func deleteSelectedLoraTrainingJob() {
+        guard let job = selectedLoraTrainingJob else {
+            recordLocalError("Select a saved LoRA job before deleting it.")
+            notifyStateChanged()
+            return
+        }
+        guard job.status != .running else {
+            recordLocalError("Running LoRA jobs cannot be deleted.")
+            notifyStateChanged()
+            return
+        }
+        do {
+            try loraTrainingJobStore.delete(id: job.id)
+            reloadLoraTrainingJobs()
+            notifyStateChanged()
+        } catch {
+            recordLoraTrainingJobPersistFailure("LoRA training job delete failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    public func importLoraTrainingJobConfigFromPath() {
+        let trimmedPath = loraTrainingJobImportPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPath.isEmpty == false else {
+            recordLocalError("Enter a LoRA config import path.")
+            notifyStateChanged()
+            return
+        }
+        do {
+            let config = try loraTrainingJobStore.importConfig(from: URL(fileURLWithPath: trimmedPath))
+            applyLoraTrainingConfig(config)
+            let saved = try loraTrainingJobStore.createDraft(
+                title: currentLoraTrainingJobTitle(config: config),
+                config: config
+            )
+            reloadLoraTrainingJobs()
+            selectedLoraTrainingJobID = saved.id
+            selectedLoraTrainingJobLoadedForEditing = true
+            notifyStateChanged()
+        } catch {
+            recordLoraTrainingJobPersistFailure("LoRA training config import failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    public func exportSelectedLoraTrainingJobConfigToPath() {
+        guard let job = selectedLoraTrainingJob else {
+            recordLocalError("Select a saved LoRA job before exporting it.")
+            notifyStateChanged()
+            return
+        }
+        let trimmedPath = loraTrainingJobExportPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPath.isEmpty == false else {
+            recordLocalError("Enter a LoRA config export path.")
+            notifyStateChanged()
+            return
+        }
+        do {
+            try loraTrainingJobStore.exportConfig(job.config, to: URL(fileURLWithPath: trimmedPath))
+            notifyStateChanged()
+        } catch {
+            recordLoraTrainingJobPersistFailure("LoRA training config export failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    public func prepareSelectedLoraTrainingJobFollowUp(_ action: RuntimeLoraTrainingJobFollowUpAction) {
+        guard let job = selectedLoraTrainingJob else {
+            recordLocalError("Select a saved LoRA job before preparing a follow-up action.")
+            notifyStateChanged()
+            return
+        }
+        applyLoraTrainingConfig(job.config)
+        let targetModelID = loraFollowUpModelID(for: job)
+        switch action {
+        case .activation:
+            selectedSurface = .tools
+            selectedToolSection = .training
+            if let adapterID = adapterPackageID(forManifestPath: loraAdapterManifestPath(for: job)) {
+                selectedAdapterPackageID = adapterID
+            }
+        case .publish:
+            selectedSurface = .tools
+            selectedToolSection = .training
+            if let adapterID = adapterPackageID(forManifestPath: loraAdapterManifestPath(for: job)) {
+                selectedAdapterPackageID = adapterID
+            }
+        case .quantization, .conversion:
+            selectedSurface = .tools
+            selectedToolSection = .downloads
+            selectedModelOperationTargetModelID = targetModelID
+            selectedBenchmarkModelID = targetModelID
+            selectedEvaluationModelID = targetModelID
+        case .benchmark:
+            selectedSurface = .tools
+            selectedToolSection = .diagnostics
+            preferredDiagnosticsStage = .benchmark
+            selectedBenchmarkModelID = targetModelID
+            selectLocalDiagnosticsTargetForLoraFollowUp()
+        case .evaluation:
+            selectedSurface = .tools
+            selectedToolSection = .diagnostics
+            preferredDiagnosticsStage = .evaluation
+            selectedEvaluationModelID = targetModelID
+            selectLocalDiagnosticsTargetForLoraFollowUp()
+        }
+        notifyStateChanged()
     }
 
     public func selectToolSection(_ section: DesktopToolSection) {
@@ -3848,6 +4163,33 @@ public final class RuntimeViewModel {
         return catalogModelsIncludingRegistry.first
     }
 
+    public var modelOperationTargetModelID: String {
+        let explicitTarget = selectedModelOperationTargetModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if explicitTarget.isEmpty == false {
+            return explicitTarget
+        }
+        if let primaryModelID = primaryModel?.modelID {
+            return primaryModelID
+        }
+        return modelOperationAllowsSelectedLoraFallback ? selectedLoraModelID : ""
+    }
+
+    public var hasExplicitModelOperationTarget: Bool {
+        selectedModelOperationTargetModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    public var modelOperationTargetDetailText: String {
+        hasExplicitModelOperationTarget
+            ? "Saved LoRA job follow-up target for convert and quantize."
+            : "Convert and quantize default to the current primary model."
+    }
+
+    public func usePrimaryModelOperationTarget() {
+        selectedModelOperationTargetModelID = ""
+        modelOperationAllowsSelectedLoraFallback = true
+        notifyStateChanged()
+    }
+
     public var desktopRuntimeEndpointState: DesktopRuntimeEndpointState {
         guard let session = selectedServerSession else {
             return .fallback
@@ -4071,6 +4413,13 @@ public final class RuntimeViewModel {
             return adapterPackages.first
         }
         return adapterPackages.first(where: { $0.id == selectedAdapterPackageID }) ?? adapterPackages.first
+    }
+
+    public var selectedLoraTrainingJob: LoraTrainingJobRecord? {
+        guard !selectedLoraTrainingJobID.isEmpty else {
+            return loraTrainingJobs.first
+        }
+        return loraTrainingJobs.first(where: { $0.id == selectedLoraTrainingJobID }) ?? loraTrainingJobs.first
     }
 
     public var registryRootSummaryText: String {
@@ -5720,6 +6069,16 @@ public final class RuntimeViewModel {
             let errorMessage = workflowErrorMessage(error)
             recordLocalError(errorMessage)
             failLoraWorkflow(workflowOperation, detail: errorMessage)
+            if workflowOperation == .trainLoRA {
+                persistActiveLoraTrainingJobCompletion(
+                    status: .failed,
+                    outputPath: "",
+                    manifestPath: "",
+                    latestOutputText: "",
+                    terminalMessage: errorMessage,
+                    backendJobID: ""
+                )
+            }
             notifyStateChanged()
         }
     }
@@ -5776,6 +6135,32 @@ public final class RuntimeViewModel {
                 loraWorkflowOperation,
                 outputPath: result.outputPath,
                 fallbackDetail: result.jobID
+            )
+            if loraWorkflowOperation == .trainLoRA {
+                persistActiveLoraTrainingJobCompletion(
+                    status: .succeeded,
+                    outputPath: result.outputPath,
+                    manifestPath: result.hasArtifact ? result.artifact.manifestPath : "",
+                    latestOutputText: result.manifestJson,
+                    terminalMessage: "Training completed.",
+                    backendJobID: result.jobID
+                )
+            } else if loraWorkflowOperation == .activateAdapter {
+                persistSelectedLoraJobFollowUp(
+                    derivedModelID: Self.stringValue("derived_model_id", from: manifestPayload),
+                    derivedModelPath: Self.stringValue("derived_model_path", from: manifestPayload)
+                )
+            } else if loraWorkflowOperation == .publishAdapter {
+                persistSelectedLoraJobFollowUp(
+                    publishedRepo: Self.stringValue("target_repo", from: manifestPayload)
+                )
+            }
+        } else {
+            persistSelectedLoraJobModelOperationFollowUp(
+                modelID: modelID,
+                operation: result.operation,
+                outputPath: result.outputPath,
+                manifestPath: result.hasArtifact ? result.artifact.manifestPath : ""
             )
         }
         if refreshProductToolingState {
@@ -5866,6 +6251,21 @@ public final class RuntimeViewModel {
                 outputPath: manifest.outputPath ?? manifest.derivedModelPath ?? "",
                 fallbackDetail: manifest.jobID ?? ""
             )
+            if loraWorkflowOperation == .trainLoRA {
+                persistActiveLoraTrainingJobCompletion(
+                    status: .succeeded,
+                    outputPath: manifest.outputPath ?? "",
+                    manifestPath: manifest.outputPath ?? "",
+                    latestOutputText: rawManifestJSON,
+                    terminalMessage: "Training completed.",
+                    backendJobID: manifest.jobID ?? ""
+                )
+            } else if loraWorkflowOperation == .activateAdapter {
+                persistSelectedLoraJobFollowUp(
+                    derivedModelID: manifest.derivedModelID ?? "",
+                    derivedModelPath: manifest.derivedModelPath ?? ""
+                )
+            }
         }
         if refreshProductToolingState {
             await refreshModelOpsProductState(modelID: modelID, notify: false)
@@ -5895,7 +6295,8 @@ public final class RuntimeViewModel {
     }
 
     public func quantizePrimaryModel() async {
-        guard let modelID = primaryModel?.modelID else {
+        let modelID = modelOperationTargetModelID
+        guard modelID.isEmpty == false else {
             return
         }
         await runModelOperation(
@@ -5909,7 +6310,8 @@ public final class RuntimeViewModel {
     }
 
     public func convertPrimaryModel() async {
-        guard let modelID = primaryModel?.modelID else {
+        let modelID = modelOperationTargetModelID
+        guard modelID.isEmpty == false else {
             return
         }
         await runModelOperation(
@@ -6007,6 +6409,9 @@ public final class RuntimeViewModel {
             )
             return
         }
+        guard persistLoraTrainingLaunch(modelID: modelID) != nil else {
+            return
+        }
         if let cliWorkflowRunner {
             let startedAt = Date()
             beginLoraWorkflow(.trainLoRA, detail: loraTrainingWorkflowDetail())
@@ -6049,6 +6454,14 @@ public final class RuntimeViewModel {
                 let errorMessage = workflowErrorMessage(error)
                 recordLocalError(errorMessage)
                 failLoraWorkflow(.trainLoRA, detail: errorMessage)
+                persistActiveLoraTrainingJobCompletion(
+                    status: .failed,
+                    outputPath: "",
+                    manifestPath: "",
+                    latestOutputText: "",
+                    terminalMessage: errorMessage,
+                    backendJobID: ""
+                )
                 notifyStateChanged()
                 return
             }
@@ -6483,6 +6896,10 @@ public final class RuntimeViewModel {
                         RuntimeBenchMetricState(name: key, value: String(format: "%.2f", payload.metrics[key] ?? 0))
                     }
                 )
+                persistSelectedLoraJobBenchmarkFollowUp(
+                    modelID: modelID,
+                    jobID: payload.reportPath
+                )
                 await refreshBenchmarkHistory(notify: false)
             } catch {
                 recordCLIWorkflowErrorIfNeeded(error)
@@ -6537,6 +6954,10 @@ public final class RuntimeViewModel {
                 metrics: result.metrics.keys.sorted().map { key in
                     RuntimeBenchMetricState(name: key, value: String(format: "%.2f", result.metrics[key] ?? 0))
                 }
+            )
+            persistSelectedLoraJobBenchmarkFollowUp(
+                modelID: modelID,
+                jobID: result.job?.jobID ?? result.reportPath
             )
             await refreshBenchmarkHistory(notify: false)
         } catch {
@@ -6916,6 +7337,10 @@ public final class RuntimeViewModel {
                     name: "menu.ops_eval_ms",
                     valueMs: Date().timeIntervalSince(startedAt) * 1_000
                 )
+                persistSelectedLoraJobEvaluationFollowUp(
+                    modelID: usesRemoteTarget ? remoteModelID : modelID,
+                    jobID: selectedEvaluationHistoryJobID
+                )
                 await refreshEvaluationHistory(notify: false)
             } catch {
                 recordCLIWorkflowErrorIfNeeded(error)
@@ -6925,9 +7350,10 @@ public final class RuntimeViewModel {
             return
         }
         do {
+            var evaluationJobID = ""
             if usesCustomSource == false, let operatorCommandRunner {
                 if selectedEvaluationMode == .compare {
-                    _ = try await operatorCommandRunner.runEvaluationCompare(
+                    let results = try await operatorCommandRunner.runEvaluationCompare(
                         EvalCompareOptions(
                             modelID: usesRemoteTarget ? "" : modelID,
                             hfRepoID: "",
@@ -6941,8 +7367,9 @@ public final class RuntimeViewModel {
                             )
                         )
                     )
+                    evaluationJobID = results.first?.job.jobID ?? ""
                 } else {
-                    _ = try await operatorCommandRunner.runEvaluations(
+                    let results = try await operatorCommandRunner.runEvaluations(
                         .init(
                             modelID: usesRemoteTarget ? "" : modelID,
                             hfRepoID: "",
@@ -6960,10 +7387,11 @@ public final class RuntimeViewModel {
                             semanticJudgeModelID: evaluationSemanticJudgeModelID
                         )
                     )
+                    evaluationJobID = results.first?.job.jobID ?? ""
                 }
             } else {
                 for suiteID in suites {
-                    _ = try await client.runEvaluation(
+                    let result = try await client.runEvaluation(
                         makeEvaluationRequest(
                             suiteID: suiteID,
                             modelID: usesRemoteTarget ? "" : modelID,
@@ -6974,11 +7402,18 @@ public final class RuntimeViewModel {
                             remoteTarget: remoteTarget
                         )
                     )
+                    if evaluationJobID.isEmpty {
+                        evaluationJobID = result.job.jobID
+                    }
                 }
             }
             await metrics.record(
                 name: "menu.ops_eval_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            persistSelectedLoraJobEvaluationFollowUp(
+                modelID: usesRemoteTarget ? remoteModelID : modelID,
+                jobID: evaluationJobID
             )
             await refreshEvaluationHistory(notify: false)
         } catch {
@@ -9970,6 +10405,102 @@ public final class RuntimeViewModel {
         }
     }
 
+    private func currentLoraTrainingConfig(modelID: String) -> LoraTrainingJobConfig {
+        LoraTrainingJobConfig(
+            modelID: modelID,
+            datasetSourceKind: loraDatasetSourceKind.rawValue,
+            datasetURI: loraDatasetURI,
+            hfDatasetPath: loraHFDatasetPath,
+            hfDatasetName: loraHFDatasetName,
+            hfDatasetRevision: loraHFDatasetRevision,
+            hfTrainSplit: loraHFTrainSplit,
+            hfValidSplit: loraHFValidSplit,
+            chatFeature: loraChatFeature,
+            promptFeature: loraPromptFeature,
+            completionFeature: loraCompletionFeature,
+            textFeature: loraTextFeature,
+            adapterName: loraAdapterName,
+            targetRepo: loraTargetRepo,
+            experimentGroupID: loraExperimentGroupID,
+            resumeManifestPath: loraResumeFromManifestPath,
+            trainingMode: loraTrainingMode.rawValue,
+            presetID: selectedLoraTrainingPreset.rawValue,
+            activationMode: loraActivationMode.rawValue,
+            rank: loraRank,
+            alpha: loraAlpha,
+            dropout: loraDropout,
+            targetModules: loraTargetModules,
+            numLayers: loraNumLayers,
+            batchSize: loraBatchSize,
+            epochs: loraEpochs,
+            learningRate: loraLearningRate,
+            maxSeqLength: loraMaxSeqLength,
+            responseOnly: loraResponseOnly,
+            maskPrompt: loraMaskPrompt,
+            gradientCheckpointing: loraGradientCheckpointing,
+            derivedModelAlias: loraDerivedModelAlias
+        )
+    }
+
+    private func applyLoraTrainingConfig(_ config: LoraTrainingJobConfig) {
+        if config.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            selectedLoraModelID = config.modelID
+        }
+        if let datasetSource = RuntimeLoraDatasetSourceKind(rawValue: config.datasetSourceKind) {
+            loraDatasetSourceKind = datasetSource
+        }
+        if let trainingMode = RuntimeLoraTrainingMode(rawValue: config.trainingMode) {
+            loraTrainingMode = trainingMode
+        }
+        if let preset = RuntimeLoraTrainingPreset(rawValue: config.presetID) {
+            selectedLoraTrainingPreset = preset
+        } else {
+            selectedLoraTrainingPreset = .custom
+        }
+        if let activationMode = RuntimeLoraActivationMode(rawValue: config.activationMode) {
+            loraActivationMode = activationMode
+        }
+        loraDatasetURI = config.datasetURI
+        loraHFDatasetPath = config.hfDatasetPath
+        loraHFDatasetName = config.hfDatasetName
+        loraHFDatasetRevision = config.hfDatasetRevision
+        loraHFTrainSplit = config.hfTrainSplit
+        loraHFValidSplit = config.hfValidSplit
+        loraChatFeature = config.chatFeature
+        loraPromptFeature = config.promptFeature
+        loraCompletionFeature = config.completionFeature
+        loraTextFeature = config.textFeature
+        loraAdapterName = config.adapterName
+        loraTargetRepo = config.targetRepo
+        loraExperimentGroupID = config.experimentGroupID
+        loraResumeFromManifestPath = config.resumeManifestPath
+        loraRank = config.rank
+        loraAlpha = config.alpha
+        loraDropout = config.dropout
+        loraTargetModules = config.targetModules
+        loraNumLayers = config.numLayers
+        loraBatchSize = config.batchSize
+        loraEpochs = config.epochs
+        loraLearningRate = config.learningRate
+        loraMaxSeqLength = config.maxSeqLength
+        loraResponseOnly = config.responseOnly
+        loraMaskPrompt = config.maskPrompt
+        loraGradientCheckpointing = config.gradientCheckpointing
+        loraDerivedModelAlias = config.derivedModelAlias
+    }
+
+    private func currentLoraTrainingJobTitle(config: LoraTrainingJobConfig) -> String {
+        let groupID = config.experimentGroupID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if groupID.isEmpty == false {
+            return groupID
+        }
+        let adapterName = config.adapterName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if adapterName.isEmpty == false {
+            return adapterName
+        }
+        return "LoRA Training Job"
+    }
+
     private func loraTrainingExt() -> [String: String] {
         var ext: [String: String] = [
             "adapter_name": Self.normalizedOptionalString(loraAdapterName) ?? "melix-dev-adapter",
@@ -10019,6 +10550,237 @@ public final class RuntimeViewModel {
         return ext.filter { key, _ in
             ["adapter_name", "dataset_source_kind", "dataset_uri", "target_repo", "training_mode"].contains(key) == false
         }
+    }
+
+    private func persistLoraTrainingLaunch(modelID: String) -> LoraTrainingJobRecord? {
+        do {
+            let config = currentLoraTrainingConfig(modelID: modelID)
+            let now = Date()
+            var record: LoraTrainingJobRecord
+            if selectedLoraTrainingJobLoadedForEditing,
+               let selected = selectedLoraTrainingJob,
+               selected.status != .running
+            {
+                record = selected
+                if record.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    record.title = currentLoraTrainingJobTitle(config: config)
+                }
+                record.config = config
+                record.status = .running
+                record.startedAt = now
+                record.completedAt = nil
+                record.lastRunJobID = ""
+                record.outputPath = ""
+                record.manifestPath = ""
+                record.latestOutputText = ""
+                record.terminalMessage = "Training launched from the desktop training studio."
+                record.followUpArtifacts = .init()
+            } else {
+                record = try loraTrainingJobStore.createDraft(
+                    title: currentLoraTrainingJobTitle(config: config),
+                    config: config
+                )
+                record.status = .running
+                record.startedAt = now
+                record.completedAt = nil
+                record.terminalMessage = "Training launched from the desktop training studio."
+            }
+            let saved = try loraTrainingJobStore.save(record)
+            reloadLoraTrainingJobs()
+            selectedLoraTrainingJobID = saved.id
+            activeDesktopLoraTrainingJobID = saved.id
+            selectedLoraTrainingJobLoadedForEditing = true
+            return saved
+        } catch {
+            recordLoraTrainingJobPersistFailure("LoRA training job launch persistence failed: \(error)")
+            failLoraWorkflow(.trainLoRA, detail: "LoRA training job launch persistence failed: \(error)")
+            notifyStateChanged()
+            return nil
+        }
+    }
+
+    private func persistActiveLoraTrainingJobCompletion(
+        status: LoraTrainingJobStatus,
+        outputPath: String,
+        manifestPath: String,
+        latestOutputText: String,
+        terminalMessage: String,
+        backendJobID: String
+    ) {
+        guard activeDesktopLoraTrainingJobID.isEmpty == false else {
+            return
+        }
+        do {
+            guard var record = try loraTrainingJobStore.get(id: activeDesktopLoraTrainingJobID) else {
+                activeDesktopLoraTrainingJobID = ""
+                return
+            }
+            record.status = status
+            record.completedAt = Date()
+            record.outputPath = outputPath
+            record.manifestPath = manifestPath
+            record.latestOutputText = latestOutputText
+            record.terminalMessage = terminalMessage
+            record.lastRunJobID = backendJobID
+            if outputPath.isEmpty == false {
+                record.followUpArtifacts.adapterManifestPath = outputPath
+            }
+            if manifestPath.isEmpty == false {
+                record.followUpArtifacts.adapterManifestPath = manifestPath
+            }
+            let saved = try loraTrainingJobStore.save(record)
+            reloadLoraTrainingJobs()
+            selectedLoraTrainingJobID = saved.id
+        } catch {
+            recordLoraTrainingJobPersistFailure("LoRA training job completion persistence failed: \(error)")
+        }
+        activeDesktopLoraTrainingJobID = ""
+    }
+
+    private func persistSelectedLoraJobFollowUp(
+        derivedModelID: String = "",
+        derivedModelPath: String = "",
+        quantizedArtifactPath: String = "",
+        convertedArtifactPath: String = "",
+        benchmarkJobID: String = "",
+        evaluationJobID: String = "",
+        publishedRepo: String = ""
+    ) {
+        guard let selected = selectedLoraTrainingJob else {
+            return
+        }
+        do {
+            var record = selected
+            if derivedModelID.isEmpty == false {
+                record.followUpArtifacts.derivedModelID = derivedModelID
+            }
+            if derivedModelPath.isEmpty == false {
+                record.followUpArtifacts.derivedModelPath = derivedModelPath
+            }
+            if quantizedArtifactPath.isEmpty == false {
+                record.followUpArtifacts.quantizedArtifactPath = quantizedArtifactPath
+            }
+            if convertedArtifactPath.isEmpty == false {
+                record.followUpArtifacts.convertedArtifactPath = convertedArtifactPath
+            }
+            if benchmarkJobID.isEmpty == false {
+                record.followUpArtifacts.benchmarkJobID = benchmarkJobID
+            }
+            if evaluationJobID.isEmpty == false {
+                record.followUpArtifacts.evaluationJobID = evaluationJobID
+            }
+            if publishedRepo.isEmpty == false {
+                record.followUpArtifacts.publishedRepo = publishedRepo
+            }
+            let saved = try loraTrainingJobStore.save(record)
+            reloadLoraTrainingJobs()
+            selectedLoraTrainingJobID = saved.id
+        } catch {
+            recordLoraTrainingJobPersistFailure("LoRA follow-up artifact persistence failed: \(error)")
+        }
+    }
+
+    private func persistSelectedLoraJobModelOperationFollowUp(
+        modelID: String,
+        operation: String,
+        outputPath: String,
+        manifestPath: String
+    ) {
+        guard shouldPersistSelectedLoraFollowUp(for: modelID) else {
+            return
+        }
+        let artifactPath = outputPath.isEmpty ? manifestPath : outputPath
+        guard artifactPath.isEmpty == false else {
+            return
+        }
+        switch operation {
+        case "quantize":
+            persistSelectedLoraJobFollowUp(quantizedArtifactPath: artifactPath)
+        case "convert":
+            persistSelectedLoraJobFollowUp(convertedArtifactPath: artifactPath)
+        default:
+            break
+        }
+    }
+
+    private func persistSelectedLoraJobBenchmarkFollowUp(modelID: String, jobID: String) {
+        guard shouldPersistSelectedLoraFollowUp(for: modelID), jobID.isEmpty == false else {
+            return
+        }
+        persistSelectedLoraJobFollowUp(benchmarkJobID: jobID)
+    }
+
+    private func persistSelectedLoraJobEvaluationFollowUp(modelID: String, jobID: String) {
+        guard shouldPersistSelectedLoraFollowUp(for: modelID), jobID.isEmpty == false else {
+            return
+        }
+        persistSelectedLoraJobFollowUp(evaluationJobID: jobID)
+    }
+
+    private func shouldPersistSelectedLoraFollowUp(for modelID: String) -> Bool {
+        guard let job = selectedLoraTrainingJob else {
+            return false
+        }
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedModelID.isEmpty == false else {
+            return false
+        }
+        let candidates = [
+            loraFollowUpModelID(for: job),
+            job.config.modelID,
+            job.followUpArtifacts.derivedModelID,
+        ]
+        return candidates.contains { candidate in
+            candidate.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedModelID
+        }
+    }
+
+    private func selectLocalDiagnosticsTargetForLoraFollowUp() {
+        guard let localTarget = diagnosticsServerTargets.first(where: { $0.kind == .localServer }) else {
+            return
+        }
+        selectedDiagnosticsServerTargetID = localTarget.id
+    }
+
+    private func loraAdapterManifestPath(for job: LoraTrainingJobRecord) -> String {
+        if job.followUpArtifacts.adapterManifestPath.isEmpty == false {
+            return job.followUpArtifacts.adapterManifestPath
+        }
+        if job.manifestPath.isEmpty == false {
+            return job.manifestPath
+        }
+        return job.outputPath
+    }
+
+    private func loraFollowUpModelID(for job: LoraTrainingJobRecord) -> String {
+        if job.followUpArtifacts.derivedModelID.isEmpty == false {
+            return job.followUpArtifacts.derivedModelID
+        }
+        if job.config.derivedModelAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return job.config.derivedModelAlias
+        }
+        return job.config.modelID
+    }
+
+    private func adapterPackageID(forManifestPath manifestPath: String) -> String? {
+        let normalizedPath = manifestPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedPath.isEmpty == false else {
+            return nil
+        }
+        return adapterPackages.first { adapter in
+            adapter.outputPath.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedPath
+        }?.id
+    }
+
+    private func recordLoraTrainingJobPersistFailure(_ message: String) {
+        loraTrainingJobPersistFailures += 1
+        Task {
+            await metrics.record(
+                name: "lora_training_job.persist_failures",
+                valueMs: loraTrainingJobPersistFailures
+            )
+        }
+        recordLocalError(message)
     }
 
     private static func normalizedOptionalString(_ value: String) -> String? {
