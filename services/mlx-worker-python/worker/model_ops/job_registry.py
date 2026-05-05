@@ -51,6 +51,7 @@ class _ActiveDerivedModelLookup:
     manifest: dict[str, Any]
     activation_manifest_path: str
     resolved_activation_manifest_path: str | None = None
+    target_payload: dict[str, Any] | None = None
 
 
 class ModelOpsJobRegistry:
@@ -396,6 +397,24 @@ class ModelOpsJobRegistry:
         }
 
     @classmethod
+    def _cached_derived_model_target_payload(
+        cls,
+        lookup: _ActiveDerivedModelLookup,
+        *,
+        resolved_activation_manifest_path: str,
+    ) -> dict[str, Any]:
+        target_payload = lookup.target_payload
+        if target_payload is None:
+            target_payload = cls._derived_model_target_payload(
+                lookup.job,
+                lookup.manifest,
+                lookup.activation_manifest_path,
+                resolved_activation_manifest_path=resolved_activation_manifest_path,
+            )
+            lookup.target_payload = target_payload
+        return dict(target_payload)
+
+    @classmethod
     def _job_manifest(cls, job: ModelOpsJob) -> dict[str, Any]:
         if job.operation == "registry_snapshot":
             return {}
@@ -485,20 +504,16 @@ class ModelOpsJobRegistry:
                 lookup.resolved_activation_manifest_path = resolved_activation_manifest_path
             if normalized_manifest_path and resolved_activation_manifest_path != normalized_manifest_path:
                 return None
-            return self._derived_model_target_payload(
-                lookup.job,
-                lookup.manifest,
-                lookup.activation_manifest_path,
+            return self._cached_derived_model_target_payload(
+                lookup,
                 resolved_activation_manifest_path=resolved_activation_manifest_path,
             )
 
         lookup = self._cached_active_derived_model_by_manifest_path().get(normalized_manifest_path)
         if lookup is None:
             return None
-        return self._derived_model_target_payload(
-            lookup.job,
-            lookup.manifest,
-            lookup.activation_manifest_path,
+        return self._cached_derived_model_target_payload(
+            lookup,
             resolved_activation_manifest_path=normalized_manifest_path,
         )
 
