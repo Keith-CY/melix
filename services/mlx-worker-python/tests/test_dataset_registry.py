@@ -155,6 +155,57 @@ def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     assert rows == [{"prompt": "first", "answer": "a"}]
 
 
+def test_dataset_catalog_limited_unfiltered_read_stops_before_later_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    first_file = data_dir / "part-000.jsonl"
+    later_file = data_dir / "part-001.jsonl"
+    first_file.write_text('{"prompt":"first"}\n', encoding="utf-8")
+    later_file.write_text('{"prompt":"later"}\n', encoding="utf-8")
+    (snapshot_dir / "README.md").write_text("# metadata\n", encoding="utf-8")
+    read_files: list[str] = []
+    original_reader = catalog._read_rows_from_file
+
+    def tracked_reader(path: Path, *, limit: int | None = None) -> list[dict[str, object]]:
+        read_files.append(path.name)
+        return original_reader(path, limit=limit)
+
+    monkeypatch.setattr(catalog, "_read_rows_from_file", tracked_reader)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=1)
+
+    assert rows == [{"prompt": "first"}]
+    assert read_files == ["part-000.jsonl"]
+
+
+def test_dataset_catalog_unlimited_unfiltered_read_preserves_full_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    (data_dir / "part-000.jsonl").write_text('{"prompt":"first"}\n', encoding="utf-8")
+    (data_dir / "part-001.jsonl").write_text('{"prompt":"second"}\n', encoding="utf-8")
+    selected_calls: list[str] = []
+    original_selector = catalog._selected_dataset_files
+
+    def tracked_selector(snapshot_path: Path, *, split: str) -> tuple[Path, ...]:
+        selected_calls.append(split)
+        return original_selector(snapshot_path, split=split)
+
+    monkeypatch.setattr(catalog, "_selected_dataset_files", tracked_selector)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir)
+
+    assert rows == [{"prompt": "first"}, {"prompt": "second"}]
+    assert selected_calls == [""]
+
+
 def test_dataset_catalog_reads_json_and_csv_snapshots(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshot"
     data_dir = snapshot_dir / "custom"
