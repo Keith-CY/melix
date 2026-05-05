@@ -21,14 +21,16 @@ def _is_diff_file_marker(line: str) -> bool:
 def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     changed_by_path: dict[str, set[int]] = {}
     current_path: str | None = None
+    current_changed_lines: set[int] | None = None
     new_line: int | None = None
     for line in diff_text.splitlines():
         first_char = line[:1]
         if first_char == "d" and line.startswith("diff --git "):
             match = _DIFF_HEADER_RE.match(line)
             current_path = None if match is None else match.group(2)
-            if current_path is not None:
-                changed_by_path.setdefault(current_path, set())
+            current_changed_lines = (
+                None if current_path is None else changed_by_path.setdefault(current_path, set())
+            )
             new_line = None
             continue
         if first_char == "@" and line.startswith("@@"):
@@ -37,14 +39,14 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
                 continue
             new_line = int(match.group(1))
             continue
-        if current_path is None or new_line is None:
+        if current_changed_lines is None or new_line is None:
             continue
         if first_char == "\\" and line.startswith("\\ "):
             continue
         if first_char in {"+", "-"} and _is_diff_file_marker(line):
             continue
         if first_char == "+":
-            changed_by_path[current_path].add(new_line)
+            current_changed_lines.add(new_line)
             new_line += 1
         elif first_char == "-":
             continue
