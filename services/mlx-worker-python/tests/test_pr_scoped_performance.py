@@ -270,6 +270,16 @@ def test_scope_report_selects_deterministic_rerank_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "deterministic-rerank-query-context-reuse"
 
 
+def test_scope_report_selects_rerank_core_top_k_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/rerank_core.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "rerank-core-top-k-heap-selection"
+
+
 def test_scope_report_selects_deterministic_embedding_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -652,6 +662,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "closure-audit-probe-source-short-circuit",
         "deterministic-embedding-duplicate-input-cache",
         "deterministic-rerank-query-context-reuse",
+        "rerank-core-top-k-heap-selection",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
         "evaluation-final-result-materialization-streaming",

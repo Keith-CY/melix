@@ -5,6 +5,7 @@ import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
+from worker.engine.rerank_core import RerankCore
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
@@ -48,6 +49,37 @@ def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpe
     )
     assert response.ok is True
     return response.model_handle
+
+
+def test_rerank_rank_scores_preserves_sort_contract_for_bounded_top_k() -> None:
+    scores = [0.4, 0.9, 0.9, -0.2, 0.7, 0.9]
+
+    ranked = RerankCore._rank_scores(scores, top_k=3)
+
+    assert ranked == [(1, 0.9), (2, 0.9), (5, 0.9)]
+
+
+def test_rerank_rank_scores_uses_heap_for_bounded_top_k(monkeypatch) -> None:
+    nsmallest = Mock(return_value=[(2, 0.8), (4, 0.7)])
+    monkeypatch.setattr("worker.engine.rerank_core.heapq.nsmallest", nsmallest)
+
+    ranked = RerankCore._rank_scores([0.1, 0.2, 0.8, 0.3, 0.7], top_k=2)
+
+    assert ranked == [(2, 0.8), (4, 0.7)]
+    nsmallest.assert_called_once()
+    assert nsmallest.call_args.args[0] == 2
+
+
+def test_rerank_rank_scores_keeps_full_sort_when_unbounded(monkeypatch) -> None:
+    nsmallest = Mock()
+    monkeypatch.setattr("worker.engine.rerank_core.heapq.nsmallest", nsmallest)
+
+    ranked = RerankCore._rank_scores([0.2, 0.5, 0.5], top_k=None)
+    oversized = RerankCore._rank_scores([0.2, 0.5, 0.5], top_k=5)
+
+    assert ranked == [(1, 0.5), (2, 0.5), (0, 0.2)]
+    assert oversized == ranked
+    nsmallest.assert_not_called()
 
 
 def test_rerank_returns_sorted_scores_and_honors_top_k() -> None:

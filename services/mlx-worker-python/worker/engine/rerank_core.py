@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import heapq
+
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.registry import WorkerRegistry
@@ -35,17 +37,24 @@ class RerankCore:
                 error=common_pb2.ErrorStatus(code="runtime_error", message=str(exc))
             )
 
-        ranked = sorted(
-            enumerate(scores),
-            key=lambda item: (-item[1], item[0]),
-        )
-        limit = int(request.top_k) if request.top_k else len(ranked)
-        if limit < len(ranked):
-            ranked = ranked[:limit]
+        ranked = self._rank_scores(scores, top_k=int(request.top_k) if request.top_k else None)
 
         return inference_pb2.RerankResponse(
             items=[
                 inference_pb2.RerankItem(index=index, score=score)
                 for index, score in ranked
             ]
+        )
+
+    @staticmethod
+    def _rank_scores(scores: list[float], *, top_k: int | None) -> list[tuple[int, float]]:
+        if top_k is not None and top_k < len(scores):
+            return heapq.nsmallest(
+                top_k,
+                enumerate(scores),
+                key=lambda item: (-item[1], item[0]),
+            )
+        return sorted(
+            enumerate(scores),
+            key=lambda item: (-item[1], item[0]),
         )
