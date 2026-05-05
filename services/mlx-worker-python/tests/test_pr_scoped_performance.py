@@ -125,6 +125,16 @@ def test_scope_report_selects_training_dataset_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "training-dataset-token-percentiles-single-sort"
 
 
+def test_scope_report_selects_startup_signals_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/startup_signals.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "startup-signals-lazy-worker-log-excerpts"
+
+
 def test_scope_report_selects_real_model_support_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -817,6 +827,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "real-model-support-hf-cache-latest-snapshot",
         "stream-assembler-structural-prefix-cache",
         "swift-cli-json-envelope-encoding",
+        "startup-signals-lazy-worker-log-excerpts",
         "upload-receipt-published-files-scandir",
         "download-pipeline-directory-size-single-stat",
         "worker-registry-resident-bytes-accumulator",
@@ -1495,6 +1506,21 @@ def test_worker_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["request_stats_elapsed_ms_mean"] > 0
     assert payload["resident_bytes_mean"] > 0
     assert payload["sample_count"] == 3.0
+
+
+def test_startup_signals_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/startup_signals_log_probe.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["conflict_elapsed_ms_mean"] > 0
+    assert payload["conflict_log_reads_mean"] == 1.0
+    assert payload["control_crash_elapsed_ms_mean"] > 0
+    assert payload["control_crash_log_reads_mean"] == 1.0
+    assert payload["worker_crash_elapsed_ms_mean"] > 0
+    assert payload["worker_crash_log_reads_mean"] == 1.0
+    assert payload["sample_count"] == 5.0
 
 
 def test_job_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
