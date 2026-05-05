@@ -57,9 +57,7 @@ class DeterministicEmbeddingBackend:
         if l2_norm == 0.0:
             return [0.0] * dimensions
         normalized_base = [round(value / l2_norm, 6) for value in base_values]
-        result: list[float] = []
-        for _ in range(full_repeats):
-            result.extend(normalized_base)
+        result = normalized_base * full_repeats
         result.extend(normalized_base[:remainder])
         return result
 
