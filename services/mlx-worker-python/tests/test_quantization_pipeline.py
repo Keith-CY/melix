@@ -11,11 +11,13 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
+from worker.model_ops import quantization_pipeline as quantization_pipeline_module
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.quantization_pipeline import (
     OQQuantizationPipeline,
     _local_source_path_for_mlx_lm_convert,
     _smoke_required_files_for_backend,
+    _sum_bundle_file_bytes,
 )
 from worker.model_ops.quantization_profiles import (
     normalize_quantization_profile,
@@ -652,6 +654,55 @@ def test_quantize_job_runs_opt_in_mlx_lm_convert_backend(
     ]
 
 
+def test_quantize_job_omits_optional_mlx_lm_group_size_when_unset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "merged-model"
+    source_artifact_path.mkdir()
+    convert_calls: list[dict[str, object]] = []
+
+    def fake_mlx_lm_convert(**kwargs: object) -> None:
+        convert_calls.append(kwargs)
+        output_path = kwargs["output_path"]
+        assert isinstance(output_path, Path)
+        output_path.mkdir(parents=True)
+        (output_path / "config.json").write_text("{}\n", encoding="utf-8")
+        (output_path / "tokenizer.json").write_text("{}\n", encoding="utf-8")
+        (output_path / "model.safetensors").write_bytes(b"real-mlx-weights")
+
+    monkeypatch.setattr(
+        OQQuantizationPipeline,
+        "_mlx_lm_convert",
+        staticmethod(fake_mlx_lm_convert),
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_backend": "mlx_lm_convert",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("completed")
+    assert len(convert_calls) == 1
+    assert convert_calls[0]["q_bits"] == 4
+    assert "q_group_size" not in convert_calls[0]
+
+
 def test_quantize_job_rejects_unknown_quantization_backend(tmp_path: Path) -> None:
     service = build_service(tmp_path)
 
@@ -957,6 +1008,27 @@ def test_mlx_lm_convert_wrapper_forwards_parameters(
             },
         }
     ]
+    calls.clear()
+
+    OQQuantizationPipeline._mlx_lm_convert(
+        source_path=tmp_path / "source",
+        output_path=tmp_path / "out",
+        q_group_size=None,
+        q_bits=4,
+        q_mode="affine",
+    )
+
+    assert calls == [
+        {
+            "args": (str(tmp_path / "source"),),
+            "kwargs": {
+                "mlx_path": str(tmp_path / "out"),
+                "quantize": True,
+                "q_bits": 4,
+                "q_mode": "affine",
+            },
+        }
+    ]
 
 
 def test_mlx_lm_source_and_smoke_file_helpers_cover_edge_cases(tmp_path: Path) -> None:
@@ -974,11 +1046,101 @@ def test_mlx_lm_source_and_smoke_file_helpers_cover_edge_cases(tmp_path: Path) -
     sharded_bundle = tmp_path / "sharded-bundle"
     sharded_bundle.mkdir()
     (sharded_bundle / "tokenizer.model").write_bytes(b"sentencepiece")
-    (sharded_bundle / "model.safetensors.index.json").write_text("{}\n", encoding="utf-8")
+    (sharded_bundle / "model-00001-of-00001.safetensors").write_bytes(b"shard")
+    (sharded_bundle / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"layer.weight": "model-00001-of-00001.safetensors"}}) + "\n",
+        encoding="utf-8",
+    )
     assert _smoke_required_files_for_backend(
         sharded_bundle,
         quantization_backend="mlx_lm_convert",
-    ) == ("config.json", "tokenizer.model", "model.safetensors.index.json")
+    ) == (
+        "config.json",
+        "tokenizer.model",
+        "model.safetensors.index.json",
+        "model-00001-of-00001.safetensors",
+    )
+
+    missing_shard_bundle = tmp_path / "missing-shard-bundle"
+    missing_shard_bundle.mkdir()
+    (missing_shard_bundle / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"layer.weight": "model-00001-of-00001.safetensors"}}) + "\n",
+        encoding="utf-8",
+    )
+    assert _smoke_required_files_for_backend(
+        missing_shard_bundle,
+        quantization_backend="mlx_lm_convert",
+    ) == (
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00001.safetensors",
+    )
+
+    invalid_index_bundle = tmp_path / "invalid-index-bundle"
+    invalid_index_bundle.mkdir()
+    (invalid_index_bundle / "model.safetensors.index.json").write_text("{not-json", encoding="utf-8")
+    assert _smoke_required_files_for_backend(
+        invalid_index_bundle,
+        quantization_backend="mlx_lm_convert",
+    ) == ("config.json", "tokenizer.json", "model.safetensors.index.json", "model.safetensors")
+
+    missing_weight_map_bundle = tmp_path / "missing-weight-map-bundle"
+    missing_weight_map_bundle.mkdir()
+    (missing_weight_map_bundle / "model.safetensors.index.json").write_text("{}\n", encoding="utf-8")
+    assert _smoke_required_files_for_backend(
+        missing_weight_map_bundle,
+        quantization_backend="mlx_lm_convert",
+    ) == ("config.json", "tokenizer.json", "model.safetensors.index.json", "model.safetensors")
+
+    empty_weight_map_bundle = tmp_path / "empty-weight-map-bundle"
+    empty_weight_map_bundle.mkdir()
+    (empty_weight_map_bundle / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"layer.weight": ""}}) + "\n",
+        encoding="utf-8",
+    )
+    assert _smoke_required_files_for_backend(
+        empty_weight_map_bundle,
+        quantization_backend="mlx_lm_convert",
+    ) == ("config.json", "tokenizer.json", "model.safetensors.index.json", "model.safetensors")
+
+
+def test_mlx_lm_bundle_byte_sum_handles_nested_and_unreadable_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle_path = tmp_path / "bundle"
+    nested_path = bundle_path / "nested"
+    nested_path.mkdir(parents=True)
+    (bundle_path / "config.json").write_bytes(b"{}")
+    (nested_path / "model.safetensors").write_bytes(b"weights")
+
+    assert _sum_bundle_file_bytes(bundle_path) == len(b"{}") + len(b"weights")
+
+    class BadEntry:
+        path = str(bundle_path / "bad")
+
+        def is_file(self) -> bool:
+            raise OSError("entry failed")
+
+        def is_dir(self) -> bool:
+            return False
+
+    class FakeScandir:
+        def __enter__(self) -> list[BadEntry]:
+            return [BadEntry()]
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+    monkeypatch.setattr(quantization_pipeline_module.os, "scandir", lambda _: FakeScandir())
+    assert _sum_bundle_file_bytes(bundle_path) == 0
+
+    def failed_scandir(_: object) -> object:
+        raise OSError("root failed")
+
+    monkeypatch.setattr(quantization_pipeline_module.os, "scandir", failed_scandir)
+    assert _sum_bundle_file_bytes(bundle_path) == 0
 
 
 def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp_path: Path) -> None:

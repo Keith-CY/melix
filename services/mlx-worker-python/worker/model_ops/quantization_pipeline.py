@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
@@ -602,14 +603,16 @@ class OQQuantizationPipeline:
             )
         bundle_path.parent.mkdir(parents=True, exist_ok=True)
         params = _mlx_lm_quantization_params_for_request(request, profile)
+        convert_kwargs = {
+            "source_path": source_path,
+            "output_path": bundle_path,
+            "q_bits": params["q_bits"],
+            "q_mode": params["q_mode"],
+        }
+        if params["q_group_size"] is not None:
+            convert_kwargs["q_group_size"] = params["q_group_size"]
         try:
-            self._mlx_lm_convert(
-                source_path=source_path,
-                output_path=bundle_path,
-                q_group_size=params["q_group_size"],
-                q_bits=params["q_bits"],
-                q_mode=params["q_mode"],
-            )
+            self._mlx_lm_convert(**convert_kwargs)
         except ModuleNotFoundError as exc:
             raise ModelOperationError(
                 code="quantization_backend_unavailable",
@@ -629,20 +632,21 @@ class OQQuantizationPipeline:
         *,
         source_path: Path,
         output_path: Path,
-        q_group_size: int | None,
         q_bits: int,
         q_mode: str,
+        q_group_size: int | None = None,
     ) -> None:
         from mlx_lm import convert as mlx_lm_convert
 
-        mlx_lm_convert(
-            str(source_path),
-            mlx_path=str(output_path),
-            quantize=True,
-            q_group_size=q_group_size,
-            q_bits=q_bits,
-            q_mode=q_mode,
-        )
+        kwargs: dict[str, Any] = {
+            "mlx_path": str(output_path),
+            "quantize": True,
+            "q_bits": q_bits,
+            "q_mode": q_mode,
+        }
+        if q_group_size is not None:
+            kwargs["q_group_size"] = q_group_size
+        mlx_lm_convert(str(source_path), **kwargs)
 
 
 def _quantization_mode_for_request(request: maintenance_pb2.ConvertModelRequest) -> str:
@@ -852,7 +856,23 @@ def _optional_positive_int(raw_value: str, key: str) -> int | None:
 
 
 def _sum_bundle_file_bytes(bundle_path: Path) -> int:
-    return sum(path.stat().st_size for path in bundle_path.rglob("*") if path.is_file())
+    total = 0
+    stack = [bundle_path]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(os.fspath(current)) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_file():
+                            total += entry.stat().st_size
+                        elif entry.is_dir():
+                            stack.append(Path(entry.path))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total
 
 
 def _smoke_required_files_for_backend(
@@ -869,12 +889,27 @@ def _smoke_required_files_for_backend(
     else:
         tokenizer_file = "tokenizer.json"
     if (bundle_path / "model.safetensors").exists():
-        weight_file = "model.safetensors"
+        weight_files = ("model.safetensors",)
     elif (bundle_path / "model.safetensors.index.json").exists():
-        weight_file = "model.safetensors.index.json"
+        weight_files = _mlx_lm_index_weight_files(bundle_path)
     else:
-        weight_file = "model.safetensors"
-    return ("config.json", tokenizer_file, weight_file)
+        weight_files = ("model.safetensors",)
+    return ("config.json", tokenizer_file, *weight_files)
+
+
+def _mlx_lm_index_weight_files(bundle_path: Path) -> tuple[str, ...]:
+    index_file = "model.safetensors.index.json"
+    try:
+        payload = json.loads((bundle_path / index_file).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return (index_file, "model.safetensors")
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, dict):
+        return (index_file, "model.safetensors")
+    shard_names = sorted({name for name in weight_map.values() if isinstance(name, str) and name})
+    if not shard_names:
+        return (index_file, "model.safetensors")
+    return (index_file, shard_names[0])
 
 
 def _not_requested_smoke_evidence(
