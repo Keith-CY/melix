@@ -1738,10 +1738,12 @@ def test_model_registry_catalog_probe_command_emits_metrics() -> None:
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["manifest_is_file_calls_mean"] == 0.0
-    assert metrics["config_load_calls_mean"] == 400.0
+    assert metrics["config_load_calls_mean"] == 401.0
     assert metrics["manifest_parse_calls_mean"] == 0.0
-    assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 400.0
-    assert metrics["sample_count"] == 2.0
+    assert metrics["hf_ref_read_text_calls_mean"] == 0.0
+    assert metrics["hf_ref_read_bytes_calls_mean"] == 1.0
+    assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 401.0
+    assert metrics["sample_count"] == 3.0
 
 
 def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:

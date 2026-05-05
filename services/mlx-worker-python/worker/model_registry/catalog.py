@@ -358,8 +358,8 @@ def _hf_cache_revision_map(
         try:
             for ref_path, relative_name in _iter_relative_file_paths_sorted(refs_dir):
                 try:
-                    snapshot_id = ref_path.read_text(encoding="utf-8").strip()
-                except OSError:
+                    snapshot_id = ref_path.read_bytes().strip().decode("utf-8")
+                except (OSError, UnicodeDecodeError):
                     continue
                 if not snapshot_id:
                     continue
