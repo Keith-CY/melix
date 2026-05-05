@@ -35,6 +35,7 @@ _FAST_PATH_SIGNATURE_METADATA_KEYS = frozenset(
     }
 )
 _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS = ("model_id", "revision", "tokenizer_hash", "quant_profile_id")
+_FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED = tuple(sorted(_FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS))
 
 
 @dataclass(frozen=True)
@@ -284,10 +285,8 @@ def fast_path_probe_signature(
     top_level_items: tuple[tuple[str, str], ...] = ()
     if isinstance(loaded_model, dict):
         top_level_items = tuple(
-            sorted(
-                (key, str(loaded_model.get(key, "")))
-                for key in _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS
-            )
+            (key, str(loaded_model.get(key, "")))
+            for key in _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED
         )
     return (
         prepared_request.multimodal_hash_hex,

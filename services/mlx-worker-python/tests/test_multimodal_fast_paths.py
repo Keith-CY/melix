@@ -12,6 +12,7 @@ from worker.runtime.multimodal_fast_paths import (
     MULTIMODAL_LOAD_NATIVE_QUANTIZED,
     MultimodalFastPathController,
     _preprocessing_fingerprint,
+    _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED,
     fast_path_probe_signature,
 )
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
@@ -426,3 +427,27 @@ def test_fast_path_probe_signature_ignores_non_dict_loaded_models() -> None:
     signature = fast_path_probe_signature(object(), _request([_image(b"image")]))
 
     assert signature == ("multi", "()", "()")
+
+
+def test_fast_path_probe_signature_reuses_pre_sorted_top_level_keys() -> None:
+    loaded_model = {
+        "quant_profile_id": "q8",
+        "tokenizer_hash": "tok",
+        "revision": "main",
+        "model_id": "melix-dev-vlm",
+        "metadata": {
+            "vision_family_id": "gemma4-v1",
+        },
+    }
+
+    signature = fast_path_probe_signature(loaded_model, _request([_image(b"image")]))
+
+    expected_top_level_items = tuple(
+        (key, str(loaded_model.get(key, "")))
+        for key in _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED
+    )
+    assert signature[1] == repr(expected_top_level_items)
+    assert signature[1] == (
+        "(('model_id', 'melix-dev-vlm'), ('quant_profile_id', 'q8'), "
+        "('revision', 'main'), ('tokenizer_hash', 'tok'))"
+    )
