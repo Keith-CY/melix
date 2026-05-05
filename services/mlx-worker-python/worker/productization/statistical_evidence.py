@@ -127,11 +127,12 @@ def _paired_bootstrap_interval(
         replicates.append(_mean(replicate))
 
     alpha = (1.0 - confidence_level) / 2.0
+    ordered_replicates = sorted(replicates)
     return _interval_payload(
         method="paired_bootstrap_percentile",
         confidence_level=confidence_level,
-        lower_bound=_percentile(replicates, alpha),
-        upper_bound=_percentile(replicates, 1.0 - alpha),
+        lower_bound=_percentile_ordered(ordered_replicates, alpha),
+        upper_bound=_percentile_ordered(ordered_replicates, 1.0 - alpha),
         iterations=int(bootstrap_iterations),
         seed=int(bootstrap_seed),
     )
@@ -218,8 +219,13 @@ def _mean(values: list[float] | tuple[float, ...]) -> float:
 def _percentile(values: list[float], percentile: float) -> float:
     if not values:
         return 0.0
+    return _percentile_ordered(sorted(values), percentile)
+
+
+def _percentile_ordered(ordered: list[float], percentile: float) -> float:
+    if not ordered:
+        return 0.0
     bounded_percentile = min(max(percentile, 0.0), 1.0)
-    ordered = sorted(values)
     if len(ordered) == 1:
         return ordered[0]
     position = bounded_percentile * (len(ordered) - 1)
