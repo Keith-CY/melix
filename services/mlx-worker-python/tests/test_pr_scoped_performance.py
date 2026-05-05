@@ -719,6 +719,31 @@ def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_statistical_evidence_bootstrap_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STAT_EVIDENCE_SAMPLE_SIZE", "16")
+    monkeypatch.setenv("MELIX_STAT_EVIDENCE_BOOTSTRAP_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_STAT_EVIDENCE_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/statistical_evidence_bootstrap_probe.py"),
+            run_name="__main__",
+        )
+
+    assert excinfo.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["sample_size"] == 16.0
+    assert metrics["bootstrap_iterations"] == 8.0
+    assert metrics["sorted_calls_mean"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["lower_bound_mean"] <= metrics["upper_bound_mean"]
+
+
 def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -779,6 +804,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "hub-catalog-tag-normalization-single-pass",
         "benchmark-evaluation-report-running-aggregates",
+        "statistical-evidence-bootstrap-percentile-single-sort",
         "stream-assembler-parser-mode-cache",
         "benchmark-export-run-scan-single-pass",
         "benchmark-queue-decoded-record-cache",
