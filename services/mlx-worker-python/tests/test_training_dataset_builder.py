@@ -222,17 +222,16 @@ def test_load_training_dataset_package_stops_reading_after_sample_limit(
     assert package.normalized_samples == [{"text": "alpha"}]
 
 
-
-def test_load_training_dataset_package_stops_reading_validation_after_sample_limit(
+def test_load_training_dataset_package_limits_validation_samples(
     tmp_path: Path,
 ) -> None:
-    package_path = tmp_path / "limited-invalid-validation-tail"
+    package_path = tmp_path / "limited-validation-package"
     package_path.mkdir(parents=True, exist_ok=True)
     (package_path / "manifest.json").write_text(
         json.dumps(
             {
                 "schema_version": "melix.training_dataset_package.v1",
-                "dataset_id": "limited-invalid-validation-tail",
+                "dataset_id": "limited-validation-package",
                 "format": "text_completion",
                 "sample_count": 1,
                 "version": "1",
@@ -247,7 +246,44 @@ def test_load_training_dataset_package_stops_reading_validation_after_sample_lim
         encoding="utf-8",
     )
     (package_path / "valid.jsonl").write_text(
-        '{"text": "validate-alpha"}\n'
+        "\n"
+        '{"text": "holdout-one"}\n'
+        "\n"
+        '{"text": "holdout-two"}\n',
+        encoding="utf-8",
+    )
+
+    package = load_training_dataset_package(str(package_path), sample_limit=1)
+
+    assert package.validation_sample_count == 1
+    assert package.normalized_validation_samples == [{"text": "holdout-one"}]
+
+
+def test_load_training_dataset_package_stops_reading_validation_after_sample_limit(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "limited-validation-invalid-tail"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "limited-validation-invalid-tail",
+                "format": "text_completion",
+                "sample_count": 1,
+                "version": "1",
+                "validation_sample_count": 2,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        '{"text": "alpha"}\n',
+        encoding="utf-8",
+    )
+    (package_path / "valid.jsonl").write_text(
+        '{"text": "holdout-one"}\n'
         "{not-json\n",
         encoding="utf-8",
     )
@@ -255,7 +291,7 @@ def test_load_training_dataset_package_stops_reading_validation_after_sample_lim
     package = load_training_dataset_package(str(package_path), sample_limit=1)
 
     assert package.validation_sample_count == 1
-    assert package.normalized_validation_samples == [{"text": "validate-alpha"}]
+    assert package.normalized_validation_samples == [{"text": "holdout-one"}]
 
 
 def test_load_training_dataset_package_supports_preference_pair_samples(
