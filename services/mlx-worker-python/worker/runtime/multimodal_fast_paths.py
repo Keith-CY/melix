@@ -34,6 +34,7 @@ _FAST_PATH_SIGNATURE_METADATA_KEYS = frozenset(
         "multimodal_adapter_hash",
     }
 )
+_FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED = tuple(sorted(_FAST_PATH_SIGNATURE_METADATA_KEYS))
 _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS = ("model_id", "revision", "tokenizer_hash", "quant_profile_id")
 _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED = tuple(sorted(_FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS))
 
@@ -265,23 +266,26 @@ def fast_path_probe_signature(
     loaded_model: Any,
     prepared_request: PreparedVisionRequest,
 ) -> tuple[str, ...]:
-    metadata: dict[str, str] = {}
+    metadata_items: tuple[tuple[str, str], ...] = ()
     if isinstance(loaded_model, dict):
-        for key in _FAST_PATH_SIGNATURE_METADATA_KEYS:
+        metadata_pairs: list[tuple[str, str]] = []
+        nested_metadata = loaded_model.get("metadata", {})
+        nested_metadata_is_dict = isinstance(nested_metadata, dict)
+        for key in _FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED:
+            normalized = ""
             value = loaded_model.get(key)
             if isinstance(value, str) and value.strip():
-                metadata[key] = value.strip()
-        nested_metadata = loaded_model.get("metadata", {})
-        if isinstance(nested_metadata, dict):
-            # Nested runtime metadata is authoritative over import-time top-level copies.
-            for key, value in nested_metadata.items():
-                if key not in _FAST_PATH_SIGNATURE_METADATA_KEYS:
-                    continue
-                normalized = str(value).strip()
-                if normalized:
-                    metadata[str(key)] = normalized
-
-    metadata_items = tuple(sorted(metadata.items()))
+                normalized = value.strip()
+            if nested_metadata_is_dict and key in nested_metadata:
+                # Nested runtime metadata is authoritative over import-time top-level copies.
+                # The accepted key set is fixed, so probe those keys directly instead of
+                # scanning and sorting arbitrary metadata payloads on every signature call.
+                nested_normalized = str(nested_metadata[key]).strip()
+                if nested_normalized:
+                    normalized = nested_normalized
+            if normalized:
+                metadata_pairs.append((key, normalized))
+        metadata_items = tuple(metadata_pairs)
     top_level_items: tuple[tuple[str, str], ...] = ()
     if isinstance(loaded_model, dict):
         top_level_items = tuple(

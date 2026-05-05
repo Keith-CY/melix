@@ -451,3 +451,37 @@ def test_fast_path_probe_signature_reuses_pre_sorted_top_level_keys() -> None:
         "(('model_id', 'melix-dev-vlm'), ('quant_profile_id', 'q8'), "
         "('revision', 'main'), ('tokenizer_hash', 'tok'))"
     )
+
+
+def test_fast_path_probe_signature_probes_fixed_metadata_keys_without_scanning_nested_items() -> None:
+    class FixedKeyMetadata(dict):
+        def items(self):  # type: ignore[override]
+            raise AssertionError("signature should not scan arbitrary nested metadata items")
+
+    loaded_model = _loaded_model(top_level_family_id="stale-family")
+    loaded_model["metadata"] = FixedKeyMetadata(
+        {"unrelated." + str(index): "ignored" for index in range(1000)}
+    )
+    loaded_model["metadata"].update(  # type: ignore[union-attr]
+        {
+            "vision_family_id": "gemma4-v1",
+            "vision_prompt_profile_id": "gemma4-chatml-v1",
+            "melix.vlm.execution_mode": "multimodal",
+            "vision_tokenization_mode": "interleaved",
+            "vision_max_images_per_prompt": 8,
+            "melix.multimodal_adapter_hash": "adapter-a",
+        }
+    )
+
+    signature = fast_path_probe_signature(loaded_model, _request([_image(b"image")]))
+    try:
+        loaded_model["metadata"].items()  # type: ignore[union-attr]
+    except AssertionError as exc:
+        assert "should not scan" in str(exc)
+    else:  # pragma: no cover - defensive guard for the test helper itself.
+        raise AssertionError("test metadata helper did not guard items() scans")
+
+    assert "stale-family" not in signature[2]
+    assert "gemma4-v1" in signature[2]
+    assert "unrelated." not in signature[2]
+    assert "('vision_max_images_per_prompt', '8')" in signature[2]
