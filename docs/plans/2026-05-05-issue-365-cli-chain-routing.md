@@ -54,6 +54,10 @@ local runtime acceptance requirements.
   `mlx_lm.utils.stream_generate` when the callable declares the specific stop
   keyword. This avoids passing unsupported `stop` kwargs through a variadic
   wrapper to installed `mlx-lm` versions whose generation step rejects them.
+- Add preference batch sharding support for MLX-LM trainer comm groups so
+  single-process DPO, ORPO, and CPO real-runtime runs do not fail when the
+  upstream trainer passes `mx.distributed.init()` into the custom preference
+  batch iterator.
 
 ### Excluded
 
@@ -90,10 +94,9 @@ Success metrics:
   calibration artifacts.
 - Changed-line coverage for the touched Swift/doc scope is at least 95 percent.
 - Changed-line coverage for the touched Python scope is at least 95 percent.
-- Real local LoRA and QLoRA subset evidence proves the fixed chain can
-  complete:
-  training, local publish receipt, direct adapter activation, chat smoke, and
-  eval smoke.
+- Real local LoRA, QLoRA, DoRA, DPO, ORPO, and CPO subset evidence proves the
+  fixed chain can complete: training, local publish receipt, direct adapter
+  activation, chat smoke, and eval smoke.
 
 ## Verification
 
@@ -191,6 +194,38 @@ normalization, direct adapter activation, and the MLX stop-kwarg fix:
   stopped the named real local QLoRA runtime stack.
 - `git diff --check`: passed.
 
+Results on 2026-05-06 after adding preference batch comm-group sharding and
+running the remaining supervised/preference real-mode subsets:
+
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py`:
+  273 passed with 2 warnings from MLX SWIG types.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/integration/test_issue365_acceptance_bundle.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py`:
+  273 passed with 2 warnings from MLX SWIG types.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage json -o /tmp/issue365-cli-chain-routing-python-coverage.json`:
+  wrote JSON coverage.
+- `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-cli-chain-routing-python-coverage.json --diff-from origin/main scripts/issue365_acceptance_bundle.py services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/worker/model_ops/preference_training.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py tests/integration/test_issue365_acceptance_bundle.py docs/plans/2026-05-05-issue-365-cli-chain-routing.md`:
+  97.74 percent total changed-line coverage, 605/619 executable lines.
+- `MELIX_SERVICE_INSTANCE_NAME=issue365-real-dora MELIX_HTTP_PORT=12467 MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real-dora" MELIX_HOME="$PWD/.runtime/home-issue365-real-dora" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-dora-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-dora-swift.sock" bash scripts/dev_up.sh --prefer-built`:
+  started a named real local runtime stack for the DoRA subset.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-real-dora" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-dora-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-dora-swift.sock" MELIX_HTTP_PORT=12467 python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id dora_export_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --output-dir .runtime/issue365/real-dora-probe --timestamp 2026-05-06T150000Z --json`:
+  selected real DoRA case passed with `release_ready=true`; evidence bundle
+  written to `.runtime/issue365/real-dora-probe/bundle.json`.
+- `MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real-dora" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-dora-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-dora-swift.sock" bash scripts/dev_down.sh`:
+  stopped the named real local DoRA runtime stack.
+- `MELIX_SERVICE_INSTANCE_NAME=issue365-real-dpo MELIX_HTTP_PORT=12469 MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real-dpo" MELIX_HOME="$PWD/.runtime/home-issue365-real-dpo" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-swift.sock" bash scripts/dev_up.sh --prefer-built`:
+  started a named real local runtime stack for preference alignment subsets.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-real-dpo" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-swift.sock" MELIX_HTTP_PORT=12469 python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id lora_dpo_export_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --preference-dataset-uri "$PWD/.runtime/issue365/input-datasets/preference_pair" --output-dir .runtime/issue365/real-dpo-probe-pass2 --timestamp 2026-05-06T153500Z --json`:
+  selected real DPO case passed with `release_ready=true`; evidence bundle
+  written to `.runtime/issue365/real-dpo-probe-pass2/bundle.json`.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-real-dpo" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-swift.sock" MELIX_HTTP_PORT=12469 python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id lora_orpo_export_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --preference-dataset-uri "$PWD/.runtime/issue365/input-datasets/preference_pair" --output-dir .runtime/issue365/real-orpo-probe --timestamp 2026-05-06T154500Z --json`:
+  selected real ORPO case passed with `release_ready=true`; evidence bundle
+  written to `.runtime/issue365/real-orpo-probe/bundle.json`.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-real-dpo" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-swift.sock" MELIX_HTTP_PORT=12469 python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id lora_cpo_export_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --preference-dataset-uri "$PWD/.runtime/issue365/input-datasets/preference_pair" --output-dir .runtime/issue365/real-cpo-probe --timestamp 2026-05-06T155500Z --json`:
+  selected real CPO case passed with `release_ready=true`; evidence bundle
+  written to `.runtime/issue365/real-cpo-probe/bundle.json`.
+- `MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real-dpo" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-swift.sock" bash scripts/dev_down.sh`:
+  stopped the named real local preference runtime stack.
+
 Results on 2026-05-05 after adding the acceptance bundle harness:
 
 - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
@@ -219,13 +254,12 @@ Results on 2026-05-05 after adding the acceptance bundle harness:
 - QAT training and QAT-aware quantized export.
 - Full CLI chain tests backed by real local runtime evidence for every listed
   business line.
-- Real local runtime evidence for `lora_export_inference` and
-  `qlora_export_inference` now exists, but the remaining eight CLI chains still
-  require real local runtime evidence:
-  `dora_export_inference`, `lora_dpo_export_inference`,
-  `lora_orpo_export_inference`, `lora_cpo_export_inference`,
-  `lora_grpo_export_inference`, `lora_rlhf_export_inference`,
-  `lora_preference_ptq_quantized_inference`, and
+- Real local runtime evidence now exists for `lora_export_inference`,
+  `qlora_export_inference`, `dora_export_inference`,
+  `lora_dpo_export_inference`, `lora_orpo_export_inference`, and
+  `lora_cpo_export_inference`, but the remaining four CLI chains still require
+  real local runtime evidence: `lora_grpo_export_inference`,
+  `lora_rlhf_export_inference`, `lora_preference_ptq_quantized_inference`, and
   `qat_quantized_inference`.
 - Window UI runnable/inspectable acceptance for every listed business line.
 - Final release evidence that separates deterministic/unit/scored-trace results
