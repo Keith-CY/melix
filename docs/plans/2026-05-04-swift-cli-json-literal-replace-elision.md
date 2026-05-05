@@ -11,7 +11,7 @@ Touched paths:
 
 ## Goal
 
-Avoid a redundant full-string pass in `MelixCLIJSONMetricPatch.literal(for:)`. The formatter already uses the lowercase `%e` exponent marker under the fixed `en_US_POSIX` locale, so the follow-up `.replacingOccurrences(of: "E", with: "e")` scans every encoded metric literal without changing the result.
+Avoid a redundant full-string replacement pass in `MelixCLIJSONMetricPatch.literal(for:)`. The formatter contract still normalizes the exponent marker to lowercase for stable JSON fixture output, but now only patches the single exponent character when Foundation returns uppercase `E` on macOS instead of scanning the whole encoded metric literal with `replacingOccurrences`.
 
 ## Registered probe
 
@@ -24,7 +24,7 @@ This cron environment has no `swift` binary, so local validation is limited to r
 ## Implementation plan
 
 1. Keep the existing `%e` / `en_US_POSIX` formatter contract.
-2. Remove only the redundant uppercase-to-lowercase replacement pass.
+2. Replace the full-string uppercase-to-lowercase replacement with a single-character exponent normalization when Foundation emits `E` on macOS.
 3. Rely on the registered macOS focused tests and probe for behavior and performance validation.
 
 ## Success metrics

@@ -32,11 +32,15 @@ enum MelixCLIJSONMetricPatch {
 
     static func literal(for value: Double) -> String {
         let finiteValue = value.isFinite ? max(value, 0) : 0
-        return String(
+        var literal = String(
             format: "%.16e",
             locale: metricLiteralLocale,
             finiteValue
         )
+        if let exponentIndex = literal.lastIndex(of: "E") {
+            literal.replaceSubrange(exponentIndex...exponentIndex, with: "e")
+        }
+        return literal
     }
 
     static func replacePlaceholder(in text: String, with value: Double) throws -> String {
