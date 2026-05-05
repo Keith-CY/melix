@@ -278,6 +278,7 @@ def load_training_dataset_package(
         serialized_validation_samples = _iter_dataset_package_jsonl_rows(
             validation_samples_path,
             invalid_json_message="Training dataset validation sample is not valid JSON.",
+            sample_limit=sample_limit,
         )
 
     return _build_training_dataset_package(
