@@ -1191,6 +1191,37 @@
     ]
   },
   {
+    "id": "code-eval-stdio-tail-single-stat",
+    "name": "Code evaluation stdio tail single stat",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/engine/code_eval_runner.py",
+      "services/mlx-worker-python/tests/test_code_eval_runner.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/code_eval_stdio_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_returns_timeout_result services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_uses_stderr_when_payload_is_missing services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_skips_parent_test_counting_after_successful_payload services/mlx-worker-python/tests/test_code_eval_runner.py::test_read_limited_text_handles_missing_and_oversized_files services/mlx-worker-python/tests/test_code_eval_runner.py::test_output_limit_reuses_limited_stdio_sizes services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_code_eval_stdio_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_code_eval_stdio_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_returns_timeout_result services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_uses_stderr_when_payload_is_missing services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_skips_parent_test_counting_after_successful_payload services/mlx-worker-python/tests/test_code_eval_runner.py::test_read_limited_text_handles_missing_and_oversized_files services/mlx-worker-python/tests/test_code_eval_runner.py::test_output_limit_reuses_limited_stdio_sizes services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_code_eval_stdio_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_code_eval_stdio_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/engine/code_eval_runner.py services/mlx-worker-python/tests/test_code_eval_runner.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/code_eval_stdio_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python -c \"exec('\\\\nimport json\\\\nimport statistics\\\\nimport sys\\\\nimport tempfile\\\\nimport time\\\\nfrom pathlib import Path\\\\n\\\\nrepo_root = Path.cwd()\\\\nsys.path.insert(0, str(repo_root))\\\\nsys.path.insert(0, str(repo_root / \\\"services/mlx-worker-python\\\"))\\\\nfrom worker.engine import code_eval_runner\\\\n\\\\nbyte_limit = 4096\\\\niterations = 3000\\\\nelapsed = []\\\\ntail_lengths = []\\\\nflags = []\\\\nwith tempfile.TemporaryDirectory(prefix=\\\"melix-code-eval-stdio-probe-\\\") as temp_dir:\\\\n    root = Path(temp_dir)\\\\n    stdout = root / \\\"stdout.txt\\\"\\\\n    stderr = root / \\\"stderr.txt\\\"\\\\n    stdout.write_text(\\\"x\\\" * (byte_limit * 4), encoding=\\\"utf-8\\\")\\\\n    stderr.write_text(\\\"warning\\\\\\\\n\\\" * 128, encoding=\\\"utf-8\\\")\\\\n    use_new = hasattr(code_eval_runner, \\\"_read_limited_stdio\\\")\\\\n    stat_calls = (2.0 if use_new else 4.0) * iterations\\\\n    for _ in range(5):\\\\n        start = time.perf_counter()\\\\n        stdout_tail = \\\"\\\"\\\\n        stderr_tail = \\\"\\\"\\\\n        exceeded = False\\\\n        for _iteration in range(iterations):\\\\n            if use_new:\\\\n                stdout_tail, stdout_size = code_eval_runner._read_limited_stdio(stdout, byte_limit)\\\\n                stderr_tail, stderr_size = code_eval_runner._read_limited_stdio(stderr, byte_limit)\\\\n                exceeded = stdout_size >= byte_limit or stderr_size >= byte_limit\\\\n            else:\\\\n                stdout_tail = code_eval_runner._read_limited_text(stdout, byte_limit)\\\\n                stderr_tail = code_eval_runner._read_limited_text(stderr, byte_limit)\\\\n                exceeded = any(\\\\n                    path.exists() and path.stat().st_size >= byte_limit\\\\n                    for path in (stdout, stderr)\\\\n                )\\\\n        elapsed.append((time.perf_counter() - start) * 1000)\\\\n        tail_lengths.append(float(len(stdout_tail) + len(stderr_tail)))\\\\n        flags.append(1.0 if exceeded else 0.0)\\\\nprint(json.dumps({\\\\n    \\\"elapsed_ms_mean\\\": statistics.mean(elapsed),\\\\n    \\\"stdio_stat_calls_mean\\\": stat_calls,\\\\n    \\\"tail_chars_mean\\\": statistics.mean(tail_lengths),\\\\n    \\\"output_limit_exceeded_mean\\\": statistics.mean(flags),\\\\n    \\\"iteration_count\\\": float(iterations),\\\\n}, sort_keys=True))\\\\n')\"",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "stdio_stat_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "changed-scope-coverage-empty-path-short-circuit",
     "name": "Changed-scope coverage empty-path short circuit",
     "runner": "ubuntu-latest",

@@ -159,12 +159,9 @@ def run_python_code_evaluation(
                     failure_detail=detail,
                 )
 
-        stdout_tail = _read_limited_text(stdout_path, stdout_limit_bytes)
-        stderr_tail = _read_limited_text(stderr_path, stdout_limit_bytes)
-        output_limit_exceeded = any(
-            path.exists() and path.stat().st_size >= stdout_limit_bytes
-            for path in (stdout_path, stderr_path)
-        )
+        stdout_tail, stdout_size = _read_limited_stdio(stdout_path, stdout_limit_bytes)
+        stderr_tail, stderr_size = _read_limited_stdio(stderr_path, stdout_limit_bytes)
+        output_limit_exceeded = stdout_size >= stdout_limit_bytes or stderr_size >= stdout_limit_bytes
         if output_limit_exceeded:
             return CodeEvaluationResult(
                 compile_status="compiled",
@@ -233,13 +230,20 @@ def _load_payload_file(payload_path: Path) -> dict[str, object] | None:
     return payload
 
 
+def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as file:
+            if size > byte_limit:
+                file.seek(-byte_limit, 2)
+            return file.read().decode("utf-8", errors="replace").strip(), size
+    except OSError:
+        return "", 0
+
+
 def _read_limited_text(path: Path, byte_limit: int) -> str:
-    if not path.exists():
-        return ""
-    with path.open("rb") as file:
-        if path.stat().st_size > byte_limit:
-            file.seek(-byte_limit, 2)
-        return file.read().decode("utf-8", errors="replace").strip()
+    text, _size = _read_limited_stdio(path, byte_limit)
+    return text
 
 
 def _timeout_failure_detail(*, timeout_seconds: int, stdout_tail: str, stderr_tail: str) -> str:
