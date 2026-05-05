@@ -3,13 +3,20 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import sys
+import types
 
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
-from worker.model_ops.quantization_pipeline import OQQuantizationPipeline
+from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.quantization_pipeline import (
+    OQQuantizationPipeline,
+    _local_source_path_for_mlx_lm_convert,
+    _smoke_required_files_for_backend,
+)
 from worker.model_ops.quantization_profiles import (
     normalize_quantization_profile,
     protected_scope_for_request,
@@ -545,6 +552,433 @@ def test_quantize_job_uses_typed_quant_profile_when_provided(tmp_path: Path) -> 
     assert manifest_event.quant_profile.ext["quant_group_size"] == "128"
     assert manifest_payload["quant_profile"]["quant_profile_id"] == "q6"
     assert manifest_payload["quant_profile"]["ext"] == {"quant_group_size": "128"}
+
+
+def test_quantize_job_runs_opt_in_mlx_lm_convert_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "merged-model"
+    source_artifact_path.mkdir()
+    (source_artifact_path / "config.json").write_text("{}\n", encoding="utf-8")
+
+    convert_calls: list[dict[str, object]] = []
+
+    def fake_mlx_lm_convert(
+        *,
+        source_path: Path,
+        output_path: Path,
+        q_group_size: int | None,
+        q_bits: int,
+        q_mode: str,
+    ) -> None:
+        convert_calls.append(
+            {
+                "source_path": source_path,
+                "output_path": output_path,
+                "q_group_size": q_group_size,
+                "q_bits": q_bits,
+                "q_mode": q_mode,
+            }
+        )
+        output_path.mkdir(parents=True)
+        (output_path / "config.json").write_text(
+            json.dumps({"quantization": {"bits": q_bits, "group_size": q_group_size}}) + "\n",
+            encoding="utf-8",
+        )
+        (output_path / "tokenizer.json").write_text("{}\n", encoding="utf-8")
+        (output_path / "model.safetensors").write_bytes(b"real-mlx-weights")
+        (output_path / "model.safetensors.index.json").write_text(
+            json.dumps({"weight_map": {"layer.weight": "model.safetensors"}}) + "\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        OQQuantizationPipeline,
+        "_mlx_lm_convert",
+        staticmethod(fake_mlx_lm_convert),
+    )
+
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        output_dir=str(tmp_path / "quantize"),
+        kv_quant="q8",
+        generate_manifest=True,
+        run_smoke_test=True,
+        ext={
+            "operation": "quantize",
+            "quantization_backend": "mlx_lm_convert",
+            "source_artifact_kind": "merged_adapter",
+            "source_artifact_path": str(source_artifact_path),
+            "mlx_lm_q_mode": "affine",
+        },
+    )
+    request.quant_profile.quant_profile_id = "q4"
+    request.quant_profile.weight_quant = "q4"
+    request.quant_profile.kv_quant = "q8"
+    request.quant_profile.ext["quant_group_size"] = "128"
+    events = list(service.ConvertModel(request, context=None))
+
+    assert len(convert_calls) == 1
+    assert convert_calls[0]["source_path"] == source_artifact_path.resolve()
+    assert convert_calls[0]["q_group_size"] == 128
+    assert convert_calls[0]["q_bits"] == 4
+    assert convert_calls[0]["q_mode"] == "affine"
+
+    manifest_payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    bundle_path = Path(events[-1].completed.output_path)
+    expected_artifact_bytes = sum(
+        (bundle_path / file_name).stat().st_size
+        for file_name in (
+            "config.json",
+            "tokenizer.json",
+            "model.safetensors",
+            "model.safetensors.index.json",
+        )
+    )
+
+    assert manifest_payload["execution_backend"] == "mlx_lm_convert"
+    assert manifest_payload["real_weight_conversion"] is True
+    assert manifest_payload["source_artifact_kind"] == "merged_adapter"
+    assert manifest_payload["source_artifact_path"] == str(source_artifact_path)
+    assert manifest_payload["artifact_bytes"] == expected_artifact_bytes
+    assert manifest_payload["quantized_artifact_bytes"] == expected_artifact_bytes
+    assert manifest_payload["release_gate"]["local_inference_smoke_result"] == "passed"
+    assert manifest_payload["local_inference_smoke"]["checked_files"] == [
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors",
+    ]
+
+
+def test_quantize_job_rejects_unknown_quantization_backend(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_backend": "shell-script",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "unsupported_quantization_backend"
+    assert events[-1].failed.error.details["quantization_backend"] == "shell-script"
+
+
+def test_quantize_job_rejects_qat_for_mlx_lm_convert_backend(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "merged-model"
+    source_artifact_path.mkdir()
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_backend": "mlx_lm_convert",
+                    "quantization_mode": "qat",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "unsupported_quantization_backend"
+    assert events[-1].failed.error.details["quantization_backend"] == "mlx_lm_convert"
+    assert events[-1].failed.error.details["quantization_mode"] == "qat"
+
+
+def test_quantize_job_rejects_mlx_lm_convert_without_local_source(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_backend": "mlx_lm_convert",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(tmp_path / "missing-model"),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "missing_quantization_source_path"
+    assert events[-1].failed.error.details["quantization_backend"] == "mlx_lm_convert"
+
+
+def test_quantize_job_rejects_non_integer_mlx_lm_profile_without_override(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "merged-model"
+    source_artifact_path.mkdir()
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q3.5",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_backend": "mlx_lm_convert",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "unsupported_quantization_profile"
+    assert events[-1].failed.error.details["weight_quant"] == "q3.5"
+
+
+def test_quantize_job_rejects_invalid_mlx_lm_backend_config(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "merged-model"
+    source_artifact_path.mkdir()
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_backend": "mlx_lm_convert",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
+                    "mlx_lm_q_mode": "unsupported",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_quantization_backend_config"
+    assert events[-1].failed.error.details["field"] == "mlx_lm_q_mode"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mlx_lm_q_bits", "bad"),
+        ("mlx_lm_q_group_size", "0"),
+    ],
+)
+def test_quantize_job_rejects_invalid_mlx_lm_integer_config(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "merged-model"
+    source_artifact_path.mkdir()
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_backend": "mlx_lm_convert",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
+                    field: value,
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_quantization_backend_config"
+    assert events[-1].failed.error.details["field"] == field
+    assert events[-1].failed.error.details["value"] == value
+
+
+def test_quantize_job_reports_mlx_lm_backend_import_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "merged-model"
+    source_artifact_path.mkdir()
+
+    def missing_backend(**_: object) -> None:
+        raise ModuleNotFoundError("mlx_lm")
+
+    monkeypatch.setattr(OQQuantizationPipeline, "_mlx_lm_convert", staticmethod(missing_backend))
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_backend": "mlx_lm_convert",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "quantization_backend_unavailable"
+
+
+def test_quantize_job_reports_mlx_lm_backend_conversion_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "merged-model"
+    source_artifact_path.mkdir()
+
+    def failing_backend(**_: object) -> None:
+        raise RuntimeError("convert failed")
+
+    monkeypatch.setattr(OQQuantizationPipeline, "_mlx_lm_convert", staticmethod(failing_backend))
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_backend": "mlx_lm_convert",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "quantization_backend_failure"
+    assert "convert failed" in events[-1].failed.error.message
+
+
+def test_mlx_lm_backend_rejects_existing_output_path(tmp_path: Path) -> None:
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    pipeline = OQQuantizationPipeline(registry)
+    source_artifact_path = tmp_path / "merged-model"
+    source_artifact_path.mkdir()
+    bundle_path = tmp_path / "quantize.artifact"
+    bundle_path.mkdir()
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        output_dir=str(tmp_path / "quantize"),
+        weight_quant="q4",
+        kv_quant="q8",
+    )
+    profile = normalize_quantization_profile(request)
+
+    with pytest.raises(ModelOperationError) as exc:
+        pipeline._write_mlx_lm_quantized_bundle(
+            request=request,
+            source_artifact_path=str(source_artifact_path),
+            profile=profile,
+            bundle_path=bundle_path,
+        )
+
+    assert exc.value.code == "quantization_output_exists"
+
+
+def test_mlx_lm_convert_wrapper_forwards_parameters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    fake_module = types.SimpleNamespace(
+        convert=lambda *args, **kwargs: calls.append({"args": args, "kwargs": kwargs})
+    )
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_module)
+
+    OQQuantizationPipeline._mlx_lm_convert(
+        source_path=tmp_path / "source",
+        output_path=tmp_path / "out",
+        q_group_size=64,
+        q_bits=4,
+        q_mode="affine",
+    )
+
+    assert calls == [
+        {
+            "args": (str(tmp_path / "source"),),
+            "kwargs": {
+                "mlx_path": str(tmp_path / "out"),
+                "quantize": True,
+                "q_group_size": 64,
+                "q_bits": 4,
+                "q_mode": "affine",
+            },
+        }
+    ]
+
+
+def test_mlx_lm_source_and_smoke_file_helpers_cover_edge_cases(tmp_path: Path) -> None:
+    with pytest.raises(ModelOperationError) as exc:
+        _local_source_path_for_mlx_lm_convert("")
+    assert exc.value.code == "missing_quantization_source_path"
+
+    empty_bundle = tmp_path / "empty-bundle"
+    empty_bundle.mkdir()
+    assert _smoke_required_files_for_backend(
+        empty_bundle,
+        quantization_backend="mlx_lm_convert",
+    ) == ("config.json", "tokenizer.json", "model.safetensors")
+
+    sharded_bundle = tmp_path / "sharded-bundle"
+    sharded_bundle.mkdir()
+    (sharded_bundle / "tokenizer.model").write_bytes(b"sentencepiece")
+    (sharded_bundle / "model.safetensors.index.json").write_text("{}\n", encoding="utf-8")
+    assert _smoke_required_files_for_backend(
+        sharded_bundle,
+        quantization_backend="mlx_lm_convert",
+    ) == ("config.json", "tokenizer.model", "model.safetensors.index.json")
 
 
 def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp_path: Path) -> None:
