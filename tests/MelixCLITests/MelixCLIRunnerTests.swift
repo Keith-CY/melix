@@ -1051,8 +1051,9 @@ struct MelixCLIRunnerTests {
               "args": {
                 "model_id": "${inputs.base_model_id}",
                 "dataset_uri": "/tmp/preference-pairs.jsonl",
+                "dataset_source_kind": "local_package",
                 "adapter_name": "issue365-dpo",
-                "algorithm": "dpo",
+                "algorithm": " DPO ",
                 "reference_model_path": "${steps.train_lora.result.output_path}",
                 "max_steps": 2
               },
@@ -1066,8 +1067,9 @@ struct MelixCLIRunnerTests {
               "args": {
                 "model_id": "${inputs.base_model_id}",
                 "target_repo": "melix/models/issue365-dpo-merged",
+                "adapter_path": "   ",
                 "manifest_path": "${steps.align_adapter.result.output_path}",
-                "export_kind": "merged"
+                "export_kind": " MERGED "
               },
               "checks": {
                 "required_result_fields": ["job_id", "output_path"]
@@ -1082,8 +1084,8 @@ struct MelixCLIRunnerTests {
                 "quant_profile_id": "q4",
                 "weight_quant": "q4",
                 "kv_quant": "q8",
-                "quantization_mode": "ptq",
-                "source_artifact_kind": "merged_adapter",
+                "quantization_mode": " PTQ ",
+                "source_artifact_kind": " MERGED_ADAPTER ",
                 "source_artifact_path": "${steps.publish_merged.result.output_path}",
                 "calibration_dataset_uri": "/tmp/calibration.jsonl",
                 "quality_delta": "-0.01",
@@ -1202,9 +1204,17 @@ struct MelixCLIRunnerTests {
         #expect(Array(operationCommands[1].prefix(2)) == ["alignment", "train"])
         #expect(operationCommands[1].contains("--reference-model-path"))
         #expect(operationCommands[1].contains("/tmp/melix/train_lora/issue365-sft.adapter.json"))
+        #expect(operationCommands[1].contains("--algorithm"))
+        #expect(operationCommands[1].contains("dpo"))
+        #expect(operationCommands[1].contains(where: { $0.contains("dataset_source_kind") }) == false)
         #expect(Array(operationCommands[2].prefix(2)) == ["lora", "publish"])
         #expect(operationCommands[2].contains("/tmp/melix/alignment/issue365-dpo.adapter.json"))
+        #expect(operationCommands[2].contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) == false)
         #expect(operationCommands[3].starts(with: ["quantize", "--model-id", "melix-dev-text"]))
+        #expect(operationCommands[3].contains("--quantization-mode"))
+        #expect(operationCommands[3].contains("ptq"))
+        #expect(operationCommands[3].contains("--source-artifact-kind"))
+        #expect(operationCommands[3].contains("merged_adapter"))
         #expect(operationCommands[3].contains("--source-artifact-path"))
         #expect(operationCommands[3].contains("/tmp/melix/publish/issue365-dpo-merged"))
         #expect(Array(operationCommands[4].prefix(2)) == ["lora", "activate"])

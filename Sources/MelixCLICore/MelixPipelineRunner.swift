@@ -974,6 +974,7 @@ private enum MelixPipelineCommandBuilder {
                         "model_id",
                         "dataset_uri",
                         "hf_dataset_path",
+                        "dataset_source_kind",
                         "adapter_name",
                         "target_repo",
                         "algorithm",
@@ -1137,7 +1138,9 @@ private enum MelixPipelineCommandBuilder {
     }
 
     private static func quantizationMode(_ args: [String: Any]) throws -> String {
-        let mode = string("quantization_mode", args) ?? ""
+        let mode = (string("quantization_mode", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         guard mode.isEmpty || ["ptq", "qat"].contains(mode) else {
             throw MelixCLIError.usage("Pipeline command argument quantization_mode must be one of: ptq, qat.")
         }
@@ -1145,7 +1148,9 @@ private enum MelixPipelineCommandBuilder {
     }
 
     private static func sourceArtifactKind(_ args: [String: Any]) throws -> String {
-        let kind = string("source_artifact_kind", args) ?? ""
+        let kind = (string("source_artifact_kind", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         guard kind.isEmpty || ["base_model", "merged_adapter", "adapter_export"].contains(kind) else {
             throw MelixCLIError.usage("Pipeline command argument source_artifact_kind must be one of: base_model, merged_adapter, adapter_export.")
         }
@@ -1156,12 +1161,12 @@ private enum MelixPipelineCommandBuilder {
         let modelID = try requiredString("model_id", args)
         let targetRepo = try requiredString("target_repo", args)
         let exportKind = try loraPublishExportKind(args)
-        let adapterPath = string("adapter_path", args) ?? ""
-        let mergedModelPath = string("merged_model_path", args) ?? ""
-        let manifestPath = string("manifest_path", args) ?? ""
-        let artifactPath = string("artifact_path", args) ?? ""
+        let adapterPath = (string("adapter_path", args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let mergedModelPath = (string("merged_model_path", args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let manifestPath = (string("manifest_path", args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let artifactPath = (string("artifact_path", args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedCount = [adapterPath, mergedModelPath, manifestPath, artifactPath]
-            .filter { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            .filter { $0.isEmpty == false }
             .count
         guard selectedCount == 1 else {
             throw MelixCLIError.missingRequired(
@@ -1211,14 +1216,16 @@ private enum MelixPipelineCommandBuilder {
             targetRepo: targetRepo,
             exportKind: exportKind,
             artifactPath: artifactPath,
-            artifactManifestPath: string("artifact_manifest_path", args) ?? artifactPath
+            artifactManifestPath: (string("artifact_manifest_path", args) ?? artifactPath)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 
     private static func loraPublishExportKind(_ args: [String: Any]) throws -> LoraPublishExportKind? {
-        guard let rawKind = string("export_kind", args),
-              rawKind.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        else {
+        let rawKind = (string("export_kind", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard rawKind.isEmpty == false else {
             return nil
         }
         switch rawKind {
