@@ -217,6 +217,16 @@ def test_scope_report_selects_lora_reward_summary_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "lora-reward-summary-candidate-minmax"
 
 
+def test_scope_report_selects_statistical_evidence_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/statistical_evidence.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "statistical-evidence-bootstrap-single-sort"
+
+
 def test_scope_report_selects_pr_scoped_scope_script_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -757,6 +767,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "worker-registry-resident-bytes-accumulator",
         "pr-scoped-performance-report-results-scandir",
         "model-ops-bundle-artifact-byte-accounting",
+        "statistical-evidence-bootstrap-single-sort",
     }
     registry_probe = None
     maintenance_probe = None

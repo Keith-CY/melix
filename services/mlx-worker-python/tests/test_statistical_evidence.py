@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import builtins
 import math
 
+import pytest
+
+from worker.productization import statistical_evidence as statistical_evidence_module
 from worker.productization.statistical_evidence import (
     _interval_sign,
     _percentile,
+    _percentile_ordered,
     build_category_breakdown,
     build_paired_statistical_evidence,
     classify_release_verdict,
@@ -87,6 +92,36 @@ def test_build_paired_statistical_evidence_keeps_full_confidence_intervals_finit
     assert evidence["analytical"]["lower_bound"] <= evidence["analytical"]["upper_bound"]
 
 
+def test_bootstrap_interval_reuses_one_sorted_replicate_vector(monkeypatch: pytest.MonkeyPatch) -> None:
+    sorted_call_lengths: list[int] = []
+    original_sorted = builtins.sorted
+
+    def tracking_sorted(values: object, *args: object, **kwargs: object) -> list[object]:
+        materialized = list(values)  # type: ignore[arg-type]
+        sorted_call_lengths.append(len(materialized))
+        return original_sorted(materialized, *args, **kwargs)
+
+    monkeypatch.setattr(statistical_evidence_module, "sorted", tracking_sorted, raising=False)
+
+    evidence = build_paired_statistical_evidence(
+        paired_outcomes=(1, 0, 1, 1, -1, 0, 1, 1),
+        confidence_level=0.9,
+        bootstrap_iterations=64,
+        bootstrap_seed=13,
+    )
+
+    assert sorted_call_lengths == [64]
+    assert evidence["bootstrap"] == {
+        "method": "paired_bootstrap_percentile",
+        "confidence_level": 0.9,
+        "lower_bound": 0.125,
+        "upper_bound": 1.0,
+        "crosses_zero": False,
+        "iterations": 64,
+        "seed": 13,
+    }
+
+
 def test_classify_release_verdict_returns_inconclusive_when_any_interval_crosses_zero() -> None:
     verdict = classify_release_verdict(
         delta_accuracy=0.2,
@@ -133,6 +168,7 @@ def test_statistical_helper_edges_cover_percentiles_and_interval_sign_fallbacks(
     assert _percentile([], 0.5) == 0.0
     assert _percentile([0.25], 0.5) == 0.25
     assert _percentile([0.25, 0.5, 0.75], 0.5) == 0.5
+    assert _percentile_ordered([], 0.5) == 0.0
     assert _interval_sign({"lower_bound": -0.2, "upper_bound": 0.3, "crosses_zero": False}) == 0
 
 

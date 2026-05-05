@@ -1409,5 +1409,36 @@
         "warn_pct": 5.0
       }
     ]
+  },
+  {
+    "id": "statistical-evidence-bootstrap-single-sort",
+    "name": "Statistical evidence bootstrap single sort",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/statistical_evidence.py",
+      "services/mlx-worker-python/tests/test_statistical_evidence.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "infra/perf/pr_scoped_probes.json",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_statistical_evidence.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_statistical_evidence_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_statistical_evidence.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_statistical_evidence_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/statistical_evidence.py services/mlx-worker-python/tests/test_statistical_evidence.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python - <<'PY'\nimport json\nimport statistics\nimport sys\nimport time\nimport tracemalloc\nfrom pathlib import Path\n\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\n\nfrom worker.productization.statistical_evidence import build_paired_statistical_evidence\n\nsample_size = 64\nbootstrap_iterations = 8000\nsamples = 5\noutcomes = tuple(1.0 if index % 7 in (0, 1, 2) else (-1.0 if index % 11 == 0 else 0.0) for index in range(sample_size))\nelapsed_ms = []\npeak_bytes = []\nlast = None\nfor sample_index in range(samples):\n    tracemalloc.start()\n    started = time.perf_counter()\n    result = build_paired_statistical_evidence(\n        paired_outcomes=outcomes,\n        confidence_level=0.95,\n        bootstrap_iterations=bootstrap_iterations,\n        bootstrap_seed=100 + sample_index,\n    )\n    elapsed_ms.append((time.perf_counter() - started) * 1000.0)\n    _, peak = tracemalloc.get_traced_memory()\n    tracemalloc.stop()\n    peak_bytes.append(float(peak))\n    last = result\n\nif last is None:\n    raise RuntimeError(\"statistical evidence probe did not run\")\n\nprint(json.dumps({\n    \"elapsed_ms_mean\": statistics.fmean(elapsed_ms),\n    \"peak_bytes_mean\": statistics.fmean(peak_bytes),\n    \"sample_size\": float(last[\"sample_size\"]),\n    \"bootstrap_iterations\": float(last[\"bootstrap\"][\"iterations\"]),\n    \"delta_accuracy\": float(last[\"delta_accuracy\"]),\n}, sort_keys=True))\nPY",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
   }
 ]
