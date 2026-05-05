@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from dataclasses import replace
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 from typing import Any
@@ -109,6 +110,20 @@ def _tokenizer_eos_token_ids(tokenizer: Any) -> tuple[str, ...]:
     if isinstance(eos_token_id, list | tuple | set):
         return tuple(str(item) for item in eos_token_id if str(item).strip())
     return (str(eos_token_id),) if str(eos_token_id).strip() else ()
+
+
+def _callable_declares_kwarg(callable_obj: Any, keyword: str) -> bool:
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return False
+    parameter = signature.parameters.get(keyword)
+    if parameter is None:
+        return False
+    return parameter.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
 
 
 def resolve_text_stop_contract(
@@ -387,7 +402,7 @@ class AutoMLXBackend:
         stream_kwargs: dict[str, Any] = {}
         if stop_contract.sequences:
             for kwarg_name in ("stop", "stop_words", "stop_sequences"):
-                if _callable_accepts_kwarg(self._stream_generate_fn, kwarg_name):
+                if _callable_declares_kwarg(self._stream_generate_fn, kwarg_name):
                     stream_kwargs[kwarg_name] = list(stop_contract.sequences)
                     break
 

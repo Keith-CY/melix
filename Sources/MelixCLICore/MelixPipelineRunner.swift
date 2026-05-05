@@ -145,7 +145,7 @@ extension MelixCLIRunner {
                             expectedMetadata: metadata,
                             allowedStatuses: options.dryRun ? ["planned", "skipped", "succeeded"] : ["succeeded", "skipped"]
                         )
-                        context.setStepEnvelope(receipt, for: step.id)
+                        context.setStepEnvelope(normalizedResultEnvelope(receipt), for: step.id)
                         stepSummaries.append(
                             stepSummary(
                                 step,
@@ -171,7 +171,7 @@ extension MelixCLIRunner {
                         expectedMetadata: metadata,
                         allowedStatuses: ["succeeded"]
                     )
-                    context.setStepEnvelope(receipt, for: step.id)
+                    context.setStepEnvelope(normalizedResultEnvelope(receipt), for: step.id)
                     resumeSkippedCount += 1
                     metrics["melix.pipeline.resume_skipped_count"] = Double(resumeSkippedCount)
                     stepSummaries.append(
@@ -231,9 +231,9 @@ extension MelixCLIRunner {
                     guard let parsedEnvelope = MelixPipelineJSON.object(from: output) else {
                         throw MelixCLIError.runtime("Step \(step.id) did not return a JSON envelope.")
                     }
-                    context.setStepEnvelope(parsedEnvelope, for: step.id)
-                    try MelixPipelineChecks.validate(step.checks, envelope: parsedEnvelope, context: context)
-                    envelope = parsedEnvelope
+                    envelope = normalizedResultEnvelope(parsedEnvelope)
+                    context.setStepEnvelope(envelope, for: step.id)
+                    try MelixPipelineChecks.validate(step.checks, envelope: envelope, context: context)
                 }
                 envelope = attachStepMetadata(metadata, to: envelope)
 
@@ -494,6 +494,26 @@ extension MelixCLIRunner {
             return
         }
         paths.append(path)
+    }
+
+    private func normalizedResultEnvelope(_ envelope: [String: Any]) -> [String: Any] {
+        guard var result = envelope["result"] as? [String: Any],
+              (result["output_path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+        else {
+            return envelope
+        }
+        for alias in ["artifact_path", "bundle_path", "managed_model_path", "report_path"] {
+            guard let outputPath = result[alias] as? String,
+                  outputPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            else {
+                continue
+            }
+            result["output_path"] = outputPath
+            var normalized = envelope
+            normalized["result"] = result
+            return normalized
+        }
+        return envelope
     }
 
     private func runSummary(
@@ -884,7 +904,9 @@ private enum MelixPipelineCommandBuilder {
                     targetRepo: try requiredString("target_repo", args),
                     artifactPath: string("artifact_path", args) ?? "",
                     artifactKind: string("artifact_kind", args) ?? "",
-                    artifactManifestPath: string("artifact_manifest_path", args) ?? ""
+                    artifactManifestPath: string("artifact_manifest_path", args) ?? "",
+                    publishBackend: string("publish_backend", args) ?? "",
+                    localPublishRoot: string("local_publish_root", args) ?? ""
                 )
             )
         case "model.import":
@@ -1183,7 +1205,9 @@ private enum MelixPipelineCommandBuilder {
                 targetRepo: targetRepo,
                 exportKind: .adapterExport,
                 artifactPath: adapterPath,
-                artifactManifestPath: adapterPath
+                artifactManifestPath: adapterPath,
+                publishBackend: string("publish_backend", args) ?? "",
+                localPublishRoot: string("local_publish_root", args) ?? ""
             )
         }
         if mergedModelPath.isEmpty == false {
@@ -1194,7 +1218,9 @@ private enum MelixPipelineCommandBuilder {
                 modelID: modelID,
                 targetRepo: targetRepo,
                 exportKind: .mergedExport,
-                artifactPath: mergedModelPath
+                artifactPath: mergedModelPath,
+                publishBackend: string("publish_backend", args) ?? "",
+                localPublishRoot: string("local_publish_root", args) ?? ""
             )
         }
         if manifestPath.isEmpty == false {
@@ -1203,7 +1229,9 @@ private enum MelixPipelineCommandBuilder {
                 targetRepo: targetRepo,
                 exportKind: exportKind,
                 artifactPath: manifestPath,
-                artifactManifestPath: manifestPath
+                artifactManifestPath: manifestPath,
+                publishBackend: string("publish_backend", args) ?? "",
+                localPublishRoot: string("local_publish_root", args) ?? ""
             )
         }
         guard let exportKind else {
@@ -1217,7 +1245,9 @@ private enum MelixPipelineCommandBuilder {
             exportKind: exportKind,
             artifactPath: artifactPath,
             artifactManifestPath: (string("artifact_manifest_path", args) ?? artifactPath)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            publishBackend: string("publish_backend", args) ?? "",
+            localPublishRoot: string("local_publish_root", args) ?? ""
         )
     }
 

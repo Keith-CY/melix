@@ -120,6 +120,17 @@ def test_issue365_acceptance_bundle_plan_covers_required_cli_matrix(tmp_path: Pa
     all_steps = [step for pipeline in pipelines for step in pipeline["steps"]]
     commands = {step["command"] for step in all_steps}
     assert {"lora.train", "alignment.train", "lora.publish", "quantize", "chat.run", "eval.run"} <= commands
+    publish_steps = [step for step in all_steps if step["command"] == "lora.publish"]
+    assert publish_steps
+    assert all(step["args"]["publish_backend"] == "local_filesystem" for step in publish_steps)
+    assert all(step["args"]["local_publish_root"] == "${inputs.local_publish_root}" for step in publish_steps)
+
+    lora_pipeline = next(
+        pipeline for pipeline in pipelines if pipeline["name"] == "issue365-lora_export_inference"
+    )
+    lora_steps = {step["id"]: step for step in lora_pipeline["steps"]}
+    assert lora_steps["lora_activate"]["args"]["adapter_path"] == "${steps.lora_train.result.output_path}"
+    assert lora_steps["lora_chat"]["args"]["model_id"] == "${steps.lora_activate.result.derived_model_id}"
 
     lora_modes = {
         step["args"].get("training_mode")

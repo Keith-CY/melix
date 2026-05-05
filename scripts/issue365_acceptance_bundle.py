@@ -243,6 +243,8 @@ def _supervised_case(training_mode: str) -> Issue365PipelineCase:
                     "model_id": "${inputs.model_id}",
                     "target_repo": f"melix/issue365-{training_mode}-adapter",
                     "adapter_path": f"${{steps.{train_step}.result.output_path}}",
+                    "publish_backend": "local_filesystem",
+                    "local_publish_root": "${inputs.local_publish_root}",
                 },
             },
             {
@@ -250,13 +252,13 @@ def _supervised_case(training_mode: str) -> Issue365PipelineCase:
                 "command": "lora.activate",
                 "args": {
                     "model_id": "${inputs.model_id}",
-                    "adapter_path": f"${{steps.{publish_step}.result.output_path}}",
+                    "adapter_path": f"${{steps.{train_step}.result.output_path}}",
                     "derived_model_alias": derived_alias,
                     "activation_mode": "adapter_backed_runtime",
                 },
             },
-            _chat_step(f"{training_mode}_chat", derived_alias),
-            _eval_step(f"{training_mode}_eval", derived_alias),
+            _chat_step(f"{training_mode}_chat", f"${{steps.{activate_step}.result.derived_model_id}}"),
+            _eval_step(f"{training_mode}_eval", f"${{steps.{activate_step}.result.derived_model_id}}"),
         ),
     )
 
@@ -323,6 +325,8 @@ def _alignment_case(
                     "model_id": "${inputs.model_id}",
                     "target_repo": f"melix/issue365-{algorithm}-aligned",
                     "adapter_path": f"${{steps.{align_step}.result.output_path}}",
+                    "publish_backend": "local_filesystem",
+                    "local_publish_root": "${inputs.local_publish_root}",
                 },
             },
             {
@@ -330,13 +334,13 @@ def _alignment_case(
                 "command": "lora.activate",
                 "args": {
                     "model_id": "${inputs.model_id}",
-                    "adapter_path": f"${{steps.{publish_step}.result.output_path}}",
+                    "adapter_path": f"${{steps.{align_step}.result.output_path}}",
                     "derived_model_alias": derived_alias,
                     "activation_mode": "adapter_backed_runtime",
                 },
             },
-            _chat_step(f"{algorithm}_chat", derived_alias),
-            _eval_step(f"{algorithm}_eval", derived_alias),
+            _chat_step(f"{algorithm}_chat", f"${{steps.{activate_step}.result.derived_model_id}}"),
+            _eval_step(f"{algorithm}_eval", f"${{steps.{activate_step}.result.derived_model_id}}"),
         ),
     )
 
@@ -394,6 +398,8 @@ def _ptq_case() -> Issue365PipelineCase:
                     "target_repo": "melix/issue365-ptq-merged",
                     "manifest_path": f"${{steps.{align_step}.result.output_path}}",
                     "export_kind": "merged",
+                    "publish_backend": "local_filesystem",
+                    "local_publish_root": "${inputs.local_publish_root}",
                 },
             },
             {
@@ -458,6 +464,8 @@ def _qat_case() -> Issue365PipelineCase:
                     "target_repo": "melix/issue365-qat-merged",
                     "manifest_path": f"${{steps.{train_step}.result.output_path}}",
                     "export_kind": "merged",
+                    "publish_backend": "local_filesystem",
+                    "local_publish_root": "${inputs.local_publish_root}",
                 },
             },
             {
@@ -503,7 +511,7 @@ def _eval_step(step_id: str, model_id: str) -> dict[str, Any]:
         "args": {
             "model_id": model_id,
             "suites": ["mmlu"],
-            "dataset_id": "issue365.smoke.v1",
+            "dataset_id": "mmlu.dev.v1",
             "sample_size": 1,
             "scoring_mode": "multiple_choice_accuracy",
         },
@@ -530,6 +538,7 @@ def _default_inputs(config: Issue365AcceptanceConfig, *, output_dir: Path) -> di
         "calibration_dataset_uri": config.calibration_dataset_uri,
         "reward_model_manifest_path": config.reward_model_manifest_path,
         "acceptance_output_dir": str(output_dir / "artifacts"),
+        "local_publish_root": str(output_dir / "artifacts" / "local-publish"),
         "server_session_id": "issue365-acceptance",
     }
 

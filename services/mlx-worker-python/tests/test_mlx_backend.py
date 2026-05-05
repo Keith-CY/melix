@@ -315,6 +315,42 @@ def test_auto_backend_passes_resolved_stop_sequences_when_supported() -> None:
     assert [chunk.text for chunk in chunks] == ["done"]
 
 
+def test_auto_backend_does_not_pass_stop_to_variadic_stream_generate() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        _ = model_source, kwargs
+        return object(), FakeTokenizer()
+
+    def fake_stream_generate(*args, **kwargs):
+        seen["kwargs"] = dict(kwargs)
+        yield FakeGenerationResponse(text="done", prompt_tokens=1, generation_tokens=1, finish_reason="stop")
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.ext["melix.stop_sequences"] = "</model>"
+    loaded_model = backend.load_model(model_spec)
+
+    chunks = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=4, stop=["</request>"]),
+            Event(),
+        )
+    )
+
+    assert "stop" not in seen["kwargs"]
+    assert "stop_words" not in seen["kwargs"]
+    assert "stop_sequences" not in seen["kwargs"]
+    assert mlx_text_runtime_module._callable_declares_kwarg(42, "stop") is False
+    assert [chunk.text for chunk in chunks] == ["done"]
+
+
 def test_runtime_enforces_stop_sequences_across_backend_chunk_boundaries() -> None:
     class ChunkedStopBackend:
         runtime_name = "fake-stop-runtime"

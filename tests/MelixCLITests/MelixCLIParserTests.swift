@@ -1549,6 +1549,8 @@ struct MelixCLIParserTests {
             "--target-repo", "melix/adapters/demo",
             "--manifest-path", "/tmp/demo/manifest.json",
             "--export-kind", "adapter",
+            "--publish-backend", "local_filesystem",
+            "--local-publish-root", "/tmp/melix-local-publish",
         ])
         guard case .loraPublish(let options) = command else {
             Issue.record("Expected loraPublish command")
@@ -1557,6 +1559,8 @@ struct MelixCLIParserTests {
         #expect(options.exportKind == .adapterExport)
         #expect(options.artifactPath == "/tmp/demo/manifest.json")
         #expect(options.artifactManifestPath == "/tmp/demo/manifest.json")
+        #expect(options.publishBackend == "local_filesystem")
+        #expect(options.localPublishRoot == "/tmp/melix-local-publish")
     }
 
     @Test("lora publish --manifest-path without --export-kind defers classification to the runner")

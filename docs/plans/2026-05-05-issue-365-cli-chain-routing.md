@@ -42,6 +42,18 @@ local runtime acceptance requirements.
   as machine-readable blockers before launching long-running pipeline cases.
 - Add `--case-id` selection for the acceptance bundle so operators can run a
   real local runtime subset without requiring unused business-line inputs.
+- Add a local-filesystem publish backend for real local acceptance runs so
+  `lora.publish` can produce publish receipts without requiring networked
+  Hugging Face credentials.
+- Preserve real-runtime adapter activation by activating the trained or aligned
+  adapter manifest directly, while still publishing a receipt as evidence.
+- Normalize successful pipeline result envelopes so downstream steps can refer
+  to `result.output_path` even when a command reports an artifact-specific path
+  such as `artifact_path`, `bundle_path`, `managed_model_path`, or `report_path`.
+- Fix MLX text runtime stop handling so stop sequences are only forwarded to
+  `mlx_lm.utils.stream_generate` when the callable declares the specific stop
+  keyword. This avoids passing unsupported `stop` kwargs through a variadic
+  wrapper to installed `mlx-lm` versions whose generation step rejects them.
 
 ### Excluded
 
@@ -77,6 +89,10 @@ Success metrics:
   subset can run without requiring unused RLHF reward-model or quantization
   calibration artifacts.
 - Changed-line coverage for the touched Swift/doc scope is at least 95 percent.
+- Changed-line coverage for the touched Python scope is at least 95 percent.
+- Real local LoRA subset evidence proves the fixed chain can complete:
+  training, local publish receipt, direct adapter activation, chat smoke, and
+  eval smoke.
 
 ## Verification
 
@@ -136,6 +152,35 @@ Results on 2026-05-06 after adding real-mode preflight and case selection:
 - `swift test --filter 'MelixCLIRunnerTests|MelixCLIParserTests'`:
   212 tests passed in 3 suites.
 
+Results on 2026-05-06 after adding local publish, pipeline output-path
+normalization, direct adapter activation, and the MLX stop-kwarg fix:
+
+- `swift test --filter 'MelixCLIRunnerTests|MelixCLIParserTests'`:
+  213 tests passed in 3 suites.
+- `swift test --enable-code-coverage --filter 'MelixCLIRunnerTests|MelixCLIParserTests'`:
+  213 tests passed in 3 suites and wrote Swift coverage data.
+- `python3 scripts/swift_changed_line_coverage.py --binary .build/arm64-apple-macosx/debug/MelixPackageTests.xctest/Contents/MacOS/MelixPackageTests --profdata .build/arm64-apple-macosx/debug/codecov/default.profdata --diff-from origin/main Sources/MelixCLICore/MelixCLI.swift Sources/MelixCLICore/MelixCLICommandCodec.swift Sources/MelixCLICore/MelixPipelineRunner.swift tests/MelixCLITests/MelixCLIParserTests.swift tests/MelixCLITests/MelixCLIRunnerTests.swift docs/plans/2026-05-05-issue-365-cli-chain-routing.md`:
+  99.44 percent total changed-line coverage, 880/885 executable lines.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
+  13 passed.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/integration/test_issue365_acceptance_bundle.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_mlx_backend.py`:
+  196 passed.
+- `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-cli-chain-routing-python-coverage.json --diff-from origin/main scripts/issue365_acceptance_bundle.py services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_mlx_backend.py tests/integration/test_issue365_acceptance_bundle.py docs/plans/2026-05-05-issue-365-cli-chain-routing.md`:
+  97.65 percent total changed-line coverage, 582/596 executable lines.
+- `MELIX_SERVICE_INSTANCE_NAME=issue365-real MELIX_HTTP_PORT=12465 MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real" MELIX_HOME="$PWD/.runtime/home-issue365-real" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-swift.sock" bash scripts/dev_up.sh --prefer-built`:
+  started a named real local runtime stack.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-real" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-swift.sock" MELIX_HTTP_PORT=12465 python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id lora_export_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --output-dir .runtime/issue365/real-lora-final-probe --timestamp 2026-05-06T133000Z --json`:
+  selected real case passed with `release_ready=true`; evidence bundle written
+  to `.runtime/issue365/real-lora-final-probe/bundle.json`.
+- The selected real local chain proved:
+  `lora.train -> lora.publish(local_filesystem) -> lora.activate -> chat.run -> eval.run`.
+- `MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-swift.sock" bash scripts/dev_down.sh`:
+  stopped the named real local runtime stack.
+- `python3 scripts/issue365_acceptance_bundle.py --execution-mode dry-run --melix-cli .build/arm64-apple-macosx/debug/melix --output-dir .runtime/issue365/acceptance-dry-run-final --timestamp 2026-05-06T140000Z --json`:
+  wrote a dry-run bundle with 10 succeeded cases, 0 failed cases, 0 blocked
+  cases, and `release_ready=false`.
+- `git diff --check`: passed.
+
 Results on 2026-05-05 after adding the acceptance bundle harness:
 
 - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
@@ -164,6 +209,14 @@ Results on 2026-05-05 after adding the acceptance bundle harness:
 - QAT training and QAT-aware quantized export.
 - Full CLI chain tests backed by real local runtime evidence for every listed
   business line.
+- Real local runtime evidence for `lora_export_inference` now exists, but the
+  remaining nine CLI chains still require real local runtime evidence:
+  `qlora_export_inference`, `dora_export_inference`,
+  `lora_dpo_export_inference`, `lora_orpo_export_inference`,
+  `lora_cpo_export_inference`, `lora_grpo_export_inference`,
+  `lora_rlhf_export_inference`,
+  `lora_preference_ptq_quantized_inference`, and
+  `qat_quantized_inference`.
 - Window UI runnable/inspectable acceptance for every listed business line.
 - Final release evidence that separates deterministic/unit/scored-trace results
   from real local runtime results.

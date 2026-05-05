@@ -708,6 +708,105 @@ struct MelixCLIRunnerTests {
         #expect(String(data: try JSONSerialization.data(withJSONObject: receipt), encoding: .utf8)?.contains("hf_secret_token") == false)
     }
 
+    @Test("pipeline result output path falls back to artifact path")
+    func pipelineResultOutputPathFallsBackToArtifactPath() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("artifact-alias.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        let adapterManifestPath = root.appendingPathComponent("train_lora.adapter.json").path
+        let activationManifestPath = root.appendingPathComponent("activate_adapter.json").path
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "artifact-alias",
+          "inputs": {
+            "model_id": "melix-dev-text"
+          },
+          "steps": [
+            {
+              "id": "train_lora",
+              "command": "lora.train",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "dataset_uri": "/tmp/sft.jsonl",
+                "adapter_name": "artifact-alias",
+                "training_mode": "lora"
+              }
+            },
+            {
+              "id": "activate_lora",
+              "command": "lora.activate",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "adapter_path": "${steps.train_lora.result.output_path}",
+                "activation_mode": "adapter_backed_runtime",
+                "derived_model_alias": "artifact-alias-derived"
+              }
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "",
+                manifestJSON: #"""
+                {
+                  "operation": "train_lora",
+                  "job_id": "train-1",
+                  "artifact_path": "\#(adapterManifestPath)"
+                }
+                """#
+            ),
+            forOperation: "train_lora"
+        )
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: activationManifestPath,
+                manifestJSON: #"""
+                {
+                  "operation": "activate_adapter",
+                  "job_id": "activate-1",
+                  "output_path": "\#(activationManifestPath)"
+                }
+                """#
+            ),
+            forOperation: "activate_adapter"
+        )
+
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": root.path]
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-artifact-alias"
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(output))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let trainStep = try #require(steps.first { $0["id"] as? String == "train_lora" })
+        let trainReceiptPath = try #require(trainStep["receipt_path"] as? String)
+        let trainReceipt = try #require(try parseJSONFile(trainReceiptPath))
+        let trainResult = try #require(trainReceipt["result"] as? [String: Any])
+        let calls = await client.modelOperationCalls.filter { $0.ext["melix.registry_rescan"] != "true" }
+
+        #expect(summary["status"] as? String == "succeeded")
+        #expect(trainResult["artifact_path"] as? String == adapterManifestPath)
+        #expect(trainResult["output_path"] as? String == adapterManifestPath)
+        #expect(calls.count == 2)
+        #expect(calls[1].operation == "activate_adapter")
+        #expect(calls[1].ext["artifact_path"] == adapterManifestPath)
+    }
+
     @Test("successful fake phase 8 pipeline writes receipts summary and artifact paths")
     func successfulFakePhase8PipelineWritesReceiptsSummaryAndArtifactPaths() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1069,7 +1168,9 @@ struct MelixCLIRunnerTests {
                 "target_repo": "melix/models/issue365-dpo-merged",
                 "adapter_path": "   ",
                 "manifest_path": "${steps.align_adapter.result.output_path}",
-                "export_kind": " MERGED "
+                "export_kind": " MERGED ",
+                "publish_backend": "local_filesystem",
+                "local_publish_root": "/tmp/melix/issue365-local-publish"
               },
               "checks": {
                 "required_result_fields": ["job_id", "output_path"]
@@ -1209,6 +1310,10 @@ struct MelixCLIRunnerTests {
         #expect(operationCommands[1].contains(where: { $0.contains("dataset_source_kind") }) == false)
         #expect(Array(operationCommands[2].prefix(2)) == ["lora", "publish"])
         #expect(operationCommands[2].contains("/tmp/melix/alignment/issue365-dpo.adapter.json"))
+        #expect(operationCommands[2].contains("--publish-backend"))
+        #expect(operationCommands[2].contains("local_filesystem"))
+        #expect(operationCommands[2].contains("--local-publish-root"))
+        #expect(operationCommands[2].contains("/tmp/melix/issue365-local-publish"))
         #expect(operationCommands[2].contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) == false)
         #expect(operationCommands[3].starts(with: ["quantize", "--model-id", "melix-dev-text"]))
         #expect(operationCommands[3].contains("--quantization-mode"))
