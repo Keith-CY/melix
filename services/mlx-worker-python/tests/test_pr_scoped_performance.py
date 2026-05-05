@@ -101,6 +101,16 @@ def test_scope_report_selects_training_dataset_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "training-dataset-token-percentiles-single-sort"
 
 
+def test_scope_report_selects_real_model_support_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/real_model_support.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "real-model-support-hf-cache-latest-snapshot"
+
+
 def test_scope_report_selects_evaluation_probes() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -590,6 +600,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "maintenance-percentile-vector-reuse",
         "phase8-metrics-closure-audit-reuse",
         "pr-scoped-performance-registry-cache",
+        "real-model-support-hf-cache-latest-snapshot",
         "swift-cli-json-envelope-encoding",
         "upload-receipt-published-files-scandir",
         "download-pipeline-directory-size-single-stat",
@@ -1307,6 +1318,21 @@ def test_benchmark_store_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["request_row_count"] == 6000.0
     assert payload["request_csv_line_count"] == 6001.0
     assert payload["sample_count"] == 3.0
+
+
+def test_real_model_support_hf_cache_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/real_model_support_hf_cache_probe.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["elapsed_ms_mean"] > 0
+    assert payload["peak_bytes_mean"] > 0
+    assert payload["sample_count"] == 7.0
+    assert payload["snapshot_count"] == 6000.0
+    assert payload["selected_latest_snapshot"] == 5999.0
 
 
 def test_upload_receipt_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
