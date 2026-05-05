@@ -23,14 +23,15 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     current_path: str | None = None
     new_line: int | None = None
     for line in diff_text.splitlines():
-        if line.startswith("diff --git "):
+        first_char = line[:1]
+        if first_char == "d" and line.startswith("diff --git "):
             match = _DIFF_HEADER_RE.match(line)
             current_path = None if match is None else match.group(2)
             if current_path is not None:
                 changed_by_path.setdefault(current_path, set())
             new_line = None
             continue
-        if line.startswith("@@"):
+        if first_char == "@" and line.startswith("@@"):
             match = _HUNK_NEW_RANGE_RE.search(line)
             if match is None:
                 continue
@@ -38,14 +39,14 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             continue
         if current_path is None or new_line is None:
             continue
-        if line.startswith("\\ "):
+        if first_char == "\\" and line.startswith("\\ "):
             continue
-        if _is_diff_file_marker(line):
+        if first_char in {"+", "-"} and _is_diff_file_marker(line):
             continue
-        if line.startswith("+"):
+        if first_char == "+":
             changed_by_path[current_path].add(new_line)
             new_line += 1
-        elif line.startswith("-"):
+        elif first_char == "-":
             continue
         else:
             new_line += 1

@@ -123,6 +123,24 @@ def test_parse_changed_lines_preserves_added_content_that_starts_with_diff_heade
     assert changed == {"foo.py": {1, 2}}
 
 
+def test_parse_changed_lines_counts_blank_context_lines_with_prefix_dispatch() -> None:
+    diff_text = "\n".join(
+        [
+            "diff --git a/foo.py b/foo.py",
+            "--- a/foo.py",
+            "+++ b/foo.py",
+            "@@ -1,3 +1,4 @@",
+            " context",
+            "",
+            "+inserted_after_blank",
+        ]
+    )
+
+    changed = changed_scope_coverage._parse_changed_lines(diff_text)
+
+    assert changed == {"foo.py": {3}}
+
+
 def test_parse_changed_lines_uses_precompiled_patterns_and_prefix_marker_check(monkeypatch) -> None:
     def fail_module_level_regex(*args: object, **kwargs: object) -> object:  # pragma: no cover
         raise AssertionError("hot parser should use precompiled regex objects")
