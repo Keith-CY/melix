@@ -453,6 +453,71 @@ def test_sandbox_executable_paths_keep_wrapper_allowed_when_launcher_is_preferre
     assert resolved.resolve() in paths
 
 
+def test_sandbox_profile_reuses_static_runtime_fragments(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+    runtime_calls = 0
+    executable_calls = 0
+
+    def fake_runtime_paths() -> tuple[Path, ...]:
+        nonlocal runtime_calls
+        runtime_calls += 1
+        return (tmp_path / "python-runtime",)
+
+    def fake_executable_paths() -> tuple[Path, ...]:
+        nonlocal executable_calls
+        executable_calls += 1
+        return (tmp_path / "python",)
+
+    monkeypatch.setattr(code_eval_runner, "_sandbox_runtime_read_paths", fake_runtime_paths)
+    monkeypatch.setattr(code_eval_runner, "_sandbox_executable_paths", fake_executable_paths)
+
+    first_root = tmp_path / "eval-a"
+    second_root = tmp_path / "eval-b"
+    first_profile = code_eval_runner._sandbox_profile(temp_root=first_root)
+    second_profile = code_eval_runner._sandbox_profile(temp_root=second_root)
+
+    assert runtime_calls == 1
+    assert executable_calls == 1
+    assert str(first_root) in first_profile
+    assert str(second_root) not in first_profile
+    assert str(second_root) in second_profile
+    assert str(tmp_path / "python-runtime") in second_profile
+
+    code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+
+
+def test_sandbox_profile_cache_key_tracks_python_environment(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+    runtime_calls = 0
+
+    def fake_runtime_paths() -> tuple[Path, ...]:
+        nonlocal runtime_calls
+        runtime_calls += 1
+        return (tmp_path / f"runtime-{runtime_calls}",)
+
+    monkeypatch.setattr(code_eval_runner, "_sandbox_runtime_read_paths", fake_runtime_paths)
+    monkeypatch.setattr(code_eval_runner, "_sandbox_executable_paths", lambda: (tmp_path / "python",))
+
+    monkeypatch.setattr(code_eval_runner.sys, "executable", str(tmp_path / "python-a"))
+    first_profile = code_eval_runner._sandbox_profile(temp_root=tmp_path / "eval-a")
+    second_profile = code_eval_runner._sandbox_profile(temp_root=tmp_path / "eval-b")
+    monkeypatch.setattr(code_eval_runner.sys, "executable", str(tmp_path / "python-b"))
+    third_profile = code_eval_runner._sandbox_profile(temp_root=tmp_path / "eval-c")
+
+    assert runtime_calls == 2
+    assert "runtime-1" in first_profile
+    assert "runtime-1" in second_profile
+    assert "runtime-2" in third_profile
+
+    code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+
+
 def test_sandbox_allow_path_variants_falls_back_when_resolve_raises() -> None:
     class BrokenPath:
         def __init__(self, label: str) -> None:

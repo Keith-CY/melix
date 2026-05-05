@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from functools import lru_cache
 import json
 from pathlib import Path
 import re
@@ -277,6 +278,41 @@ def _summarize_stdio(*, stdout_tail: str, stderr_tail: str) -> str:
 
 
 def _sandbox_profile(*, temp_root: Path) -> str:
+    static_profile = _sandbox_static_profile_fragments(_sandbox_static_profile_key())
+    temp_read_filters = " ".join(
+        f"(subpath {json.dumps(str(path))})"
+        for path in _sandbox_allow_path_variants((temp_root,))
+    )
+    return " ".join(
+        (
+            static_profile.prefix,
+            f"(allow file-read* {static_profile.runtime_read_filters} {temp_read_filters})",
+            f"(allow file-write* (subpath {json.dumps(str(temp_root))}))",
+        )
+    )
+
+
+@dataclass(frozen=True)
+class _SandboxStaticProfileFragments:
+    prefix: str
+    runtime_read_filters: str
+
+
+def _sandbox_static_profile_key() -> tuple[object, ...]:
+    return (
+        sys.executable,
+        sys.prefix,
+        sys.exec_prefix,
+        sys.base_prefix,
+        sys.base_exec_prefix,
+        tuple(sorted((key, value or "") for key, value in sysconfig.get_paths().items())),
+    )
+
+
+@lru_cache(maxsize=8)
+def _sandbox_static_profile_fragments(
+    _cache_key: tuple[object, ...],
+) -> _SandboxStaticProfileFragments:
     executable_paths = _sandbox_executable_paths()
     runtime_paths = _sandbox_runtime_read_paths()
     clauses = [
@@ -309,13 +345,14 @@ def _sandbox_profile(*, temp_root: Path) -> str:
             for path in executable_paths
         )
         clauses.append(f"(allow process-exec {executable_filters})")
-    read_filters = " ".join(
+    runtime_read_filters = " ".join(
         f"(subpath {json.dumps(str(path))})"
-        for path in _sandbox_allow_path_variants((*runtime_paths, temp_root))
+        for path in _sandbox_allow_path_variants(runtime_paths)
     )
-    clauses.append(f"(allow file-read* {read_filters})")
-    clauses.append(f"(allow file-write* (subpath {json.dumps(str(temp_root))}))")
-    return " ".join(clauses)
+    return _SandboxStaticProfileFragments(
+        prefix=" ".join(clauses),
+        runtime_read_filters=runtime_read_filters,
+    )
 
 
 def _sandbox_executable_paths() -> tuple[Path, ...]:

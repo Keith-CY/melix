@@ -39,6 +39,31 @@ def _measure_new(stdout_path: Path, stderr_path: Path, *, byte_limit: int, itera
     }
 
 
+def _measure_sandbox_profiles(temp_root: Path, *, iterations: int) -> dict[str, float]:
+    elapsed_samples: list[float] = []
+    profile_lengths: list[float] = []
+    cache_clear = getattr(code_eval_runner._sandbox_static_profile_fragments, "cache_clear", None)
+    for sample_index in range(5):
+        if cache_clear is not None:
+            cache_clear()
+        start = time.perf_counter()
+        profile = ""
+        for iteration in range(iterations):
+            profile = code_eval_runner._sandbox_profile(
+                temp_root=temp_root / f"sample-{sample_index}" / f"run-{iteration}"
+            )
+        elapsed_samples.append((time.perf_counter() - start) * 1000)
+        profile_lengths.append(float(len(profile)))
+    if cache_clear is not None:
+        cache_clear()
+    return {
+        "sandbox_profile_elapsed_ms_mean": statistics.mean(elapsed_samples),
+        "sandbox_profile_static_builds_mean": 1.0 if cache_clear is not None else float(iterations),
+        "sandbox_profile_length_mean": statistics.mean(profile_lengths),
+        "sandbox_profile_iteration_count": float(iterations),
+    }
+
+
 def main() -> None:
     byte_limit = 4096
     iterations = 3000
@@ -48,7 +73,9 @@ def main() -> None:
         stderr_path = temp_root / "stderr.txt"
         stdout_path.write_text("x" * (byte_limit * 4), encoding="utf-8")
         stderr_path.write_text("warning\n" * 128, encoding="utf-8")
-        print(json.dumps(_measure_new(stdout_path, stderr_path, byte_limit=byte_limit, iterations=iterations), sort_keys=True))
+        metrics = _measure_new(stdout_path, stderr_path, byte_limit=byte_limit, iterations=iterations)
+        metrics.update(_measure_sandbox_profiles(temp_root, iterations=1500))
+        print(json.dumps(metrics, sort_keys=True))
 
 
 if __name__ == "__main__":
