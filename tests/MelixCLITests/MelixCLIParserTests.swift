@@ -577,6 +577,9 @@ struct MelixCLIParserTests {
             (.modelHubSearch(.init(query: "qwen", pageSize: 5, cursor: "next", mlxOnly: false, json: true)), "model.hub.search"),
             (.modelHubShow(.init(repoID: "mlx/qwen", json: true)), "model.hub.show"),
             (.modelHubDownload(.init(repoID: "mlx/qwen", revision: "main", json: true)), "model.hub.download"),
+            (.datasetList(.init(json: true)), "dataset.list"),
+            (.datasetHubDownload(.init(repoID: "org/dataset", revision: "main", json: true)), "dataset.hub.download"),
+            (.datasetRemove(.init(repoID: "org/dataset", revision: "main", snapshotID: "abc123", json: true)), "dataset.remove"),
             (.modelRootsList(.init(json: true)), "model.roots.list"),
             (.modelRootsAdd(.init(path: "/models", json: true)), "model.roots.add"),
             (.modelRootsRemove(.init(path: "/models", json: true)), "model.roots.remove"),
@@ -651,6 +654,9 @@ struct MelixCLIParserTests {
             .upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)),
             .modelImport(.init(path: "/tmp/model", modelID: "model", modelKind: "text", revision: "main", json: true)),
             .modelHubDownload(.init(repoID: "mlx/qwen", revision: "main", json: true)),
+            .datasetList(.init(json: true)),
+            .datasetHubDownload(.init(repoID: "org/dataset", revision: "main", json: true)),
+            .datasetRemove(.init(repoID: "org/dataset", revision: "main", snapshotID: "abc123", json: true)),
             .modelRootsList(.init(json: true)),
             .modelRootsAdd(.init(path: "/models", json: true)),
             .modelRootsRemove(.init(path: "/models", json: true)),
@@ -819,6 +825,54 @@ struct MelixCLIParserTests {
         #expect(addOptions.path == "/tmp/models-a")
         #expect(moveOptions.path == "/tmp/models-a")
         #expect(moveOptions.index == 1)
+    }
+
+    @Test("parses dataset list download and remove commands")
+    func parsesDatasetListDownloadAndRemoveCommands() throws {
+        let listCommand = try MelixCLIParser.parse([
+            "dataset",
+            "list",
+            "--json",
+        ])
+        let downloadCommand = try MelixCLIParser.parse([
+            "dataset",
+            "hub",
+            "download",
+            "--repo-id", "Jax-dan/HundredCV-Chat",
+            "--revision", "main",
+            "--hf-token", "hf_secret_token",
+            "--json",
+        ])
+        let removeCommand = try MelixCLIParser.parse([
+            "dataset",
+            "remove",
+            "--repo-id", "Jax-dan/HundredCV-Chat",
+            "--snapshot-id", "abc123",
+            "--json",
+        ])
+
+        guard case .datasetList(let listOptions) = listCommand else {
+            Issue.record("Expected datasetList command")
+            return
+        }
+        guard case .datasetHubDownload(let downloadOptions) = downloadCommand else {
+            Issue.record("Expected datasetHubDownload command")
+            return
+        }
+        guard case .datasetRemove(let removeOptions) = removeCommand else {
+            Issue.record("Expected datasetRemove command")
+            return
+        }
+
+        #expect(listOptions.json)
+        #expect(downloadOptions.repoID == "Jax-dan/HundredCV-Chat")
+        #expect(downloadOptions.revision == "main")
+        #expect(downloadOptions.hfToken == "hf_secret_token")
+        #expect(downloadOptions.json)
+        #expect(removeOptions.repoID == "Jax-dan/HundredCV-Chat")
+        #expect(removeOptions.revision == "main")
+        #expect(removeOptions.snapshotID == "abc123")
+        #expect(removeOptions.json)
     }
 
     @Test("parses model import command and rejects missing import path")
@@ -1664,6 +1718,32 @@ struct MelixCLIParserTests {
         #expect(options.json)
     }
 
+    @Test("parses bench run with managed dataset reference")
+    func parsesBenchRunWithManagedDatasetReference() throws {
+        let command = try MelixCLIParser.parse([
+            "bench",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--suite", "latency",
+            "--dataset-ref", "Jax-dan/HundredCV-Chat@main",
+            "--hf-dataset-name", "default",
+            "--hf-dataset-split", "train",
+            "--prompt-feature", "messages",
+        ])
+
+        guard case .benchRun(let options) = command else {
+            Issue.record("Expected benchRun command")
+            return
+        }
+
+        #expect(options.parameters["dataset_ref"] == "Jax-dan/HundredCV-Chat@main")
+        #expect(options.parameters["hf_dataset_path"] == "Jax-dan/HundredCV-Chat")
+        #expect(options.parameters["hf_dataset_revision"] == "main")
+        #expect(options.parameters["hf_dataset_name"] == "default")
+        #expect(options.parameters["hf_dataset_split"] == "train")
+        #expect(options.parameters["prompt_feature"] == "messages")
+    }
+
     @Test("parses bench list and export-csv commands")
     func parsesBenchListAndExportCSVCommands() throws {
         let listCommand = try MelixCLIParser.parse([
@@ -2060,6 +2140,35 @@ struct MelixCLIParserTests {
         #expect(options.profile.ignoredPaths == ["metadata.trace_id"])
     }
 
+    @Test("parses eval run with managed dataset reference")
+    func parsesEvalRunWithManagedDatasetReference() throws {
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--suite", "dolly",
+            "--dataset-ref", "IRUCAAI/extract_group_chat_dataset_with_summary@main",
+            "--hf-dataset-split", "train",
+            "--field-input-text-path", "dialogue",
+            "--field-target-path", "summary",
+        ])
+
+        guard case .evalRun(let options) = command else {
+            Issue.record("Expected evalRun command")
+            return
+        }
+
+        #expect(options.source.kind == .huggingFaceDataset)
+        #expect(options.source.datasetPath == "IRUCAAI/extract_group_chat_dataset_with_summary")
+        #expect(options.source.datasetRevision == "main")
+        #expect(options.source.split == "train")
+        #expect(options.parameters["dataset_ref"] == "IRUCAAI/extract_group_chat_dataset_with_summary@main")
+        #expect(options.parameters["hf_dataset_path"] == "IRUCAAI/extract_group_chat_dataset_with_summary")
+        #expect(options.parameters["hf_dataset_revision"] == "main")
+        #expect(options.fieldMapping.inputTextPath == "dialogue")
+        #expect(options.fieldMapping.targetPath == "summary")
+    }
+
     @Test("parses eval compare with target model ids and comparison controls")
     func parsesEvalCompareCommand() throws {
         let command = try MelixCLIParser.parse([
@@ -2156,6 +2265,38 @@ struct MelixCLIParserTests {
 
         #expect(options.targetModelIDs == ["melix-dev-text-lora-registered"])
         #expect(options.targetAdapterManifestPaths == ["/tmp/melix-adapters/fresh.adapter.json"])
+    }
+
+    @Test("parses eval compare with managed dataset reference")
+    func parsesEvalCompareWithManagedDatasetReference() throws {
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "compare",
+            "--model-id", "melix-dev-text",
+            "--target-model-id", "melix-dev-text-lora",
+            "--suite", "dolly",
+            "--dataset-ref", "IRUCAAI/extract_group_chat_dataset_with_summary@main",
+            "--hf-dataset-split", "train",
+            "--field-input-text-path", "dialogue",
+            "--field-target-path", "summary",
+            "--json",
+        ])
+
+        guard case .evalCompare(let options) = command else {
+            Issue.record("Expected evalCompare command")
+            return
+        }
+
+        #expect(options.suites == ["dolly"])
+        #expect(options.source.kind == .huggingFaceDataset)
+        #expect(options.source.datasetPath == "IRUCAAI/extract_group_chat_dataset_with_summary")
+        #expect(options.source.datasetRevision == "main")
+        #expect(options.source.split == "train")
+        #expect(options.fieldMapping.inputTextPath == "dialogue")
+        #expect(options.fieldMapping.targetPath == "summary")
+        #expect(options.parameters["dataset_ref"] == "IRUCAAI/extract_group_chat_dataset_with_summary@main")
+        #expect(options.parameters["hf_dataset_path"] == "IRUCAAI/extract_group_chat_dataset_with_summary")
+        #expect(options.parameters["hf_dataset_revision"] == "main")
     }
 
     @Test("eval compare rejects invocations missing both target types")

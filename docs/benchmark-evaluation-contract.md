@@ -77,6 +77,26 @@ When `hf_repo_id` is used:
 - the imported target must appear in persisted run metadata as `source_repo`
 - the control plane remains the orchestration truth for target resolution
 
+## Shared Dataset Selection
+
+Both product lines may run against an operator-selected managed dataset using a
+dataset reference in the form `repo_id[@revision]`.
+
+When a managed dataset reference is provided:
+
+- `repo_id` is the Hugging Face dataset repository id
+- `revision` defaults to `main`
+- the worker should prefer a local Hugging Face cache snapshot under
+  `~/.cache/huggingface/hub/datasets--*`
+- if no local snapshot is available, the evaluation and benchmark materializers
+  may fall back to the Hugging Face Dataset Viewer API
+- persisted run parameters must include `dataset_ref`, `hf_dataset_path`, and
+  `hf_dataset_revision`
+
+Dataset references select the dataset source only. Existing field mapping,
+split, config, sample-size, and suite semantics still determine how rows become
+benchmark prompts or evaluation samples.
+
 ## Task Kinds
 
 Melix benchmark and evaluation targets use the following task-aligned values:

@@ -111,6 +111,7 @@ def test_benchmark_suite_catalog_materializes_curated_hf_suite_and_reuses_cache(
     assert len(first.prompt_batches) == 2
     assert first.prompt_batches[0] == "Say hi.\n\nSay bye."
     assert first.metadata()["dataset_uri"].startswith("hf://HuggingFaceH4/ultrachat_200k")
+    assert first.metadata()["source_kind"] == "hf_dataset"
 
 
 def test_load_materialized_rows_streams_without_read_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -558,6 +559,10 @@ def test_parse_positive_int_returns_default_for_non_numeric_and_empty_input() ->
     assert benchmark_suites._parse_positive_int("  ", 4) == 4
 
 
+def test_benchmark_dataset_ref_parser_supports_explicit_revision() -> None:
+    assert benchmark_suites._parse_dataset_ref("org/bench@feature-branch") == ("org/bench", "feature-branch")
+
+
 def test_benchmark_suite_catalog_raises_for_unknown_task_kind(tmp_path: Path) -> None:
     catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkSuiteFetcher())
 
@@ -571,3 +576,48 @@ def test_benchmark_suite_catalog_raises_for_unknown_task_kind(tmp_path: Path) ->
 
     assert error.value.code == "invalid_benchmark_suite"
     assert error.value.details == {"suite_id": "smoke", "task_kind": "audio-to-text"}
+
+
+def test_benchmark_suite_dataset_ref_prefers_local_cache_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    cache_repo = home / ".cache" / "huggingface" / "hub" / "datasets--org--bench"
+    snapshot = cache_repo / "snapshots" / "abc123"
+    data_dir = snapshot / "data"
+    data_dir.mkdir(parents=True)
+    (cache_repo / "refs").mkdir()
+    (cache_repo / "refs" / "main").write_text("abc123", encoding="utf-8")
+    (data_dir / "train-00000-of-00001.jsonl").write_text(
+        '{"instruction":"Use the local cache."}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    def fail_fetcher(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        raise AssertionError(f"unexpected remote fetch {endpoint} {params}")
+
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=fail_fetcher)
+    suite = catalog.resolve_suite(
+        "latency",
+        jobs_root=tmp_path / "jobs",
+        parameters={
+            "dataset_ref": "org/bench",
+            "prompt_feature": "instruction",
+            "sample_size": "1",
+        },
+        task_kind="text-generation",
+    )
+    manifest = json.loads((suite.materialized_package_path / "manifest.json").read_text(encoding="utf-8"))
+
+    assert suite.dataset_path == "org/bench"
+    assert suite.dataset_revision == "main"
+    assert suite.prompt_batches == ("Use the local cache.",)
+    assert suite.cache_hit is False
+    assert suite.metadata()["source_kind"] == "hf_cache_snapshot"
+    assert suite.metadata()["hf_snapshot_id"] == "abc123"
+    assert suite.metadata()["hf_snapshot_path"] == str(snapshot.resolve())
+    assert manifest["source_kind"] == "hf_cache_snapshot"
+    assert manifest["hf_snapshot_id"] == "abc123"
+    assert manifest["hf_snapshot_path"] == str(snapshot.resolve())

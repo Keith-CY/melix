@@ -755,6 +755,42 @@ public struct ModelHubDownloadOptions: Equatable, Sendable {
     }
 }
 
+public struct DatasetListOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct DatasetHubDownloadOptions: Equatable, Sendable {
+    public let repoID: String
+    public let revision: String
+    public let hfToken: String
+    public let json: Bool
+
+    public init(repoID: String, revision: String = "main", hfToken: String = "", json: Bool = false) {
+        self.repoID = repoID
+        self.revision = revision.isEmpty ? "main" : revision
+        self.hfToken = hfToken
+        self.json = json
+    }
+}
+
+public struct DatasetRemoveOptions: Equatable, Sendable {
+    public let repoID: String
+    public let revision: String
+    public let snapshotID: String
+    public let json: Bool
+
+    public init(repoID: String, revision: String = "main", snapshotID: String = "", json: Bool = false) {
+        self.repoID = repoID
+        self.revision = revision.isEmpty ? "main" : revision
+        self.snapshotID = snapshotID
+        self.json = json
+    }
+}
+
 public struct ModelDownloadOptions: Equatable, Sendable {
     public let modelID: String
     public let outputDir: String
@@ -914,6 +950,40 @@ public struct ManagedModelReceipt: Codable, Equatable, Sendable {
         self.sourceKind = sourceKind
         self.sourceLocator = sourceLocator
         self.warnings = warnings
+    }
+}
+
+public struct ManagedDatasetReceipt: Codable, Equatable, Sendable {
+    public let datasetID: String
+    public let repoID: String
+    public let revision: String
+    public let snapshotID: String
+    public let managedDatasetPath: String
+    public let sourceKind: String
+
+    enum CodingKeys: String, CodingKey {
+        case datasetID = "dataset_id"
+        case repoID = "repo_id"
+        case revision
+        case snapshotID = "snapshot_id"
+        case managedDatasetPath = "managed_dataset_path"
+        case sourceKind = "source_kind"
+    }
+
+    public init(
+        datasetID: String,
+        repoID: String,
+        revision: String,
+        snapshotID: String,
+        managedDatasetPath: String,
+        sourceKind: String
+    ) {
+        self.datasetID = datasetID
+        self.repoID = repoID
+        self.revision = revision
+        self.snapshotID = snapshotID
+        self.managedDatasetPath = managedDatasetPath
+        self.sourceKind = sourceKind
     }
 }
 
@@ -1238,6 +1308,9 @@ public enum MelixCLICommand: Equatable, Sendable {
     case modelHubSearch(ModelHubSearchOptions)
     case modelHubShow(ModelHubShowOptions)
     case modelHubDownload(ModelHubDownloadOptions)
+    case datasetList(DatasetListOptions)
+    case datasetHubDownload(DatasetHubDownloadOptions)
+    case datasetRemove(DatasetRemoveOptions)
     case modelRootsList(ModelRootsListOptions)
     case modelRootsAdd(ModelRootsMutateOptions)
     case modelRootsRemove(ModelRootsMutateOptions)
@@ -1365,6 +1438,8 @@ public enum MelixCLIParser {
             return try parseUpload(tail)
         case "model":
             return try parseModel(tail)
+        case "dataset":
+            return try parseDataset(tail)
         case "server":
             return try parseServer(tail)
         case "remote-server":
@@ -1401,6 +1476,9 @@ public enum MelixCLIParser {
       melix model hub search --query QUERY [--page-size N] [--cursor TOKEN] [--mlx-only (true|false)] [--json]
       melix model hub show --repo-id HF_REPO [--json]
       melix model hub download --repo-id HF_REPO [--revision REV] [--hf-token TOKEN] [--json]
+      melix dataset list [--json]
+      melix dataset hub download --repo-id HF_DATASET [--revision REV] [--hf-token TOKEN] [--json]
+      melix dataset remove --repo-id HF_DATASET [--revision REV | --snapshot-id SHA] [--json]
       melix model roots list [--json]
       melix model roots add --path PATH [--json]
       melix model roots remove --path PATH [--json]
@@ -1437,21 +1515,21 @@ public enum MelixCLIParser {
       melix lora resume --group-id GROUP_ID [--model-id MODEL_ID] [--preset PRESET] [--adapter-name NAME] [--dataset-uri URI] [--json]
       melix lora publishes list [--model-id MODEL_ID] [--json]
       melix lora publishes show --job-id JOB_ID [--model-id MODEL_ID] [--json]
-      melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
+      melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-split SPLIT] [--prompt-feature NAME] [--text-feature NAME] [--image-feature NAME] [--source-image-feature NAME] [--mask-feature NAME] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix run (--model-id MODEL_ID | --repo-id HF_REPO) --suite SUITE ... --context-length N ... --generation-length N ... --batch-size N ... --cache-profile MODE ... --reasoning-mode MODE ... --structured-output-mode MODE ... --concurrency N ... [--repeats N] (--requests N | --duration-seconds N) [--allow-large-matrix] [--json]
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
       melix eval prompt list [--json]
       melix eval prompt show --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt create --prompt-id ID --title TITLE --system-prompt-file PATH [--json]
       melix eval prompt update --prompt-id ID --system-prompt-file PATH [--json]
       melix eval prompt freeze --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt archive --prompt-id ID [--json]
-      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
+      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
       melix eval compare export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-jsonl --job-id JOB_ID --output PATH [--json]
@@ -1704,6 +1782,57 @@ public enum MelixCLIParser {
             return .modelRootsMove(.init(path: path, index: index, json: values.flags.contains("--json")))
         case "rescan":
             return .modelRootsRescan(.init(json: values.flags.contains("--json")))
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseDataset(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        switch action {
+        case "list":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+            return .datasetList(.init(json: values.flags.contains("--json")))
+        case "hub":
+            return try parseDatasetHub(Array(arguments.dropFirst()))
+        case "remove":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+            guard let repoID = values.single["--repo-id"], !repoID.isEmpty else {
+                throw MelixCLIError.missingRequired("--repo-id is required for melix dataset remove.")
+            }
+            return .datasetRemove(
+                .init(
+                    repoID: repoID,
+                    revision: values.single["--revision"] ?? "main",
+                    snapshotID: values.single["--snapshot-id"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseDatasetHub(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        switch action {
+        case "download":
+            guard let repoID = values.single["--repo-id"], !repoID.isEmpty else {
+                throw MelixCLIError.missingRequired("--repo-id is required for melix dataset hub download.")
+            }
+            return .datasetHubDownload(
+                .init(
+                    repoID: repoID,
+                    revision: values.single["--revision"] ?? "main",
+                    hfToken: values.single["--hf-token"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
         default:
             throw MelixCLIError.usage(usageText)
         }
@@ -2560,6 +2689,25 @@ public enum MelixCLIParser {
             if let batchFactor = values.single["--batch-factor"] {
                 parameters["batch_factor"] = batchFactor
             }
+            if let datasetRef = values.single["--dataset-ref"], datasetRef.isEmpty == false {
+                let parsedRef = parseDatasetReference(datasetRef)
+                parameters["dataset_ref"] = datasetRef
+                parameters["hf_dataset_path"] = parsedRef.repoID
+                parameters["hf_dataset_revision"] = parsedRef.revision
+            }
+            for option in [
+                "--hf-dataset-name",
+                "--hf-dataset-split",
+                "--prompt-feature",
+                "--text-feature",
+                "--image-feature",
+                "--source-image-feature",
+                "--mask-feature",
+            ] {
+                if let value = values.single[option], value.isEmpty == false {
+                    parameters[normalizedParameterKey(option)] = value
+                }
+            }
             return .benchRun(
                 BenchRunOptions(
                     modelID: modelID,
@@ -3031,6 +3179,12 @@ public enum MelixCLIParser {
         if let remoteExtraBodyJSON = values.single["--remote-extra-body-json"] {
             parameters["remote_provider_extra_body_json"] = remoteExtraBodyJSON
         }
+        if let datasetRef = values.single["--dataset-ref"], datasetRef.isEmpty == false {
+            let parsedRef = parseDatasetReference(datasetRef)
+            parameters["dataset_ref"] = datasetRef
+            parameters["hf_dataset_path"] = parsedRef.repoID
+            parameters["hf_dataset_revision"] = parsedRef.revision
+        }
         return parameters
     }
 
@@ -3045,12 +3199,14 @@ public enum MelixCLIParser {
         let localCSVPath = values.single["--source-csv"] ?? ""
         let localJSONLPath = values.single["--source-jsonl"] ?? ""
         let hfDatasetPath = values.single["--hf-dataset-path"] ?? ""
-        let customSourceCount = [localCSVPath, localJSONLPath, hfDatasetPath].filter { $0.isEmpty == false }.count
+        let datasetRef = values.single["--dataset-ref"] ?? ""
+        let customSourceCount = [localCSVPath, localJSONLPath, hfDatasetPath, datasetRef].filter { $0.isEmpty == false }.count
         guard customSourceCount <= 1 else {
             throw MelixCLIError.usage(
-                "At most one of --source-csv, --source-jsonl, or --hf-dataset-path may be provided for \(command)."
+                "At most one of --source-csv, --source-jsonl, --hf-dataset-path, or --dataset-ref may be provided for \(command)."
             )
         }
+        let parsedDatasetRef = datasetRef.isEmpty ? nil : parseDatasetReference(datasetRef)
 
         let fieldMapping = ControlPlaneEvaluationRequest.FieldMapping(
             systemPath: values.single["--field-system-path"] ?? "",
@@ -3080,6 +3236,13 @@ public enum MelixCLIParser {
                 datasetRevision: values.single["--hf-dataset-revision"] ?? "main",
                 split: values.single["--hf-dataset-split"] ?? "train"
             )
+        } else if let parsedDatasetRef {
+            source = .huggingFaceDataset(
+                datasetPath: parsedDatasetRef.repoID,
+                datasetName: values.single["--hf-dataset-name"] ?? "",
+                datasetRevision: values.single["--hf-dataset-revision"] ?? parsedDatasetRef.revision,
+                split: values.single["--hf-dataset-split"] ?? "train"
+            )
         } else {
             source = .builtinPackage
         }
@@ -3106,6 +3269,17 @@ public enum MelixCLIParser {
         option
             .replacingOccurrences(of: "--", with: "")
             .replacingOccurrences(of: "-", with: "_")
+    }
+
+    private static func parseDatasetReference(_ datasetRef: String) -> (repoID: String, revision: String) {
+        let trimmed = datasetRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let separator = trimmed.lastIndex(of: "@") else {
+            return (trimmed, "main")
+        }
+        let repoID = String(trimmed[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let revision = String(trimmed[trimmed.index(after: separator)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (repoID, revision.isEmpty ? "main" : revision)
     }
 
     private static func parseUInt32Value(
@@ -3471,6 +3645,68 @@ public actor MelixCLIRunner {
         )
     }
 
+    public func datasetRegistrySnapshot() async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        try await performModelOperation(
+            modelID: "melix-datasets",
+            operation: "dataset_snapshot",
+            outputDir: "",
+            ext: [:]
+        )
+    }
+
+    public func downloadHubDataset(
+        repoID: String,
+        revision: String = "main",
+        hfToken: String = ""
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        let tokenStore = HuggingFaceTokenStore(melixHome: MelixHome(environment: environment))
+        let providedToken = hfToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveToken: String
+        if providedToken.isEmpty == false {
+            _ = try tokenStore.saveToken(providedToken)
+            effectiveToken = providedToken
+        } else {
+            effectiveToken = (try tokenStore.loadToken()?.token ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var ext: [String: String] = [
+            "melix.source_kind": "hf_dataset",
+            "melix.source_locator": repoID,
+            "melix.hf_dataset_repo_id": repoID,
+            "melix.hf_revision": revision.isEmpty ? "main" : revision,
+            "melix.managed_import": "true",
+        ]
+        if effectiveToken.isEmpty == false {
+            ext["melix.hf_token"] = effectiveToken
+        }
+        return try await performModelOperation(
+            modelID: repoID,
+            operation: "dataset_download",
+            outputDir: "",
+            ext: ext
+        )
+    }
+
+    public func removeDataset(
+        repoID: String,
+        revision: String = "main",
+        snapshotID: String = ""
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        var ext: [String: String] = [
+            "melix.hf_dataset_repo_id": repoID,
+            "melix.hf_revision": revision.isEmpty ? "main" : revision,
+        ]
+        if snapshotID.isEmpty == false {
+            ext["melix.hf_snapshot_id"] = snapshotID
+        }
+        return try await performModelOperation(
+            modelID: repoID,
+            operation: "dataset_remove",
+            outputDir: "",
+            ext: ext
+        )
+    }
+
     public func downloadModel(
         modelID: String,
         outputDir: String = ""
@@ -3783,6 +4019,28 @@ public actor MelixCLIRunner {
             let result = try await downloadHubModel(repoID: options.repoID, revision: options.revision, hfToken: options.hfToken)
             let receipt = try makeManagedModelReceipt(from: result)
             return options.json ? try prettyJSON(receipt) : receipt.managedModelPath + "\n"
+        case .datasetList(let options):
+            let result = try await datasetRegistrySnapshot()
+            if options.json {
+                return try prettyJSON(
+                    try filterManifestKeys(
+                        fromManifestJson: result.manifestJson,
+                        defaults: datasetRegistrySnapshotDefaults()
+                    )
+                )
+            }
+            return renderDatasetRegistrySnapshot(result.manifestJson)
+        case .datasetHubDownload(let options):
+            let result = try await downloadHubDataset(repoID: options.repoID, revision: options.revision, hfToken: options.hfToken)
+            let receipt = try makeManagedDatasetReceipt(from: result)
+            return options.json ? try prettyJSON(receipt) : receipt.managedDatasetPath + "\n"
+        case .datasetRemove(let options):
+            let result = try await removeDataset(
+                repoID: options.repoID,
+                revision: options.revision,
+                snapshotID: options.snapshotID
+            )
+            return options.json ? result.manifestJson : result.outputPath + "\n"
         case .modelRootsList(let options):
             let state = try loadOperatorState()
             if options.json {
@@ -4632,6 +4890,20 @@ public actor MelixCLIRunner {
             var arguments = ["lora", "remove-derived", "--model-id", modelID]
             appendOption("--derived-model-id", value: ext["derived_model_id"], into: &arguments)
             appendOption("--manifest-path", value: ext["manifest_path"], into: &arguments)
+            arguments.append("--json")
+            return arguments
+        case "dataset_snapshot":
+            return ["dataset", "list", "--json"]
+        case "dataset_download":
+            var arguments = ["dataset", "hub", "download", "--repo-id", modelID]
+            appendOption("--revision", value: ext["melix.hf_revision"], into: &arguments)
+            appendOption("--hf-token", value: ext["melix.hf_token"], into: &arguments)
+            arguments.append("--json")
+            return arguments
+        case "dataset_remove":
+            var arguments = ["dataset", "remove", "--repo-id", modelID]
+            appendOption("--revision", value: ext["melix.hf_revision"], into: &arguments)
+            appendOption("--snapshot-id", value: ext["melix.hf_snapshot_id"], into: &arguments)
             arguments.append("--json")
             return arguments
         case "registry_snapshot":
@@ -5802,6 +6074,41 @@ public actor MelixCLIRunner {
         ]
     }
 
+    private func datasetRegistrySnapshotDefaults() -> [String: Any] {
+        [
+            "dataset_registry": [
+                "schema_version": "melix.dataset_registry_snapshot.v1",
+                "roots": [] as [Any],
+                "datasets": [] as [Any],
+            ] as [String: Any],
+            "warnings": [] as [Any],
+        ]
+    }
+
+    private func renderDatasetRegistrySnapshot(_ manifestJSON: String) -> String {
+        guard
+            let data = manifestJSON.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let registry = payload["dataset_registry"] as? [String: Any]
+        else {
+            return manifestJSON
+        }
+        let datasets = registry["datasets"] as? [[String: Any]] ?? []
+        if datasets.isEmpty {
+            return "No managed datasets found.\n"
+        }
+        let lines = datasets.map { dataset in
+            let repoID = (dataset["repo_id"] as? String) ?? ""
+            let revision = (dataset["revision"] as? String) ?? ""
+            let snapshotID = (dataset["snapshot_id"] as? String) ?? ""
+            let totalBytes = formatBinaryBytes(UInt64((dataset["total_bytes"] as? Int) ?? 0))
+            let path = (dataset["snapshot_path"] as? String) ?? ""
+            return "\(repoID)\t\(revision)\t\(snapshotID)\t\(totalBytes)\t\(path)"
+        }
+        return (["repo_id\trevision\tsnapshot_id\ttotal_bytes\tsnapshot_path"] + lines)
+            .joined(separator: "\n") + "\n"
+    }
+
     private func renderRegistrySnapshot(_ manifestJSON: String) -> String {
         guard
             let data = manifestJSON.data(using: .utf8),
@@ -6482,6 +6789,44 @@ public actor MelixCLIRunner {
             sourceKind: sourceKind,
             sourceLocator: sourceLocator,
             warnings: warnings
+        )
+    }
+
+    private func makeManagedDatasetReceipt(
+        from result: Melix_Controlplane_V1_ModelOperationResult
+    ) throws -> ManagedDatasetReceipt {
+        guard let data = result.manifestJson.data(using: .utf8) else {
+            throw MelixCLIError.runtime("Managed dataset operations must return a JSON manifest.")
+        }
+        let payloadObject: Any
+        do {
+            payloadObject = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw MelixCLIError.runtime("Managed dataset operations must return a JSON manifest.")
+        }
+        guard let payload = payloadObject as? [String: Any] else {
+            throw MelixCLIError.runtime("Managed dataset operations must return a JSON manifest.")
+        }
+        let datasetID = (payload["dataset_id"] as? String) ?? ""
+        let repoID = (payload["repo_id"] as? String) ?? ""
+        let revision = (payload["revision"] as? String) ?? ""
+        let snapshotID = (payload["snapshot_id"] as? String) ?? ""
+        let managedDatasetPath = (payload["snapshot_path"] as? String)
+            ?? (payload["output_path"] as? String)
+            ?? result.outputPath
+        let sourceKind = (payload["source_kind"] as? String) ?? "hf_cache_snapshot"
+
+        guard repoID.isEmpty == false, managedDatasetPath.isEmpty == false else {
+            throw MelixCLIError.runtime("Managed dataset manifest did not include a repo identifier and snapshot path.")
+        }
+
+        return ManagedDatasetReceipt(
+            datasetID: datasetID.isEmpty ? "\(repoID)@\(revision.isEmpty ? "main" : revision)" : datasetID,
+            repoID: repoID,
+            revision: revision.isEmpty ? "main" : revision,
+            snapshotID: snapshotID,
+            managedDatasetPath: managedDatasetPath,
+            sourceKind: sourceKind
         )
     }
 

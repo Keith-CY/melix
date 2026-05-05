@@ -9,6 +9,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from worker.dataset_registry.catalog import (
+    read_hf_dataset_snapshot_rows,
+    resolve_cached_hf_dataset_snapshot,
+)
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.training_dataset import HFDatasetFetcher
 
@@ -55,17 +59,21 @@ class ResolvedBenchmarkSuite:
     materialized_package_path: Path
     cache_key: str
     cache_hit: bool
+    source_kind: str
     sample_size: int
     batch_factor: int
     prompt_batches: tuple[str, ...]
     cases: tuple[BenchmarkCase, ...]
+    hf_snapshot_id: str = ""
+    hf_snapshot_path: str = ""
+    hf_cache_repo_path: str = ""
 
     def metadata(self) -> dict[str, object]:
-        return {
+        metadata: dict[str, object] = {
             "suite_id": self.suite_id,
             "task_kind": self.task_kind,
             "title": self.title,
-            "source_kind": "hf_dataset",
+            "source_kind": self.source_kind,
             "dataset_uri": self.dataset_uri,
             "dataset_path": self.dataset_path,
             "dataset_name": self.dataset_name,
@@ -77,6 +85,11 @@ class ResolvedBenchmarkSuite:
             "sample_size": self.sample_size,
             "batch_factor": self.batch_factor,
         }
+        if self.hf_snapshot_id:
+            metadata["hf_snapshot_id"] = self.hf_snapshot_id
+            metadata["hf_snapshot_path"] = self.hf_snapshot_path
+            metadata["hf_cache_repo_path"] = self.hf_cache_repo_path
+        return metadata
 
 
 class BenchmarkSuiteCatalog:
@@ -93,7 +106,7 @@ class BenchmarkSuiteCatalog:
         }
         self._hf_dataset_fetcher = hf_dataset_fetcher or _fetch_hf_dataset_server_json
         self._resolved_suite_cache: dict[
-            tuple[str, str, Path, int, int],
+            tuple[str, str, Path, int, int, str],
             ResolvedBenchmarkSuite,
         ] = {}
 
@@ -115,10 +128,18 @@ class BenchmarkSuiteCatalog:
                 message=f"Unknown benchmark suite: {suite_id}",
                 details={"suite_id": suite_id, "task_kind": task_kind},
             )
+        definition = _definition_with_dataset_override(definition, parameters)
 
         sample_size = _parse_positive_int(parameters.get("sample_size", ""), definition.default_sample_size)
         batch_factor = _parse_positive_int(parameters.get("batch_factor", ""), definition.default_batch_factor)
-        cache_key = (definition.task_kind, definition.suite_id, jobs_root, sample_size, batch_factor)
+        cache_key = (
+            definition.task_kind,
+            definition.suite_id,
+            jobs_root,
+            sample_size,
+            batch_factor,
+            _benchmark_suite_cache_key(definition),
+        )
         cached_suite = self._resolved_suite_cache.get(cache_key)
         if cached_suite is not None:
             return cached_suite
@@ -155,6 +176,10 @@ class BenchmarkSuiteCatalog:
             materialized_package_path=materialized["package_path"],
             cache_key=materialized["cache_key"],
             cache_hit=materialized["cache_hit"],
+            source_kind=materialized["source_kind"],
+            hf_snapshot_id=materialized.get("hf_snapshot_id", ""),
+            hf_snapshot_path=materialized.get("hf_snapshot_path", ""),
+            hf_cache_repo_path=materialized.get("hf_cache_repo_path", ""),
             sample_size=sample_size,
             batch_factor=batch_factor,
             prompt_batches=tuple(case.prompt for case in cases),
@@ -357,26 +382,44 @@ def _materialize_benchmark_suite(
             "package_path": package_path,
             "cache_key": cache_key,
             "cache_hit": True,
+            "source_kind": str(manifest.get("source_kind", "hf_dataset")),
+            "hf_snapshot_id": str(manifest.get("hf_snapshot_id", "")),
+            "hf_snapshot_path": str(manifest.get("hf_snapshot_path", "")),
+            "hf_cache_repo_path": str(manifest.get("hf_cache_repo_path", "")),
             "dataset_name": str(manifest.get("dataset_name", definition.dataset_name or "default")),
             "rows": _load_materialized_rows(rows_path, limit=sample_hint),
         }
 
-    dataset_name = definition.dataset_name or _resolve_dataset_name(definition, fetch_json)
-    row_payload = fetch_json(
-        "rows",
-        {
-            "dataset": definition.dataset_path,
-            "config": dataset_name,
-            "split": definition.dataset_split,
-            "offset": "0",
-            "length": str(max(1, sample_hint)),
-        },
+    source_kind = "hf_dataset"
+    snapshot = resolve_cached_hf_dataset_snapshot(
+        repo_id=definition.dataset_path,
+        revision=definition.dataset_revision or "main",
     )
-    rows = [
-        entry["row"]
-        for entry in row_payload.get("rows", [])
-        if isinstance(entry, dict) and isinstance(entry.get("row"), dict)
-    ]
+    if snapshot is not None:
+        dataset_name = definition.dataset_name or (snapshot.configs[0] if snapshot.configs else "default")
+        rows = read_hf_dataset_snapshot_rows(
+            snapshot.snapshot_path,
+            split=definition.dataset_split,
+            limit=sample_hint,
+        )
+        source_kind = "hf_cache_snapshot"
+    else:
+        dataset_name = definition.dataset_name or _resolve_dataset_name(definition, fetch_json)
+        row_payload = fetch_json(
+            "rows",
+            {
+                "dataset": definition.dataset_path,
+                "config": dataset_name,
+                "split": definition.dataset_split,
+                "offset": "0",
+                "length": str(max(1, sample_hint)),
+            },
+        )
+        rows = [
+            entry["row"]
+            for entry in row_payload.get("rows", [])
+            if isinstance(entry, dict) and isinstance(entry.get("row"), dict)
+        ]
     if not rows:
         raise ModelOperationError(
             code="hf_dataset_fetch_failed",
@@ -387,6 +430,7 @@ def _materialize_benchmark_suite(
     package_path.mkdir(parents=True, exist_ok=True)
     manifest = {
         "schema_version": "melix.benchmark_suite_materialization.v1",
+        "source_kind": source_kind,
         "task_kind": definition.task_kind,
         "suite_id": definition.suite_id,
         "dataset_path": definition.dataset_path,
@@ -400,15 +444,65 @@ def _materialize_benchmark_suite(
         "mask_feature": definition.mask_feature,
         "default_prompt": definition.default_prompt,
     }
+    if snapshot is not None:
+        manifest.update(
+            {
+                "hf_snapshot_id": snapshot.snapshot_id,
+                "hf_snapshot_path": str(snapshot.snapshot_path),
+                "hf_cache_repo_path": str(snapshot.cache_repo_path),
+            }
+        )
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     _write_jsonl_rows(rows_path, rows)
     return {
         "package_path": package_path,
         "cache_key": cache_key,
         "cache_hit": False,
+        "source_kind": source_kind,
+        "hf_snapshot_id": snapshot.snapshot_id if snapshot is not None else "",
+        "hf_snapshot_path": str(snapshot.snapshot_path) if snapshot is not None else "",
+        "hf_cache_repo_path": str(snapshot.cache_repo_path) if snapshot is not None else "",
         "dataset_name": dataset_name,
         "rows": rows,
     }
+
+
+def _definition_with_dataset_override(
+    definition: BenchmarkSuiteDefinition,
+    parameters: dict[str, str],
+) -> BenchmarkSuiteDefinition:
+    dataset_ref = parameters.get("dataset_ref", "").strip()
+    dataset_path = parameters.get("hf_dataset_path", "").strip()
+    dataset_revision = parameters.get("hf_dataset_revision", "").strip()
+    if dataset_ref:
+        ref_path, ref_revision = _parse_dataset_ref(dataset_ref)
+        dataset_path = dataset_path or ref_path
+        dataset_revision = dataset_revision or ref_revision
+
+    if not dataset_path:
+        return definition
+
+    return replace(
+        definition,
+        dataset_path=dataset_path,
+        dataset_name=parameters.get("hf_dataset_name", "").strip() or definition.dataset_name,
+        dataset_revision=dataset_revision or definition.dataset_revision or "main",
+        dataset_split=parameters.get("hf_dataset_split", "").strip()
+        or parameters.get("dataset_split", "").strip()
+        or definition.dataset_split,
+        prompt_feature=parameters.get("prompt_feature", "").strip() or definition.prompt_feature,
+        text_feature=parameters.get("text_feature", "").strip() or definition.text_feature,
+        image_feature=parameters.get("image_feature", "").strip() or definition.image_feature,
+        source_image_feature=parameters.get("source_image_feature", "").strip() or definition.source_image_feature,
+        mask_feature=parameters.get("mask_feature", "").strip() or definition.mask_feature,
+    )
+
+
+def _parse_dataset_ref(dataset_ref: str) -> tuple[str, str]:
+    if "@" not in dataset_ref:
+        return dataset_ref, "main"
+    repo_id, revision = dataset_ref.rsplit("@", 1)
+    return repo_id.strip(), revision.strip() or "main"
 
 
 def _suite_cases(
