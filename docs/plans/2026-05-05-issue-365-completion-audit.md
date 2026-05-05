@@ -42,11 +42,11 @@ PRs, and what remains before the roadmap can be treated as implemented.
 | QAT runs before final quantized export and records quantization-aware settings. | Current code rejects unsupported QAT source combinations and #397 explicitly excludes real QAT. | Missing. |
 | QLoRA records quantized-base behavior and rejects unsafe targets. | Existing LoRA/QLoRA contract tests cover mode validation; #365-specific real release evidence is not complete. | Partial baseline coverage only. |
 | CLI exposes `melix alignment train` separately from `melix lora train`. | #368 adds parser/runner/codec support and tests. | Implemented on `origin/main`. |
-| CLI supports a full chained workflow across training, alignment, publish/export, quantize, local inference, and eval/bench evidence. | #400 adds `melix pipeline run` routing for post-training steps in draft. | Not complete on `origin/main`; open draft PR #400 covers routing only, not final real-runtime acceptance. |
-| Required CLI chain tests exist for every listed business line. | Existing tests cover focused slices; #400 adds one fast post-training route test in draft. | Missing for the full matrix and real local runtime evidence. |
+| CLI supports a full chained workflow across training, alignment, publish/export, quantize, local inference, and eval/bench evidence. | #400 adds `melix pipeline run` routing for post-training steps plus a draft Issue 365 acceptance bundle harness. | Not complete on `origin/main`; open draft PR #400 covers routing and plan/dry-run evidence orchestration, not final real-runtime acceptance. |
+| Required CLI chain tests exist for every listed business line. | Existing tests cover focused slices. #400 now writes all 10 required chain cases into a machine-readable plan/dry-run matrix. | Partially covered by open draft PR #400. Real local runtime execution of the full matrix is still missing. |
 | Window UI exposes every CLI business line. | Existing Window routing code and tests expose alignment mode state and forwarding paths. | Partial UI routing exists; full runnable/inspectable acceptance remains missing. |
 | Window UI acceptance proves every business line is visible, selectable, runnable, and inspectable. | Existing Window tests cover routing surfaces. No full real-runtime acceptance matrix exists. | Missing. |
-| Release evidence separates deterministic/unit/scored-trace results from real local runtime results. | PR bodies and plans label deterministic/scored-trace limitations. There is no final aggregated release evidence bundle for #365. | Missing. |
+| Release evidence separates deterministic/unit/scored-trace results from real local runtime results. | PR bodies and plans label deterministic/scored-trace limitations. #400 adds a bundle schema that marks plan/dry-run evidence as not release-ready. | Partially covered by open draft PR #400. A final real-local-runtime release evidence bundle is still missing. |
 | No business line is marked complete when only deterministic evidence exists. | Plans explicitly state remaining gaps, and open PRs are draft. | Process guard exists, but final release gate is missing. |
 
 ## Verified Covered Work
@@ -103,8 +103,10 @@ and full CLI/Window acceptance.
 ### PR #400: CLI Pipeline Chain Routing
 
 Draft PR #400 adds pipeline routing for `alignment.train`, `lora.publish`,
-`quantize`, `convert`, and `upload`. It proves command construction and
-step-to-step artifact references, but it does not provide full real local
+`quantize`, `convert`, and `upload`. It also adds an Issue 365 acceptance bundle
+harness that writes the full 10-case CLI matrix and explicitly separates
+planning, deterministic dry-run, and real-local-runtime evidence. This is useful
+release-evidence infrastructure, but it still does not provide full real local
 runtime acceptance for every business line.
 
 ## Missing Completion Items
@@ -117,7 +119,7 @@ The objective is not achieved until all of these are implemented and verified:
    #366 artifacts.
 4. Real QAT training or QAT-aware export with fake-quant/quantization-aware
    settings recorded in manifests.
-5. Full required CLI chain tests for every listed business line:
+5. Full real-runtime CLI chain execution for every listed business line:
    - BaseModel -> LoRA -> export -> local inference
    - BaseModel -> QLoRA -> export -> local inference
    - BaseModel -> DoRA -> export -> local inference
@@ -131,7 +133,7 @@ The objective is not achieved until all of these are implemented and verified:
 6. Real local runtime evidence for the final CLI acceptance matrix.
 7. Window UI runnable and inspectable acceptance for every CLI-supported
    business line.
-8. A final release evidence bundle that distinguishes:
+8. A final populated release evidence bundle that distinguishes:
    - unit tests
    - deterministic fixture tests
    - scored-trace evidence
@@ -140,8 +142,9 @@ The objective is not achieved until all of these are implemented and verified:
 ## Recommended Next Implementation Order
 
 1. Land and undraft #394, #397, and #400 when CI and review are clean.
-2. Add a real-runtime CLI acceptance harness that can run a small configured
-   matrix and emit a single machine-readable #365 evidence bundle.
+2. Use or extend the #400 acceptance bundle harness to run a configured
+   real-local-runtime matrix and emit the final machine-readable #365 evidence
+   bundle.
 3. Implement QAT as a separate worker backend path, or keep QAT explicitly
    unsupported with a final acceptance failure until the backend exists.
 4. Integrate #366 reward-model inference into RLHF before claiming RLHF
