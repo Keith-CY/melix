@@ -196,6 +196,16 @@ def test_scope_report_selects_pr_scoped_scope_script_probe() -> None:
     assert "pr-scoped-performance-scope-json-read-bytes" in selected_ids
 
 
+def test_scope_report_selects_changed_scope_coverage_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/changed_scope_coverage.py"],
+    )
+
+    selected_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "changed-scope-coverage-empty-path-short-circuit" in selected_ids
+
+
 def test_scope_report_selects_changed_scope_coverage_parser_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -637,6 +647,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "benchmark-export-run-scan-single-pass",
         "benchmark-queue-decoded-record-cache",
         "benchmark-store-matrix-streaming",
+        "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
         "deterministic-embedding-duplicate-input-cache",

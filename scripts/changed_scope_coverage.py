@@ -71,18 +71,21 @@ def _measurable_changed_lines(
     rel_path: str,
     changed: set[int],
 ) -> tuple[list[int], list[int], list[int]]:
+    if not changed:
+        return [], [], []
+
     entry = coverage_payload["files"][rel_path]
     executed = set(entry["executed_lines"])
     missing = set(entry["missing_lines"])
     measured = executed | missing
     source_lines = (repo_root / rel_path).read_text(encoding="utf-8").splitlines()
-    measurable = [
-        line_no
-        for line_no in sorted(changed)
-        if line_no in measured
-        and source_lines[line_no - 1].strip()
-        and not source_lines[line_no - 1].strip().startswith("#")
-    ]
+    measurable: list[int] = []
+    for line_no in sorted(changed):
+        if line_no not in measured:
+            continue
+        stripped = source_lines[line_no - 1].strip()
+        if stripped and not stripped.startswith("#"):
+            measurable.append(line_no)
     covered = [line_no for line_no in measurable if line_no in executed]
     missed = [line_no for line_no in measurable if line_no in missing]
     return measurable, covered, missed

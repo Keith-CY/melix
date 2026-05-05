@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "changed_scope_coverage.py"
 MODULE_SPEC = importlib.util.spec_from_file_location("changed_scope_coverage", MODULE_PATH)
@@ -22,6 +24,15 @@ assert PROBE_MODULE_SPEC is not None
 assert PROBE_MODULE_SPEC.loader is not None
 changed_scope_coverage_parse_probe = importlib.util.module_from_spec(PROBE_MODULE_SPEC)
 PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_parse_probe)
+
+EMPTY_PROBE_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "changed_scope_coverage_probe.py"
+EMPTY_PROBE_MODULE_SPEC = importlib.util.spec_from_file_location(
+    "changed_scope_coverage_probe", EMPTY_PROBE_MODULE_PATH
+)
+assert EMPTY_PROBE_MODULE_SPEC is not None
+assert EMPTY_PROBE_MODULE_SPEC.loader is not None
+changed_scope_coverage_probe = importlib.util.module_from_spec(EMPTY_PROBE_MODULE_SPEC)
+EMPTY_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_probe)
 
 
 def test_parse_changed_lines_handles_multiple_files_and_hunks() -> None:
@@ -196,6 +207,116 @@ def test_measurable_changed_lines_filters_blank_comment_and_unmeasured_lines(tmp
     assert measurable == [1, 4, 5]
     assert covered == [1, 4]
     assert missed == [5]
+
+
+def test_measurable_changed_lines_skips_source_read_when_no_changed_lines(monkeypatch, tmp_path: Path) -> None:
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [1],
+                "missing_lines": [2],
+            }
+        }
+    }
+    read_calls: list[Path] = []
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        read_calls.append(self)
+        raise AssertionError("source file should not be read when the changed set is empty")
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        set(),
+    )
+
+    assert measurable == []
+    assert covered == []
+    assert missed == []
+    assert read_calls == []
+
+
+def test_changed_scope_coverage_probe_emits_empty_path_metrics() -> None:
+    metrics = changed_scope_coverage_probe.run_probe(Path(__file__).resolve().parents[1], path_count=5, samples=2)
+
+    assert metrics["path_count"] == 5.0
+    assert metrics["sample_count"] == 2.0
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["source_read_calls_mean"] == 0.0
+
+
+def test_changed_scope_coverage_probe_counts_unexpected_source_reads(monkeypatch, tmp_path: Path) -> None:
+    class ReadingCoverageModule:
+        Path = Path
+
+        @staticmethod
+        def _measurable_changed_lines(
+            repo_root: Path,
+            coverage_payload: dict[str, object],
+            rel_path: str,
+            changed: set[int],
+        ) -> tuple[list[int], list[int], list[int]]:
+            (repo_root / rel_path).read_text(encoding="utf-8")
+            return [], [], []
+
+    monkeypatch.setattr(
+        changed_scope_coverage_probe,
+        "_load_changed_scope_coverage",
+        lambda repo_root: ReadingCoverageModule,
+    )
+
+    metrics = changed_scope_coverage_probe.run_probe(tmp_path, path_count=1, samples=1)
+
+    assert metrics["source_read_calls_mean"] == 1.0
+
+
+def test_changed_scope_coverage_probe_rejects_non_empty_empty_scope(monkeypatch, tmp_path: Path) -> None:
+    class NonEmptyCoverageModule:
+        Path = Path
+
+        @staticmethod
+        def _measurable_changed_lines(
+            repo_root: Path,
+            coverage_payload: dict[str, object],
+            rel_path: str,
+            changed: set[int],
+        ) -> tuple[list[int], list[int], list[int]]:
+            return [1], [], []
+
+    monkeypatch.setattr(
+        changed_scope_coverage_probe,
+        "_load_changed_scope_coverage",
+        lambda repo_root: NonEmptyCoverageModule,
+    )
+
+    with pytest.raises(RuntimeError, match="empty changed sets"):
+        changed_scope_coverage_probe.run_probe(tmp_path, path_count=1, samples=1)
+
+
+def test_changed_scope_coverage_probe_rejects_missing_loader(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        changed_scope_coverage_probe.importlib.util,
+        "spec_from_file_location",
+        lambda *args, **kwargs: None,
+    )
+
+    with pytest.raises(RuntimeError, match="unable to load"):
+        changed_scope_coverage_probe._load_changed_scope_coverage(tmp_path)
+
+
+def test_changed_scope_coverage_probe_main_prints_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        changed_scope_coverage_probe,
+        "run_probe",
+        lambda repo_root: {"elapsed_ms_mean": 1.0, "source_read_calls_mean": 0.0},
+    )
+
+    assert changed_scope_coverage_probe.main() == 0
+
+    assert json.loads(capsys.readouterr().out) == {"elapsed_ms_mean": 1.0, "source_read_calls_mean": 0.0}
 
 
 def test_parse_probe_reports_stable_parser_guardrails(monkeypatch, tmp_path: Path) -> None:
