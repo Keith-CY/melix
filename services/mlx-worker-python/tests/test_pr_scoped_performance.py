@@ -169,6 +169,18 @@ def test_scope_report_selects_training_dataset_probe() -> None:
     }
 
 
+def test_scope_report_selects_training_dataset_chunker_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/model_ops/training_dataset_chunker.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "training-dataset-chunker-top-level-base-copy"
+
+
 def test_scope_report_selects_startup_signals_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -845,6 +857,30 @@ def test_statistical_evidence_bootstrap_probe_script_emits_metrics(
     assert metrics["lower_bound_mean"] <= metrics["upper_bound_mean"]
 
 
+def test_training_dataset_chunker_top_level_copy_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_TOP_KEYS", "4")
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_WORDS", "240")
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_CHUNK_SIZE", "60")
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/training_dataset_chunker_top_level_copy_probe.py"),
+            run_name="__main__",
+        )
+
+    assert excinfo.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["top_level_key_count"] == 7.0
+    assert metrics["chunk_count"] > 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1025,6 +1061,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "pr-scoped-performance-scope-matcher",
         "training-dataset-token-percentiles-single-sort",
         "training-dataset-validation-sample-limit",
+        "training-dataset-chunker-top-level-base-copy",
         "maintenance-bench-report-readback",
         "maintenance-percentile-vector-reuse",
         "phase8-metrics-closure-audit-reuse",
