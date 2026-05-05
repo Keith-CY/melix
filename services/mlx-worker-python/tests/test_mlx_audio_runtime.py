@@ -93,6 +93,56 @@ def test_mlx_audio_transcription_runtime_uses_lazy_import_and_cleans_up_inline_a
     assert created_paths == []
 
 
+def test_mlx_audio_transcription_runtime_uses_local_uri_path_without_reading_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime import audio_preprocessing
+    from worker.runtime.mlx_audio_runtime import MLXAudioTranscriptionRuntime
+
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"local audio payload")
+    captured_paths: list[str] = []
+
+    class FakeSTTModel:
+        def generate(self, audio_path: str, **kwargs):
+            captured_paths.append(audio_path)
+            return SimpleNamespace(text="decoded local uri", language="", total_time=0.0)
+
+    def fake_load_model(model_path: str):
+        return FakeSTTModel()
+
+    def fail_read_bytes(self: Path) -> bytes:
+        if self == audio_path:
+            raise AssertionError("MLX local audio URI path should not read file bytes")
+        return original_read_bytes(self)
+
+    original_read_bytes = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
+    _install_fake_mlx_audio(monkeypatch, stt_loader=fake_load_model)
+
+    runtime = MLXAudioTranscriptionRuntime(temp_root=tmp_path / "transient")
+    loaded = runtime.load_model(WorkerModelCatalog.mlx_whisper_model())
+    result = runtime.transcribe(
+        loaded,
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri(), language="en", format="wav"),
+    )
+    probe = runtime.last_probe_snapshot()
+
+    assert captured_paths == [str(audio_path)]
+    assert result.text == "decoded local uri"
+    assert result.language == "en"
+    assert result.duration_seconds == round(audio_path.stat().st_size / 16000.0, 6)
+    assert probe.preprocess_input_bytes == audio_path.stat().st_size
+    assert probe.preprocess_peak_memory_bytes == audio_path.stat().st_size
+
+    monkeypatch.setattr(Path, "read_bytes", original_read_bytes)
+    prepared = audio_preprocessing.prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri(), format="wav")
+    )
+    assert prepared.bytes_data == b"local audio payload"
+
+
 def test_mlx_audio_speech_runtime_detects_voice_mode_and_maps_voice_and_instructions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
