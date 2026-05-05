@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
+import time
 from typing import Any
 
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
@@ -23,6 +26,41 @@ from worker.model_ops.errors import ModelOperationError
 from worker.registry import WorkerRegistry
 
 _BUNDLE_SCHEMA_VERSION = "melix.quantized_bundle.v1"
+_SMOKE_REQUIRED_FILES = ("config.json", "tokenizer.json", "weights.safetensors")
+
+
+@dataclass(frozen=True)
+class LocalInferenceSmokeEvidence:
+    status: str
+    evidence_kind: str
+    smoke_mode: str
+    runtime: str
+    runtime_backend: str
+    artifact_path: str
+    checked_files: tuple[str, ...]
+    latency_ms: float
+    prompt_sha256: str = ""
+    generated_token_count: int = 0
+    failure_reason: str = ""
+
+    @property
+    def passed(self) -> bool:
+        return self.status == "passed"
+
+    def to_manifest_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "evidence_kind": self.evidence_kind,
+            "smoke_mode": self.smoke_mode,
+            "runtime": self.runtime,
+            "runtime_backend": self.runtime_backend,
+            "artifact_path": self.artifact_path,
+            "checked_files": list(self.checked_files),
+            "latency_ms": self.latency_ms,
+            "prompt_sha256": self.prompt_sha256,
+            "generated_token_count": self.generated_token_count,
+            "failure_reason": self.failure_reason,
+        }
 
 
 @dataclass(frozen=True)
@@ -35,6 +73,7 @@ class QuantizationPipelineResult:
     artifact_bytes: int
     manifest_bytes: int
     smoke_test_passed: bool
+    smoke_evidence: LocalInferenceSmokeEvidence
 
 
 class OQQuantizationPipeline:
@@ -62,6 +101,7 @@ class OQQuantizationPipeline:
             source_artifact_kind=source_artifact_kind,
             source_artifact_path=source_artifact_path,
         )
+        smoke_mode = _local_inference_smoke_mode_for_request(request)
         calibration_evidence = _calibration_evidence_for_request(request)
         calibration = calibration_plan_for_profile(
             profile,
@@ -103,9 +143,20 @@ class OQQuantizationPipeline:
             ).encode("utf-8"),
         )
 
-        smoke_test_passed = False
+        smoke_evidence = _not_requested_smoke_evidence(
+            bundle_path=bundle_path,
+            smoke_mode=smoke_mode,
+        )
         if request.run_smoke_test:
-            smoke_test_passed = self._run_structural_smoke_test(bundle_path)
+            smoke_evidence = self._run_local_inference_smoke_test(
+                request=request,
+                job_id=job_id,
+                source_model=source_model,
+                profile=profile,
+                bundle_path=bundle_path,
+                smoke_mode=smoke_mode,
+            )
+        smoke_test_passed = smoke_evidence.passed
 
         manifest_path = bundle_path / "manifest.json"
         manifest_payload = self._manifest_payload(
@@ -126,7 +177,7 @@ class OQQuantizationPipeline:
             bundle_path=bundle_path,
             manifest_path=manifest_path,
             artifact_bytes=artifact_bytes,
-            smoke_test_passed=smoke_test_passed,
+            smoke_evidence=smoke_evidence,
         )
         manifest_bytes = 0
         encoded_manifest = b""
@@ -149,6 +200,7 @@ class OQQuantizationPipeline:
             artifact_bytes=artifact_bytes,
             manifest_bytes=manifest_payload["manifest_bytes"],
             smoke_test_passed=smoke_test_passed,
+            smoke_evidence=smoke_evidence,
         )
 
     def _resolve_source_model(self, source_model: str) -> common_pb2.ModelSpec:
@@ -168,19 +220,194 @@ class OQQuantizationPipeline:
             max_context=0,
         )
 
+    def _run_local_inference_smoke_test(
+        self,
+        *,
+        request: maintenance_pb2.ConvertModelRequest,
+        job_id: str,
+        source_model: common_pb2.ModelSpec,
+        profile: QuantizationProfile,
+        bundle_path: Path,
+        smoke_mode: str,
+    ) -> LocalInferenceSmokeEvidence:
+        if smoke_mode == "structural":
+            return self._run_structural_smoke_evidence(bundle_path)
+        if smoke_mode == "runtime_generate":
+            return self._run_runtime_generate_smoke_evidence(
+                request=request,
+                job_id=job_id,
+                source_model=source_model,
+                profile=profile,
+                bundle_path=bundle_path,
+            )
+        raise AssertionError(f"Unexpected local inference smoke mode: {smoke_mode}")
+
     @staticmethod
     def _run_structural_smoke_test(bundle_path: Path) -> bool:
-        required_files = (
-            bundle_path / "config.json",
-            bundle_path / "tokenizer.json",
-            bundle_path / "weights.safetensors",
-        )
-        for path in required_files:
+        return OQQuantizationPipeline._run_structural_smoke_evidence(bundle_path).passed
+
+    @staticmethod
+    def _run_structural_smoke_evidence(bundle_path: Path) -> LocalInferenceSmokeEvidence:
+        started_at = time.perf_counter()
+        checked_files = _SMOKE_REQUIRED_FILES
+        for file_name in checked_files:
+            path = bundle_path / file_name
             if not path.exists():
-                return False
+                return LocalInferenceSmokeEvidence(
+                    status="failed",
+                    evidence_kind="bundle_structural",
+                    smoke_mode="structural",
+                    runtime="mlx_text",
+                    runtime_backend="structural",
+                    artifact_path=str(bundle_path),
+                    checked_files=checked_files,
+                    latency_ms=_elapsed_ms(started_at),
+                    failure_reason=f"{file_name} is missing from quantized bundle.",
+                )
             if path.suffix == ".json":
-                json.loads(path.read_text(encoding="utf-8"))
-        return True
+                try:
+                    json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    return LocalInferenceSmokeEvidence(
+                        status="failed",
+                        evidence_kind="bundle_structural",
+                        smoke_mode="structural",
+                        runtime="mlx_text",
+                        runtime_backend="structural",
+                        artifact_path=str(bundle_path),
+                        checked_files=checked_files,
+                        latency_ms=_elapsed_ms(started_at),
+                        failure_reason=f"{file_name} is not readable JSON: {exc}",
+                    )
+        return LocalInferenceSmokeEvidence(
+            status="passed",
+            evidence_kind="bundle_structural",
+            smoke_mode="structural",
+            runtime="mlx_text",
+            runtime_backend="structural",
+            artifact_path=str(bundle_path),
+            checked_files=checked_files,
+            latency_ms=_elapsed_ms(started_at),
+        )
+
+    def _run_runtime_generate_smoke_evidence(
+        self,
+        *,
+        request: maintenance_pb2.ConvertModelRequest,
+        job_id: str,
+        source_model: common_pb2.ModelSpec,
+        profile: QuantizationProfile,
+        bundle_path: Path,
+    ) -> LocalInferenceSmokeEvidence:
+        structural_evidence = self._run_structural_smoke_evidence(bundle_path)
+        prompt = (
+            request.ext.get("local_inference_smoke_prompt", "").strip()
+            or "Validate the Melix quantized bundle."
+        )
+        prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        if not structural_evidence.passed:
+            return LocalInferenceSmokeEvidence(
+                status="failed",
+                evidence_kind="local_runtime_generate",
+                smoke_mode="runtime_generate",
+                runtime="mlx_text",
+                runtime_backend="preflight",
+                artifact_path=str(bundle_path),
+                checked_files=structural_evidence.checked_files,
+                latency_ms=structural_evidence.latency_ms,
+                prompt_sha256=prompt_sha256,
+                failure_reason=f"structural preflight failed: {structural_evidence.failure_reason}",
+            )
+
+        loaded_handle = ""
+        runtime_backend = ""
+        started_at = time.perf_counter()
+        try:
+            smoke_model = common_pb2.ModelSpec(
+                model_id=f"{source_model.model_id}-quantized-{profile.quant_profile_id}-{job_id}",
+                model_path=str(bundle_path),
+                model_kind=source_model.model_kind or "text",
+                revision=f"quantized:{job_id}",
+                tokenizer_hash=source_model.tokenizer_hash,
+                quant_profile_id=profile.quant_profile_id,
+                parser_mode=source_model.parser_mode,
+                reasoning_mode=source_model.reasoning_mode,
+                max_context=source_model.max_context,
+                ext=dict(source_model.ext),
+            )
+            smoke_model.ext["melix.quantized_bundle_path"] = str(bundle_path)
+            loaded = self._registry.load_model(smoke_model)
+            loaded_handle = loaded.handle
+            runtime = self._registry.runtime_for_loaded_model(loaded)
+            runtime_backend = str(getattr(runtime, "runtime_name", "") or loaded.runtime_kind)
+            messages = [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text=prompt)],
+                )
+            ]
+            rendered_prompt = runtime.render_prompt(
+                messages,
+                loaded_model=loaded.runtime_model,
+                template_kwargs=None,
+                execution_ext={},
+            )
+            sampling = common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=1,
+                max_output_tokens=1,
+            )
+            cancel_event = Event()
+            token_stream = runtime.generate_tokens(
+                loaded.runtime_model,
+                rendered_prompt,
+                sampling,
+                cancel_event,
+                execution_ext={},
+            )
+            generated_token_count = 0
+            try:
+                for event in token_stream:
+                    text = getattr(event, "text", str(event))
+                    if text:
+                        generated_token_count += 1
+                    cancel_event.set()
+                    break
+            finally:
+                close = getattr(token_stream, "close", None)
+                if callable(close):
+                    close()
+            if generated_token_count <= 0:
+                raise RuntimeError("Runtime smoke generated no token events.")
+            return LocalInferenceSmokeEvidence(
+                status="passed",
+                evidence_kind="local_runtime_generate",
+                smoke_mode="runtime_generate",
+                runtime="mlx_text",
+                runtime_backend=runtime_backend,
+                artifact_path=str(bundle_path),
+                checked_files=_SMOKE_REQUIRED_FILES,
+                latency_ms=_elapsed_ms(started_at),
+                prompt_sha256=prompt_sha256,
+                generated_token_count=generated_token_count,
+            )
+        except Exception as exc:
+            return LocalInferenceSmokeEvidence(
+                status="failed",
+                evidence_kind="local_runtime_generate",
+                smoke_mode="runtime_generate",
+                runtime="mlx_text",
+                runtime_backend=runtime_backend or "unknown",
+                artifact_path=str(bundle_path),
+                checked_files=_SMOKE_REQUIRED_FILES,
+                latency_ms=_elapsed_ms(started_at),
+                prompt_sha256=prompt_sha256,
+                failure_reason=str(exc),
+            )
+        finally:
+            if loaded_handle:
+                self._registry.unload_model(loaded_handle)
 
     @staticmethod
     def _manifest_payload(
@@ -202,7 +429,7 @@ class OQQuantizationPipeline:
         bundle_path: Path,
         manifest_path: Path,
         artifact_bytes: int,
-        smoke_test_passed: bool,
+        smoke_evidence: LocalInferenceSmokeEvidence,
     ) -> dict[str, Any]:
         payload = {
             "schema_version": _BUNDLE_SCHEMA_VERSION,
@@ -233,15 +460,16 @@ class OQQuantizationPipeline:
             "calibration": calibration.to_dict(),
             "release_gate": _release_gate_for_request(
                 request,
-                smoke_test_passed=smoke_test_passed,
+                smoke_evidence=smoke_evidence,
             ),
+            "local_inference_smoke": smoke_evidence.to_manifest_dict(),
             "strategy": strategy,
             "source_format": source_format,
             "compatibility": {
-                "runtime": "mlx_text",
+                "runtime": smoke_evidence.runtime,
                 "serving_compatible": True,
                 "smoke_test_requested": request.run_smoke_test,
-                "smoke_test_passed": smoke_test_passed,
+                "smoke_test_passed": smoke_evidence.passed,
             },
             "protected_scope": protected_scope_for_request(
                 request,
@@ -312,6 +540,17 @@ def _source_artifact_kind_for_request(request: maintenance_pb2.ConvertModelReque
     return source_artifact_kind
 
 
+def _local_inference_smoke_mode_for_request(request: maintenance_pb2.ConvertModelRequest) -> str:
+    smoke_mode = request.ext.get("local_inference_smoke_mode", "").strip().lower() or "structural"
+    if smoke_mode not in {"structural", "runtime_generate"}:
+        raise ModelOperationError(
+            code="unsupported_local_inference_smoke_mode",
+            message=f"Unsupported local_inference_smoke_mode: {smoke_mode}",
+            details={"local_inference_smoke_mode": smoke_mode},
+        )
+    return smoke_mode
+
+
 def _source_artifact_path_for_request(
     request: maintenance_pb2.ConvertModelRequest,
     *,
@@ -348,6 +587,23 @@ def _validate_quantization_source(
                 "supported_source_artifact_kinds": "merged_adapter,adapter_export",
             },
         )
+
+
+def _not_requested_smoke_evidence(
+    *,
+    bundle_path: Path,
+    smoke_mode: str,
+) -> LocalInferenceSmokeEvidence:
+    return LocalInferenceSmokeEvidence(
+        status="not_requested",
+        evidence_kind="not_requested",
+        smoke_mode=smoke_mode,
+        runtime="mlx_text",
+        runtime_backend="not_requested",
+        artifact_path=str(bundle_path),
+        checked_files=(),
+        latency_ms=0.0,
+    )
 
 
 def _calibration_evidence_for_request(
@@ -429,10 +685,10 @@ def _calibration_evidence_for_request(
 def _release_gate_for_request(
     request: maintenance_pb2.ConvertModelRequest,
     *,
-    smoke_test_passed: bool,
+    smoke_evidence: LocalInferenceSmokeEvidence,
 ) -> dict[str, Any]:
     if request.run_smoke_test:
-        smoke_result = "passed" if smoke_test_passed else "failed"
+        smoke_result = smoke_evidence.status
     else:
         smoke_result = "not_requested"
     return {
@@ -440,6 +696,10 @@ def _release_gate_for_request(
         "latency_delta": _float_ext(request, "latency_delta"),
         "local_inference_smoke_result": smoke_result,
     }
+
+
+def _elapsed_ms(started_at: float) -> float:
+    return round(max(0.0, (time.perf_counter() - started_at) * 1000.0), 3)
 
 
 def _float_ext(request: maintenance_pb2.ConvertModelRequest, key: str) -> float:
