@@ -390,6 +390,27 @@ def _alignment_manifest_payload(
     reward_summary = _reward_summary(dataset.package.normalized_samples)
     if reward_summary:
         metrics.update(reward_summary)
+    if alignment.dataset_contract in {"prompt_candidate", "reward_scored"}:
+        metrics.update(
+            {
+                "policy_update_count": training_result.metrics.policy_update_count,
+                "selected_candidate_count": training_result.metrics.selected_candidate_count,
+                "policy_update_trace_path": training_result.metrics.policy_update_trace_path,
+                "kl_penalty": alignment.kl_penalty,
+            }
+        )
+        if training_result.metrics.reward_mean:
+            metrics["reward_mean"] = training_result.metrics.reward_mean
+            metrics["reward_p50"] = training_result.metrics.reward_p50
+            metrics["reward_p95"] = training_result.metrics.reward_p95
+        if training_result.metrics.candidate_group_count:
+            metrics["candidate_group_count"] = training_result.metrics.candidate_group_count
+            metrics["candidate_group_reward_margin_mean"] = (
+                training_result.metrics.candidate_group_reward_margin_mean
+            )
+            metrics["candidate_group_reward_variance_mean"] = (
+                training_result.metrics.candidate_group_reward_variance_mean
+            )
 
     return {
         "schema_version": "melix.alignment_run.v1",

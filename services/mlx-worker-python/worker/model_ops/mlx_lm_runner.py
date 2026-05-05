@@ -63,6 +63,15 @@ class TrainingMetrics:
     rejected_logprob_mean: float | None = None
     chosen_rejected_margin: float | None = None
     win_rate_proxy: float | None = None
+    reward_mean: float = 0.0
+    reward_p50: float = 0.0
+    reward_p95: float = 0.0
+    policy_update_count: int = 0
+    selected_candidate_count: int = 0
+    candidate_group_count: int = 0
+    candidate_group_reward_margin_mean: float = 0.0
+    candidate_group_reward_variance_mean: float = 0.0
+    policy_update_trace_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -153,13 +162,13 @@ class MLXLMRunner:
             raise _alignment_trainer_unavailable_error(request.config)
         try:
             result = self.train_native(request)
-            return replace(result, execution_backend="native")
+            return result if result.execution_backend else replace(result, execution_backend="native")
         except NativeExecutionUnavailable as exc:
             result = self.train_subprocess(request, exc)
             return replace(result, execution_backend="subprocess")
 
     def supports_alignment_training(self, config: LoRATrainingConfig) -> bool:
-        return config.training_objective == "preference"
+        return config.training_objective in {"preference", "alignment_rl"}
 
     def activate(self, request: ActivationRequest) -> ActivationResult:
         try:
@@ -174,6 +183,10 @@ class MLXLMRunner:
             from worker.model_ops.preference_training import train_preference_native
 
             return train_preference_native(request)
+        if request.config.training_objective == "alignment_rl":
+            from worker.model_ops.rl_alignment_training import train_alignment_rl_trace
+
+            return train_alignment_rl_trace(request)
 
         try:
             from mlx_lm.lora import train_model

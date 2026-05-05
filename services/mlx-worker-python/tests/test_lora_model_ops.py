@@ -1025,6 +1025,109 @@ def test_train_lora_supports_rl_alignment_mode_contracts(
     assert runner.last_train_request.config.alignment.alignment_algorithm == training_mode
 
 
+@pytest.mark.parametrize(
+    ("training_mode", "dataset_format", "samples", "extra_ext", "expected_reward_mean"),
+    [
+        (
+            "grpo",
+            "prompt_candidate",
+            [
+                {
+                    "prompt": "Draft two summaries.",
+                    "candidates": [
+                        {"text": "Short summary.", "score": 0.7},
+                        {"text": "Verbose summary.", "score": 0.4},
+                    ],
+                }
+            ],
+            {"grpo_candidate_count": "2", "reference_model_path": "/tmp/reference-model", "kl_penalty": "0.05"},
+            0.55,
+        ),
+        (
+            "rlhf",
+            "reward_scored",
+            [
+                {
+                    "prompt": "Rate this answer.",
+                    "response": "Helpful answer.",
+                    "reward_score": 0.9,
+                }
+            ],
+            {"reward_model_manifest_path": "/tmp/reward-model/manifest.json"},
+            0.9,
+        ),
+    ],
+)
+def test_train_lora_runs_scored_rl_alignment_with_default_runner(
+    tmp_path: Path,
+    training_mode: str,
+    dataset_format: str,
+    samples: list[dict],
+    extra_ext: dict[str, str],
+    expected_reward_mean: float,
+) -> None:
+    extra_ext = dict(extra_ext)
+    if training_mode == "rlhf":
+        reward_manifest_path = tmp_path / "reward-model" / "manifest.json"
+        reward_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        reward_manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "melix.reward_model_adapter.v1",
+                    "reward_model_id": "reward-model",
+                    "compatible_policy_families": ["melix-dev-text"],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        extra_ext["reward_model_manifest_path"] = str(reward_manifest_path)
+
+    dataset_dir = _write_dataset_package(
+        tmp_path / f"dataset-default-{training_mode}",
+        format=dataset_format,
+        samples=samples,
+    )
+    service = _build_service(tmp_path, MLXLMRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / f"train-default-{training_mode}"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": training_mode,
+                    "adapter_name": f"melix-default-{training_mode}-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    **extra_ext,
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    alignment_payload = json.loads(Path(payload["alignment_run_manifest_path"]).read_text(encoding="utf-8"))
+
+    assert events[-1].HasField("completed")
+    assert payload["training_backend"] == "scored_trace"
+    assert Path(payload["weights_path"]).is_file()
+    assert alignment_payload["training_backend"] == "scored_trace"
+    assert alignment_payload["metrics"]["policy_update_count"] == 1
+    assert alignment_payload["metrics"]["selected_candidate_count"] == 1
+    assert alignment_payload["metrics"]["reward_mean"] == pytest.approx(expected_reward_mean)
+    assert alignment_payload["metrics"]["policy_update_trace_path"].endswith("policy_updates.jsonl")
+    assert alignment_payload["metrics"]["kl_penalty"] == pytest.approx(
+        0.05 if training_mode == "grpo" else 0.0
+    )
+    if training_mode == "grpo":
+        assert alignment_payload["metrics"]["candidate_group_reward_margin_mean"] == pytest.approx(0.3)
+    else:
+        assert alignment_payload["reward_model_manifest_path"] == extra_ext["reward_model_manifest_path"]
+
+
 def test_train_lora_supports_continual_pretraining_contract(tmp_path: Path) -> None:
     dataset_dir = _write_dataset_package(
         tmp_path / "dataset-cpt",

@@ -131,13 +131,29 @@ def test_mlx_lora_namespace_uses_dora_fine_tune_type(tmp_path: Path) -> None:
     assert mlx_lm_runner_module._mlx_lora_namespace(request).fine_tune_type == "dora"
 
 
-def test_mlx_lm_runner_rejects_alignment_rl_without_backend_before_mlx_execution(tmp_path: Path) -> None:
+def test_mlx_lm_runner_routes_alignment_rl_to_scored_trace_backend(tmp_path: Path) -> None:
     config = training_config_module.normalize_training_config(
         source_model=_text_model(model_path=str(tmp_path / "base-model")),
-        ext={"training_mode": "grpo", "grpo_candidate_count": "4"},
+        ext={"training_mode": "grpo", "grpo_candidate_count": "2", "kl_penalty": "0.05"},
         dataset_format="prompt_candidate",
         response_only_supported=False,
-        sample_count=2,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        "\n"
+        + json.dumps(
+            {
+                "prompt": "Draft two summaries.",
+                "candidates": [
+                    {"text": "Short summary.", "score": 0.7},
+                    {"text": "Verbose summary.", "score": 0.4},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
     )
     request = mlx_lm_runner_module.TrainingRequest(
         job_id="train-grpo",
@@ -145,18 +161,155 @@ def test_mlx_lm_runner_rejects_alignment_rl_without_backend_before_mlx_execution
         model_path=tmp_path / "base-model",
         model_revision="main",
         adapter_output_dir=tmp_path / "adapter-output",
-        normalized_dataset_dir=tmp_path / "normalized",
+        normalized_dataset_dir=normalized_dataset_dir,
         config=config,
-        dataset_format="preference_pair",
+        dataset_format="prompt_candidate",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().train(request)
+
+    assert result.execution_backend == "scored_trace"
+    assert result.weights_path.read_bytes()
+    assert json.loads(result.adapter_config_path.read_text(encoding="utf-8"))["alignment_algorithm"] == "grpo"
+    assert result.metrics.examples_seen == 1
+    assert result.metrics.policy_update_count == 1
+    assert result.metrics.selected_candidate_count == 1
+    assert result.metrics.reward_mean == pytest.approx(0.55)
+    assert result.metrics.reward_p50 == pytest.approx(0.55)
+    assert result.metrics.candidate_group_reward_margin_mean == pytest.approx(0.3)
+    assert result.metrics.candidate_group_reward_variance_mean == pytest.approx(0.0225)
+    assert result.metrics.policy_update_trace_path.endswith("policy_updates.jsonl")
+
+
+def test_alignment_rl_trace_runner_rejects_missing_alignment_config() -> None:
+    from worker.model_ops.rl_alignment_training import train_alignment_rl_trace
+
+    request = types.SimpleNamespace(config=types.SimpleNamespace(alignment=None))
+
+    with pytest.raises(ModelOperationError) as exc:
+        train_alignment_rl_trace(request)
+
+    assert exc.value.code == "invalid_alignment_config"
+
+
+def test_alignment_rl_trace_runner_rejects_unknown_algorithm(tmp_path: Path) -> None:
+    from worker.model_ops.rl_alignment_training import train_alignment_rl_trace
+
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps({"reward_score": 1.0}) + "\n",
+        encoding="utf-8",
+    )
+    request = types.SimpleNamespace(
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=types.SimpleNamespace(
+            alignment=types.SimpleNamespace(alignment_algorithm="ppo"),
+        ),
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        train_alignment_rl_trace(request)
+
+    assert exc.value.code == "unsupported_alignment_trainer"
+    assert exc.value.details["alignment_algorithm"] == "ppo"
+
+
+@pytest.mark.parametrize(
+    ("file_state", "expected_message"),
+    [
+        ("missing", "requires train.jsonl"),
+        ("invalid-json", "must contain valid JSON lines"),
+        ("array-row", "rows must be JSON objects"),
+        ("empty", "requires at least one scored row"),
+    ],
+)
+def test_alignment_rl_trace_runner_rejects_invalid_training_rows(
+    tmp_path: Path,
+    file_state: str,
+    expected_message: str,
+) -> None:
+    from worker.model_ops.rl_alignment_training import _load_training_rows
+
+    train_path = tmp_path / "train.jsonl"
+    if file_state == "invalid-json":
+        train_path.write_text("{not-json\n", encoding="utf-8")
+    elif file_state == "array-row":
+        train_path.write_text("[]\n", encoding="utf-8")
+    elif file_state == "empty":
+        train_path.write_text("\n", encoding="utf-8")
+
+    with pytest.raises(ModelOperationError) as exc:
+        _load_training_rows(train_path)
+
+    assert expected_message in exc.value.message
+
+
+def test_alignment_rl_trace_runner_rejects_bad_scored_rows() -> None:
+    from worker.model_ops.rl_alignment_training import (
+        _grpo_policy_updates,
+        _reward_summary,
+        _rlhf_policy_updates,
+        _tokens_per_second,
+    )
+
+    with pytest.raises(ModelOperationError) as grpo_exc:
+        _grpo_policy_updates(
+            [{"prompt": "Draft.", "candidates": [{"text": "Only.", "score": 0.1}]}],
+            candidate_count=2,
+        )
+    assert grpo_exc.value.details["grpo_candidate_count"] == "2"
+
+    with pytest.raises(ModelOperationError) as rlhf_exc:
+        _rlhf_policy_updates([{"prompt": "Rate.", "response": "Helpful."}])
+    assert rlhf_exc.value.details["missing_field"] == "reward_score"
+
+    with pytest.raises(ModelOperationError):
+        _reward_summary([])
+
+    assert _tokens_per_second([], 0.0) == 0.0
+
+
+def test_alignment_rl_trace_runner_rejects_unscored_grpo_candidates(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "grpo", "grpo_candidate_count": "2"},
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Draft two summaries.",
+                "candidates": [
+                    {"text": "Short summary."},
+                    {"text": "Verbose summary."},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="prompt_candidate",
     )
 
     with pytest.raises(ModelOperationError) as exc:
         mlx_lm_runner_module.MLXLMRunner().train(request)
 
-    assert exc.value.code == "unsupported_alignment_trainer"
-    assert exc.value.details["training_mode"] == "grpo"
+    assert exc.value.code == "invalid_alignment_dataset"
     assert exc.value.details["alignment_algorithm"] == "grpo"
-    assert exc.value.details["available_backend"] == "mlx_lm_lora_supervised"
+    assert exc.value.details["missing_field"] == "candidate.score"
     assert not request.adapter_output_dir.exists()
 
 
