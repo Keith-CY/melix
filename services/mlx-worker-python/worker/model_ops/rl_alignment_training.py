@@ -333,6 +333,7 @@ def _grpo_policy_updates(
                 "prompt": str(sample.get("prompt", "")),
                 "selected_candidate_index": selected["index"],
                 "selected_candidate_text": selected["text"],
+                "selected_text": selected["text"],
                 "selected_reward": selected["score"],
                 "group_reward_mean": group_mean,
                 "group_reward_margin": group_margins[-1],
@@ -448,6 +449,7 @@ def _grpo_runtime_policy_updates(
                 "prompt": prompt,
                 "selected_candidate_index": selected["index"],
                 "selected_candidate_text": selected["text"],
+                "selected_text": selected["text"],
                 "selected_reward": selected["score"],
                 "group_reward_mean": group_mean,
                 "group_reward_margin": group_margins[-1],
@@ -828,6 +830,7 @@ def _estimated_tokens_seen(rows: list[dict[str, Any]]) -> int:
         total += len(str(row.get("prompt", "")).split())
         selected_text = (
             row.get("selected_response", "")
+            or row.get("selected_text", "")
             or row.get("selected_candidate_text", "")
             or row.get("selected_candidate_index", "")
         )

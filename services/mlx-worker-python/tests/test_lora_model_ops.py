@@ -1026,7 +1026,7 @@ def test_train_lora_supports_rl_alignment_mode_contracts(
 
 
 @pytest.mark.parametrize(
-    ("training_mode", "dataset_format", "samples", "extra_ext", "expected_reward_mean"),
+    ("training_mode", "dataset_format", "samples", "extra_ext", "expected_reward_mean", "expected_grpo_margin"),
     [
         (
             "grpo",
@@ -1042,6 +1042,23 @@ def test_train_lora_supports_rl_alignment_mode_contracts(
             ],
             {"grpo_candidate_count": "2", "reference_model_path": "/tmp/reference-model", "kl_penalty": "0.05"},
             0.55,
+            0.3,
+        ),
+        (
+            "grpo",
+            "prompt_candidate",
+            [
+                {
+                    "prompt": "Draft a neutral response.",
+                    "candidates": [
+                        {"text": "Negative score response.", "score": -1.0},
+                        {"text": "Positive score response.", "score": 1.0},
+                    ],
+                }
+            ],
+            {"grpo_candidate_count": "2", "reference_model_path": "/tmp/reference-model", "kl_penalty": "0.05"},
+            0.0,
+            2.0,
         ),
         (
             "rlhf",
@@ -1055,6 +1072,7 @@ def test_train_lora_supports_rl_alignment_mode_contracts(
             ],
             {"reward_model_manifest_path": "/tmp/reward-model/manifest.json"},
             0.9,
+            None,
         ),
     ],
 )
@@ -1065,6 +1083,7 @@ def test_train_lora_runs_scored_rl_alignment_with_default_runner(
     samples: list[dict],
     extra_ext: dict[str, str],
     expected_reward_mean: float,
+    expected_grpo_margin: float | None,
 ) -> None:
     extra_ext = dict(extra_ext)
     if training_mode == "rlhf":
@@ -1123,7 +1142,17 @@ def test_train_lora_runs_scored_rl_alignment_with_default_runner(
         0.05 if training_mode == "grpo" else 0.0
     )
     if training_mode == "grpo":
-        assert alignment_payload["metrics"]["candidate_group_reward_margin_mean"] == pytest.approx(0.3)
+        assert expected_grpo_margin is not None
+        assert alignment_payload["metrics"]["candidate_group_reward_margin_mean"] == pytest.approx(
+            expected_grpo_margin
+        )
+        trace_rows = [
+            json.loads(line)
+            for line in Path(alignment_payload["metrics"]["policy_update_trace_path"]).read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        assert trace_rows[0]["selected_text"] == trace_rows[0]["selected_candidate_text"]
     else:
         assert alignment_payload["reward_model_manifest_path"] == extra_ext["reward_model_manifest_path"]
 
