@@ -74,7 +74,21 @@ CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_E := \
 CONTROL_PLANE_TEST_FILTER_OPENAI := OpenAIHandlerTests
 CONTROL_PLANE_TEST_FILTER_HTTP_REST := RichOutputSanitizerTests|PersistentAuthSessionStoreTests|ProtocolCompatibilityMatrixTests|ConnectionLifecyclePolicyTests|SSEStreamWriterTests
 
-.PHONY: bootstrap proto proto-check swift-build-integration-prereqs swift-test py-test integration-test package-smoke swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
+SWIFT_TEST_SHARD_TARGETS := \
+	swift-test-protocol \
+	swift-test-text-worker \
+	swift-test-control-core \
+	swift-test-control-request-coordinator-a \
+	swift-test-control-request-coordinator-b \
+	swift-test-control-request-coordinator-c \
+	swift-test-control-request-coordinator-d \
+	swift-test-control-request-coordinator-e \
+	swift-test-control-openai \
+	swift-test-control-rest \
+	swift-test-control-worker \
+	swift-test-menubar
+
+.PHONY: bootstrap proto proto-check swift-build-integration-prereqs swift-test $(SWIFT_TEST_SHARD_TARGETS) py-test integration-test package-smoke swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
 
 PHASE1_METRICS_ARGS ?=
 PHASE2_METRICS_ARGS ?=
@@ -104,17 +118,78 @@ swift-build-integration-prereqs:
 
 swift-test:
 	/bin/zsh -lc 'set -e; \
-	mkdir -p "$(PROTOCOL_SWIFT_HOME)" "$(TEXT_WORKER_SWIFT_HOME)" "$(CONTROL_PLANE_SWIFT_HOME)" "$(MENUBAR_SWIFT_HOME)"; \
-	mkdir -p "$(PROTOCOL_MODULE_CACHE_PATH)" "$(TEXT_WORKER_MODULE_CACHE_PATH)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)" "$(MENUBAR_MODULE_CACHE_PATH)"; \
-	bash scripts/ci_progress.sh "swift-test stage: protocol package" env HOME="$(PROTOCOL_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(PROTOCOL_MODULE_CACHE_PATH)" xcrun swift test --package-path packages/protocol/swift; \
-	bash scripts/ci_progress.sh "swift-test stage: text worker package" env HOME="$(TEXT_WORKER_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(TEXT_WORKER_MODULE_CACHE_PATH)" xcrun swift test --package-path services/mlx-text-worker-swift; \
-	bash scripts/ci_progress.sh "swift-test stage: control-plane core groups" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_CONTROL)"; \
-	for specifier in $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_A) $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_B) $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_C) $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_D) $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_E); do \
+	for target in $(SWIFT_TEST_SHARD_TARGETS); do \
+		$(MAKE) "$$target"; \
+	done'
+
+swift-test-protocol:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(PROTOCOL_SWIFT_HOME)" "$(PROTOCOL_MODULE_CACHE_PATH)"; \
+	bash scripts/ci_progress.sh "swift-test stage: protocol package" env HOME="$(PROTOCOL_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(PROTOCOL_MODULE_CACHE_PATH)" xcrun swift test --package-path packages/protocol/swift'
+
+swift-test-text-worker:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(TEXT_WORKER_SWIFT_HOME)" "$(TEXT_WORKER_MODULE_CACHE_PATH)"; \
+	bash scripts/ci_progress.sh "swift-test stage: text worker package" env HOME="$(TEXT_WORKER_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(TEXT_WORKER_MODULE_CACHE_PATH)" xcrun swift test --package-path services/mlx-text-worker-swift'
+
+swift-test-control-core:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(CONTROL_PLANE_SWIFT_HOME)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
+	bash scripts/ci_progress.sh "swift-test stage: control-plane core groups" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_CONTROL)"'
+
+swift-test-control-request-coordinator-a:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(CONTROL_PLANE_SWIFT_HOME)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
+	for specifier in $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_A); do \
 		bash scripts/ci_progress.sh "swift-test stage: control-plane request coordinator $$specifier" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$$specifier"; \
-	done; \
-	bash scripts/ci_progress.sh "swift-test stage: control-plane OpenAI handler" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_OPENAI)"; \
-	bash scripts/ci_progress.sh "swift-test stage: control-plane REST compatibility" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_HTTP_REST)"; \
-	bash scripts/ci_progress.sh "swift-test stage: control-plane worker clients" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_WORKER)"; \
+	done'
+
+swift-test-control-request-coordinator-b:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(CONTROL_PLANE_SWIFT_HOME)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
+	for specifier in $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_B); do \
+		bash scripts/ci_progress.sh "swift-test stage: control-plane request coordinator $$specifier" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$$specifier"; \
+	done'
+
+swift-test-control-request-coordinator-c:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(CONTROL_PLANE_SWIFT_HOME)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
+	for specifier in $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_C); do \
+		bash scripts/ci_progress.sh "swift-test stage: control-plane request coordinator $$specifier" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$$specifier"; \
+	done'
+
+swift-test-control-request-coordinator-d:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(CONTROL_PLANE_SWIFT_HOME)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
+	for specifier in $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_D); do \
+		bash scripts/ci_progress.sh "swift-test stage: control-plane request coordinator $$specifier" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$$specifier"; \
+	done'
+
+swift-test-control-request-coordinator-e:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(CONTROL_PLANE_SWIFT_HOME)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
+	for specifier in $(CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_E); do \
+		bash scripts/ci_progress.sh "swift-test stage: control-plane request coordinator $$specifier" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$$specifier"; \
+	done'
+
+swift-test-control-openai:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(CONTROL_PLANE_SWIFT_HOME)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
+	bash scripts/ci_progress.sh "swift-test stage: control-plane OpenAI handler" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_OPENAI)"'
+
+swift-test-control-rest:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(CONTROL_PLANE_SWIFT_HOME)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
+	bash scripts/ci_progress.sh "swift-test stage: control-plane REST compatibility" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_HTTP_REST)"'
+
+swift-test-control-worker:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(CONTROL_PLANE_SWIFT_HOME)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
+	bash scripts/ci_progress.sh "swift-test stage: control-plane worker clients" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_WORKER)"'
+
+swift-test-menubar:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(MENUBAR_SWIFT_HOME)" "$(MENUBAR_MODULE_CACHE_PATH)"; \
 	bash scripts/ci_progress.sh "swift-test stage: macOS menubar package" env HOME="$(MENUBAR_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(MENUBAR_MODULE_CACHE_PATH)" xcrun swift test --package-path apps/macos-menubar'
 
 py-test:
