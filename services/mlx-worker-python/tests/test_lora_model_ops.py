@@ -855,6 +855,8 @@ def test_train_lora_supports_preference_mode_contracts(
     assert alignment_payload["alignment_algorithm"] == training_mode
     assert alignment_payload["dataset_contract"] == "preference_pair"
     assert alignment_payload["adapter_manifest_path"] == payload["artifact_path"]
+    assert "preference_loss" not in alignment_payload["metrics"]
+    assert alignment_payload["metrics"]["preference_loss_config"] == training_mode
     assert alignment_payload["metrics"]["preference_loss_final"] == pytest.approx(0.2)
     assert alignment_payload["metrics"]["chosen_logprob_mean"] == pytest.approx(-1.5)
     assert alignment_payload["metrics"]["rejected_logprob_mean"] == pytest.approx(-2.0)

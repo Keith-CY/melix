@@ -119,11 +119,11 @@ Expected: fails with `TypeError` for unknown `TrainingMetrics` keyword.
 Add these defaulted fields to `TrainingMetrics`:
 
 ```python
-    preference_loss_final: float = 0.0
-    chosen_logprob_mean: float = 0.0
-    rejected_logprob_mean: float = 0.0
-    chosen_rejected_margin: float = 0.0
-    win_rate_proxy: float = 0.0
+    preference_loss_final: float | None = None
+    chosen_logprob_mean: float | None = None
+    rejected_logprob_mean: float | None = None
+    chosen_rejected_margin: float | None = None
+    win_rate_proxy: float | None = None
 ```
 
 - [x] **Step 4: Verify the test passes**
@@ -377,7 +377,9 @@ Expected: fails because metrics are not copied into alignment manifest.
 
 In `_alignment_manifest_payload`, when `dataset_contract == "preference_pair"`,
 populate preference metrics from `training_result.metrics` instead of static
-zero defaults.
+zero defaults. Keep the config-time loss selector under
+`preference_loss_config` so manifest consumers can distinguish the requested
+objective from the observed `preference_loss_final` scalar.
 
 - [x] **Step 4: Verify pipeline test passes**
 
@@ -470,6 +472,15 @@ section in this plan.
   `97.21% (557/573)` after refreshing `origin/main` to include merged
   PR #368.
 - `git diff --check` after native preference trainer routing: passed.
+- PR #369 review follow-up targeted tests:
+  `8 passed, 2 warnings in 1.18s`.
+- Focused Python regression after PR #369 review follow-up:
+  `142 passed, 2 warnings in 3.49s`.
+- Coverage run after PR #369 review follow-up:
+  `142 passed, 2 warnings in 4.03s`.
+- Python changed-line coverage after PR #369 review follow-up:
+  `97.88% (600/613)`.
+- `git diff --check` after PR #369 review follow-up: passed.
 
 ## Remaining Issue 365 Gaps After This Plan
 

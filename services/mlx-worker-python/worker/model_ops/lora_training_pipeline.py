@@ -379,7 +379,7 @@ def _alignment_manifest_payload(
     if alignment.dataset_contract == "preference_pair":
         metrics.update(
             {
-                "preference_loss": config.preference_loss,
+                "preference_loss_config": config.preference_loss,
                 "preference_loss_final": training_result.metrics.preference_loss_final,
                 "chosen_logprob_mean": training_result.metrics.chosen_logprob_mean,
                 "rejected_logprob_mean": training_result.metrics.rejected_logprob_mean,

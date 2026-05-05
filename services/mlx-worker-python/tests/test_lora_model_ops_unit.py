@@ -297,6 +297,31 @@ def test_training_metrics_serializes_preference_fields(tmp_path: Path) -> None:
     assert restored.metrics.win_rate_proxy == pytest.approx(1.0)
 
 
+def test_training_metrics_serializes_absent_preference_fields_as_null(tmp_path: Path) -> None:
+    metrics = mlx_lm_runner_module.TrainingMetrics(
+        job_duration_ms=10.0,
+        tokens_seen=4,
+        examples_seen=2,
+        loss_final=0.4,
+        loss_best=0.3,
+        learning_rate_final=1e-4,
+    )
+    result = mlx_lm_runner_module.TrainingResult(
+        weights_path=tmp_path / "adapters.safetensors",
+        adapter_config_path=tmp_path / "adapter_config.json",
+        metrics=metrics,
+        execution_backend="native",
+    )
+
+    payload = mlx_lm_runner_module._serialize_training_result(result)
+    restored = mlx_lm_runner_module._deserialize_training_result(payload)
+
+    assert payload["metrics"]["preference_loss_final"] is None
+    assert payload["metrics"]["win_rate_proxy"] is None
+    assert restored.metrics.preference_loss_final is None
+    assert restored.metrics.win_rate_proxy is None
+
+
 def test_preference_training_loads_preference_pairs(tmp_path: Path) -> None:
     from worker.model_ops.preference_training import load_preference_pairs
 
@@ -320,6 +345,28 @@ def test_preference_training_loads_preference_pairs(tmp_path: Path) -> None:
     assert pairs[0].prompt == "Choose."
     assert pairs[0].chosen == "Helpful."
     assert pairs[0].rejected == "Unsafe."
+
+
+def test_preference_examples_seen_prefers_callback_count(tmp_path: Path) -> None:
+    from worker.model_ops.preference_training import (
+        PreferenceMetricsCollector,
+        _preference_examples_seen,
+    )
+
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "orpo", "batch_size": "2", "iters": "3"},
+        dataset_format="preference_pair",
+        response_only_supported=False,
+        sample_count=6,
+    )
+    collector = PreferenceMetricsCollector()
+
+    assert _preference_examples_seen(collector=collector, config=config) == 6
+
+    collector.on_train_loss_report({"examples_seen": 5})
+
+    assert _preference_examples_seen(collector=collector, config=config) == 5
 
 
 def test_preference_training_rejects_missing_or_empty_train_file(tmp_path: Path) -> None:
@@ -645,6 +692,47 @@ def test_preference_training_iterate_batches_rejects_too_small_dataset() -> None
         next(iterate_preference_batches(dataset, batch_size=2, max_seq_length=16))
 
 
+def test_preference_training_iterate_batches_rejects_distributed_sharding() -> None:
+    pytest.importorskip("mlx.core")
+    from worker.model_ops.preference_training import (
+        PreferencePair,
+        PreferenceTokenDataset,
+        iterate_preference_batches,
+    )
+
+    class SimpleTokenizer:
+        eos_token_id = 4
+
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            del add_special_tokens
+            return {
+                "Prompt": [0],
+                "Good": [2],
+                "Bad": [3],
+            }[text]
+
+    class FakeCommGroup:
+        pass
+
+    dataset = PreferenceTokenDataset(
+        [
+            PreferencePair(prompt="Prompt", chosen="Good", rejected="Bad"),
+            PreferencePair(prompt="Prompt", chosen="Good", rejected="Bad"),
+        ],
+        SimpleTokenizer(),
+    )
+
+    with pytest.raises(NotImplementedError, match="Distributed preference batch sharding"):
+        next(
+            iterate_preference_batches(
+                dataset,
+                batch_size=2,
+                max_seq_length=16,
+                comm_group=FakeCommGroup(),
+            )
+        )
+
+
 def test_preference_training_tokenizes_chat_template_and_text_fallbacks() -> None:
     from worker.model_ops.preference_training import PreferencePair, PreferenceTokenDataset
 
@@ -760,6 +848,7 @@ def test_train_preference_native_wires_mlx_lm_trainer_and_metrics(
                 "train_loss": 0.31,
                 "learning_rate": 0.0002,
                 "trained_tokens": 12,
+                "trained_examples": 7,
                 "tokens_per_second": 34.0,
             }
         )
@@ -832,9 +921,11 @@ def test_train_preference_native_wires_mlx_lm_trainer_and_metrics(
     ]
     assert calls["lora_converted"] is True
     assert calls["trainer_args"].batch_size == 1
+    assert calls["trainer_args"].steps_per_eval == 0
     assert result.weights_path.read_bytes() == b"trained-preference-adapter"
     assert result.adapter_config_path.is_file()
     assert result.metrics.tokens_seen == 12
+    assert result.metrics.examples_seen == 7
     assert result.metrics.learning_rate_final == pytest.approx(0.0002)
     assert result.metrics.preference_loss_final == pytest.approx(0.2)
     assert result.metrics.chosen_rejected_margin == pytest.approx(0.5)

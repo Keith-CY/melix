@@ -6,10 +6,15 @@ import json
 import math
 from pathlib import Path
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.training_config import LoRATrainingConfig
+
+if TYPE_CHECKING:
+    from worker.model_ops.mlx_lm_runner import TrainingRequest, TrainingResult
+
+_mlx_core: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +68,7 @@ class PreferenceMetricsCollector:
         self.losses: list[float] = []
         self.learning_rates: list[float] = []
         self.tokens_seen = 0
+        self.examples_seen: int | None = None
         self.tokens_per_second = 0.0
 
     def on_train_loss_report(self, train_info: dict) -> None:
@@ -72,6 +78,10 @@ class PreferenceMetricsCollector:
             self.learning_rates.append(float(train_info["learning_rate"]))
         if "trained_tokens" in train_info:
             self.tokens_seen = int(train_info["trained_tokens"])
+        if "trained_examples" in train_info:
+            self.examples_seen = int(train_info["trained_examples"])
+        elif "examples_seen" in train_info:
+            self.examples_seen = int(train_info["examples_seen"])
         if "tokens_per_second" in train_info:
             self.tokens_per_second = float(train_info["tokens_per_second"])
 
@@ -85,7 +95,7 @@ def load_preference_pairs(dataset_dir: Path) -> list[PreferencePair]:
     return _load_preference_pairs_file(path)
 
 
-def train_preference_native(request: Any) -> Any:
+def train_preference_native(request: TrainingRequest) -> TrainingResult:
     try:
         import mlx.core as mx
         import mlx.optimizers as optim
@@ -157,7 +167,7 @@ def train_preference_native(request: Any) -> Any:
             iters=args.iters,
             val_batches=0,
             steps_per_report=args.steps_per_report,
-            steps_per_eval=args.steps_per_eval,
+            steps_per_eval=0,
             steps_per_save=args.save_every,
             adapter_file=adapter_file,
             max_seq_length=args.max_seq_length,
@@ -208,7 +218,10 @@ def train_preference_native(request: Any) -> Any:
         metrics=TrainingMetrics(
             job_duration_ms=duration_ms,
             tokens_seen=collector.tokens_seen,
-            examples_seen=request.config.batch_size * request.config.iters,
+            examples_seen=_preference_examples_seen(
+                collector=collector,
+                config=request.config,
+            ),
             loss_final=losses[-1],
             loss_best=min(losses),
             learning_rate_final=learning_rates[-1],
@@ -409,18 +422,13 @@ def iterate_preference_batches(
             f"Dataset must have at least batch_size={batch_size} examples "
             f"but only has {len(dataset)}."
         )
-    idx = sorted(range(len(dataset)), key=dataset.itemlen)
     if comm_group is not None:
-        offset = comm_group.rank()
-        step = comm_group.size()
-    else:
-        offset = 0
-        step = 1
-    if batch_size % step != 0:
-        raise ValueError("The batch size must be divisible by the number of workers")
-
+        raise NotImplementedError(
+            "Distributed preference batch sharding is deferred until GRPO support lands."
+        )
+    idx = sorted(range(len(dataset)), key=dataset.itemlen)
     batch_idx = [
-        idx[i + offset: i + offset + batch_size: step]
+        idx[i: i + batch_size]
         for i in range(0, len(idx) - batch_size + 1, batch_size)
     ]
     if seed is not None:
@@ -626,6 +634,22 @@ def _array_to_float_list(value: Any) -> list[float]:
 
 
 def _mx() -> Any:
-    import mlx.core as mx
+    global _mlx_core
+    if _mlx_core is None:
+        import mlx.core as mx
 
-    return mx
+        _mlx_core = mx
+    return _mlx_core
+
+
+def _preference_examples_seen(
+    *,
+    collector: PreferenceMetricsCollector,
+    config: LoRATrainingConfig,
+) -> int:
+    if collector.examples_seen is not None:
+        return collector.examples_seen
+    # MLX-LM preference callbacks reliably expose trained_tokens, but not row
+    # counts. Keep examples_seen as configured sample-visits until that callback
+    # adds an actual examples counter.
+    return config.batch_size * config.iters

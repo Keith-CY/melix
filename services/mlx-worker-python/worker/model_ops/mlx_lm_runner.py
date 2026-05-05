@@ -58,11 +58,11 @@ class TrainingMetrics:
     chunked_enabled: bool = False
     chunk_count: int = 0
     source_sample_count: int = 0
-    preference_loss_final: float = 0.0
-    chosen_logprob_mean: float = 0.0
-    rejected_logprob_mean: float = 0.0
-    chosen_rejected_margin: float = 0.0
-    win_rate_proxy: float = 0.0
+    preference_loss_final: float | None = None
+    chosen_logprob_mean: float | None = None
+    rejected_logprob_mean: float | None = None
+    chosen_rejected_margin: float | None = None
+    win_rate_proxy: float | None = None
 
 
 @dataclass(frozen=True)
