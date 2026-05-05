@@ -91,6 +91,16 @@ def test_scope_report_selects_only_matching_probe() -> None:
     assert scope["force_all"] is False
 
 
+def test_scope_report_selects_changed_scope_coverage_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/changed_scope_coverage.py"],
+    )
+
+    selected_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "changed-scope-coverage-empty-path-short-circuit" in selected_ids
+
+
 def test_scope_report_selects_training_dataset_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -525,6 +535,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "benchmark-export-run-scan-single-pass",
         "benchmark-queue-decoded-record-cache",
         "benchmark-store-matrix-streaming",
+        "changed-scope-coverage-empty-path-short-circuit",
         "closure-audit-probe-source-short-circuit",
         "deterministic-rerank-query-context-reuse",
         "dev-up-mlx-metal-dist-info-scandir",

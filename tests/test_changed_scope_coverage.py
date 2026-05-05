@@ -138,6 +138,52 @@ def test_measurable_changed_lines_filters_blank_comment_and_unmeasured_lines(tmp
     assert missed == [5]
 
 
+def test_measurable_changed_lines_skips_source_read_when_no_changed_lines(monkeypatch, tmp_path: Path) -> None:
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [1],
+                "missing_lines": [2],
+            }
+        }
+    }
+    read_calls: list[Path] = []
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        read_calls.append(self)
+        raise AssertionError("source file should not be read when the changed set is empty")
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        set(),
+    )
+
+    assert measurable == []
+    assert covered == []
+    assert missed == []
+    assert read_calls == []
+
+
+def test_changed_scope_coverage_probe_emits_empty_path_metrics() -> None:
+    probe_path = Path(__file__).resolve().parents[1] / "scripts" / "changed_scope_coverage_probe.py"
+    spec = importlib.util.spec_from_file_location("changed_scope_coverage_probe", probe_path)
+    assert spec is not None
+    assert spec.loader is not None
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+
+    metrics = probe.run_probe(Path(__file__).resolve().parents[1], path_count=5, samples=2)
+
+    assert metrics["path_count"] == 5.0
+    assert metrics["sample_count"] == 2.0
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["source_read_calls_mean"] == 0.0
+
+
 def test_main_reports_aggregate_coverage_for_multiple_paths(monkeypatch, tmp_path: Path, capsys) -> None:
     (tmp_path / "foo.py").write_text("covered\nmissed\n", encoding="utf-8")
     (tmp_path / "bar.py").write_text("covered\n", encoding="utf-8")

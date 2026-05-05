@@ -10,20 +10,25 @@ import subprocess
 import sys
 
 
+_DIFF_HEADER_RE = re.compile(r"diff --git a/(.+) b/(.+)")
+_HUNK_NEW_RANGE_RE = re.compile(r"\+(\d+)(?:,(\d+))?")
+_FILE_MARKER_RE = re.compile(r"(?:\+\+\+|---) (?:[ab]/|/dev/null)")
+
+
 def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     changed_by_path: dict[str, set[int]] = {}
     current_path: str | None = None
     new_line: int | None = None
     for line in diff_text.splitlines():
         if line.startswith("diff --git "):
-            match = re.match(r"diff --git a/(.+) b/(.+)", line)
+            match = _DIFF_HEADER_RE.match(line)
             current_path = None if match is None else match.group(2)
             if current_path is not None:
                 changed_by_path.setdefault(current_path, set())
             new_line = None
             continue
         if line.startswith("@@"):
-            match = re.search(r"\+(\d+)(?:,(\d+))?", line)
+            match = _HUNK_NEW_RANGE_RE.search(line)
             if match is None:
                 continue
             new_line = int(match.group(1))
@@ -32,7 +37,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             continue
         if line.startswith("\\ "):
             continue
-        if re.match(r"\+\+\+ (?:b/|/dev/null)", line) or re.match(r"--- (?:a/|/dev/null)", line):
+        if _FILE_MARKER_RE.match(line):
             continue
         if line.startswith("+"):
             changed_by_path[current_path].add(new_line)
@@ -62,18 +67,21 @@ def _measurable_changed_lines(
     rel_path: str,
     changed: set[int],
 ) -> tuple[list[int], list[int], list[int]]:
+    if not changed:
+        return [], [], []
+
     entry = coverage_payload["files"][rel_path]
     executed = set(entry["executed_lines"])
     missing = set(entry["missing_lines"])
     measured = executed | missing
     source_lines = (repo_root / rel_path).read_text(encoding="utf-8").splitlines()
-    measurable = [
-        line_no
-        for line_no in sorted(changed)
-        if line_no in measured
-        and source_lines[line_no - 1].strip()
-        and not source_lines[line_no - 1].strip().startswith("#")
-    ]
+    measurable: list[int] = []
+    for line_no in sorted(changed):
+        if line_no not in measured:
+            continue
+        stripped = source_lines[line_no - 1].strip()
+        if stripped and not stripped.startswith("#"):
+            measurable.append(line_no)
     covered = [line_no for line_no in measurable if line_no in executed]
     missed = [line_no for line_no in measurable if line_no in missing]
     return measurable, covered, missed
