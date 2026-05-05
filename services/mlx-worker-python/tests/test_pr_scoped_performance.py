@@ -260,6 +260,16 @@ def test_scope_report_selects_deterministic_rerank_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "deterministic-rerank-query-context-reuse"
 
 
+def test_scope_report_selects_deterministic_embedding_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/deterministic_embedding_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "deterministic-embedding-duplicate-input-cache"
+
+
 def test_scope_report_selects_benchmark_export_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -605,6 +615,22 @@ def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/deterministic_embedding_duplicate_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["input_count"] == 8192.0
+    assert 0 < metrics["unique_input_count"] < metrics["input_count"]
+    assert metrics["embed_text_calls_mean"] == metrics["unique_input_count"]
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["checksum"] > 0
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "benchmark-evaluation-report-running-aggregates",
@@ -613,6 +639,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "benchmark-store-matrix-streaming",
         "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
+        "deterministic-embedding-duplicate-input-cache",
         "deterministic-rerank-query-context-reuse",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
