@@ -79,6 +79,16 @@ def benchmark_scope() -> dict[str, object]:
     )
 
 
+def test_scope_report_selects_event_extraction_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/event_extraction.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "event-extraction-alignment-accepted-edge-cache"
+
+
 def test_scope_report_selects_hub_catalog_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -739,6 +749,28 @@ def test_compiled_glob_pattern_reuses_cached_regex(monkeypatch: pytest.MonkeyPat
     pr_scoped_performance_module._force_all_wildcard_matchers.cache_clear()
 
 
+def test_event_extraction_alignment_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_EVENT_ALIGNMENT_PROBE_SIZE", "5")
+    monkeypatch.setenv("MELIX_EVENT_ALIGNMENT_PROBE_ACCEPTED_PER_ROW", "2")
+    monkeypatch.setenv("MELIX_EVENT_ALIGNMENT_PROBE_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_EVENT_ALIGNMENT_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/event_extraction_alignment_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["matrix_size"] == 5.0
+    assert metrics["accepted_edges"] == 10.0
+    assert metrics["iterations_per_sample"] == 2.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["match_count_mean"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
 def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -885,6 +917,7 @@ def test_dataset_registry_limit_probe_script_emits_metrics(
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "dataset-registry-limited-read-streaming",
+        "event-extraction-alignment-accepted-edge-cache",
         "hub-catalog-tag-normalization-single-pass",
         "benchmark-evaluation-report-running-aggregates",
         "statistical-evidence-bootstrap-percentile-single-sort",

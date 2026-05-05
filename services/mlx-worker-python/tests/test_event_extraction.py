@@ -1653,6 +1653,29 @@ def test_event_alignment_uses_global_optimum_not_greedy() -> None:
     assert matches == [(0, 1, 0.80), (1, 0, 0.80)]
 
 
+def test_event_alignment_precomputes_only_accepted_sparse_edges() -> None:
+    scores = [
+        [0.91, 0.0, 0.0, 0.77],
+        [0.0, 0.82, 0.0, 0.0],
+        [0.80, 0.0, 0.79, 0.0],
+    ]
+    accepted = [
+        [True, False, False, True],
+        [False, True, False, False],
+        [True, False, True, False],
+    ]
+
+    edges = event_extraction_module._accepted_event_matching_edges(scores, accepted)
+    matches = event_extraction_module._maximum_weight_event_matching(scores, accepted)
+
+    assert edges == (
+        ((0, 0.91), (3, 0.77)),
+        ((1, 0.82),),
+        ((0, 0.80), (2, 0.79)),
+    )
+    assert matches == [(0, 0, 0.91), (1, 1, 0.82), (2, 2, 0.79)]
+
+
 def test_event_alignment_reuses_normalized_action_values(monkeypatch) -> None:
     calls = 0
     original = event_extraction_module._normalize_event_field
