@@ -39,7 +39,7 @@ PRs, and what remains before the roadmap can be treated as implemented.
 | Adapter manifests backlink to alignment manifests through `alignment_run_manifest_path`. | #368 implementation evidence and worker tests cover adapter backlinking. | Implemented on `origin/main`. |
 | Quantized bundle manifests record `quantization_mode`, `source_artifact_kind`, and release-gate evidence. | #368 and #386 extend quantization manifests and typed local smoke evidence. | Implemented on `origin/main`. |
 | PTQ can quantize exported or merged artifacts. | Current `origin/main` has manifest/runtime evidence. #397 adds an opt-in `mlx_lm_convert` backend for real PTQ conversion in draft. | Not complete on `origin/main`; open draft PR #397 covers the next backend slice. |
-| QAT runs before final quantized export and records quantization-aware settings. | Current code rejects unsupported QAT source combinations and #397 explicitly excludes real QAT. | Missing. |
+| QAT runs before final quantized export and records quantization-aware settings. | #397 records QAT-aware export lineage, requires existing adapter-derived source artifacts, and writes fake-quant/training-manifest/calibration metadata in a draft PR. | Partially covered by open draft PR #397. Real QAT training/fake-quant optimizer execution is still missing. |
 | QLoRA records quantized-base behavior and rejects unsafe targets. | Existing LoRA/QLoRA contract tests cover mode validation; #365-specific real release evidence is not complete. | Partial baseline coverage only. |
 | CLI exposes `melix alignment train` separately from `melix lora train`. | #368 adds parser/runner/codec support and tests. | Implemented on `origin/main`. |
 | CLI supports a full chained workflow across training, alignment, publish/export, quantize, local inference, and eval/bench evidence. | #400 adds `melix pipeline run` routing for post-training steps plus a draft Issue 365 acceptance bundle harness. | Not complete on `origin/main`; open draft PR #400 covers routing and plan/dry-run evidence orchestration, not final real-runtime acceptance. |
@@ -100,8 +100,11 @@ local runtime release evidence, and Window UI acceptance.
 ### PR #397: MLX Quantization Convert Backend
 
 Draft PR #397 adds opt-in real PTQ weight conversion through MLX-LM conversion.
-It is useful PTQ backend progress, but it explicitly excludes real QAT training
-and full CLI/Window acceptance.
+It also tightens QAT-aware export evidence by requiring existing
+adapter-derived source artifacts and recording fake-quant, source, optional QAT
+training-manifest, and calibration lineage in the quantized bundle. It is useful
+PTQ/QAT-evidence progress, but it explicitly excludes real QAT training and full
+CLI/Window acceptance.
 
 ### PR #400: CLI Pipeline Chain Routing
 
@@ -122,8 +125,8 @@ The objective is not achieved until all of these are implemented and verified:
    seed-overlap proxy scoring or scored-trace replay.
 3. RLHF reward-model inference and reward-guided/PPO-style policy updates from
    #366 artifacts.
-4. Real QAT training or QAT-aware export with fake-quant/quantization-aware
-   settings recorded in manifests.
+4. Real QAT training/fake-quant optimizer execution. QAT-aware export lineage is
+   partially covered by open draft PR #397, but real training is not.
 5. Full real-runtime CLI chain execution for every listed business line:
    - BaseModel -> LoRA -> export -> local inference
    - BaseModel -> QLoRA -> export -> local inference
