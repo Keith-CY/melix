@@ -16,7 +16,7 @@ and what remains before the roadmap can be treated as implemented.
 ## Audit Snapshot
 
 - Date: 2026-05-06
-- Base inspected: `origin/main` at `34023d7e8`
+- Base inspected: `origin/main` at `2fc2e4c93`
 - Merged Issue 365 PRs inspected:
   - #368, `Add Issue 365 alignment and quantization contracts`
   - #369, `Implement Issue 365 offline preference trainer routing`
@@ -28,6 +28,7 @@ and what remains before the roadmap can be treated as implemented.
   - #394, `Add scored RL alignment runner`
   - #397, `Add MLX quantization convert backend`
   - #400, `Add CLI pipeline chain routing slice`
+  - #412, `Add Issue 365 Window acceptance matrix`
 
 ## Prompt-To-Artifact Checklist
 
@@ -47,8 +48,8 @@ and what remains before the roadmap can be treated as implemented.
 | CLI exposes `melix alignment train` separately from `melix lora train`. | #368 adds parser/runner/codec support and tests. | Implemented on `origin/main`. |
 | CLI supports a full chained workflow across training, alignment, publish/export, quantize, local inference, and eval/bench evidence. | #400 adds `melix pipeline run` routing for post-training steps plus an open Issue 365 acceptance bundle harness. The harness now records real-mode preflight blockers for missing CLI, dataset, calibration, and reward-model prerequisites before long-running execution. | Not complete on `origin/main`; open PR #400 covers routing, plan/dry-run evidence orchestration, and real-mode prerequisite evidence, not final real-runtime acceptance. |
 | Required CLI chain tests exist for every listed business line. | Existing tests cover focused slices. #400 now writes all 10 required chain cases into a machine-readable plan/dry-run matrix and supports `--case-id` subset execution for real-mode runs. | Partially covered by open PR #400. Real local runtime execution of the full matrix is still missing. |
-| Window UI exposes every CLI business line. | Existing Window routing code and tests expose alignment mode state and forwarding paths. | Partial UI routing exists; full runnable/inspectable acceptance remains missing. |
-| Window UI acceptance proves every business line is visible, selectable, runnable, and inspectable. | Existing Window tests cover routing surfaces. No full real-runtime acceptance matrix exists. | Missing. |
+| Window UI exposes every CLI business line. | Existing Window routing code and tests expose alignment mode state and forwarding paths. #412 adds a Window PTQ/QAT mode selector and an open 10-case Window business-line routing matrix. | Partially covered by open PR #412. Final real-runtime Window acceptance remains missing. |
+| Window UI acceptance proves every business line is visible, selectable, runnable, and inspectable. | #412 extends the Phase 8 Window UI acceptance bundle with all 10 Issue 365 business lines and records route-level visible/selectable/runnable/inspectable state with `release_ready=false`. | Partially covered by open PR #412. This is routing/inspectability evidence, not final real local runtime acceptance. |
 | Release evidence separates deterministic/unit/scored-trace results from real local runtime results. | PR bodies and plans label deterministic/scored-trace limitations. #400 adds a bundle schema that marks plan/dry-run evidence as not release-ready and marks missing real-mode prerequisites as blocked rather than successful. | Partially covered by open PR #400. A final real-local-runtime release evidence bundle is still missing. |
 | No business line is marked complete when only deterministic evidence exists. | Plans explicitly state remaining gaps, and open PRs are unmerged. #400's bundle keeps plan/dry-run evidence `release_ready=false` and only permits real-mode release readiness after succeeded real pipeline cases. | Process guard exists, but final release gate and full real evidence are missing. |
 
@@ -129,6 +130,18 @@ quantization inputs. This is useful release-evidence infrastructure, but it
 still does not provide full real local runtime acceptance for every business
 line.
 
+### PR #412: Window Acceptance Matrix
+
+Open PR #412 adds a Window UI PTQ/QAT quantization mode state, exposes the mode
+selector beside the existing quantization profile selector, and forwards
+explicit `quantization_mode`, `source_artifact_kind`, and QAT source-artifact
+hints through Window model-operation requests. It also extends the Phase 8
+Window UI acceptance bundle with all 10 Issue 365 business lines and records
+visible/selectable/runnable/inspectable route state for each case while keeping
+`release_ready=false`. This is useful Window routing and inspectability
+evidence, but it intentionally excludes final real-local-runtime Window
+acceptance for every business line.
+
 ## Missing Completion Items
 
 The objective is not achieved until all of these are implemented and verified:
@@ -157,8 +170,9 @@ The objective is not achieved until all of these are implemented and verified:
 6. Real local runtime evidence for the final CLI acceptance matrix. #400 now
    records real-mode prerequisites and blockers, but blocker evidence is not a
    substitute for successful real local runtime execution.
-7. Window UI runnable and inspectable acceptance for every CLI-supported
-   business line.
+7. Window UI runnable and inspectable real-runtime acceptance for every
+   CLI-supported business line. Open PR #412 adds route-level matrix evidence,
+   but not final real-runtime acceptance.
 8. A final populated release evidence bundle that distinguishes:
    - unit tests
    - deterministic fixture tests
@@ -167,7 +181,7 @@ The objective is not achieved until all of these are implemented and verified:
 
 ## Recommended Next Implementation Order
 
-1. Land #394, #397, and #400 when CI and review are clean.
+1. Land #394, #397, #400, and #412 when CI and review are clean.
 2. Use or extend the #400 acceptance bundle harness to run a configured
    real-local-runtime matrix with actual local datasets, model artifacts,
    reward-model artifacts, and runtime availability, then emit the final
@@ -177,13 +191,14 @@ The objective is not achieved until all of these are implemented and verified:
    with a final acceptance failure until the backend exists.
 4. Integrate #366 reward-model training artifacts and PPO/reward-guided policy
    updates into RLHF before claiming RLHF completion.
-5. Extend Window UI acceptance to consume the same real-runtime matrix evidence
-   rather than screenshots or static routing tests.
+5. Extend the #412 Window UI acceptance matrix to consume the same
+   real-runtime matrix evidence rather than treating route/screenshot evidence
+   as release readiness.
 
 ## Audit Conclusion
 
 Issue #365 is not complete. The current repository has strong contract,
-manifest, offline preference, and quantization evidence foundations, plus three
+manifest, offline preference, and quantization evidence foundations, plus four
 active open PRs for additional slices. The remaining acceptance items require
 real runtime paths and release evidence, so this audit must not be used to mark
 the objective complete.
