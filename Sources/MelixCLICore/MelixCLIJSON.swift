@@ -36,7 +36,7 @@ enum MelixCLIJSONMetricPatch {
             format: "%.16e",
             locale: metricLiteralLocale,
             finiteValue
-        ).replacingOccurrences(of: "E", with: "e")
+        )
     }
 
     static func replacePlaceholder(in text: String, with value: Double) throws -> String {
