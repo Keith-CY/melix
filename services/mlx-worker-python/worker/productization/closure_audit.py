@@ -486,12 +486,11 @@ def _iter_text_files_sorted(root: Path) -> Iterator[Path]:
     with os.scandir(root) as scandir_entries:
         entries = sorted(scandir_entries, key=lambda entry: entry.name)
     for entry in entries:
-        entry_path = Path(entry.path)
         if entry.is_dir(follow_symlinks=False):
-            yield from _iter_text_files_sorted(entry_path)
+            yield from _iter_text_files_sorted(Path(entry.path))
             continue
-        if entry.is_file(follow_symlinks=False) and entry.name.endswith(_TEXT_FILE_SUFFIXES):
-            yield entry_path
+        if entry.name.endswith(_TEXT_FILE_SUFFIXES) and entry.is_file(follow_symlinks=False):
+            yield Path(entry.path)
 
 
 
