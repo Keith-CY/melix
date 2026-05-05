@@ -17,6 +17,8 @@ from worker.runtime import multimodal_preprocessing
 from worker.runtime.multimodal_fast_paths import fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import (
     MultimodalPreprocessError,
+    _bytes_from_image_uri,
+    _path_from_uri,
     _prepare_image_part,
     prepare_vision_request,
 )
@@ -1311,6 +1313,37 @@ def test_prepare_vision_request_rejects_missing_remote_and_unsupported_inputs(
                 )
             ]
         )
+
+
+def test_path_from_uri_preserves_direct_helper_behavior(tmp_path: Path) -> None:
+    image_path = tmp_path / "direct-helper-image.txt"
+    image_path.write_bytes(b"direct image bytes")
+
+    assert _path_from_uri(str(image_path)) == image_path
+
+
+def test_bytes_from_local_image_uri_reuses_single_parsed_uri(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_path = tmp_path / "single-parse-image.txt"
+    image_path.write_bytes(b"local image bytes")
+    calls: list[str] = []
+    original_urlparse = multimodal_preprocessing.urlparse
+
+    def tracked_urlparse(uri: str):
+        calls.append(uri)
+        return original_urlparse(uri)
+
+    monkeypatch.setattr(multimodal_preprocessing, "urlparse", tracked_urlparse)
+
+    bytes_data, reference, mime_type, format_name, filename = _bytes_from_image_uri(image_path.as_uri())
+
+    assert bytes_data == b"local image bytes"
+    assert reference == image_path.as_uri()
+    assert mime_type == ""
+    assert format_name == "txt"
+    assert filename == image_path.name
+    assert calls == [image_path.as_uri()]
 
 
 def test_prepare_image_part_rejects_parts_without_any_image_payload() -> None:
