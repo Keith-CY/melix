@@ -602,6 +602,47 @@ def test_order_aware_query_context_preserves_exact_order_and_prefix_bonuses(
         abs=1e-6,
     )
 
+
+@pytest.mark.parametrize(
+    "family",
+    [JinaV3RerankFamilyAdapter(), CausalLMRerankFamilyAdapter()],
+)
+def test_order_aware_rerank_families_use_combined_order_match_once_for_full_overlap(
+    monkeypatch,
+    family: RerankFamilyAdapter,
+) -> None:
+    backend = DeterministicRerankBackend()
+    query_order_matches = Mock(return_value=(True, True))
+    contains = Mock(side_effect=AssertionError("score should use the combined order matcher"))
+    has_prefix = Mock(side_effect=AssertionError("score should use the combined order matcher"))
+
+    monkeypatch.setattr(
+        JinaV3RerankFamilyAdapter,
+        "_query_order_matches",
+        staticmethod(query_order_matches),
+    )
+    monkeypatch.setattr(
+        JinaV3RerankFamilyAdapter,
+        "_contains_contiguous_query",
+        staticmethod(contains),
+    )
+    monkeypatch.setattr(
+        JinaV3RerankFamilyAdapter,
+        "_has_query_prefix",
+        staticmethod(has_prefix),
+    )
+
+    score = family.score(backend, "swift runtime", "swift runtime is available")
+
+    assert score > 0.0
+    query_order_matches.assert_called_once_with(
+        ["swift", "runtime", "is", "available"],
+        ("swift", "runtime"),
+    )
+    contains.assert_not_called()
+    has_prefix.assert_not_called()
+
+
 def test_rerank_rejects_missing_and_wrong_model_kinds() -> None:
     runtime_service, inference_service = build_services()
     text_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
