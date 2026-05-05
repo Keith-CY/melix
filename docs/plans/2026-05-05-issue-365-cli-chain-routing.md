@@ -34,6 +34,9 @@ local runtime acceptance requirements.
 - Keep screenshot cleanup scoped to temporary generated screenshot artifacts
   only. Tracked app branding images, evaluation fixtures, docs, and source
   files are not cleanup targets.
+- Add an Issue 365 CLI acceptance bundle harness that writes a machine-readable
+  matrix for every required CLI chain and separates planning, deterministic
+  dry-run, and real-local-runtime evidence.
 
 ### Excluded
 
@@ -57,6 +60,8 @@ Success metrics:
 - Pipeline dry-run receipts include stable command IDs for the new post-training
   steps.
 - Existing pipeline resume, check, and reference behavior remains unchanged.
+- The Issue 365 acceptance bundle must mark plan-only and dry-run evidence as
+  not release-ready even when every planned pipeline case is covered.
 - Changed-line coverage for the touched Swift/doc scope is at least 95 percent.
 
 ## Verification
@@ -66,6 +71,7 @@ Targeted commands:
 ```bash
 swift test --filter MelixCLIRunnerTests
 swift test --filter MelixCLIParserTests
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py
 git diff --check
 ```
 
@@ -81,11 +87,36 @@ python3 scripts/swift_changed_line_coverage.py \
   tests/MelixCLITests/MelixCLIRunnerTests.swift \
   tests/MelixCLITests/MelixCLIParserTests.swift \
   docs/plans/2026-05-05-issue-365-cli-chain-routing.md
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/integration/test_issue365_acceptance_bundle.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage json -o /tmp/issue365-cli-acceptance-bundle-coverage.json
+python3 scripts/python_changed_line_coverage.py \
+  --coverage-json /tmp/issue365-cli-acceptance-bundle-coverage.json \
+  --diff-from origin/main \
+  scripts/issue365_acceptance_bundle.py \
+  tests/integration/test_issue365_acceptance_bundle.py \
+  docs/plans/2026-05-05-issue-365-cli-chain-routing.md
 ```
 
 Expected changed-line coverage target: at least 95 percent for the changed
 Swift scope. Documentation-only lines are reported as N/A when the coverage
 tool does not map them to executable statements.
+
+Results on 2026-05-05 after adding the acceptance bundle harness:
+
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
+  9 passed.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
+  9 passed.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage json -o /tmp/issue365-cli-acceptance-bundle-coverage.json`:
+  wrote JSON coverage.
+- `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-cli-acceptance-bundle-coverage.json --diff-from origin/main scripts/issue365_acceptance_bundle.py tests/integration/test_issue365_acceptance_bundle.py docs/plans/2026-05-05-issue-365-cli-chain-routing.md`:
+  99.37 percent total changed-line coverage, 316/318 executable lines.
+- `python3 scripts/issue365_acceptance_bundle.py --execution-mode plan --output-dir .runtime/issue365/acceptance-smoke --timestamp 2026-05-05T000000Z --json`:
+  wrote a plan bundle with 10 planned cases and `release_ready=false`.
+- `swift test --filter 'MelixCLIRunnerTests|MelixCLIParserTests'`:
+  212 tests passed in 3 suites. Existing `try await store.save` warnings
+  remain.
+- `git diff --check`: passed.
 
 ## Remaining Issue 365 Gaps
 
