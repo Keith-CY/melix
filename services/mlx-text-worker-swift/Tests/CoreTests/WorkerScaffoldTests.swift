@@ -7550,23 +7550,25 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
-    func testFusedDecodeQuantizerRejectsUnsupportedInputs() throws {
-        let (keys, values) = makeDecodeKeyValueTensors(dtype: .float32, headDimension: 32)
+    func testFusedDecodeQuantizerRejectsUnsupportedInputs() async throws {
+        try await withTemporaryDefaultMetallib {
+            let (keys, values) = makeDecodeKeyValueTensors(dtype: .float32, headDimension: 32)
 
-        XCTAssertNil(fusedQ4AffineKeyValueQuantizedForDecode(
-            keys: keys,
-            values: values,
-            groupSize: 32,
-            bits: 8,
-            mode: .affine
-        ))
-        XCTAssertNil(fusedQ4AffineKeyValueQuantizedForDecode(
-            keys: keys,
-            values: values,
-            groupSize: 24,
-            bits: 4,
-            mode: .affine
-        ))
+            XCTAssertNil(fusedQ4AffineKeyValueQuantizedForDecode(
+                keys: keys,
+                values: values,
+                groupSize: 32,
+                bits: 8,
+                mode: .affine
+            ))
+            XCTAssertNil(fusedQ4AffineKeyValueQuantizedForDecode(
+                keys: keys,
+                values: values,
+                groupSize: 24,
+                bits: 4,
+                mode: .affine
+            ))
+        }
     }
 
     func testQuantizedKVCacheUsesNativeDecodeQuantizerByDefaultForSingleTokenAffineQ4()
