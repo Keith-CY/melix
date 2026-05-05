@@ -229,7 +229,9 @@ class MaintenanceCore:
         self._quantization_pipeline = OQQuantizationPipeline(registry)
         self._download_pipeline = download_pipeline or DownloadPipeline()
         self._local_import_pipeline = local_import_pipeline or LocalImportPipeline()
-        self._lora_training_pipeline = lora_training_pipeline or LoRATrainingPipeline()
+        self._lora_training_pipeline = lora_training_pipeline or LoRATrainingPipeline(
+            policy_runtime=registry.runtime
+        )
         self._adapter_activation_pipeline = adapter_activation_pipeline or AdapterActivationPipeline()
         self._upload_receipt_pipeline = upload_receipt_pipeline or UploadReceiptPipeline()
         self._operation_locks = ModelOpsConflictRegistry()

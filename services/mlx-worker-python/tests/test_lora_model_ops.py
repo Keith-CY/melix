@@ -46,7 +46,7 @@ from worker.model_ops.training_dataset import (
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_backend import DeterministicTextBackend
-from worker.runtime.mlx_text_runtime import MLXTextRuntime
+from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
 
 def test_checkpoint_order_key_uses_last_numeric_token() -> None:
@@ -1126,6 +1126,97 @@ def test_train_lora_runs_scored_rl_alignment_with_default_runner(
         assert alignment_payload["metrics"]["candidate_group_reward_margin_mean"] == pytest.approx(0.3)
     else:
         assert alignment_payload["reward_model_manifest_path"] == extra_ext["reward_model_manifest_path"]
+
+
+def test_train_lora_records_runtime_generated_grpo_evidence(tmp_path: Path) -> None:
+    class ScriptedPolicyBackend:
+        runtime_name = "scripted-policy-runtime"
+
+        def __init__(self) -> None:
+            self.prompt_count = 0
+
+        def load_model(self, model_spec):
+            return {
+                "model_id": model_spec.model_id,
+                "model_path": model_spec.model_path,
+            }
+
+        def estimate_resident_bytes(self, model_spec) -> int:
+            return 1
+
+        def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
+            del loaded_model, sampling, execution_ext
+            self.prompt_count += 1
+            if cancel_event.is_set():
+                return
+            if "candidate 1" in prompt:
+                yield RuntimeTokenEvent(text="concise useful summary")
+            else:
+                yield RuntimeTokenEvent(text="off-topic draft")
+
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-runtime-grpo",
+        format="prompt_candidate",
+        samples=[
+            {
+                "prompt": "Draft two summaries.",
+                "candidates": [
+                    {"text": "concise useful summary", "score": 0.8},
+                    {"text": "off-topic draft", "score": 0.1},
+                ],
+            }
+        ],
+    )
+    backend = ScriptedPolicyBackend()
+    service = _build_service(
+        tmp_path,
+        MLXLMRunner(policy_runtime=MLXTextRuntime(backend=backend)),
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-runtime-grpo"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "grpo",
+                    "adapter_name": "melix-runtime-grpo-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "grpo_candidate_count": "2",
+                    "candidate_generation_mode": "runtime_generate",
+                    "candidate_generation_max_tokens": "16",
+                    "kl_penalty": "0.05",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    alignment_payload = json.loads(Path(payload["alignment_run_manifest_path"]).read_text(encoding="utf-8"))
+    trace_rows = [
+        json.loads(line)
+        for line in Path(alignment_payload["metrics"]["policy_update_trace_path"]).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+
+    assert events[-1].HasField("completed")
+    assert backend.prompt_count == 2
+    assert payload["training_backend"] == "runtime_generated_scored_trace"
+    assert alignment_payload["training_backend"] == "runtime_generated_scored_trace"
+    assert alignment_payload["candidate_generation_mode"] == "runtime_generate"
+    assert alignment_payload["candidate_scoring_mode"] == "seed_overlap_proxy"
+    assert alignment_payload["metrics"]["candidate_generation_backend"] == "scripted-policy-runtime"
+    assert alignment_payload["metrics"]["generated_candidate_count"] == 2
+    assert alignment_payload["metrics"]["candidate_generation_mode"] == "runtime_generate"
+    assert alignment_payload["metrics"]["candidate_scoring_mode"] == "seed_overlap_proxy"
+    assert alignment_payload["metrics"]["policy_update_count"] == 1
+    assert alignment_payload["metrics"]["reward_mean"] > 0.0
+    assert trace_rows[0]["candidate_generation_backend"] == "scripted-policy-runtime"
+    assert trace_rows[0]["selected_candidate_text"] == "concise useful summary"
 
 
 def test_train_lora_supports_continual_pretraining_contract(tmp_path: Path) -> None:

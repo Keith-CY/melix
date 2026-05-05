@@ -72,6 +72,10 @@ class TrainingMetrics:
     candidate_group_reward_margin_mean: float = 0.0
     candidate_group_reward_variance_mean: float = 0.0
     policy_update_trace_path: str = ""
+    candidate_generation_mode: str = ""
+    candidate_generation_backend: str = ""
+    candidate_scoring_mode: str = ""
+    generated_candidate_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,8 @@ class TrainingRequest:
     config: LoRATrainingConfig
     dataset_format: str
     resume_source_path: Path | None = None
+    source_model_kind: str = "text"
+    source_model_ext: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -154,6 +160,9 @@ def _alignment_trainer_unavailable_error(config: LoRATrainingConfig) -> ModelOpe
 
 
 class MLXLMRunner:
+    def __init__(self, policy_runtime: Any | None = None) -> None:
+        self._policy_runtime = policy_runtime
+
     def train(self, request: TrainingRequest) -> TrainingResult:
         if (
             _requires_alignment_trainer(request.config)
@@ -186,7 +195,7 @@ class MLXLMRunner:
         if request.config.training_objective == "alignment_rl":
             from worker.model_ops.rl_alignment_training import train_alignment_rl_trace
 
-            return train_alignment_rl_trace(request)
+            return train_alignment_rl_trace(request, policy_runtime=self._policy_runtime)
 
         try:
             from mlx_lm.lora import train_model
@@ -458,6 +467,8 @@ def _serialize_training_request(request: TrainingRequest) -> dict:
             else ""
         ),
         "dataset_format": request.dataset_format,
+        "source_model_kind": request.source_model_kind,
+        "source_model_ext": dict(request.source_model_ext or {}),
         "config": asdict(request.config),
     }
     return payload
@@ -483,6 +494,11 @@ def _deserialize_training_request(payload: dict) -> TrainingRequest:
             if str(payload.get("resume_source_path", "")).strip()
             else None
         ),
+        source_model_kind=str(payload.get("source_model_kind", "") or "text"),
+        source_model_ext={
+            str(key): str(value)
+            for key, value in dict(payload.get("source_model_ext", {}) or {}).items()
+        },
     )
 
 

@@ -29,6 +29,7 @@ from worker.model_ops.lora_training_pipeline import (
 )
 from worker.model_ops.mlx_lm_runner import MLXLMRunner
 from worker.model_ops.training_dataset import HFDatasetReference, load_training_dataset_package, materialize_hf_training_dataset_package
+from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
 
 def _write_dataset_package(
@@ -179,6 +180,247 @@ def test_mlx_lm_runner_routes_alignment_rl_to_scored_trace_backend(tmp_path: Pat
     assert result.metrics.candidate_group_reward_margin_mean == pytest.approx(0.3)
     assert result.metrics.candidate_group_reward_variance_mean == pytest.approx(0.0225)
     assert result.metrics.policy_update_trace_path.endswith("policy_updates.jsonl")
+
+
+def test_mlx_lm_runner_generates_grpo_candidates_with_policy_runtime(tmp_path: Path) -> None:
+    class ScriptedPolicyBackend:
+        runtime_name = "scripted-policy-runtime"
+
+        def __init__(self) -> None:
+            self.loaded_model_path = ""
+            self.prompts: list[str] = []
+
+        def load_model(self, model_spec):
+            self.loaded_model_path = model_spec.model_path
+            return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+        def estimate_resident_bytes(self, model_spec) -> int:
+            return 1
+
+        def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
+            del loaded_model, sampling, execution_ext
+            self.prompts.append(prompt)
+            if cancel_event.is_set():
+                return
+            if "candidate 1" in prompt:
+                yield RuntimeTokenEvent(text="preferred concise answer")
+            else:
+                yield RuntimeTokenEvent(text="weak answer")
+
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={
+            "training_mode": "grpo",
+            "grpo_candidate_count": "2",
+            "candidate_generation_mode": "runtime_generate",
+            "candidate_generation_max_tokens": "16",
+        },
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Draft two summaries.",
+                "candidates": [
+                    {"text": "preferred concise answer", "score": 1.0},
+                    {"text": "weak answer", "score": 0.2},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    backend = ScriptedPolicyBackend()
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo-runtime",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="prompt_candidate",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner(
+        policy_runtime=MLXTextRuntime(backend=backend)
+    ).train(request)
+
+    trace_rows = [
+        json.loads(line)
+        for line in Path(result.metrics.policy_update_trace_path).read_text(encoding="utf-8").splitlines()
+    ]
+    adapter_config = json.loads(result.adapter_config_path.read_text(encoding="utf-8"))
+
+    assert result.execution_backend == "runtime_generated_scored_trace"
+    assert backend.loaded_model_path == str(tmp_path / "base-model")
+    assert len(backend.prompts) == 2
+    assert result.metrics.candidate_generation_mode == "runtime_generate"
+    assert result.metrics.candidate_generation_backend == "scripted-policy-runtime"
+    assert result.metrics.candidate_scoring_mode == "seed_overlap_proxy"
+    assert result.metrics.generated_candidate_count == 2
+    assert result.metrics.reward_mean == pytest.approx(2 / 3)
+    assert trace_rows[0]["generated_candidates"][0]["score"] == pytest.approx(1.0)
+    assert trace_rows[0]["generated_candidates"][1]["score"] == pytest.approx(1 / 3)
+    assert trace_rows[0]["selected_candidate_text"] == "preferred concise answer"
+    assert adapter_config["candidate_generation_mode"] == "runtime_generate"
+    assert adapter_config["candidate_generation_backend"] == "scripted-policy-runtime"
+
+
+@pytest.mark.parametrize(
+    ("training_mode", "dataset_format", "ext", "expected_message"),
+    [
+        (
+            "grpo",
+            "prompt_candidate",
+            {
+                "training_mode": "grpo",
+                "grpo_candidate_count": "2",
+                "candidate_generation_mode": "remote",
+            },
+            "Unsupported candidate_generation_mode",
+        ),
+        (
+            "rlhf",
+            "reward_scored",
+            {
+                "training_mode": "rlhf",
+                "reward_model_manifest_path": "/tmp/reward/manifest.json",
+                "candidate_generation_mode": "runtime_generate",
+            },
+            "only supported for GRPO",
+        ),
+        (
+            "grpo",
+            "prompt_candidate",
+            {
+                "training_mode": "grpo",
+                "grpo_candidate_count": "2",
+                "candidate_generation_mode": "runtime_generate",
+                "candidate_scoring_mode": "dataset_score",
+            },
+            "candidate_scoring_mode=dataset_score is not supported",
+        ),
+    ],
+)
+def test_alignment_config_rejects_invalid_candidate_generation_options(
+    tmp_path: Path,
+    training_mode: str,
+    dataset_format: str,
+    ext: dict[str, str],
+    expected_message: str,
+) -> None:
+    del training_mode
+
+    with pytest.raises(ModelOperationError) as exc:
+        training_config_module.normalize_training_config(
+            source_model=_text_model(model_path=str(tmp_path / "base-model")),
+            ext=ext,
+            dataset_format=dataset_format,
+            response_only_supported=False,
+            sample_count=1,
+        )
+
+    assert expected_message in exc.value.message
+
+
+def test_alignment_rl_runtime_generation_requires_policy_runtime(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={
+            "training_mode": "grpo",
+            "grpo_candidate_count": "2",
+            "candidate_generation_mode": "runtime_generate",
+        },
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Draft two summaries.",
+                "candidates": [
+                    {"text": "Preferred.", "score": 1.0},
+                    {"text": "Rejected.", "score": 0.0},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo-runtime-missing",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="prompt_candidate",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        mlx_lm_runner_module.MLXLMRunner().train(request)
+
+    assert exc.value.code == "unsupported_alignment_trainer"
+    assert exc.value.details["candidate_generation_mode"] == "runtime_generate"
+
+
+def test_alignment_rl_runtime_generation_rejects_empty_generation_and_unscored_seed(
+    tmp_path: Path,
+) -> None:
+    from worker.model_ops.rl_alignment_training import _generate_candidate_text, _scored_seed_candidates
+
+    class EmptyPolicyBackend:
+        runtime_name = "empty-policy-runtime"
+
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id}
+
+        def estimate_resident_bytes(self, model_spec) -> int:
+            return 1
+
+        def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
+            del loaded_model, prompt, sampling, cancel_event, execution_ext
+            yield RuntimeTokenEvent(text="")
+
+    runtime = MLXTextRuntime(backend=EmptyPolicyBackend())
+    loaded_model = runtime.load_model(_text_model(model_path=str(tmp_path / "base-model")))
+
+    with pytest.raises(ModelOperationError) as generation_exc:
+        _generate_candidate_text(
+            runtime,
+            loaded_model,
+            "Generate a candidate.",
+            types.SimpleNamespace(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=0,
+                max_output_tokens=16,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                stop=[],
+            ),
+            types.SimpleNamespace(is_set=lambda: False),
+        )
+    assert generation_exc.value.code == "alignment_generation_failed"
+
+    with pytest.raises(ModelOperationError) as seed_exc:
+        _scored_seed_candidates(
+            {
+                "prompt": "Draft.",
+                "candidates": [{"text": "Missing score."}, {"text": "Also missing."}],
+            },
+            sample_index=0,
+        )
+    assert seed_exc.value.details["missing_field"] == "candidate.score"
 
 
 def test_alignment_rl_trace_runner_rejects_missing_alignment_config() -> None:
@@ -335,6 +577,8 @@ def test_mlx_lm_runner_routes_preference_training_to_preference_backend(
         normalized_dataset_dir=tmp_path / "normalized",
         config=config,
         dataset_format="preference_pair",
+        source_model_kind="text",
+        source_model_ext={"text_family_id": "qwen"},
     )
 
     def fake_train_preference_native(
@@ -407,6 +651,8 @@ def test_training_request_deserialization_restores_alignment_config(tmp_path: Pa
         normalized_dataset_dir=tmp_path / "normalized",
         config=config,
         dataset_format="preference_pair",
+        source_model_kind="text",
+        source_model_ext={"text_family_id": "qwen"},
     )
 
     restored = mlx_lm_runner_module._deserialize_training_request(
@@ -416,6 +662,8 @@ def test_training_request_deserialization_restores_alignment_config(tmp_path: Pa
     assert isinstance(restored.config.alignment, training_config_module.AlignmentTrainingConfig)
     assert restored.config.alignment.alignment_algorithm == "cpo"
     assert restored.config.alignment.dataset_contract == "preference_pair"
+    assert restored.source_model_kind == "text"
+    assert restored.source_model_ext == {"text_family_id": "qwen"}
 
 
 def test_training_metrics_serializes_preference_fields(tmp_path: Path) -> None:

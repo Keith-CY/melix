@@ -37,10 +37,11 @@ class LoRATrainingPipeline:
     def __init__(
         self,
         runner: MLXLMRunner | None = None,
+        policy_runtime: Any | None = None,
         hf_dataset_fetcher: HFDatasetFetcher | None = None,
         experiment_store: LoraExperimentStore | None = None,
     ) -> None:
-        self._runner = runner or MLXLMRunner()
+        self._runner = runner or MLXLMRunner(policy_runtime=policy_runtime)
         self._hf_dataset_fetcher = hf_dataset_fetcher
         self._experiment_store = experiment_store or LoraExperimentStore()
 
@@ -110,6 +111,8 @@ class LoRATrainingPipeline:
                 config=config,
                 dataset_format=dataset.package.format,
                 resume_source_path=resume_context["resume_source_path"],
+                source_model_kind=source_model.model_kind,
+                source_model_ext=dict(source_model.ext),
             )
         )
 
@@ -397,8 +400,14 @@ def _alignment_manifest_payload(
                 "selected_candidate_count": training_result.metrics.selected_candidate_count,
                 "policy_update_trace_path": training_result.metrics.policy_update_trace_path,
                 "kl_penalty": alignment.kl_penalty,
+                "candidate_generation_mode": alignment.candidate_generation_mode,
+                "candidate_scoring_mode": alignment.candidate_scoring_mode,
             }
         )
+        if training_result.metrics.candidate_generation_backend:
+            metrics["candidate_generation_backend"] = training_result.metrics.candidate_generation_backend
+        if training_result.metrics.generated_candidate_count:
+            metrics["generated_candidate_count"] = training_result.metrics.generated_candidate_count
         if training_result.metrics.reward_mean:
             metrics["reward_mean"] = training_result.metrics.reward_mean
             metrics["reward_p50"] = training_result.metrics.reward_p50
@@ -426,6 +435,8 @@ def _alignment_manifest_payload(
         "dataset_contract": alignment.dataset_contract,
         "dataset_uri": dataset.dataset_uri,
         "dataset_format": dataset.package.format,
+        "candidate_generation_mode": alignment.candidate_generation_mode,
+        "candidate_scoring_mode": alignment.candidate_scoring_mode,
         "adapter_manifest_path": str(adapter_manifest_path),
         "reference_model_path": alignment.reference_model_path,
         "reward_model_manifest_path": alignment.reward_model_manifest_path,
