@@ -8,6 +8,7 @@ import pytest
 from worker.productization import statistical_evidence as statistical_evidence_module
 from worker.productization.statistical_evidence import (
     _interval_sign,
+    _ordered_percentile,
     _percentile,
     _percentile_ordered,
     build_category_breakdown,
@@ -166,6 +167,7 @@ def test_classify_release_verdict_requires_threshold_and_same_side_intervals() -
 
 def test_statistical_helper_edges_cover_percentiles_and_interval_sign_fallbacks() -> None:
     assert _percentile([], 0.5) == 0.0
+    assert _ordered_percentile([], 0.5) == 0.0
     assert _percentile([0.25], 0.5) == 0.25
     assert _percentile([0.25, 0.5, 0.75], 0.5) == 0.5
     assert _percentile_ordered([], 0.5) == 0.0
