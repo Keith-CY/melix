@@ -103,6 +103,16 @@ def test_scope_report_selects_stream_assembler_probe() -> None:
     }
 
 
+def test_scope_report_selects_runtime_utils_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/runtime_utils.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "runtime-utils-kwarg-signature-cache"
+
+
 def test_scope_report_selects_only_matching_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -775,6 +785,24 @@ def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
+
+def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_utils_kwarg_cache_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["iterations_per_sample"] == 40000.0
+    assert metrics["inspect_signature_calls_mean"] == 2.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "hub-catalog-tag-normalization-single-pass",
@@ -791,6 +819,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-embedding-project-digest-allocation",
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
+        "runtime-utils-kwarg-signature-cache",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
         "evaluation-final-result-materialization-streaming",
