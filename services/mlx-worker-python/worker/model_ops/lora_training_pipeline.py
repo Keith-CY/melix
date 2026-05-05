@@ -429,17 +429,25 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
             scores.append(float(sample["reward_score"]))
         candidates = sample.get("candidates")
         candidate_scores: list[float] = []
+        candidate_score_min: float | None = None
+        candidate_score_max: float | None = None
         if isinstance(candidates, list):
             for candidate in candidates:
                 if isinstance(candidate, dict) and "score" in candidate:
-                    candidate_scores.append(float(candidate["score"]))
+                    candidate_score = float(candidate["score"])
+                    candidate_scores.append(candidate_score)
+                    if candidate_score_min is None or candidate_score < candidate_score_min:
+                        candidate_score_min = candidate_score
+                    if candidate_score_max is None or candidate_score > candidate_score_max:
+                        candidate_score_max = candidate_score
         if candidate_scores:
             scores.extend(candidate_scores)
         if len(candidate_scores) >= 2:
-            ordered_candidate_scores = sorted(candidate_scores)
+            assert candidate_score_min is not None
+            assert candidate_score_max is not None
             group_mean = sum(candidate_scores) / len(candidate_scores)
             candidate_group_margins.append(
-                ordered_candidate_scores[-1] - ordered_candidate_scores[0]
+                candidate_score_max - candidate_score_min
             )
             candidate_group_variances.append(
                 sum((score - group_mean) ** 2 for score in candidate_scores)

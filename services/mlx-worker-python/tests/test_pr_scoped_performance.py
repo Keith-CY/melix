@@ -185,6 +185,18 @@ def test_scope_report_selects_worker_registry_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "worker-registry-resident-bytes-accumulator"
 
 
+def test_scope_report_selects_lora_reward_summary_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/model_ops/lora_training_pipeline.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "lora-reward-summary-candidate-minmax"
+
+
 def test_scope_report_selects_pr_scoped_scope_script_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -661,6 +673,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
+        "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
         "mlx-vlm-family-config-cache",
         "model-registry-plain-local-manifest-stat-elision",
@@ -1900,6 +1913,39 @@ def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:
     assert metrics["payload_value"] == 42.0
     assert metrics["line_count"] == 50002.0
     assert metrics["sample_count"] == 5.0
+
+
+def test_lora_reward_summary_probe_script_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "lora-reward-summary-candidate-minmax"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["sorted_calls_mean"] == 2.0
+    assert metrics["sample_count"] == 5000.0
+    assert metrics["candidate_count"] == 32.0
+    assert metrics["checksum"] > 0
+
+
+def test_lora_reward_summary_probe_script_main_covers_checked_in_file(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "lora_reward_summary_probe.py"
+    spec = importlib.util.spec_from_file_location("lora_reward_summary_probe_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.main() == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert payload["sorted_calls_mean"] == 2.0
+    assert payload["sample_count"] == 5000.0
+    assert payload["candidate_count"] == 32.0
 
 
 def test_mlx_vlm_family_config_probe_script_emits_metrics() -> None:
