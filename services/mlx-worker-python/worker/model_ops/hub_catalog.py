@@ -183,11 +183,13 @@ class HubCatalog:
         card_data = payload.get("cardData") if isinstance(payload.get("cardData"), dict) else {}
         repo_id = _string(payload.get("id") or payload.get("modelId"))
         tags = _string_list(payload.get("tags"))
+        lowered_tags = _lowered_tag_set(tags)
         library_name = _string(payload.get("library_name") or card_data.get("library_name"))
         sibling_files = _sibling_files(payload.get("siblings"))
         mlx_compatible = _is_mlx_compatible(
             repo_id=repo_id,
             tags=tags,
+            lowered_tags=lowered_tags,
             library_name=library_name,
             card_data=card_data,
         )
@@ -196,6 +198,7 @@ class HubCatalog:
             repo_id=repo_id,
             pipeline_tag=_string(payload.get("pipeline_tag") or card_data.get("pipeline_tag")),
             tags=tags,
+            lowered_tags=lowered_tags,
             mlx_compatible=mlx_compatible,
             local_memory_gb=self._local_memory_gb,
         )
@@ -286,6 +289,14 @@ def _string_list(value: Any) -> list[str]:
     return []
 
 
+def _lowered_tag_set(tags: list[str]) -> set[str]:
+    return {tag.lower() for tag in tags}
+
+
+def _normalized_lowered_tags(tags: list[str], lowered_tags: set[str] | None = None) -> set[str]:
+    return lowered_tags if lowered_tags is not None else _lowered_tag_set(tags)
+
+
 def _sibling_files(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -335,8 +346,9 @@ def _is_mlx_compatible(
     tags: list[str],
     library_name: str,
     card_data: dict[str, Any],
+    lowered_tags: set[str] | None = None,
 ) -> bool:
-    lowered_tags = {tag.lower() for tag in tags}
+    lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
     card_tags = {
         tag.lower()
         for tag in _string_list(card_data.get("tags"))
@@ -359,14 +371,17 @@ def _local_fit_evidence(
     tags: list[str],
     mlx_compatible: bool,
     local_memory_gb: float,
+    lowered_tags: set[str] | None = None,
 ) -> dict[str, Any]:
+    lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
     artifact_bytes = _estimated_artifact_bytes(payload)
     parameter_count = _parameter_count(payload.get("safetensors"))
-    quantization_summary = _quantization_summary(tags)
+    quantization_summary = _quantization_summary(tags, lowered_tags=lowered_tags)
     estimated_resident_bytes = _estimated_resident_bytes(
         artifact_bytes=artifact_bytes,
         parameter_count=parameter_count,
         tags=tags,
+        lowered_tags=lowered_tags,
     )
     gated = _gated(payload.get("gated"))
     reasons: list[str] = []
@@ -547,18 +562,19 @@ def _estimated_resident_bytes(
     artifact_bytes: int,
     parameter_count: int,
     tags: list[str],
+    lowered_tags: set[str] | None = None,
 ) -> int:
     if artifact_bytes > 0:
         base_size = artifact_bytes
     elif parameter_count > 0:
-        base_size = parameter_count * _bytes_per_parameter(tags)
+        base_size = parameter_count * _bytes_per_parameter(tags, lowered_tags=lowered_tags)
     else:
         return 0
     return math.ceil(base_size * RESIDENT_MEMORY_OVERHEAD_FACTOR)
 
 
-def _bytes_per_parameter(tags: list[str]) -> float:
-    lowered = {tag.lower() for tag in tags}
+def _bytes_per_parameter(tags: list[str], *, lowered_tags: set[str] | None = None) -> float:
+    lowered = _normalized_lowered_tags(tags, lowered_tags)
     joined = " ".join(lowered)
     if "2bit" in joined or "2-bit" in joined:
         return 0.25
@@ -575,8 +591,8 @@ def _bytes_per_parameter(tags: list[str]) -> float:
     return 2.0
 
 
-def _quantization_summary(tags: list[str]) -> str:
-    lowered = {tag.lower() for tag in tags}
+def _quantization_summary(tags: list[str], *, lowered_tags: set[str] | None = None) -> str:
+    lowered = _normalized_lowered_tags(tags, lowered_tags)
     ordered = [
         ("2-bit", {"2bit", "2-bit"}),
         ("3-bit", {"3bit", "3-bit"}),

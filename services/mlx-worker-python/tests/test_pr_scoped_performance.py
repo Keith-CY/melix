@@ -79,6 +79,16 @@ def benchmark_scope() -> dict[str, object]:
     )
 
 
+def test_scope_report_selects_hub_catalog_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/hub_catalog.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "hub-catalog-tag-normalization-single-pass"
+
+
 def test_scope_report_selects_stream_assembler_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -690,6 +700,25 @@ def test_compiled_glob_pattern_reuses_cached_regex(monkeypatch: pytest.MonkeyPat
     pr_scoped_performance_module._force_all_wildcard_matchers.cache_clear()
 
 
+def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_HUB_CATALOG_TAG_PROBE_RECORDS", "3")
+    monkeypatch.setenv("MELIX_HUB_CATALOG_TAG_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/hub_catalog_tag_normalization_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["record_count"] == 3.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["tag_normalization_calls_mean"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -748,6 +777,7 @@ def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
 
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
+        "hub-catalog-tag-normalization-single-pass",
         "benchmark-evaluation-report-running-aggregates",
         "stream-assembler-parser-mode-cache",
         "benchmark-export-run-scan-single-pass",

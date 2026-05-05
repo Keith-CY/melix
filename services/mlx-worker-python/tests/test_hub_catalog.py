@@ -6,7 +6,8 @@ from urllib.request import Request
 
 import pytest
 
-from worker.model_ops.hub_catalog import HubCatalog, HubCatalogError
+import worker.model_ops.hub_catalog as hub_catalog_module
+from worker.model_ops.hub_catalog import HubCatalog, HubCatalogError, _is_mlx_compatible, _local_fit_evidence
 
 
 class FakeHTTPResponse:
@@ -383,6 +384,32 @@ def test_search_models_counts_fp32_parameters_as_four_bytes_for_local_fit() -> N
     assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
 
 
+def test_tag_lowering_fallbacks_preserve_direct_helper_compatibility() -> None:
+    assert _is_mlx_compatible(
+        repo_id="plain/model",
+        tags=["MLX"],
+        library_name="transformers",
+        card_data={},
+    ) is True
+
+    evidence = _local_fit_evidence(
+        payload={
+            "safetensors": {"total": 2_000_000_000},
+            "siblings": [{"rfilename": "config.json"}],
+        },
+        repo_id="mlx-community/direct-helper",
+        pipeline_tag="text-generation",
+        tags=["MLX", "4-bit"],
+        mlx_compatible=True,
+        local_memory_gb=64.0,
+    )
+
+    assert evidence["quantization_summary"] == "4-bit"
+    assert evidence["estimated_resident_bytes"] == int(
+        2_000_000_000 * 0.5 * hub_catalog_module.RESIDENT_MEMORY_OVERHEAD_FACTOR
+    )
+
+
 def test_search_models_treats_gated_auto_as_soft_access_not_blocked() -> None:
     payload = [
         {
@@ -470,6 +497,43 @@ def test_search_models_marks_gated_true_and_unsupported_pipeline_as_blocked() ->
     assert unsupported.local_fit_status == "blocked"
     assert unsupported.recommended_action == "unavailable"
     assert any("Unsupported Melix pipeline tag" in reason for reason in unsupported.local_fit_reasons)
+
+
+def test_summary_record_reuses_lowered_tags_for_local_fit(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = [
+        {
+            "id": "mlx-community/reused-tags",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["MLX", "4-BIT", "OptiQ"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "config.json"}],
+            "safetensors": {"total": 2_000_000_000},
+            "cardData": {},
+        }
+    ]
+    calls = 0
+    original_lowered_tag_set = hub_catalog_module._lowered_tag_set
+
+    def counting_lowered_tag_set(tags: list[str]) -> set[str]:
+        nonlocal calls
+        calls += 1
+        return original_lowered_tag_set(tags)
+
+    monkeypatch.setattr(hub_catalog_module, "_lowered_tag_set", counting_lowered_tag_set)
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="reused-tags", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.quantization_summary == "4-bit, optiq"
+    assert model.estimated_resident_bytes == int(
+        2_000_000_000 * 0.5 * hub_catalog_module.RESIDENT_MEMORY_OVERHEAD_FACTOR
+    )
+    assert calls == 1
 
 
 def test_get_model_card_includes_local_fit_evidence_from_readme_size_hint() -> None:
