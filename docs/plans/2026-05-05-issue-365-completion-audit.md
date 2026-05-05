@@ -118,15 +118,16 @@ CLI/Window acceptance.
 ### PR #400: CLI Pipeline Chain Routing
 
 Open PR #400 adds pipeline routing for `alignment.train`, `lora.publish`,
-`quantize`, `convert`, and `upload`. It also adds an Issue 365 acceptance bundle
-harness that writes the full 10-case CLI matrix and explicitly separates
-planning, deterministic dry-run, and real-local-runtime evidence. The harness
-now records per-case real-mode preflight evidence, blocks missing local
-prerequisites with machine-readable blocker codes, and supports `--case-id`
-subset execution so operators can run a real local runtime slice without
-requiring unused RLHF or quantization inputs. This is useful release-evidence
-infrastructure, but it still does not provide full real local runtime acceptance
-for every business line.
+`quantize`, `convert`, and `upload` in both the supported-command registry and
+the command builder. It also adds an Issue 365 acceptance bundle harness that
+writes the full 10-case CLI matrix and explicitly separates planning,
+deterministic dry-run, and real-local-runtime evidence. The harness now records
+per-case real-mode preflight evidence, blocks missing local prerequisites with
+machine-readable blocker codes, and supports `--case-id` subset execution so
+operators can run a real local runtime slice without requiring unused RLHF or
+quantization inputs. This is useful release-evidence infrastructure, but it
+still does not provide full real local runtime acceptance for every business
+line.
 
 ## Missing Completion Items
 
@@ -152,7 +153,7 @@ The objective is not achieved until all of these are implemented and verified:
    - BaseModel -> LoRA -> GRPO -> export -> local inference
    - BaseModel -> LoRA -> RLHF using #366 reward model -> export -> local inference
    - BaseModel -> LoRA/preference result -> merge/export -> PTQ -> local inference
-   - BaseModel -> QAT/QAT-aware export -> quantized local inference
+   - BaseModel -> LoRA (QAT) -> QAT-aware export -> quantized local inference
 6. Real local runtime evidence for the final CLI acceptance matrix. #400 now
    records real-mode prerequisites and blockers, but blocker evidence is not a
    substitute for successful real local runtime execution.
