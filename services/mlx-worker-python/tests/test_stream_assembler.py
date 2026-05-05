@@ -29,9 +29,11 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
     )
 
     assert tool_enabled._structural_tag_prefixes == think_prefixes + tool_prefixes
+    assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_disabled._structural_tag_prefixes == think_prefixes
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_disabled._structural_tag_prefixes is tool_disabled._structural_tag_prefixes
+    assert tool_disabled._structural_tag_prefixes is RequestStreamAssembler._THINK_PREFIXES
 
 
 def test_parser_mode_flags_are_computed_once_at_initialization() -> None:

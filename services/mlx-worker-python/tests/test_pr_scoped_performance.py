@@ -85,8 +85,12 @@ def test_scope_report_selects_stream_assembler_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/stream_assembler.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "stream-assembler-parser-mode-cache"
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "stream-assembler-parser-mode-cache",
+        "stream-assembler-structural-prefix-cache",
+    }
 
 
 def test_scope_report_selects_only_matching_probe() -> None:
@@ -712,6 +716,26 @@ def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     assert metrics["checksum"] > 0
 
 
+def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STREAM_PREFIX_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_STREAM_PREFIX_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/stream_assembler_structural_prefix_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iteration_count"] == 3.0
+    assert metrics["held_suffix_hits"] == 3.0
+    assert metrics["prefix_identity_hits"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "benchmark-evaluation-report-running-aggregates",
@@ -751,6 +775,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "phase8-metrics-closure-audit-reuse",
         "pr-scoped-performance-registry-cache",
         "real-model-support-hf-cache-latest-snapshot",
+        "stream-assembler-structural-prefix-cache",
         "swift-cli-json-envelope-encoding",
         "upload-receipt-published-files-scandir",
         "download-pipeline-directory-size-single-stat",
