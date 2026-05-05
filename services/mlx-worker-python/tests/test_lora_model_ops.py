@@ -246,6 +246,15 @@ class SuccessfulRunner(MLXLMRunner):
             + "\n",
             encoding="utf-8",
         )
+        preference_metrics = {}
+        if request.config.training_objective == "preference":
+            preference_metrics = {
+                "preference_loss_final": 0.2,
+                "chosen_logprob_mean": -1.5,
+                "rejected_logprob_mean": -2.0,
+                "chosen_rejected_margin": 0.5,
+                "win_rate_proxy": 1.0,
+            }
         return TrainingResult(
             weights_path=weights_path,
             adapter_config_path=adapter_config_path,
@@ -262,6 +271,7 @@ class SuccessfulRunner(MLXLMRunner):
                 resume_source_path=str(request.resume_source_path or ""),
                 tokens_per_second=128.5,
                 peak_memory_gb=5.25,
+                **preference_metrics,
             ),
             execution_backend="native",
         )
@@ -889,8 +899,13 @@ def test_train_lora_supports_preference_mode_contracts(
     assert alignment_payload["alignment_algorithm"] == training_mode
     assert alignment_payload["dataset_contract"] == "preference_pair"
     assert alignment_payload["adapter_manifest_path"] == payload["artifact_path"]
-    assert "chosen_rejected_margin" in alignment_payload["metrics"]
-    assert "win_rate_proxy" in alignment_payload["metrics"]
+    assert "preference_loss" not in alignment_payload["metrics"]
+    assert alignment_payload["metrics"]["preference_loss_config"] == training_mode
+    assert alignment_payload["metrics"]["preference_loss_final"] == pytest.approx(0.2)
+    assert alignment_payload["metrics"]["chosen_logprob_mean"] == pytest.approx(-1.5)
+    assert alignment_payload["metrics"]["rejected_logprob_mean"] == pytest.approx(-2.0)
+    assert alignment_payload["metrics"]["chosen_rejected_margin"] == pytest.approx(0.5)
+    assert alignment_payload["metrics"]["win_rate_proxy"] == pytest.approx(1.0)
     assert normalized_dataset_payload["format"] == "preference_pair"
     assert runner.last_train_request is not None
     assert runner.last_train_request.dataset_format == "preference_pair"

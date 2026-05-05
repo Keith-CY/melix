@@ -18,6 +18,7 @@ class AlignmentTrainingConfig:
     reward_model_manifest_path: str = ""
     grpo_candidate_count: int = 0
     kl_penalty: float = 0.0
+    preference_margin_target: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -711,6 +712,12 @@ def _resolve_alignment_config(
             default=0.0,
             minimum=0.0,
             field_name="kl_penalty",
+        ),
+        preference_margin_target=_float_value(
+            ext.get("preference_margin_target", ""),
+            default=0.0,
+            minimum=0.0,
+            field_name="preference_margin_target",
         ),
     )
 

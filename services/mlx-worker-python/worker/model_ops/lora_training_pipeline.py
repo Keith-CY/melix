@@ -379,9 +379,12 @@ def _alignment_manifest_payload(
     if alignment.dataset_contract == "preference_pair":
         metrics.update(
             {
-                "preference_loss": config.preference_loss,
-                "chosen_rejected_margin": 0.0,
-                "win_rate_proxy": 0.0,
+                "preference_loss_config": config.preference_loss,
+                "preference_loss_final": training_result.metrics.preference_loss_final,
+                "chosen_logprob_mean": training_result.metrics.chosen_logprob_mean,
+                "rejected_logprob_mean": training_result.metrics.rejected_logprob_mean,
+                "chosen_rejected_margin": training_result.metrics.chosen_rejected_margin,
+                "win_rate_proxy": training_result.metrics.win_rate_proxy,
             }
         )
     reward_summary = _reward_summary(dataset.package.normalized_samples)
