@@ -176,8 +176,12 @@ def test_scope_report_selects_code_eval_stdio_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/engine/code_eval_runner.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "code-eval-stdio-tail-single-stat"
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "code-eval-code-block-last-match-streaming",
+        "code-eval-stdio-tail-single-stat",
+    }
 
 
 def test_scope_report_selects_evaluation_store_probe() -> None:
@@ -850,6 +854,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
+        "code-eval-code-block-last-match-streaming",
         "code-eval-stdio-tail-single-stat",
         "deterministic-embedding-duplicate-input-cache",
         "deterministic-embedding-project-digest-allocation",
@@ -1266,6 +1271,21 @@ def test_code_eval_stdio_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert metrics["stdio_stat_calls_mean"] == 6000.0
     assert metrics["output_limit_exceeded_mean"] == 1.0
     assert metrics["tail_chars_mean"] > 0
+
+
+def test_code_eval_code_block_extract_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/code_eval_code_block_extract_probe.py"))
+
+    probe_script["main"]()
+    metrics = json.loads(capsys.readouterr().out)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["block_count"] == 2500.0
+    assert metrics["sample_count"] == 7.0
+    assert metrics["extracted_chars_mean"] > 0
 
 
 def test_probe_smokes_return_metrics_against_current_repo() -> None:

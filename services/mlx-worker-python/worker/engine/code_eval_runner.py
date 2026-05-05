@@ -40,9 +40,11 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     normalized = raw_response.strip()
     if not normalized:
         return "", "empty_prediction"
-    matches = _CODE_BLOCK_PATTERN.findall(normalized)
-    if matches:
-        return matches[-1].strip(), "parsed_code_block"
+    last_code_block: str | None = None
+    for match in _CODE_BLOCK_PATTERN.finditer(normalized):
+        last_code_block = match.group(1)
+    if last_code_block is not None:
+        return last_code_block.strip(), "parsed_code_block"
     return normalized, "parsed_code"
 
 
