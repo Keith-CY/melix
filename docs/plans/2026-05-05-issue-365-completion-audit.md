@@ -10,18 +10,21 @@ Window UI evidence.
 
 The GitHub issue is currently closed as a roadmap artifact, but the
 implementation acceptance criteria are not complete. This audit is the current
-source-of-truth checklist for what is finished, what is covered by open draft
-PRs, and what remains before the roadmap can be treated as implemented.
+source-of-truth checklist for what is finished, what is covered by open PRs,
+and what remains before the roadmap can be treated as implemented.
 
 ## Audit Snapshot
 
-- Date: 2026-05-05
-- Base inspected: `origin/main` at `87e5ea054`
+- Date: 2026-05-06
+- Base inspected: `origin/main` at `34023d7e8`
 - Merged Issue 365 PRs inspected:
   - #368, `Add Issue 365 alignment and quantization contracts`
   - #369, `Implement Issue 365 offline preference trainer routing`
   - #386, `Record quantization runtime smoke evidence`
-- Open Issue 365 draft PRs inspected:
+- Related mainline support PRs inspected:
+  - #393, `Add dataset management and selection` (useful dataset materialization
+    support, but no desktop UI surface and not final Issue 365 acceptance)
+- Open Issue 365 PRs inspected:
   - #394, `Add scored RL alignment runner`
   - #397, `Add MLX quantization convert backend`
   - #400, `Add CLI pipeline chain routing slice`
@@ -33,21 +36,21 @@ PRs, and what remains before the roadmap can be treated as implemented.
 | `lora`, `qlora`, and `dora` supervised adapter training remains supported. | Existing LoRA training pipeline and regression tests remain in `services/mlx-worker-python/tests/test_lora_model_ops.py` and CLI tests. | Covered as baseline regression scope, not reclassified as complete Issue 365 release evidence by itself. |
 | `dpo`, `orpo`, and `cpo` accept `preference_pair` datasets. | #368 adds contracts; #369 adds offline preference trainer routing and preference metrics. | Implemented on `origin/main`. |
 | `dpo`, `orpo`, and `cpo` run real trainer paths rather than manifest-only placeholders. | #369 routes preference training through worker-side preference trainer logic and records preference metrics. | Implemented on `origin/main`, with targeted unit and worker evidence in the PR body. |
-| `grpo` accepts prompt/candidate datasets and records candidate/reward traces. | #368 adds `prompt_candidate` validation. #394 adds a scored-trace runner plus opt-in `runtime_generate` policy-runtime candidate generation and explicit reward-runtime scoring in a draft PR. | Partially covered by open draft PR #394. Release-ready GRPO still needs real local runtime release evidence and real policy-update evidence. |
-| `rlhf` consumes reward-model lineage from #366 and records reward-model lineage. | #368 validates readable reward manifests. #394 records reward-scored traces and an opt-in reward-runtime response scoring interface in a draft PR. | Partially covered by open draft PR #394. Reward-model training artifacts and PPO/reward-guided policy updates from #366 are still missing. |
+| `grpo` accepts prompt/candidate datasets and records candidate/reward traces. | #368 adds `prompt_candidate` validation. #394 adds a scored-trace runner plus opt-in `runtime_generate` policy-runtime candidate generation and explicit reward-runtime scoring in an open PR. | Partially covered by open PR #394. Release-ready GRPO still needs real local runtime release evidence and real policy-update evidence. |
+| `rlhf` consumes reward-model lineage from #366 and records reward-model lineage. | #368 validates readable reward manifests. #394 records reward-scored traces and an opt-in reward-runtime response scoring interface in an open PR. | Partially covered by open PR #394. Reward-model training artifacts and PPO/reward-guided policy updates from #366 are still missing. |
 | Every preference/RL run emits `melix.alignment_run.v1`. | #368 adds alignment run manifests and adapter backlinks; tests assert `melix.alignment_run.v1`. | Implemented for contract and current worker paths on `origin/main`; open #394 expands scored-trace, runtime-generated GRPO, and reward-runtime scoring metrics. |
 | Adapter manifests backlink to alignment manifests through `alignment_run_manifest_path`. | #368 implementation evidence and worker tests cover adapter backlinking. | Implemented on `origin/main`. |
 | Quantized bundle manifests record `quantization_mode`, `source_artifact_kind`, and release-gate evidence. | #368 and #386 extend quantization manifests and typed local smoke evidence. | Implemented on `origin/main`. |
-| PTQ can quantize exported or merged artifacts. | Current `origin/main` has manifest/runtime evidence. #397 adds an opt-in `mlx_lm_convert` backend for real PTQ conversion in draft. | Not complete on `origin/main`; open draft PR #397 covers the next backend slice. |
-| QAT runs before final quantized export and records quantization-aware settings. | #397 records QAT-aware export lineage, requires existing adapter-derived source artifacts, and now writes deterministic fake-quant optimizer trace/manifest/artifact evidence in a draft PR. | Partially covered by open draft PR #397. MLX-native QAT over full model tensors and real local-runtime release evidence are still missing. |
+| PTQ can quantize exported or merged artifacts. | Current `origin/main` has manifest/runtime evidence. #397 adds an opt-in `mlx_lm_convert` backend for real PTQ conversion in an open PR. | Not complete on `origin/main`; open PR #397 covers the next backend slice. |
+| QAT runs before final quantized export and records quantization-aware settings. | #397 records QAT-aware export lineage, requires existing adapter-derived source artifacts, and now writes deterministic fake-quant optimizer trace/manifest/artifact evidence in an open PR. | Partially covered by open PR #397. MLX-native QAT over full model tensors and real local-runtime release evidence are still missing. |
 | QLoRA records quantized-base behavior and rejects unsafe targets. | Existing LoRA/QLoRA contract tests cover mode validation; #365-specific real release evidence is not complete. | Partial baseline coverage only. |
 | CLI exposes `melix alignment train` separately from `melix lora train`. | #368 adds parser/runner/codec support and tests. | Implemented on `origin/main`. |
-| CLI supports a full chained workflow across training, alignment, publish/export, quantize, local inference, and eval/bench evidence. | #400 adds `melix pipeline run` routing for post-training steps plus a draft Issue 365 acceptance bundle harness. | Not complete on `origin/main`; open draft PR #400 covers routing and plan/dry-run evidence orchestration, not final real-runtime acceptance. |
-| Required CLI chain tests exist for every listed business line. | Existing tests cover focused slices. #400 now writes all 10 required chain cases into a machine-readable plan/dry-run matrix. | Partially covered by open draft PR #400. Real local runtime execution of the full matrix is still missing. |
+| CLI supports a full chained workflow across training, alignment, publish/export, quantize, local inference, and eval/bench evidence. | #400 adds `melix pipeline run` routing for post-training steps plus an open Issue 365 acceptance bundle harness. The harness now records real-mode preflight blockers for missing CLI, dataset, calibration, and reward-model prerequisites before long-running execution. | Not complete on `origin/main`; open PR #400 covers routing, plan/dry-run evidence orchestration, and real-mode prerequisite evidence, not final real-runtime acceptance. |
+| Required CLI chain tests exist for every listed business line. | Existing tests cover focused slices. #400 now writes all 10 required chain cases into a machine-readable plan/dry-run matrix and supports `--case-id` subset execution for real-mode runs. | Partially covered by open PR #400. Real local runtime execution of the full matrix is still missing. |
 | Window UI exposes every CLI business line. | Existing Window routing code and tests expose alignment mode state and forwarding paths. | Partial UI routing exists; full runnable/inspectable acceptance remains missing. |
 | Window UI acceptance proves every business line is visible, selectable, runnable, and inspectable. | Existing Window tests cover routing surfaces. No full real-runtime acceptance matrix exists. | Missing. |
-| Release evidence separates deterministic/unit/scored-trace results from real local runtime results. | PR bodies and plans label deterministic/scored-trace limitations. #400 adds a bundle schema that marks plan/dry-run evidence as not release-ready. | Partially covered by open draft PR #400. A final real-local-runtime release evidence bundle is still missing. |
-| No business line is marked complete when only deterministic evidence exists. | Plans explicitly state remaining gaps, and open PRs are draft. | Process guard exists, but final release gate is missing. |
+| Release evidence separates deterministic/unit/scored-trace results from real local runtime results. | PR bodies and plans label deterministic/scored-trace limitations. #400 adds a bundle schema that marks plan/dry-run evidence as not release-ready and marks missing real-mode prerequisites as blocked rather than successful. | Partially covered by open PR #400. A final real-local-runtime release evidence bundle is still missing. |
+| No business line is marked complete when only deterministic evidence exists. | Plans explicitly state remaining gaps, and open PRs are unmerged. #400's bundle keeps plan/dry-run evidence `release_ready=false` and only permits real-mode release readiness after succeeded real pipeline cases. | Process guard exists, but final release gate and full real evidence are missing. |
 
 ## Verified Covered Work
 
@@ -88,7 +91,7 @@ Implemented by #386 on `origin/main`:
 
 ### PR #394: Scored RL Alignment Runner
 
-Draft PR #394 adds a deterministic scored-trace runner for GRPO and RLHF
+Open PR #394 adds a deterministic scored-trace runner for GRPO and RLHF
 datasets. It also adds opt-in GRPO `candidate_generation_mode=runtime_generate`
 support that loads the policy runtime once per job, generates candidates, scores
 them with a seed-overlap proxy, and records generated-candidate evidence in
@@ -102,7 +105,7 @@ from #366, and Window UI acceptance.
 
 ### PR #397: MLX Quantization Convert Backend
 
-Draft PR #397 adds opt-in real PTQ weight conversion through MLX-LM conversion.
+Open PR #397 adds opt-in real PTQ weight conversion through MLX-LM conversion.
 It also tightens QAT-aware export evidence by requiring existing
 adapter-derived source artifacts and recording fake-quant, source, optional QAT
 training-manifest, and calibration lineage in the quantized bundle. It now also
@@ -114,12 +117,16 @@ CLI/Window acceptance.
 
 ### PR #400: CLI Pipeline Chain Routing
 
-Draft PR #400 adds pipeline routing for `alignment.train`, `lora.publish`,
+Open PR #400 adds pipeline routing for `alignment.train`, `lora.publish`,
 `quantize`, `convert`, and `upload`. It also adds an Issue 365 acceptance bundle
 harness that writes the full 10-case CLI matrix and explicitly separates
-planning, deterministic dry-run, and real-local-runtime evidence. This is useful
-release-evidence infrastructure, but it still does not provide full real local
-runtime acceptance for every business line.
+planning, deterministic dry-run, and real-local-runtime evidence. The harness
+now records per-case real-mode preflight evidence, blocks missing local
+prerequisites with machine-readable blocker codes, and supports `--case-id`
+subset execution so operators can run a real local runtime slice without
+requiring unused RLHF or quantization inputs. This is useful release-evidence
+infrastructure, but it still does not provide full real local runtime acceptance
+for every business line.
 
 ## Missing Completion Items
 
@@ -134,7 +141,7 @@ The objective is not achieved until all of these are implemented and verified:
    policy updates from #366 artifacts.
 4. MLX-native QAT training over full model tensors and real local-runtime QAT
    release evidence. Deterministic fake-quant optimizer execution is partially
-   covered by open draft PR #397, but release-ready MLX-native QAT is not.
+   covered by open PR #397, but release-ready MLX-native QAT is not.
 5. Full real-runtime CLI chain execution for every listed business line:
    - BaseModel -> LoRA -> export -> local inference
    - BaseModel -> QLoRA -> export -> local inference
@@ -146,7 +153,9 @@ The objective is not achieved until all of these are implemented and verified:
    - BaseModel -> LoRA -> RLHF using #366 reward model -> export -> local inference
    - BaseModel -> LoRA/preference result -> merge/export -> PTQ -> local inference
    - BaseModel -> QAT/QAT-aware export -> quantized local inference
-6. Real local runtime evidence for the final CLI acceptance matrix.
+6. Real local runtime evidence for the final CLI acceptance matrix. #400 now
+   records real-mode prerequisites and blockers, but blocker evidence is not a
+   substitute for successful real local runtime execution.
 7. Window UI runnable and inspectable acceptance for every CLI-supported
    business line.
 8. A final populated release evidence bundle that distinguishes:
@@ -157,10 +166,11 @@ The objective is not achieved until all of these are implemented and verified:
 
 ## Recommended Next Implementation Order
 
-1. Land and undraft #394, #397, and #400 when CI and review are clean.
+1. Land #394, #397, and #400 when CI and review are clean.
 2. Use or extend the #400 acceptance bundle harness to run a configured
-   real-local-runtime matrix and emit the final machine-readable #365 evidence
-   bundle.
+   real-local-runtime matrix with actual local datasets, model artifacts,
+   reward-model artifacts, and runtime availability, then emit the final
+   machine-readable #365 evidence bundle.
 3. Promote QAT from deterministic fake-quant optimizer evidence to an
    MLX-native worker backend path, or keep MLX-native QAT explicitly unsupported
    with a final acceptance failure until the backend exists.
@@ -173,6 +183,6 @@ The objective is not achieved until all of these are implemented and verified:
 
 Issue #365 is not complete. The current repository has strong contract,
 manifest, offline preference, and quantization evidence foundations, plus three
-active draft PRs for additional slices. The remaining acceptance items require
+active open PRs for additional slices. The remaining acceptance items require
 real runtime paths and release evidence, so this audit must not be used to mark
 the objective complete.
