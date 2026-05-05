@@ -258,8 +258,11 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "mlx-vlm-family-config-cache"
+    assert scope["selected_count"] == 2
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "mlx-vlm-family-config-cache",
+        "mlx-vlm-gemma4-weight-presence-single-pass",
+    ]
 
 
 def test_scope_report_selects_model_registry_catalog_probe() -> None:
@@ -687,6 +690,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
         "mlx-vlm-family-config-cache",
+        "mlx-vlm-gemma4-weight-presence-single-pass",
         "model-registry-plain-local-manifest-stat-elision",
         "multimodal-fast-path-signature-top-level-key-cache",
         "package-macos-resolve-fallback-scandir",
@@ -2011,6 +2015,44 @@ def test_mlx_vlm_family_config_probe_script_main_covers_checked_in_file(
     assert payload["iteration_count"] == 8.0
     assert payload["sample_count"] == 2.0
     assert payload["resolve_calls_mean"] >= 1.0
+
+
+def test_mlx_vlm_gemma4_weight_presence_probe_script_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-vlm-gemma4-weight-presence-single-pass"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["visited_names_mean"] > 0
+    assert metrics["has_vision"] == 1.0
+    assert metrics["has_audio"] == 1.0
+
+
+def test_mlx_vlm_gemma4_weight_presence_probe_script_main_covers_checked_in_file(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "mlx_vlm_gemma4_weight_presence_probe.py"
+    spec = importlib.util.spec_from_file_location("mlx_vlm_gemma4_weight_presence_probe_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.WEIGHT_NAME_COUNT = 32
+    module.ITERATION_COUNT = 2
+    module.SAMPLE_COUNT = 2
+
+    assert module.main() == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert payload["weight_name_count"] == 32.0
+    assert payload["iteration_count"] == 2.0
+    assert payload["sample_count"] == 2.0
+    assert payload["has_vision"] == 1.0
+    assert payload["has_audio"] == 1.0
 
 
 def test_command_json_probe_rejects_missing_command_and_non_numeric_metrics(tmp_path: Path) -> None:
