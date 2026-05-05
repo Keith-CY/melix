@@ -411,6 +411,57 @@ def test_collect_probe_sources_uses_iterator_order_without_resorting(
     }
 
 
+def test_iter_text_files_sorted_checks_suffix_before_file_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scan_root = tmp_path / "scan-root"
+    scan_root.mkdir()
+    text_path = scan_root / "kept.md"
+    binary_path = scan_root / "ignored.bin"
+
+    class FakeScandir:
+        def __init__(self, entries):
+            self._entries = entries
+
+        def __enter__(self):
+            return iter(self._entries)
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeEntry:
+        def __init__(self, name: str, *, is_file: bool) -> None:
+            self.name = name
+            self.path = str(scan_root / name)
+            self._is_file = is_file
+            self.file_checks = 0
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
+            return False
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
+            self.file_checks += 1
+            if not self.name.endswith(closure_audit_module._TEXT_FILE_SUFFIXES):
+                raise AssertionError("non-text suffix entries should not call is_file")
+            return self._is_file
+
+    binary_entry = FakeEntry("ignored.bin", is_file=True)
+    text_entry = FakeEntry("kept.md", is_file=True)
+
+    def fake_scandir(path: Path | str):
+        assert Path(path) == scan_root
+        return FakeScandir([binary_entry, text_entry])
+
+    monkeypatch.setattr(closure_audit_module.os, "scandir", fake_scandir)
+
+    assert list(closure_audit_module._iter_text_files_sorted(scan_root)) == [text_path]
+    assert binary_entry.file_checks == 0
+    assert text_entry.file_checks == 1
+    assert binary_path == scan_root / "ignored.bin"
+
+
 def test_load_milestone_statuses_streams_execution_index_without_read_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
