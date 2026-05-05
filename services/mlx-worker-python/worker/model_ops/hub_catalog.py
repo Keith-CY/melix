@@ -293,6 +293,10 @@ def _lowered_tag_set(tags: list[str]) -> set[str]:
     return {tag.lower() for tag in tags}
 
 
+def _normalized_lowered_tags(tags: list[str], lowered_tags: set[str] | None = None) -> set[str]:
+    return lowered_tags if lowered_tags is not None else _lowered_tag_set(tags)
+
+
 def _sibling_files(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -344,8 +348,7 @@ def _is_mlx_compatible(
     card_data: dict[str, Any],
     lowered_tags: set[str] | None = None,
 ) -> bool:
-    if lowered_tags is None:
-        lowered_tags = _lowered_tag_set(tags)
+    lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
     card_tags = {
         tag.lower()
         for tag in _string_list(card_data.get("tags"))
@@ -370,8 +373,7 @@ def _local_fit_evidence(
     local_memory_gb: float,
     lowered_tags: set[str] | None = None,
 ) -> dict[str, Any]:
-    if lowered_tags is None:
-        lowered_tags = _lowered_tag_set(tags)
+    lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
     artifact_bytes = _estimated_artifact_bytes(payload)
     parameter_count = _parameter_count(payload.get("safetensors"))
     quantization_summary = _quantization_summary(tags, lowered_tags=lowered_tags)
@@ -572,7 +574,7 @@ def _estimated_resident_bytes(
 
 
 def _bytes_per_parameter(tags: list[str], *, lowered_tags: set[str] | None = None) -> float:
-    lowered = lowered_tags if lowered_tags is not None else _lowered_tag_set(tags)
+    lowered = _normalized_lowered_tags(tags, lowered_tags)
     joined = " ".join(lowered)
     if "2bit" in joined or "2-bit" in joined:
         return 0.25
@@ -590,7 +592,7 @@ def _bytes_per_parameter(tags: list[str], *, lowered_tags: set[str] | None = Non
 
 
 def _quantization_summary(tags: list[str], *, lowered_tags: set[str] | None = None) -> str:
-    lowered = lowered_tags if lowered_tags is not None else _lowered_tag_set(tags)
+    lowered = _normalized_lowered_tags(tags, lowered_tags)
     ordered = [
         ("2-bit", {"2bit", "2-bit"}),
         ("3-bit", {"3bit", "3-bit"}),
