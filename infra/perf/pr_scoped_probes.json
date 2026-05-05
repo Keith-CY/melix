@@ -1070,5 +1070,40 @@
         "warn_pct": 5.0
       }
     ]
+  },
+  {
+    "id": "changed-scope-coverage-diff-parser",
+    "name": "Changed-scope coverage diff parser",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "scripts/changed_scope_coverage.py",
+      "scripts/changed_scope_coverage_parse_probe.py",
+      "tests/test_changed_scope_coverage.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q tests/test_changed_scope_coverage.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_changed_scope_coverage_parser_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/test_changed_scope_coverage.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_changed_scope_coverage_parser_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python scripts/changed_scope_coverage.py --coverage-json coverage.json scripts/changed_scope_coverage.py tests/test_changed_scope_coverage.py scripts/changed_scope_coverage_parse_probe.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "bash -c 'if [ -f scripts/changed_scope_coverage_parse_probe.py ]; then python scripts/changed_scope_coverage_parse_probe.py; else python - <<\"PY\"\nimport importlib.util, json, statistics, time\nfrom pathlib import Path\nrepo_root = Path.cwd()\nspec = importlib.util.spec_from_file_location(\"changed_scope_coverage_probe_target\", repo_root / \"scripts\" / \"changed_scope_coverage.py\")\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nlines = []\nfor file_index in range(240):\n    path = f\"pkg/module_{file_index:04d}.py\"\n    lines.extend([f\"diff --git a/{path} b/{path}\", f\"--- a/{path}\", f\"+++ b/{path}\"])\n    for hunk_index in range(8):\n        start = hunk_index * 10 + 1\n        lines.append(f\"@@ -{start},3 +{start},6 @@\")\n        lines.append(\" context\")\n        lines.append(\"-old_value\")\n        for addition_index in range(4):\n            lines.append(f\"+new_value_{file_index}_{hunk_index}_{addition_index}\")\n        lines.append(\" context_tail\")\ndiff_text = \"\\n\".join(lines)\nsamples = []\nchanged = files = 0\nfor _ in range(12):\n    start = time.perf_counter()\n    parsed = module._parse_changed_lines(diff_text)\n    samples.append((time.perf_counter() - start) * 1000.0)\n    files = len(parsed)\n    changed = sum(len(v) for v in parsed.values())\n    if files != 240 or changed != 7680:\n        raise RuntimeError(f\"unexpected parser output: files={files} changed={changed}\")\nprint(json.dumps({\"elapsed_ms_mean\": statistics.fmean(samples), \"elapsed_ms_min\": min(samples), \"line_count\": float(diff_text.count(\"\\n\") + 1), \"file_count\": float(files), \"changed_line_count\": float(changed)}, sort_keys=True))\nPY\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "changed_line_count",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "line_count",
+        "unit": "count",
+        "direction": "informational"
+      }
+    ]
   }
 ]

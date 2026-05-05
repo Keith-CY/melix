@@ -10,20 +10,28 @@ import subprocess
 import sys
 
 
+_DIFF_HEADER_RE = re.compile(r"diff --git a/(.+) b/(.+)")
+_HUNK_NEW_RANGE_RE = re.compile(r"\+(\d+)(?:,(\d+))?")
+
+
+def _is_diff_file_marker(line: str) -> bool:
+    return line.startswith(("+++ b/", "+++ /dev/null", "--- a/", "--- /dev/null"))
+
+
 def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     changed_by_path: dict[str, set[int]] = {}
     current_path: str | None = None
     new_line: int | None = None
     for line in diff_text.splitlines():
         if line.startswith("diff --git "):
-            match = re.match(r"diff --git a/(.+) b/(.+)", line)
+            match = _DIFF_HEADER_RE.match(line)
             current_path = None if match is None else match.group(2)
             if current_path is not None:
                 changed_by_path.setdefault(current_path, set())
             new_line = None
             continue
         if line.startswith("@@"):
-            match = re.search(r"\+(\d+)(?:,(\d+))?", line)
+            match = _HUNK_NEW_RANGE_RE.search(line)
             if match is None:
                 continue
             new_line = int(match.group(1))
@@ -32,7 +40,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             continue
         if line.startswith("\\ "):
             continue
-        if re.match(r"\+\+\+ (?:b/|/dev/null)", line) or re.match(r"--- (?:a/|/dev/null)", line):
+        if _is_diff_file_marker(line):
             continue
         if line.startswith("+"):
             changed_by_path[current_path].add(new_line)
