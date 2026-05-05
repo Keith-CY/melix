@@ -113,6 +113,9 @@ Results on 2026-05-05 after adding the acceptance bundle harness:
   99.37 percent total changed-line coverage, 316/318 executable lines.
 - `python3 scripts/issue365_acceptance_bundle.py --execution-mode plan --output-dir .runtime/issue365/acceptance-smoke --timestamp 2026-05-05T000000Z --json`:
   wrote a plan bundle with 10 planned cases and `release_ready=false`.
+- `python3 scripts/issue365_acceptance_bundle.py --execution-mode dry-run --melix-cli .build/arm64-apple-macosx/debug/melix --output-dir .runtime/issue365/acceptance-dry-run --timestamp 2026-05-05T000000Z --json`:
+  passed with 10 succeeded dry-run cases, 0 failures, and
+  `release_ready=false`.
 - `swift test --filter 'MelixCLIRunnerTests|MelixCLIParserTests'`:
   212 tests passed in 3 suites. Existing `try await store.save` warnings
   remain.
