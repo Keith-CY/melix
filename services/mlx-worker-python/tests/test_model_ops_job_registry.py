@@ -506,6 +506,49 @@ def test_resolve_derived_model_target_model_id_uses_cached_resolved_path(
     assert second_target["activation_manifest_path"] == manifest_path
 
 
+def test_resolve_derived_model_target_caches_payload_without_sharing_return_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ModelOpsJobRegistry()
+    job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    manifest_path = "/runtime/activate/melix-dev-active/manifest.json"
+    registry.attach_manifest(
+        job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": "/runtime/activate/melix-dev-active",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(job.job_id, manifest_path)
+
+    build_calls = 0
+    original_payload_builder = ModelOpsJobRegistry._derived_model_target_payload
+
+    def counted_payload_builder(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal build_calls
+        build_calls += 1
+        return original_payload_builder(*args, **kwargs)
+
+    monkeypatch.setattr(
+        ModelOpsJobRegistry,
+        "_derived_model_target_payload",
+        staticmethod(counted_payload_builder),
+    )
+
+    first_target = registry.resolve_derived_model_target(derived_model_id="melix-dev-active")
+    assert first_target is not None
+    first_target["derived_model_id"] = "mutated-by-caller"
+
+    second_target = registry.resolve_derived_model_target(derived_model_id="melix-dev-active")
+
+    assert second_target is not None
+    assert second_target["derived_model_id"] == "melix-dev-active"
+    assert build_calls == 1
+
+
 def test_resolve_derived_model_target_id_lookup_negative_paths() -> None:
     registry = ModelOpsJobRegistry()
     job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
