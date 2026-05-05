@@ -35,6 +35,47 @@ class RaisingExecutor:
         raise RuntimeError(f"boom: {' '.join(command)}")
 
 
+def _write_executable(path: Path) -> Path:
+    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _real_config(
+    tmp_path: Path,
+    *,
+    case_ids: tuple[str, ...] = (),
+    execution_mode: str = "real",
+) -> issue365_acceptance_bundle.Issue365AcceptanceConfig:
+    prereqs = tmp_path / "real-prereqs"
+    datasets = prereqs / "datasets"
+    sft = datasets / "sft"
+    preference = datasets / "preference_pair"
+    prompt_candidate = datasets / "prompt_candidate"
+    reward_scored = datasets / "reward_scored"
+    calibration = datasets / "calibration"
+    for path in (sft, preference, prompt_candidate, reward_scored, calibration):
+        path.mkdir(parents=True, exist_ok=True)
+    reward_manifest = prereqs / "reward-model" / "manifest.json"
+    reward_manifest.parent.mkdir(parents=True, exist_ok=True)
+    reward_manifest.write_text('{"schema_version":"melix.reward_model.v1"}\n', encoding="utf-8")
+    melix_cli = _write_executable(prereqs / "melix")
+    return issue365_acceptance_bundle.Issue365AcceptanceConfig(
+        repo_root=Path(__file__).resolve().parents[2],
+        output_dir=tmp_path / "bundle",
+        execution_mode=execution_mode,
+        melix_cli=str(melix_cli),
+        sft_dataset_uri=str(sft),
+        preference_dataset_uri=str(preference),
+        prompt_candidate_dataset_uri=str(prompt_candidate),
+        reward_scored_dataset_uri=str(reward_scored),
+        calibration_dataset_uri=str(calibration),
+        reward_model_manifest_path=str(reward_manifest),
+        case_ids=case_ids,
+        timestamp="2026-05-05T000000Z",
+    )
+
+
 def test_issue365_acceptance_bundle_plan_covers_required_cli_matrix(tmp_path: Path) -> None:
     bundle = issue365_acceptance_bundle.build_acceptance_bundle(
         issue365_acceptance_bundle.Issue365AcceptanceConfig(
@@ -51,6 +92,8 @@ def test_issue365_acceptance_bundle_plan_covers_required_cli_matrix(tmp_path: Pa
     assert bundle["release_ready"] is False
     assert bundle["summary"]["case_count"] == 10
     assert bundle["summary"]["planned_count"] == 10
+    assert bundle["summary"]["blocked_count"] == 0
+    assert bundle["real_runtime_preflight"]["status"] == "not_run"
 
     case_ids = {case["case_id"] for case in bundle["cases"]}
     assert case_ids == {
@@ -132,13 +175,7 @@ def test_issue365_acceptance_bundle_real_success_is_release_ready_only_after_all
 ) -> None:
     executor = RecordingExecutor(statuses=["succeeded"])
     bundle = issue365_acceptance_bundle.build_acceptance_bundle(
-        issue365_acceptance_bundle.Issue365AcceptanceConfig(
-            repo_root=Path(__file__).resolve().parents[2],
-            output_dir=tmp_path,
-            execution_mode="real",
-            melix_cli="/tmp/melix",
-            timestamp="2026-05-05T000000Z",
-        ),
+        _real_config(tmp_path),
         executor=executor,
     )
 
@@ -147,8 +184,10 @@ def test_issue365_acceptance_bundle_real_success_is_release_ready_only_after_all
     assert bundle["release_ready"] is True
     assert bundle["known_gaps"] == []
     assert bundle["summary"]["release_ready_case_count"] == 10
+    assert bundle["real_runtime_preflight"]["status"] == "ready"
     assert all(case["evidence_tier"] == "real_local_runtime" for case in bundle["cases"])
     assert all(case["missing_evidence"] == [] for case in bundle["cases"])
+    assert all(case["real_runtime_preflight"]["ready"] is True for case in bundle["cases"])
 
 
 def test_issue365_acceptance_bundle_real_failure_keeps_bundle_not_release_ready(
@@ -156,13 +195,7 @@ def test_issue365_acceptance_bundle_real_failure_keeps_bundle_not_release_ready(
 ) -> None:
     executor = RecordingExecutor(statuses=["succeeded", "failed"])
     bundle = issue365_acceptance_bundle.build_acceptance_bundle(
-        issue365_acceptance_bundle.Issue365AcceptanceConfig(
-            repo_root=Path(__file__).resolve().parents[2],
-            output_dir=tmp_path,
-            execution_mode="real",
-            melix_cli="/tmp/melix",
-            timestamp="2026-05-05T000000Z",
-        ),
+        _real_config(tmp_path),
         executor=executor,
     )
 
@@ -170,6 +203,107 @@ def test_issue365_acceptance_bundle_real_failure_keeps_bundle_not_release_ready(
     assert bundle["summary"]["failed_count"] == 9
     assert bundle["summary"]["release_ready_case_count"] == 1
     assert "passing_pipeline_summary" in bundle["known_gaps"]
+
+
+def test_issue365_acceptance_bundle_real_preflight_blocks_missing_local_inputs(
+    tmp_path: Path,
+) -> None:
+    melix_cli = _write_executable(tmp_path / "melix")
+    executor = RecordingExecutor(statuses=["succeeded"])
+
+    bundle = issue365_acceptance_bundle.build_acceptance_bundle(
+        issue365_acceptance_bundle.Issue365AcceptanceConfig(
+            repo_root=Path(__file__).resolve().parents[2],
+            output_dir=tmp_path / "bundle",
+            execution_mode="real",
+            melix_cli=str(melix_cli),
+            sft_dataset_uri=str(tmp_path / "missing-sft"),
+            reward_scored_dataset_uri=str(tmp_path / "missing-reward-scored"),
+            reward_model_manifest_path=str(tmp_path / "missing-reward-model.json"),
+            case_ids=("lora_export_inference", "lora_rlhf_export_inference"),
+            timestamp="2026-05-05T000000Z",
+        ),
+        executor=executor,
+    )
+
+    assert executor.commands == []
+    assert bundle["release_ready"] is False
+    assert bundle["real_runtime_preflight"]["status"] == "blocked"
+    assert bundle["summary"]["case_count"] == 2
+    assert bundle["summary"]["blocked_count"] == 2
+    assert all(case["status"] == "blocked" for case in bundle["cases"])
+    assert all("real_local_runtime_preflight" in case["missing_evidence"] for case in bundle["cases"])
+    rlhf = next(case for case in bundle["cases"] if case["case_id"] == "lora_rlhf_export_inference")
+    blocker_codes = {blocker["code"] for blocker in rlhf["real_runtime_preflight"]["blockers"]}
+    assert {"missing_sft_dataset_uri", "missing_reward_scored_dataset_uri", "missing_reward_model_manifest_path"} <= blocker_codes
+
+
+def test_issue365_acceptance_bundle_real_case_filter_runs_only_selected_ready_case(
+    tmp_path: Path,
+) -> None:
+    prereqs = tmp_path / "minimal-real-prereqs"
+    sft = prereqs / "datasets" / "sft"
+    sft.mkdir(parents=True)
+    melix_cli = _write_executable(prereqs / "melix")
+    executor = RecordingExecutor(statuses=["succeeded"])
+
+    bundle = issue365_acceptance_bundle.build_acceptance_bundle(
+        issue365_acceptance_bundle.Issue365AcceptanceConfig(
+            repo_root=prereqs,
+            output_dir=tmp_path / "bundle",
+            execution_mode="real",
+            melix_cli=str(melix_cli),
+            sft_dataset_uri="datasets/sft",
+            preference_dataset_uri=str(tmp_path / "missing-preference"),
+            prompt_candidate_dataset_uri=str(tmp_path / "missing-prompt-candidate"),
+            reward_scored_dataset_uri=str(tmp_path / "missing-reward-scored"),
+            calibration_dataset_uri=str(tmp_path / "missing-calibration"),
+            reward_model_manifest_path=str(tmp_path / "missing-reward-model.json"),
+            case_ids=("lora_export_inference",),
+            timestamp="2026-05-05T000000Z",
+        ),
+        executor=executor,
+    )
+
+    assert len(executor.commands) == 1
+    assert bundle["release_ready"] is True
+    assert bundle["selected_case_ids"] == ["lora_export_inference"]
+    assert bundle["summary"]["case_count"] == 1
+    assert bundle["cases"][0]["real_runtime_preflight"]["required_inputs"] == ["sft_dataset_uri"]
+    input_check = bundle["cases"][0]["real_runtime_preflight"]["checks"]["inputs"][0]
+    assert input_check["resolved_path"] == str(sft)
+
+
+def test_issue365_acceptance_bundle_real_preflight_blocks_empty_required_inputs(
+    tmp_path: Path,
+) -> None:
+    prereqs = tmp_path / "empty-required-prereqs"
+    sft = prereqs / "datasets" / "sft"
+    reward_scored = prereqs / "datasets" / "reward_scored"
+    sft.mkdir(parents=True)
+    reward_scored.mkdir(parents=True)
+    melix_cli = _write_executable(prereqs / "melix")
+    executor = RecordingExecutor(statuses=["succeeded"])
+
+    bundle = issue365_acceptance_bundle.build_acceptance_bundle(
+        issue365_acceptance_bundle.Issue365AcceptanceConfig(
+            repo_root=Path(__file__).resolve().parents[2],
+            output_dir=tmp_path / "bundle",
+            execution_mode="real",
+            melix_cli=str(melix_cli),
+            sft_dataset_uri=str(sft),
+            reward_scored_dataset_uri=str(reward_scored),
+            reward_model_manifest_path="",
+            case_ids=("lora_rlhf_export_inference",),
+            timestamp="2026-05-05T000000Z",
+        ),
+        executor=executor,
+    )
+
+    assert executor.commands == []
+    assert bundle["summary"]["blocked_count"] == 1
+    blockers = bundle["cases"][0]["real_runtime_preflight"]["blockers"]
+    assert {blocker["code"] for blocker in blockers} == {"empty_reward_model_manifest_path"}
 
 
 def test_issue365_acceptance_bundle_records_executor_errors(tmp_path: Path) -> None:
@@ -238,6 +372,21 @@ def test_issue365_acceptance_bundle_rejects_invalid_execution_mode(tmp_path: Pat
         raise AssertionError("Expected invalid execution mode to raise")
 
 
+def test_issue365_acceptance_bundle_rejects_unknown_case_id(tmp_path: Path) -> None:
+    try:
+        issue365_acceptance_bundle.build_acceptance_bundle(
+            issue365_acceptance_bundle.Issue365AcceptanceConfig(
+                repo_root=Path(__file__).resolve().parents[2],
+                output_dir=tmp_path,
+                case_ids=("missing_case",),
+            )
+        )
+    except ValueError as exc:
+        assert "missing_case" in str(exc)
+    else:
+        raise AssertionError("Expected unknown case_id to raise")
+
+
 def test_subprocess_json_executor_covers_success_and_failure_edges(tmp_path: Path) -> None:
     executor = issue365_acceptance_bundle.SubprocessJSONExecutor(repo_root=tmp_path, environment={})
 
@@ -276,6 +425,8 @@ def test_issue365_acceptance_bundle_main_writes_json_and_text_outputs(
             str(json_output_dir),
             "--timestamp",
             "2026-05-05T000000Z",
+            "--case-id",
+            "lora_export_inference",
             "--json",
         ]
     )
@@ -284,6 +435,7 @@ def test_issue365_acceptance_bundle_main_writes_json_and_text_outputs(
     assert result == 0
     assert payload["bundle_path"] == str(json_output_dir.resolve() / "bundle.json")
     assert payload["release_ready"] is False
+    assert payload["selected_case_ids"] == ["lora_export_inference"]
 
     text_output_dir = tmp_path / "text"
     result = issue365_acceptance_bundle.main(

@@ -37,10 +37,17 @@ local runtime acceptance requirements.
 - Add an Issue 365 CLI acceptance bundle harness that writes a machine-readable
   matrix for every required CLI chain and separates planning, deterministic
   dry-run, and real-local-runtime evidence.
+- Add real-local-runtime preflight evidence to the acceptance bundle so `real`
+  mode records missing CLI, dataset, calibration, and reward-model prerequisites
+  as machine-readable blockers before launching long-running pipeline cases.
+- Add `--case-id` selection for the acceptance bundle so operators can run a
+  real local runtime subset without requiring unused business-line inputs.
 
 ### Excluded
 
-- Real local runtime acceptance for every business line.
+- Real local runtime acceptance for every business line. This slice can preflight
+  and run real-mode cases, but it does not provide the required local model,
+  dataset, reward-model, or runtime evidence bundle for all cases.
 - GRPO candidate generation from a live policy runtime.
 - RLHF reward-model integration from issue 366.
 - QAT trainer/export implementation.
@@ -49,9 +56,10 @@ local runtime acceptance requirements.
 
 ## Performance And Metrics
 
-This slice changes command construction and dry-run planning only. It should not
-add model execution, background polling, or file-system scans beyond the
-existing pipeline receipt writes.
+This slice changes command construction, acceptance planning, and real-mode
+preflight only. It should not add model execution in plan/dry-run mode,
+background polling, or broad file-system scans beyond checking the explicit CLI
+and input paths that the operator passes to the acceptance bundle.
 
 Success metrics:
 
@@ -62,6 +70,12 @@ Success metrics:
 - Existing pipeline resume, check, and reference behavior remains unchanged.
 - The Issue 365 acceptance bundle must mark plan-only and dry-run evidence as
   not release-ready even when every planned pipeline case is covered.
+- The Issue 365 acceptance bundle must mark real-mode cases as `blocked` when
+  required local prerequisites are missing, and must record the blocker codes in
+  the bundle rather than invoking long-running pipelines that cannot succeed.
+- Real-mode subset runs must only preflight the selected case inputs, so a LoRA
+  subset can run without requiring unused RLHF reward-model or quantization
+  calibration artifacts.
 - Changed-line coverage for the touched Swift/doc scope is at least 95 percent.
 
 ## Verification
@@ -100,6 +114,27 @@ python3 scripts/python_changed_line_coverage.py \
 Expected changed-line coverage target: at least 95 percent for the changed
 Swift scope. Documentation-only lines are reported as N/A when the coverage
 tool does not map them to executable statements.
+
+Results on 2026-05-06 after adding real-mode preflight and case selection:
+
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
+  13 passed.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
+  13 passed.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage json -o /tmp/issue365-cli-acceptance-bundle-coverage.json`:
+  wrote JSON coverage.
+- `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-cli-acceptance-bundle-coverage.json --diff-from origin/main scripts/issue365_acceptance_bundle.py tests/integration/test_issue365_acceptance_bundle.py docs/plans/2026-05-05-issue-365-cli-chain-routing.md`:
+  97.30 percent total changed-line coverage, 469/482 executable lines.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python python -m compileall -q scripts/issue365_acceptance_bundle.py tests/integration/test_issue365_acceptance_bundle.py`:
+  passed.
+- `python3 scripts/issue365_acceptance_bundle.py --execution-mode plan --output-dir .runtime/issue365/acceptance-smoke --timestamp 2026-05-06T010000Z --json`:
+  wrote a plan bundle with 10 planned cases, 0 blocked cases, and
+  `release_ready=false`.
+- `python3 scripts/issue365_acceptance_bundle.py --execution-mode dry-run --melix-cli .build/arm64-apple-macosx/debug/melix --output-dir .runtime/issue365/acceptance-dry-run --timestamp 2026-05-06T010000Z`:
+  wrote a dry-run bundle with 10 succeeded cases, 0 failed cases, 0 blocked
+  cases, and `release_ready=false`.
+- `swift test --filter 'MelixCLIRunnerTests|MelixCLIParserTests'`:
+  212 tests passed in 3 suites.
 
 Results on 2026-05-05 after adding the acceptance bundle harness:
 

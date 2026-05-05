@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ class Issue365AcceptanceConfig:
     calibration_dataset_uri: str = "/tmp/melix-issue365/datasets/calibration"
     reward_model_manifest_path: str = "/tmp/melix-issue365/reward-model/manifest.json"
     melix_cli: str = "melix"
+    case_ids: tuple[str, ...] = ()
     timestamp: str = ""
     json_output: bool = False
 
@@ -42,6 +44,7 @@ class Issue365PipelineCase:
     business_line: str
     steps: tuple[dict[str, Any], ...]
     acceptance_requirements: tuple[str, ...]
+    required_inputs: tuple[str, ...] = ()
 
 
 class JSONCommandExecutor(Protocol):
@@ -93,12 +96,19 @@ def build_acceptance_bundle(
     receipt_root.mkdir(parents=True, exist_ok=True)
 
     inputs = _default_inputs(config, output_dir=output_dir)
+    cases = _selected_pipeline_cases(config.case_ids)
+    real_runtime_preflight = _real_runtime_preflight(config, cases) if config.execution_mode == "real" else {
+        "status": "not_run",
+        "ready": False,
+        "reason": "Real local runtime preflight only runs in execution_mode=real.",
+        "cases": {},
+    }
     case_results: list[dict[str, Any]] = []
     runner = executor
     if config.execution_mode != "plan" and runner is None:
         runner = SubprocessJSONExecutor(repo_root=config.repo_root)
 
-    for case in issue365_pipeline_cases():
+    for case in cases:
         pipeline_path = pipeline_dir / f"{case.case_id}.pipeline.json"
         pipeline = {
             "schema_version": PIPELINE_SCHEMA_VERSION,
@@ -117,7 +127,11 @@ def build_acceptance_bundle(
         summary: dict[str, Any] | None = None
         status = "planned"
         error = ""
-        if config.execution_mode != "plan":
+        case_preflight = real_runtime_preflight.get("cases", {}).get(case.case_id)
+        if config.execution_mode == "real" and case_preflight is not None and not case_preflight["ready"]:
+            status = "blocked"
+            error = "Real local runtime preflight failed."
+        elif config.execution_mode != "plan":
             try:
                 assert runner is not None
                 summary = runner.run_json(command)
@@ -135,6 +149,7 @@ def build_acceptance_bundle(
                 status=status,
                 summary=summary,
                 error=error,
+                real_runtime_preflight=case_preflight,
             )
         )
 
@@ -149,8 +164,11 @@ def build_acceptance_bundle(
             "unit_and_plan_evidence_release_ready": False,
             "deterministic_dry_run_release_ready": False,
             "real_local_runtime_required": True,
+            "real_local_runtime_preflight_required": True,
         },
         "inputs": inputs,
+        "selected_case_ids": [case.case_id for case in cases],
+        "real_runtime_preflight": real_runtime_preflight,
         "summary": summary,
         "cases": case_results,
         "known_gaps": _known_gaps(case_results, execution_mode=config.execution_mode),
@@ -204,6 +222,7 @@ def _supervised_case(training_mode: str) -> Issue365PipelineCase:
             "evaluation evidence recorded",
             "real local runtime evidence captured",
         ),
+        required_inputs=("sft_dataset_uri",),
         steps=(
             {
                 "id": train_step,
@@ -278,6 +297,7 @@ def _alignment_case(
             "evaluation evidence recorded",
             "real local runtime evidence captured",
         ),
+        required_inputs=_alignment_required_inputs(algorithm),
         steps=(
             {
                 "id": train_step,
@@ -339,6 +359,7 @@ def _ptq_case() -> Issue365PipelineCase:
             "quality and latency evidence recorded",
             "real local runtime evidence captured",
         ),
+        required_inputs=("sft_dataset_uri", "preference_dataset_uri", "calibration_dataset_uri"),
         steps=(
             {
                 "id": train_step,
@@ -414,6 +435,7 @@ def _qat_case() -> Issue365PipelineCase:
             "quality and latency evidence recorded",
             "real local runtime evidence captured",
         ),
+        required_inputs=("sft_dataset_uri", "calibration_dataset_uri"),
         steps=(
             {
                 "id": train_step,
@@ -488,6 +510,16 @@ def _eval_step(step_id: str, model_id: str) -> dict[str, Any]:
     }
 
 
+def _alignment_required_inputs(algorithm: str) -> tuple[str, ...]:
+    if algorithm in {"dpo", "orpo", "cpo"}:
+        return ("sft_dataset_uri", "preference_dataset_uri")
+    if algorithm == "grpo":
+        return ("sft_dataset_uri", "prompt_candidate_dataset_uri")
+    if algorithm == "rlhf":
+        return ("sft_dataset_uri", "reward_scored_dataset_uri", "reward_model_manifest_path")
+    raise ValueError(f"Unsupported alignment algorithm: {algorithm}")
+
+
 def _default_inputs(config: Issue365AcceptanceConfig, *, output_dir: Path) -> dict[str, Any]:
     return {
         "model_id": config.model_id,
@@ -500,6 +532,180 @@ def _default_inputs(config: Issue365AcceptanceConfig, *, output_dir: Path) -> di
         "acceptance_output_dir": str(output_dir / "artifacts"),
         "server_session_id": "issue365-acceptance",
     }
+
+
+def _selected_pipeline_cases(case_ids: tuple[str, ...]) -> tuple[Issue365PipelineCase, ...]:
+    cases = issue365_pipeline_cases()
+    if not case_ids:
+        return cases
+    case_by_id = {case.case_id: case for case in cases}
+    unknown = sorted(set(case_ids) - set(case_by_id))
+    if unknown:
+        raise ValueError(f"Unknown Issue 365 case_id(s): {', '.join(unknown)}")
+    return tuple(case_by_id[case_id] for case_id in case_ids)
+
+
+def _real_runtime_preflight(
+    config: Issue365AcceptanceConfig,
+    cases: tuple[Issue365PipelineCase, ...],
+) -> dict[str, Any]:
+    common_checks = [
+        _repo_root_check(config.repo_root),
+        _cli_executable_check(config.melix_cli, repo_root=config.repo_root),
+    ]
+    input_checks = _input_preflight_checks(config)
+    case_results: dict[str, Any] = {}
+    for case in cases:
+        blockers: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
+        for check in common_checks:
+            if check["ready"]:
+                if check.get("warning"):
+                    warnings.append(check)
+            else:
+                blockers.append(check)
+        required_input_checks = []
+        for input_name in case.required_inputs:
+            input_check = input_checks[input_name]
+            required_input_checks.append(input_check)
+            if input_check["ready"]:
+                if input_check.get("warning"):
+                    warnings.append(input_check)
+            else:
+                blockers.append(input_check)
+        case_results[case.case_id] = {
+            "ready": not blockers,
+            "required_inputs": list(case.required_inputs),
+            "blockers": blockers,
+            "warnings": warnings,
+            "checks": {
+                "common": common_checks,
+                "inputs": required_input_checks,
+            },
+        }
+    ready = all(case["ready"] for case in case_results.values())
+    return {
+        "status": "ready" if ready else "blocked",
+        "ready": ready,
+        "checked_case_count": len(case_results),
+        "common_checks": common_checks,
+        "cases": case_results,
+    }
+
+
+def _repo_root_check(repo_root: Path) -> dict[str, Any]:
+    return _preflight_check(
+        code="repo_root_missing",
+        label="repo_root",
+        value=str(repo_root),
+        ready=repo_root.exists() and repo_root.is_dir(),
+        detail="Repository root must exist before real local runtime execution.",
+    )
+
+
+def _cli_executable_check(melix_cli: str, *, repo_root: Path) -> dict[str, Any]:
+    resolved = _resolve_cli_path(melix_cli, repo_root=repo_root)
+    ready = resolved is not None and resolved.exists() and os.access(resolved, os.X_OK)
+    return _preflight_check(
+        code="melix_cli_not_executable",
+        label="melix_cli",
+        value=melix_cli,
+        ready=ready,
+        detail="Real local runtime execution requires an executable melix CLI path.",
+        resolved_path=str(resolved) if resolved is not None else "",
+    )
+
+
+def _resolve_cli_path(melix_cli: str, *, repo_root: Path) -> Path | None:
+    if "/" in melix_cli:
+        path = Path(melix_cli).expanduser()
+        return path if path.is_absolute() else (repo_root / path).resolve()
+    resolved = shutil.which(melix_cli)
+    return Path(resolved) if resolved else None
+
+
+def _input_preflight_checks(config: Issue365AcceptanceConfig) -> dict[str, dict[str, Any]]:
+    values = {
+        "sft_dataset_uri": config.sft_dataset_uri,
+        "preference_dataset_uri": config.preference_dataset_uri,
+        "prompt_candidate_dataset_uri": config.prompt_candidate_dataset_uri,
+        "reward_scored_dataset_uri": config.reward_scored_dataset_uri,
+        "calibration_dataset_uri": config.calibration_dataset_uri,
+        "reward_model_manifest_path": config.reward_model_manifest_path,
+    }
+    return {
+        name: _input_uri_check(
+            name,
+            value,
+            require_file=name == "reward_model_manifest_path",
+            repo_root=config.repo_root,
+        )
+        for name, value in values.items()
+    }
+
+
+def _input_uri_check(name: str, value: str, *, require_file: bool, repo_root: Path) -> dict[str, Any]:
+    if not value.strip():
+        return _preflight_check(
+            code=f"empty_{name}",
+            label=name,
+            value=value,
+            ready=False,
+            detail="Real local runtime execution requires a non-empty input value before running the case.",
+        )
+    local_path = _local_uri_path(value, repo_root=repo_root)
+    if local_path is None:
+        return _preflight_check(
+            code="non_local_input_not_checked",
+            label=name,
+            value=value,
+            ready=True,
+            detail="Input is not a local path, so the acceptance bundle cannot preflight its contents.",
+            warning=True,
+        )
+    ready = local_path.exists() and (local_path.is_file() if require_file else True)
+    expected = "file" if require_file else "path"
+    return _preflight_check(
+        code=f"missing_{name}",
+        label=name,
+        value=value,
+        ready=ready,
+        detail=f"Real local runtime execution requires this {expected} before running the case.",
+        resolved_path=str(local_path),
+    )
+
+
+def _local_uri_path(value: str, *, repo_root: Path) -> Path | None:
+    if value.startswith("file://"):
+        return Path(value.removeprefix("file://")).expanduser()
+    if "://" in value:
+        return None
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else (repo_root / path).resolve()
+
+
+def _preflight_check(
+    *,
+    code: str,
+    label: str,
+    value: str,
+    ready: bool,
+    detail: str,
+    resolved_path: str = "",
+    warning: bool = False,
+) -> dict[str, Any]:
+    payload = {
+        "code": code,
+        "label": label,
+        "value": value,
+        "ready": ready,
+        "detail": detail,
+    }
+    if resolved_path:
+        payload["resolved_path"] = resolved_path
+    if warning:
+        payload["warning"] = True
+    return payload
 
 
 def _pipeline_command(
@@ -536,6 +742,7 @@ def _case_result(
     status: str,
     summary: dict[str, Any] | None,
     error: str,
+    real_runtime_preflight: dict[str, Any] | None,
 ) -> dict[str, Any]:
     evidence_tier = {
         "plan": "planning_matrix",
@@ -558,6 +765,8 @@ def _case_result(
         "commands": [str(step["command"]) for step in case.steps],
         "missing_evidence": [] if release_ready else _missing_evidence(execution_mode, status),
     }
+    if real_runtime_preflight is not None:
+        result["real_runtime_preflight"] = real_runtime_preflight
     if summary is not None:
         result["pipeline_summary"] = summary
         if summary.get("summary_path"):
@@ -575,6 +784,8 @@ def _missing_evidence(execution_mode: str, status: str) -> list[str]:
         missing.append("pipeline_execution")
     if execution_mode == "dry-run":
         missing.append("non_dry_run_execution")
+    if status == "blocked":
+        missing.append("real_local_runtime_preflight")
     if status == "failed":
         missing.append("passing_pipeline_summary")
     return missing
@@ -585,6 +796,7 @@ def _bundle_summary(case_results: list[dict[str, Any]], *, execution_mode: str) 
     succeeded = sum(1 for case in case_results if case["status"] == "succeeded")
     planned = sum(1 for case in case_results if case["status"] == "planned")
     failed = sum(1 for case in case_results if case["status"] == "failed")
+    blocked = sum(1 for case in case_results if case["status"] == "blocked")
     release_ready_cases = sum(1 for case in case_results if case["release_ready"] is True)
     release_ready = execution_mode == "real" and release_ready_cases == total and total > 0
     return {
@@ -592,6 +804,7 @@ def _bundle_summary(case_results: list[dict[str, Any]], *, execution_mode: str) 
         "planned_count": planned,
         "succeeded_count": succeeded,
         "failed_count": failed,
+        "blocked_count": blocked,
         "release_ready_case_count": release_ready_cases,
         "release_ready": release_ready,
         "required_case_ids": [case["case_id"] for case in case_results],
@@ -645,6 +858,12 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--reward-scored-dataset-uri", default="/tmp/melix-issue365/datasets/reward_scored")
     parser.add_argument("--calibration-dataset-uri", default="/tmp/melix-issue365/datasets/calibration")
     parser.add_argument("--reward-model-manifest-path", default="/tmp/melix-issue365/reward-model/manifest.json")
+    parser.add_argument(
+        "--case-id",
+        action="append",
+        default=[],
+        help="Run only the selected Issue 365 acceptance case. May be repeated.",
+    )
     parser.add_argument("--timestamp", default="")
     parser.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
@@ -664,6 +883,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         calibration_dataset_uri=args.calibration_dataset_uri,
         reward_model_manifest_path=args.reward_model_manifest_path,
         melix_cli=args.melix_cli,
+        case_ids=tuple(args.case_id),
         timestamp=args.timestamp,
         json_output=args.json,
     )
