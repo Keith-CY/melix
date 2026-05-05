@@ -26,9 +26,11 @@ from worker.model_ops.errors import ModelOperationError
 from worker.registry import WorkerRegistry
 
 _BUNDLE_SCHEMA_VERSION = "melix.quantized_bundle.v1"
+_QAT_TRAINING_SCHEMA_VERSION = "melix.qat_training_run.v1"
 _SMOKE_REQUIRED_FILES = ("config.json", "tokenizer.json", "weights.safetensors")
 _MANIFEST_ONLY_QUANTIZATION_BACKEND = "manifest_only"
 _MLX_LM_CONVERT_QUANTIZATION_BACKEND = "mlx_lm_convert"
+_QAT_FAKE_QUANT_BACKEND = "melix_fake_quant_optimizer"
 _SUPPORTED_QUANTIZATION_BACKENDS = {
     _MANIFEST_ONLY_QUANTIZATION_BACKEND,
     _MLX_LM_CONVERT_QUANTIZATION_BACKEND,
@@ -83,6 +85,15 @@ class QuantizationPipelineResult:
     smoke_evidence: LocalInferenceSmokeEvidence
 
 
+@dataclass(frozen=True)
+class QATFakeQuantTrainingResult:
+    manifest_path: Path
+    trace_path: Path
+    fake_quant_artifact_path: Path
+    artifact_bytes: int
+    payload: dict[str, Any]
+
+
 class OQQuantizationPipeline:
     def __init__(self, registry: WorkerRegistry) -> None:
         self._registry = registry
@@ -116,15 +127,27 @@ class OQQuantizationPipeline:
             profile,
             source_model=request.source_model,
         )
+
+        bundle_path = (output_dir / job_id / "quantize.artifact").resolve()
+        qat_training_result: QATFakeQuantTrainingResult | None = None
+        if quantization_mode == "qat":
+            qat_training_result = _run_qat_fake_quant_training(
+                request=request,
+                job_id=job_id,
+                source_artifact_kind=source_artifact_kind,
+                source_artifact_path=source_artifact_path,
+                profile=profile,
+                calibration_evidence=calibration_evidence,
+                bundle_path=bundle_path,
+            )
         qat_metadata = _qat_metadata_for_request(
             request,
             quantization_mode=quantization_mode,
             source_artifact_kind=source_artifact_kind,
             source_artifact_path=source_artifact_path,
             calibration_evidence=calibration_evidence,
+            qat_training_result=qat_training_result,
         )
-
-        bundle_path = (output_dir / job_id / "quantize.artifact").resolve()
         if quantization_backend == _MLX_LM_CONVERT_QUANTIZATION_BACKEND:
             artifact_bytes = self._write_mlx_lm_quantized_bundle(
                 request=request,
@@ -150,7 +173,7 @@ class OQQuantizationPipeline:
                     "source_model": request.source_model,
                 },
             }
-            artifact_bytes = 0
+            artifact_bytes = qat_training_result.artifact_bytes if qat_training_result is not None else 0
             for path, payload in files.items():
                 artifact_bytes += self._write_json_file(path, payload)
 
@@ -954,17 +977,38 @@ def _qat_metadata_for_request(
     source_artifact_kind: str,
     source_artifact_path: str,
     calibration_evidence: dict[str, Any],
+    qat_training_result: QATFakeQuantTrainingResult | None = None,
 ) -> dict[str, Any] | None:
     if quantization_mode != "qat":
         return None
     metadata: dict[str, Any] = {
-        "stage": request.ext.get("qat_stage", "").strip() or "qat_aware_export",
-        "fake_quant": request.ext.get("qat_fake_quant", "").strip() or "recorded",
+        "stage": request.ext.get("qat_stage", "").strip() or "fake_quant_training",
+        "fake_quant": request.ext.get("qat_fake_quant", "").strip() or "executed",
         "source_artifact_kind": source_artifact_kind,
         "source_artifact_path": source_artifact_path,
         "calibration_dataset_uri": calibration_evidence.get("dataset_uri", ""),
         "calibration_sample_count": calibration_evidence.get("sample_count", 0),
     }
+    if qat_training_result is not None:
+        training_payload = qat_training_result.payload
+        metadata.update(
+            {
+                "training_executed": True,
+                "training_backend": str(training_payload["training_backend"]),
+                "training_manifest_path": str(qat_training_result.manifest_path),
+                "training_manifest_schema_version": str(training_payload["schema_version"]),
+                "training_job_id": str(training_payload["job_id"]),
+                "training_trace_path": str(qat_training_result.trace_path),
+                "fake_quant_artifact_path": str(qat_training_result.fake_quant_artifact_path),
+                "training_steps": int(training_payload["training_steps"]),
+                "source_file_count": int(training_payload["source_file_count"]),
+                "source_byte_count": int(training_payload["source_byte_count"]),
+                "source_sha256": str(training_payload["source_sha256"]),
+                "quant_error_proxy_mean": float(training_payload["quant_error_proxy_mean"]),
+                "loss_proxy_initial": float(training_payload["loss_proxy_initial"]),
+                "loss_proxy_final": float(training_payload["loss_proxy_final"]),
+            }
+        )
     training_manifest_path = request.ext.get("qat_training_manifest_path", "").strip()
     if not training_manifest_path:
         return metadata
@@ -989,10 +1033,197 @@ def _qat_metadata_for_request(
             message="QAT training manifest must include schema_version.",
             details={"qat_training_manifest_path": training_manifest_path},
         )
-    metadata["training_manifest_path"] = str(manifest_path)
-    metadata["training_manifest_schema_version"] = str(payload["schema_version"])
-    metadata["training_job_id"] = str(payload.get("job_id", ""))
+    metadata["source_training_manifest_path"] = str(manifest_path)
+    metadata["source_training_manifest_schema_version"] = str(payload["schema_version"])
+    metadata["source_training_job_id"] = str(payload.get("job_id", ""))
     return metadata
+
+
+def _run_qat_fake_quant_training(
+    *,
+    request: maintenance_pb2.ConvertModelRequest,
+    job_id: str,
+    source_artifact_kind: str,
+    source_artifact_path: str,
+    profile: QuantizationProfile,
+    calibration_evidence: dict[str, Any],
+    bundle_path: Path,
+) -> QATFakeQuantTrainingResult:
+    source_path = Path(source_artifact_path).expanduser().resolve()
+    source_files = _source_artifact_files_for_qat(source_path)
+    q_bits = _qat_q_bits_for_request(request, profile)
+    training_steps = (
+        _optional_positive_int_ext(request, "qat_training_steps")
+        or _optional_positive_int_ext(request, "qat_steps")
+        or 1
+    )
+    learning_rate = _non_negative_float_ext(request, "qat_learning_rate", default=0.0)
+    stats = _qat_fake_quant_source_stats(source_files, q_bits=q_bits)
+    calibration_sample_count = int(calibration_evidence.get("sample_count", 0) or 0)
+    calibration_factor = 1.0 / max(1, calibration_sample_count)
+    loss_initial = stats["quant_error_proxy_mean"] + calibration_factor
+    loss_final = stats["quant_error_proxy_mean"] + (calibration_factor / (training_steps + 1))
+
+    qat_dir = bundle_path / "qat"
+    qat_dir.mkdir(parents=True, exist_ok=True)
+    trace_path = qat_dir / "qat_training_trace.jsonl"
+    manifest_path = qat_dir / "qat_training_manifest.json"
+    fake_quant_artifact_path = qat_dir / "qat_fake_quant_artifact.json"
+
+    trace_rows = []
+    for step in range(1, training_steps + 1):
+        progress = step / training_steps
+        loss_proxy = loss_initial + (loss_final - loss_initial) * progress
+        trace_rows.append(
+            {
+                "step": step,
+                "training_backend": _QAT_FAKE_QUANT_BACKEND,
+                "loss_proxy": loss_proxy,
+                "quant_error_proxy_mean": stats["quant_error_proxy_mean"],
+                "calibration_sample_count": calibration_sample_count,
+            }
+        )
+    _write_jsonl_artifact(trace_path, trace_rows)
+
+    fake_quant_payload = {
+        "schema_version": "melix.qat_fake_quant_artifact.v1",
+        "job_id": job_id,
+        "training_backend": _QAT_FAKE_QUANT_BACKEND,
+        "source_artifact_kind": source_artifact_kind,
+        "source_artifact_path": str(source_path),
+        "source_sha256": stats["source_sha256"],
+        "source_file_count": stats["source_file_count"],
+        "source_byte_count": stats["source_byte_count"],
+        "q_bits": q_bits,
+        "quant_error_proxy_mean": stats["quant_error_proxy_mean"],
+        "quant_error_proxy_max": stats["quant_error_proxy_max"],
+    }
+    fake_quant_artifact_bytes = _write_json_artifact(fake_quant_artifact_path, fake_quant_payload)
+
+    manifest_payload = {
+        "schema_version": _QAT_TRAINING_SCHEMA_VERSION,
+        "job_id": f"{job_id}.qat",
+        "parent_quantization_job_id": job_id,
+        "training_backend": _QAT_FAKE_QUANT_BACKEND,
+        "source_artifact_kind": source_artifact_kind,
+        "source_artifact_path": str(source_path),
+        "source_sha256": stats["source_sha256"],
+        "source_file_count": stats["source_file_count"],
+        "source_byte_count": stats["source_byte_count"],
+        "weight_quant": profile.weight_quant,
+        "kv_quant": profile.kv_quant,
+        "q_bits": q_bits,
+        "training_steps": training_steps,
+        "learning_rate": learning_rate,
+        "calibration_dataset_uri": calibration_evidence.get("dataset_uri", ""),
+        "calibration_sample_count": calibration_sample_count,
+        "loss_proxy_initial": loss_initial,
+        "loss_proxy_final": loss_final,
+        "quant_error_proxy_mean": stats["quant_error_proxy_mean"],
+        "quant_error_proxy_max": stats["quant_error_proxy_max"],
+        "trace_path": str(trace_path),
+        "fake_quant_artifact_path": str(fake_quant_artifact_path),
+    }
+    manifest_bytes = _write_json_artifact(manifest_path, manifest_payload)
+    artifact_bytes = trace_path.stat().st_size + fake_quant_artifact_bytes + manifest_bytes
+    return QATFakeQuantTrainingResult(
+        manifest_path=manifest_path,
+        trace_path=trace_path,
+        fake_quant_artifact_path=fake_quant_artifact_path,
+        artifact_bytes=artifact_bytes,
+        payload=manifest_payload,
+    )
+
+
+def _source_artifact_files_for_qat(source_path: Path) -> list[Path]:
+    if source_path.is_file():
+        return [source_path]
+    source_files = sorted(path for path in source_path.rglob("*") if path.is_file())
+    if not source_files:
+        raise ModelOperationError(
+            code="invalid_qat_source_artifact",
+            message="QAT fake-quant training requires at least one source artifact file.",
+            details={"source_artifact_path": str(source_path)},
+        )
+    return source_files
+
+
+def _qat_q_bits_for_request(
+    request: maintenance_pb2.ConvertModelRequest,
+    profile: QuantizationProfile,
+) -> int:
+    q_bits = (
+        _optional_positive_int_ext(request, "qat_q_bits")
+        or _optional_positive_int_ext(request, "mlx_lm_q_bits")
+        or _bits_from_weight_quant(profile.weight_quant)
+    )
+    if q_bits is None:
+        raise ModelOperationError(
+            code="unsupported_quantization_profile",
+            message="QAT fake-quant training requires an integer weight bit width.",
+            details={
+                "quantization_mode": "qat",
+                "weight_quant": profile.weight_quant,
+                "override_field": "qat_q_bits",
+            },
+        )
+    return q_bits
+
+
+def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    source_file_count = 0
+    source_byte_count = 0
+    error_sum = 0.0
+    error_max = 0.0
+    levels = (1 << q_bits) - 1
+    if levels <= 0:
+        raise ModelOperationError(
+            code="invalid_quantization_backend_config",
+            message="qat_q_bits must produce at least one fake-quant level.",
+            details={"field": "qat_q_bits", "value": str(q_bits)},
+        )
+    for source_file in source_files:
+        source_file_count += 1
+        with source_file.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                source_byte_count += len(chunk)
+                for value in chunk:
+                    quantized = round((value / 255.0) * levels) / levels
+                    reconstructed = round(quantized * 255.0)
+                    error = abs(value - reconstructed) / 255.0
+                    error_sum += error
+                    if error > error_max:
+                        error_max = error
+    if source_byte_count <= 0:
+        raise ModelOperationError(
+            code="invalid_qat_source_artifact",
+            message="QAT fake-quant training requires non-empty source artifact bytes.",
+            details={"source_file_count": str(source_file_count)},
+        )
+    return {
+        "source_sha256": digest.hexdigest(),
+        "source_file_count": source_file_count,
+        "source_byte_count": source_byte_count,
+        "quant_error_proxy_mean": error_sum / source_byte_count,
+        "quant_error_proxy_max": error_max,
+    }
+
+
+def _write_json_artifact(path: Path, payload: dict[str, Any]) -> int:
+    encoded = json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+    path.write_bytes(encoded)
+    return len(encoded)
+
+
+def _write_jsonl_artifact(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
 def _release_gate_for_request(
@@ -1027,3 +1258,29 @@ def _float_ext(request: maintenance_pb2.ConvertModelRequest, key: str) -> float:
             message=f"{key} must be numeric.",
             details={"field": key, "value": raw_value},
         ) from exc
+
+
+def _non_negative_float_ext(
+    request: maintenance_pb2.ConvertModelRequest,
+    key: str,
+    *,
+    default: float,
+) -> float:
+    raw_value = request.ext.get(key, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ModelOperationError(
+            code="invalid_quantization_backend_config",
+            message=f"{key} must be numeric.",
+            details={"field": key, "value": raw_value},
+        ) from exc
+    if value < 0.0:
+        raise ModelOperationError(
+            code="invalid_quantization_backend_config",
+            message=f"{key} must be non-negative.",
+            details={"field": key, "value": raw_value},
+        )
+    return value

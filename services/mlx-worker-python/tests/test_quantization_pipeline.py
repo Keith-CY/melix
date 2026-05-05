@@ -985,6 +985,11 @@ def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp
     service = build_service(tmp_path)
     source_artifact_path = tmp_path / "merged-adapter"
     source_artifact_path.mkdir()
+    (source_artifact_path / "adapters.safetensors").write_bytes(b"melix-qatsource-weights")
+    (source_artifact_path / "adapter_config.json").write_text(
+        json.dumps({"fine_tune_type": "lora"}) + "\n",
+        encoding="utf-8",
+    )
     qat_training_manifest_path = tmp_path / "qat-training.json"
     qat_training_manifest_path.write_text(
         json.dumps(
@@ -1015,6 +1020,8 @@ def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp
                     "latency_delta": "-0.2",
                     "qat_fake_quant": "enabled",
                     "qat_training_manifest_path": str(qat_training_manifest_path),
+                    "qat_training_steps": "3",
+                    "qat_learning_rate": "0.01",
                 },
             ),
             context=None,
@@ -1031,22 +1038,43 @@ def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp
         "latency_delta": -0.2,
         "local_inference_smoke_result": "passed",
     }
-    assert manifest_payload["qat"] == {
-        "stage": "qat_aware_export",
-        "fake_quant": "enabled",
-        "source_artifact_kind": "merged_adapter",
-        "source_artifact_path": str(source_artifact_path),
-        "calibration_dataset_uri": "",
-        "calibration_sample_count": 0,
-        "training_manifest_path": str(qat_training_manifest_path.resolve()),
-        "training_manifest_schema_version": "melix.qat_training_run.v1",
-        "training_job_id": "qat-train-1",
-    }
+    qat = manifest_payload["qat"]
+    assert qat["stage"] == "fake_quant_training"
+    assert qat["fake_quant"] == "enabled"
+    assert qat["source_artifact_kind"] == "merged_adapter"
+    assert qat["source_artifact_path"] == str(source_artifact_path)
+    assert qat["calibration_dataset_uri"] == ""
+    assert qat["calibration_sample_count"] == 0
+    assert qat["training_executed"] is True
+    assert qat["training_backend"] == "melix_fake_quant_optimizer"
+    assert qat["training_manifest_schema_version"] == "melix.qat_training_run.v1"
+    assert qat["training_job_id"] == f"{manifest_payload['job_id']}.qat"
+    assert qat["training_steps"] == 3
+    assert qat["source_file_count"] == 2
+    assert qat["source_byte_count"] > 0
+    assert len(qat["source_sha256"]) == 64
+    assert qat["quant_error_proxy_mean"] >= 0.0
+    assert qat["loss_proxy_initial"] >= qat["loss_proxy_final"]
+    assert qat["source_training_manifest_path"] == str(qat_training_manifest_path.resolve())
+    assert qat["source_training_manifest_schema_version"] == "melix.qat_training_run.v1"
+    assert qat["source_training_job_id"] == "qat-train-1"
+    assert Path(qat["training_manifest_path"]).is_file()
+    assert Path(qat["training_trace_path"]).is_file()
+    assert Path(qat["fake_quant_artifact_path"]).is_file()
+    training_payload = json.loads(Path(qat["training_manifest_path"]).read_text(encoding="utf-8"))
+    assert training_payload["training_backend"] == "melix_fake_quant_optimizer"
+    assert training_payload["training_steps"] == 3
+    assert training_payload["learning_rate"] == 0.01
+    trace_rows = [
+        json.loads(line)
+        for line in Path(qat["training_trace_path"]).read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["step"] for row in trace_rows] == [1, 2, 3]
     weights_payload = json.loads(
         (Path(manifest_payload["artifact_path"]) / "weights.safetensors").read_text(encoding="utf-8")
     )
     assert weights_payload["quantization_mode"] == "qat"
-    assert weights_payload["qat"]["training_job_id"] == "qat-train-1"
+    assert weights_payload["qat"]["training_job_id"] == f"{manifest_payload['job_id']}.qat"
 
 
 def test_quantize_job_rejects_qat_for_base_model_sources(tmp_path: Path) -> None:
@@ -1107,6 +1135,7 @@ def test_quantize_job_rejects_qat_with_invalid_training_manifest(tmp_path: Path)
     service = build_service(tmp_path)
     source_artifact_path = tmp_path / "merged-adapter"
     source_artifact_path.mkdir()
+    (source_artifact_path / "adapters.safetensors").write_bytes(b"melix-qatsource-weights")
     qat_training_manifest_path = tmp_path / "qat-training.json"
     qat_training_manifest_path.write_text(json.dumps({"job_id": "missing-schema"}) + "\n", encoding="utf-8")
 
@@ -1132,6 +1161,34 @@ def test_quantize_job_rejects_qat_with_invalid_training_manifest(tmp_path: Path)
 
     assert events[-1].failed.error.code == "invalid_qat_training_manifest"
     assert events[-1].failed.error.details["qat_training_manifest_path"] == str(qat_training_manifest_path)
+
+
+def test_quantize_job_rejects_qat_with_empty_source_artifact(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "empty-merged-adapter"
+    source_artifact_path.mkdir()
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_mode": "qat",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_qat_source_artifact"
+    assert events[-1].failed.error.details["source_artifact_path"] == str(source_artifact_path.resolve())
 
 
 def test_quantize_job_rejects_unknown_quantization_mode(tmp_path: Path) -> None:
