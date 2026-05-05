@@ -452,6 +452,7 @@ def _selected_dataset_files(snapshot_path: Path, *, split: str) -> tuple[Path, .
         ]
         if split_matches:
             return tuple(split_matches)
+        return ()
     return tuple(data_files)
 
 
@@ -489,7 +490,10 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
                 code="unavailable",
                 message="pyarrow is required to read local parquet dataset snapshots.",
             ) from exc
-        return _limit_rows([row for row in pq.read_table(path).to_pylist() if isinstance(row, dict)], limit)
+        table = pq.read_table(path)
+        if limit is not None:
+            table = table.slice(0, limit)
+        return [row for row in table.to_pylist() if isinstance(row, dict)]
     if suffix == ".arrow":
         try:
             import pyarrow.ipc as ipc
@@ -499,7 +503,10 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
                 message="pyarrow is required to read local Arrow dataset snapshots.",
             ) from exc
         with ipc.open_file(path) as reader:
-            return _limit_rows([row for row in reader.read_all().to_pylist() if isinstance(row, dict)], limit)
+            table = reader.read_all()
+            if limit is not None:
+                table = table.slice(0, limit)
+            return [row for row in table.to_pylist() if isinstance(row, dict)]
     return []
 
 
@@ -597,19 +604,19 @@ def _dataset_files(snapshot_dir: Path) -> Iterator[DatasetFile]:
 def _iter_supported_dataset_files(snapshot_dir: Path) -> Iterator[Path]:
     try:
         with os.scandir(os.fspath(snapshot_dir)) as entries:
-            child_names = sorted(entry.name for entry in entries)
+            child_entries = sorted(entries, key=lambda entry: entry.name)
     except OSError:
         return
-    for child_name in child_names:
-        child_path = snapshot_dir / child_name
+    for entry in child_entries:
         try:
-            if child_path.is_dir():
-                yield from _iter_supported_dataset_files(child_path)
+            if entry.is_dir():
+                yield from _iter_supported_dataset_files(Path(entry.path))
                 continue
-            if not child_path.is_file():
+            if not entry.is_file():
                 continue
         except OSError:
             continue
+        child_path = Path(entry.path)
         if _dataset_file_format(child_path):
             yield child_path
 

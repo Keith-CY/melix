@@ -1538,6 +1538,10 @@ public enum MelixCLIParser {
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
       melix pipeline run --file PIPELINE.json [--inputs INPUTS.json] [--receipt-dir PATH] [--trace-id ID] [--resume] [--from-step STEP_ID] [--dry-run] [--format json-v1]
+
+    Notes:
+      --hf-token passed to model or dataset hub download is saved for later Hugging Face operations.
+      For eval run/compare, --hf-dataset-revision overrides a revision embedded in --dataset-ref.
     """
 
     private static func extractOutputFormat(
@@ -2690,7 +2694,7 @@ public enum MelixCLIParser {
                 parameters["batch_factor"] = batchFactor
             }
             if let datasetRef = values.single["--dataset-ref"], datasetRef.isEmpty == false {
-                let parsedRef = parseDatasetReference(datasetRef)
+                let parsedRef = try parseDatasetReference(datasetRef)
                 parameters["dataset_ref"] = datasetRef
                 parameters["hf_dataset_path"] = parsedRef.repoID
                 parameters["hf_dataset_revision"] = parsedRef.revision
@@ -2926,7 +2930,7 @@ public enum MelixCLIParser {
                     source: sourceConfiguration.source,
                     fieldMapping: sourceConfiguration.fieldMapping,
                     profile: sourceConfiguration.profile,
-                    parameters: parseEvalParameters(values),
+                    parameters: try parseEvalParameters(values),
                     evalPromptID: values.single["--eval-prompt-id"] ?? "",
                     evalPromptRevisionID: values.single["--eval-prompt-revision"] ?? "",
                     semanticJudgeRemoteServerID: semanticJudgeRemoteServerID,
@@ -3137,7 +3141,7 @@ public enum MelixCLIParser {
                 source: sourceConfiguration.source,
                 fieldMapping: sourceConfiguration.fieldMapping,
                 profile: sourceConfiguration.profile,
-                parameters: parseEvalParameters(values),
+                parameters: try parseEvalParameters(values),
                 json: values.flags.contains("--json")
             )
         )
@@ -3156,7 +3160,7 @@ public enum MelixCLIParser {
         return EvalExportOptions(jobID: jobID, outputPath: outputPath, json: values.flags.contains("--json"))
     }
 
-    private static func parseEvalParameters(_ values: ParsedArguments) -> [String: String] {
+    private static func parseEvalParameters(_ values: ParsedArguments) throws -> [String: String] {
         var parameters: [String: String] = [:]
         if let batchFactor = values.single["--batch-factor"] {
             parameters["batch_factor"] = batchFactor
@@ -3180,10 +3184,10 @@ public enum MelixCLIParser {
             parameters["remote_provider_extra_body_json"] = remoteExtraBodyJSON
         }
         if let datasetRef = values.single["--dataset-ref"], datasetRef.isEmpty == false {
-            let parsedRef = parseDatasetReference(datasetRef)
+            let parsedRef = try parseDatasetReference(datasetRef)
             parameters["dataset_ref"] = datasetRef
             parameters["hf_dataset_path"] = parsedRef.repoID
-            parameters["hf_dataset_revision"] = parsedRef.revision
+            parameters["hf_dataset_revision"] = values.single["--hf-dataset-revision"] ?? parsedRef.revision
         }
         return parameters
     }
@@ -3206,7 +3210,12 @@ public enum MelixCLIParser {
                 "At most one of --source-csv, --source-jsonl, --hf-dataset-path, or --dataset-ref may be provided for \(command)."
             )
         }
-        let parsedDatasetRef = datasetRef.isEmpty ? nil : parseDatasetReference(datasetRef)
+        let parsedDatasetRef: (repoID: String, revision: String)?
+        if datasetRef.isEmpty {
+            parsedDatasetRef = nil
+        } else {
+            parsedDatasetRef = try parseDatasetReference(datasetRef)
+        }
 
         let fieldMapping = ControlPlaneEvaluationRequest.FieldMapping(
             systemPath: values.single["--field-system-path"] ?? "",
@@ -3271,14 +3280,20 @@ public enum MelixCLIParser {
             .replacingOccurrences(of: "-", with: "_")
     }
 
-    private static func parseDatasetReference(_ datasetRef: String) -> (repoID: String, revision: String) {
+    private static func parseDatasetReference(_ datasetRef: String) throws -> (repoID: String, revision: String) {
         let trimmed = datasetRef.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let separator = trimmed.lastIndex(of: "@") else {
+            guard trimmed.isEmpty == false else {
+                throw MelixCLIError.usage("Invalid --dataset-ref: expected format is repo/name[@revision].")
+            }
             return (trimmed, "main")
         }
         let repoID = String(trimmed[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
         let revision = String(trimmed[trimmed.index(after: separator)...])
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard repoID.isEmpty == false, repoID.contains("@") == false else {
+            throw MelixCLIError.usage("Invalid --dataset-ref: '\(repoID)' is not a valid repo id; expected format is repo/name[@revision].")
+        }
         return (repoID, revision.isEmpty ? "main" : revision)
     }
 
@@ -4029,7 +4044,7 @@ public actor MelixCLIRunner {
                     )
                 )
             }
-            return renderDatasetRegistrySnapshot(result.manifestJson)
+            return try renderDatasetRegistrySnapshot(result.manifestJson)
         case .datasetHubDownload(let options):
             let result = try await downloadHubDataset(repoID: options.repoID, revision: options.revision, hfToken: options.hfToken)
             let receipt = try makeManagedDatasetReceipt(from: result)
@@ -4040,7 +4055,7 @@ public actor MelixCLIRunner {
                 revision: options.revision,
                 snapshotID: options.snapshotID
             )
-            return options.json ? result.manifestJson : result.outputPath + "\n"
+            return options.json ? result.manifestJson : renderDatasetRemoveResult(result)
         case .modelRootsList(let options):
             let state = try loadOperatorState()
             if options.json {
@@ -5096,6 +5111,9 @@ public actor MelixCLIRunner {
         result.stage = stringValue("stage", from: payload)
         result.pct = Float(doubleValue("pct", from: payload))
         result.outputPath = stringValue("output_path", from: payload)
+        if result.outputPath.isEmpty, result.operation == "dataset_download" {
+            result.outputPath = stringValue("snapshot_path", from: payload)
+        }
         return result
     }
 
@@ -6085,13 +6103,13 @@ public actor MelixCLIRunner {
         ]
     }
 
-    private func renderDatasetRegistrySnapshot(_ manifestJSON: String) -> String {
+    private func renderDatasetRegistrySnapshot(_ manifestJSON: String) throws -> String {
         guard
             let data = manifestJSON.data(using: .utf8),
             let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let registry = payload["dataset_registry"] as? [String: Any]
         else {
-            return manifestJSON
+            throw MelixCLIError.runtime("dataset_snapshot response did not include a dataset_registry JSON object.")
         }
         let datasets = registry["datasets"] as? [[String: Any]] ?? []
         if datasets.isEmpty {
@@ -6101,12 +6119,44 @@ public actor MelixCLIRunner {
             let repoID = (dataset["repo_id"] as? String) ?? ""
             let revision = (dataset["revision"] as? String) ?? ""
             let snapshotID = (dataset["snapshot_id"] as? String) ?? ""
-            let totalBytes = formatBinaryBytes(UInt64((dataset["total_bytes"] as? Int) ?? 0))
+            let totalBytes = formatBinaryBytes((dataset["total_bytes"] as? NSNumber)?.uint64Value ?? 0)
             let path = (dataset["snapshot_path"] as? String) ?? ""
             return "\(repoID)\t\(revision)\t\(snapshotID)\t\(totalBytes)\t\(path)"
         }
         return (["repo_id\trevision\tsnapshot_id\ttotal_bytes\tsnapshot_path"] + lines)
             .joined(separator: "\n") + "\n"
+    }
+
+    private func renderDatasetRemoveResult(_ result: Melix_Controlplane_V1_ModelOperationResult) -> String {
+        let outputPath = result.outputPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if outputPath.isEmpty == false {
+            return outputPath + "\n"
+        }
+        guard
+            let data = result.manifestJson.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return "Dataset removal completed.\n"
+        }
+
+        let repoID = (payload["repo_id"] as? String) ?? ""
+        let revision = (payload["revision"] as? String) ?? ""
+        let snapshotID = (payload["snapshot_id"] as? String)
+            ?? (payload["removed_snapshot_id"] as? String)
+            ?? ""
+        let removedPath = (payload["removed_snapshot_path"] as? String) ?? ""
+        let datasetLabel = [
+            repoID,
+            revision.isEmpty ? "" : "@\(revision)",
+            snapshotID.isEmpty ? "" : " (\(snapshotID))",
+        ].joined()
+        let headline = datasetLabel.isEmpty
+            ? "Removed dataset snapshot."
+            : "Removed dataset snapshot \(datasetLabel)."
+        if removedPath.isEmpty {
+            return headline + "\n"
+        }
+        return headline + "\nRemoved path: \(removedPath)\n"
     }
 
     private func renderRegistrySnapshot(_ manifestJSON: String) -> String {
@@ -6811,6 +6861,8 @@ public actor MelixCLIRunner {
         let repoID = (payload["repo_id"] as? String) ?? ""
         let revision = (payload["revision"] as? String) ?? ""
         let snapshotID = (payload["snapshot_id"] as? String) ?? ""
+        // snapshot_path is the canonical worker field; output_path and the
+        // stream output path cover older or newer worker versions during skew.
         let managedDatasetPath = (payload["snapshot_path"] as? String)
             ?? (payload["output_path"] as? String)
             ?? result.outputPath

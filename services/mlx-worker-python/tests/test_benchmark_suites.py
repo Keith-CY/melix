@@ -561,6 +561,9 @@ def test_parse_positive_int_returns_default_for_non_numeric_and_empty_input() ->
 
 def test_benchmark_dataset_ref_parser_supports_explicit_revision() -> None:
     assert benchmark_suites._parse_dataset_ref("org/bench@feature-branch") == ("org/bench", "feature-branch")
+    with pytest.raises(ModelOperationError) as error:
+        benchmark_suites._parse_dataset_ref("org@bench@main")
+    assert error.value.code == "invalid_argument"
 
 
 def test_benchmark_suite_catalog_raises_for_unknown_task_kind(tmp_path: Path) -> None:
@@ -621,3 +624,58 @@ def test_benchmark_suite_dataset_ref_prefers_local_cache_snapshot(
     assert manifest["source_kind"] == "hf_cache_snapshot"
     assert manifest["hf_snapshot_id"] == "abc123"
     assert manifest["hf_snapshot_path"] == str(snapshot.resolve())
+
+
+def test_benchmark_suite_dataset_ref_falls_back_when_local_split_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    cache_repo = home / ".cache" / "huggingface" / "hub" / "datasets--org--bench"
+    snapshot = cache_repo / "snapshots" / "abc123"
+    data_dir = snapshot / "data"
+    data_dir.mkdir(parents=True)
+    (cache_repo / "refs").mkdir()
+    (cache_repo / "refs" / "main").write_text("abc123", encoding="utf-8")
+    (data_dir / "test-00000-of-00001.jsonl").write_text(
+        '{"instruction":"Wrong split."}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    def fetcher(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        calls.append((endpoint, dict(params)))
+        assert endpoint == "rows"
+        return {"rows": [{"row": {"instruction": "Use the remote fallback."}}]}
+
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=fetcher)
+    suite = catalog.resolve_suite(
+        "latency",
+        jobs_root=tmp_path / "jobs",
+        parameters={
+            "dataset_ref": "org/bench",
+            "prompt_feature": "instruction",
+            "sample_size": "1",
+        },
+        task_kind="text-generation",
+    )
+    manifest = json.loads((suite.materialized_package_path / "manifest.json").read_text(encoding="utf-8"))
+
+    assert calls == [
+        (
+            "rows",
+            {
+                "dataset": "org/bench",
+                "config": "default",
+                "split": "train",
+                "offset": "0",
+                "length": "8",
+            },
+        )
+    ]
+    assert suite.prompt_batches == ("Use the remote fallback.",)
+    assert suite.metadata()["source_kind"] == "hf_dataset"
+    assert "hf_snapshot_id" not in suite.metadata()
+    assert manifest["source_kind"] == "hf_dataset"
+    assert "hf_snapshot_id" not in manifest

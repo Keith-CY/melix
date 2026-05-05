@@ -85,7 +85,11 @@ dataset reference in the form `repo_id[@revision]`.
 When a managed dataset reference is provided:
 
 - `repo_id` is the Hugging Face dataset repository id
+- `repo_id` must not contain `@`; malformed references are rejected before
+  reaching worker-side Hugging Face calls
 - `revision` defaults to `main`
+- for evaluation commands that also pass `--hf-dataset-revision`, the explicit
+  revision option takes precedence over the revision embedded in `dataset_ref`
 - the worker should prefer a local Hugging Face cache snapshot under
   `~/.cache/huggingface/hub/datasets--*`
 - if no local snapshot is available, the evaluation and benchmark materializers

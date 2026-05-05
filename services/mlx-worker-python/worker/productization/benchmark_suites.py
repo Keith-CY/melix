@@ -391,6 +391,7 @@ def _materialize_benchmark_suite(
         }
 
     source_kind = "hf_dataset"
+    local_snapshot = None
     snapshot = resolve_cached_hf_dataset_snapshot(
         repo_id=definition.dataset_path,
         revision=definition.dataset_revision or "main",
@@ -402,8 +403,10 @@ def _materialize_benchmark_suite(
             split=definition.dataset_split,
             limit=sample_hint,
         )
-        source_kind = "hf_cache_snapshot"
-    else:
+        if rows:
+            source_kind = "hf_cache_snapshot"
+            local_snapshot = snapshot
+    if local_snapshot is None:
         dataset_name = definition.dataset_name or _resolve_dataset_name(definition, fetch_json)
         row_payload = fetch_json(
             "rows",
@@ -444,12 +447,12 @@ def _materialize_benchmark_suite(
         "mask_feature": definition.mask_feature,
         "default_prompt": definition.default_prompt,
     }
-    if snapshot is not None:
+    if local_snapshot is not None:
         manifest.update(
             {
-                "hf_snapshot_id": snapshot.snapshot_id,
-                "hf_snapshot_path": str(snapshot.snapshot_path),
-                "hf_cache_repo_path": str(snapshot.cache_repo_path),
+                "hf_snapshot_id": local_snapshot.snapshot_id,
+                "hf_snapshot_path": str(local_snapshot.snapshot_path),
+                "hf_cache_repo_path": str(local_snapshot.cache_repo_path),
             }
         )
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -459,9 +462,9 @@ def _materialize_benchmark_suite(
         "cache_key": cache_key,
         "cache_hit": False,
         "source_kind": source_kind,
-        "hf_snapshot_id": snapshot.snapshot_id if snapshot is not None else "",
-        "hf_snapshot_path": str(snapshot.snapshot_path) if snapshot is not None else "",
-        "hf_cache_repo_path": str(snapshot.cache_repo_path) if snapshot is not None else "",
+        "hf_snapshot_id": local_snapshot.snapshot_id if local_snapshot is not None else "",
+        "hf_snapshot_path": str(local_snapshot.snapshot_path) if local_snapshot is not None else "",
+        "hf_cache_repo_path": str(local_snapshot.cache_repo_path) if local_snapshot is not None else "",
         "dataset_name": dataset_name,
         "rows": rows,
     }
@@ -499,10 +502,21 @@ def _definition_with_dataset_override(
 
 
 def _parse_dataset_ref(dataset_ref: str) -> tuple[str, str]:
-    if "@" not in dataset_ref:
-        return dataset_ref, "main"
-    repo_id, revision = dataset_ref.rsplit("@", 1)
-    return repo_id.strip(), revision.strip() or "main"
+    # Keep this grammar in sync with MelixCLIParser.parseDatasetReference.
+    trimmed = dataset_ref.strip()
+    if "@" not in trimmed:
+        repo_id, revision = trimmed, "main"
+    else:
+        repo_id, revision = trimmed.rsplit("@", 1)
+        repo_id = repo_id.strip()
+        revision = revision.strip() or "main"
+    if not repo_id or "@" in repo_id:
+        raise ModelOperationError(
+            code="invalid_argument",
+            message="Invalid dataset_ref. Expected format: repo/name[@revision].",
+            details={"dataset_ref": dataset_ref},
+        )
+    return repo_id, revision
 
 
 def _suite_cases(

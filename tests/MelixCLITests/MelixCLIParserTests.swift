@@ -9,6 +9,8 @@ struct MelixCLIParserTests {
     @Test("documents eval dataset root in usage text")
     func documentsEvalDatasetRootInUsageText() {
         #expect(MelixCLIParser.usageText.contains("[--dataset-root PATH]"))
+        #expect(MelixCLIParser.usageText.contains("--hf-token passed to model or dataset hub download is saved"))
+        #expect(MelixCLIParser.usageText.contains("--hf-dataset-revision overrides a revision embedded in --dataset-ref"))
     }
 
     @Test("documents and parses remote server direct target commands")
@@ -1742,6 +1744,37 @@ struct MelixCLIParserTests {
         #expect(options.parameters["hf_dataset_name"] == "default")
         #expect(options.parameters["hf_dataset_split"] == "train")
         #expect(options.parameters["prompt_feature"] == "messages")
+
+        let defaultRevisionCommand = try MelixCLIParser.parse([
+            "bench",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--suite", "latency",
+            "--dataset-ref", "Jax-dan/HundredCV-Chat",
+        ])
+        #expect(defaultRevisionCommand == .benchRun(.init(
+            modelID: "melix-dev-text",
+            suites: ["latency"],
+            parameters: [
+                "dataset_ref": "Jax-dan/HundredCV-Chat",
+                "hf_dataset_path": "Jax-dan/HundredCV-Chat",
+                "hf_dataset_revision": "main",
+            ]
+        )))
+    }
+
+    @Test("rejects malformed managed dataset references")
+    func rejectsMalformedManagedDatasetReferences() throws {
+        try assertError(
+            for: [
+                "bench",
+                "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "latency",
+                "--dataset-ref", "org@repo@main",
+            ],
+            equals: .usage("Invalid --dataset-ref: 'org@repo' is not a valid repo id; expected format is repo/name[@revision].")
+        )
     }
 
     @Test("parses bench list and export-csv commands")
@@ -2167,6 +2200,30 @@ struct MelixCLIParserTests {
         #expect(options.parameters["hf_dataset_revision"] == "main")
         #expect(options.fieldMapping.inputTextPath == "dialogue")
         #expect(options.fieldMapping.targetPath == "summary")
+    }
+
+    @Test("eval dataset revision option overrides managed dataset reference revision")
+    func evalDatasetRevisionOptionOverridesManagedDatasetReferenceRevision() throws {
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--suite", "dolly",
+            "--dataset-ref", "IRUCAAI/extract_group_chat_dataset_with_summary@pinned",
+            "--hf-dataset-revision", "main",
+            "--field-input-text-path", "dialogue",
+            "--field-target-path", "summary",
+        ])
+
+        guard case .evalRun(let options) = command else {
+            Issue.record("Expected evalRun command")
+            return
+        }
+
+        #expect(options.source.datasetPath == "IRUCAAI/extract_group_chat_dataset_with_summary")
+        #expect(options.source.datasetRevision == "main")
+        #expect(options.parameters["dataset_ref"] == "IRUCAAI/extract_group_chat_dataset_with_summary@pinned")
+        #expect(options.parameters["hf_dataset_revision"] == "main")
     }
 
     @Test("parses eval compare with target model ids and comparison controls")
@@ -2740,6 +2797,18 @@ struct MelixCLIParserTests {
 
     @Test("surfaces malformed option errors")
     func surfacesMalformedOptionErrors() throws {
+        try assertError(for: ["dataset"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(for: ["dataset", "unknown"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(for: ["dataset", "hub"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(for: ["dataset", "hub", "unknown"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(
+            for: ["dataset", "hub", "download"],
+            equals: .missingRequired("--repo-id is required for melix dataset hub download.")
+        )
+        try assertError(
+            for: ["dataset", "remove"],
+            equals: .missingRequired("--repo-id is required for melix dataset remove.")
+        )
         try assertError(for: ["server"], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["server", "hibernate"], equals: .usage(MelixCLIParser.usageText))
         try assertError(
@@ -2761,6 +2830,16 @@ struct MelixCLIParserTests {
         try assertError(for: ["bench", "run", "oops"], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["bench", "run", "--model-id"], equals: .missingValue("--model-id"))
         try assertError(for: ["eval", "run", "--repo-id"], equals: .missingValue("--repo-id"))
+        try assertError(
+            for: [
+                "eval",
+                "run",
+                "--model-id", "melix-dev-text",
+                "--source-csv", "/tmp/eval.csv",
+                "--dataset-ref", "org/dataset",
+            ],
+            equals: .usage("At most one of --source-csv, --source-jsonl, --hf-dataset-path, or --dataset-ref may be provided for melix eval run.")
+        )
         try assertError(for: ["lora", "list", "--model-id"], equals: .missingValue("--model-id"))
         try assertError(for: ["lora", "activate", "--model-id", "melix-dev-text", "oops"], equals: .usage(MelixCLIParser.usageText))
         #expect(MelixCLIError.usage("usage").errorDescription == "usage")

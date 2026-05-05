@@ -38,6 +38,22 @@ Melix or with the Hugging Face CLI.
 
 ## Design
 
+### Review Follow-Up Decisions
+
+The PR review follow-up keeps the dataset reference grammar shared across Swift
+and Python implementations: `repo_id[@revision]`, with `revision` defaulting to
+`main` and embedded `@` characters rejected in the `repo_id` portion. When an
+evaluation command passes both `--dataset-ref REPO@REV` and
+`--hf-dataset-revision OTHER`, the explicit revision option remains the
+precedence rule for backward compatibility and must be documented in the CLI
+contract.
+
+Local cached snapshots are an optimization, not an availability boundary. If a
+requested local snapshot is present but cannot satisfy the requested split, the
+benchmark materializer falls through to the Hugging Face Dataset Viewer API just
+as the evaluation materializer does. Reader implementations must apply sample
+limits before converting Arrow or Parquet tables to Python dictionaries.
+
 ### Dataset Snapshot Catalog
 
 The worker owns a small dataset catalog that scans the default HF hub cache for
@@ -106,13 +122,30 @@ fallback remains in place.
 - Swift parser and runner tests for new `dataset` commands, `--dataset-ref`
   parsing, token redaction/reuse, and benchmark/evaluation parameter plumbing.
 - Targeted commands:
-  - `uv run pytest services/mlx-worker-python/tests/test_dataset_registry.py services/mlx-worker-python/tests/test_evaluation_final_result.py services/mlx-worker-python/tests/test_benchmark_suites.py`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_dataset_registry.py services/mlx-worker-python/tests/test_evaluation_final_result.py services/mlx-worker-python/tests/test_benchmark_suites.py services/mlx-worker-python/tests/test_maintenance_service.py -q`
   - `swift test --filter MelixCLIParserTests`
   - `swift test --filter MelixCLIRunnerTests`
+  - `swift test --enable-code-coverage --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`
 
 ## Metrics Report
 
-Changed-scope coverage is measurable for the Python and Swift test scopes above.
-The success criterion before handoff is targeted test pass plus an explicit
-coverage or N/A note if the local coverage tooling does not support the touched
-mixed Python/Swift slice in one command.
+Review follow-up metrics from the focused handoff:
+
+- Python targeted tests: 207 passed.
+- Swift parser tests: 69 passed.
+- Swift runner tests: 158 passed.
+- Swift parser plus runner coverage tests: 227 passed.
+- Python production changed-line coverage:
+  `TOTAL 100.00% 31/31` across `dataset_registry/catalog.py`,
+  `engine/maintenance_core.py`, `productization/benchmark_suites.py`, and
+  `productization/evaluation_final_result.py`.
+- Python production plus touched-test changed-line coverage:
+  `TOTAL 99.29% 139/140`.
+- Swift changed-line coverage for `Sources/MelixCLICore/MelixCLI.swift`,
+  `tests/MelixCLITests/MelixCLIParserTests.swift`, and
+  `tests/MelixCLITests/MelixCLIRunnerTests.swift`: `98.45%` (`254/258`).
+- Focused Python statement report for touched production files:
+  `catalog.py` 97%, `maintenance_core.py` 94%, `benchmark_suites.py` 98%,
+  `evaluation_final_result.py` 75%, total 92%. The lower statement totals are
+  from existing broad modules; changed-line coverage above is the commit gate
+  for the review follow-up.

@@ -167,7 +167,8 @@ def test_dataset_catalog_reads_json_and_csv_snapshots(tmp_path: Path) -> None:
 
     assert read_hf_dataset_snapshot_rows(snapshot_dir, split="validation") == [{"prompt": "json-row"}]
     assert read_hf_dataset_snapshot_rows(snapshot_dir, split="train") == [{"prompt": "csv-row", "answer": "ok"}]
-    assert read_hf_dataset_snapshot_rows(snapshot_dir, split="missing", limit=1) == [{"prompt": "csv-row", "answer": "ok"}]
+    assert read_hf_dataset_snapshot_rows(snapshot_dir, split="missing", limit=1) == []
+    assert read_hf_dataset_snapshot_rows(snapshot_dir, limit=1) == [{"prompt": "csv-row", "answer": "ok"}]
 
 
 def test_dataset_catalog_reads_parquet_and_arrow_with_fake_pyarrow(
@@ -178,11 +179,24 @@ def test_dataset_catalog_reads_parquet_and_arrow_with_fake_pyarrow(
     arrow_path = tmp_path / "train.arrow"
     parquet_path.write_bytes(b"parquet")
     arrow_path.write_bytes(b"arrow")
+    sliced_offsets: list[tuple[int, int | None]] = []
+
+    class FakeArrowTable:
+        def __init__(self, rows: list[object]) -> None:
+            self._rows = rows
+
+        def slice(self, offset: int, length: int | None = None) -> "FakeArrowTable":
+            sliced_offsets.append((offset, length))
+            end = None if length is None else offset + length
+            return FakeArrowTable(self._rows[offset:end])
+
+        def to_pylist(self) -> list[object]:
+            return list(self._rows)
 
     pyarrow_module = types.ModuleType("pyarrow")
     pyarrow_module.__path__ = []
     parquet_module = types.ModuleType("pyarrow.parquet")
-    parquet_module.read_table = lambda _path: types.SimpleNamespace(to_pylist=lambda: [{"prompt": "parquet"}, "ignored"])
+    parquet_module.read_table = lambda _path: FakeArrowTable([{"prompt": "parquet"}, {"prompt": "extra"}, "ignored"])
 
     class FakeArrowReader:
         def __enter__(self):
@@ -192,7 +206,7 @@ def test_dataset_catalog_reads_parquet_and_arrow_with_fake_pyarrow(
             return False
 
         def read_all(self):
-            return types.SimpleNamespace(to_pylist=lambda: [{"prompt": "arrow"}, "ignored"])
+            return FakeArrowTable([{"prompt": "arrow"}, {"prompt": "extra"}, "ignored"])
 
     ipc_module = types.ModuleType("pyarrow.ipc")
     ipc_module.open_file = lambda _path: FakeArrowReader()
@@ -201,8 +215,9 @@ def test_dataset_catalog_reads_parquet_and_arrow_with_fake_pyarrow(
     monkeypatch.setitem(sys.modules, "pyarrow.parquet", parquet_module)
     monkeypatch.setitem(sys.modules, "pyarrow.ipc", ipc_module)
 
-    assert catalog._read_rows_from_file(parquet_path) == [{"prompt": "parquet"}]
-    assert catalog._read_rows_from_file(arrow_path) == [{"prompt": "arrow"}]
+    assert catalog._read_rows_from_file(parquet_path, limit=1) == [{"prompt": "parquet"}]
+    assert catalog._read_rows_from_file(arrow_path, limit=1) == [{"prompt": "arrow"}]
+    assert sliced_offsets == [(0, 1), (0, 1)]
 
 
 def test_dataset_catalog_surfaces_missing_pyarrow(

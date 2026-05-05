@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from worker.dataset_registry.catalog import (
+    DatasetSnapshot,
     read_hf_dataset_snapshot_rows,
     resolve_cached_hf_dataset_snapshot,
 )
@@ -412,7 +413,7 @@ def _hf_source_metadata(*, source: HFEvaluationDatasetSource, rows: list[dict[st
 def _hf_cache_source_metadata(
     *,
     source: HFEvaluationDatasetSource,
-    snapshot: Any,
+    snapshot: DatasetSnapshot,
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     metadata = _hf_source_metadata(source=source, rows=rows)

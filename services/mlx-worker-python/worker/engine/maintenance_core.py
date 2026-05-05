@@ -221,6 +221,7 @@ class MaintenanceCore:
         adapter_activation_pipeline: AdapterActivationPipeline | None = None,
         upload_receipt_pipeline: UploadReceiptPipeline | None = None,
         benchmark_suite_catalog: BenchmarkSuiteCatalog | None = None,
+        dataset_catalog: DatasetCatalog | None = None,
     ) -> None:
         self._registry = registry
         self._jobs_root = Path(jobs_root)
@@ -237,7 +238,7 @@ class MaintenanceCore:
         self._benchmark_store = None
         self._benchmark_queue_store = BenchmarkQueueStore()
         self._benchmark_suite_catalog = benchmark_suite_catalog or BenchmarkSuiteCatalog()
-        self._dataset_catalog = DatasetCatalog()
+        self._dataset_catalog = dataset_catalog or DatasetCatalog()
         self._restore_derived_models_into_catalog()
 
     @staticmethod
