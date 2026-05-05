@@ -17,9 +17,9 @@ This is a Python worker-runtime slice. It can be validated on Linux with focused
 
 ## Optimization hypothesis
 
-`DeterministicEmbeddingRuntime.embed_inputs()` currently embeds every input position independently. For duplicate strings inside the same request, it repeats the same family/backend embedding work even though backend, family, and dimensions are fixed for that call.
+`DeterministicEmbeddingRuntime.embed_inputs()` caches duplicate input vectors for a request, but the cache currently stores a tuple copy and then converts it back to a list for every emitted position. That keeps aliasing safe but adds an avoidable tuple allocation for each unique input and a generic list-constructor copy for each output.
 
-Add a request-local cache keyed by the raw input text so duplicate positions reuse the already-computed vector while preserving input ordering and output values.
+Store the canonical cached vector as the list returned by the embedding family, emit the first occurrence directly, and emit `vector.copy()` for duplicate response positions. This preserves output ordering, values, and per-position list independence while removing the unique-input tuple roundtrip and first-occurrence response copy from duplicate-heavy requests.
 
 ## Performance probe
 
