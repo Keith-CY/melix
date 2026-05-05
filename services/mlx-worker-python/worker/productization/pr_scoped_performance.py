@@ -209,7 +209,9 @@ def build_scope_report(
 ) -> dict[str, object]:
     probes = load_probe_registry_for_scope(registry_path)
     changed_path_set = {path for path in changed_files if path}
-    force_all = any(_path_matches_force_all(path) for path in changed_path_set)
+    force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
+        changed_path_set
+    )
     if force_all:
         selected = probes
     else:
@@ -2234,6 +2236,13 @@ def _path_matches_force_all(path: str) -> bool:
         path,
         _force_all_wildcard_matchers(),
     )
+
+
+def _changed_paths_match_force_all_wildcards(changed_paths: set[str]) -> bool:
+    matchers = _force_all_wildcard_matchers()
+    if not matchers:
+        return False
+    return any(_matches_any_compiled_glob(path, matchers) for path in changed_paths)
 
 
 def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:

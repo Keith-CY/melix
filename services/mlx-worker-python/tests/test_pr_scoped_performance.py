@@ -371,6 +371,41 @@ def test_scope_report_force_selects_all_on_infra_change() -> None:
     assert "pr-scoped-performance-scope-matcher" in probe_ids
 
 
+def test_scope_report_exact_force_all_skips_wildcard_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_wildcard_scan(changed_paths: set[str]) -> bool:  # pragma: no cover - sentinel
+        raise AssertionError("exact force-all matches should not scan wildcard matchers")
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_changed_paths_match_force_all_wildcards",
+        fail_wildcard_scan,
+    )
+
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["infra/perf/pr_scoped_probes.json", "README.md"],
+    )
+
+    assert scope["force_all"] is True
+    assert scope["selected_count"] == len(load_probe_registry(REGISTRY_PATH))
+
+
+def test_scope_report_force_selects_all_on_pr_scope_script_change() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/pr_scoped_performance_report.py"],
+    )
+
+    assert scope["force_all"] is True
+    assert scope["selected_count"] == len(load_probe_registry(REGISTRY_PATH))
+
+
+def test_changed_paths_force_all_wildcards_handles_empty_matchers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pr_scoped_performance_module, "_force_all_wildcard_matchers", lambda: ())
+
+    assert pr_scoped_performance_module._changed_paths_match_force_all_wildcards({"README.md"}) is False
+
+
 def test_scope_report_large_changed_set_preserves_exact_selection_semantics() -> None:
     changed_files = _build_large_scope_probe_changed_files() + [
         "services/mlx-worker-python/worker/engine/evaluation_core.py",
