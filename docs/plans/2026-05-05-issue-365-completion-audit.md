@@ -33,9 +33,9 @@ PRs, and what remains before the roadmap can be treated as implemented.
 | `lora`, `qlora`, and `dora` supervised adapter training remains supported. | Existing LoRA training pipeline and regression tests remain in `services/mlx-worker-python/tests/test_lora_model_ops.py` and CLI tests. | Covered as baseline regression scope, not reclassified as complete Issue 365 release evidence by itself. |
 | `dpo`, `orpo`, and `cpo` accept `preference_pair` datasets. | #368 adds contracts; #369 adds offline preference trainer routing and preference metrics. | Implemented on `origin/main`. |
 | `dpo`, `orpo`, and `cpo` run real trainer paths rather than manifest-only placeholders. | #369 routes preference training through worker-side preference trainer logic and records preference metrics. | Implemented on `origin/main`, with targeted unit and worker evidence in the PR body. |
-| `grpo` accepts prompt/candidate datasets and records candidate/reward traces. | #368 adds `prompt_candidate` validation. #394 adds a scored-trace runner in a draft PR. | Partially covered by open draft PR #394. Real online candidate generation from a loaded policy runtime is still missing. |
+| `grpo` accepts prompt/candidate datasets and records candidate/reward traces. | #368 adds `prompt_candidate` validation. #394 adds a scored-trace runner plus opt-in `runtime_generate` policy-runtime candidate generation in a draft PR. | Partially covered by open draft PR #394. Release-ready GRPO still needs real local runtime evidence, real reward-model scoring, and real policy-update evidence. |
 | `rlhf` consumes reward-model lineage from #366 and records reward-model lineage. | #368 validates readable reward manifests. #394 records reward-scored traces in a draft PR. | Partially covered by open draft PR #394. Local reward-model inference and PPO/reward-guided updates from #366 are still missing. |
-| Every preference/RL run emits `melix.alignment_run.v1`. | #368 adds alignment run manifests and adapter backlinks; tests assert `melix.alignment_run.v1`. | Implemented for contract and current worker paths on `origin/main`; open #394 expands scored-trace RL metrics. |
+| Every preference/RL run emits `melix.alignment_run.v1`. | #368 adds alignment run manifests and adapter backlinks; tests assert `melix.alignment_run.v1`. | Implemented for contract and current worker paths on `origin/main`; open #394 expands scored-trace and runtime-generated GRPO metrics. |
 | Adapter manifests backlink to alignment manifests through `alignment_run_manifest_path`. | #368 implementation evidence and worker tests cover adapter backlinking. | Implemented on `origin/main`. |
 | Quantized bundle manifests record `quantization_mode`, `source_artifact_kind`, and release-gate evidence. | #368 and #386 extend quantization manifests and typed local smoke evidence. | Implemented on `origin/main`. |
 | PTQ can quantize exported or merged artifacts. | Current `origin/main` has manifest/runtime evidence. #397 adds an opt-in `mlx_lm_convert` backend for real PTQ conversion in draft. | Not complete on `origin/main`; open draft PR #397 covers the next backend slice. |
@@ -89,10 +89,13 @@ Implemented by #386 on `origin/main`:
 ### PR #394: Scored RL Alignment Runner
 
 Draft PR #394 adds a deterministic scored-trace runner for GRPO and RLHF
-datasets. It is useful implementation progress, but it does not satisfy final
-GRPO/RLHF acceptance because it explicitly excludes online policy candidate
-generation, reward-model inference, PPO/reward-guided updates, real local
-runtime release evidence, and Window UI acceptance.
+datasets. It also adds opt-in GRPO `candidate_generation_mode=runtime_generate`
+support that loads the policy runtime once per job, generates candidates, scores
+them with a seed-overlap proxy, and records generated-candidate evidence in
+policy-update traces plus `melix.alignment_run.v1` metrics. It is useful
+implementation progress, but it does not satisfy final GRPO/RLHF acceptance
+because it still excludes reward-model scoring, PPO/reward-guided updates, real
+local runtime release evidence, and Window UI acceptance.
 
 ### PR #397: MLX Quantization Convert Backend
 
@@ -113,8 +116,10 @@ runtime acceptance for every business line.
 
 The objective is not achieved until all of these are implemented and verified:
 
-1. Real GRPO online candidate generation from a loaded policy runtime.
-2. Real GRPO scoring and policy update evidence, not only scored-trace replay.
+1. Release-ready GRPO online candidate generation from a loaded policy runtime
+   with real local runtime evidence, not only scripted/deterministic tests.
+2. Real GRPO reward-model scoring and policy update evidence, not only
+   seed-overlap proxy scoring or scored-trace replay.
 3. RLHF reward-model inference and reward-guided/PPO-style policy updates from
    #366 artifacts.
 4. Real QAT training or QAT-aware export with fake-quant/quantization-aware
