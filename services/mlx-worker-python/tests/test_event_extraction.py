@@ -6,6 +6,8 @@ from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
+import pytest
+
 from worker.engine.evaluation_core import EvaluationCore
 from worker.engine import evaluation_core
 from worker.productization import event_extraction as event_extraction_module
@@ -244,6 +246,96 @@ def test_evaluate_event_extraction_aligns_reordered_events_before_exact_scoring(
         {"gold_event_index": 1, "pred_event_index": 0, "alignment_score": 1.0},
         {"gold_event_index": 2, "pred_event_index": 2, "alignment_score": 1.0},
     ]
+
+
+def test_evaluate_event_extraction_reuses_alignment_details_for_matched_pairs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_summary.json"
+    details_path = tmp_path / "event_eval_details.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-reuse",
+                "dialogue": ["A: 周一开会", "B: 周二吃饭"],
+                "events": [
+                    {"actor": ["A"], "time": ["周一"], "location": ["公司"], "action": ["开会"], "digest": ""},
+                    {"actor": ["B"], "time": ["周二"], "location": ["餐厅"], "action": ["吃饭"], "digest": ""},
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-reuse",
+                "dialogue": ["A: 周一开会", "B: 周二吃饭"],
+                "events": [
+                    {"actor": ["B"], "time": ["周二"], "location": ["餐厅"], "action": ["吃饭"], "digest": ""},
+                    {"actor": ["A"], "time": ["周一"], "location": ["公司"], "action": ["开会"], "digest": ""},
+                ],
+            }
+        ],
+    )
+    original_event_alignment = event_extraction_module._event_alignment
+    call_count = 0
+
+    def tracked_event_alignment(gold_event: dict[str, object], pred_event: dict[str, object]) -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        return original_event_alignment(gold_event, pred_event)
+
+    monkeypatch.setattr(event_extraction_module, "_event_alignment", tracked_event_alignment)
+
+    summary = evaluate_event_extraction(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+    )
+
+    assert summary["summary"]["events_matched"] == 2
+    assert call_count == 4
+
+
+def test_evaluate_event_extraction_keeps_legacy_alignment_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_summary.json"
+    details_path = tmp_path / "event_eval_details.jsonl"
+    row = {
+        "dialogue_id": "dlg-legacy",
+        "dialogue": ["A: 周一开会"],
+        "events": [{"actor": ["A"], "time": ["周一"], "location": ["公司"], "action": ["开会"], "digest": ""}],
+    }
+    _write_jsonl(gold, [row])
+    _write_jsonl(pred, [row])
+    original_align_dialogue_events = event_extraction_module._align_dialogue_events
+
+    def legacy_align_dialogue_events(
+        gold_events: list[dict[str, object]],
+        pred_events: list[dict[str, object]],
+    ) -> dict[str, object]:
+        alignment = dict(original_align_dialogue_events(gold_events, pred_events))
+        alignment.pop("pair_alignments", None)
+        return alignment
+
+    monkeypatch.setattr(event_extraction_module, "_align_dialogue_events", legacy_align_dialogue_events)
+
+    summary = evaluate_event_extraction(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+    )
+
+    assert summary["summary"]["events_matched"] == 1
+    assert summary["event_alignment"]["mean_alignment_score"] == 1.0
 
 
 def test_evaluate_event_extraction_uses_soft_alignment_but_exact_field_scores(tmp_path: Path) -> None:

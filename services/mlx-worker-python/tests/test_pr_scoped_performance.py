@@ -111,6 +111,16 @@ def test_scope_report_selects_training_dataset_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "training-dataset-token-percentiles-single-sort"
 
 
+def test_scope_report_selects_event_extraction_alignment_reuse_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/event_extraction.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "event-extraction-alignment-reuse"
+
+
 def test_scope_report_selects_real_model_support_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -730,6 +740,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
         "evaluation-final-result-materialization-streaming",
+        "event-extraction-alignment-reuse",
         "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
         "evaluation-store-compare-summary-csv-streaming",

@@ -1409,5 +1409,41 @@
         "warn_pct": 5.0
       }
     ]
+  },
+  {
+    "id": "event-extraction-alignment-reuse",
+    "name": "Event extraction alignment detail reuse",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/event_extraction.py",
+      "services/mlx-worker-python/tests/test_event_extraction.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "infra/perf/pr_scoped_probes.json",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_aligns_reordered_events_before_exact_scoring services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_reuses_alignment_details_for_matched_pairs services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_keeps_legacy_alignment_fallback services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_uses_soft_alignment_but_exact_field_scores services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_keeps_low_similarity_events_unmatched services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_event_extraction_alignment_reuse_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_aligns_reordered_events_before_exact_scoring services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_reuses_alignment_details_for_matched_pairs services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_keeps_legacy_alignment_fallback services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_uses_soft_alignment_but_exact_field_scores services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_keeps_low_similarity_events_unmatched services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_event_extraction_alignment_reuse_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/event_extraction.py services/mlx-worker-python/tests/test_event_extraction.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 - <<'PY'\nimport json\nimport statistics\nimport tempfile\nimport time\nfrom pathlib import Path\nfrom worker.productization import event_extraction as event_module\n\ndef write_jsonl(path, rows):\n    path.write_text(''.join(json.dumps(row, ensure_ascii=False) + chr(10) for row in rows), encoding='utf-8')\n\ndef event(actor, time_value, location, action):\n    return {'actor': [actor], 'time': [time_value], 'location': [location], 'action': [action], 'digest': ''}\n\ndialogue_count = 80\nevents_per_dialogue = 5\ngold_rows = []\npred_rows = []\nfor dialogue_index in range(dialogue_count):\n    gold_events = [event(f'speaker-{event_index}', f'\u5468{event_index}', f'\u5730\u70b9{event_index}', f'\u52a8\u4f5c{event_index}') for event_index in range(events_per_dialogue)]\n    pred_events = list(reversed(gold_events))\n    gold_rows.append({'dialogue_id': f'dlg-{dialogue_index}', 'dialogue': ['A: synthetic'], 'events': gold_events})\n    pred_rows.append({'dialogue_id': f'dlg-{dialogue_index}', 'dialogue': ['A: synthetic'], 'events': pred_events})\n\nelapsed = []\ncall_counts = []\nmatched_counts = []\noriginal = event_module._event_alignment\ntry:\n    for iteration in range(5):\n        with tempfile.TemporaryDirectory(prefix='melix-event-alignment-probe-') as tmpdir:\n            root = Path(tmpdir)\n            gold = root / 'gold.jsonl'\n            pred = root / 'pred.jsonl'\n            write_jsonl(gold, gold_rows)\n            write_jsonl(pred, pred_rows)\n            calls = {'count': 0}\n            def tracked(gold_event, pred_event):\n                calls['count'] += 1\n                return original(gold_event, pred_event)\n            event_module._event_alignment = tracked\n            start = time.perf_counter()\n            summary = event_module.evaluate_event_extraction(\n                gold_jsonl=gold,\n                pred_jsonl=pred,\n                summary_output=root / 'summary.json',\n                details_output=root / 'details.jsonl',\n            )\n            elapsed.append((time.perf_counter() - start) * 1000.0)\n            call_counts.append(float(calls['count']))\n            matched_counts.append(float(summary['summary']['events_matched']))\nfinally:\n    event_module._event_alignment = original\n\nexpected_matches = float(dialogue_count * events_per_dialogue)\nexpected_pair_calls = float(dialogue_count * events_per_dialogue * events_per_dialogue)\nif statistics.fmean(matched_counts) != expected_matches:\n    raise SystemExit(f'unexpected matched count: {matched_counts}')\nprint(json.dumps({\n    'alignment_calls_mean': round(statistics.fmean(call_counts), 6),\n    'dialogue_count': float(dialogue_count),\n    'elapsed_ms_mean': round(statistics.fmean(elapsed), 6),\n    'event_count': expected_matches,\n    'expected_pair_calls': expected_pair_calls,\n    'sample_count': float(len(elapsed)),\n}, sort_keys=True))\nPY",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "alignment_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "event_count",
+        "unit": "count",
+        "direction": "informational"
+      }
+    ]
   }
 ]

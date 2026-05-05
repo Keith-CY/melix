@@ -893,10 +893,8 @@ def evaluate_event_extraction(
         alignment = _align_dialogue_events(gold_events, pred_events)
         matched_by_gold = {gold_index: pred_index for gold_index, pred_index, _score in alignment["matches"]}
         matched_pred_indices = {pred_index for _gold_index, pred_index, _score in alignment["matches"]}
-        alignment_by_pair = {
-            (gold_index, pred_index): _event_alignment(gold_events[gold_index], pred_events[pred_index])
-            for gold_index, pred_index, _score in alignment["matches"]
-        }
+        raw_alignment_by_pair = alignment.get("pair_alignments")
+        alignment_by_pair = raw_alignment_by_pair if isinstance(raw_alignment_by_pair, dict) else {}
         row_audits.append(
             _build_row_alignment_audit(
                 dialogue_id=dialogue_id,
@@ -928,7 +926,9 @@ def evaluate_event_extraction(
                 )
                 continue
             pred_event = pred_events[pred_index]
-            pair_alignment = alignment_by_pair[(gold_index, pred_index)]
+            pair_alignment = alignment_by_pair.get((gold_index, pred_index))
+            if not isinstance(pair_alignment, dict):
+                pair_alignment = _event_alignment(gold_event, pred_event)
             matched_events += 1
             alignment_scores.append(float(pair_alignment["score"]))
             field_details: dict[str, dict[str, object]] = {}
@@ -2016,11 +2016,13 @@ def _align_dialogue_events(
     scores: list[list[float]] = []
     accepted: list[list[bool]] = []
     candidate_scores: list[dict[str, object]] = []
+    pair_alignments: dict[tuple[int, int], dict[str, object]] = {}
     for gold_index, gold_event in enumerate(gold_events):
         score_row: list[float] = []
         accepted_row: list[bool] = []
         for pred_index, pred_event in enumerate(pred_events):
             alignment = _event_alignment(gold_event, pred_event)
+            pair_alignments[(gold_index, pred_index)] = alignment
             score = float(alignment["score"])
             is_accepted = bool(alignment["accepted"])
             score_row.append(score)
@@ -2040,6 +2042,7 @@ def _align_dialogue_events(
     return {
         "matches": matches,
         "candidate_scores": candidate_scores,
+        "pair_alignments": pair_alignments,
     }
 
 
