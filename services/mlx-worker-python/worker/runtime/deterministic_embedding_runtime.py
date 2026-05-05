@@ -35,4 +35,13 @@ class DeterministicEmbeddingRuntime:
         family = loaded_model.get("embedding_family_adapter")
         if family is None:
             family = resolve_embedding_family(loaded_model.get("embedding_family_id", ""), backend)
-        return [family.embed_text(backend, text, dimensions) for text in inputs]
+
+        vector_cache: dict[str, tuple[float, ...]] = {}
+        vectors: list[list[float]] = []
+        for text in inputs:
+            vector = vector_cache.get(text)
+            if vector is None:
+                vector = tuple(family.embed_text(backend, text, dimensions))
+                vector_cache[text] = vector
+            vectors.append(list(vector))
+        return vectors

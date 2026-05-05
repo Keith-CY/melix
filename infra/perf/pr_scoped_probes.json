@@ -25,6 +25,37 @@
     ]
   },
   {
+    "id": "deterministic-embedding-duplicate-input-cache",
+    "name": "Deterministic embedding duplicate input cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/deterministic_embedding_runtime.py",
+      "services/mlx-worker-python/tests/test_embedding_runtime.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/deterministic_embedding_duplicate_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_embedding_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_deterministic_embedding_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_deterministic_embedding_duplicate_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_embedding_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_deterministic_embedding_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_deterministic_embedding_duplicate_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/deterministic_embedding_runtime.py services/mlx-worker-python/tests/test_embedding_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/deterministic_embedding_duplicate_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/deterministic_embedding_duplicate_probe.py ]; then python scripts/deterministic_embedding_duplicate_probe.py; else python - <<PY\nimport json\nimport statistics\nimport sys\nimport time\nfrom pathlib import Path\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\nfrom worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime\nfrom worker.runtime.embedding_backends import DeterministicEmbeddingBackend, DeterministicEmbeddingFamilyAdapter, EmbeddingBackendDescriptor, EmbeddingFamilyDescriptor\nclass CountingEmbeddingBackend(DeterministicEmbeddingBackend):\n    descriptor = EmbeddingBackendDescriptor(backend_id=\"counting-v1\", family_id=\"counting\", pooling_mode=\"mean\", normalization=\"none\", estimated_resident_bytes=1)\n    def __init__(self):\n        self.calls = 0\n    def embed_text(self, text, dimensions):\n        self.calls += 1\n        seed = (len(text) % 17) / 17.0\n        return [seed + (index / 1000.0) for index in range(dimensions)]\nclass CountingEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):\n    descriptor = EmbeddingFamilyDescriptor(family_id=\"counting\", pooling_mode=\"mean\", normalization=\"none\", default_dimensions=32)\n    def embed_text(self, backend, text, dimensions):\n        return backend.embed_text(text, dimensions)\ndimensions = 32\nunique_inputs = [f\"document-{index % 160}-payload-{index % 13}\" for index in range(512)]\ninputs = [unique_inputs[index % len(unique_inputs)] for index in range(8192)]\nexpected_unique_count = len(set(inputs))\nelapsed_samples = []\ncall_samples = []\nchecksum = 0.0\nfor _ in range(5):\n    backend = CountingEmbeddingBackend()\n    runtime = DeterministicEmbeddingRuntime(dimensions=dimensions)\n    loaded_model = {\"model_id\": \"melix-dev-embed-counting\", \"dimensions\": dimensions, \"embedding_backend\": backend, \"embedding_family_adapter\": CountingEmbeddingFamilyAdapter()}\n    started = time.perf_counter()\n    vectors = runtime.embed_inputs(loaded_model, inputs)\n    elapsed_samples.append((time.perf_counter() - started) * 1000.0)\n    call_samples.append(float(backend.calls))\n    checksum = sum(vector[0] for vector in vectors)\nif len(vectors) != len(inputs):\n    raise AssertionError(f\"unexpected vector count: {len(vectors)} != {len(inputs)}\")\nprint(json.dumps({\"elapsed_ms_mean\": round(statistics.fmean(elapsed_samples), 6), \"embed_text_calls_mean\": round(statistics.fmean(call_samples), 6), \"input_count\": float(len(inputs)), \"unique_input_count\": float(expected_unique_count), \"checksum\": round(checksum, 6)}, sort_keys=True))\nPY\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "embed_text_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "benchmark-evaluation-report-running-aggregates",
     "name": "Benchmark evaluation report running aggregates",
     "runner": "ubuntu-latest",
