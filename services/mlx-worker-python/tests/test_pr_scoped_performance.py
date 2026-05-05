@@ -91,16 +91,6 @@ def test_scope_report_selects_only_matching_probe() -> None:
     assert scope["force_all"] is False
 
 
-def test_scope_report_selects_changed_scope_coverage_probe() -> None:
-    scope = build_scope_report(
-        registry_path=REGISTRY_PATH,
-        changed_files=["scripts/changed_scope_coverage.py"],
-    )
-
-    selected_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert "changed-scope-coverage-empty-path-short-circuit" in selected_ids
-
-
 def test_scope_report_selects_training_dataset_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -109,6 +99,16 @@ def test_scope_report_selects_training_dataset_probe() -> None:
 
     assert scope["selected_count"] == 1
     assert scope["selected_probes"][0]["id"] == "training-dataset-token-percentiles-single-sort"
+
+
+def test_scope_report_selects_real_model_support_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/real_model_support.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "real-model-support-hf-cache-latest-snapshot"
 
 
 def test_scope_report_selects_evaluation_probes() -> None:
@@ -165,6 +165,16 @@ def test_dispatch_probe_impl_supports_evaluation_final_result_probe() -> None:
 
 
 
+def test_scope_report_selects_multimodal_fast_path_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/multimodal_fast_paths.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "multimodal-fast-path-signature-top-level-key-cache"
+
+
 def test_scope_report_selects_worker_registry_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -184,6 +194,27 @@ def test_scope_report_selects_pr_scoped_scope_script_probe() -> None:
     selected_ids = {probe["id"] for probe in scope["selected_probes"]}
     assert scope["force_all"] is True
     assert "pr-scoped-performance-scope-json-read-bytes" in selected_ids
+
+
+def test_scope_report_selects_changed_scope_coverage_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/changed_scope_coverage.py"],
+    )
+
+    selected_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "changed-scope-coverage-empty-path-short-circuit" in selected_ids
+
+
+def test_scope_report_selects_changed_scope_coverage_parser_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/changed_scope_coverage.py"],
+    )
+
+    selected_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["force_all"] is False
+    assert "changed-scope-coverage-diff-parser" in selected_ids
 
 
 def test_scope_report_selects_job_registry_probe() -> None:
@@ -237,6 +268,16 @@ def test_scope_report_selects_deterministic_rerank_probe() -> None:
 
     assert scope["selected_count"] == 1
     assert scope["selected_probes"][0]["id"] == "deterministic-rerank-query-context-reuse"
+
+
+def test_scope_report_selects_deterministic_embedding_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/deterministic_embedding_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "deterministic-embedding-duplicate-input-cache"
 
 
 def test_scope_report_selects_benchmark_export_probe() -> None:
@@ -379,6 +420,41 @@ def test_scope_report_force_selects_all_on_infra_change() -> None:
     assert scope["selected_count"] == len(load_probe_registry(REGISTRY_PATH))
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
     assert "pr-scoped-performance-scope-matcher" in probe_ids
+
+
+def test_scope_report_exact_force_all_skips_wildcard_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_wildcard_scan(changed_paths: set[str]) -> bool:  # pragma: no cover - sentinel
+        raise AssertionError("exact force-all matches should not scan wildcard matchers")
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_changed_paths_match_force_all_wildcards",
+        fail_wildcard_scan,
+    )
+
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["infra/perf/pr_scoped_probes.json", "README.md"],
+    )
+
+    assert scope["force_all"] is True
+    assert scope["selected_count"] == len(load_probe_registry(REGISTRY_PATH))
+
+
+def test_scope_report_force_selects_all_on_pr_scope_script_change() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/pr_scoped_performance_report.py"],
+    )
+
+    assert scope["force_all"] is True
+    assert scope["selected_count"] == len(load_probe_registry(REGISTRY_PATH))
+
+
+def test_changed_paths_force_all_wildcards_handles_empty_matchers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pr_scoped_performance_module, "_force_all_wildcard_matchers", lambda: ())
+
+    assert pr_scoped_performance_module._changed_paths_match_force_all_wildcards({"README.md"}) is False
 
 
 def test_scope_report_large_changed_set_preserves_exact_selection_semantics() -> None:
@@ -529,6 +605,42 @@ def test_compiled_glob_pattern_reuses_cached_regex(monkeypatch: pytest.MonkeyPat
     pr_scoped_performance_module._force_all_wildcard_matchers.cache_clear()
 
 
+def test_multimodal_fast_path_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MULTIMODAL_SIGNATURE_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_MULTIMODAL_SIGNATURE_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/multimodal_fast_path_signature_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations_per_sample"] == 3.0
+    assert metrics["signature_count"] == 3.0
+    assert metrics["top_level_item_count"] == 4.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/deterministic_embedding_duplicate_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["input_count"] == 8192.0
+    assert 0 < metrics["unique_input_count"] < metrics["input_count"]
+    assert metrics["embed_text_calls_mean"] == metrics["unique_input_count"]
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["checksum"] > 0
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "benchmark-evaluation-report-running-aggregates",
@@ -536,7 +648,9 @@ def test_registered_probes_expose_focused_commands() -> None:
         "benchmark-queue-decoded-record-cache",
         "benchmark-store-matrix-streaming",
         "changed-scope-coverage-empty-path-short-circuit",
+        "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
+        "deterministic-embedding-duplicate-input-cache",
         "deterministic-rerank-query-context-reuse",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
@@ -550,6 +664,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "mlx-lm-structured-result-tail-parse",
         "mlx-vlm-family-config-cache",
         "model-registry-plain-local-manifest-stat-elision",
+        "multimodal-fast-path-signature-top-level-key-cache",
         "package-macos-resolve-fallback-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
@@ -558,6 +673,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "maintenance-percentile-vector-reuse",
         "phase8-metrics-closure-audit-reuse",
         "pr-scoped-performance-registry-cache",
+        "real-model-support-hf-cache-latest-snapshot",
         "swift-cli-json-envelope-encoding",
         "upload-receipt-published-files-scandir",
         "download-pipeline-directory-size-single-stat",
@@ -1275,6 +1391,21 @@ def test_benchmark_store_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["request_row_count"] == 6000.0
     assert payload["request_csv_line_count"] == 6001.0
     assert payload["sample_count"] == 3.0
+
+
+def test_real_model_support_hf_cache_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/real_model_support_hf_cache_probe.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["elapsed_ms_mean"] > 0
+    assert payload["peak_bytes_mean"] > 0
+    assert payload["sample_count"] == 7.0
+    assert payload["snapshot_count"] == 6000.0
+    assert payload["selected_latest_snapshot"] == 5999.0
 
 
 def test_upload_receipt_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:

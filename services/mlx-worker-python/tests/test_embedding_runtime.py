@@ -9,7 +9,13 @@ from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
-from worker.runtime.embedding_backends import BERTEmbeddingBackend
+from worker.runtime.embedding_backends import (
+    BERTEmbeddingBackend,
+    DeterministicEmbeddingBackend,
+    DeterministicEmbeddingFamilyAdapter,
+    EmbeddingBackendDescriptor,
+    EmbeddingFamilyDescriptor,
+)
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
@@ -21,6 +27,40 @@ class PassiveTextBackend:
 
     def estimate_resident_bytes(self, model_spec):
         return 1024
+
+
+class CountingEmbeddingBackend(DeterministicEmbeddingBackend):
+    descriptor = EmbeddingBackendDescriptor(
+        backend_id="counting-v1",
+        family_id="counting",
+        pooling_mode="mean",
+        normalization="none",
+        estimated_resident_bytes=1,
+    )
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    def embed_text(self, text: str, dimensions: int) -> list[float]:
+        self.calls.append((text, dimensions))
+        return [float(len(self.calls))] * dimensions
+
+
+class CountingEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):
+    descriptor = EmbeddingFamilyDescriptor(
+        family_id="counting",
+        pooling_mode="mean",
+        normalization="none",
+        default_dimensions=4,
+    )
+
+    def embed_text(
+        self,
+        backend: DeterministicEmbeddingBackend,
+        text: str,
+        dimensions: int,
+    ) -> list[float]:
+        return backend.embed_text(text, dimensions)
 
 
 def build_services(model_catalog: WorkerModelCatalog | None = None):
@@ -289,6 +329,32 @@ def test_embed_runtime_resolves_backend_from_loaded_model_metadata() -> None:
 
     assert len(vectors) == 1
     assert len(vectors[0]) == 8
+
+
+def test_embed_runtime_reuses_duplicate_inputs_within_one_request() -> None:
+    runtime = DeterministicEmbeddingRuntime()
+    backend = CountingEmbeddingBackend()
+    family = CountingEmbeddingFamilyAdapter()
+
+    vectors = runtime.embed_inputs(
+        {
+            "model_id": "melix-dev-embed-counting",
+            "dimensions": 4,
+            "embedding_backend": backend,
+            "embedding_family_adapter": family,
+        },
+        ["alpha", "beta", "alpha", "gamma", "beta"],
+    )
+
+    assert backend.calls == [("alpha", 4), ("beta", 4), ("gamma", 4)]
+    assert vectors == [
+        [1.0, 1.0, 1.0, 1.0],
+        [2.0, 2.0, 2.0, 2.0],
+        [1.0, 1.0, 1.0, 1.0],
+        [3.0, 3.0, 3.0, 3.0],
+        [2.0, 2.0, 2.0, 2.0],
+    ]
+    assert vectors[0] is not vectors[2]
 
 
 def test_load_model_rejects_unsupported_embedding_backend() -> None:

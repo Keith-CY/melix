@@ -16,10 +16,24 @@ from worker.model_ops.quantization_profiles import (
 )
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime.deterministic_backend import DeterministicTextBackend
+from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
 def build_service(tmp_path: Path) -> WorkerMaintenanceService:
     registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    return WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+
+def build_deterministic_service(tmp_path: Path) -> WorkerMaintenanceService:
+    return build_service_with_text_backend(tmp_path, DeterministicTextBackend())
+
+
+def build_service_with_text_backend(tmp_path: Path, backend: object) -> WorkerMaintenanceService:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=backend),
+        model_catalog=WorkerModelCatalog(),
+    )
     return WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
 
 
@@ -101,6 +115,19 @@ def test_quantize_job_writes_bundle_directory_and_versioned_manifest(tmp_path: P
         "latency_delta": 0.0,
         "local_inference_smoke_result": "not_requested",
     }
+    assert manifest_payload["local_inference_smoke"] == {
+        "status": "not_requested",
+        "evidence_kind": "not_requested",
+        "smoke_mode": "structural",
+        "runtime": "mlx_text",
+        "runtime_backend": "not_requested",
+        "artifact_path": str(bundle_path),
+        "checked_files": [],
+        "latency_ms": 0.0,
+        "prompt_sha256": "",
+        "generated_token_count": 0,
+        "failure_reason": "",
+    }
     assert manifest_payload["quant_profile"] == {
         "algorithm": "oq",
         "schema_version": "melix.quant_profile.v1",
@@ -153,12 +180,246 @@ def test_quantize_job_records_successful_smoke_validation(tmp_path: Path) -> Non
     assert manifest_payload["compatibility"]["smoke_test_requested"] is True
     assert manifest_payload["compatibility"]["smoke_test_passed"] is True
     assert manifest_payload["release_gate"]["local_inference_smoke_result"] == "passed"
+    assert manifest_payload["local_inference_smoke"]["status"] == "passed"
+    assert manifest_payload["local_inference_smoke"]["evidence_kind"] == "bundle_structural"
+    assert manifest_payload["local_inference_smoke"]["smoke_mode"] == "structural"
+    assert manifest_payload["local_inference_smoke"]["runtime"] == "mlx_text"
+    assert manifest_payload["local_inference_smoke"]["runtime_backend"] == "structural"
+    assert manifest_payload["local_inference_smoke"]["checked_files"] == [
+        "config.json",
+        "tokenizer.json",
+        "weights.safetensors",
+    ]
+    assert manifest_payload["local_inference_smoke"]["latency_ms"] >= 0.0
+    assert manifest_payload["local_inference_smoke"]["prompt_sha256"] == ""
+    assert manifest_payload["local_inference_smoke"]["generated_token_count"] == 0
+    assert manifest_payload["local_inference_smoke"]["failure_reason"] == ""
     assert manifest_payload["artifact_bytes"] > 0
     assert manifest_payload["manifest_bytes"] > 0
     assert manifest_event.artifact.smoke_test_requested is True
     assert manifest_event.artifact.smoke_test_passed is True
     assert completed_event.artifact.smoke_test_requested is True
     assert completed_event.artifact.smoke_test_passed is True
+
+
+def test_structural_smoke_wrapper_reports_invalid_json(tmp_path: Path) -> None:
+    bundle_path = tmp_path / "bad-json-bundle"
+    bundle_path.mkdir()
+    (bundle_path / "config.json").write_text("{not-json\n", encoding="utf-8")
+    (bundle_path / "tokenizer.json").write_text("{}\n", encoding="utf-8")
+    (bundle_path / "weights.safetensors").write_bytes(b"weights")
+
+    evidence = OQQuantizationPipeline._run_structural_smoke_evidence(bundle_path)
+
+    assert OQQuantizationPipeline._run_structural_smoke_test(bundle_path) is False
+    assert evidence.status == "failed"
+    assert evidence.evidence_kind == "bundle_structural"
+    assert "config.json is not readable JSON" in evidence.failure_reason
+
+
+def test_quantize_job_records_structured_smoke_failure_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    original_write_bytes_file = OQQuantizationPipeline._write_bytes_file
+
+    def write_and_remove_weights(path: Path, payload: bytes) -> int:
+        written = original_write_bytes_file(path, payload)
+        if path.name == "weights.safetensors":
+            path.unlink()
+        return written
+
+    monkeypatch.setattr(
+        OQQuantizationPipeline,
+        "_write_bytes_file",
+        staticmethod(write_and_remove_weights),
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                run_smoke_test=True,
+                ext={"operation": "quantize"},
+            ),
+            context=None,
+        )
+    )
+
+    manifest_payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+
+    assert events[-1].HasField("completed")
+    assert manifest_payload["compatibility"]["smoke_test_passed"] is False
+    assert manifest_payload["release_gate"]["local_inference_smoke_result"] == "failed"
+    assert manifest_payload["local_inference_smoke"]["status"] == "failed"
+    assert manifest_payload["local_inference_smoke"]["evidence_kind"] == "bundle_structural"
+    assert manifest_payload["local_inference_smoke"]["runtime_backend"] == "structural"
+    assert manifest_payload["local_inference_smoke"]["checked_files"] == [
+        "config.json",
+        "tokenizer.json",
+        "weights.safetensors",
+    ]
+    assert "weights.safetensors is missing" in manifest_payload["local_inference_smoke"]["failure_reason"]
+
+
+def test_quantize_job_records_runtime_generate_preflight_failure_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_deterministic_service(tmp_path)
+    original_write_bytes_file = OQQuantizationPipeline._write_bytes_file
+
+    def write_and_remove_weights(path: Path, payload: bytes) -> int:
+        written = original_write_bytes_file(path, payload)
+        if path.name == "weights.safetensors":
+            path.unlink()
+        return written
+
+    monkeypatch.setattr(
+        OQQuantizationPipeline,
+        "_write_bytes_file",
+        staticmethod(write_and_remove_weights),
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                run_smoke_test=True,
+                ext={
+                    "operation": "quantize",
+                    "local_inference_smoke_mode": "runtime_generate",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    manifest_payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    smoke = manifest_payload["local_inference_smoke"]
+
+    assert events[-1].HasField("completed")
+    assert smoke["status"] == "failed"
+    assert smoke["evidence_kind"] == "local_runtime_generate"
+    assert smoke["runtime_backend"] == "preflight"
+    assert "structural preflight failed" in smoke["failure_reason"]
+
+
+def test_quantize_job_records_runtime_generate_smoke_evidence(tmp_path: Path) -> None:
+    service = build_deterministic_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                run_smoke_test=True,
+                ext={
+                    "operation": "quantize",
+                    "local_inference_smoke_mode": "runtime_generate",
+                    "local_inference_smoke_prompt": "Summarize the quantized runtime gate.",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    manifest_payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    smoke = manifest_payload["local_inference_smoke"]
+
+    assert events[-1].HasField("completed")
+    assert manifest_payload["compatibility"]["smoke_test_passed"] is True
+    assert manifest_payload["release_gate"]["local_inference_smoke_result"] == "passed"
+    assert smoke["status"] == "passed"
+    assert smoke["evidence_kind"] == "local_runtime_generate"
+    assert smoke["smoke_mode"] == "runtime_generate"
+    assert smoke["runtime"] == "mlx_text"
+    assert smoke["runtime_backend"] == "deterministic-text"
+    assert smoke["checked_files"] == [
+        "config.json",
+        "tokenizer.json",
+        "weights.safetensors",
+    ]
+    assert smoke["latency_ms"] >= 0.0
+    assert len(smoke["prompt_sha256"]) == 64
+    assert smoke["generated_token_count"] == 1
+    assert smoke["failure_reason"] == ""
+
+
+def test_quantize_job_records_runtime_generate_empty_token_failure(tmp_path: Path) -> None:
+    class EmptyTokenBackend(DeterministicTextBackend):
+        runtime_name = "empty-token"
+
+        def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
+            return []
+
+    service = build_service_with_text_backend(tmp_path, EmptyTokenBackend())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                run_smoke_test=True,
+                ext={
+                    "operation": "quantize",
+                    "local_inference_smoke_mode": "runtime_generate",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    manifest_payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    smoke = manifest_payload["local_inference_smoke"]
+
+    assert events[-1].HasField("completed")
+    assert manifest_payload["release_gate"]["local_inference_smoke_result"] == "failed"
+    assert smoke["status"] == "failed"
+    assert smoke["runtime_backend"] == "empty-token"
+    assert smoke["generated_token_count"] == 0
+    assert smoke["failure_reason"] == "Runtime smoke generated no token events."
+
+
+def test_quantize_job_rejects_unknown_local_inference_smoke_mode(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                run_smoke_test=True,
+                ext={
+                    "operation": "quantize",
+                    "local_inference_smoke_mode": "screenshot",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "unsupported_local_inference_smoke_mode"
+    assert events[-1].failed.error.details["local_inference_smoke_mode"] == "screenshot"
 
 
 def test_quantize_job_writes_manifest_once_after_in_memory_byte_convergence(
