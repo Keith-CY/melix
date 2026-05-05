@@ -365,6 +365,99 @@ struct MelixCLIRunnerTests {
               }
             },
             {
+              "id": "align",
+              "command": "alignment.train",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "dataset_uri": "/tmp/preference-pairs.jsonl",
+                "adapter_name": "aligned-adapter",
+                "target_repo": "melix/aligned-adapter",
+                "algorithm": "grpo",
+                "grpo_candidate_count": 4,
+                "reference_model_path": "/tmp/reference-model",
+                "reward_model_manifest_path": "/tmp/reward-model.json",
+                "kl_penalty": "0.05",
+                "max_steps": 2
+              }
+            },
+            {
+              "id": "publish_adapter",
+              "command": "lora.publish",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "target_repo": "melix/adapters/demo",
+                "adapter_path": "/tmp/adapter.json"
+              }
+            },
+            {
+              "id": "publish_merged_path",
+              "command": "lora.publish",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "target_repo": "melix/models/demo-merged",
+                "merged_model_path": "/tmp/merged-model",
+                "export_kind": "merged"
+              }
+            },
+            {
+              "id": "publish_manifest",
+              "command": "lora.publish",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "target_repo": "melix/models/demo-manifest",
+                "manifest_path": "/tmp/merged-manifest.json"
+              }
+            },
+            {
+              "id": "publish_artifact",
+              "command": "lora.publish",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "target_repo": "melix/adapters/artifact",
+                "artifact_path": "/tmp/artifact-adapter.json",
+                "artifact_manifest_path": "/tmp/artifact-adapter.json",
+                "export_kind": "adapter"
+              }
+            },
+            {
+              "id": "convert",
+              "command": "convert",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "output_dir": "/tmp/converted",
+                "target_format": "melix_model_bundle"
+              }
+            },
+            {
+              "id": "quantize",
+              "command": "quantize",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "output_dir": "/tmp/quantized",
+                "quant_profile_id": "q4",
+                "weight_quant": "q4",
+                "kv_quant": "q8",
+                "quantization_mode": "ptq",
+                "source_artifact_kind": "merged_adapter",
+                "source_artifact_path": "/tmp/merged-model",
+                "calibration_dataset_uri": "/tmp/calibration.jsonl",
+                "quality_delta": "-0.01",
+                "latency_delta": "-0.15"
+              }
+            },
+            {
+              "id": "upload",
+              "command": "upload",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "output_dir": "/tmp/upload",
+                "target_repo": "melix/models/uploaded",
+                "artifact_path": "/tmp/quantized",
+                "artifact_kind": "quantized_model_bundle",
+                "artifact_manifest_path": "/tmp/quantized/manifest.json"
+              }
+            },
+            {
               "id": "activate",
               "command": "lora.activate",
               "args": {
@@ -537,14 +630,29 @@ struct MelixCLIRunnerTests {
         let trainReceipt = try #require(try parseJSONFile(trainReceiptPath))
         let trainResult = try #require(trainReceipt["result"] as? [String: Any])
         let trainArguments = try #require(trainResult["arguments"] as? [String])
+        let alignStep = try #require(steps.first { $0["id"] as? String == "align" })
+        let alignReceiptPath = try #require(alignStep["receipt_path"] as? String)
+        let alignReceipt = try #require(try parseJSONFile(alignReceiptPath))
+        let alignResult = try #require(alignReceipt["result"] as? [String: Any])
+        let alignArguments = try #require(alignResult["arguments"] as? [String])
+        let quantizeStep = try #require(steps.first { $0["id"] as? String == "quantize" })
+        let quantizeReceiptPath = try #require(quantizeStep["receipt_path"] as? String)
+        let quantizeReceipt = try #require(try parseJSONFile(quantizeReceiptPath))
+        let quantizeResult = try #require(quantizeReceipt["result"] as? [String: Any])
+        let quantizeArguments = try #require(quantizeResult["arguments"] as? [String])
 
         #expect(summary["receipt_dir"] as? String == expectedReceiptDir)
         #expect(summary["status"] as? String == "planned")
-        #expect(steps.count == 19)
+        #expect(steps.count == 27)
         #expect(steps.allSatisfy { $0["status"] as? String == "planned" })
         #expect(chatArguments.contains("override-model"))
         #expect(chatArguments.contains(#"number 7 flag true object {"suite":"smoke"}"#))
         #expect(trainArguments.contains("--response-only"))
+        #expect(Array(alignArguments.prefix(2)) == ["alignment", "train"])
+        #expect(alignArguments.contains("--algorithm"))
+        #expect(alignArguments.contains("grpo"))
+        #expect(quantizeArguments.contains("--source-artifact-kind"))
+        #expect(quantizeArguments.contains("merged_adapter"))
     }
 
     @Test("pipeline dry run redacts Hugging Face download token arguments")
@@ -903,6 +1011,204 @@ struct MelixCLIRunnerTests {
         #expect(FileManager.default.fileExists(atPath: artifactRoot.appendingPathComponent("matrix-summary.csv").path))
         #expect(FileManager.default.fileExists(atPath: artifactRoot.appendingPathComponent("eval-summary.csv").path))
         #expect(FileManager.default.fileExists(atPath: artifactRoot.appendingPathComponent("eval-samples.jsonl").path))
+    }
+
+    @Test("post training pipeline routes alignment publish quantize and local evidence steps")
+    func postTrainingPipelineRoutesAlignmentPublishQuantizeAndLocalEvidenceSteps() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("issue365-post-training.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "issue365-post-training-chain",
+          "inputs": {
+            "base_model_id": "melix-dev-text",
+            "quantized_model_id": "melix-dev-text-aligned-q4",
+            "server_session_id": "server-session-issue365"
+          },
+          "steps": [
+            {
+              "id": "train_lora",
+              "command": "lora.train",
+              "args": {
+                "model_id": "${inputs.base_model_id}",
+                "dataset_uri": "/tmp/sft.jsonl",
+                "adapter_name": "issue365-sft",
+                "training_mode": "lora",
+                "max_steps": 2
+              },
+              "checks": {
+                "required_result_fields": ["job_id", "output_path"]
+              }
+            },
+            {
+              "id": "align_adapter",
+              "command": "alignment.train",
+              "args": {
+                "model_id": "${inputs.base_model_id}",
+                "dataset_uri": "/tmp/preference-pairs.jsonl",
+                "adapter_name": "issue365-dpo",
+                "algorithm": "dpo",
+                "reference_model_path": "${steps.train_lora.result.output_path}",
+                "max_steps": 2
+              },
+              "checks": {
+                "required_result_fields": ["job_id", "output_path", "alignment_run_manifest_path"]
+              }
+            },
+            {
+              "id": "publish_merged",
+              "command": "lora.publish",
+              "args": {
+                "model_id": "${inputs.base_model_id}",
+                "target_repo": "melix/models/issue365-dpo-merged",
+                "manifest_path": "${steps.align_adapter.result.output_path}",
+                "export_kind": "merged"
+              },
+              "checks": {
+                "required_result_fields": ["job_id", "output_path"]
+              }
+            },
+            {
+              "id": "quantize_merged",
+              "command": "quantize",
+              "args": {
+                "model_id": "${inputs.base_model_id}",
+                "output_dir": "/tmp/melix/quantized/issue365-dpo-q4",
+                "quant_profile_id": "q4",
+                "weight_quant": "q4",
+                "kv_quant": "q8",
+                "quantization_mode": "ptq",
+                "source_artifact_kind": "merged_adapter",
+                "source_artifact_path": "${steps.publish_merged.result.output_path}",
+                "calibration_dataset_uri": "/tmp/calibration.jsonl",
+                "quality_delta": "-0.01",
+                "latency_delta": "-0.12"
+              },
+              "checks": {
+                "required_result_fields": ["job_id", "output_path", "bundle_path"]
+              }
+            },
+            {
+              "id": "activate_adapter_runtime",
+              "command": "lora.activate",
+              "args": {
+                "model_id": "${inputs.base_model_id}",
+                "adapter_path": "${steps.align_adapter.result.output_path}",
+                "activation_mode": "adapter_backed_runtime",
+                "derived_model_alias": "${inputs.quantized_model_id}"
+              },
+              "checks": {
+                "required_result_fields": ["job_id", "output_path"]
+              }
+            },
+            {
+              "id": "local_chat_smoke",
+              "command": "chat.run",
+              "args": {
+                "model_id": "${inputs.quantized_model_id}",
+                "server_session_id": "${inputs.server_session_id}",
+                "message": "Reply with ISSUE365_OK only."
+              },
+              "checks": {
+                "required_result_fields": ["assistant_text", "request_id"]
+              }
+            },
+            {
+              "id": "eval_smoke",
+              "command": "eval.run",
+              "args": {
+                "model_id": "${inputs.quantized_model_id}",
+                "suites": ["smoke"],
+                "dataset_id": "issue365.smoke.v1",
+                "sample_size": 2
+              },
+              "checks": {
+                "required_result_fields": ["0.job.job_id"]
+              }
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: "melix-dev-text", kind: "text"),
+            makeModelSummary(id: "melix-dev-text-aligned-q4", kind: "text"),
+        ]))
+        await client.setChatExecution(
+            requestID: "chat-issue365",
+            modelID: "melix-dev-text-aligned-q4",
+            events: [
+                .tokenDelta("ISSUE365_OK"),
+                .completed(finishReason: "stop", assistantText: "", reasoningText: ""),
+            ]
+        )
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-issue365",
+                suiteID: "smoke",
+                datasetID: "issue365.smoke.v1",
+                metricName: "eval.smoke.accuracy",
+                metricValue: 1.0
+            ),
+        ])
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                #"{"operation":"registry_snapshot","adapters":[]}"#,
+                #"{"operation":"train_lora","job_id":"lora-job-1","output_path":"/tmp/melix/train_lora/issue365-sft.adapter.json"}"#,
+                #"{"operation":"registry_snapshot","adapters":[]}"#,
+                #"{"operation":"train_alignment","job_id":"align-job-1","output_path":"/tmp/melix/alignment/issue365-dpo.adapter.json","alignment_run_manifest_path":"/tmp/melix/alignment/issue365-dpo.alignment_run.json"}"#,
+                #"{"operation":"upload","job_id":"publish-job-1","output_path":"/tmp/melix/publish/issue365-dpo-merged","artifact_manifest_path":"/tmp/melix/publish/issue365-dpo-merged/manifest.json"}"#,
+                #"{"operation":"registry_snapshot","adapters":[]}"#,
+                #"{"operation":"quantize","job_id":"quantize-job-1","output_path":"/tmp/melix/quantized/issue365-dpo-q4","bundle_path":"/tmp/melix/quantized/issue365-dpo-q4"}"#,
+                #"{"operation":"registry_snapshot","adapters":[]}"#,
+                #"{"operation":"activate_adapter","job_id":"activate-job-1","output_path":"/tmp/melix/activate_adapter/issue365-dpo"}"#,
+                #"{"operation":"registry_snapshot","adapters":[]}"#,
+                #"{"operation":"registry_snapshot","adapters":[]}"#,
+            ]
+        )
+
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": root.path],
+            commandExecutor: executor.run
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-issue365-post-training"
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(output))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let quantizeStep = try #require(steps.first { $0["id"] as? String == "quantize_merged" })
+        let quantizeArtifactPaths = try #require(quantizeStep["artifact_paths"] as? [String])
+        let commands = await executor.commands
+        let operationCommands = commands.filter { Array($0.prefix(2)) != ["lora", "list"] }
+
+        #expect(summary["status"] as? String == "succeeded")
+        #expect(steps.count == 7)
+        #expect(steps.allSatisfy { $0["status"] as? String == "succeeded" })
+        #expect(operationCommands.count == 5)
+        #expect(Array(operationCommands[0].prefix(2)) == ["lora", "train"])
+        #expect(Array(operationCommands[1].prefix(2)) == ["alignment", "train"])
+        #expect(operationCommands[1].contains("--reference-model-path"))
+        #expect(operationCommands[1].contains("/tmp/melix/train_lora/issue365-sft.adapter.json"))
+        #expect(Array(operationCommands[2].prefix(2)) == ["lora", "publish"])
+        #expect(operationCommands[2].contains("/tmp/melix/alignment/issue365-dpo.adapter.json"))
+        #expect(operationCommands[3].starts(with: ["quantize", "--model-id", "melix-dev-text"]))
+        #expect(operationCommands[3].contains("--source-artifact-path"))
+        #expect(operationCommands[3].contains("/tmp/melix/publish/issue365-dpo-merged"))
+        #expect(Array(operationCommands[4].prefix(2)) == ["lora", "activate"])
+        #expect(quantizeArtifactPaths.contains("/tmp/melix/quantized/issue365-dpo-q4"))
     }
 
     @Test("pipeline writes an error receipt and summary when a step fails")
@@ -1451,6 +1757,205 @@ struct MelixCLIRunnerTests {
                 }
                 """#,
                 "Pipeline command argument context_lengths must be an array of unsigned integers."
+            ),
+            (
+                "alignment-missing-algorithm",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "alignment-missing-algorithm",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "align",
+                      "command": "alignment.train",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "dataset_uri": "/tmp/preference-pairs.jsonl",
+                        "adapter_name": "aligned-adapter"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument algorithm is required."
+            ),
+            (
+                "alignment-invalid-algorithm",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "alignment-invalid-algorithm",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "align",
+                      "command": "alignment.train",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "dataset_uri": "/tmp/preference-pairs.jsonl",
+                        "adapter_name": "aligned-adapter",
+                        "algorithm": "ppo"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument algorithm must be one of: dpo, orpo, cpo, grpo, rlhf."
+            ),
+            (
+                "quantize-invalid-mode",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "quantize-invalid-mode",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "quantize",
+                      "command": "quantize",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "quantization_mode": "dynamic"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument quantization_mode must be one of: ptq, qat."
+            ),
+            (
+                "quantize-invalid-source-kind",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "quantize-invalid-source-kind",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "quantize",
+                      "command": "quantize",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "source_artifact_kind": "checkpoint"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument source_artifact_kind must be one of: base_model, merged_adapter, adapter_export."
+            ),
+            (
+                "publish-missing-artifact-selector",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "publish-missing-artifact-selector",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "publish",
+                      "command": "lora.publish",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "target_repo": "melix/adapters/demo"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Exactly one of adapter_path, merged_model_path, manifest_path, or artifact_path is required for pipeline command lora.publish."
+            ),
+            (
+                "publish-adapter-kind-mismatch",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "publish-adapter-kind-mismatch",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "publish",
+                      "command": "lora.publish",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "target_repo": "melix/adapters/demo",
+                        "adapter_path": "/tmp/adapter.json",
+                        "export_kind": "merged"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument export_kind merged is incompatible with adapter_path."
+            ),
+            (
+                "publish-merged-kind-mismatch",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "publish-merged-kind-mismatch",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "publish",
+                      "command": "lora.publish",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "target_repo": "melix/models/demo",
+                        "merged_model_path": "/tmp/merged-model",
+                        "export_kind": "adapter"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument export_kind adapter is incompatible with merged_model_path."
+            ),
+            (
+                "publish-artifact-missing-export-kind",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "publish-artifact-missing-export-kind",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "publish",
+                      "command": "lora.publish",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "target_repo": "melix/adapters/demo",
+                        "artifact_path": "/tmp/artifact.json"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument export_kind is required when lora.publish uses artifact_path."
+            ),
+            (
+                "publish-invalid-export-kind",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "publish-invalid-export-kind",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "publish",
+                      "command": "lora.publish",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "target_repo": "melix/adapters/demo",
+                        "adapter_path": "/tmp/adapter.json",
+                        "export_kind": "full"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument export_kind must be one of: adapter, merged."
             ),
         ]
 
