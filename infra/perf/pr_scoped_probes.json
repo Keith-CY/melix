@@ -1505,6 +1505,12 @@
         "unit": "bytes",
         "direction": "lower_is_better",
         "warn_pct": 5.0
+      },
+      {
+        "key": "sorted_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
       }
     ]
   }

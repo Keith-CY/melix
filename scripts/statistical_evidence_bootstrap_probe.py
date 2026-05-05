@@ -38,31 +38,37 @@ def run_probe() -> dict[str, float]:
         sorted_calls = 0
         original_sorted = builtins.sorted
 
-        def tracked_sorted(values):
+        def tracked_sorted(iterable, /, *, key=None, reverse=False):
             nonlocal sorted_calls
             sorted_calls += 1
-            return original_sorted(values)
+            return original_sorted(iterable, key=key, reverse=reverse)
 
         builtins.sorted = tracked_sorted
         try:
             tracemalloc.start()
-            started = time.perf_counter()
-            evidence = build_paired_statistical_evidence(
-                paired_outcomes=outcomes,
-                confidence_level=0.95,
-                bootstrap_iterations=bootstrap_iterations,
-                bootstrap_seed=1729 + sample_index,
-            )
-            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
-            _, peak = tracemalloc.get_traced_memory()
-            tracemalloc.stop()
+            try:
+                started = time.perf_counter()
+                evidence = build_paired_statistical_evidence(
+                    paired_outcomes=outcomes,
+                    confidence_level=0.95,
+                    bootstrap_iterations=bootstrap_iterations,
+                    bootstrap_seed=1729 + sample_index,
+                )
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                _, peak = tracemalloc.get_traced_memory()
+                bootstrap = evidence["bootstrap"]
+                lower_bound = float(bootstrap["lower_bound"])
+                upper_bound = float(bootstrap["upper_bound"])
+
+                elapsed_samples.append(elapsed_ms)
+                peak_samples.append(float(peak))
+                sorted_call_samples.append(float(sorted_calls))
+                lower_bounds.append(lower_bound)
+                upper_bounds.append(upper_bound)
+            finally:
+                tracemalloc.stop()
         finally:
             builtins.sorted = original_sorted
-        peak_samples.append(float(peak))
-        sorted_call_samples.append(float(sorted_calls))
-        bootstrap = evidence["bootstrap"]
-        lower_bounds.append(float(bootstrap["lower_bound"]))
-        upper_bounds.append(float(bootstrap["upper_bound"]))
 
     if any(lower > upper for lower, upper in zip(lower_bounds, upper_bounds, strict=True)):
         raise SystemExit("bootstrap interval lower bound exceeded upper bound")
