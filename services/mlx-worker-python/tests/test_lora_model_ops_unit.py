@@ -29,7 +29,7 @@ from worker.model_ops.lora_training_pipeline import (
 )
 from worker.model_ops.mlx_lm_runner import MLXLMRunner
 from worker.model_ops.training_dataset import HFDatasetReference, load_training_dataset_package, materialize_hf_training_dataset_package
-from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
+from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent, RuntimeUnavailableError
 
 
 def _write_dataset_package(
@@ -271,6 +271,440 @@ def test_mlx_lm_runner_generates_grpo_candidates_with_policy_runtime(tmp_path: P
     assert adapter_config["candidate_generation_backend"] == "scripted-policy-runtime"
 
 
+def test_mlx_lm_runner_scores_generated_grpo_candidates_with_reward_model(
+    tmp_path: Path,
+) -> None:
+    class ScriptedPolicyBackend:
+        runtime_name = "scripted-policy-runtime"
+
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+        def estimate_resident_bytes(self, model_spec) -> int:
+            return 1
+
+        def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
+            del loaded_model, sampling, execution_ext
+            if cancel_event.is_set():
+                return
+            if "candidate 1" in prompt:
+                yield RuntimeTokenEvent(text="clear helpful answer")
+            else:
+                yield RuntimeTokenEvent(text="terse answer")
+
+    class ScriptedRewardBackend:
+        runtime_name = "scripted-reward-runtime"
+
+        def __init__(self) -> None:
+            self.loaded_model_path = ""
+            self.scored_responses: list[str] = []
+
+        def load_model(self, model_spec):
+            self.loaded_model_path = model_spec.model_path
+            return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+        def estimate_resident_bytes(self, model_spec) -> int:
+            return 1
+
+        def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
+            del loaded_model, prompt, sampling, cancel_event, execution_ext
+            return
+            yield
+
+        def score_response(self, loaded_model, prompt: str, response: str, execution_ext=None):
+            del loaded_model, prompt, execution_ext
+            self.scored_responses.append(response)
+            return 0.9 if "clear helpful" in response else 0.2
+
+    reward_model_dir = tmp_path / "reward-model"
+    reward_model_dir.mkdir()
+    reward_manifest_path = reward_model_dir / "manifest.json"
+    reward_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.reward_model_adapter.v1",
+                "reward_model_id": "helpfulness-reward",
+                "model_path": str(reward_model_dir),
+                "reward_head_type": "scalar",
+                "score_scale": "0_to_1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={
+            "training_mode": "grpo",
+            "grpo_candidate_count": "2",
+            "candidate_generation_mode": "runtime_generate",
+            "candidate_scoring_mode": "reward_model",
+            "reward_model_manifest_path": str(reward_manifest_path),
+            "candidate_generation_max_tokens": "16",
+        },
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Draft two answers.",
+                "candidates": [
+                    {"text": "seed answer one"},
+                    {"text": "seed answer two"},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    reward_backend = ScriptedRewardBackend()
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo-runtime-reward",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="prompt_candidate",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner(
+        policy_runtime=MLXTextRuntime(backend=ScriptedPolicyBackend()),
+        reward_runtime=MLXTextRuntime(backend=reward_backend),
+    ).train(request)
+
+    trace_rows = [
+        json.loads(line)
+        for line in Path(result.metrics.policy_update_trace_path).read_text(encoding="utf-8").splitlines()
+    ]
+    adapter_config = json.loads(result.adapter_config_path.read_text(encoding="utf-8"))
+
+    assert result.execution_backend == "runtime_generated_reward_model"
+    assert reward_backend.loaded_model_path == str(reward_model_dir)
+    assert reward_backend.scored_responses == ["clear helpful answer", "terse answer"]
+    assert result.metrics.candidate_scoring_mode == "reward_model"
+    assert result.metrics.reward_scoring_backend == "scripted-reward-runtime"
+    assert result.metrics.reward_mean == pytest.approx(0.55)
+    assert trace_rows[0]["reward_model_id"] == "helpfulness-reward"
+    assert trace_rows[0]["reward_scoring_backend"] == "scripted-reward-runtime"
+    assert trace_rows[0]["selected_candidate_text"] == "clear helpful answer"
+    assert trace_rows[0]["generated_candidates"][0]["score"] == pytest.approx(0.9)
+    assert adapter_config["reward_scoring_backend"] == "scripted-reward-runtime"
+
+
+def test_mlx_lm_runner_scores_rlhf_responses_with_reward_model(tmp_path: Path) -> None:
+    class ScriptedRewardBackend:
+        runtime_name = "scripted-reward-runtime"
+
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+        def estimate_resident_bytes(self, model_spec) -> int:
+            return 1
+
+        def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
+            del loaded_model, prompt, sampling, cancel_event, execution_ext
+            return
+            yield
+
+        def score_response(self, loaded_model, prompt: str, response: str, execution_ext=None):
+            del loaded_model, prompt, execution_ext
+            return 0.8 if "useful" in response else 0.1
+
+    reward_model_dir = tmp_path / "reward-model"
+    reward_model_dir.mkdir()
+    reward_manifest_path = reward_model_dir / "manifest.json"
+    reward_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.reward_model_adapter.v1",
+                "reward_model_id": "rlhf-reward",
+                "model_path": str(reward_model_dir),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={
+            "training_mode": "rlhf",
+            "reward_model_manifest_path": str(reward_manifest_path),
+            "candidate_scoring_mode": "reward_model",
+        },
+        dataset_format="reward_scored",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Rate this answer.",
+                "response": "A useful answer.",
+                "reward_score": 0.2,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-rlhf-reward",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="reward_scored",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner(
+        reward_runtime=MLXTextRuntime(backend=ScriptedRewardBackend()),
+    ).train(request)
+
+    trace_rows = [
+        json.loads(line)
+        for line in Path(result.metrics.policy_update_trace_path).read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert result.execution_backend == "reward_model_scored_trace"
+    assert result.metrics.candidate_scoring_mode == "reward_model"
+    assert result.metrics.reward_scoring_backend == "scripted-reward-runtime"
+    assert result.metrics.reward_mean == pytest.approx(0.8)
+    assert trace_rows[0]["selected_reward"] == pytest.approx(0.8)
+    assert trace_rows[0]["dataset_reward_score"] == pytest.approx(0.2)
+    assert trace_rows[0]["reward_model_id"] == "rlhf-reward"
+
+
+def test_alignment_rl_reward_model_scoring_helpers_cover_trace_and_error_paths(
+    tmp_path: Path,
+) -> None:
+    from worker.model_ops.rl_alignment_training import (
+        RewardModelScorer,
+        _grpo_policy_updates,
+        _load_reward_model_manifest,
+        _missing_reward_scorer_error,
+        _resolve_reward_model_scorer,
+        _reward_model_spec_from_manifest,
+        _rlhf_policy_updates,
+    )
+
+    class DirectRewardRuntime:
+        runtime_name = "direct-reward-runtime"
+
+        def __init__(self) -> None:
+            self.responses: list[str] = []
+
+        def score_response(self, loaded_model, prompt: str, response: str, execution_ext=None):
+            del loaded_model, prompt, execution_ext
+            self.responses.append(response)
+            return 0.6 if "best" in response else 0.1
+
+    reward_runtime = DirectRewardRuntime()
+    reward_scorer = RewardModelScorer(
+        runtime=reward_runtime,
+        loaded_model={},
+        runtime_name=reward_runtime.runtime_name,
+        manifest_path=str(tmp_path / "reward-model" / "manifest.json"),
+        reward_model_id="direct-reward",
+    )
+
+    grpo_result = _grpo_policy_updates(
+        [
+            {
+                "prompt": "Pick a candidate.",
+                "candidates": [{"text": "best answer"}, {"text": "weak answer"}],
+            }
+        ],
+        candidate_count=2,
+        candidate_scoring_mode="reward_model",
+        reward_scorer=reward_scorer,
+    )
+
+    assert grpo_result.execution_backend == "reward_model_scored_trace"
+    assert grpo_result.reward_scoring_backend == "direct-reward-runtime"
+    assert grpo_result.reward_values == [0.6, 0.1]
+    assert grpo_result.trace_rows[0]["reward_model_id"] == "direct-reward"
+    assert reward_runtime.responses == ["best answer", "weak answer"]
+
+    with pytest.raises(ModelOperationError) as grpo_missing:
+        _grpo_policy_updates(
+            [{"prompt": "Pick.", "candidates": [{"text": "A"}, {"text": "B"}]}],
+            candidate_count=2,
+            candidate_scoring_mode="reward_model",
+        )
+    assert grpo_missing.value.details["missing_field"] == "reward_runtime"
+
+    with pytest.raises(ModelOperationError) as rlhf_missing:
+        _rlhf_policy_updates(
+            [{"prompt": "Rate.", "response": "Useful.", "reward_score": 0.3}],
+            candidate_scoring_mode="reward_model",
+        )
+    assert rlhf_missing.value.details["missing_field"] == "reward_runtime"
+
+    assert _missing_reward_scorer_error().code == "unsupported_alignment_trainer"
+    assert _resolve_reward_model_scorer(
+        types.SimpleNamespace(candidate_scoring_mode="dataset_score"),
+        reward_runtime=None,
+    ) is None
+
+    manifest_path = tmp_path / "reward-model" / "manifest.json"
+    manifest_path.parent.mkdir()
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.reward_model_adapter.v1",
+                "reward_model_id": "fallback-reward",
+                "reward_head_type": "scalar",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manifest_payload = _load_reward_model_manifest(manifest_path)
+    reward_model_spec = _reward_model_spec_from_manifest(manifest_path, manifest_payload)
+    assert reward_model_spec.model_id == "fallback-reward"
+    assert reward_model_spec.model_path == str(manifest_path.parent)
+    assert reward_model_spec.ext["melix.reward_model.reward_head_type"] == "scalar"
+
+    with pytest.raises(ModelOperationError) as missing_manifest:
+        _load_reward_model_manifest(tmp_path / "missing" / "manifest.json")
+    assert missing_manifest.value.code == "invalid_alignment_config"
+
+    malformed_manifest = tmp_path / "malformed-reward.json"
+    malformed_manifest.write_text("{bad-json\n", encoding="utf-8")
+    with pytest.raises(ModelOperationError, match="readable JSON"):
+        _load_reward_model_manifest(malformed_manifest)
+
+    schema_missing_manifest = tmp_path / "schema-missing-reward.json"
+    schema_missing_manifest.write_text(json.dumps({"reward_model_id": "bad"}) + "\n", encoding="utf-8")
+    with pytest.raises(ModelOperationError, match="schema_version"):
+        _load_reward_model_manifest(schema_missing_manifest)
+
+
+def test_alignment_rl_reward_model_runtime_errors_are_reported(tmp_path: Path) -> None:
+    from worker.model_ops.rl_alignment_training import (
+        RewardModelScorer,
+        _resolve_reward_model_scorer,
+    )
+
+    class MissingScoreRuntime:
+        runtime_name = "missing-score-runtime"
+
+    missing_score_scorer = RewardModelScorer(
+        runtime=MissingScoreRuntime(),
+        loaded_model={},
+        runtime_name="missing-score-runtime",
+        manifest_path=str(tmp_path / "reward" / "manifest.json"),
+        reward_model_id="reward",
+    )
+    with pytest.raises(ModelOperationError) as missing_score:
+        missing_score_scorer.score_response(
+            prompt="Prompt.",
+            response="Response.",
+            alignment_algorithm="rlhf",
+            sample_index=0,
+        )
+    assert missing_score.value.code == "unsupported_alignment_trainer"
+
+    class ExplodingScoreRuntime:
+        runtime_name = "exploding-score-runtime"
+
+        def score_response(self, loaded_model, prompt: str, response: str, execution_ext=None):
+            del loaded_model, prompt, response, execution_ext
+            raise RuntimeError("score failed")
+
+    exploding_scorer = RewardModelScorer(
+        runtime=ExplodingScoreRuntime(),
+        loaded_model={},
+        runtime_name="exploding-score-runtime",
+        manifest_path=str(tmp_path / "reward" / "manifest.json"),
+        reward_model_id="reward",
+    )
+    with pytest.raises(ModelOperationError) as scoring_failed:
+        exploding_scorer.score_response(
+            prompt="Prompt.",
+            response="Response.",
+            alignment_algorithm="grpo",
+            sample_index=1,
+            candidate_index=2,
+        )
+    assert scoring_failed.value.code == "reward_model_scoring_failed"
+
+    reward_manifest_path = tmp_path / "reward-manifest.json"
+    reward_manifest_path.write_text(
+        json.dumps({"schema_version": "melix.reward_model_adapter.v1"}) + "\n",
+        encoding="utf-8",
+    )
+
+    class FailingLoadRuntime:
+        runtime_name = "failing-load-runtime"
+
+        def load_model(self, model_spec):
+            del model_spec
+            raise RuntimeError("load failed")
+
+    with pytest.raises(ModelOperationError) as load_failed:
+        _resolve_reward_model_scorer(
+            types.SimpleNamespace(
+                candidate_scoring_mode="reward_model",
+                reward_model_manifest_path=str(reward_manifest_path),
+            ),
+            reward_runtime=FailingLoadRuntime(),
+        )
+    assert load_failed.value.code == "reward_model_load_failed"
+
+
+def test_text_runtime_score_response_delegates_backend_and_executor() -> None:
+    class PlainScoringBackend:
+        runtime_name = "plain-scoring-runtime"
+
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id}
+
+        def estimate_resident_bytes(self, model_spec) -> int:
+            return 1
+
+        def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
+            del loaded_model, prompt, sampling, cancel_event, execution_ext
+            return
+            yield
+
+        def score_response(self, loaded_model, prompt: str, response: str):
+            del loaded_model, prompt
+            return 0.7 if response else 0.0
+
+    class Executor:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, callback):
+            self.calls += 1
+            return callback()
+
+    runtime = MLXTextRuntime(backend=PlainScoringBackend())
+    assert runtime.score_response({}, "Prompt.", "Response.") == pytest.approx(0.7)
+
+    executor = Executor()
+    executor_runtime = MLXTextRuntime(backend=PlainScoringBackend(), executor=executor)
+    assert executor_runtime.score_response({}, "Prompt.", "Response.") == pytest.approx(0.7)
+    assert executor.calls == 1
+
+    class MissingScoreBackend:
+        def estimate_resident_bytes(self, model_spec) -> int:
+            return 1
+
+    with pytest.raises(RuntimeUnavailableError):
+        MLXTextRuntime(backend=MissingScoreBackend()).score_response({}, "Prompt.", "Response.")
+
+
 @pytest.mark.parametrize(
     ("training_mode", "dataset_format", "ext", "expected_message"),
     [
@@ -304,6 +738,25 @@ def test_mlx_lm_runner_generates_grpo_candidates_with_policy_runtime(tmp_path: P
                 "candidate_scoring_mode": "dataset_score",
             },
             "candidate_scoring_mode=dataset_score is not supported",
+        ),
+        (
+            "grpo",
+            "prompt_candidate",
+            {
+                "training_mode": "grpo",
+                "grpo_candidate_count": "2",
+                "candidate_scoring_mode": "reward_model",
+            },
+            "requires reward_model_manifest_path",
+        ),
+        (
+            "dpo",
+            "preference_pair",
+            {
+                "training_mode": "dpo",
+                "candidate_scoring_mode": "reward_model",
+            },
+            "candidate_scoring_mode=reward_model is not supported",
         ),
     ],
 )

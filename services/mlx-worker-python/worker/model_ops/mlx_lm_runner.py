@@ -75,6 +75,7 @@ class TrainingMetrics:
     candidate_generation_mode: str = ""
     candidate_generation_backend: str = ""
     candidate_scoring_mode: str = ""
+    reward_scoring_backend: str = ""
     generated_candidate_count: int = 0
 
 
@@ -160,8 +161,9 @@ def _alignment_trainer_unavailable_error(config: LoRATrainingConfig) -> ModelOpe
 
 
 class MLXLMRunner:
-    def __init__(self, policy_runtime: Any | None = None) -> None:
+    def __init__(self, policy_runtime: Any | None = None, reward_runtime: Any | None = None) -> None:
         self._policy_runtime = policy_runtime
+        self._reward_runtime = reward_runtime
 
     def train(self, request: TrainingRequest) -> TrainingResult:
         if (
@@ -195,7 +197,11 @@ class MLXLMRunner:
         if request.config.training_objective == "alignment_rl":
             from worker.model_ops.rl_alignment_training import train_alignment_rl_trace
 
-            return train_alignment_rl_trace(request, policy_runtime=self._policy_runtime)
+            return train_alignment_rl_trace(
+                request,
+                policy_runtime=self._policy_runtime,
+                reward_runtime=self._reward_runtime,
+            )
 
         try:
             from mlx_lm.lora import train_model

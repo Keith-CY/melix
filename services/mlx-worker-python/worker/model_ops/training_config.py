@@ -737,11 +737,14 @@ def _resolve_alignment_config(
         or ext.get("grpo_candidate_scoring_mode", "").strip().lower()
         or ("seed_overlap_proxy" if candidate_generation_mode == "runtime_generate" else "dataset_score")
     )
-    expected_scoring_modes = (
-        {"seed_overlap_proxy"}
-        if candidate_generation_mode == "runtime_generate"
-        else {"dataset_score"}
-    )
+    if training_mode in _RL_TRAINING_MODES:
+        expected_scoring_modes = (
+            {"seed_overlap_proxy", "reward_model"}
+            if candidate_generation_mode == "runtime_generate"
+            else {"dataset_score", "reward_model"}
+        )
+    else:
+        expected_scoring_modes = {"dataset_score"}
     if candidate_scoring_mode not in expected_scoring_modes:
         raise ModelOperationError(
             code="invalid_alignment_config",
@@ -754,6 +757,16 @@ def _resolve_alignment_config(
                 "candidate_generation_mode": candidate_generation_mode,
                 "candidate_scoring_mode": candidate_scoring_mode,
                 "supported_candidate_scoring_modes": ",".join(sorted(expected_scoring_modes)),
+            },
+        )
+    if candidate_scoring_mode == "reward_model" and not reward_model_manifest_path:
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="candidate_scoring_mode=reward_model requires reward_model_manifest_path.",
+            details={
+                "training_mode": training_mode,
+                "candidate_scoring_mode": candidate_scoring_mode,
+                "missing_field": "reward_model_manifest_path",
             },
         )
 

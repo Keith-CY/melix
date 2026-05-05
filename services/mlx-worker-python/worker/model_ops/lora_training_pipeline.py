@@ -406,6 +406,8 @@ def _alignment_manifest_payload(
         )
         if training_result.metrics.candidate_generation_backend:
             metrics["candidate_generation_backend"] = training_result.metrics.candidate_generation_backend
+        if training_result.metrics.reward_scoring_backend:
+            metrics["reward_scoring_backend"] = training_result.metrics.reward_scoring_backend
         if training_result.metrics.generated_candidate_count:
             metrics["generated_candidate_count"] = training_result.metrics.generated_candidate_count
         if training_result.metrics.reward_mean:

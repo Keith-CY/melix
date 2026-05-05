@@ -25,10 +25,75 @@ class PolicyUpdateResult:
     candidate_generation_mode: str
     candidate_scoring_mode: str
     candidate_generation_backend: str = ""
+    reward_scoring_backend: str = ""
     generated_candidate_count: int = 0
 
 
-def train_alignment_rl_trace(request: Any, *, policy_runtime: Any | None = None) -> Any:
+@dataclass(frozen=True)
+class RewardModelScorer:
+    runtime: Any
+    loaded_model: Any
+    runtime_name: str
+    manifest_path: str
+    reward_model_id: str
+
+    def score_response(
+        self,
+        *,
+        prompt: str,
+        response: str,
+        alignment_algorithm: str,
+        sample_index: int,
+        candidate_index: int | None = None,
+    ) -> float:
+        scorer = getattr(self.runtime, "score_response", None)
+        if not callable(scorer):
+            raise ModelOperationError(
+                code="unsupported_alignment_trainer",
+                message="Reward-model scoring requires a reward runtime with score_response support.",
+                details={
+                    "required_backend": "reward_runtime",
+                    "candidate_scoring_mode": "reward_model",
+                    "reward_model_manifest_path": self.manifest_path,
+                },
+            )
+        try:
+            return float(
+                scorer(
+                    self.loaded_model,
+                    prompt,
+                    response,
+                    execution_ext={
+                        "melix.alignment.algorithm": alignment_algorithm,
+                        "melix.alignment.sample_index": str(sample_index),
+                        "melix.alignment.candidate_index": (
+                            "" if candidate_index is None else str(candidate_index)
+                        ),
+                        "melix.reward_model_manifest_path": self.manifest_path,
+                        "melix.reward_model_id": self.reward_model_id,
+                    },
+                )
+            )
+        except ModelOperationError:
+            raise
+        except Exception as exc:
+            raise ModelOperationError(
+                code="reward_model_scoring_failed",
+                message=f"Reward-model scoring failed: {exc}",
+                details={
+                    "candidate_scoring_mode": "reward_model",
+                    "reward_model_manifest_path": self.manifest_path,
+                    "sample_index": str(sample_index),
+                },
+            ) from exc
+
+
+def train_alignment_rl_trace(
+    request: Any,
+    *,
+    policy_runtime: Any | None = None,
+    reward_runtime: Any | None = None,
+) -> Any:
     from worker.model_ops.mlx_lm_runner import TrainingMetrics, TrainingResult
 
     alignment = request.config.alignment
@@ -40,6 +105,7 @@ def train_alignment_rl_trace(request: Any, *, policy_runtime: Any | None = None)
 
     started_at = time.perf_counter()
     samples = _load_training_rows(request.normalized_dataset_dir / "train.jsonl")
+    reward_scorer = _resolve_reward_model_scorer(alignment, reward_runtime)
     if alignment.alignment_algorithm == "grpo":
         if alignment.candidate_generation_mode == "runtime_generate":
             policy_updates = _grpo_runtime_policy_updates(
@@ -47,14 +113,21 @@ def train_alignment_rl_trace(request: Any, *, policy_runtime: Any | None = None)
                 samples,
                 candidate_count=alignment.grpo_candidate_count,
                 policy_runtime=policy_runtime,
+                reward_scorer=reward_scorer,
             )
         else:
             policy_updates = _grpo_policy_updates(
                 samples,
                 candidate_count=alignment.grpo_candidate_count,
+                candidate_scoring_mode=alignment.candidate_scoring_mode,
+                reward_scorer=reward_scorer,
             )
     elif alignment.alignment_algorithm == "rlhf":
-        policy_updates = _rlhf_policy_updates(samples)
+        policy_updates = _rlhf_policy_updates(
+            samples,
+            candidate_scoring_mode=alignment.candidate_scoring_mode,
+            reward_scorer=reward_scorer,
+        )
     else:
         raise ModelOperationError(
             code="unsupported_alignment_trainer",
@@ -83,6 +156,7 @@ def train_alignment_rl_trace(request: Any, *, policy_runtime: Any | None = None)
         "candidate_generation_mode": policy_updates.candidate_generation_mode,
         "candidate_generation_backend": policy_updates.candidate_generation_backend,
         "candidate_scoring_mode": policy_updates.candidate_scoring_mode,
+        "reward_scoring_backend": policy_updates.reward_scoring_backend,
         "lora_parameters": {
             "rank": request.config.rank,
             "dropout": request.config.dropout,
@@ -132,6 +206,7 @@ def train_alignment_rl_trace(request: Any, *, policy_runtime: Any | None = None)
             candidate_generation_mode=policy_updates.candidate_generation_mode,
             candidate_generation_backend=policy_updates.candidate_generation_backend,
             candidate_scoring_mode=policy_updates.candidate_scoring_mode,
+            reward_scoring_backend=policy_updates.reward_scoring_backend,
             generated_candidate_count=policy_updates.generated_candidate_count,
         ),
         execution_backend=policy_updates.execution_backend,
@@ -179,7 +254,12 @@ def _grpo_policy_updates(
     samples: list[dict[str, Any]],
     *,
     candidate_count: int,
+    candidate_scoring_mode: str = "dataset_score",
+    reward_scorer: RewardModelScorer | None = None,
 ) -> PolicyUpdateResult:
+    if candidate_scoring_mode == "reward_model" and reward_scorer is None:
+        raise _missing_reward_scorer_error()
+
     trace_rows: list[dict[str, Any]] = []
     reward_values: list[float] = []
     group_margins: list[float] = []
@@ -198,7 +278,29 @@ def _grpo_policy_updates(
             )
         scored_candidates = []
         for candidate_index, candidate in enumerate(candidates[:candidate_count]):
-            if not isinstance(candidate, dict) or "score" not in candidate:
+            if not isinstance(candidate, dict):
+                raise ModelOperationError(
+                    code="invalid_alignment_dataset",
+                    message="GRPO scored trace candidates must be JSON objects.",
+                    details={
+                        "alignment_algorithm": "grpo",
+                        "sample_index": str(sample_index),
+                        "candidate_index": str(candidate_index),
+                    },
+                )
+            candidate_text = str(candidate.get("text", ""))
+            if candidate_scoring_mode == "reward_model":
+                assert reward_scorer is not None
+                score = reward_scorer.score_response(
+                    prompt=str(sample.get("prompt", "")),
+                    response=candidate_text,
+                    alignment_algorithm="grpo",
+                    sample_index=sample_index,
+                    candidate_index=candidate_index,
+                )
+            elif "score" in candidate:
+                score = float(candidate["score"])
+            else:
                 raise ModelOperationError(
                     code="invalid_alignment_dataset",
                     message="GRPO scored trace candidates must include numeric score.",
@@ -212,8 +314,8 @@ def _grpo_policy_updates(
             scored_candidates.append(
                 {
                     "index": candidate_index,
-                    "text": str(candidate.get("text", "")),
-                    "score": float(candidate["score"]),
+                    "text": candidate_text,
+                    "score": score,
                 }
             )
         scores = [candidate["score"] for candidate in scored_candidates]
@@ -227,24 +329,34 @@ def _grpo_policy_updates(
                 "sample_index": sample_index,
                 "alignment_algorithm": "grpo",
                 "candidate_generation_mode": "scored_trace",
-                "candidate_scoring_mode": "dataset_score",
+                "candidate_scoring_mode": candidate_scoring_mode,
                 "prompt": str(sample.get("prompt", "")),
                 "selected_candidate_index": selected["index"],
+                "selected_candidate_text": selected["text"],
                 "selected_reward": selected["score"],
                 "group_reward_mean": group_mean,
                 "group_reward_margin": group_margins[-1],
                 "candidate_count": len(scored_candidates),
+                "scored_candidates": scored_candidates,
             }
         )
+        if reward_scorer is not None:
+            trace_rows[-1]["reward_scoring_backend"] = reward_scorer.runtime_name
+            trace_rows[-1]["reward_model_id"] = reward_scorer.reward_model_id
     return PolicyUpdateResult(
         trace_rows=trace_rows,
         reward_values=reward_values,
         group_margins=group_margins,
         group_variances=group_variances,
         selected_count=len(trace_rows),
-        execution_backend="scored_trace",
+        execution_backend=(
+            "reward_model_scored_trace"
+            if candidate_scoring_mode == "reward_model"
+            else "scored_trace"
+        ),
         candidate_generation_mode="scored_trace",
-        candidate_scoring_mode="dataset_score",
+        candidate_scoring_mode=candidate_scoring_mode,
+        reward_scoring_backend=reward_scorer.runtime_name if reward_scorer is not None else "",
     )
 
 
@@ -254,6 +366,7 @@ def _grpo_runtime_policy_updates(
     *,
     candidate_count: int,
     policy_runtime: Any | None,
+    reward_scorer: RewardModelScorer | None = None,
 ) -> PolicyUpdateResult:
     if policy_runtime is None:
         raise ModelOperationError(
@@ -278,7 +391,11 @@ def _grpo_runtime_policy_updates(
     generated_candidate_total = 0
     for sample_index, sample in enumerate(samples):
         prompt = str(sample.get("prompt", ""))
-        seed_candidates = _scored_seed_candidates(sample, sample_index=sample_index)
+        seed_candidates = (
+            []
+            if request.config.alignment.candidate_scoring_mode == "reward_model"
+            else _scored_seed_candidates(sample, sample_index=sample_index)
+        )
         generated_candidates: list[dict[str, Any]] = []
         for candidate_index in range(candidate_count):
             generation_prompt = _runtime_generation_prompt(
@@ -293,7 +410,18 @@ def _grpo_runtime_policy_updates(
                 sampling,
                 cancel_event,
             )
-            score = _seed_overlap_proxy_score(generated_text, seed_candidates)
+            if request.config.alignment.candidate_scoring_mode == "reward_model":
+                if reward_scorer is None:
+                    raise _missing_reward_scorer_error()
+                score = reward_scorer.score_response(
+                    prompt=prompt,
+                    response=generated_text,
+                    alignment_algorithm="grpo",
+                    sample_index=sample_index,
+                    candidate_index=candidate_index,
+                )
+            else:
+                score = _seed_overlap_proxy_score(generated_text, seed_candidates)
             generated_candidates.append(
                 {
                     "index": candidate_index,
@@ -316,7 +444,7 @@ def _grpo_runtime_policy_updates(
                 "alignment_algorithm": "grpo",
                 "candidate_generation_mode": "runtime_generate",
                 "candidate_generation_backend": runtime_name,
-                "candidate_scoring_mode": "seed_overlap_proxy",
+                "candidate_scoring_mode": request.config.alignment.candidate_scoring_mode,
                 "prompt": prompt,
                 "selected_candidate_index": selected["index"],
                 "selected_candidate_text": selected["text"],
@@ -327,27 +455,41 @@ def _grpo_runtime_policy_updates(
                 "generated_candidates": generated_candidates,
             }
         )
+        if reward_scorer is not None:
+            trace_rows[-1]["reward_scoring_backend"] = reward_scorer.runtime_name
+            trace_rows[-1]["reward_model_id"] = reward_scorer.reward_model_id
     return PolicyUpdateResult(
         trace_rows=trace_rows,
         reward_values=reward_values,
         group_margins=group_margins,
         group_variances=group_variances,
         selected_count=len(trace_rows),
-        execution_backend="runtime_generated_scored_trace",
+        execution_backend=(
+            "runtime_generated_reward_model"
+            if request.config.alignment.candidate_scoring_mode == "reward_model"
+            else "runtime_generated_scored_trace"
+        ),
         candidate_generation_mode="runtime_generate",
         candidate_generation_backend=runtime_name,
-        candidate_scoring_mode="seed_overlap_proxy",
+        candidate_scoring_mode=request.config.alignment.candidate_scoring_mode,
+        reward_scoring_backend=reward_scorer.runtime_name if reward_scorer is not None else "",
         generated_candidate_count=generated_candidate_total,
     )
 
 
 def _rlhf_policy_updates(
     samples: list[dict[str, Any]],
+    *,
+    candidate_scoring_mode: str = "dataset_score",
+    reward_scorer: RewardModelScorer | None = None,
 ) -> PolicyUpdateResult:
+    if candidate_scoring_mode == "reward_model" and reward_scorer is None:
+        raise _missing_reward_scorer_error()
+
     trace_rows: list[dict[str, Any]] = []
     reward_values: list[float] = []
     for sample_index, sample in enumerate(samples):
-        if "reward_score" not in sample:
+        if candidate_scoring_mode == "dataset_score" and "reward_score" not in sample:
             raise ModelOperationError(
                 code="invalid_alignment_dataset",
                 message="RLHF scored trace rows must include reward_score.",
@@ -357,29 +499,174 @@ def _rlhf_policy_updates(
                     "missing_field": "reward_score",
                 },
             )
-        reward = float(sample["reward_score"])
+        prompt = str(sample.get("prompt", ""))
+        response = str(sample.get("response", ""))
+        if candidate_scoring_mode == "reward_model":
+            assert reward_scorer is not None
+            reward = reward_scorer.score_response(
+                prompt=prompt,
+                response=response,
+                alignment_algorithm="rlhf",
+                sample_index=sample_index,
+            )
+        else:
+            reward = float(sample["reward_score"])
         reward_values.append(reward)
-        trace_rows.append(
-            {
-                "sample_index": sample_index,
-                "alignment_algorithm": "rlhf",
-                "candidate_generation_mode": "scored_trace",
-                "candidate_scoring_mode": "dataset_score",
-                "prompt": str(sample.get("prompt", "")),
-                "selected_response": str(sample.get("response", "")),
-                "selected_reward": reward,
-            }
-        )
+        row = {
+            "sample_index": sample_index,
+            "alignment_algorithm": "rlhf",
+            "candidate_generation_mode": "scored_trace",
+            "candidate_scoring_mode": candidate_scoring_mode,
+            "prompt": prompt,
+            "selected_response": response,
+            "selected_reward": reward,
+        }
+        if "reward_score" in sample and candidate_scoring_mode == "reward_model":
+            row["dataset_reward_score"] = float(sample["reward_score"])
+        if reward_scorer is not None:
+            row["reward_scoring_backend"] = reward_scorer.runtime_name
+            row["reward_model_id"] = reward_scorer.reward_model_id
+        trace_rows.append(row)
     return PolicyUpdateResult(
         trace_rows=trace_rows,
         reward_values=reward_values,
         group_margins=[],
         group_variances=[],
         selected_count=len(trace_rows),
-        execution_backend="scored_trace",
+        execution_backend=(
+            "reward_model_scored_trace"
+            if candidate_scoring_mode == "reward_model"
+            else "scored_trace"
+        ),
         candidate_generation_mode="scored_trace",
-        candidate_scoring_mode="dataset_score",
+        candidate_scoring_mode=candidate_scoring_mode,
+        reward_scoring_backend=reward_scorer.runtime_name if reward_scorer is not None else "",
     )
+
+
+def _resolve_reward_model_scorer(
+    alignment: Any,
+    reward_runtime: Any | None,
+) -> RewardModelScorer | None:
+    if getattr(alignment, "candidate_scoring_mode", "") != "reward_model":
+        return None
+    if reward_runtime is None:
+        raise _missing_reward_scorer_error()
+
+    manifest_path = Path(alignment.reward_model_manifest_path).expanduser()
+    manifest_payload = _load_reward_model_manifest(manifest_path)
+    model_spec = _reward_model_spec_from_manifest(manifest_path, manifest_payload)
+    try:
+        loaded_model = reward_runtime.load_model(model_spec)
+    except ModelOperationError:
+        raise
+    except Exception as exc:
+        raise ModelOperationError(
+            code="reward_model_load_failed",
+            message=f"Reward model runtime load failed: {exc}",
+            details={
+                "candidate_scoring_mode": "reward_model",
+                "reward_model_manifest_path": str(manifest_path),
+            },
+        ) from exc
+
+    return RewardModelScorer(
+        runtime=reward_runtime,
+        loaded_model=loaded_model,
+        runtime_name=str(getattr(reward_runtime, "runtime_name", "") or "unknown-runtime"),
+        manifest_path=str(manifest_path),
+        reward_model_id=str(
+            manifest_payload.get("reward_model_id")
+            or manifest_payload.get("model_id")
+            or model_spec.model_id
+        ),
+    )
+
+
+def _missing_reward_scorer_error() -> ModelOperationError:
+    return ModelOperationError(
+        code="unsupported_alignment_trainer",
+        message="Reward-model candidate scoring requires a reward runtime and manifest.",
+        details={
+            "candidate_scoring_mode": "reward_model",
+            "required_backend": "reward_runtime",
+            "missing_field": "reward_runtime",
+        },
+    )
+
+
+def _load_reward_model_manifest(manifest_path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="reward_model_manifest_path must point to a readable reward model manifest.",
+            details={"reward_model_manifest_path": str(manifest_path)},
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="reward_model_manifest_path must point to a readable JSON manifest.",
+            details={"reward_model_manifest_path": str(manifest_path)},
+        ) from exc
+    if not isinstance(payload, dict) or not str(payload.get("schema_version", "")).strip():
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="reward model manifest must include schema_version.",
+            details={"reward_model_manifest_path": str(manifest_path)},
+        )
+    return payload
+
+
+def _reward_model_spec_from_manifest(
+    manifest_path: Path,
+    manifest_payload: dict[str, Any],
+) -> common_pb2.ModelSpec:
+    model_id = str(
+        manifest_payload.get("reward_model_id")
+        or manifest_payload.get("model_id")
+        or manifest_payload.get("base_model_id")
+        or "melix-reward-model"
+    )
+    model_path = _first_manifest_string(
+        manifest_payload,
+        "reward_model_path",
+        "model_path",
+        "derived_model_path",
+        "base_model_path",
+        "artifact_path",
+    )
+    if not model_path:
+        model_path = str(manifest_path.parent)
+    model = common_pb2.ModelSpec(
+        model_id=model_id,
+        model_path=model_path,
+        model_kind=str(manifest_payload.get("model_kind") or "reward"),
+        revision=str(manifest_payload.get("model_revision") or manifest_payload.get("revision") or "main"),
+    )
+    model.ext["melix.reward_model_manifest_path"] = str(manifest_path)
+    for key in (
+        "schema_version",
+        "reward_model_id",
+        "reward_head_type",
+        "score_scale",
+        "adapter_manifest_path",
+        "adapter_weights_path",
+        "base_model_id",
+    ):
+        value = manifest_payload.get(key)
+        if value is not None and str(value).strip():
+            model.ext[f"melix.reward_model.{key}"] = str(value)
+    return model
+
+
+def _first_manifest_string(payload: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    return ""
 
 
 def _runtime_model_spec(request: Any) -> common_pb2.ModelSpec:

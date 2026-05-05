@@ -1219,6 +1219,96 @@ def test_train_lora_records_runtime_generated_grpo_evidence(tmp_path: Path) -> N
     assert trace_rows[0]["selected_candidate_text"] == "concise useful summary"
 
 
+def test_train_lora_records_reward_model_scored_rlhf_evidence(tmp_path: Path) -> None:
+    class ScriptedRewardBackend:
+        runtime_name = "scripted-reward-runtime"
+
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+        def estimate_resident_bytes(self, model_spec) -> int:
+            return 1
+
+        def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
+            del loaded_model, prompt, sampling, cancel_event, execution_ext
+            return
+            yield
+
+        def score_response(self, loaded_model, prompt: str, response: str, execution_ext=None):
+            del loaded_model, prompt, execution_ext
+            return 0.85 if "helpful" in response.lower() else 0.15
+
+    reward_model_dir = tmp_path / "reward-model"
+    reward_model_dir.mkdir()
+    reward_manifest_path = reward_model_dir / "manifest.json"
+    reward_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.reward_model_adapter.v1",
+                "reward_model_id": "helpfulness-reward",
+                "model_path": str(reward_model_dir),
+                "reward_head_type": "scalar",
+                "score_scale": "0_to_1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-reward-model-rlhf",
+        format="reward_scored",
+        samples=[
+            {
+                "prompt": "Rate this answer.",
+                "response": "Helpful answer.",
+                "reward_score": 0.4,
+            }
+        ],
+    )
+    service = _build_service(
+        tmp_path,
+        MLXLMRunner(reward_runtime=MLXTextRuntime(backend=ScriptedRewardBackend())),
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-reward-model-rlhf"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "rlhf",
+                    "adapter_name": "melix-reward-model-rlhf-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "reward_model_manifest_path": str(reward_manifest_path),
+                    "candidate_scoring_mode": "reward_model",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    alignment_payload = json.loads(Path(payload["alignment_run_manifest_path"]).read_text(encoding="utf-8"))
+    trace_rows = [
+        json.loads(line)
+        for line in Path(alignment_payload["metrics"]["policy_update_trace_path"]).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+
+    assert events[-1].HasField("completed")
+    assert payload["training_backend"] == "reward_model_scored_trace"
+    assert alignment_payload["training_backend"] == "reward_model_scored_trace"
+    assert alignment_payload["candidate_scoring_mode"] == "reward_model"
+    assert alignment_payload["metrics"]["candidate_scoring_mode"] == "reward_model"
+    assert alignment_payload["metrics"]["reward_scoring_backend"] == "scripted-reward-runtime"
+    assert alignment_payload["metrics"]["reward_mean"] == pytest.approx(0.85)
+    assert trace_rows[0]["dataset_reward_score"] == pytest.approx(0.4)
+    assert trace_rows[0]["reward_model_id"] == "helpfulness-reward"
+
+
 def test_train_lora_supports_continual_pretraining_contract(tmp_path: Path) -> None:
     dataset_dir = _write_dataset_package(
         tmp_path / "dataset-cpt",
