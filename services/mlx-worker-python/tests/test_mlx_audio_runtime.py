@@ -204,6 +204,55 @@ def test_mlx_audio_speech_runtime_detects_voice_mode_and_maps_voice_and_instruct
     ]
 
 
+def test_mlx_audio_speech_runtime_reuses_generate_signature_from_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import worker.runtime.mlx_audio_runtime as mlx_audio_runtime
+    from worker.runtime.mlx_audio_runtime import MLXAudioSpeechRuntime
+
+    signature_calls = 0
+    original_signature = mlx_audio_runtime.signature
+
+    class FakeChunk:
+        def __init__(self, audio):
+            self.audio = audio
+            self.sample_rate = 24_000
+
+    class FakeTTSModel:
+        def generate(self, text, voice=None, instruct=None, speed=1.0, verbose=False):
+            yield FakeChunk([0.1, -0.1, 0.0])
+
+    def fake_load_model(model_path: str, strict: bool = True):
+        return FakeTTSModel()
+
+    def tracked_signature(callable_obj):
+        nonlocal signature_calls
+        signature_calls += 1
+        return original_signature(callable_obj)
+
+    _install_fake_mlx_audio(monkeypatch, tts_loader=fake_load_model)
+    monkeypatch.setattr(mlx_audio_runtime, "signature", tracked_signature)
+
+    runtime = MLXAudioSpeechRuntime()
+    loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
+    assert loaded.generate_parameter_names == ("text", "voice", "instruct", "speed", "verbose")
+    assert signature_calls == 1
+
+    for index in range(3):
+        result = runtime.speak(
+            loaded,
+            inference_pb2.SpeakRequest(
+                input=f"hello cached signature {index}",
+                voice="alloy",
+                instructions="Speak calmly.",
+                format="wav",
+            ),
+        )
+        assert result.audio_bytes.startswith(b"RIFF")
+
+    assert signature_calls == 1
+
+
 def test_mlx_audio_speech_runtime_falls_back_to_voice_descriptor_only_for_instructional_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
