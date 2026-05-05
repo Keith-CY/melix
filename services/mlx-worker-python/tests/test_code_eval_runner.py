@@ -328,11 +328,64 @@ def test_count_tests_falls_back_for_syntax_error_input() -> None:
 def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -> None:
     missing_path = tmp_path / "missing.txt"
     assert code_eval_runner._read_limited_text(missing_path, 8) == ""
+    assert code_eval_runner._read_limited_stdio(missing_path, 8) == ("", 0)
 
     output_path = tmp_path / "output.txt"
     output_path.write_text("0123456789abcdef", encoding="utf-8")
 
     assert code_eval_runner._read_limited_text(output_path, 4) == "cdef"
+    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
+
+    directory_path = tmp_path / "directory"
+    directory_path.mkdir()
+    assert code_eval_runner._read_limited_stdio(directory_path, 4) == ("", 0)
+
+
+def test_read_limited_stdio_handles_stat_open_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_path = tmp_path / "output.txt"
+    output_path.write_text("secret output", encoding="utf-8")
+
+    original_open = Path.open
+
+    def fake_open(self: Path, *args, **kwargs):
+        if self == output_path:
+            raise FileNotFoundError(str(self))
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("", 0)
+
+
+def test_output_limit_reuses_limited_stdio_sizes(monkeypatch) -> None:
+    monkeypatch.setattr(code_eval_runner.shutil, "which", lambda _: "/usr/bin/sandbox-exec")
+    read_paths: list[str] = []
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=args[0], returncode=0)
+
+    def fake_read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
+        read_paths.append(path.name)
+        if path.name == "stdout.txt":
+            return "stdout-tail", byte_limit
+        return "", 0
+
+    monkeypatch.setattr(code_eval_runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(code_eval_runner, "_read_limited_stdio", fake_read_limited_stdio)
+
+    result = run_python_code_evaluation(
+        candidate_code="def identity(value):\n    return value",
+        entry_point="identity",
+        test_code="assert identity(1) == 1",
+        stdout_limit_bytes=4096,
+    )
+
+    assert result.runtime_status == "error"
+    assert result.test_status == "failed"
+    assert "stdio limit" in result.failure_detail
+    assert read_paths == ["stdout.txt", "stderr.txt"]
 
 
 def test_timeout_and_output_limit_failure_details_include_stdio_when_present() -> None:

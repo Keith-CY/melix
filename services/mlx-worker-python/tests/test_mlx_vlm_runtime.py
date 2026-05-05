@@ -880,6 +880,46 @@ def test_gemma4_multimodal_weight_presence_detects_text_backed_exports() -> None
     assert has_audio is False
 
 
+def test_gemma4_multimodal_weight_presence_scans_weight_names_once() -> None:
+    class CountingWeightNames:
+        def __init__(self, names: tuple[str, ...]) -> None:
+            self.names = names
+            self.iteration_count = 0
+            self.visited_names: list[str] = []
+
+        def __iter__(self):
+            self.iteration_count += 1
+            for name in self.names:
+                self.visited_names.append(name)
+                yield name
+
+    weight_names = CountingWeightNames(
+        (
+            "language_model.model.layers.0.self_attn.q_proj.weight",
+            "vision_tower.encoder.layers.0.weight",
+            "audio_tower.encoder.layers.0.weight",
+            "language_model.model.layers.99.self_attn.o_proj.weight",
+        )
+    )
+
+    assert _gemma4_multimodal_weight_presence(weight_names) == (True, True)
+    assert weight_names.iteration_count == 1
+    assert weight_names.visited_names == [
+        "language_model.model.layers.0.self_attn.q_proj.weight",
+        "vision_tower.encoder.layers.0.weight",
+        "audio_tower.encoder.layers.0.weight",
+    ]
+
+
+def test_gemma4_multimodal_weight_presence_accepts_dict_keys_view() -> None:
+    weights = {
+        "language_model.model.layers.0.self_attn.q_proj.weight": object(),
+        "embed_audio.proj.weight": object(),
+    }
+
+    assert _gemma4_multimodal_weight_presence(weights.keys()) == (False, True)
+
+
 def test_mlx_vlm_runtime_overrides_stale_text_backed_metadata_for_loaded_gemma4_vision_models() -> None:
     def fake_load(model_path: str, revision: str = "main"):
         _ = model_path

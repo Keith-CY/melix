@@ -104,7 +104,7 @@ def _legacy_project_digest(seed_text: str, dimensions: int) -> list[float]:
 def test_project_digest_preserves_legacy_projection_values() -> None:
     backend = BERTEmbeddingBackend()
 
-    for dimensions in (0, 1, 8, 9, 17, 384):
+    for dimensions in (0, 1, 8, 9, 17, 384, 1536, 4096):
         actual = backend._project_digest("bert::projection parity", dimensions)
         expected = _legacy_project_digest("bert::projection parity", dimensions)
         assert actual == expected
