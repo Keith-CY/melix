@@ -71,6 +71,50 @@ def test_alignment_percentile_uses_interpolation_and_upper_bound() -> None:
     ) == pytest.approx(0.7)
 
 
+def test_reward_summary_reuses_candidate_group_minmax(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sorted_calls: list[int] = []
+    original_sorted = sorted
+
+    def counting_sorted(values: list[float]) -> list[float]:
+        sorted_calls.append(len(values))
+        return original_sorted(values)
+
+    monkeypatch.setattr(
+        lora_training_pipeline_module,
+        "sorted",
+        counting_sorted,
+        raising=False,
+    )
+
+    samples = [
+        {
+            "reward_score": 0.05,
+            "candidates": [
+                {"score": 0.4},
+                {"score": 0.1},
+                {"score": 0.9},
+            ],
+        },
+        {
+            "reward_score": 0.2,
+            "candidates": [
+                {"score": 1.1},
+                {"score": -0.2},
+                {"score": 0.3},
+            ],
+        },
+    ]
+
+    summary = lora_training_pipeline_module._reward_summary(samples)
+
+    assert summary["candidate_group_count"] == 2
+    assert summary["candidate_group_reward_margin_mean"] == pytest.approx(1.05)
+    assert summary["candidate_group_reward_margin_p50"] == pytest.approx(1.05)
+    assert sorted_calls == [8, 2]
+
+
 def test_latest_checkpoint_from_directory_prefers_last_numeric_token(tmp_path: Path) -> None:
     older = (
         tmp_path / "model-ops-999" / "adapter" / "checkpoint-2" / "adapters.safetensors"
