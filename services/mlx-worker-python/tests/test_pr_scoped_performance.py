@@ -282,6 +282,32 @@ def test_scope_report_selects_deterministic_rerank_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "deterministic-rerank-query-context-reuse"
 
 
+def test_scope_report_selects_embedding_project_digest_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/embedding_backends.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "deterministic-embedding-project-digest-allocation"
+
+
+def test_deterministic_embedding_project_digest_probe_script_smoke(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/deterministic_embedding_project_digest_probe.py"),
+            run_name="__main__",
+        )
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["sample_count"] == 3.0
+    assert metrics["vector_count"] == 500.0
+    assert metrics["dimensions"] == 4096.0
+
+
 def test_scope_report_selects_rerank_core_top_k_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -673,6 +699,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
         "deterministic-embedding-duplicate-input-cache",
+        "deterministic-embedding-project-digest-allocation",
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
         "dev-up-mlx-metal-dist-info-scandir",

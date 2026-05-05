@@ -47,13 +47,21 @@ class DeterministicEmbeddingBackend:
             - 1.0
             for start in range(0, len(digest), 4)
         ]
-        full_repeats, remainder = divmod(dimensions, len(base_values))
-        values = base_values * full_repeats + base_values[:remainder]
+        base_count = len(base_values)
+        full_repeats, remainder = divmod(dimensions, base_count)
+        squared_values = [value * value for value in base_values]
+        squared_sum = sum(squared_values) * full_repeats
+        squared_sum += sum(squared_values[:remainder])
 
-        l2_norm = math.sqrt(sum(value * value for value in values))
+        l2_norm = math.sqrt(squared_sum)
         if l2_norm == 0.0:
             return [0.0] * dimensions
-        return [round(value / l2_norm, 6) for value in values]
+        normalized_base = [round(value / l2_norm, 6) for value in base_values]
+        result: list[float] = []
+        for _ in range(full_repeats):
+            result.extend(normalized_base)
+        result.extend(normalized_base[:remainder])
+        return result
 
     @staticmethod
     def _collapse_whitespace(text: str) -> str:
