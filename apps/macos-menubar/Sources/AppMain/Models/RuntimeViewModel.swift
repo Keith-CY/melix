@@ -1102,6 +1102,24 @@ public enum RuntimeLoraTrainingMode: String, CaseIterable, Identifiable, Sendabl
     }
 }
 
+public enum RuntimeQuantizationMode: String, CaseIterable, Identifiable, Sendable {
+    case ptq = "ptq"
+    case qat = "qat"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .ptq:
+            return "PTQ"
+        case .qat:
+            return "QAT"
+        }
+    }
+}
+
 public enum RuntimeLoraTrainingPreset: String, CaseIterable, Identifiable, Sendable {
     case custom = ""
     case debugFast = "debug_fast"
@@ -2056,6 +2074,7 @@ public final class RuntimeViewModel {
     public private(set) var effectiveImageNegativePrompt = ""
     public private(set) var imageDefaultsUpdatedAtUnixMS: Int64 = 0
     public let availableQuantizationProfileIDs = ["q2", "q3", "q4", "q5", "q6", "q7", "q8"]
+    public var selectedQuantizationMode: RuntimeQuantizationMode = .ptq
     public var selectedQuantizationProfileID = "q4"
     public var selectedModelOperationTargetModelID = ""
     public var openCommandCenterAction: (@MainActor @Sendable () -> Void)?
@@ -3069,6 +3088,15 @@ public final class RuntimeViewModel {
             return
         }
         selectedQuantizationProfileID = normalizedProfileID
+        notifyStateChanged()
+    }
+
+    public func selectQuantizationMode(_ modeID: String) {
+        let normalizedModeID = modeID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let mode = RuntimeQuantizationMode(rawValue: normalizedModeID) else {
+            return
+        }
+        selectedQuantizationMode = mode
         notifyStateChanged()
     }
 
@@ -6330,7 +6358,8 @@ public final class RuntimeViewModel {
             outputDir: "/tmp/melix-quantize",
             quantProfileID: selectedQuantizationProfileID,
             weightQuant: selectedQuantizationProfileID,
-            kvQuant: "q8"
+            kvQuant: "q8",
+            ext: quantizationModeExt()
         )
     }
 
@@ -6345,6 +6374,43 @@ public final class RuntimeViewModel {
             outputDir: "/tmp/melix-convert",
             ext: ["target_format": "melix_model_bundle"]
         )
+    }
+
+    private func quantizationModeExt() -> [String: String] {
+        var ext: [String: String] = [
+            "quantization_mode": selectedQuantizationMode.rawValue,
+        ]
+        switch selectedQuantizationMode {
+        case .ptq:
+            ext["source_artifact_kind"] = "base_model"
+        case .qat:
+            ext["source_artifact_kind"] = "merged_adapter"
+            ext["qat_fake_quant"] = "requested"
+            if let sourceArtifactPath = selectedQATSourceArtifactPath() {
+                ext["source_artifact_path"] = sourceArtifactPath
+            }
+        }
+        return ext
+    }
+
+    private func selectedQATSourceArtifactPath() -> String? {
+        if let job = selectedLoraTrainingJob {
+            let adapterPath = loraAdapterManifestPath(for: job).trimmingCharacters(in: .whitespacesAndNewlines)
+            if adapterPath.isEmpty == false {
+                return adapterPath
+            }
+        }
+        if let lastModelOperation {
+            let manifestPath = lastModelOperation.manifestPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if manifestPath.isEmpty == false {
+                return manifestPath
+            }
+            let outputPath = lastModelOperation.outputPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if outputPath.isEmpty == false {
+                return outputPath
+            }
+        }
+        return nil
     }
 
     public func downloadPrimaryModel() async {

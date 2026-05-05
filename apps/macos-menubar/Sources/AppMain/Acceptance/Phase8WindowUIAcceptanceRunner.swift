@@ -19,6 +19,8 @@ private let phase8MatrixConcurrencyLevel: UInt32 = 1
 private let phase8MatrixRequests: UInt32 = 4
 private let phase8EvaluationSampleSize: UInt32 = 4
 private let phase8EvaluationScoringMode = "multiple_choice_accuracy"
+private let phase8WindowUIBusinessLineEvidenceLevel = "window_route_matrix"
+private let phase8WindowUIReleaseReadyBlocker = "real_local_runtime_matrix_not_run"
 
 public enum Phase8WindowUIAcceptanceError: Error, LocalizedError {
     case missingCLIEvidenceBundle(String)
@@ -193,6 +195,49 @@ private struct Phase8WindowUIAcceptanceUIState: Codable, Equatable, Sendable {
     let selectedServerLifecycle: String
 }
 
+private enum Phase8WindowUIBusinessLineKind: Equatable, Sendable {
+    case training(RuntimeLoraTrainingMode)
+    case quantization(RuntimeQuantizationMode)
+}
+
+private struct Phase8WindowUIBusinessLineCase: Equatable, Sendable {
+    let caseID: String
+    let businessLine: String
+    let kind: Phase8WindowUIBusinessLineKind
+}
+
+private struct Phase8WindowUIBusinessLineEvidence: Codable, Equatable, Sendable {
+    let caseID: String
+    let businessLine: String
+    let evidenceLevel: String
+    let selectedSurface: String
+    let selectedToolSection: String
+    let selectedTrainingMode: String
+    let selectedQuantizationMode: String
+    let selectedQuantizationProfileID: String
+    let runnableAction: String
+    let routedCommand: String
+    let visible: Bool
+    let selectable: Bool
+    let runnable: Bool
+    let inspectable: Bool
+    let releaseReady: Bool
+    let releaseReadyBlocker: String
+}
+
+private let phase8WindowUIBusinessLineCases: [Phase8WindowUIBusinessLineCase] = [
+    .init(caseID: "base_lora_export_local_inference", businessLine: "BaseModel -> LoRA -> export -> local inference", kind: .training(.lora)),
+    .init(caseID: "base_qlora_export_local_inference", businessLine: "BaseModel -> QLoRA -> export -> local inference", kind: .training(.qlora)),
+    .init(caseID: "base_dora_export_local_inference", businessLine: "BaseModel -> DoRA -> export -> local inference", kind: .training(.dora)),
+    .init(caseID: "lora_dpo_export_local_inference", businessLine: "BaseModel -> LoRA -> DPO -> export -> local inference", kind: .training(.dpo)),
+    .init(caseID: "lora_orpo_export_local_inference", businessLine: "BaseModel -> LoRA -> ORPO -> export -> local inference", kind: .training(.orpo)),
+    .init(caseID: "lora_cpo_export_local_inference", businessLine: "BaseModel -> LoRA -> CPO -> export -> local inference", kind: .training(.cpo)),
+    .init(caseID: "lora_grpo_export_local_inference", businessLine: "BaseModel -> LoRA -> GRPO -> export -> local inference", kind: .training(.grpo)),
+    .init(caseID: "lora_rlhf_export_local_inference", businessLine: "BaseModel -> LoRA -> RLHF using #366 reward model -> export -> local inference", kind: .training(.rlhf)),
+    .init(caseID: "lora_preference_ptq_local_inference", businessLine: "BaseModel -> LoRA/preference result -> merge/export -> PTQ -> local inference", kind: .quantization(.ptq)),
+    .init(caseID: "qat_quantized_local_inference", businessLine: "BaseModel -> QAT/QAT-aware export -> quantized local inference", kind: .quantization(.qat)),
+]
+
 private struct Phase8WindowUIAcceptanceBundle: Codable, Equatable, Sendable {
     let schemaVersion: String
     let surface: String
@@ -212,6 +257,7 @@ private struct Phase8WindowUIAcceptanceBundle: Codable, Equatable, Sendable {
     let evaluationDataset: String
     let cliEvidenceBundlePath: String
     let screenshotPath: String
+    let businessLines: [Phase8WindowUIBusinessLineEvidence]
     let baseChatAssistantText: String
     let derivedChatAssistantText: String
     let loraTrainJobID: String
@@ -417,6 +463,8 @@ public final class Phase8WindowUIAcceptanceRunner {
             outputURL: exportsRoot.appendingPathComponent("evaluation-samples.jsonl")
         )
 
+        let businessLines = collectBusinessLineEvidence()
+
         await viewModel.refreshDesktopFoundation()
         viewModel.selectSurface(.server)
         viewModel.selectServerSession(id: serverSessionID)
@@ -449,6 +497,7 @@ public final class Phase8WindowUIAcceptanceRunner {
             evaluationDataset: config.evaluationDataset,
             cliEvidenceBundlePath: config.cliEvidenceBundlePath,
             screenshotPath: screenshotURL.path,
+            businessLines: businessLines,
             baseChatAssistantText: baseChatReceipt.assistantText,
             derivedChatAssistantText: derivedChatReceipt.assistantText,
             loraTrainJobID: loraTrainJobID,
@@ -481,6 +530,101 @@ public final class Phase8WindowUIAcceptanceRunner {
             screenshotPath: screenshotURL.path,
             cliEvidenceBundlePath: config.cliEvidenceBundlePath,
             modelID: materializeReceipt.modelID
+        )
+    }
+
+    private func collectBusinessLineEvidence() -> [Phase8WindowUIBusinessLineEvidence] {
+        phase8WindowUIBusinessLineCases.map { businessLine in
+            switch businessLine.kind {
+            case .training(let mode):
+                return collectTrainingBusinessLineEvidence(businessLine, mode: mode)
+            case .quantization(let mode):
+                return collectQuantizationBusinessLineEvidence(businessLine, mode: mode)
+            }
+        }
+    }
+
+    private func collectTrainingBusinessLineEvidence(
+        _ businessLine: Phase8WindowUIBusinessLineCase,
+        mode: RuntimeLoraTrainingMode
+    ) -> Phase8WindowUIBusinessLineEvidence {
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.training)
+        viewModel.selectedLoraModelID = config.modelID
+        viewModel.loraDatasetURI = config.trainingFixture
+        viewModel.loraAdapterName = "\(phase8AdapterName)-\(mode.rawValue)"
+        viewModel.loraTrainingMode = mode
+        if mode.isAlignmentMode {
+            viewModel.loraReferenceModelPath = "/tmp/melix/reference-model"
+            viewModel.loraKLPenalty = "0.02"
+        }
+        if mode == .grpo {
+            viewModel.loraGRPOCandidateCount = "4"
+        }
+        if mode == .rlhf {
+            viewModel.loraRewardModelManifestPath = "/tmp/melix/reward-model/manifest.json"
+        }
+
+        let visible = RuntimeLoraTrainingMode.allCases.contains(mode)
+        let selectable = viewModel.loraTrainingMode == mode
+        let runnable = viewModel.selectedLoraModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && viewModel.loraDatasetURI.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let inspectable = viewModel.selectedSurface == .tools && viewModel.selectedToolSection == .training
+        let routedCommand = mode.isAlignmentMode ? "alignment.train" : "lora.train"
+
+        return Phase8WindowUIBusinessLineEvidence(
+            caseID: businessLine.caseID,
+            businessLine: businessLine.businessLine,
+            evidenceLevel: phase8WindowUIBusinessLineEvidenceLevel,
+            selectedSurface: viewModel.selectedSurface.rawValue,
+            selectedToolSection: viewModel.selectedToolSection.rawValue,
+            selectedTrainingMode: mode.rawValue,
+            selectedQuantizationMode: "",
+            selectedQuantizationProfileID: "",
+            runnableAction: "Start Training",
+            routedCommand: routedCommand,
+            visible: visible,
+            selectable: selectable,
+            runnable: runnable,
+            inspectable: inspectable,
+            releaseReady: false,
+            releaseReadyBlocker: phase8WindowUIReleaseReadyBlocker
+        )
+    }
+
+    private func collectQuantizationBusinessLineEvidence(
+        _ businessLine: Phase8WindowUIBusinessLineCase,
+        mode: RuntimeQuantizationMode
+    ) -> Phase8WindowUIBusinessLineEvidence {
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+        viewModel.selectQuantizationMode(mode.rawValue)
+        viewModel.selectQuantizationProfile("q4")
+
+        let visible = RuntimeQuantizationMode.allCases.contains(mode)
+        let selectable = viewModel.selectedQuantizationMode == mode
+        let runnable = viewModel.modelOperationTargetModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let inspectable = viewModel.selectedSurface == .tools
+            && viewModel.selectedToolSection == .downloads
+            && viewModel.availableQuantizationProfileIDs.contains(viewModel.selectedQuantizationProfileID)
+
+        return Phase8WindowUIBusinessLineEvidence(
+            caseID: businessLine.caseID,
+            businessLine: businessLine.businessLine,
+            evidenceLevel: phase8WindowUIBusinessLineEvidenceLevel,
+            selectedSurface: viewModel.selectedSurface.rawValue,
+            selectedToolSection: viewModel.selectedToolSection.rawValue,
+            selectedTrainingMode: "",
+            selectedQuantizationMode: mode.rawValue,
+            selectedQuantizationProfileID: viewModel.selectedQuantizationProfileID,
+            runnableAction: "Quantize Model",
+            routedCommand: "model.quantize",
+            visible: visible,
+            selectable: selectable,
+            runnable: runnable,
+            inspectable: inspectable,
+            releaseReady: false,
+            releaseReadyBlocker: phase8WindowUIReleaseReadyBlocker
         )
     }
 
