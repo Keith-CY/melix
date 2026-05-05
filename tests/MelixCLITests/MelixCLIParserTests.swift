@@ -363,6 +363,8 @@ struct MelixCLIParserTests {
             "--calibration-dataset-uri", "/tmp/melix-datasets/calibration",
             "--quality-delta", "-0.01",
             "--latency-delta", "-0.15",
+            "--local-inference-smoke-mode", "runtime_generate",
+            "--local-inference-smoke-prompt", "Reply with ISSUE365_OK",
             "--json",
         ])
         let uploadCommand = try MelixCLIParser.parse([
@@ -409,6 +411,8 @@ struct MelixCLIParserTests {
         #expect(quantizeOptions.calibrationDatasetURI == "/tmp/melix-datasets/calibration")
         #expect(quantizeOptions.qualityDelta == "-0.01")
         #expect(quantizeOptions.latencyDelta == "-0.15")
+        #expect(quantizeOptions.localInferenceSmokeMode == "runtime_generate")
+        #expect(quantizeOptions.localInferenceSmokePrompt == "Reply with ISSUE365_OK")
         #expect(quantizeOptions.json)
         #expect(uploadOptions.modelID == "melix-dev-text")
         #expect(uploadOptions.outputDir == "/tmp/melix-upload")
@@ -568,7 +572,7 @@ struct MelixCLIParserTests {
         let allCommands: [(MelixCLICommand, String)] = [
             (.doctor(.init()), "doctor"),
             (.convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)), "convert"),
-            (.quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", json: true)), "quantize"),
+            (.quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", localInferenceSmokeMode: "runtime_generate", localInferenceSmokePrompt: "smoke", json: true)), "quantize"),
             (.upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)), "upload"),
             (.modelList(.init(json: true)), "model.list"),
             (.modelInspect(.init(modelID: "model", json: true)), "model.inspect"),
@@ -652,7 +656,7 @@ struct MelixCLIParserTests {
         let supportedCommands: [MelixCLICommand] = [
             .doctor(.init(json: true)),
             .convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)),
-            .quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", json: true)),
+            .quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", localInferenceSmokeMode: "runtime_generate", localInferenceSmokePrompt: "smoke", json: true)),
             .upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)),
             .modelImport(.init(path: "/tmp/model", modelID: "model", modelKind: "text", revision: "main", json: true)),
             .modelHubDownload(.init(repoID: "mlx/qwen", revision: "main", json: true)),
@@ -2613,6 +2617,14 @@ struct MelixCLIParserTests {
                 "--source-artifact-kind", "checkpoint",
             ],
             equals: .usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--local-inference-smoke-mode", "screenshot",
+            ],
+            equals: .usage("Invalid value for --local-inference-smoke-mode. Expected one of: structural, runtime_generate.")
         )
         try assertError(
             for: ["upload", "--model-id", "melix-dev-text"],

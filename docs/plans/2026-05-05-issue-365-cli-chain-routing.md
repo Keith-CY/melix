@@ -58,6 +58,14 @@ local runtime acceptance requirements.
   single-process DPO, ORPO, and CPO real-runtime runs do not fail when the
   upstream trainer passes `mx.distributed.init()` into the custom preference
   batch iterator.
+- Add public `melix quantize` and pipeline routing for
+  `--local-inference-smoke-mode` and `--local-inference-smoke-prompt` so PTQ
+  and QAT acceptance can request the quantization pipeline's own typed
+  `runtime_generate` local inference evidence.
+- Route PTQ/QAT acceptance through the quantized bundle manifest's
+  `local_inference_smoke` and `release_gate.local_inference_smoke_result`
+  checks instead of treating `quantized_model_bundle` directories as generic
+  `chat.run` targets.
 
 ### Excluded
 
@@ -97,6 +105,9 @@ Success metrics:
 - Real local LoRA, QLoRA, DoRA, DPO, ORPO, and CPO subset evidence proves the
   fixed chain can complete: training, local publish receipt, direct adapter
   activation, chat smoke, and eval smoke.
+- Quantized PTQ/QAT real-mode subsets must not be marked successful unless the
+  quantize step reports `local_runtime_generate` smoke evidence with
+  `status=passed` and `release_gate.local_inference_smoke_result=passed`.
 
 ## Verification
 
@@ -226,6 +237,47 @@ running the remaining supervised/preference real-mode subsets:
 - `MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real-dpo" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-dpo-swift.sock" bash scripts/dev_down.sh`:
   stopped the named real local preference runtime stack.
 
+Results on 2026-05-06 after routing quantize runtime smoke through public CLI
+and pipeline options:
+
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
+  13 passed.
+- `swift test --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`:
+  213 tests passed in 3 suites.
+- `swift test --enable-code-coverage --filter 'MelixCLIRunnerTests|MelixCLIParserTests'`:
+  213 tests passed in 3 suites and wrote Swift coverage data.
+- `python3 scripts/swift_changed_line_coverage.py --binary .build/arm64-apple-macosx/debug/MelixPackageTests.xctest/Contents/MacOS/MelixPackageTests --profdata .build/arm64-apple-macosx/debug/codecov/default.profdata --diff-from origin/main Sources/MelixCLICore/MelixCLI.swift Sources/MelixCLICore/MelixCLICommandCodec.swift Sources/MelixCLICore/MelixPipelineRunner.swift tests/MelixCLITests/MelixCLIParserTests.swift tests/MelixCLITests/MelixCLIRunnerTests.swift docs/plans/2026-05-05-issue-365-cli-chain-routing.md`:
+  99.48 percent total changed-line coverage, 962/967 executable lines.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/integration/test_issue365_acceptance_bundle.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py`:
+  273 passed with 2 warnings from MLX SWIG types.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage json -o /tmp/issue365-cli-chain-routing-python-coverage.json`:
+  wrote JSON coverage.
+- `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-cli-chain-routing-python-coverage.json --diff-from origin/main scripts/issue365_acceptance_bundle.py services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/worker/model_ops/preference_training.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py tests/integration/test_issue365_acceptance_bundle.py docs/plans/2026-05-05-issue-365-cli-chain-routing.md`:
+  97.80 percent total changed-line coverage, 621/635 executable lines.
+- `python3 scripts/issue365_acceptance_bundle.py --execution-mode plan --output-dir .runtime/issue365/acceptance-plan-runtime-smoke --timestamp 2026-05-06T170000Z --json`:
+  wrote a plan bundle with 10 planned cases and `release_ready=false`.
+- `python3 scripts/issue365_acceptance_bundle.py --execution-mode dry-run --melix-cli .build/arm64-apple-macosx/debug/melix --output-dir .runtime/issue365/acceptance-dry-run-runtime-smoke --timestamp 2026-05-06T170500Z --json`:
+  wrote a dry-run bundle with 10 succeeded cases, 0 failed cases, 0 blocked
+  cases, and `release_ready=false`.
+- `MELIX_SERVICE_INSTANCE_NAME=issue365-real-ptq-runtime-smoke MELIX_HTTP_PORT=12472 MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real-ptq-runtime-smoke" MELIX_HOME="$PWD/.runtime/home-issue365-real-ptq-runtime-smoke" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-ptq-runtime-smoke-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-ptq-runtime-smoke-swift.sock" bash scripts/dev_up.sh --prefer-built`:
+  started a named real local runtime stack for the PTQ runtime smoke probe.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-real-ptq-runtime-smoke" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-ptq-runtime-smoke-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-ptq-runtime-smoke-swift.sock" MELIX_HTTP_PORT=12472 python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id lora_preference_ptq_quantized_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --preference-dataset-uri "$PWD/.runtime/issue365/input-datasets/preference_pair" --calibration-dataset-uri "$PWD/.runtime/issue365/input-datasets/calibration" --output-dir .runtime/issue365/real-ptq-runtime-smoke-probe --timestamp 2026-05-06T171500Z --json`:
+  failed as expected because the quantize step's `runtime_generate` local
+  inference smoke did not pass; the selected case has `status=failed` and
+  `release_ready=false`.
+- `.runtime/issue365/real-ptq-runtime-smoke-probe/artifacts/ptq/model-ops-0015/quantize.artifact/manifest.json`:
+  recorded `local_inference_smoke.evidence_kind=local_runtime_generate`,
+  `local_inference_smoke.smoke_mode=runtime_generate`,
+  `local_inference_smoke.status=failed`,
+  `release_gate.local_inference_smoke_result=failed`, and failure reason
+  `No safetensors found in .../quantize.artifact`.
+- `MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real-ptq-runtime-smoke" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-ptq-runtime-smoke-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-ptq-runtime-smoke-swift.sock" bash scripts/dev_down.sh`:
+  stopped the named PTQ runtime smoke stack.
+- `find .runtime -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) -print`:
+  passed with no generated screenshot artifacts found.
+- `git diff --check`:
+  passed.
+
 Results on 2026-05-05 after adding the acceptance bundle harness:
 
 - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
@@ -261,6 +313,10 @@ Results on 2026-05-05 after adding the acceptance bundle harness:
   real local runtime evidence: `lora_grpo_export_inference`,
   `lora_rlhf_export_inference`, `lora_preference_ptq_quantized_inference`, and
   `qat_quantized_inference`.
+- The latest `lora_preference_ptq_quantized_inference` real probe is
+  intentionally counted as failed evidence, not completion evidence, because
+  the quantize step recorded failed `runtime_generate` smoke and
+  `release_gate.local_inference_smoke_result=failed`.
 - Window UI runnable/inspectable acceptance for every listed business line.
 - Final release evidence that separates deterministic/unit/scored-trace results
   from real local runtime results.

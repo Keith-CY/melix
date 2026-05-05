@@ -442,7 +442,9 @@ struct MelixCLIRunnerTests {
                 "source_artifact_path": "/tmp/merged-model",
                 "calibration_dataset_uri": "/tmp/calibration.jsonl",
                 "quality_delta": "-0.01",
-                "latency_delta": "-0.15"
+                "latency_delta": "-0.15",
+                "local_inference_smoke_mode": "runtime_generate",
+                "local_inference_smoke_prompt": "Reply with ISSUE365_OK"
               }
             },
             {
@@ -653,6 +655,8 @@ struct MelixCLIRunnerTests {
         #expect(alignArguments.contains("grpo"))
         #expect(quantizeArguments.contains("--source-artifact-kind"))
         #expect(quantizeArguments.contains("merged_adapter"))
+        #expect(quantizeArguments.contains("--local-inference-smoke-mode"))
+        #expect(quantizeArguments.contains("runtime_generate"))
     }
 
     @Test("pipeline dry run redacts Hugging Face download token arguments")
@@ -1190,10 +1194,16 @@ struct MelixCLIRunnerTests {
                 "source_artifact_path": "${steps.publish_merged.result.output_path}",
                 "calibration_dataset_uri": "/tmp/calibration.jsonl",
                 "quality_delta": "-0.01",
-                "latency_delta": "-0.12"
+                "latency_delta": "-0.12",
+                "local_inference_smoke_mode": " runtime_generate ",
+                "local_inference_smoke_prompt": "Reply with ISSUE365_OK"
               },
               "checks": {
-                "required_result_fields": ["job_id", "output_path", "bundle_path"]
+                "required_result_fields": ["job_id", "output_path", "local_inference_smoke.status"],
+                "equals": {
+                  "result.local_inference_smoke.status": "passed",
+                  "result.local_inference_smoke.smoke_mode": "runtime_generate"
+                }
               }
             },
             {
@@ -1269,7 +1279,7 @@ struct MelixCLIRunnerTests {
                 #"{"operation":"train_alignment","job_id":"align-job-1","output_path":"/tmp/melix/alignment/issue365-dpo.adapter.json","alignment_run_manifest_path":"/tmp/melix/alignment/issue365-dpo.alignment_run.json"}"#,
                 #"{"operation":"upload","job_id":"publish-job-1","output_path":"/tmp/melix/publish/issue365-dpo-merged","artifact_manifest_path":"/tmp/melix/publish/issue365-dpo-merged/manifest.json"}"#,
                 #"{"operation":"registry_snapshot","adapters":[]}"#,
-                #"{"operation":"quantize","job_id":"quantize-job-1","output_path":"/tmp/melix/quantized/issue365-dpo-q4","bundle_path":"/tmp/melix/quantized/issue365-dpo-q4"}"#,
+                #"{"operation":"quantize","job_id":"quantize-job-1","output_path":"/tmp/melix/quantized/issue365-dpo-q4","bundle_path":"/tmp/melix/quantized/issue365-dpo-q4","local_inference_smoke":{"status":"passed","smoke_mode":"runtime_generate"}}"#,
                 #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"activate_adapter","job_id":"activate-job-1","output_path":"/tmp/melix/activate_adapter/issue365-dpo"}"#,
                 #"{"operation":"registry_snapshot","adapters":[]}"#,
@@ -1322,6 +1332,10 @@ struct MelixCLIRunnerTests {
         #expect(operationCommands[3].contains("merged_adapter"))
         #expect(operationCommands[3].contains("--source-artifact-path"))
         #expect(operationCommands[3].contains("/tmp/melix/publish/issue365-dpo-merged"))
+        #expect(operationCommands[3].contains("--local-inference-smoke-mode"))
+        #expect(operationCommands[3].contains("runtime_generate"))
+        #expect(operationCommands[3].contains("--local-inference-smoke-prompt"))
+        #expect(operationCommands[3].contains("Reply with ISSUE365_OK"))
         #expect(Array(operationCommands[4].prefix(2)) == ["lora", "activate"])
         #expect(quantizeArtifactPaths.contains("/tmp/melix/quantized/issue365-dpo-q4"))
     }
@@ -1961,6 +1975,27 @@ struct MelixCLIRunnerTests {
                 "Pipeline command argument source_artifact_kind must be one of: base_model, merged_adapter, adapter_export."
             ),
             (
+                "quantize-invalid-smoke-mode",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "quantize-invalid-smoke-mode",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "quantize",
+                      "command": "quantize",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "local_inference_smoke_mode": "screenshot"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument local_inference_smoke_mode must be one of: structural, runtime_generate."
+            ),
+            (
                 "publish-missing-artifact-selector",
                 #"""
                 {
@@ -2454,6 +2489,8 @@ struct MelixCLIRunnerTests {
                     calibrationDatasetURI: "/tmp/melix-datasets/calibration",
                     qualityDelta: "-0.01",
                     latencyDelta: "-0.15",
+                    localInferenceSmokeMode: "runtime_generate",
+                    localInferenceSmokePrompt: "Reply with ISSUE365_OK",
                     json: true
                 )
             )
@@ -2499,6 +2536,8 @@ struct MelixCLIRunnerTests {
         #expect(quantizeCall.ext["calibration_dataset_uri"] == "/tmp/melix-datasets/calibration")
         #expect(quantizeCall.ext["quality_delta"] == "-0.01")
         #expect(quantizeCall.ext["latency_delta"] == "-0.15")
+        #expect(quantizeCall.ext["local_inference_smoke_mode"] == "runtime_generate")
+        #expect(quantizeCall.ext["local_inference_smoke_prompt"] == "Reply with ISSUE365_OK")
         #expect(uploadPayload["job_id"] as? String == "upload-job-1")
         #expect(uploadCall.operation == "upload")
         #expect(uploadCall.outputDir == "/tmp/melix-upload")

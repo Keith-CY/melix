@@ -194,6 +194,8 @@ public enum MelixCLICommandCodec {
             appendOption("--calibration-dataset-uri", value: options.calibrationDatasetURI, into: &arguments)
             appendOption("--quality-delta", value: options.qualityDelta, into: &arguments)
             appendOption("--latency-delta", value: options.latencyDelta, into: &arguments)
+            appendOption("--local-inference-smoke-mode", value: options.localInferenceSmokeMode, into: &arguments)
+            appendOption("--local-inference-smoke-prompt", value: options.localInferenceSmokePrompt, into: &arguments)
             json = options.json
         case .upload(let options):
             arguments = ["upload"]

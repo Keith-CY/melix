@@ -870,6 +870,8 @@ public struct QuantizeOptions: Equatable, Sendable {
     public let calibrationDatasetURI: String
     public let qualityDelta: String
     public let latencyDelta: String
+    public let localInferenceSmokeMode: String
+    public let localInferenceSmokePrompt: String
     public let json: Bool
 
     public init(
@@ -884,6 +886,8 @@ public struct QuantizeOptions: Equatable, Sendable {
         calibrationDatasetURI: String = "",
         qualityDelta: String = "",
         latencyDelta: String = "",
+        localInferenceSmokeMode: String = "",
+        localInferenceSmokePrompt: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -897,6 +901,8 @@ public struct QuantizeOptions: Equatable, Sendable {
         self.calibrationDatasetURI = calibrationDatasetURI
         self.qualityDelta = qualityDelta
         self.latencyDelta = latencyDelta
+        self.localInferenceSmokeMode = localInferenceSmokeMode
+        self.localInferenceSmokePrompt = localInferenceSmokePrompt
         self.json = json
     }
 }
@@ -1477,7 +1483,7 @@ public enum MelixCLIParser {
     Usage:
       melix doctor [--json]
       melix convert --model-id MODEL_ID [--output-dir PATH] [--target-format FORMAT] [--json]
-      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--quantization-mode (ptq|qat)] [--source-artifact-kind (base_model|merged_adapter|adapter_export)] [--source-artifact-path PATH] [--calibration-dataset-uri PATH] [--quality-delta N] [--latency-delta N] [--json]
+      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--quantization-mode (ptq|qat)] [--source-artifact-kind (base_model|merged_adapter|adapter_export)] [--source-artifact-path PATH] [--calibration-dataset-uri PATH] [--quality-delta N] [--latency-delta N] [--local-inference-smoke-mode (structural|runtime_generate)] [--local-inference-smoke-prompt TEXT] [--json]
       melix upload --model-id MODEL_ID --target-repo REPO [--output-dir PATH] [--artifact-path PATH] [--artifact-kind KIND] [--artifact-manifest-path PATH] [--publish-backend BACKEND] [--local-publish-root PATH] [--json]
       melix model list [--json]
       melix model inspect --model-id MODEL_ID [--json]
@@ -1623,6 +1629,10 @@ public enum MelixCLIParser {
         if !sourceArtifactKind.isEmpty, ["base_model", "merged_adapter", "adapter_export"].contains(sourceArtifactKind) == false {
             throw MelixCLIError.usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
         }
+        let localInferenceSmokeMode = values.single["--local-inference-smoke-mode"] ?? ""
+        if !localInferenceSmokeMode.isEmpty, ["structural", "runtime_generate"].contains(localInferenceSmokeMode) == false {
+            throw MelixCLIError.usage("Invalid value for --local-inference-smoke-mode. Expected one of: structural, runtime_generate.")
+        }
         return .quantize(
             .init(
                 modelID: modelID,
@@ -1636,6 +1646,8 @@ public enum MelixCLIParser {
                 calibrationDatasetURI: values.single["--calibration-dataset-uri"] ?? "",
                 qualityDelta: values.single["--quality-delta"] ?? "",
                 latencyDelta: values.single["--latency-delta"] ?? "",
+                localInferenceSmokeMode: localInferenceSmokeMode,
+                localInferenceSmokePrompt: values.single["--local-inference-smoke-prompt"] ?? "",
                 json: values.flags.contains("--json")
             )
         )
@@ -3951,6 +3963,12 @@ public actor MelixCLIRunner {
             if !options.latencyDelta.isEmpty {
                 ext["latency_delta"] = options.latencyDelta
             }
+            if !options.localInferenceSmokeMode.isEmpty {
+                ext["local_inference_smoke_mode"] = options.localInferenceSmokeMode
+            }
+            if !options.localInferenceSmokePrompt.isEmpty {
+                ext["local_inference_smoke_prompt"] = options.localInferenceSmokePrompt
+            }
             let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "quantize",
@@ -4987,6 +5005,8 @@ public actor MelixCLIRunner {
             appendOption("--calibration-dataset-uri", value: ext["calibration_dataset_uri"], into: &arguments)
             appendOption("--quality-delta", value: ext["quality_delta"], into: &arguments)
             appendOption("--latency-delta", value: ext["latency_delta"], into: &arguments)
+            appendOption("--local-inference-smoke-mode", value: ext["local_inference_smoke_mode"], into: &arguments)
+            appendOption("--local-inference-smoke-prompt", value: ext["local_inference_smoke_prompt"], into: &arguments)
             arguments.append("--json")
             return arguments
         case "upload":

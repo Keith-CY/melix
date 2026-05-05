@@ -152,6 +152,33 @@ def test_issue365_acceptance_bundle_plan_covers_required_cli_matrix(tmp_path: Pa
         if step["command"] == "quantize"
     }
     assert quantization_modes == {"ptq", "qat"}
+    ptq_pipeline = next(
+        pipeline
+        for pipeline in pipelines
+        if pipeline["name"] == "issue365-lora_preference_ptq_quantized_inference"
+    )
+    ptq_steps = {step["id"]: step for step in ptq_pipeline["steps"]}
+    assert ptq_steps["ptq_publish_export"]["args"]["export_kind"] == "adapter"
+    assert ptq_steps["ptq_quantize"]["args"]["source_artifact_kind"] == "adapter_export"
+    assert ptq_steps["ptq_quantize"]["args"]["local_inference_smoke_mode"] == "runtime_generate"
+    assert ptq_steps["ptq_quantize"]["checks"]["equals"] == {
+        "result.local_inference_smoke.status": "passed",
+        "result.local_inference_smoke.evidence_kind": "local_runtime_generate",
+        "result.local_inference_smoke.smoke_mode": "runtime_generate",
+        "result.release_gate.local_inference_smoke_result": "passed",
+    }
+    assert all(step["command"] != "chat.run" for step in ptq_pipeline["steps"])
+    qat_pipeline = next(
+        pipeline
+        for pipeline in pipelines
+        if pipeline["name"] == "issue365-qat_quantized_inference"
+    )
+    qat_steps = {step["id"]: step for step in qat_pipeline["steps"]}
+    assert qat_steps["qat_publish_export"]["args"]["export_kind"] == "adapter"
+    assert qat_steps["qat_quantize"]["args"]["source_artifact_kind"] == "adapter_export"
+    assert qat_steps["qat_quantize"]["args"]["local_inference_smoke_mode"] == "runtime_generate"
+    assert qat_steps["qat_quantize"]["checks"] == ptq_steps["ptq_quantize"]["checks"]
+    assert all(step["command"] != "chat.run" for step in qat_pipeline["steps"])
     assert any("real_local_runtime" in gap for gap in bundle["known_gaps"])
     assert all(case["evidence_tier"] == "planning_matrix" for case in bundle["cases"])
     assert all(case["release_ready"] is False for case in bundle["cases"])

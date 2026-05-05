@@ -893,7 +893,9 @@ private enum MelixPipelineCommandBuilder {
                     sourceArtifactPath: string("source_artifact_path", args) ?? "",
                     calibrationDatasetURI: string("calibration_dataset_uri", args) ?? "",
                     qualityDelta: string("quality_delta", args) ?? "",
-                    latencyDelta: string("latency_delta", args) ?? ""
+                    latencyDelta: string("latency_delta", args) ?? "",
+                    localInferenceSmokeMode: try localInferenceSmokeMode(args),
+                    localInferenceSmokePrompt: string("local_inference_smoke_prompt", args) ?? ""
                 )
             )
         case "upload":
@@ -1177,6 +1179,16 @@ private enum MelixPipelineCommandBuilder {
             throw MelixCLIError.usage("Pipeline command argument source_artifact_kind must be one of: base_model, merged_adapter, adapter_export.")
         }
         return kind
+    }
+
+    private static func localInferenceSmokeMode(_ args: [String: Any]) throws -> String {
+        let mode = (string("local_inference_smoke_mode", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard mode.isEmpty || ["structural", "runtime_generate"].contains(mode) else {
+            throw MelixCLIError.usage("Pipeline command argument local_inference_smoke_mode must be one of: structural, runtime_generate.")
+        }
+        return mode
     }
 
     private static func loraPublishOptions(_ args: [String: Any]) throws -> LoraPublishOptions {

@@ -348,7 +348,7 @@ def _alignment_case(
 def _ptq_case() -> Issue365PipelineCase:
     train_step = "ptq_base_lora"
     align_step = "ptq_dpo_align"
-    publish_step = "ptq_publish_merged"
+    publish_step = "ptq_publish_export"
     quantize_step = "ptq_quantize"
     return Issue365PipelineCase(
         case_id="lora_preference_ptq_quantized_inference",
@@ -395,9 +395,9 @@ def _ptq_case() -> Issue365PipelineCase:
                 "command": "lora.publish",
                 "args": {
                     "model_id": "${inputs.model_id}",
-                    "target_repo": "melix/issue365-ptq-merged",
+                    "target_repo": "melix/issue365-ptq-export",
                     "manifest_path": f"${{steps.{align_step}.result.output_path}}",
-                    "export_kind": "merged",
+                    "export_kind": "adapter",
                     "publish_backend": "local_filesystem",
                     "local_publish_root": "${inputs.local_publish_root}",
                 },
@@ -412,22 +412,23 @@ def _ptq_case() -> Issue365PipelineCase:
                     "weight_quant": "q4",
                     "kv_quant": "q8",
                     "quantization_mode": "ptq",
-                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_kind": "adapter_export",
                     "source_artifact_path": f"${{steps.{publish_step}.result.output_path}}",
                     "calibration_dataset_uri": "${inputs.calibration_dataset_uri}",
                     "quality_delta": 0,
                     "latency_delta": 0,
+                    "local_inference_smoke_mode": "runtime_generate",
+                    "local_inference_smoke_prompt": "Reply with ISSUE365_OK",
                 },
+                "checks": _quantized_runtime_smoke_checks(),
             },
-            _chat_step("ptq_chat", f"${{steps.{quantize_step}.result.output_path}}"),
-            _eval_step("ptq_eval", f"${{steps.{quantize_step}.result.output_path}}"),
         ),
     )
 
 
 def _qat_case() -> Issue365PipelineCase:
     train_step = "qat_train"
-    publish_step = "qat_publish_merged"
+    publish_step = "qat_publish_export"
     quantize_step = "qat_quantize"
     return Issue365PipelineCase(
         case_id="qat_quantized_inference",
@@ -461,9 +462,9 @@ def _qat_case() -> Issue365PipelineCase:
                 "command": "lora.publish",
                 "args": {
                     "model_id": "${inputs.model_id}",
-                    "target_repo": "melix/issue365-qat-merged",
+                    "target_repo": "melix/issue365-qat-export",
                     "manifest_path": f"${{steps.{train_step}.result.output_path}}",
-                    "export_kind": "merged",
+                    "export_kind": "adapter",
                     "publish_backend": "local_filesystem",
                     "local_publish_root": "${inputs.local_publish_root}",
                 },
@@ -478,18 +479,37 @@ def _qat_case() -> Issue365PipelineCase:
                     "weight_quant": "q4",
                     "kv_quant": "q8",
                     "quantization_mode": "qat",
-                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_kind": "adapter_export",
                     "source_artifact_path": f"${{steps.{publish_step}.result.output_path}}",
                     "calibration_dataset_uri": "${inputs.calibration_dataset_uri}",
                     "quality_delta": 0,
                     "latency_delta": 0,
                     "qat_fake_quant": "enabled",
+                    "local_inference_smoke_mode": "runtime_generate",
+                    "local_inference_smoke_prompt": "Reply with ISSUE365_OK",
                 },
+                "checks": _quantized_runtime_smoke_checks(),
             },
-            _chat_step("qat_chat", f"${{steps.{quantize_step}.result.output_path}}"),
-            _eval_step("qat_eval", f"${{steps.{quantize_step}.result.output_path}}"),
         ),
     )
+
+
+def _quantized_runtime_smoke_checks() -> dict[str, Any]:
+    return {
+        "required_result_fields": [
+            "job_id",
+            "output_path",
+            "artifact_path",
+            "local_inference_smoke.status",
+            "release_gate.local_inference_smoke_result",
+        ],
+        "equals": {
+            "result.local_inference_smoke.status": "passed",
+            "result.local_inference_smoke.evidence_kind": "local_runtime_generate",
+            "result.local_inference_smoke.smoke_mode": "runtime_generate",
+            "result.release_gate.local_inference_smoke_result": "passed",
+        },
+    }
 
 
 def _chat_step(step_id: str, model_id: str) -> dict[str, Any]:
