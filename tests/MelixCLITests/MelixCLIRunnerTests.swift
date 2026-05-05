@@ -1974,6 +1974,177 @@ struct MelixCLIRunnerTests {
         #expect(secondCall.ext["melix.hf_token"] == "hf_secret_token")
     }
 
+    @Test("dataset list renders managed Hugging Face cache snapshots")
+    func datasetListRendersManagedHuggingFaceCacheSnapshots() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: #"""
+            {
+              "operation": "dataset_snapshot",
+              "dataset_registry": {
+                "datasets": [
+                  {
+                    "repo_id": "Jax-dan/HundredCV-Chat",
+                    "revision": "main",
+                    "snapshot_id": "abc123",
+                    "snapshot_path": "/tmp/hf-cache/datasets--Jax-dan--HundredCV-Chat/snapshots/abc123",
+                    "total_bytes": 9007199254740993
+                  }
+                ],
+                "roots": []
+              }
+            }
+            """#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(.datasetList(.init(json: false)))
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(call.operation == "dataset_snapshot")
+        #expect(output.contains("repo_id\trevision\tsnapshot_id\ttotal_bytes\tsnapshot_path"))
+        #expect(output.contains("Jax-dan/HundredCV-Chat\tmain\tabc123"))
+        #expect(output.contains("\t8192.00 TB\t"))
+
+        let jsonOutput = try await MelixCLIRunner(client: client).run(.datasetList(.init(json: true)))
+        let jsonPayload = try #require(parseJSONObject(jsonOutput))
+        let registry = try #require(jsonPayload["dataset_registry"] as? [String: Any])
+        let datasets = try #require(registry["datasets"] as? [[String: Any]])
+        #expect(datasets.first?["repo_id"] as? String == "Jax-dan/HundredCV-Chat")
+    }
+
+    @Test("dataset list renders empty managed dataset state")
+    func datasetListRendersEmptyManagedDatasetState() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: #"{"operation":"dataset_snapshot","dataset_registry":{"datasets":[],"roots":[]}}"#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(.datasetList(.init(json: false)))
+
+        #expect(output == "No managed datasets found.\n")
+    }
+
+    @Test("dataset list surfaces malformed registry responses")
+    func datasetListSurfacesMalformedRegistryResponses() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(manifestJSON: #"{"datasets":[]}"#))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(.datasetList(.init(json: false)))
+            Issue.record("Expected dataset list to throw for missing dataset_registry")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("dataset_snapshot response did not include a dataset_registry JSON object."))
+        }
+    }
+
+    @Test("dataset hub download forwards dataset repo operation and redacts token from output")
+    func datasetHubDownloadForwardsDatasetRepoOperationAndRedactsTokenFromOutput() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-hf-dataset-token-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/hf-cache/datasets--Jax-dan--HundredCV-Chat/snapshots/abc123",
+            manifestJSON: #"""
+            {
+              "dataset_id": "Jax-dan/HundredCV-Chat@main",
+              "repo_id": "Jax-dan/HundredCV-Chat",
+              "revision": "main",
+              "snapshot_id": "abc123",
+              "snapshot_path": "/tmp/hf-cache/datasets--Jax-dan--HundredCV-Chat/snapshots/abc123",
+              "source_kind": "hf_cache_snapshot"
+            }
+            """#
+        ))
+
+        let runner = MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": temporaryRoot.path]
+        )
+        let output = try await runner.run(
+            .datasetHubDownload(.init(repoID: "Jax-dan/HundredCV-Chat", revision: "main", hfToken: "hf_secret_token", json: true))
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        let payload = try #require(parseJSONObject(output))
+
+        #expect(call.modelID == "Jax-dan/HundredCV-Chat")
+        #expect(call.operation == "dataset_download")
+        #expect(call.ext["melix.source_kind"] == "hf_dataset")
+        #expect(call.ext["melix.hf_dataset_repo_id"] == "Jax-dan/HundredCV-Chat")
+        #expect(call.ext["melix.hf_revision"] == "main")
+        #expect(call.ext["melix.hf_token"] == "hf_secret_token")
+        #expect(payload["repo_id"] as? String == "Jax-dan/HundredCV-Chat")
+        #expect(payload["managed_dataset_path"] as? String == "/tmp/hf-cache/datasets--Jax-dan--HundredCV-Chat/snapshots/abc123")
+        #expect(output.contains("hf_secret_token") == false)
+
+        _ = try await runner.run(
+            .datasetHubDownload(.init(repoID: "Jax-dan/HundredCV-Chat", revision: "main", json: true))
+        )
+        let reusedTokenCall = try #require(await client.lastModelOperationCall)
+        #expect(reusedTokenCall.ext["melix.hf_token"] == "hf_secret_token")
+    }
+
+    @Test("dataset remove forwards safe snapshot selector")
+    func datasetRemoveForwardsSafeSnapshotSelector() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/melix/model-ops/dataset_remove.json",
+            manifestJSON: #"{"operation":"dataset_remove","repo_id":"Jax-dan/HundredCV-Chat","snapshot_id":"abc123"}"#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .datasetRemove(.init(repoID: "Jax-dan/HundredCV-Chat", revision: "main", snapshotID: "abc123", json: false))
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(output == "/tmp/melix/model-ops/dataset_remove.json\n")
+        #expect(call.operation == "dataset_remove")
+        #expect(call.modelID == "Jax-dan/HundredCV-Chat")
+        #expect(call.ext["melix.hf_dataset_repo_id"] == "Jax-dan/HundredCV-Chat")
+        #expect(call.ext["melix.hf_revision"] == "main")
+        #expect(call.ext["melix.hf_snapshot_id"] == "abc123")
+    }
+
+    @Test("dataset remove renders manifest summary when worker output path is empty")
+    func datasetRemoveRendersManifestSummaryWhenWorkerOutputPathIsEmpty() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "",
+            manifestJSON: #"""
+            {
+              "operation": "dataset_remove",
+              "repo_id": "Jax-dan/HundredCV-Chat",
+              "revision": "main",
+              "removed_snapshot_id": "abc123",
+              "removed_snapshot_path": "/tmp/hf-cache/datasets--Jax-dan--HundredCV-Chat/snapshots/abc123"
+            }
+            """#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .datasetRemove(.init(repoID: "Jax-dan/HundredCV-Chat", revision: "main", snapshotID: "abc123", json: false))
+        )
+
+        #expect(output.contains("Removed dataset snapshot Jax-dan/HundredCV-Chat@main (abc123)."))
+        #expect(output.contains("Removed path: /tmp/hf-cache/datasets--Jax-dan--HundredCV-Chat/snapshots/abc123"))
+
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "",
+            manifestJSON: #"{"operation":"dataset_remove","repo_id":"Jax-dan/HundredCV-Chat","revision":"main","snapshot_id":"abc123"}"#
+        ))
+        let summaryWithoutPath = try await MelixCLIRunner(client: client).run(
+            .datasetRemove(.init(repoID: "Jax-dan/HundredCV-Chat", revision: "main", snapshotID: "abc123", json: false))
+        )
+        #expect(summaryWithoutPath == "Removed dataset snapshot Jax-dan/HundredCV-Chat@main (abc123).\n")
+
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "", manifestJSON: "not-json"))
+        let genericSummary = try await MelixCLIRunner(client: client).run(
+            .datasetRemove(.init(repoID: "Jax-dan/HundredCV-Chat", revision: "main", snapshotID: "abc123", json: false))
+        )
+        #expect(genericSummary == "Dataset removal completed.\n")
+    }
+
     @Test("model import forwards a local import operation and renders a managed model receipt")
     func modelImportForwardsALocalImportOperationAndRendersAManagedModelReceipt() async throws {
         let client = StubControlPlaneXPCClient()
@@ -4501,6 +4672,56 @@ struct MelixCLIRunnerTests {
         #expect(commands[2] == ["lora", "list", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", "--json"])
     }
 
+    @Test("subprocess-backed dataset operations build public melix arguments")
+    func subprocessBackedDatasetOperationsBuildPublicCLIArguments() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                #"{"operation":"dataset_snapshot","dataset_registry":{"datasets":[],"roots":[]}}"#,
+                #"{"operation":"dataset_download","repo_id":"org/dataset","revision":"main","snapshot_path":"/tmp/hf-cache/datasets--org--dataset/snapshots/abc123"}"#,
+                #"{"operation":"dataset_remove","repo_id":"org/dataset","revision":"main","snapshot_id":"abc123","removed_snapshot_path":"/tmp/hf-cache/datasets--org--dataset/snapshots/abc123"}"#,
+            ]
+        )
+        let runner = MelixCLIRunner(
+            client: client,
+            commandExecutor: executor.run
+        )
+
+        let snapshotResult = try await runner.performModelOperation(
+            modelID: "melix-datasets",
+            operation: "dataset_snapshot",
+            outputDir: "",
+            ext: [:]
+        )
+        let downloadResult = try await runner.performModelOperation(
+            modelID: "org/dataset",
+            operation: "dataset_download",
+            outputDir: "",
+            ext: [
+                "melix.hf_revision": "main",
+                "melix.hf_token": "hf_secret",
+            ]
+        )
+        let removeResult = try await runner.performModelOperation(
+            modelID: "org/dataset",
+            operation: "dataset_remove",
+            outputDir: "",
+            ext: [
+                "melix.hf_revision": "main",
+                "melix.hf_snapshot_id": "abc123",
+            ]
+        )
+        let commands = await executor.commands
+
+        #expect(await client.lastModelOperationCall == nil)
+        #expect(parseJSONObject(snapshotResult.manifestJson)?["operation"] as? String == "dataset_snapshot")
+        #expect(downloadResult.outputPath == "/tmp/hf-cache/datasets--org--dataset/snapshots/abc123")
+        #expect(parseJSONObject(removeResult.manifestJson)?["operation"] as? String == "dataset_remove")
+        #expect(commands[0] == ["dataset", "list", "--json"])
+        #expect(commands[1] == ["dataset", "hub", "download", "--repo-id", "org/dataset", "--revision", "main", "--hf-token", "hf_secret", "--json"])
+        #expect(commands[2] == ["dataset", "remove", "--repo-id", "org/dataset", "--revision", "main", "--snapshot-id", "abc123", "--json"])
+    }
+
     @Test("subprocess-backed legacy alignment training mode uses alignment train")
     func subprocessBackedLegacyAlignmentTrainingModeUsesAlignmentTrain() async throws {
         let client = StubControlPlaneXPCClient()
@@ -5122,6 +5343,41 @@ struct MelixCLIRunnerTests {
         #expect(payload["report_path"] as? String == "/tmp/melix/bench/job-3/report.md")
         #expect(payload["report_markdown"] as? String == "# Melix Bench\n")
         #expect(metrics["bench.smoke.ttft_ms"] == 24.45)
+    }
+
+    @Test("bench run forwards managed dataset reference parameters")
+    func benchRunForwardsManagedDatasetReferenceParameters() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setBenchResult(
+            .init(
+                reportPath: "/tmp/melix/bench/job-dataset/report.md",
+                reportMarkdown: "# Melix Bench\n",
+                metrics: [:]
+            )
+        )
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .benchRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["latency"],
+                    parameters: [
+                        "dataset_ref": "Jax-dan/HundredCV-Chat@main",
+                        "hf_dataset_path": "Jax-dan/HundredCV-Chat",
+                        "hf_dataset_revision": "main",
+                        "hf_dataset_split": "train",
+                        "prompt_feature": "messages",
+                    ]
+                )
+            )
+        )
+        let benchRequest = try #require(await client.lastBenchRequest)
+
+        #expect(benchRequest.parameters["dataset_ref"] == "Jax-dan/HundredCV-Chat@main")
+        #expect(benchRequest.parameters["hf_dataset_path"] == "Jax-dan/HundredCV-Chat")
+        #expect(benchRequest.parameters["hf_dataset_revision"] == "main")
+        #expect(benchRequest.parameters["hf_dataset_split"] == "train")
+        #expect(benchRequest.parameters["prompt_feature"] == "messages")
     }
 
     @Test("bench run forwards canonical normalized request values")
@@ -5839,6 +6095,48 @@ struct MelixCLIRunnerTests {
         #expect(request.profile.ignoredPaths == ["metadata.trace_id"])
     }
 
+    @Test("eval run forwards managed dataset reference parameters")
+    func evalRunForwardsManagedDatasetReferenceParameters() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-managed-dataset",
+                suiteID: "dolly",
+                datasetID: "managed.dev.v1",
+                metricName: "eval.dolly.exact_match",
+                metricValue: 0.5
+            ),
+        ])
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["dolly"],
+                    source: .huggingFaceDataset(
+                        datasetPath: "IRUCAAI/extract_group_chat_dataset_with_summary",
+                        datasetRevision: "main",
+                        split: "train"
+                    ),
+                    fieldMapping: .init(inputTextPath: "dialogue", targetPath: "summary"),
+                    parameters: [
+                        "dataset_ref": "IRUCAAI/extract_group_chat_dataset_with_summary@main",
+                        "hf_dataset_path": "IRUCAAI/extract_group_chat_dataset_with_summary",
+                        "hf_dataset_revision": "main",
+                    ]
+                )
+            )
+        )
+        let request = try #require((await client.evaluationRequests).first)
+
+        #expect(request.source.kind == .huggingFaceDataset)
+        #expect(request.source.datasetPath == "IRUCAAI/extract_group_chat_dataset_with_summary")
+        #expect(request.source.datasetRevision == "main")
+        #expect(request.parameters["dataset_ref"] == "IRUCAAI/extract_group_chat_dataset_with_summary@main")
+        #expect(request.parameters["hf_dataset_path"] == "IRUCAAI/extract_group_chat_dataset_with_summary")
+        #expect(request.parameters["hf_dataset_revision"] == "main")
+    }
+
     @Test("eval compare preloads base and target models and forwards comparison parameters")
     func evalComparePreloadsBaseAndTargetsAndReturnsJSON() async throws {
         let client = StubControlPlaneXPCClient()
@@ -5951,6 +6249,53 @@ struct MelixCLIRunnerTests {
         #expect(request.profile.scoringMode == "normalized_exact_match")
         #expect(request.profile.threshold == 0.8)
         #expect(request.profile.ignoredPaths == ["metadata.trace_id"])
+    }
+
+    @Test("eval compare forwards managed dataset reference parameters")
+    func evalCompareForwardsManagedDatasetReferenceParameters() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-compare-managed-dataset",
+                suiteID: "dolly",
+                datasetID: "managed.dev.v1",
+                metricName: "eval.compare.win_rate",
+                metricValue: 0.5
+            ),
+        ])
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalCompare(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetModelIDs: ["melix-dev-text-lora"],
+                    suites: ["dolly"],
+                    source: .huggingFaceDataset(
+                        datasetPath: "IRUCAAI/extract_group_chat_dataset_with_summary",
+                        datasetRevision: "main",
+                        split: "train"
+                    ),
+                    fieldMapping: .init(inputTextPath: "dialogue", targetPath: "summary"),
+                    parameters: [
+                        "dataset_ref": "IRUCAAI/extract_group_chat_dataset_with_summary@main",
+                        "hf_dataset_path": "IRUCAAI/extract_group_chat_dataset_with_summary",
+                        "hf_dataset_revision": "main",
+                    ],
+                    json: true
+                )
+            )
+        )
+        let request = try #require((await client.evaluationRequests).first)
+
+        #expect(await client.loadedModelIDs == ["melix-dev-text", "melix-dev-text-lora"])
+        #expect(request.parameters["compare_mode"] == "base_vs_targets")
+        #expect(request.parameters["compare_target_model_ids"] == "melix-dev-text-lora")
+        #expect(request.source.kind == .huggingFaceDataset)
+        #expect(request.source.datasetPath == "IRUCAAI/extract_group_chat_dataset_with_summary")
+        #expect(request.source.datasetRevision == "main")
+        #expect(request.parameters["dataset_ref"] == "IRUCAAI/extract_group_chat_dataset_with_summary@main")
+        #expect(request.parameters["hf_dataset_path"] == "IRUCAAI/extract_group_chat_dataset_with_summary")
+        #expect(request.parameters["hf_dataset_revision"] == "main")
     }
 
     @Test("eval compare rejects requests without target models before dispatch")

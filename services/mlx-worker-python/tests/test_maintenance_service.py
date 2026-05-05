@@ -407,6 +407,106 @@ class FailingHubCatalog:
         raise self.card_error or AssertionError("card_error must be configured")
 
 
+class FakeDatasetCatalog:
+    def __init__(self, *, failure: ModelOperationError | None = None) -> None:
+        self.failure = failure
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def _raise_if_configured(self) -> None:
+        if self.failure is not None:
+            raise self.failure
+
+    def registry_snapshot_payload(self, *, repo_id: str = "", revision: str = "") -> dict[str, object]:
+        self._raise_if_configured()
+        self.calls.append(("registry_snapshot_payload", {"repo_id": repo_id, "revision": revision}))
+        return {
+            "schema_version": "melix.dataset_registry_snapshot.v1",
+            "roots": [],
+            "datasets": [
+                {
+                    "dataset_id": f"{repo_id or 'org/repo'}@{revision or 'main'}",
+                    "repo_id": repo_id or "org/repo",
+                    "revision": revision or "main",
+                    "snapshot_id": "abc123",
+                    "snapshot_path": "/tmp/hf-cache/datasets--org--repo/snapshots/abc123",
+                    "total_bytes": 123,
+                }
+            ],
+        }
+
+    def download_hf_dataset(
+        self,
+        *,
+        repo_id: str,
+        revision: str = "main",
+        hf_token: str = "",
+        job_id: str = "",
+        output_dir: Path | None = None,
+    ) -> SimpleNamespace:
+        self._raise_if_configured()
+        self.calls.append(
+            (
+                "download_hf_dataset",
+                {
+                    "repo_id": repo_id,
+                    "revision": revision,
+                    "hf_token": hf_token,
+                    "job_id": job_id,
+                    "output_dir": output_dir,
+                },
+            )
+        )
+        snapshot_path = Path(output_dir or "/tmp") / "snapshots" / "abc123"
+        snapshot = SimpleNamespace(snapshot_path=snapshot_path)
+        return SimpleNamespace(
+            snapshot=snapshot,
+            manifest={
+                "schema_version": "melix.dataset_operation.v1",
+                "operation": "dataset_download",
+                "repo_id": repo_id,
+                "revision": revision,
+                "snapshot_id": "abc123",
+                "snapshot_path": str(snapshot_path),
+                "job_id": job_id,
+            },
+        )
+
+    def remove_hf_dataset_snapshot(
+        self,
+        *,
+        repo_id: str,
+        revision: str = "",
+        snapshot_id: str = "",
+        job_id: str = "",
+        output_dir: Path | None = None,
+    ) -> SimpleNamespace:
+        self._raise_if_configured()
+        self.calls.append(
+            (
+                "remove_hf_dataset_snapshot",
+                {
+                    "repo_id": repo_id,
+                    "revision": revision,
+                    "snapshot_id": snapshot_id,
+                    "job_id": job_id,
+                    "output_dir": output_dir,
+                },
+            )
+        )
+        return SimpleNamespace(
+            removed_snapshot=SimpleNamespace(snapshot_id=snapshot_id),
+            manifest={
+                "schema_version": "melix.dataset_operation.v1",
+                "operation": "dataset_remove",
+                "repo_id": repo_id,
+                "revision": revision or "main",
+                "snapshot_id": snapshot_id,
+                "removed_snapshot_id": snapshot_id,
+                "job_id": job_id,
+            },
+        )
+
+
 def _write_training_dataset_package(tmp_path: Path, *, dataset_id: str = "melix-dev") -> Path:
     dataset_dir = tmp_path / "dataset"
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -545,6 +645,7 @@ def build_service(
     registry: WorkerRegistry | None = None,
     benchmark_fetcher: FakeBenchmarkHFDatasetFetcher | None = None,
     publish_backend: FakePublishBackend | None = None,
+    dataset_catalog: FakeDatasetCatalog | None = None,
 ) -> WorkerMaintenanceService:
     registry = registry or WorkerRegistry(
         runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
@@ -567,6 +668,7 @@ def build_service(
         benchmark_suite_catalog=BenchmarkSuiteCatalog(
             hf_dataset_fetcher=benchmark_fetcher or FakeBenchmarkHFDatasetFetcher()
         ),
+        dataset_catalog=dataset_catalog,
     )
     service._fake_publish_backend = publish_backend
     return service
@@ -776,6 +878,112 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
     assert upload_payload["upload_backend"] == "huggingface_hub"
     assert upload_payload["published_url"] == "https://huggingface.co/melix/upload-target"
     assert upload_manifest.artifact.artifact_kind == "upload_receipt"
+
+
+def test_convert_model_dispatches_dataset_operations_through_injected_catalog(tmp_path: Path) -> None:
+    dataset_catalog = FakeDatasetCatalog()
+    service = build_service(tmp_path, dataset_catalog=dataset_catalog)
+
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-datasets",
+                output_dir=str(tmp_path / "dataset-snapshot"),
+                generate_manifest=True,
+                ext={
+                    "operation": "dataset_snapshot",
+                    "melix.hf_dataset_repo_id": "org/repo",
+                    "melix.hf_revision": "main",
+                },
+            ),
+            context=None,
+        )
+    )
+    download_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="org/repo",
+                output_dir=str(tmp_path / "dataset-download"),
+                generate_manifest=True,
+                ext={
+                    "operation": "dataset_download",
+                    "melix.hf_dataset_repo_id": "org/repo",
+                    "melix.hf_revision": "feature",
+                    "melix.hf_token": "hf_secret",
+                },
+            ),
+            context=None,
+        )
+    )
+    remove_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="org/repo",
+                output_dir=str(tmp_path / "dataset-remove"),
+                generate_manifest=True,
+                ext={
+                    "operation": "dataset_remove",
+                    "melix.hf_dataset_repo_id": "org/repo",
+                    "melix.hf_revision": "feature",
+                    "melix.hf_snapshot_id": "abc123",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    snapshot_payload = json.loads(
+        next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
+    )
+    download_payload = json.loads(
+        next(event.manifest for event in download_events if event.HasField("manifest")).manifest_json
+    )
+    remove_payload = json.loads(
+        next(event.manifest for event in remove_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert snapshot_events[0].HasField("started")
+    assert snapshot_events[-1].HasField("completed")
+    assert snapshot_payload["dataset_registry"]["datasets"][0]["repo_id"] == "org/repo"
+    assert download_events[-1].completed.output_path.endswith("snapshots/abc123")
+    assert download_payload["operation"] == "dataset_download"
+    assert remove_events[-1].completed.output_path.endswith("dataset_remove.json")
+    assert remove_payload["operation"] == "dataset_remove"
+    assert [name for name, _payload in dataset_catalog.calls] == [
+        "registry_snapshot_payload",
+        "download_hf_dataset",
+        "remove_hf_dataset_snapshot",
+    ]
+    assert dataset_catalog.calls[1][1]["hf_token"] == "hf_secret"
+
+
+def test_convert_model_dataset_operation_surfaces_catalog_errors(tmp_path: Path) -> None:
+    dataset_catalog = FakeDatasetCatalog(
+        failure=ModelOperationError(
+            code="not_found",
+            message="No matching managed dataset snapshot was found.",
+        )
+    )
+    service = build_service(tmp_path, dataset_catalog=dataset_catalog)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="org/missing",
+                ext={
+                    "operation": "dataset_remove",
+                    "melix.hf_dataset_repo_id": "org/missing",
+                    "melix.hf_snapshot_id": "missing",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[0].HasField("started")
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "not_found"
+    assert events[-1].failed.error.message == "No matching managed dataset snapshot was found."
 
 
 def test_upload_job_writes_receipt_once_after_in_memory_byte_convergence(

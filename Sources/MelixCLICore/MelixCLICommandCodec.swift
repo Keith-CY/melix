@@ -30,6 +30,12 @@ public enum MelixCLICommandCodec {
             return "model.hub.show"
         case .modelHubDownload:
             return "model.hub.download"
+        case .datasetList:
+            return "dataset.list"
+        case .datasetHubDownload:
+            return "dataset.hub.download"
+        case .datasetRemove:
+            return "dataset.remove"
         case .modelRootsList:
             return "model.roots.list"
         case .modelRootsAdd:
@@ -210,6 +216,21 @@ public enum MelixCLICommandCodec {
             appendOption("--repo-id", value: options.repoID, into: &arguments)
             appendOption("--revision", value: options.revision, into: &arguments)
             appendOption("--hf-token", value: options.hfToken, into: &arguments)
+            json = options.json
+        case .datasetList(let options):
+            arguments = ["dataset", "list"]
+            json = options.json
+        case .datasetHubDownload(let options):
+            arguments = ["dataset", "hub", "download"]
+            appendOption("--repo-id", value: options.repoID, into: &arguments)
+            appendOption("--revision", value: options.revision, into: &arguments)
+            appendOption("--hf-token", value: options.hfToken, into: &arguments)
+            json = options.json
+        case .datasetRemove(let options):
+            arguments = ["dataset", "remove"]
+            appendOption("--repo-id", value: options.repoID, into: &arguments)
+            appendOption("--revision", value: options.revision, into: &arguments)
+            appendOption("--snapshot-id", value: options.snapshotID, into: &arguments)
             json = options.json
         case .modelRootsRescan(let options):
             arguments = ["model", "roots", "rescan"]
@@ -402,6 +423,14 @@ public enum MelixCLICommandCodec {
             appendOption("--structured-output-mode", value: options.structuredOutputMode, into: &arguments)
             appendOption("--sample-size", value: options.parameters["sample_size"], into: &arguments)
             appendOption("--batch-factor", value: options.parameters["batch_factor"], into: &arguments)
+            appendOption("--dataset-ref", value: options.parameters["dataset_ref"], into: &arguments)
+            appendOption("--hf-dataset-name", value: options.parameters["hf_dataset_name"], into: &arguments)
+            appendOption("--hf-dataset-split", value: options.parameters["hf_dataset_split"], into: &arguments)
+            appendOption("--prompt-feature", value: options.parameters["prompt_feature"], into: &arguments)
+            appendOption("--text-feature", value: options.parameters["text_feature"], into: &arguments)
+            appendOption("--image-feature", value: options.parameters["image_feature"], into: &arguments)
+            appendOption("--source-image-feature", value: options.parameters["source_image_feature"], into: &arguments)
+            appendOption("--mask-feature", value: options.parameters["mask_feature"], into: &arguments)
             json = options.json
         case .benchMatrixRun(let options):
             arguments = ["bench", "matrix", "run"]
