@@ -90,7 +90,8 @@ Success metrics:
   calibration artifacts.
 - Changed-line coverage for the touched Swift/doc scope is at least 95 percent.
 - Changed-line coverage for the touched Python scope is at least 95 percent.
-- Real local LoRA subset evidence proves the fixed chain can complete:
+- Real local LoRA and QLoRA subset evidence proves the fixed chain can
+  complete:
   training, local publish receipt, direct adapter activation, chat smoke, and
   eval smoke.
 
@@ -179,6 +180,15 @@ normalization, direct adapter activation, and the MLX stop-kwarg fix:
 - `python3 scripts/issue365_acceptance_bundle.py --execution-mode dry-run --melix-cli .build/arm64-apple-macosx/debug/melix --output-dir .runtime/issue365/acceptance-dry-run-final --timestamp 2026-05-06T140000Z --json`:
   wrote a dry-run bundle with 10 succeeded cases, 0 failed cases, 0 blocked
   cases, and `release_ready=false`.
+- `MELIX_SERVICE_INSTANCE_NAME=issue365-real-qlora MELIX_HTTP_PORT=12466 MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real-qlora" MELIX_HOME="$PWD/.runtime/home-issue365-real-qlora" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-qlora-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-qlora-swift.sock" bash scripts/dev_up.sh --prefer-built`:
+  started a named real local runtime stack for the QLoRA subset.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-real-qlora" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-qlora-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-qlora-swift.sock" MELIX_HTTP_PORT=12466 python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id qlora_export_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --output-dir .runtime/issue365/real-qlora-probe --timestamp 2026-05-06T143000Z --json`:
+  selected real QLoRA case passed with `release_ready=true`; evidence bundle
+  written to `.runtime/issue365/real-qlora-probe/bundle.json`.
+- The selected real local QLoRA chain proved:
+  `lora.train -> lora.publish(local_filesystem) -> lora.activate -> chat.run -> eval.run`.
+- `MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-real-qlora" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-real-qlora-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-real-qlora-swift.sock" bash scripts/dev_down.sh`:
+  stopped the named real local QLoRA runtime stack.
 - `git diff --check`: passed.
 
 Results on 2026-05-05 after adding the acceptance bundle harness:
@@ -209,12 +219,12 @@ Results on 2026-05-05 after adding the acceptance bundle harness:
 - QAT training and QAT-aware quantized export.
 - Full CLI chain tests backed by real local runtime evidence for every listed
   business line.
-- Real local runtime evidence for `lora_export_inference` now exists, but the
-  remaining nine CLI chains still require real local runtime evidence:
-  `qlora_export_inference`, `dora_export_inference`,
-  `lora_dpo_export_inference`, `lora_orpo_export_inference`,
-  `lora_cpo_export_inference`, `lora_grpo_export_inference`,
-  `lora_rlhf_export_inference`,
+- Real local runtime evidence for `lora_export_inference` and
+  `qlora_export_inference` now exists, but the remaining eight CLI chains still
+  require real local runtime evidence:
+  `dora_export_inference`, `lora_dpo_export_inference`,
+  `lora_orpo_export_inference`, `lora_cpo_export_inference`,
+  `lora_grpo_export_inference`, `lora_rlhf_export_inference`,
   `lora_preference_ptq_quantized_inference`, and
   `qat_quantized_inference`.
 - Window UI runnable/inspectable acceptance for every listed business line.
