@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import heapq
 import json
 import logging
 import os
@@ -1152,11 +1153,11 @@ class EvaluationCore:
                     provider_usage_totals[key] = provider_usage_totals.get(key, 0) + int(value)
 
         slowest_dialogues = []
-        for trace in sorted(
+        for trace in heapq.nlargest(
+            5,
             traces,
             key=lambda item: float(item.get("total_duration_ms") or 0.0),
-            reverse=True,
-        )[:5]:
+        ):
             slowest_dialogues.append(
                 {
                     "dialogue_id": trace.get("dialogue_id", ""),

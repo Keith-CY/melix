@@ -1887,6 +1887,40 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
     assert prompt_snapshot["system_prompt"] == "Extract only events from this dialogue."
 
 
+def test_event_extraction_dialogue_diagnostics_uses_top_k_for_slowest_dialogues(monkeypatch) -> None:
+    calls: list[tuple[int, int]] = []
+    original_nlargest = evaluation_core.heapq.nlargest
+
+    def counting_nlargest(count, iterable, *, key=None):
+        items = list(iterable)
+        calls.append((count, len(items)))
+        return original_nlargest(count, items, key=key)
+
+    monkeypatch.setattr(evaluation_core.heapq, "nlargest", counting_nlargest)
+    traces = [
+        {
+            "dialogue_id": f"dlg-{index}",
+            "line_number": index,
+            "status": "ok",
+            "request_duration_ms": float(index),
+            "total_duration_ms": float(index),
+            "raw_response_chars": 10 + index,
+        }
+        for index in range(12)
+    ]
+
+    diagnostics = EvaluationCore._event_extraction_dialogue_diagnostics(traces)
+
+    assert calls == [(5, 12)]
+    assert diagnostics["slowest_dialogues"] == [
+        {"dialogue_id": "dlg-11", "line_number": 11, "duration_ms": 11.0, "status": "ok"},
+        {"dialogue_id": "dlg-10", "line_number": 10, "duration_ms": 10.0, "status": "ok"},
+        {"dialogue_id": "dlg-9", "line_number": 9, "duration_ms": 9.0, "status": "ok"},
+        {"dialogue_id": "dlg-8", "line_number": 8, "duration_ms": 8.0, "status": "ok"},
+        {"dialogue_id": "dlg-7", "line_number": 7, "duration_ms": 7.0, "status": "ok"},
+    ]
+
+
 def test_evaluation_core_writes_semantic_judge_artifacts_without_persisting_judge_secret(
     tmp_path: Path,
     monkeypatch,
