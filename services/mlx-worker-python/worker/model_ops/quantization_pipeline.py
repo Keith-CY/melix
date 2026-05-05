@@ -116,6 +116,13 @@ class OQQuantizationPipeline:
             profile,
             source_model=request.source_model,
         )
+        qat_metadata = _qat_metadata_for_request(
+            request,
+            quantization_mode=quantization_mode,
+            source_artifact_kind=source_artifact_kind,
+            source_artifact_path=source_artifact_path,
+            calibration_evidence=calibration_evidence,
+        )
 
         bundle_path = (output_dir / job_id / "quantize.artifact").resolve()
         if quantization_backend == _MLX_LM_CONVERT_QUANTIZATION_BACKEND:
@@ -135,6 +142,8 @@ class OQQuantizationPipeline:
                     "source_model": request.source_model,
                     "quant_profile_id": profile.quant_profile_id,
                     "quant_algorithm": profile.algorithm,
+                    "quantization_mode": quantization_mode,
+                    "source_artifact_kind": source_artifact_kind,
                 },
                 bundle_path / "tokenizer.json": {
                     "tokenizer_hash": source_model.tokenizer_hash,
@@ -155,6 +164,9 @@ class OQQuantizationPipeline:
                         "weight_quant": profile.weight_quant,
                         "kv_quant": profile.kv_quant,
                         "calibration": calibration.to_dict(),
+                        "quantization_mode": quantization_mode,
+                        "source_artifact_kind": source_artifact_kind,
+                        "qat": qat_metadata or {},
                     },
                     sort_keys=True,
                 ).encode("utf-8"),
@@ -196,6 +208,7 @@ class OQQuantizationPipeline:
             source_artifact_kind=source_artifact_kind,
             source_artifact_path=source_artifact_path,
             quantization_backend=quantization_backend,
+            qat_metadata=qat_metadata,
             calibration_evidence=calibration_evidence,
             bundle_path=bundle_path,
             manifest_path=manifest_path,
@@ -456,6 +469,7 @@ class OQQuantizationPipeline:
         source_artifact_kind: str,
         source_artifact_path: str,
         quantization_backend: str,
+        qat_metadata: dict[str, Any] | None,
         calibration_evidence: dict[str, Any],
         bundle_path: Path,
         manifest_path: Path,
@@ -518,10 +532,8 @@ class OQQuantizationPipeline:
             payload["compensation"] = compensation
         if calibration_evidence:
             payload["calibration_dataset"] = calibration_evidence
-        if quantization_mode == "qat":
-            payload["qat"] = {
-                "fake_quant": request.ext.get("qat_fake_quant", "").strip() or "recorded",
-            }
+        if qat_metadata is not None:
+            payload["qat"] = qat_metadata
         return payload
 
     @staticmethod
@@ -708,6 +720,16 @@ def _validate_quantization_source(
                 "quantization_mode": quantization_mode,
                 "source_artifact_kind": source_artifact_kind,
                 "supported_source_artifact_kinds": "merged_adapter,adapter_export",
+            },
+        )
+    if quantization_mode == "qat" and not Path(source_artifact_path).expanduser().exists():
+        raise ModelOperationError(
+            code="missing_source_artifact_path",
+            message="QAT quantization requires an existing adapter-derived source artifact.",
+            details={
+                "quantization_mode": quantization_mode,
+                "source_artifact_kind": source_artifact_kind,
+                "source_artifact_path": source_artifact_path,
             },
         )
 
@@ -923,6 +945,54 @@ def _calibration_evidence_for_request(
         "manifest_path": str(manifest_path),
         "package_path": str(package_path),
     }
+
+
+def _qat_metadata_for_request(
+    request: maintenance_pb2.ConvertModelRequest,
+    *,
+    quantization_mode: str,
+    source_artifact_kind: str,
+    source_artifact_path: str,
+    calibration_evidence: dict[str, Any],
+) -> dict[str, Any] | None:
+    if quantization_mode != "qat":
+        return None
+    metadata: dict[str, Any] = {
+        "stage": request.ext.get("qat_stage", "").strip() or "qat_aware_export",
+        "fake_quant": request.ext.get("qat_fake_quant", "").strip() or "recorded",
+        "source_artifact_kind": source_artifact_kind,
+        "source_artifact_path": source_artifact_path,
+        "calibration_dataset_uri": calibration_evidence.get("dataset_uri", ""),
+        "calibration_sample_count": calibration_evidence.get("sample_count", 0),
+    }
+    training_manifest_path = request.ext.get("qat_training_manifest_path", "").strip()
+    if not training_manifest_path:
+        return metadata
+    manifest_path = Path(training_manifest_path).expanduser().resolve()
+    if not manifest_path.is_file():
+        raise ModelOperationError(
+            code="invalid_qat_training_manifest",
+            message="qat_training_manifest_path must point to a readable manifest.",
+            details={"qat_training_manifest_path": training_manifest_path},
+        )
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ModelOperationError(
+            code="invalid_qat_training_manifest",
+            message="qat_training_manifest_path must point to readable JSON.",
+            details={"qat_training_manifest_path": training_manifest_path},
+        ) from exc
+    if not isinstance(payload, dict) or not str(payload.get("schema_version", "")).strip():
+        raise ModelOperationError(
+            code="invalid_qat_training_manifest",
+            message="QAT training manifest must include schema_version.",
+            details={"qat_training_manifest_path": training_manifest_path},
+        )
+    metadata["training_manifest_path"] = str(manifest_path)
+    metadata["training_manifest_schema_version"] = str(payload["schema_version"])
+    metadata["training_job_id"] = str(payload.get("job_id", ""))
+    return metadata
 
 
 def _release_gate_for_request(

@@ -10,7 +10,10 @@ recorded lineage, release-gate, QAT-mode, and runtime-smoke evidence, but the
 default fast path still writes deterministic structural bundle files. This
 slice adds a separate backend that can invoke `mlx_lm.convert(..., quantize=True)`
 for local source artifacts while preserving the existing deterministic backend
-for fast tests and unsupported environments.
+for fast tests and unsupported environments. It also tightens the QAT-aware
+export evidence block so QAT requests preserve adapter-derived source lineage,
+fake-quant settings, optional QAT training-manifest lineage, and calibration
+lineage.
 
 ## Scope
 
@@ -27,6 +30,9 @@ for fast tests and unsupported environments.
   `melix.quantized_bundle.v1`.
 - Run structural and runtime-generate smoke preflight against the file layout
   emitted by the selected backend.
+- Require QAT source artifacts to exist before writing an output bundle.
+- Record QAT-aware export metadata in both the quantized bundle manifest and
+  the manifest-only weights payload.
 
 ### Excluded
 
@@ -62,10 +68,10 @@ git diff --check
 
 Results on 2026-05-05:
 
-- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py`: 50 passed.
-- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py`: 50 passed.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py`: 52 passed.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py`: 52 passed.
 - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python coverage json -o /tmp/issue365-mlx-quantization-coverage.json`: wrote JSON report.
-- `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-mlx-quantization-coverage.json --diff-from origin/main services/mlx-worker-python/worker/model_ops/quantization_pipeline.py services/mlx-worker-python/tests/test_quantization_pipeline.py docs/plans/2026-05-05-issue-365-mlx-quantization-convert.md`: 100.00% total changed-line coverage (228/228).
+- `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-mlx-quantization-coverage.json --diff-from origin/main services/mlx-worker-python/worker/model_ops/quantization_pipeline.py services/mlx-worker-python/tests/test_quantization_pipeline.py docs/plans/2026-05-05-issue-365-mlx-quantization-convert.md`: 98.55% total changed-line coverage (271/275).
 - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python python -m compileall -q services/mlx-worker-python/worker/model_ops/quantization_pipeline.py services/mlx-worker-python/tests/test_quantization_pipeline.py`: passed.
 - `git diff --check`: passed.
 
@@ -73,7 +79,7 @@ Results on 2026-05-05:
 
 - Real GRPO candidate generation and reward-guided policy update integration.
 - RLHF reward-model-backed policy optimization from issue 366.
-- Real QAT training and QAT-aware export.
+- Real QAT training.
 - Full CLI chain tests with real local runtime evidence for every business
   line.
 - Window UI runnable and inspectable acceptance for every business line.

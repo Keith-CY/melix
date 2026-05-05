@@ -985,6 +985,17 @@ def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp
     service = build_service(tmp_path)
     source_artifact_path = tmp_path / "merged-adapter"
     source_artifact_path.mkdir()
+    qat_training_manifest_path = tmp_path / "qat-training.json"
+    qat_training_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.qat_training_run.v1",
+                "job_id": "qat-train-1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     events = list(
         service.ConvertModel(
@@ -1003,6 +1014,7 @@ def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp
                     "quality_delta": "-0.0125",
                     "latency_delta": "-0.2",
                     "qat_fake_quant": "enabled",
+                    "qat_training_manifest_path": str(qat_training_manifest_path),
                 },
             ),
             context=None,
@@ -1019,7 +1031,22 @@ def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp
         "latency_delta": -0.2,
         "local_inference_smoke_result": "passed",
     }
-    assert manifest_payload["qat"] == {"fake_quant": "enabled"}
+    assert manifest_payload["qat"] == {
+        "stage": "qat_aware_export",
+        "fake_quant": "enabled",
+        "source_artifact_kind": "merged_adapter",
+        "source_artifact_path": str(source_artifact_path),
+        "calibration_dataset_uri": "",
+        "calibration_sample_count": 0,
+        "training_manifest_path": str(qat_training_manifest_path.resolve()),
+        "training_manifest_schema_version": "melix.qat_training_run.v1",
+        "training_job_id": "qat-train-1",
+    }
+    weights_payload = json.loads(
+        (Path(manifest_payload["artifact_path"]) / "weights.safetensors").read_text(encoding="utf-8")
+    )
+    assert weights_payload["quantization_mode"] == "qat"
+    assert weights_payload["qat"]["training_job_id"] == "qat-train-1"
 
 
 def test_quantize_job_rejects_qat_for_base_model_sources(tmp_path: Path) -> None:
@@ -1046,6 +1073,65 @@ def test_quantize_job_rejects_qat_for_base_model_sources(tmp_path: Path) -> None
     assert events[-1].failed.error.code == "unsupported_quantization_mode"
     assert events[-1].failed.error.details["quantization_mode"] == "qat"
     assert events[-1].failed.error.details["source_artifact_kind"] == "base_model"
+
+
+def test_quantize_job_rejects_qat_with_missing_source_artifact(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "missing-merged-adapter"
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_mode": "qat",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "missing_source_artifact_path"
+    assert events[-1].failed.error.details["quantization_mode"] == "qat"
+    assert events[-1].failed.error.details["source_artifact_path"] == str(source_artifact_path)
+
+
+def test_quantize_job_rejects_qat_with_invalid_training_manifest(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_artifact_path = tmp_path / "merged-adapter"
+    source_artifact_path.mkdir()
+    qat_training_manifest_path = tmp_path / "qat-training.json"
+    qat_training_manifest_path.write_text(json.dumps({"job_id": "missing-schema"}) + "\n", encoding="utf-8")
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "quantization_mode": "qat",
+                    "source_artifact_kind": "merged_adapter",
+                    "source_artifact_path": str(source_artifact_path),
+                    "qat_training_manifest_path": str(qat_training_manifest_path),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "invalid_qat_training_manifest"
+    assert events[-1].failed.error.details["qat_training_manifest_path"] == str(qat_training_manifest_path)
 
 
 def test_quantize_job_rejects_unknown_quantization_mode(tmp_path: Path) -> None:
