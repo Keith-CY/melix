@@ -567,7 +567,7 @@ def test_deterministic_image_edit_digest_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 5.0
     assert metrics["image_count"] == 8.0
-    assert metrics["digest_calls_mean"] == 4.0
+    assert metrics["digest_calls_mean"] == 2.0
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["payload_checksum"] > 0
 

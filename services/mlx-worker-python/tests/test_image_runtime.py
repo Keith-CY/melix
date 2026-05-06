@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from threading import Event
 
@@ -179,6 +180,8 @@ def test_image_edit_persists_lineage_and_generated_artifact(tmp_path: Path) -> N
     assert generated_artifact.role == common_pb2.IMAGE_ARTIFACT_GENERATED
     assert Path(source_artifact.storage_uri).read_bytes() == b"SOURCE_IMAGE"
     assert Path(mask_artifact.storage_uri).read_bytes() == b"MASK_IMAGE"
+    assert source_artifact.sha256 == hashlib.sha256(b"SOURCE_IMAGE").hexdigest()
+    assert mask_artifact.sha256 == hashlib.sha256(b"MASK_IMAGE").hexdigest()
     assert Path(generated_artifact.storage_uri).read_bytes() == response.images[0]
 
 
@@ -189,20 +192,19 @@ def test_image_edit_reuses_input_digests_across_variants(tmp_path: Path, monkeyp
     mask_path = tmp_path / "edit-mask.png"
     source_path.write_bytes(b"SOURCE_IMAGE")
     mask_path.write_bytes(b"MASK_IMAGE")
-    digest_payloads: list[bytes] = []
+    input_sha256_payloads: list[bytes] = []
 
-    def record_digest(payload: bytes) -> str:
-        digest_payloads.append(payload)
-        if payload == b"SOURCE_IMAGE":
-            return "source-once"
-        if payload == b"MASK_IMAGE":
-            return "mask-once"
-        return "unexpected"
+    def record_input_sha256(payload: bytes) -> str:
+        input_sha256_payloads.append(payload)
+        return {
+            b"SOURCE_IMAGE": "source-once-full-digest",
+            b"MASK_IMAGE": "mask-once-full-digest",
+        }[payload]
 
     monkeypatch.setattr(
         DeterministicImageGenerationRuntime,
-        "_edit_input_digest",
-        staticmethod(record_digest),
+        "_edit_input_sha256",
+        staticmethod(record_input_sha256),
     )
 
     response = inference_service.ImageEdit(
@@ -221,10 +223,22 @@ def test_image_edit_reuses_input_digests_across_variants(tmp_path: Path, monkeyp
 
     assert response.error.code == ""
     assert len(response.images) == 4
-    assert digest_payloads == [b"SOURCE_IMAGE", b"MASK_IMAGE"]
+    source_artifact, mask_artifact, *_ = response.job.artifacts
+    assert input_sha256_payloads == [b"SOURCE_IMAGE", b"MASK_IMAGE"]
+    assert source_artifact.sha256 == "source-once-full-digest"
+    assert mask_artifact.sha256 == "mask-once-full-digest"
     for payload in response.images:
-        assert b"SOURCE_SHA=source-once" in payload
-        assert b"MASK_SHA=mask-once" in payload
+        assert b"SOURCE_SHA=source-once-" in payload
+        assert b"MASK_SHA=mask-once-fu" in payload
+
+
+def test_image_edit_digest_helper_preserves_short_sha256_prefix() -> None:
+    payload = b"SOURCE_IMAGE"
+    full_digest = hashlib.sha256(payload).hexdigest()
+
+    assert DeterministicImageGenerationRuntime._edit_input_sha256(payload) == full_digest
+    assert DeterministicImageGenerationRuntime._edit_input_digest(payload) == full_digest[:12]
+    assert DeterministicImageGenerationRuntime._edit_input_digest_from_sha256(full_digest) == full_digest[:12]
 
 
 def test_image_iterate_and_variation_preserve_lineage_metadata(tmp_path: Path) -> None:

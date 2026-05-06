@@ -152,8 +152,10 @@ class DeterministicImageGenerationRuntime:
             label="image edit mask",
         )
 
-        source_digest = self._edit_input_digest(source_bytes)
-        mask_digest = self._edit_input_digest(mask_bytes) if mask_bytes is not None else "none"
+        source_sha256 = self._edit_input_sha256(source_bytes)
+        mask_sha256 = self._edit_input_sha256(mask_bytes) if mask_bytes is not None else ""
+        source_digest = self._edit_input_digest_from_sha256(source_sha256)
+        mask_digest = self._edit_input_digest_from_sha256(mask_sha256) if mask_bytes is not None else "none"
 
         artifacts: list[common_pb2.ImageArtifactMetadata] = []
         artifact_publish_ms = 0.0
@@ -174,6 +176,7 @@ class DeterministicImageGenerationRuntime:
                 width=width,
                 height=height,
                 payload=source_bytes,
+                payload_sha256=source_sha256,
                 storage_path=source_path,
                 variant_index=0,
                 parent_artifact_id=request.source_artifact_id,
@@ -194,6 +197,7 @@ class DeterministicImageGenerationRuntime:
                     width=width,
                     height=height,
                     payload=mask_bytes,
+                    payload_sha256=mask_sha256,
                     storage_path=mask_path,
                     variant_index=0,
                     parent_artifact_id=request.source_artifact_id,
@@ -321,12 +325,13 @@ class DeterministicImageGenerationRuntime:
         width: int,
         height: int,
         payload: bytes,
+        payload_sha256: str | None = None,
         storage_path: Path,
         variant_index: int,
         parent_artifact_id: str = "",
         ext: dict[str, str] | None = None,
     ) -> common_pb2.ImageArtifactMetadata:
-        digest = hashlib.sha256(payload).hexdigest()
+        digest = payload_sha256 or hashlib.sha256(payload).hexdigest()
         return common_pb2.ImageArtifactMetadata(
             artifact_id=artifact_id,
             job_id=job_id,
@@ -414,7 +419,17 @@ class DeterministicImageGenerationRuntime:
 
     @staticmethod
     def _edit_input_digest(payload: bytes) -> str:
-        return hashlib.sha256(payload).hexdigest()[:12]
+        return DeterministicImageGenerationRuntime._edit_input_digest_from_sha256(
+            DeterministicImageGenerationRuntime._edit_input_sha256(payload)
+        )
+
+    @staticmethod
+    def _edit_input_sha256(payload: bytes) -> str:
+        return hashlib.sha256(payload).hexdigest()
+
+    @staticmethod
+    def _edit_input_digest_from_sha256(sha256_digest: str) -> str:
+        return sha256_digest[:12]
 
     @staticmethod
     def _render_edit_payload(
