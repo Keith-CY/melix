@@ -2,6 +2,17 @@ import Foundation
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
+enum MelixQuantizationAllowedValues {
+    static let quantizationModes = ["ptq", "qat"]
+    static let sourceArtifactKinds = ["base_model", "merged_adapter", "adapter_export"]
+    static let quantizationBackends = ["manifest_only", "mlx_lm_convert"]
+    static let mlxLMQModes = ["affine", "mxfp4", "nvfp4", "mxfp8"]
+
+    static func renderedList(_ values: [String]) -> String {
+        values.joined(separator: ", ")
+    }
+}
+
 public struct LoraListOptions: Equatable, Sendable {
     public let modelID: String
     public let json: Bool
@@ -179,6 +190,8 @@ public struct LoraPublishOptions: Equatable, Sendable {
     public let exportKind: LoraPublishExportKind?
     public let artifactPath: String
     public let artifactManifestPath: String
+    public let publishBackend: String
+    public let localPublishRoot: String
     public let json: Bool
 
     public init(
@@ -187,6 +200,8 @@ public struct LoraPublishOptions: Equatable, Sendable {
         exportKind: LoraPublishExportKind?,
         artifactPath: String,
         artifactManifestPath: String = "",
+        publishBackend: String = "",
+        localPublishRoot: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -194,6 +209,8 @@ public struct LoraPublishOptions: Equatable, Sendable {
         self.exportKind = exportKind
         self.artifactPath = artifactPath
         self.artifactManifestPath = artifactManifestPath
+        self.publishBackend = publishBackend
+        self.localPublishRoot = localPublishRoot
         self.json = json
     }
 }
@@ -861,11 +878,19 @@ public struct QuantizeOptions: Equatable, Sendable {
     public let quantizationMode: String
     public let sourceArtifactKind: String
     public let sourceArtifactPath: String
+    public let quantizationBackend: String
+    public let mlxLMQBits: String
+    public let mlxLMQGroupSize: String
+    public let mlxLMQMode: String
     public let calibrationDatasetURI: String
     public let qualityDelta: String
     public let latencyDelta: String
+    public let localInferenceSmokeMode: String
+    public let localInferenceSmokePrompt: String
     public let json: Bool
 
+    // The parser and pipeline runner pass optional enum-like fields already
+    // trimmed and lowercased; this initializer preserves direct caller input.
     public init(
         modelID: String,
         outputDir: String = "",
@@ -875,9 +900,15 @@ public struct QuantizeOptions: Equatable, Sendable {
         quantizationMode: String = "",
         sourceArtifactKind: String = "",
         sourceArtifactPath: String = "",
+        quantizationBackend: String = "",
+        mlxLMQBits: String = "",
+        mlxLMQGroupSize: String = "",
+        mlxLMQMode: String = "",
         calibrationDatasetURI: String = "",
         qualityDelta: String = "",
         latencyDelta: String = "",
+        localInferenceSmokeMode: String = "",
+        localInferenceSmokePrompt: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -888,9 +919,15 @@ public struct QuantizeOptions: Equatable, Sendable {
         self.quantizationMode = quantizationMode
         self.sourceArtifactKind = sourceArtifactKind
         self.sourceArtifactPath = sourceArtifactPath
+        self.quantizationBackend = quantizationBackend
+        self.mlxLMQBits = mlxLMQBits
+        self.mlxLMQGroupSize = mlxLMQGroupSize
+        self.mlxLMQMode = mlxLMQMode
         self.calibrationDatasetURI = calibrationDatasetURI
         self.qualityDelta = qualityDelta
         self.latencyDelta = latencyDelta
+        self.localInferenceSmokeMode = localInferenceSmokeMode
+        self.localInferenceSmokePrompt = localInferenceSmokePrompt
         self.json = json
     }
 }
@@ -902,6 +939,8 @@ public struct UploadOptions: Equatable, Sendable {
     public let artifactPath: String
     public let artifactKind: String
     public let artifactManifestPath: String
+    public let publishBackend: String
+    public let localPublishRoot: String
     public let json: Bool
 
     public init(
@@ -911,6 +950,8 @@ public struct UploadOptions: Equatable, Sendable {
         artifactPath: String = "",
         artifactKind: String = "",
         artifactManifestPath: String = "",
+        publishBackend: String = "",
+        localPublishRoot: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -919,6 +960,8 @@ public struct UploadOptions: Equatable, Sendable {
         self.artifactPath = artifactPath
         self.artifactKind = artifactKind
         self.artifactManifestPath = artifactManifestPath
+        self.publishBackend = publishBackend
+        self.localPublishRoot = localPublishRoot
         self.json = json
     }
 }
@@ -1465,8 +1508,8 @@ public enum MelixCLIParser {
     Usage:
       melix doctor [--json]
       melix convert --model-id MODEL_ID [--output-dir PATH] [--target-format FORMAT] [--json]
-      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--quantization-mode (ptq|qat)] [--source-artifact-kind (base_model|merged_adapter|adapter_export)] [--source-artifact-path PATH] [--calibration-dataset-uri PATH] [--quality-delta N] [--latency-delta N] [--json]
-      melix upload --model-id MODEL_ID --target-repo REPO [--output-dir PATH] [--artifact-path PATH] [--artifact-kind KIND] [--artifact-manifest-path PATH] [--json]
+      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--quantization-mode (ptq|qat)] [--source-artifact-kind (base_model|merged_adapter|adapter_export)] [--source-artifact-path PATH] [--quantization-backend (manifest_only|mlx_lm_convert)] [--mlx-lm-q-bits N] [--mlx-lm-q-group-size N] [--mlx-lm-q-mode (affine|mxfp4|nvfp4|mxfp8)] [--calibration-dataset-uri PATH] [--quality-delta N] [--latency-delta N] [--local-inference-smoke-mode (structural|runtime_generate)] [--local-inference-smoke-prompt TEXT] [--json]
+      melix upload --model-id MODEL_ID --target-repo REPO [--output-dir PATH] [--artifact-path PATH] [--artifact-kind KIND] [--artifact-manifest-path PATH] [--publish-backend BACKEND] [--local-publish-root PATH] [--json]
       melix model list [--json]
       melix model inspect --model-id MODEL_ID [--json]
       melix model load --model-id MODEL_ID [--memory-budget-bytes N] [--json]
@@ -1504,12 +1547,13 @@ public enum MelixCLIParser {
       melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
-      melix alignment train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --algorithm dpo|orpo|cpo|grpo|rlhf [--target-repo REPO] [--grpo-candidate-count N] [--reference-model-path PATH] [--reward-model-manifest-path PATH] [--kl-penalty N] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--json]
+      melix alignment train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --algorithm dpo|orpo|cpo|grpo|rlhf [--target-repo REPO] [--source-adapter-path PATH] [--grpo-candidate-count N] [--candidate-generation-mode scored_trace|runtime_generate] [--candidate-scoring-mode dataset_score|seed_overlap_proxy|reward_model] [--candidate-generation-max-tokens N] [--reference-model-path PATH] [--reward-model-manifest-path PATH] [--kl-penalty N] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--json]
+        note: --source-adapter-path is the upstream/base LoRA adapter to carry into GRPO/RLHF output; it is not checkpoint resumption.
       melix lora dataset inspect --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora dataset build --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--output-dir PATH] [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
       melix lora remove-derived --model-id MODEL_ID (--derived-model-id ID | --manifest-path PATH) [--json]
-      melix lora publish --model-id MODEL_ID --target-repo REPO (--adapter-path PATH | --merged-model-path PATH | --manifest-path PATH) [--export-kind (adapter|merged)] [--json]
+      melix lora publish --model-id MODEL_ID --target-repo REPO (--adapter-path PATH | --merged-model-path PATH | --manifest-path PATH) [--export-kind (adapter|merged)] [--publish-backend BACKEND] [--local-publish-root PATH] [--json]
       melix lora experiments list [--model-id MODEL_ID] [--json]
       melix lora experiments show --group-id GROUP_ID [--model-id MODEL_ID] [--json]
       melix lora resume --group-id GROUP_ID [--model-id MODEL_ID] [--preset PRESET] [--adapter-name NAME] [--dataset-uri URI] [--json]
@@ -1603,13 +1647,51 @@ public enum MelixCLIParser {
         guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
             throw MelixCLIError.missingRequired("--model-id is required for melix quantize.")
         }
-        let quantizationMode = values.single["--quantization-mode"] ?? ""
-        if !quantizationMode.isEmpty, ["ptq", "qat"].contains(quantizationMode) == false {
-            throw MelixCLIError.usage("Invalid value for --quantization-mode. Expected one of: ptq, qat.")
+        let quantizationMode = (values.single["--quantization-mode"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if !quantizationMode.isEmpty, MelixQuantizationAllowedValues.quantizationModes.contains(quantizationMode) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --quantization-mode. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.quantizationModes))."
+            )
         }
-        let sourceArtifactKind = values.single["--source-artifact-kind"] ?? ""
-        if !sourceArtifactKind.isEmpty, ["base_model", "merged_adapter", "adapter_export"].contains(sourceArtifactKind) == false {
-            throw MelixCLIError.usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
+        let sourceArtifactKind = (values.single["--source-artifact-kind"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if !sourceArtifactKind.isEmpty, MelixQuantizationAllowedValues.sourceArtifactKinds.contains(sourceArtifactKind) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --source-artifact-kind. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.sourceArtifactKinds))."
+            )
+        }
+        let quantizationBackend = (values.single["--quantization-backend"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if !quantizationBackend.isEmpty, MelixQuantizationAllowedValues.quantizationBackends.contains(quantizationBackend) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --quantization-backend. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.quantizationBackends))."
+            )
+        }
+        let mlxLMQBits = (values.single["--mlx-lm-q-bits"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !mlxLMQBits.isEmpty, Int(mlxLMQBits) == nil {
+            throw MelixCLIError.usage("Invalid value for --mlx-lm-q-bits. Expected an integer.")
+        }
+        let mlxLMQGroupSize = (values.single["--mlx-lm-q-group-size"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !mlxLMQGroupSize.isEmpty, Int(mlxLMQGroupSize) == nil {
+            throw MelixCLIError.usage("Invalid value for --mlx-lm-q-group-size. Expected an integer.")
+        }
+        let mlxLMQMode = (values.single["--mlx-lm-q-mode"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if !mlxLMQMode.isEmpty, MelixQuantizationAllowedValues.mlxLMQModes.contains(mlxLMQMode) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --mlx-lm-q-mode. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.mlxLMQModes))."
+            )
+        }
+        let localInferenceSmokeMode = (values.single["--local-inference-smoke-mode"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if !localInferenceSmokeMode.isEmpty, ["structural", "runtime_generate"].contains(localInferenceSmokeMode) == false {
+            throw MelixCLIError.usage("Invalid value for --local-inference-smoke-mode. Expected one of: structural, runtime_generate.")
         }
         return .quantize(
             .init(
@@ -1621,9 +1703,15 @@ public enum MelixCLIParser {
                 quantizationMode: quantizationMode,
                 sourceArtifactKind: sourceArtifactKind,
                 sourceArtifactPath: values.single["--source-artifact-path"] ?? "",
+                quantizationBackend: quantizationBackend,
+                mlxLMQBits: mlxLMQBits,
+                mlxLMQGroupSize: mlxLMQGroupSize,
+                mlxLMQMode: mlxLMQMode,
                 calibrationDatasetURI: values.single["--calibration-dataset-uri"] ?? "",
                 qualityDelta: values.single["--quality-delta"] ?? "",
                 latencyDelta: values.single["--latency-delta"] ?? "",
+                localInferenceSmokeMode: localInferenceSmokeMode,
+                localInferenceSmokePrompt: values.single["--local-inference-smoke-prompt"] ?? "",
                 json: values.flags.contains("--json")
             )
         )
@@ -1645,6 +1733,8 @@ public enum MelixCLIParser {
                 artifactPath: values.single["--artifact-path"] ?? "",
                 artifactKind: values.single["--artifact-kind"] ?? "",
                 artifactManifestPath: values.single["--artifact-manifest-path"] ?? "",
+                publishBackend: values.single["--publish-backend"] ?? "",
+                localPublishRoot: values.single["--local-publish-root"] ?? "",
                 json: values.flags.contains("--json")
             )
         )
@@ -2239,6 +2329,27 @@ public enum MelixCLIParser {
             if ["dpo", "orpo", "cpo", "grpo", "rlhf"].contains(algorithm) == false {
                 throw MelixCLIError.usage("Invalid value for --algorithm. Expected one of: dpo, orpo, cpo, grpo, rlhf.")
             }
+            let candidateGenerationMode = (values.single["--candidate-generation-mode"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if candidateGenerationMode.isEmpty == false,
+               ["scored_trace", "runtime_generate"].contains(candidateGenerationMode) == false {
+                throw MelixCLIError.usage("Invalid value for --candidate-generation-mode. Expected one of: scored_trace, runtime_generate.")
+            }
+            let candidateScoringMode = (values.single["--candidate-scoring-mode"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if candidateScoringMode.isEmpty == false,
+               ["dataset_score", "seed_overlap_proxy", "reward_model"].contains(candidateScoringMode) == false {
+                throw MelixCLIError.usage("Invalid value for --candidate-scoring-mode. Expected one of: dataset_score, seed_overlap_proxy, reward_model.")
+            }
+            let loraResumeAdapter = (values.single["--resume-adapter"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let loraResumeManifest = (values.single["--resume-from-manifest"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if loraResumeAdapter.isEmpty == false || loraResumeManifest.isEmpty == false {
+                throw MelixCLIError.usage(
+                    "--resume-adapter and --resume-from-manifest are only for melix lora train checkpoint resumption. For melix alignment train, use --source-adapter-path for the upstream/base LoRA adapter to carry into GRPO/RLHF output."
+                )
+            }
             let datasetSourceKind = datasetURI.isEmpty ? "hf_dataset" : "local_package"
             var parameters: [String: String] = [:]
             for option in [
@@ -2264,6 +2375,8 @@ public enum MelixCLIParser {
                 "--completion-feature",
                 "--text-feature",
                 "--grpo-candidate-count",
+                "--candidate-generation-max-tokens",
+                "--source-adapter-path",
                 "--reference-model-path",
                 "--reward-model-manifest-path",
                 "--kl-penalty",
@@ -2271,6 +2384,12 @@ public enum MelixCLIParser {
                 if let value = values.single[option] {
                     parameters[normalizedParameterKey(option)] = value
                 }
+            }
+            if candidateGenerationMode.isEmpty == false {
+                parameters["candidate_generation_mode"] = candidateGenerationMode
+            }
+            if candidateScoringMode.isEmpty == false {
+                parameters["candidate_scoring_mode"] = candidateScoringMode
             }
             if let presetID = values.single["--preset"] {
                 parameters["preset_id"] = presetID
@@ -2503,6 +2622,8 @@ public enum MelixCLIParser {
                     exportKind: exportKind,
                     artifactPath: artifactPath,
                     artifactManifestPath: artifactManifestPath,
+                    publishBackend: values.single["--publish-backend"] ?? "",
+                    localPublishRoot: values.single["--local-publish-root"] ?? "",
                     json: values.flags.contains("--json")
                 )
             )
@@ -3926,6 +4047,18 @@ public actor MelixCLIRunner {
             if !options.sourceArtifactPath.isEmpty {
                 ext["source_artifact_path"] = options.sourceArtifactPath
             }
+            if !options.quantizationBackend.isEmpty {
+                ext["quantization_backend"] = options.quantizationBackend
+            }
+            if !options.mlxLMQBits.isEmpty {
+                ext["mlx_lm_q_bits"] = options.mlxLMQBits
+            }
+            if !options.mlxLMQGroupSize.isEmpty {
+                ext["mlx_lm_q_group_size"] = options.mlxLMQGroupSize
+            }
+            if !options.mlxLMQMode.isEmpty {
+                ext["mlx_lm_q_mode"] = options.mlxLMQMode
+            }
             if !options.calibrationDatasetURI.isEmpty {
                 ext["calibration_dataset_uri"] = options.calibrationDatasetURI
             }
@@ -3934,6 +4067,12 @@ public actor MelixCLIRunner {
             }
             if !options.latencyDelta.isEmpty {
                 ext["latency_delta"] = options.latencyDelta
+            }
+            if !options.localInferenceSmokeMode.isEmpty {
+                ext["local_inference_smoke_mode"] = options.localInferenceSmokeMode
+            }
+            if !options.localInferenceSmokePrompt.isEmpty {
+                ext["local_inference_smoke_prompt"] = options.localInferenceSmokePrompt
             }
             let result = try await performModelOperation(
                 modelID: options.modelID,
@@ -3955,6 +4094,12 @@ public actor MelixCLIRunner {
             }
             if !options.artifactManifestPath.isEmpty {
                 ext["artifact_manifest_path"] = options.artifactManifestPath
+            }
+            if !options.publishBackend.isEmpty {
+                ext["publish_backend"] = options.publishBackend
+            }
+            if !options.localPublishRoot.isEmpty {
+                ext["local_publish_root"] = options.localPublishRoot
             }
             let result = try await performModelOperation(
                 modelID: options.modelID,
@@ -4535,6 +4680,12 @@ public actor MelixCLIRunner {
             if !options.artifactManifestPath.isEmpty {
                 ext["artifact_manifest_path"] = options.artifactManifestPath
             }
+            if !options.publishBackend.isEmpty {
+                ext["publish_backend"] = options.publishBackend
+            }
+            if !options.localPublishRoot.isEmpty {
+                ext["local_publish_root"] = options.localPublishRoot
+            }
             let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "upload",
@@ -4821,6 +4972,10 @@ public actor MelixCLIRunner {
                 appendOption("--sample-limit", value: ext["sample_limit"], into: &arguments)
                 appendOption("--gradient-accumulation", value: ext["gradient_accumulation"], into: &arguments)
                 appendOption("--grpo-candidate-count", value: ext["grpo_candidate_count"], into: &arguments)
+                appendOption("--candidate-generation-mode", value: ext["candidate_generation_mode"], into: &arguments)
+                appendOption("--candidate-scoring-mode", value: ext["candidate_scoring_mode"], into: &arguments)
+                appendOption("--candidate-generation-max-tokens", value: ext["candidate_generation_max_tokens"], into: &arguments)
+                appendOption("--source-adapter-path", value: ext["source_adapter_path"], into: &arguments)
                 appendOption("--reference-model-path", value: ext["reference_model_path"], into: &arguments)
                 appendOption("--reward-model-manifest-path", value: ext["reward_model_manifest_path"], into: &arguments)
                 appendOption("--kl-penalty", value: ext["kl_penalty"], into: &arguments)
@@ -4956,9 +5111,15 @@ public actor MelixCLIRunner {
             appendOption("--quantization-mode", value: ext["quantization_mode"], into: &arguments)
             appendOption("--source-artifact-kind", value: ext["source_artifact_kind"], into: &arguments)
             appendOption("--source-artifact-path", value: ext["source_artifact_path"], into: &arguments)
+            appendOption("--quantization-backend", value: ext["quantization_backend"], into: &arguments)
+            appendOption("--mlx-lm-q-bits", value: ext["mlx_lm_q_bits"], into: &arguments)
+            appendOption("--mlx-lm-q-group-size", value: ext["mlx_lm_q_group_size"], into: &arguments)
+            appendOption("--mlx-lm-q-mode", value: ext["mlx_lm_q_mode"], into: &arguments)
             appendOption("--calibration-dataset-uri", value: ext["calibration_dataset_uri"], into: &arguments)
             appendOption("--quality-delta", value: ext["quality_delta"], into: &arguments)
             appendOption("--latency-delta", value: ext["latency_delta"], into: &arguments)
+            appendOption("--local-inference-smoke-mode", value: ext["local_inference_smoke_mode"], into: &arguments)
+            appendOption("--local-inference-smoke-prompt", value: ext["local_inference_smoke_prompt"], into: &arguments)
             arguments.append("--json")
             return arguments
         case "upload":
@@ -4978,6 +5139,8 @@ public actor MelixCLIRunner {
                         appendOption("--merged-model-path", value: artifactPath, into: &arguments)
                     }
                 }
+                appendOption("--publish-backend", value: ext["publish_backend"], into: &arguments)
+                appendOption("--local-publish-root", value: ext["local_publish_root"], into: &arguments)
                 arguments.append("--json")
                 return arguments
             }
@@ -4989,6 +5152,8 @@ public actor MelixCLIRunner {
             appendOption("--artifact-path", value: ext["artifact_path"], into: &arguments)
             appendOption("--artifact-kind", value: ext["artifact_kind"], into: &arguments)
             appendOption("--artifact-manifest-path", value: ext["artifact_manifest_path"], into: &arguments)
+            appendOption("--publish-backend", value: ext["publish_backend"], into: &arguments)
+            appendOption("--local-publish-root", value: ext["local_publish_root"], into: &arguments)
             arguments.append("--json")
             return arguments
         default:

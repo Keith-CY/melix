@@ -23,6 +23,7 @@ def main() -> int:
     elapsed_samples: list[float] = []
     resident_samples: list[float] = []
     request_stats_elapsed_samples: list[float] = []
+    request_lifecycle_elapsed_samples: list[float] = []
     loaded_model_listing_elapsed_samples: list[float] = []
     loaded_model_listing_sort_calls: list[float] = []
     preloaded_count = 2000
@@ -86,6 +87,24 @@ def main() -> int:
                 raise AssertionError("runtime_stats request counters drifted during the probe")
         request_stats_elapsed_samples.append((time.perf_counter() - started) * 1000.0 / loop_count)
 
+        lifecycle_registry = build_registry()
+        lifecycle_kinds = ("ocr", "text", "vlm", "speech", "transcription", "image")
+        started = time.perf_counter()
+        for index in range(request_count):
+            request_id = f"lifecycle-{index}"
+            lifecycle_registry.start_request(request_id, runtime_kind=lifecycle_kinds[index % len(lifecycle_kinds)])
+            lifecycle_registry.set_request_phase(request_id, "prefill" if index % 2 == 0 else "decode")
+            lifecycle_registry.finish_request(request_id)
+        request_lifecycle_elapsed_samples.append((time.perf_counter() - started) * 1000.0 / request_count)
+        lifecycle_stats = lifecycle_registry.runtime_stats()
+        if (
+            lifecycle_stats.active_requests != 0
+            or lifecycle_stats.active_prefills != 0
+            or lifecycle_stats.active_decodes != 0
+            or lifecycle_stats.active_multimodal_requests != 0
+        ):
+            raise AssertionError("request lifecycle counters did not return to zero during the probe")  # pragma: no cover
+
     print(
         json.dumps(
             {
@@ -99,6 +118,9 @@ def main() -> int:
                 "loop_count": float(loop_count),
                 "preloaded_model_count": float(preloaded_count),
                 "request_count": float(request_count),
+                "request_lifecycle_elapsed_ms_mean": round(
+                    statistics.fmean(request_lifecycle_elapsed_samples), 6
+                ),
                 "request_stats_elapsed_ms_mean": round(statistics.fmean(request_stats_elapsed_samples), 6),
                 "resident_bytes_mean": round(statistics.fmean(resident_samples), 3),
                 "sample_count": float(len(elapsed_samples)),

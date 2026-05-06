@@ -59,6 +59,44 @@ def test_dataset_catalog_discovers_default_huggingface_cache_snapshot(tmp_path: 
     assert dataset["restore_command"] == "melix dataset hub download --repo-id org/repo --revision main"
 
 
+def test_dataset_catalog_builds_snapshot_inference_in_one_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    snapshot_dir = _write_hf_dataset_snapshot(home)
+    (snapshot_dir / "custom").mkdir()
+    (snapshot_dir / "custom" / "validation-00000.parquet").write_bytes(b"validation")
+    (snapshot_dir / "custom" / "test.json").write_text("[]", encoding="utf-8")
+
+    def fail_split(_relative_path: str) -> str:
+        raise AssertionError("snapshot build should infer split/config together")
+
+    monkeypatch.setattr(catalog, "_inferred_split", fail_split)
+    monkeypatch.setattr(catalog, "_inferred_config", fail_split)
+
+    payload = DatasetCatalog(environment={"HOME": str(home)}).registry_snapshot_payload()
+
+    dataset = payload["datasets"][0]
+    assert dataset["splits"] == ["test", "train", "validation"]
+    assert dataset["configs"] == ["custom", "default"]
+    assert {file["relative_path"] for file in dataset["files"]} == {
+        "README.md",
+        "custom/test.json",
+        "custom/validation-00000.parquet",
+        "data/train-00000-of-00001.jsonl",
+    }
+
+
+def test_dataset_catalog_inferred_split_and_config_preserves_legacy_helpers() -> None:
+    assert catalog._inferred_split("custom/validation-00000.parquet") == "validation"
+    assert catalog._inferred_config("custom/validation-00000.parquet") == "custom"
+    assert catalog._inferred_split_and_config("data/train-00000-of-00001.jsonl") == ("train", "default")
+    assert catalog._inferred_split_and_config("custom\\test.json") == ("test", "custom")
+    assert catalog._inferred_split_and_config("README.md") == ("", "default")
+    assert catalog._inferred_split_and_config("") == ("", "default")
+
+
 def test_dataset_catalog_reports_unavailable_roots_and_filters_snapshots(tmp_path: Path) -> None:
     home = tmp_path / "home"
     _write_hf_dataset_snapshot(home)
@@ -155,6 +193,110 @@ def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     assert rows == [{"prompt": "first", "answer": "a"}]
 
 
+def test_dataset_catalog_limited_unfiltered_read_stops_before_later_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    first_file = data_dir / "part-000.jsonl"
+    later_file = data_dir / "part-001.jsonl"
+    first_file.write_text('{"prompt":"first"}\n', encoding="utf-8")
+    later_file.write_text('{"prompt":"later"}\n', encoding="utf-8")
+    (snapshot_dir / "README.md").write_text("# metadata\n", encoding="utf-8")
+    read_files: list[str] = []
+    original_reader = catalog._read_rows_from_file
+
+    def tracked_reader(path: Path, *, limit: int | None = None) -> list[dict[str, object]]:
+        read_files.append(path.name)
+        return original_reader(path, limit=limit)
+
+    monkeypatch.setattr(catalog, "_read_rows_from_file", tracked_reader)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=1)
+
+    assert rows == [{"prompt": "first"}]
+    assert read_files == ["part-000.jsonl"]
+
+
+def test_dataset_catalog_unlimited_unfiltered_read_preserves_full_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    (data_dir / "part-000.jsonl").write_text('{"prompt":"first"}\n', encoding="utf-8")
+    (data_dir / "part-001.jsonl").write_text('{"prompt":"second"}\n', encoding="utf-8")
+    selected_calls: list[str] = []
+    original_selector = catalog._selected_dataset_files
+
+    def tracked_selector(snapshot_path: Path, *, split: str) -> tuple[Path, ...]:
+        selected_calls.append(split)
+        return original_selector(snapshot_path, split=split)
+
+    monkeypatch.setattr(catalog, "_selected_dataset_files", tracked_selector)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir)
+
+    assert rows == [{"prompt": "first"}, {"prompt": "second"}]
+    assert selected_calls == []
+
+
+def test_dataset_catalog_row_reader_stops_file_scan_after_unsplit_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    first_file = data_dir / "part-00000.jsonl"
+    second_file = data_dir / "part-00001.jsonl"
+    first_file.write_text('{"prompt":"first"}\n', encoding="utf-8")
+    second_file.write_text('{"prompt":"second"}\n', encoding="utf-8")
+    read_paths: list[Path] = []
+    original_read_rows = catalog._read_rows_from_file
+
+    def tracking_read_rows(path: Path, *, limit: int | None = None) -> list[dict[str, object]]:
+        read_paths.append(path)
+        return original_read_rows(path, limit=limit)
+
+    monkeypatch.setattr(catalog, "_read_rows_from_file", tracking_read_rows)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=1)
+
+    assert rows == [{"prompt": "first"}]
+    assert read_paths == [first_file]
+
+
+def test_dataset_catalog_row_reader_keeps_split_filtering_eager_for_missing_split(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    train_path = data_dir / "train.jsonl"
+    validation_path = data_dir / "validation.jsonl"
+    train_path.write_text('{"prompt":"train"}\n', encoding="utf-8")
+    validation_path.write_text('{"prompt":"validation"}\n', encoding="utf-8")
+    considered_paths: list[Path] = []
+    original_iter_supported = catalog._iter_supported_dataset_files
+
+    def tracking_iter_supported(path: Path):
+        for candidate in original_iter_supported(path):
+            considered_paths.append(candidate)
+            yield candidate
+
+    monkeypatch.setattr(catalog, "_iter_supported_dataset_files", tracking_iter_supported)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, split="test", limit=1)
+
+    assert rows == []
+    assert sorted(set(considered_paths)) == [train_path, validation_path]
+
+
 def test_dataset_catalog_reads_json_and_csv_snapshots(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshot"
     data_dir = snapshot_dir / "custom"
@@ -169,6 +311,36 @@ def test_dataset_catalog_reads_json_and_csv_snapshots(tmp_path: Path) -> None:
     assert read_hf_dataset_snapshot_rows(snapshot_dir, split="train") == [{"prompt": "csv-row", "answer": "ok"}]
     assert read_hf_dataset_snapshot_rows(snapshot_dir, split="missing", limit=1) == []
     assert read_hf_dataset_snapshot_rows(snapshot_dir, limit=1) == [{"prompt": "csv-row", "answer": "ok"}]
+
+
+def test_dataset_catalog_path_split_matching_avoids_temporary_path_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingPath:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("split matching should use string stems, not Path(part).stem")
+
+    monkeypatch.setattr(catalog, "Path", FailingPath)
+
+    assert catalog._path_matches_split(Path("data/validation-00000.jsonl"), "validation") is True
+    assert catalog._path_matches_split(Path("custom/test.arrow"), "test") is True
+    assert catalog._path_matches_split(Path("train_dir/part-00000.parquet"), "train") is True
+    assert catalog._path_matches_split(Path("custom/eval.jsonl"), "train") is False
+
+
+def test_dataset_catalog_string_stem_matches_pathlib_for_split_names() -> None:
+    names = [
+        "train.jsonl",
+        "validation_foo.parquet",
+        "test-00000-of-00001.arrow",
+        "archive.train.jsonl",
+        ".hidden",
+        "train.",
+        "train..jsonl",
+    ]
+
+    for name in names:
+        assert catalog._string_stem(name) == Path(name).stem
 
 
 def test_dataset_catalog_reads_parquet_and_arrow_with_fake_pyarrow(

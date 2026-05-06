@@ -966,6 +966,9 @@ class WorkerModelCatalog:
         self._json_file_cache: dict[Path, tuple[int, int, dict[str, object]]] = {}
         self._text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] = {}
         self._registry_snapshot_cache: dict[tuple[str, ...], RegistrySnapshot] = {}
+        self._runtime_models_snapshot: RegistrySnapshot | None = None
+        self._runtime_models_overlay_revision = 0
+        self._overlay_revision = 0
         self._active_registry_roots = tuple(self._configured_registry_roots())
         self._last_registry_snapshot = self._refresh_registry_snapshot(self._active_registry_roots)
         self._registry_snapshot_cache[self._active_registry_roots] = self._last_registry_snapshot
@@ -983,6 +986,7 @@ class WorkerModelCatalog:
         registered.CopyFrom(model)
         with self._registry_lock:
             self._overlay_models[registered.model_id] = registered
+            self._overlay_revision += 1
             self._rebuild_runtime_models()
             return self._models[registered.model_id]
 
@@ -991,6 +995,7 @@ class WorkerModelCatalog:
             removed = self._overlay_models.pop(model_id, None)
             if removed is None:
                 return False
+            self._overlay_revision += 1
             self._rebuild_runtime_models()
             return True
 
@@ -1007,8 +1012,15 @@ class WorkerModelCatalog:
             snapshot = self._registry_snapshot_cache[roots_key]
             self._active_registry_roots = roots_key
             self._last_registry_snapshot = snapshot
-            self._rebuild_runtime_models(snapshot=snapshot)
+            if not self._runtime_models_current(snapshot):
+                self._rebuild_runtime_models(snapshot=snapshot)
             return snapshot
+
+    def _runtime_models_current(self, snapshot: RegistrySnapshot) -> bool:
+        return (
+            self._runtime_models_snapshot is snapshot
+            and self._runtime_models_overlay_revision == self._overlay_revision
+        )
 
     def _rebuild_runtime_models(self, snapshot: RegistrySnapshot | None = None) -> None:
         active_snapshot = snapshot or self._last_registry_snapshot
@@ -1018,6 +1030,8 @@ class WorkerModelCatalog:
         for model_id, model in self._overlay_models.items():
             new_models[model_id] = model
         self._models = new_models
+        self._runtime_models_snapshot = active_snapshot
+        self._runtime_models_overlay_revision = self._overlay_revision
 
     def registry_snapshot_payload(
         self,

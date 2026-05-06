@@ -145,18 +145,33 @@ def materialize_local_evaluation_dataset(
     cache_root: Path,
 ) -> MaterializedEvaluationDataset:
     resolved_source_path = request.source_path.expanduser().resolve()
+    _validate_local_source_kind(request.source_kind)
+    source_metadata = _local_source_metadata(
+        source_kind=request.source_kind,
+        source_path=resolved_source_path,
+    )
+    dataset_id = request.dataset_id or f"{resolved_source_path.stem}.dev.v1"
+    suite_id = request.suite_id or resolved_source_path.stem
+    cache_hit = _materialized_cache_hit(
+        cache_root=cache_root,
+        source_metadata=source_metadata,
+        profile=request.profile,
+        field_mapping=request.field_mapping,
+        dataset_id=dataset_id,
+        suite_id=suite_id,
+    )
+    if cache_hit is not None:
+        return cache_hit
+
     rows = _read_local_rows(request.source_kind, resolved_source_path)
     return _materialize_evaluation_rows(
         rows=rows,
         profile=request.profile,
         field_mapping=request.field_mapping,
-        dataset_id=request.dataset_id or f"{resolved_source_path.stem}.dev.v1",
-        suite_id=request.suite_id or resolved_source_path.stem,
+        dataset_id=dataset_id,
+        suite_id=suite_id,
         cache_root=cache_root,
-        source_metadata=_local_source_metadata(
-            source_kind=request.source_kind,
-            source_path=resolved_source_path,
-        ),
+        source_metadata=source_metadata,
     )
 
 
@@ -436,7 +451,16 @@ def _sha256_for_path(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+def _validate_local_source_kind(source_kind: str) -> None:
+    if source_kind not in {"jsonl", "csv"}:
+        raise ModelOperationError(
+            code="invalid_evaluation_source",
+            message=f"Unsupported local evaluation source kind: {source_kind}",
+        )
+
+
 def _read_local_rows(source_kind: str, source_path: Path) -> list[dict[str, Any]]:
+    _validate_local_source_kind(source_kind)
     resolved = Path(source_path).expanduser().resolve()
     if source_kind == "jsonl":
         rows: list[dict[str, Any]] = []
@@ -451,13 +475,8 @@ def _read_local_rows(source_kind: str, source_path: Path) -> list[dict[str, Any]
                         )
                     rows.append(payload)
         return rows
-    if source_kind == "csv":
-        with resolved.open("r", encoding="utf-8", newline="") as handle:
-            return [dict(row) for row in csv.DictReader(handle)]
-    raise ModelOperationError(
-        code="invalid_evaluation_source",
-        message=f"Unsupported local evaluation source kind: {source_kind}",
-    )
+    with resolved.open("r", encoding="utf-8", newline="") as handle:
+        return [dict(row) for row in csv.DictReader(handle)]
 
 
 def _required_string_field(row: dict[str, Any], path: str, field_name: str) -> str:
@@ -528,6 +547,29 @@ def _materialization_cache_key(
         sort_keys=True,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _materialized_cache_hit(
+    *,
+    cache_root: Path,
+    source_metadata: dict[str, Any],
+    profile: EvaluationProfileDefinition,
+    field_mapping: EvaluationFieldMapping,
+    dataset_id: str,
+    suite_id: str,
+) -> MaterializedEvaluationDataset | None:
+    _validate_field_mapping(field_mapping)
+    cache_key = _materialization_cache_key(
+        source_metadata=source_metadata,
+        profile=profile,
+        field_mapping=field_mapping,
+        dataset_id=dataset_id,
+        suite_id=suite_id,
+    )
+    package_path = cache_root / cache_key
+    if (package_path / "manifest.json").is_file() and (package_path / "samples.jsonl").is_file():
+        return MaterializedEvaluationDataset(package_path=package_path, cache_key=cache_key, cache_hit=True)
+    return None
 
 
 def _materialize_evaluation_rows(

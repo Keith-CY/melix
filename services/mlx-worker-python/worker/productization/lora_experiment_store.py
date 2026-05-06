@@ -80,6 +80,8 @@ class LoraExperimentStore:
 
             manifest_path = run_dir / "train_lora.adapter.json"
             payload = self._load_payload(manifest_path)
+            if payload == {}:
+                continue
             run_id = str(payload.get("job_id", "")).strip() or manifest_path.parent.name
             if run_id in runs_by_id:
                 continue

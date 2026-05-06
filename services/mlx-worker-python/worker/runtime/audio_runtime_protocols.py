@@ -51,7 +51,9 @@ class AudioRuntimeLoadedModel:
     voice_metadata: dict[str, Any] = field(default_factory=dict)
     voice_mode: str = ""
     supports_instructions: bool = False
+    speech_generate_parameters: frozenset[str] = field(default_factory=frozenset)
     output_formats: tuple[str, ...] = ()
+    generate_parameter_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

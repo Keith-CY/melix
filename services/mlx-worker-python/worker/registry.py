@@ -24,6 +24,9 @@ from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddin
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 
 
+_MULTIMODAL_REQUEST_KINDS = frozenset({"ocr", "vlm", "transcription", "speech", "image"})
+
+
 @dataclass
 class LoadedModel:
     handle: str
@@ -481,7 +484,7 @@ class WorkerRegistry:
 
     @staticmethod
     def _is_multimodal_request_kind(runtime_kind: str) -> bool:
-        return runtime_kind in {"ocr", "vlm", "transcription", "speech", "image"}
+        return runtime_kind in _MULTIMODAL_REQUEST_KINDS
 
     def _add_request_to_counters(self, state: RequestState) -> None:
         self._active_request_count += 1

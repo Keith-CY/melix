@@ -423,12 +423,16 @@ def iterate_preference_batches(
             f"but only has {len(dataset)}."
         )
     if comm_group is not None:
-        raise NotImplementedError(
-            "Distributed preference batch sharding is deferred until GRPO support lands."
-        )
+        offset = comm_group.rank()
+        step = comm_group.size()
+    else:
+        offset = 0
+        step = 1
+    if batch_size % step != 0:
+        raise ValueError("The batch size must be divisible by the number of workers.")
     idx = sorted(range(len(dataset)), key=dataset.itemlen)
     batch_idx = [
-        idx[i: i + batch_size]
+        idx[i + offset : i + offset + batch_size : step]
         for i in range(0, len(idx) - batch_size + 1, batch_size)
     ]
     if seed is not None:

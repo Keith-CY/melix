@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import Mock
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
 
-from worker.model_ops.hub_catalog import HubCatalog, HubCatalogError
+import worker.model_ops.hub_catalog as hub_catalog_module
+from worker.model_ops.hub_catalog import (
+    HubCatalog,
+    HubCatalogError,
+    _is_mlx_compatible,
+    _local_fit_evidence,
+    _size_hint_from_text,
+)
+
+
+KB = 1024
+MB = 1024 ** 2
+GB = 1024 ** 3
 
 
 class FakeHTTPResponse:
@@ -178,6 +191,81 @@ def test_hub_catalog_raises_hub_payload_invalid_on_malformed_json() -> None:
     assert error.value.code == "hub_payload_invalid"
 
 
+def test_is_mlx_compatible_preserves_card_data_tag_signal_after_fast_paths() -> None:
+    assert _is_mlx_compatible(
+        repo_id="plain/card-tagged-model",
+        tags=["transformers"],
+        library_name="transformers",
+        card_data={"tags": ["MLX"]},
+        lowered_tags={"transformers"},
+    ) is True
+
+
+def test_is_mlx_compatible_skips_empty_card_tag_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    string_list = Mock(side_effect=AssertionError("empty cardData.tags should not be normalized"))
+    monkeypatch.setattr(hub_catalog_module, "_string_list", string_list)
+
+    assert _is_mlx_compatible(
+        repo_id="plain/standard-model",
+        tags=["transformers"],
+        library_name="transformers",
+        card_data={},
+        lowered_tags={"transformers"},
+    ) is False
+    string_list.assert_not_called()
+
+
+def test_is_mlx_compatible_keeps_library_name_fast_path() -> None:
+    assert _is_mlx_compatible(
+        repo_id="plain/library-tagged-model",
+        tags=["transformers"],
+        library_name="MLX",
+        card_data={"tags": []},
+        lowered_tags={"transformers"},
+    ) is True
+
+
+def test_next_cursor_from_link_extracts_encoded_next_cursor_without_full_query_parse() -> None:
+    assert not hasattr(hub_catalog_module, "urlparse")
+    assert not hasattr(hub_catalog_module, "parse_qs")
+    link_header = (
+        '<https://huggingface.co/api/models?cursor=ignored>; rel="prev", '
+        '<https://huggingface.co/api/models?limit=10&cursor=abc%2Fdef+ghi&full=true#page>; rel="next"'
+    )
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "abc/def ghi"
+
+
+def test_next_cursor_from_link_scans_segments_without_splitting_on_url_commas() -> None:
+    link_header = (
+        '<https://huggingface.co/api/models?cursor=prev>; rel="prev", '
+        '<https://huggingface.co/api/models?note=a,b&cursor=page%2C2&full=true>; rel="next"'
+    )
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "page,2"
+
+
+def test_next_cursor_from_link_returns_empty_for_missing_or_malformed_next_cursor() -> None:
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor=prev>; rel="prev"') == ""
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models>; rel="next"') == ""
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?limit=10>; rel="next"') == ""
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor>; rel="next"') == ""
+    assert hub_catalog_module._next_cursor_from_link('https://huggingface.co/api/models?cursor=broken; rel="next"') == ""
+
+
+def test_search_models_uses_next_cursor_from_link_header() -> None:
+    response = FakeHTTPResponse([{"id": "mlx-community/example", "tags": ["mlx"], "siblings": [], "cardData": {}}])
+    response.headers["Link"] = '<https://huggingface.co/api/models?limit=1&cursor=page%2B2>; rel="next"'
+
+    def opener(_request: Request):
+        return response
+
+    catalog = HubCatalog(opener=opener)
+    page = catalog.search_models(query="mlx", page_size=1, cursor="", mlx_only=False)
+
+    assert page.next_cursor == "page+2"
+
+
 def test_search_models_with_mlx_only_false_returns_all_results() -> None:
     payload = [
         {
@@ -329,6 +417,14 @@ def test_search_models_marks_large_mlx_model_as_heavy_not_blocked() -> None:
     assert any("memory comfort budget" in reason for reason in model.local_fit_reasons)
 
 
+def test_size_hint_from_empty_text_skips_regex_search(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hub_catalog_module, "_BARE_SIZE_HINT_RE", object())
+    monkeypatch.setattr(hub_catalog_module, "_EXPLICIT_SIZE_HINT_RE", object())
+
+    assert _size_hint_from_text("", allow_bare=True) == 0
+    assert _size_hint_from_text("", allow_bare=False) == 0
+
+
 def test_search_models_ignores_sibling_sizes_without_weight_or_config_filenames() -> None:
     payload = [
         {
@@ -381,6 +477,32 @@ def test_search_models_counts_fp32_parameters_as_four_bytes_for_local_fit() -> N
     model = page.items[0]
     assert model.local_fit_status == "heavy"
     assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
+
+
+def test_tag_lowering_fallbacks_preserve_direct_helper_compatibility() -> None:
+    assert _is_mlx_compatible(
+        repo_id="plain/model",
+        tags=["MLX"],
+        library_name="transformers",
+        card_data={},
+    ) is True
+
+    evidence = _local_fit_evidence(
+        payload={
+            "safetensors": {"total": 2_000_000_000},
+            "siblings": [{"rfilename": "config.json"}],
+        },
+        repo_id="mlx-community/direct-helper",
+        pipeline_tag="text-generation",
+        tags=["MLX", "4-bit"],
+        mlx_compatible=True,
+        local_memory_gb=64.0,
+    )
+
+    assert evidence["quantization_summary"] == "4-bit"
+    assert evidence["estimated_resident_bytes"] == int(
+        2_000_000_000 * 0.5 * hub_catalog_module.RESIDENT_MEMORY_OVERHEAD_FACTOR
+    )
 
 
 def test_search_models_treats_gated_auto_as_soft_access_not_blocked() -> None:
@@ -472,6 +594,43 @@ def test_search_models_marks_gated_true_and_unsupported_pipeline_as_blocked() ->
     assert any("Unsupported Melix pipeline tag" in reason for reason in unsupported.local_fit_reasons)
 
 
+def test_summary_record_reuses_lowered_tags_for_local_fit(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = [
+        {
+            "id": "mlx-community/reused-tags",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["MLX", "4-BIT", "OptiQ"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "config.json"}],
+            "safetensors": {"total": 2_000_000_000},
+            "cardData": {},
+        }
+    ]
+    calls = 0
+    original_lowered_tag_set = hub_catalog_module._lowered_tag_set
+
+    def counting_lowered_tag_set(tags: list[str]) -> set[str]:
+        nonlocal calls
+        calls += 1
+        return original_lowered_tag_set(tags)
+
+    monkeypatch.setattr(hub_catalog_module, "_lowered_tag_set", counting_lowered_tag_set)
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="reused-tags", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.quantization_summary == "4-bit, optiq"
+    assert model.estimated_resident_bytes == int(
+        2_000_000_000 * 0.5 * hub_catalog_module.RESIDENT_MEMORY_OVERHEAD_FACTOR
+    )
+    assert calls == 1
+
+
 def test_get_model_card_includes_local_fit_evidence_from_readme_size_hint() -> None:
     payload = [
         {
@@ -497,6 +656,18 @@ def test_get_model_card_includes_local_fit_evidence_from_readme_size_hint() -> N
     card = catalog.get_model_card(repo_id="mlx-community/readme-size")
 
     assert card.local_fit_status == "good"
-    assert card.estimated_artifact_bytes == 570 * 1024 * 1024
+    assert card.estimated_artifact_bytes == 570 * MB
     assert card.quantization_summary == "4-bit, optiq"
     assert card.base_models == ["base/model"]
+
+
+def test_size_hint_parser_uses_precompiled_patterns(monkeypatch: pytest.MonkeyPatch) -> None:
+    def dynamic_search_forbidden(*_args, **_kwargs):
+        raise AssertionError("size hint parsing should use precompiled pattern.search")
+
+    monkeypatch.setattr(hub_catalog_module.re, "search", dynamic_search_forbidden)
+
+    assert hub_catalog_module._size_hint_from_text("2.5 GB", allow_bare=True) == int(2.5 * GB)
+    assert hub_catalog_module._size_hint_from_text("Model size: 768 MB", allow_bare=False) == 768 * MB
+    assert hub_catalog_module._size_hint_from_text("Readme says 768 MB", allow_bare=False) == 0
+    assert hub_catalog_module._size_hint_from_text("MODEL SIZE | 512 kb", allow_bare=False) == 512 * KB

@@ -7,7 +7,7 @@ from math import ceil
 from pathlib import Path
 from time import perf_counter
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlparse
+from urllib.parse import ParseResult, unquote, urlparse
 from urllib.request import urlopen
 
 from worker.runtime.video_preprocessing import PreparedVideoInput, prepare_video_input
@@ -44,6 +44,16 @@ class PreparedVideoFramePolicy:
     clip_start_ms: int
     clip_end_ms: int
     clip_duration_ms: int
+
+
+@dataclass(frozen=True)
+class ParsedImageReference:
+    raw: str
+    parsed: ParseResult
+    decoded_path: str
+    path: Path
+    filename: str
+    format: str
 
 
 @dataclass(frozen=True)
@@ -156,52 +166,65 @@ def _prepare_image_part(part) -> PreparedImageInput:
     raise MultimodalPreprocessError("No image input provided.")
 
 
-def _path_from_uri(uri: str) -> Path:
+def _parse_image_reference(uri: str) -> ParsedImageReference:
     parsed = urlparse(uri)
-    if parsed.scheme in {"", "file"}:
-        if parsed.scheme == "file":
-            candidate = Path(unquote(parsed.path))
-        else:
-            candidate = Path(uri)
+    if parsed.scheme in {"http", "https", "file"}:
+        decoded_path = unquote(parsed.path)
+        path = Path(decoded_path)
+    else:
+        decoded_path = uri
+        path = Path(uri)
+    return ParsedImageReference(
+        raw=uri,
+        parsed=parsed,
+        decoded_path=decoded_path,
+        path=path,
+        filename=path.name,
+        format=path.suffix.lstrip("."),
+    )
+
+
+def _path_from_uri(uri: str | ParsedImageReference) -> Path:
+    reference = uri if isinstance(uri, ParsedImageReference) else _parse_image_reference(uri)
+    if reference.parsed.scheme in {"", "file"}:
+        candidate = reference.path
         if not candidate.exists():
-            raise MultimodalPreprocessError(f"Missing local image input: {uri}")
+            raise MultimodalPreprocessError(f"Missing local image input: {reference.raw}")
         return candidate
-    raise MultimodalPreprocessError(f"Unsupported image URI scheme: {parsed.scheme}")
+    raise MultimodalPreprocessError(f"Unsupported image URI scheme: {reference.parsed.scheme}")
 
 
 def _bytes_from_image_uri(uri: str) -> tuple[bytes, str, str, str, str]:
-    parsed = urlparse(uri)
-    if parsed.scheme in {"", "file"}:
-        path = _path_from_uri(uri)
+    reference = _parse_image_reference(uri)
+    if reference.parsed.scheme in {"", "file"}:
+        path = _path_from_uri(reference)
         return (
             path.read_bytes(),
-            uri,
+            reference.raw,
             "",
-            path.suffix.lstrip("."),
-            path.name,
+            reference.format,
+            reference.filename,
         )
-    if parsed.scheme in {"http", "https"}:
-        return _fetch_remote_image(uri)
-    raise MultimodalPreprocessError(f"Unsupported image URI scheme: {parsed.scheme}")
+    if reference.parsed.scheme in {"http", "https"}:
+        return _fetch_remote_image(reference)
+    raise MultimodalPreprocessError(f"Unsupported image URI scheme: {reference.parsed.scheme}")
 
 
-def _fetch_remote_image(uri: str) -> tuple[bytes, str, str, str, str]:
-    parsed = urlparse(uri)
+def _fetch_remote_image(uri: str | ParsedImageReference) -> tuple[bytes, str, str, str, str]:
+    reference = uri if isinstance(uri, ParsedImageReference) else _parse_image_reference(uri)
     try:
-        with urlopen(uri, timeout=5.0) as response:
+        with urlopen(reference.raw, timeout=5.0) as response:
             bytes_data = response.read()
             mime_type = response.headers.get_content_type()
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        raise MultimodalPreprocessError(f"Remote image fetch failed: {uri}") from exc
+        raise MultimodalPreprocessError(f"Remote image fetch failed: {reference.raw}") from exc
 
-    path = Path(unquote(parsed.path))
-    format_name = path.suffix.lstrip(".")
+    format_name = reference.format
     if not format_name and mime_type:
         guessed = mimetypes.guess_extension(mime_type)
         format_name = guessed.lstrip(".") if guessed else ""
-    filename = path.name or "remote-image"
-    return bytes_data, uri, mime_type or "", format_name, filename
-
+    filename = reference.filename or "remote-image"
+    return bytes_data, reference.raw, mime_type or "", format_name, filename
 
 def _sha256_hex(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()

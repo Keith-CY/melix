@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from worker.runtime import stream_assembler
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
 
 
@@ -29,9 +30,19 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
     )
 
     assert tool_enabled._structural_tag_prefixes == think_prefixes + tool_prefixes
+    assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
+    assert tool_enabled._structural_tag_prefixes_reversed == tuple(
+        reversed(think_prefixes + tool_prefixes)
+    )
+    assert (
+        tool_enabled._structural_tag_prefixes_reversed
+        is tool_enabled._structural_tag_prefixes_reversed
+    )
     assert tool_disabled._structural_tag_prefixes == think_prefixes
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_disabled._structural_tag_prefixes is tool_disabled._structural_tag_prefixes
+    assert tool_disabled._structural_tag_prefixes is RequestStreamAssembler._THINK_PREFIXES
+    assert tool_disabled._structural_tag_prefixes_reversed is RequestStreamAssembler._THINK_PREFIXES_REVERSED
 
 
 def test_parser_mode_flags_are_computed_once_at_initialization() -> None:
@@ -81,6 +92,31 @@ def test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call(
 
     assert assembler._has_partial_structural_tag_suffix() is True
     assert buffer.calls == [assembler._structural_tag_prefixes]
+
+
+def test_partial_structural_tag_suffix_returns_match_without_tuple_prescan() -> None:
+    class RecordingBuffer(str):
+        def __new__(cls) -> "RecordingBuffer":
+            instance = str.__new__(cls, "chunk-ending-with-partial-<tool")
+            instance.calls = []
+            return instance
+
+        def endswith(self, suffix: str | tuple[str, ...], *args: object) -> bool:  # type: ignore[override]
+            self.calls.append(suffix)
+            return super().endswith(suffix, *args)
+
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-suffix-single-pass",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    buffer = RecordingBuffer()
+    assembler._buffer = buffer
+
+    assert assembler._partial_structural_tag_suffix() == "<tool"
+    assert all(isinstance(call, str) for call in buffer.calls)
+    assert buffer.calls[-1] == "<tool"
 
 
 def test_stream_assembler_instances_do_not_share_request_state() -> None:
@@ -418,6 +454,38 @@ def test_duplicate_tool_call_fragments_are_skipped_when_raw_stream_replays_out_o
 
     assert [delta.tool_call.tool_name for delta in first if delta.tool_call] == ["search"]
     assert [delta.tool_call for delta in replay if delta.tool_call] == []
+    assert completed.metrics["duplicate_tool_delta_count"] == 1
+    assert completed.metrics["non_monotonic_stream_count"] == 1
+
+
+def test_duplicate_model_call_id_skips_argument_serialization(monkeypatch) -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-duplicate-call-id-fast-path",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    dumps_calls = 0
+    original_dumps = stream_assembler.json.dumps
+
+    def counting_dumps(*args, **kwargs):
+        nonlocal dumps_calls
+        dumps_calls += 1
+        return original_dumps(*args, **kwargs)
+
+    monkeypatch.setattr(stream_assembler.json, "dumps", counting_dumps)
+    raw_tool_call = (
+        '<tool_call>{"id":"call-duplicate","name":"search","arguments":'
+        '{"query":"alpha","payload":[1,2,3,4,5]}}</tool_call>'
+    )
+
+    first = assembler.accept(StreamFragment(raw_text=raw_tool_call))
+    replay = assembler.accept(StreamFragment(raw_text=f"prefix {raw_tool_call}"))
+    completed = assembler.completed()
+
+    assert [delta.tool_call.call_id for delta in first if delta.tool_call] == ["call-duplicate"]
+    assert [delta.tool_call for delta in replay if delta.tool_call] == []
+    assert dumps_calls == 1
     assert completed.metrics["duplicate_tool_delta_count"] == 1
     assert completed.metrics["non_monotonic_stream_count"] == 1
 

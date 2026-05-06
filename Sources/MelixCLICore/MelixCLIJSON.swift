@@ -113,13 +113,11 @@ enum MelixCLIJSON {
     }
 
     static func jsonValue(from text: String) -> Any {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let data = trimmed.data(using: .utf8),
-              let value = try? JSONSerialization.jsonObject(with: data)
-        else {
-            return ["text": trimmed]
+        let data = Data(text.utf8)
+        if let value = try? JSONSerialization.jsonObject(with: data) {
+            return value
         }
-        return value
+        return ["text": text.trimmingCharacters(in: .whitespacesAndNewlines)]
     }
 
     static func metricsObject(

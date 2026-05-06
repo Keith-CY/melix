@@ -69,6 +69,29 @@ from worker.productization.pr_scoped_performance import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REGISTRY_PATH = REPO_ROOT / "infra/perf/pr_scoped_probes.json"
+DATASET_REGISTRY_SELECTED_PROBE_IDS = [
+    "dataset-registry-limited-read-streaming",
+    "dataset-registry-snapshot-inference-single-pass",
+    "dataset-registry-preview-limit-short-circuit",
+]
+MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS = [
+    "mlx-audio-speech-signature-cache",
+    "mlx-audio-wav-streaming-pcm",
+    "mlx-audio-local-uri-zero-copy-preprocess",
+    "mlx-audio-generate-signature-cache",
+]
+SCOPE_MATCHER_SELECTED_PROBE_IDS = [
+    "benchmark-export-run-scan-single-pass",
+    "evaluation-job-id-high-water-mark",
+    "evaluation-sample-probe-aggregation",
+    "evaluation-latency-percentile-vector-reuse",
+    "evaluation-dialogue-diagnostics-top-k",
+    "download-pipeline-directory-size-single-stat",
+]
+
+
+def _selected_probe_ids(scope: dict[str, object]) -> list[str]:
+    return [probe["id"] for probe in _dict_list(scope["selected_probes"])]
 
 
 @pytest.fixture()
@@ -79,14 +102,116 @@ def benchmark_scope() -> dict[str, object]:
     )
 
 
+def test_scope_report_selects_event_extraction_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/event_extraction.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "event-extraction-alignment-accepted-edge-cache"
+
+
+def test_scope_report_selects_hub_catalog_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/hub_catalog.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 3
+    assert probe_ids == {
+        "hub-catalog-tag-normalization-single-pass",
+        "hub-catalog-next-cursor-fast-parse",
+        "hub-catalog-size-hint-regex-precompile",
+    }
+
+
 def test_scope_report_selects_stream_assembler_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
         changed_files=["services/mlx-worker-python/worker/runtime/stream_assembler.py"],
     )
 
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "stream-assembler-parser-mode-cache",
+        "stream-assembler-structural-prefix-cache",
+    }
+
+
+def test_scope_report_selects_runtime_utils_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/runtime_utils.py"],
+    )
+
     assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "stream-assembler-parser-mode-cache"
+    assert scope["selected_probes"][0]["id"] == "runtime-utils-kwarg-signature-cache"
+
+
+def test_scope_report_selects_mlx_text_stop_kwarg_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_text_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-text-stop-kwarg-signature-cache"
+
+
+def test_scope_report_selects_dataset_registry_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/dataset_registry/catalog.py"],
+    )
+
+    assert scope["selected_count"] == len(DATASET_REGISTRY_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == DATASET_REGISTRY_SELECTED_PROBE_IDS
+
+
+def test_scope_report_selects_mlx_audio_wav_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
+    )
+
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-wav-streaming-pcm" in _selected_probe_ids(scope)
+
+
+def test_scope_report_selects_mlx_audio_signature_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
+    )
+
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-generate-signature-cache" in _selected_probe_ids(scope)
+
+
+def test_scope_report_selects_video_preprocessing_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/video_preprocessing.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "video-preprocessing-uri-byte-length-reuse"
+
+
+def test_scope_report_selects_mlx_audio_speech_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
+    )
+
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-speech-signature-cache" in _selected_probe_ids(scope)
 
 
 def test_scope_report_selects_only_matching_probe() -> None:
@@ -107,8 +232,34 @@ def test_scope_report_selects_training_dataset_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/model_ops/training_dataset.py"],
     )
 
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "training-dataset-token-percentiles-single-sort",
+        "training-dataset-validation-sample-limit",
+    }
+
+
+def test_scope_report_selects_training_dataset_chunker_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/model_ops/training_dataset_chunker.py"
+        ],
+    )
+
     assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "training-dataset-token-percentiles-single-sort"
+    assert scope["selected_probes"][0]["id"] == "training-dataset-chunker-top-level-base-copy"
+
+
+def test_scope_report_selects_startup_signals_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/startup_signals.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "startup-signals-lazy-worker-log-excerpts"
 
 
 def test_scope_report_selects_real_model_support_probe() -> None:
@@ -128,8 +279,9 @@ def test_scope_report_selects_evaluation_probes() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 3
+    assert scope["selected_count"] == 4
     assert probe_ids == {
+        "evaluation-dialogue-diagnostics-top-k",
         "evaluation-job-id-high-water-mark",
         "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
@@ -142,8 +294,12 @@ def test_scope_report_selects_code_eval_stdio_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/engine/code_eval_runner.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "code-eval-stdio-tail-single-stat"
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "code-eval-code-block-last-match-streaming",
+        "code-eval-stdio-tail-single-stat",
+    }
 
 
 def test_scope_report_selects_evaluation_store_probe() -> None:
@@ -181,7 +337,9 @@ def test_dispatch_probe_impl_supports_evaluation_final_result_probe() -> None:
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["read_rows_calls_mean"] == 0.0
     assert metrics["sample_count"] == 15000.0
+    assert metrics["cache_hit_count"] == 5.0
 
 
 
@@ -193,6 +351,33 @@ def test_scope_report_selects_multimodal_fast_path_probe() -> None:
 
     assert scope["selected_count"] == 1
     assert scope["selected_probes"][0]["id"] == "multimodal-fast-path-signature-top-level-key-cache"
+
+
+def test_scope_report_selects_multimodal_preprocessing_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/multimodal_preprocessing.py"],
+    )
+
+    assert scope["selected_count"] == 2
+    assert {probe["id"] for probe in scope["selected_probes"]} == {
+        "multimodal-preprocessing-local-uri-parse-elision",
+        "multimodal-preprocessing-image-uri-single-parse",
+    }
+
+
+def test_scope_report_selects_dataset_registry_preview_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/dataset_registry/catalog.py"],
+    )
+
+    assert scope["selected_count"] == 3
+    assert {probe["id"] for probe in scope["selected_probes"]} == {
+        "dataset-registry-limited-read-streaming",
+        "dataset-registry-snapshot-inference-single-pass",
+        "dataset-registry-preview-limit-short-circuit",
+    }
 
 
 def test_scope_report_selects_worker_registry_probe() -> None:
@@ -215,6 +400,16 @@ def test_scope_report_selects_lora_reward_summary_probe() -> None:
 
     assert scope["selected_count"] == 1
     assert scope["selected_probes"][0]["id"] == "lora-reward-summary-candidate-minmax"
+
+
+def test_scope_report_selects_statistical_evidence_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/statistical_evidence.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "statistical-evidence-bootstrap-single-sort"
 
 
 def test_scope_report_selects_pr_scoped_scope_script_probe() -> None:
@@ -270,6 +465,17 @@ def test_scope_report_selects_mlx_lm_runner_probe() -> None:
 
     assert scope["selected_count"] == 1
     assert scope["selected_probes"][0]["id"] == "mlx-lm-structured-result-tail-parse"
+
+
+def test_scope_report_selects_mlx_audio_local_uri_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
+    )
+
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-local-uri-zero-copy-preprocess" in _selected_probe_ids(scope)
 
 
 def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
@@ -329,6 +535,32 @@ def test_deterministic_embedding_project_digest_probe_script_smoke(capsys: pytes
     assert metrics["sample_count"] == 3.0
     assert metrics["vector_count"] == 500.0
     assert metrics["dimensions"] == 4096.0
+
+
+def test_scope_report_selects_deterministic_image_edit_digest_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/deterministic_image_generation_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "deterministic-image-edit-digest-reuse"
+
+
+def test_deterministic_image_edit_digest_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/deterministic_image_edit_digest_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["image_count"] == 8.0
+    assert metrics["digest_calls_mean"] == 4.0
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["payload_checksum"] > 0
 
 
 def test_scope_report_selects_rerank_core_top_k_probe() -> None:
@@ -419,6 +651,16 @@ def test_scope_report_selects_maintenance_percentile_probe() -> None:
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
     assert "maintenance-percentile-vector-reuse" in probe_ids
+
+
+def test_scope_report_selects_maintenance_prompt_shape_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/maintenance_core.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "maintenance-prompt-shape-vector-repeat" in probe_ids
 
 
 def test_scope_report_selects_upload_receipt_published_files_probe() -> None:
@@ -542,14 +784,11 @@ def test_scope_report_large_changed_set_preserves_exact_selection_semantics() ->
 
     assert scope["force_all"] is False
     assert scope["changed_files"] == sorted({path for path in changed_files if path})
-    assert [probe["id"] for probe in scope["selected_probes"]] == [
-        "benchmark-export-run-scan-single-pass",
-        "evaluation-job-id-high-water-mark",
-        "evaluation-sample-probe-aggregation",
-        "evaluation-latency-percentile-vector-reuse",
-        "download-pipeline-directory-size-single-stat",
-    ]
-    assert scope["selected_count"] == 5
+    assert (
+        [probe["id"] for probe in scope["selected_probes"]]
+        == SCOPE_MATCHER_SELECTED_PROBE_IDS
+    )
+    assert scope["selected_count"] == len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
 
 
 def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
@@ -676,6 +915,134 @@ def test_compiled_glob_pattern_reuses_cached_regex(monkeypatch: pytest.MonkeyPat
     pr_scoped_performance_module._force_all_wildcard_matchers.cache_clear()
 
 
+def test_event_extraction_alignment_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_EVENT_ALIGNMENT_PROBE_SIZE", "5")
+    monkeypatch.setenv("MELIX_EVENT_ALIGNMENT_PROBE_ACCEPTED_PER_ROW", "2")
+    monkeypatch.setenv("MELIX_EVENT_ALIGNMENT_PROBE_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_EVENT_ALIGNMENT_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/event_extraction_alignment_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["matrix_size"] == 5.0
+    assert metrics["accepted_edges"] == 10.0
+    assert metrics["iterations_per_sample"] == 2.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["match_count_mean"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_HUB_CATALOG_TAG_PROBE_RECORDS", "3")
+    monkeypatch.setenv("MELIX_HUB_CATALOG_TAG_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/hub_catalog_tag_normalization_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["record_count"] == 3.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["tag_normalization_calls_mean"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_hub_catalog_size_hint_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_HUB_CATALOG_SIZE_HINT_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_HUB_CATALOG_SIZE_HINT_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/hub_catalog_size_hint_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["size_hint_calls_mean"] == 8.0
+    assert metrics["matched_hint_count"] == 6.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_hub_catalog_next_cursor_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_HUB_CATALOG_CURSOR_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_HUB_CATALOG_CURSOR_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/hub_catalog_next_cursor_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["cursor_parse_calls_mean"] == 8.0
+    assert metrics["checksum"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_statistical_evidence_bootstrap_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STAT_EVIDENCE_SAMPLE_SIZE", "16")
+    monkeypatch.setenv("MELIX_STAT_EVIDENCE_BOOTSTRAP_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_STAT_EVIDENCE_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/statistical_evidence_bootstrap_probe.py"),
+            run_name="__main__",
+        )
+
+    assert excinfo.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["sample_size"] == 16.0
+    assert metrics["bootstrap_iterations"] == 8.0
+    assert metrics["sorted_calls_mean"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["lower_bound_mean"] <= metrics["upper_bound_mean"]
+
+
+def test_training_dataset_chunker_top_level_copy_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_TOP_KEYS", "4")
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_WORDS", "240")
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_CHUNK_SIZE", "60")
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/training_dataset_chunker_top_level_copy_probe.py"),
+            run_name="__main__",
+        )
+
+    assert excinfo.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["top_level_key_count"] == 7.0
+    assert metrics["chunk_count"] > 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -696,6 +1063,38 @@ def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_multimodal_preprocessing_uri_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/multimodal_preprocessing_uri_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["iteration_count"] == 3.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["urlparse_calls_mean"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_multimodal_image_uri_parse_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/multimodal_image_uri_parse_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["prepared_image_count"] == 640.0
+    assert metrics["urlparse_calls_mean"] == 640.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -712,8 +1111,239 @@ def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     assert metrics["checksum"] > 0
 
 
+def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STREAM_PREFIX_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_STREAM_PREFIX_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/stream_assembler_structural_prefix_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iteration_count"] == 3.0
+    assert metrics["held_suffix_hits"] == 3.0
+    assert metrics["partial_suffix_hits"] == 3.0
+    assert metrics["prefix_identity_hits"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["partial_suffix_elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_utils_kwarg_cache_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["iterations_per_sample"] == 40000.0
+    assert metrics["inspect_signature_calls_mean"] == 2.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_mlx_text_stop_kwarg_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MLX_TEXT_STOP_KWARG_PROBE_ITERATIONS", "12")
+    monkeypatch.setenv("MELIX_MLX_TEXT_STOP_KWARG_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/mlx_text_stop_kwarg_signature_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations_per_sample"] == 12.0
+    assert metrics["stream_signature_calls_mean"] == 1.0
+    assert metrics["inspect_signature_calls_mean"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_dataset_registry_limit_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_LIMIT_PROBE_GROUPS", "2")
+    monkeypatch.setenv("MELIX_DATASET_LIMIT_PROBE_FILES_PER_GROUP", "3")
+    monkeypatch.setenv("MELIX_DATASET_LIMIT_PROBE_LIMIT", "2")
+    monkeypatch.setenv("MELIX_DATASET_LIMIT_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_limit_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["synthetic_file_count"] == 6.0
+    assert metrics["limit"] == 2.0
+    assert metrics["dataset_files_yielded_mean"] == 4.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_dataset_registry_split_match_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_SPLIT_MATCH_PROBE_FILE_COUNT", "12")
+    monkeypatch.setenv("MELIX_DATASET_SPLIT_MATCH_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_split_match_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["file_count"] == 12.0
+    assert metrics["matched_files_mean"] == 3.0
+    assert metrics["path_constructor_calls_mean"] == 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_mlx_audio_wav_streaming_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/mlx_audio_wav_streaming_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 240000.0
+    assert metrics["wav_bytes"] == 480044.0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_mlx_audio_generate_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MLX_AUDIO_SIGNATURE_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_MLX_AUDIO_SIGNATURE_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/mlx_audio_generate_signature_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations_per_sample"] == 3.0
+    assert metrics["signature_calls_mean"] == 0.0
+    assert metrics["audio_bytes_total"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_dataset_registry_snapshot_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_REGISTRY_PROBE_FILE_COUNT", "3")
+    monkeypatch.setenv("MELIX_DATASET_REGISTRY_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_snapshot_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["legacy_inference_helper_calls_mean"] == 0.0
+    assert metrics["file_count_mean"] == 4.0
+
+
+def test_video_preprocessing_uri_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/video_preprocessing_uri_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["iterations_per_sample"] == 50000.0
+    assert metrics["byte_length_getattrs_per_call"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_mlx_audio_speech_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_AUDIO_SPEECH_SIGNATURE_PROBE_CALLS", "3")
+    monkeypatch.setenv("MELIX_AUDIO_SPEECH_SIGNATURE_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/mlx_audio_speech_signature_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["speak_call_count"] == 3.0
+    assert metrics["inspect_signature_calls_mean"] == 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["output_bytes_total"] > 0
+
+
+def test_dataset_registry_preview_limit_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_PREVIEW_PROBE_FILES", "4")
+    monkeypatch.setenv("MELIX_DATASET_PREVIEW_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/dataset_registry_preview_limit_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["file_count"] == 4.0
+    assert metrics["rows_returned"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
+        "dataset-registry-limited-read-streaming",
+        "dataset-registry-snapshot-inference-single-pass",
+        "event-extraction-alignment-accepted-edge-cache",
+        "hub-catalog-tag-normalization-single-pass",
+        "hub-catalog-next-cursor-fast-parse",
+        "hub-catalog-size-hint-regex-precompile",
         "benchmark-evaluation-report-running-aggregates",
         "stream-assembler-parser-mode-cache",
         "benchmark-export-run-scan-single-pass",
@@ -722,13 +1352,23 @@ def test_registered_probes_expose_focused_commands() -> None:
         "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
+        "code-eval-code-block-last-match-streaming",
         "code-eval-stdio-tail-single-stat",
         "deterministic-embedding-duplicate-input-cache",
         "deterministic-embedding-project-digest-allocation",
+        "deterministic-image-edit-digest-reuse",
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
+        "runtime-utils-kwarg-signature-cache",
+        "mlx-text-stop-kwarg-signature-cache",
+        "mlx-audio-wav-streaming-pcm",
+        "mlx-audio-generate-signature-cache",
+        "mlx-audio-speech-signature-cache",
+        "video-preprocessing-uri-byte-length-reuse",
         "dev-up-mlx-metal-dist-info-scandir",
+        "evaluation-dialogue-diagnostics-top-k",
         "evaluation-job-id-high-water-mark",
+        "evaluation-dialogue-diagnostics-top-k",
         "evaluation-final-result-materialization-streaming",
         "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
@@ -738,25 +1378,38 @@ def test_registered_probes_expose_focused_commands() -> None:
         "job-registry-restore-sort-elision",
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
+        "mlx-audio-local-uri-zero-copy-preprocess",
+        "mlx-audio-generate-signature-cache",
+        "mlx-audio-speech-signature-cache",
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
         "model-registry-plain-local-manifest-stat-elision",
         "multimodal-fast-path-signature-top-level-key-cache",
+        "multimodal-preprocessing-local-uri-parse-elision",
+        "multimodal-preprocessing-image-uri-single-parse",
         "package-macos-resolve-fallback-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
         "training-dataset-token-percentiles-single-sort",
+        "training-dataset-validation-sample-limit",
+        "training-dataset-chunker-top-level-base-copy",
+        "dataset-registry-preview-limit-short-circuit",
         "maintenance-bench-report-readback",
         "maintenance-percentile-vector-reuse",
+        "maintenance-prompt-shape-vector-repeat",
         "phase8-metrics-closure-audit-reuse",
         "pr-scoped-performance-registry-cache",
         "real-model-support-hf-cache-latest-snapshot",
+        "stream-assembler-structural-prefix-cache",
         "swift-cli-json-envelope-encoding",
+        "startup-signals-lazy-worker-log-excerpts",
         "upload-receipt-published-files-scandir",
+        "video-preprocessing-uri-byte-length-reuse",
         "download-pipeline-directory-size-single-stat",
         "worker-registry-resident-bytes-accumulator",
         "pr-scoped-performance-report-results-scandir",
         "model-ops-bundle-artifact-byte-accounting",
+        "statistical-evidence-bootstrap-single-sort",
     }
     registry_probe = None
     maintenance_probe = None
@@ -1134,6 +1787,24 @@ def test_code_eval_stdio_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert metrics["stdio_stat_calls_mean"] == 6000.0
     assert metrics["output_limit_exceeded_mean"] == 1.0
     assert metrics["tail_chars_mean"] > 0
+    assert metrics["sandbox_profile_elapsed_ms_mean"] > 0
+    assert metrics["sandbox_profile_static_builds_mean"] == 1.0
+    assert metrics["sandbox_profile_iteration_count"] == 1500.0
+
+
+def test_code_eval_code_block_extract_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/code_eval_code_block_extract_probe.py"))
+
+    probe_script["main"]()
+    metrics = json.loads(capsys.readouterr().out)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["block_count"] == 2500.0
+    assert metrics["sample_count"] == 7.0
+    assert metrics["extracted_chars_mean"] > 0
 
 
 def test_probe_smokes_return_metrics_against_current_repo() -> None:
@@ -1194,7 +1865,9 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert evaluation_store_metrics["csv_line_count"] == 10001.0
     assert scope_matcher_metrics["build_scope_report_ms_mean"] > 0
     assert scope_matcher_metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
-    assert scope_matcher_metrics["selected_probe_count_mean"] == 5.0
+    assert scope_matcher_metrics["selected_probe_count_mean"] == float(
+        len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
+    )
     assert scope_matcher_metrics["force_all_selected_mean"] == 0.0
     assert training_dataset_metrics["elapsed_ms_mean"] > 0
     assert training_dataset_metrics["peak_bytes_mean"] > 0
@@ -1426,9 +2099,25 @@ def test_worker_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["preloaded_model_count"] == 2000.0
     assert payload["loop_count"] == 250.0
     assert payload["request_count"] == 3000.0
+    assert payload["request_lifecycle_elapsed_ms_mean"] > 0
     assert payload["request_stats_elapsed_ms_mean"] > 0
     assert payload["resident_bytes_mean"] > 0
     assert payload["sample_count"] == 3.0
+
+
+def test_startup_signals_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(REPO_ROOT / "scripts/startup_signals_log_probe.py"), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["conflict_elapsed_ms_mean"] > 0
+    assert payload["conflict_log_reads_mean"] == 0.0
+    assert payload["control_crash_elapsed_ms_mean"] > 0
+    assert payload["control_crash_log_reads_mean"] == 1.0
+    assert payload["worker_crash_elapsed_ms_mean"] > 0
+    assert payload["worker_crash_log_reads_mean"] == 1.0
+    assert payload["sample_count"] == 5.0
 
 
 def test_job_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1549,7 +2238,9 @@ def test_dispatch_probe_impl_supports_pr_scoped_scope_matcher_probe() -> None:
 
     assert metrics["build_scope_report_ms_mean"] > 0
     assert metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
-    assert metrics["selected_probe_count_mean"] == 5.0
+    assert metrics["selected_probe_count_mean"] == float(
+        len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
+    )
     assert metrics["force_all_selected_mean"] == 0.0
 
 
@@ -1989,6 +2680,41 @@ def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:
     assert metrics["payload_value"] == 42.0
     assert metrics["line_count"] == 50002.0
     assert metrics["sample_count"] == 5.0
+
+
+def test_mlx_audio_local_uri_probe_script_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-audio-local-uri-zero-copy-preprocess"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["local_uri_read_bytes_calls_mean"] == 0.0
+    assert metrics["audio_size_bytes"] == 8_388_608.0
+    assert metrics["sample_count"] == 5.0
+
+
+def test_mlx_audio_local_uri_probe_script_main_covers_checked_in_file(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "mlx_audio_local_uri_probe.py"
+    spec = importlib.util.spec_from_file_location("mlx_audio_local_uri_probe_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.AUDIO_SIZE_BYTES = 1024
+    module.SAMPLE_COUNT = 1
+
+    assert module.main() == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert payload["local_uri_read_bytes_calls_mean"] == 0.0
+    assert payload["audio_size_bytes"] == 1024.0
+    assert payload["sample_count"] == 1.0
 
 
 def test_lora_reward_summary_probe_script_emits_metrics() -> None:

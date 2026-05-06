@@ -84,6 +84,7 @@ def prepare_video_input(part) -> PreparedVideoInput:
     resolved_filename = (
         filename or _filename_from_reference(parsed_reference) or f"remote-video.{resolved_format}"
     )
+    byte_length = int(getattr(media, "byte_length", 0) or 0)
     return PreparedVideoInput(
         source_kind="uri",
         reference=uri,
@@ -91,7 +92,7 @@ def prepare_video_input(part) -> PreparedVideoInput:
         mime_type=mime_type,
         format=resolved_format,
         filename=resolved_filename,
-        byte_length=int(getattr(media, "byte_length", 0) or 0),
+        byte_length=byte_length,
         duration_ms=duration_ms,
         frame_budget=frame_budget,
         start_ms=start_ms,
@@ -101,7 +102,7 @@ def prepare_video_input(part) -> PreparedVideoInput:
             mime_type=mime_type,
             format_name=resolved_format,
             filename=resolved_filename,
-            byte_length=int(getattr(media, "byte_length", 0) or 0),
+            byte_length=byte_length,
             duration_ms=duration_ms,
             frame_budget=frame_budget,
             start_ms=start_ms,

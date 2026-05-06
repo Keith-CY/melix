@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
@@ -22,6 +23,34 @@ from worker.productization.event_extraction import (
     RemoteEventExtractionTarget,
     write_event_prediction_rows,
 )
+
+
+def test_event_dialogue_diagnostics_keeps_top_five_without_full_sort(monkeypatch) -> None:
+    traces = [
+        {"dialogue_id": f"dlg-{index}", "line_number": index, "status": "ok", "total_duration_ms": float(index)}
+        for index in range(30)
+    ]
+    traces[3]["provider_usage"] = {"prompt_tokens": 2.0, "ignored_bool": True}
+
+    def fail_sorted(*args, **kwargs):  # pragma: no cover - exercised only on regression
+        if args and args[0] is traces:
+            raise AssertionError("slowest dialogue diagnostics should not fully sort all traces")
+        return original_sorted(*args, **kwargs)
+
+    original_sorted = builtins.sorted
+    monkeypatch.setattr(builtins, "sorted", fail_sorted)
+
+    diagnostics = EvaluationCore._event_extraction_dialogue_diagnostics(traces)
+
+    assert diagnostics["provider_usage_totals"] == {"prompt_tokens": 2}
+    assert diagnostics["dialogue_status_counts"] == {"ok": 30, "failed": 0, "aborted": 0}
+    assert diagnostics["slowest_dialogues"] == [
+        {"dialogue_id": "dlg-29", "line_number": 29, "duration_ms": 29.0, "status": "ok"},
+        {"dialogue_id": "dlg-28", "line_number": 28, "duration_ms": 28.0, "status": "ok"},
+        {"dialogue_id": "dlg-27", "line_number": 27, "duration_ms": 27.0, "status": "ok"},
+        {"dialogue_id": "dlg-26", "line_number": 26, "duration_ms": 26.0, "status": "ok"},
+        {"dialogue_id": "dlg-25", "line_number": 25, "duration_ms": 25.0, "status": "ok"},
+    ]
 
 
 def test_default_event_extraction_prompt_spec_uses_baseline_v6_feedback_rules() -> None:
@@ -1653,6 +1682,29 @@ def test_event_alignment_uses_global_optimum_not_greedy() -> None:
     assert matches == [(0, 1, 0.80), (1, 0, 0.80)]
 
 
+def test_event_alignment_precomputes_only_accepted_sparse_edges() -> None:
+    scores = [
+        [0.91, 0.0, 0.0, 0.77],
+        [0.0, 0.82, 0.0, 0.0],
+        [0.80, 0.0, 0.79, 0.0],
+    ]
+    accepted = [
+        [True, False, False, True],
+        [False, True, False, False],
+        [True, False, True, False],
+    ]
+
+    edges = event_extraction_module._accepted_event_matching_edges(scores, accepted)
+    matches = event_extraction_module._maximum_weight_event_matching(scores, accepted)
+
+    assert edges == (
+        ((0, 0.91), (3, 0.77)),
+        ((1, 0.82),),
+        ((0, 0.80), (2, 0.79)),
+    )
+    assert matches == [(0, 0, 0.91), (1, 1, 0.82), (2, 2, 0.79)]
+
+
 def test_event_alignment_reuses_normalized_action_values(monkeypatch) -> None:
     calls = 0
     original = event_extraction_module._normalize_event_field
@@ -1885,6 +1937,40 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
     prompt_snapshot = json.loads((output_dir / "prompt_snapshot.json").read_text(encoding="utf-8"))
     assert prompt_snapshot["prompt_id"] == "event-prod"
     assert prompt_snapshot["system_prompt"] == "Extract only events from this dialogue."
+
+
+def test_event_extraction_dialogue_diagnostics_uses_top_k_for_slowest_dialogues(monkeypatch) -> None:
+    calls: list[tuple[int, int]] = []
+    original_nlargest = evaluation_core.heapq.nlargest
+
+    def counting_nlargest(count, iterable, *, key=None):
+        items = list(iterable)
+        calls.append((count, len(items)))
+        return original_nlargest(count, items, key=key)
+
+    monkeypatch.setattr(evaluation_core.heapq, "nlargest", counting_nlargest)
+    traces = [
+        {
+            "dialogue_id": f"dlg-{index}",
+            "line_number": index,
+            "status": "ok",
+            "request_duration_ms": float(index),
+            "total_duration_ms": float(index),
+            "raw_response_chars": 10 + index,
+        }
+        for index in range(12)
+    ]
+
+    diagnostics = EvaluationCore._event_extraction_dialogue_diagnostics(traces)
+
+    assert calls == [(5, 12)]
+    assert diagnostics["slowest_dialogues"] == [
+        {"dialogue_id": "dlg-11", "line_number": 11, "duration_ms": 11.0, "status": "ok"},
+        {"dialogue_id": "dlg-10", "line_number": 10, "duration_ms": 10.0, "status": "ok"},
+        {"dialogue_id": "dlg-9", "line_number": 9, "duration_ms": 9.0, "status": "ok"},
+        {"dialogue_id": "dlg-8", "line_number": 8, "duration_ms": 8.0, "status": "ok"},
+        {"dialogue_id": "dlg-7", "line_number": 7, "duration_ms": 7.0, "status": "ok"},
+    ]
 
 
 def test_evaluation_core_writes_semantic_judge_artifacts_without_persisting_judge_secret(

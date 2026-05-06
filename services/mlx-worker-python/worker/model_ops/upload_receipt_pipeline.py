@@ -128,6 +128,59 @@ class HuggingFacePublishBackend:
         )
 
 
+@dataclass(frozen=True)
+class LocalFilesystemPublishBackend:
+    root: Path
+
+    def publish(
+        self,
+        *,
+        source_path: Path,
+        target_repo: str,
+        artifact_kind: str,
+        token: str = "",
+        private: bool = False,
+        commit_message: str = "",
+        published_files: list[str] | None = None,
+    ) -> PublishResult:
+        del artifact_kind, token, private, commit_message
+        resolved_source_path = source_path.expanduser().resolve()
+        target_path = self.root.expanduser().resolve() / _local_target_repo_path(target_repo)
+        if target_path.exists() and not target_path.is_dir():
+            target_path.unlink()
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if resolved_source_path.is_dir():
+            shutil.copytree(resolved_source_path, target_path, dirs_exist_ok=True)
+        else:
+            target_path.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(resolved_source_path, target_path / resolved_source_path.name)
+
+        if published_files is None:
+            if target_path.is_dir():
+                published_files = _collect_published_file_list(target_path)
+            else:
+                published_files = [target_path.name]
+
+        return PublishResult(
+            backend="local_filesystem",
+            target_repo=target_repo,
+            target_url=target_path.as_uri(),
+            remote_ref=str(target_path),
+            published_files=published_files,
+        )
+
+
+def _local_target_repo_path(target_repo: str) -> Path:
+    normalized_parts = [
+        part.strip().replace("\\", "_")
+        for part in target_repo.split("/")
+        if part.strip() not in {"", ".", ".."}
+    ]
+    if not normalized_parts:
+        normalized_parts = ["artifact"]
+    return Path(*normalized_parts)
+
+
 def _resolve_hf_cli_command() -> str:
     for candidate in ("hf", "huggingface-cli"):
         if shutil.which(candidate):
@@ -159,7 +212,7 @@ class UploadReceiptPipeline:
         return _collect_published_file_list(source_dir)
 
     def __init__(self, publisher: Any | None = None) -> None:
-        self._publisher = publisher or HuggingFacePublishBackend()
+        self._publisher = publisher
 
     def run(
         self,
@@ -197,7 +250,7 @@ class UploadReceiptPipeline:
         processor_config_files = UploadReceiptPipeline._collect_processor_config_files(
             prepared_source.published_files
         )
-        publish_result = self._publisher.publish(
+        publish_result = self._resolve_publisher(request.ext).publish(
             source_path=prepared_source.source_path,
             target_repo=target_repo,
             artifact_kind=export_artifact_kind,
@@ -350,6 +403,29 @@ class UploadReceiptPipeline:
                 ]
             ),
         )
+
+    @staticmethod
+    def _resolve_publisher_from_ext(ext: dict[str, str]) -> Any:
+        backend = ext.get("publish_backend", "").strip().lower()
+        if backend in {"", "huggingface", "huggingface_hub"}:
+            return HuggingFacePublishBackend()
+        if backend in {"local", "local_filesystem", "filesystem"}:
+            root = ext.get("local_publish_root", "").strip()
+            if not root:
+                raise ModelOperationError(
+                    code="invalid_argument",
+                    message="local_filesystem publish requires local_publish_root.",
+                )
+            return LocalFilesystemPublishBackend(root=Path(root))
+        raise ModelOperationError(
+            code="unsupported_publish_backend",
+            message="publish_backend must be one of: huggingface_hub, local_filesystem.",
+        )
+
+    def _resolve_publisher(self, ext: dict[str, str]) -> Any:
+        if self._publisher is not None:
+            return self._publisher
+        return self._resolve_publisher_from_ext(ext)
 
     @staticmethod
     def _resolve_export_artifact_kind(

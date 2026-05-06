@@ -49,11 +49,13 @@ class RerankCore:
     @staticmethod
     def _rank_scores(scores: list[float], *, top_k: int | None) -> list[tuple[int, float]]:
         if top_k is not None and top_k < len(scores):
-            return heapq.nsmallest(
-                top_k,
-                enumerate(scores),
-                key=lambda item: (-item[1], item[0]),
-            )
+            return [
+                (index, score)
+                for _negative_score, index, score in heapq.nsmallest(
+                    top_k,
+                    ((-score, index, score) for index, score in enumerate(scores)),
+                )
+            ]
         return sorted(
             enumerate(scores),
             key=lambda item: (-item[1], item[0]),

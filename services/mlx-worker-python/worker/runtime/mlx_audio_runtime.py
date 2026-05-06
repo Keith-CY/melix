@@ -7,6 +7,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Lock
 from time import perf_counter
+import array
+import sys
 import wave
 
 from worker.runtime.audio_preprocessing import prepare_audio_input
@@ -35,36 +37,49 @@ def _normalize_language(value) -> str:
     return "" if normalized.lower() == "none" else normalized
 
 
-def _flatten_samples(value) -> list[float]:
+def _iter_samples(value):
+    if isinstance(value, (float, int)):
+        yield float(value)
+        return
+    flat_values = getattr(value, "flat", None)
+    if flat_values is not None and not isinstance(value, (list, tuple)):
+        for item in flat_values:
+            yield float(item)
+        return
     if hasattr(value, "tolist"):
         value = value.tolist()
-    if isinstance(value, (float, int)):
-        return [float(value)]
-    flattened: list[float] = []
     for item in value:
-        if isinstance(item, (list, tuple)):
-            flattened.extend(_flatten_samples(item))
-        elif hasattr(item, "tolist"):
-            flattened.extend(_flatten_samples(item.tolist()))
+        if (
+            isinstance(item, (list, tuple))
+            or hasattr(item, "flat")
+            or hasattr(item, "tolist")
+        ):
+            yield from _iter_samples(item)
         else:
-            flattened.append(float(item))
-    return flattened
+            yield float(item)
 
 
 def _audio_to_wav_bytes(audio, sample_rate: int) -> bytes:
-    samples = _flatten_samples(audio)
-    pcm = bytearray()
-    for sample in samples:
-        clamped = max(-1.0, min(1.0, float(sample)))
-        scaled = int(clamped * 32767.0)
-        pcm.extend(int(scaled).to_bytes(2, byteorder="little", signed=True))
+    chunk = array.array("h")
+    chunk_sample_limit = 65536
 
     with BytesIO() as buffer:
         with wave.open(buffer, "wb") as handle:
             handle.setnchannels(1)
             handle.setsampwidth(2)
             handle.setframerate(int(sample_rate))
-            handle.writeframes(bytes(pcm))
+            for sample in _iter_samples(audio):
+                clamped = max(-1.0, min(1.0, float(sample)))
+                chunk.append(int(clamped * 32767.0))
+                if len(chunk) >= chunk_sample_limit:
+                    if sys.byteorder != "little":
+                        chunk.byteswap()
+                    handle.writeframesraw(chunk.tobytes())
+                    chunk = array.array("h")
+            if chunk:
+                if sys.byteorder != "little":
+                    chunk.byteswap()
+                handle.writeframesraw(chunk.tobytes())
         return buffer.getvalue()
 
 
@@ -152,7 +167,7 @@ class MLXAudioTranscriptionRuntime:
         return 0
 
     def transcribe(self, loaded_model: AudioRuntimeLoadedModel, request) -> TranscriptionResult:
-        prepared = prepare_audio_input(request)
+        prepared = prepare_audio_input(request, read_uri_bytes=not bool(request.audio_uri))
         started_at = perf_counter()
         cleanup_path: Path | None = None
         audio_path = prepared.local_path
@@ -235,7 +250,9 @@ class MLXAudioSpeechRuntime:
         except TypeError:
             model = load_model(model_spec.model_path)
 
-        params = signature(model.generate).parameters
+        generate_parameter_names = tuple(signature(model.generate).parameters)
+        speech_generate_parameters = frozenset(generate_parameter_names)
+        params = speech_generate_parameters
         supports_voice = "voice" in params
         supports_instructions = "instruct" in params
         if supports_voice and supports_instructions:
@@ -254,7 +271,9 @@ class MLXAudioSpeechRuntime:
             voice_metadata=_voice_metadata_for_model(model),
             voice_mode=voice_mode,
             supports_instructions=supports_instructions,
+            speech_generate_parameters=speech_generate_parameters,
             output_formats=("wav",),
+            generate_parameter_names=generate_parameter_names,
         )
 
     def estimate_resident_bytes(self, model_spec) -> int:
@@ -265,20 +284,25 @@ class MLXAudioSpeechRuntime:
         if requested_format != "wav":
             raise ValueError("mlx-audio speech backend only supports wav output.")
 
-        params = signature(loaded_model.model.generate).parameters
+        supports_voice = loaded_model.voice_mode in {"hybrid", "named"}
+        supports_instructions = loaded_model.supports_instructions
+        if not loaded_model.speech_generate_parameters and not loaded_model.generate_parameter_names:
+            params = frozenset(signature(loaded_model.model.generate).parameters)
+            supports_voice = "voice" in params
+            supports_instructions = "instruct" in params
         kwargs = {
             "text": request.input,
             "verbose": False,
         }
         voice_fallback_count = 0
 
-        if "voice" in params and request.voice:
+        if supports_voice and request.voice:
             kwargs["voice"] = request.voice
 
-        if "instruct" in params:
+        if supports_instructions:
             if request.instructions:
                 kwargs["instruct"] = request.instructions
-            elif "voice" not in params and request.voice:
+            elif not supports_voice and request.voice:
                 kwargs["instruct"] = request.voice
                 voice_fallback_count = 1
 

@@ -5,45 +5,60 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import re
 import subprocess
 import sys
 
 
-_DIFF_HEADER_RE = re.compile(r"diff --git a/(.+) b/(.+)")
-_HUNK_NEW_RANGE_RE = re.compile(r"\+(\d+)(?:,(\d+))?")
+_DIFF_HEADER_PREFIX = "diff --git a/"
+_DIFF_HEADER_SEPARATOR = " b/"
 
 
 def _is_diff_file_marker(line: str) -> bool:
     return line.startswith(("+++ b/", "+++ /dev/null", "--- a/", "--- /dev/null"))
 
 
+def _parse_diff_header_new_path(line: str) -> str | None:
+    if not line.startswith(_DIFF_HEADER_PREFIX):
+        return None
+    separator_index = line.find(_DIFF_HEADER_SEPARATOR, len(_DIFF_HEADER_PREFIX))
+    if separator_index < 0:
+        return None
+    return line[separator_index + len(_DIFF_HEADER_SEPARATOR) :]
+
+
+def _parse_hunk_new_start(line: str) -> int | None:
+    new_range_index = line.find(" +")
+    if new_range_index < 0:
+        return None
+    digit_index = new_range_index + 2
+    end_index = digit_index
+    line_length = len(line)
+    while end_index < line_length and line[end_index].isdigit():
+        end_index += 1
+    if end_index == digit_index:
+        return None
+    return int(line[digit_index:end_index])
+
+
 def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     changed_by_path: dict[str, set[int]] = {}
-    current_path: str | None = None
     current_changed_lines: set[int] | None = None
     new_line: int | None = None
     for line in diff_text.splitlines():
         first_char = line[:1]
-        if first_char == "d" and line.startswith("diff --git "):
-            match = _DIFF_HEADER_RE.match(line)
-            current_path = None if match is None else match.group(2)
+        if first_char == "d" and line.startswith(_DIFF_HEADER_PREFIX):
+            current_path = _parse_diff_header_new_path(line)
             current_changed_lines = (
                 None if current_path is None else changed_by_path.setdefault(current_path, set())
             )
             new_line = None
             continue
         if first_char == "@" and line.startswith("@@"):
-            match = _HUNK_NEW_RANGE_RE.search(line)
-            if match is None:
-                continue
-            new_line = int(match.group(1))
+            new_line = _parse_hunk_new_start(line)
             continue
         if current_changed_lines is None or new_line is None:
             continue
         if first_char == "\\" and line.startswith("\\ "):
-            continue
-        if first_char in {"+", "-"} and _is_diff_file_marker(line):
             continue
         if first_char == "+":
             current_changed_lines.add(new_line)

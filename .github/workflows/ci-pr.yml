@@ -41,6 +41,26 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
 
+      - name: Restore Python dependency cache
+        uses: actions/cache@v4
+        with:
+          path: .uv-cache
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock', 'pyproject.toml', 'services/mlx-worker-python/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Restore Swift protocol cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .swift-home/protocol
+            .build/ModuleCache.noindex/protocol
+            packages/protocol/swift/.build
+          key: ${{ runner.os }}-swift-protocol-${{ hashFiles('packages/protocol/swift/Package.swift', 'packages/protocol/swift/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-protocol-
+            ${{ runner.os }}-swift-
+
       - name: Bootstrap
         run: bash scripts/ci_progress.sh "Bootstrap" make bootstrap
 
@@ -48,8 +68,37 @@ jobs:
         run: bash scripts/ci_progress.sh "Protocol drift check" make proto-check
 
   swift-tests:
+    name: swift-tests (${{ matrix.shard }})
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: protocol
+            target: swift-test-protocol
+          - shard: text-worker
+            target: swift-test-text-worker
+          - shard: control-core
+            target: swift-test-control-core
+          - shard: request-coordinator-a
+            target: swift-test-control-request-coordinator-a
+          - shard: request-coordinator-b
+            target: swift-test-control-request-coordinator-b
+          - shard: request-coordinator-c
+            target: swift-test-control-request-coordinator-c
+          - shard: request-coordinator-d
+            target: swift-test-control-request-coordinator-d
+          - shard: request-coordinator-e
+            target: swift-test-control-request-coordinator-e
+          - shard: control-openai
+            target: swift-test-control-openai
+          - shard: control-rest
+            target: swift-test-control-rest
+          - shard: control-worker
+            target: swift-test-control-worker
+          - shard: menubar
+            target: swift-test-menubar
 
     steps:
       - uses: actions/checkout@v6
@@ -60,11 +109,49 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
 
-      - name: Bootstrap
-        run: bash scripts/ci_progress.sh "Bootstrap" make bootstrap
+      - name: Restore Python dependency cache
+        uses: actions/cache@v4
+        with:
+          path: .uv-cache
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock', 'pyproject.toml', 'services/mlx-worker-python/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Restore Swift dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .swift-home
+            .build/ModuleCache.noindex
+            .build
+            packages/protocol/swift/.build
+            services/control-plane-swift/.build
+            services/mlx-text-worker-swift/.build
+            apps/macos-menubar/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swift-${{ matrix.target }}-${{ hashFiles('Package.swift', 'Package.resolved', 'packages/protocol/swift/Package.swift', 'packages/protocol/swift/Package.resolved', 'services/control-plane-swift/Package.swift', 'services/control-plane-swift/Package.resolved', 'services/mlx-text-worker-swift/Package.swift', 'services/mlx-text-worker-swift/Package.resolved', 'apps/macos-menubar/Package.swift', 'apps/macos-menubar/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-${{ matrix.target }}-
+            ${{ runner.os }}-swift-
 
       - name: Swift tests
-        run: bash scripts/ci_progress.sh "Swift tests" make swift-test
+        run: |
+          bash scripts/ci_progress.sh "Swift tests: ${{ matrix.shard }}" make ${{ matrix.target }}
+
+  swift-tests-report:
+    if: always()
+    needs:
+      - swift-tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Swift test shards
+        run: |
+          if [ "${{ needs.swift-tests.result }}" != "success" ]; then
+            echo "Swift test shards completed with result: ${{ needs.swift-tests.result }}"
+            exit 1
+          fi
+          echo "Swift test shards completed successfully."
 
   python-tests:
     runs-on: macos-15
@@ -78,6 +165,14 @@ jobs:
           python-version: "3.12"
 
       - uses: astral-sh/setup-uv@v7
+
+      - name: Restore Python dependency cache
+        uses: actions/cache@v4
+        with:
+          path: .uv-cache
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock', 'pyproject.toml', 'services/mlx-worker-python/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
 
       - name: Bootstrap
         run: bash scripts/ci_progress.sh "Bootstrap" make bootstrap
@@ -130,6 +225,31 @@ jobs:
           python-version: "3.12"
 
       - uses: astral-sh/setup-uv@v7
+
+      - name: Restore Python dependency cache
+        uses: actions/cache@v4
+        with:
+          path: .uv-cache
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock', 'pyproject.toml', 'services/mlx-worker-python/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Restore Swift integration cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .swift-home/mlx-text-worker-swift
+            .swift-home/control-plane-swift
+            .build/ModuleCache.noindex/mlx-text-worker-swift
+            .build/ModuleCache.noindex/control-plane-swift
+            services/control-plane-swift/.build
+            services/mlx-text-worker-swift/.build
+            packages/protocol/swift/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swift-integration-${{ hashFiles('Package.swift', 'Package.resolved', 'packages/protocol/swift/Package.swift', 'packages/protocol/swift/Package.resolved', 'services/control-plane-swift/Package.swift', 'services/control-plane-swift/Package.resolved', 'services/mlx-text-worker-swift/Package.swift', 'services/mlx-text-worker-swift/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-integration-
+            ${{ runner.os }}-swift-
 
       - name: Bootstrap
         run: bash scripts/ci_progress.sh "Bootstrap" make bootstrap

@@ -46,6 +46,8 @@ class RequestStreamAssembler:
     _TOOL_CLOSE = "</tool_call>"
     _THINK_PREFIXES = tuple("<think>"[:index] for index in range(1, len("<think>")))
     _TOOL_PREFIXES = tuple("<tool_call>"[:index] for index in range(1, len("<tool_call>")))
+    _THINK_PREFIXES_REVERSED = tuple(reversed(_THINK_PREFIXES))
+    _TOOL_PREFIXES_REVERSED = tuple(reversed(_TOOL_PREFIXES))
 
     def __init__(
         self,
@@ -67,9 +69,13 @@ class RequestStreamAssembler:
             self._is_json_structured_output_value and not self._tool_parsing_enabled_value
         )
         self._structural_tag_prefixes_value = self._THINK_PREFIXES
+        self._structural_tag_prefixes_reversed_value = self._THINK_PREFIXES_REVERSED
         if self._tool_parsing_enabled_value:
             self._request_context_mode_value = "tool_parser"
             self._structural_tag_prefixes_value = self._THINK_PREFIXES + self._TOOL_PREFIXES
+            self._structural_tag_prefixes_reversed_value = (
+                self._TOOL_PREFIXES_REVERSED + self._THINK_PREFIXES_REVERSED
+            )
         elif self._is_json_structured_output_value:
             self._request_context_mode_value = "structured_json"
         elif self._reasoning_enabled:
@@ -146,6 +152,10 @@ class RequestStreamAssembler:
     @property
     def _structural_tag_prefixes(self) -> tuple[str, ...]:
         return self._structural_tag_prefixes_value
+
+    @property
+    def _structural_tag_prefixes_reversed(self) -> tuple[str, ...]:
+        return self._structural_tag_prefixes_reversed_value
 
     def _unseen_delta(self, raw: str) -> str:
         if raw.startswith(self._raw_seen):
@@ -266,9 +276,7 @@ class RequestStreamAssembler:
         return self._buffer.endswith(self._structural_tag_prefixes)
 
     def _partial_structural_tag_suffix(self) -> str:
-        if not self._has_partial_structural_tag_suffix():
-            return ""
-        for prefix in reversed(self._structural_tag_prefixes):
+        for prefix in self._structural_tag_prefixes_reversed:
             if self._buffer.endswith(prefix):
                 return prefix
         return ""
@@ -302,14 +310,23 @@ class RequestStreamAssembler:
 
         arguments = payload.get("arguments", {})
         call_id = str(payload.get("id") or payload.get("call_id") or "").strip()
-        arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
         # Prefer model-provided call ids for dedupe so identical repeated calls
-        # can be emitted. Legacy call-id-less fragments keep content dedupe to
-        # suppress non-monotonic replay from older parsers.
-        key = ("call_id", call_id) if call_id else ("legacy", f"{name}\0{arguments_fragment}")
-        if key in self._emitted_tool_keys:
-            self._metrics["duplicate_tool_delta_count"] += 1
-            return None
+        # can be emitted. When a call id has already been seen, skip before
+        # canonicalizing arguments because the fragment will be discarded.
+        if call_id:
+            key = ("call_id", call_id)
+            if key in self._emitted_tool_keys:
+                self._metrics["duplicate_tool_delta_count"] += 1
+                return None
+            arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+        else:
+            arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+            # Legacy call-id-less fragments keep content dedupe to suppress
+            # non-monotonic replay from older parsers.
+            key = ("legacy", f"{name}\0{arguments_fragment}")
+            if key in self._emitted_tool_keys:
+                self._metrics["duplicate_tool_delta_count"] += 1
+                return None
         self._emitted_tool_keys.add(key)
 
         self._tool_fragment_index += 1

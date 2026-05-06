@@ -121,17 +121,20 @@ def _paired_bootstrap_interval(
 
     sampler = random.Random(bootstrap_seed)
     sample_size = len(outcomes)
+    inverse_sample_size = 1.0 / sample_size
+    choices = sampler.choices
     replicates: list[float] = []
+    append_replicate = replicates.append
     for _ in range(bootstrap_iterations):
-        replicate = [outcomes[sampler.randrange(sample_size)] for _ in range(sample_size)]
-        replicates.append(_mean(replicate))
+        append_replicate(sum(choices(outcomes, k=sample_size)) * inverse_sample_size)
 
     alpha = (1.0 - confidence_level) / 2.0
+    ordered_replicates = sorted(replicates)
     return _interval_payload(
         method="paired_bootstrap_percentile",
         confidence_level=confidence_level,
-        lower_bound=_percentile(replicates, alpha),
-        upper_bound=_percentile(replicates, 1.0 - alpha),
+        lower_bound=_ordered_percentile(ordered_replicates, alpha),
+        upper_bound=_ordered_percentile(ordered_replicates, 1.0 - alpha),
         iterations=int(bootstrap_iterations),
         seed=int(bootstrap_seed),
     )
@@ -218,8 +221,13 @@ def _mean(values: list[float] | tuple[float, ...]) -> float:
 def _percentile(values: list[float], percentile: float) -> float:
     if not values:
         return 0.0
+    return _ordered_percentile(sorted(values), percentile)
+
+
+def _ordered_percentile(ordered: list[float], percentile: float) -> float:
+    if not ordered:
+        return 0.0
     bounded_percentile = min(max(percentile, 0.0), 1.0)
-    ordered = sorted(values)
     if len(ordered) == 1:
         return ordered[0]
     position = bounded_percentile * (len(ordered) - 1)
@@ -231,6 +239,10 @@ def _percentile(values: list[float], percentile: float) -> float:
         return lower_value
     fraction = position - lower_index
     return lower_value + (upper_value - lower_value) * fraction
+
+
+def _percentile_ordered(ordered: list[float], percentile: float) -> float:
+    return _ordered_percentile(ordered, percentile)
 
 
 def _rounded(value: float) -> float:

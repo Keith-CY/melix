@@ -357,12 +357,18 @@ struct MelixCLIParserTests {
             "--quant-profile-id", "q4",
             "--weight-quant", "q4",
             "--kv-quant", "q8",
-            "--quantization-mode", "qat",
-            "--source-artifact-kind", "merged_adapter",
+            "--quantization-mode", " QAT ",
+            "--source-artifact-kind", " Merged_Adapter ",
             "--source-artifact-path", "/tmp/melix-export/merged",
+            "--quantization-backend", " MLX_LM_CONVERT ",
+            "--mlx-lm-q-bits", " 4 ",
+            "--mlx-lm-q-group-size", " 128 ",
+            "--mlx-lm-q-mode", " Affine ",
             "--calibration-dataset-uri", "/tmp/melix-datasets/calibration",
             "--quality-delta", "-0.01",
             "--latency-delta", "-0.15",
+            "--local-inference-smoke-mode", " Runtime_Generate ",
+            "--local-inference-smoke-prompt", "Reply with ISSUE365_OK",
             "--json",
         ])
         let uploadCommand = try MelixCLIParser.parse([
@@ -406,9 +412,15 @@ struct MelixCLIParserTests {
         #expect(quantizeOptions.quantizationMode == "qat")
         #expect(quantizeOptions.sourceArtifactKind == "merged_adapter")
         #expect(quantizeOptions.sourceArtifactPath == "/tmp/melix-export/merged")
+        #expect(quantizeOptions.quantizationBackend == "mlx_lm_convert")
+        #expect(quantizeOptions.mlxLMQBits == "4")
+        #expect(quantizeOptions.mlxLMQGroupSize == "128")
+        #expect(quantizeOptions.mlxLMQMode == "affine")
         #expect(quantizeOptions.calibrationDatasetURI == "/tmp/melix-datasets/calibration")
         #expect(quantizeOptions.qualityDelta == "-0.01")
         #expect(quantizeOptions.latencyDelta == "-0.15")
+        #expect(quantizeOptions.localInferenceSmokeMode == "runtime_generate")
+        #expect(quantizeOptions.localInferenceSmokePrompt == "Reply with ISSUE365_OK")
         #expect(quantizeOptions.json)
         #expect(uploadOptions.modelID == "melix-dev-text")
         #expect(uploadOptions.outputDir == "/tmp/melix-upload")
@@ -552,6 +564,9 @@ struct MelixCLIParserTests {
                 parameters: [
                     "hf_dataset_path": "org/preference",
                     "grpo_candidate_count": "4",
+                    "candidate_generation_mode": "runtime_generate",
+                    "candidate_scoring_mode": "reward_model",
+                    "candidate_generation_max_tokens": "16",
                     "kl_penalty": "0.02",
                 ],
                 json: true
@@ -560,6 +575,12 @@ struct MelixCLIParserTests {
         let alignmentArguments = try MelixCLICommandCodec.arguments(for: alignmentCommand)
         #expect(alignmentArguments.contains("--hf-dataset-path"))
         #expect(alignmentArguments.contains("org/preference"))
+        #expect(alignmentArguments.contains("--candidate-generation-mode"))
+        #expect(alignmentArguments.contains("runtime_generate"))
+        #expect(alignmentArguments.contains("--candidate-scoring-mode"))
+        #expect(alignmentArguments.contains("reward_model"))
+        #expect(alignmentArguments.contains("--candidate-generation-max-tokens"))
+        #expect(alignmentArguments.contains("16"))
         #expect(try MelixCLIParser.parse(alignmentArguments) == alignmentCommand)
     }
 
@@ -568,7 +589,7 @@ struct MelixCLIParserTests {
         let allCommands: [(MelixCLICommand, String)] = [
             (.doctor(.init()), "doctor"),
             (.convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)), "convert"),
-            (.quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", json: true)), "quantize"),
+            (.quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", localInferenceSmokeMode: "runtime_generate", localInferenceSmokePrompt: "smoke", json: true)), "quantize"),
             (.upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)), "upload"),
             (.modelList(.init(json: true)), "model.list"),
             (.modelInspect(.init(modelID: "model", json: true)), "model.inspect"),
@@ -652,7 +673,7 @@ struct MelixCLIParserTests {
         let supportedCommands: [MelixCLICommand] = [
             .doctor(.init(json: true)),
             .convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)),
-            .quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", json: true)),
+            .quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", localInferenceSmokeMode: "runtime_generate", localInferenceSmokePrompt: "smoke", json: true)),
             .upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)),
             .modelImport(.init(path: "/tmp/model", modelID: "model", modelKind: "text", revision: "main", json: true)),
             .modelHubDownload(.init(repoID: "mlx/qwen", revision: "main", json: true)),
@@ -1322,6 +1343,7 @@ struct MelixCLIParserTests {
     @Test("parses alignment train with preference and RL parameters")
     func parsesAlignmentTrainCommand() throws {
         #expect(MelixCLIParser.usageText.contains("melix alignment train"))
+        #expect(MelixCLIParser.usageText.contains("--source-adapter-path is the upstream/base LoRA adapter"))
 
         let command = try MelixCLIParser.parse([
             "alignment",
@@ -1331,6 +1353,10 @@ struct MelixCLIParserTests {
             "--adapter-name", "aligned-adapter",
             "--algorithm", "grpo",
             "--grpo-candidate-count", "4",
+            "--candidate-generation-mode", " Runtime_Generate ",
+            "--candidate-scoring-mode", " Reward_Model ",
+            "--candidate-generation-max-tokens", "16",
+            "--source-adapter-path", "/tmp/source/train_lora.adapter.json",
             "--reference-model-path", "/tmp/reference-model",
             "--reward-model-manifest-path", "/tmp/reward/manifest.json",
             "--sample-limit", "8",
@@ -1349,6 +1375,10 @@ struct MelixCLIParserTests {
         #expect(options.adapterName == "aligned-adapter")
         #expect(options.algorithm == "grpo")
         #expect(options.parameters["grpo_candidate_count"] == "4")
+        #expect(options.parameters["candidate_generation_mode"] == "runtime_generate")
+        #expect(options.parameters["candidate_scoring_mode"] == "reward_model")
+        #expect(options.parameters["candidate_generation_max_tokens"] == "16")
+        #expect(options.parameters["source_adapter_path"] == "/tmp/source/train_lora.adapter.json")
         #expect(options.parameters["reference_model_path"] == "/tmp/reference-model")
         #expect(options.parameters["reward_model_manifest_path"] == "/tmp/reward/manifest.json")
         #expect(options.parameters["sample_limit"] == "8")
@@ -1367,6 +1397,47 @@ struct MelixCLIParserTests {
                 "--algorithm", "ppo",
             ],
             equals: .usage("Invalid value for --algorithm. Expected one of: dpo, orpo, cpo, grpo, rlhf.")
+        )
+    }
+
+    @Test("alignment train rejects unsupported candidate generation controls")
+    func alignmentTrainRejectsUnsupportedCandidateGenerationControls() throws {
+        try assertError(
+            for: [
+                "alignment", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "aligned-adapter",
+                "--algorithm", "grpo",
+                "--candidate-generation-mode", "remote",
+            ],
+            equals: .usage("Invalid value for --candidate-generation-mode. Expected one of: scored_trace, runtime_generate.")
+        )
+        try assertError(
+            for: [
+                "alignment", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "aligned-adapter",
+                "--algorithm", "grpo",
+                "--candidate-scoring-mode", "dataset",
+            ],
+            equals: .usage("Invalid value for --candidate-scoring-mode. Expected one of: dataset_score, seed_overlap_proxy, reward_model.")
+        )
+    }
+
+    @Test("alignment train rejects LoRA checkpoint resume flags")
+    func alignmentTrainRejectsLoraCheckpointResumeFlags() throws {
+        try assertError(
+            for: [
+                "alignment", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "aligned-adapter",
+                "--algorithm", "grpo",
+                "--resume-adapter", "/tmp/lora-checkpoint",
+            ],
+            equals: .usage("--resume-adapter and --resume-from-manifest are only for melix lora train checkpoint resumption. For melix alignment train, use --source-adapter-path for the upstream/base LoRA adapter to carry into GRPO/RLHF output.")
         )
     }
 
@@ -1549,6 +1620,8 @@ struct MelixCLIParserTests {
             "--target-repo", "melix/adapters/demo",
             "--manifest-path", "/tmp/demo/manifest.json",
             "--export-kind", "adapter",
+            "--publish-backend", "local_filesystem",
+            "--local-publish-root", "/tmp/melix-local-publish",
         ])
         guard case .loraPublish(let options) = command else {
             Issue.record("Expected loraPublish command")
@@ -1557,6 +1630,8 @@ struct MelixCLIParserTests {
         #expect(options.exportKind == .adapterExport)
         #expect(options.artifactPath == "/tmp/demo/manifest.json")
         #expect(options.artifactManifestPath == "/tmp/demo/manifest.json")
+        #expect(options.publishBackend == "local_filesystem")
+        #expect(options.localPublishRoot == "/tmp/melix-local-publish")
     }
 
     @Test("lora publish --manifest-path without --export-kind defers classification to the runner")
@@ -2609,6 +2684,46 @@ struct MelixCLIParserTests {
                 "--source-artifact-kind", "checkpoint",
             ],
             equals: .usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--quantization-backend", "script",
+            ],
+            equals: .usage("Invalid value for --quantization-backend. Expected one of: manifest_only, mlx_lm_convert.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--mlx-lm-q-mode", "log",
+            ],
+            equals: .usage("Invalid value for --mlx-lm-q-mode. Expected one of: affine, mxfp4, nvfp4, mxfp8.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--mlx-lm-q-bits", "four",
+            ],
+            equals: .usage("Invalid value for --mlx-lm-q-bits. Expected an integer.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--mlx-lm-q-group-size", "wide",
+            ],
+            equals: .usage("Invalid value for --mlx-lm-q-group-size. Expected an integer.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--local-inference-smoke-mode", "screenshot",
+            ],
+            equals: .usage("Invalid value for --local-inference-smoke-mode. Expected one of: structural, runtime_generate.")
         )
         try assertError(
             for: ["upload", "--model-id", "melix-dev-text"],

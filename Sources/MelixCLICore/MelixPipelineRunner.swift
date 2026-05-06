@@ -145,7 +145,7 @@ extension MelixCLIRunner {
                             expectedMetadata: metadata,
                             allowedStatuses: options.dryRun ? ["planned", "skipped", "succeeded"] : ["succeeded", "skipped"]
                         )
-                        context.setStepEnvelope(receipt, for: step.id)
+                        context.setStepEnvelope(normalizedResultEnvelope(receipt), for: step.id)
                         stepSummaries.append(
                             stepSummary(
                                 step,
@@ -171,7 +171,7 @@ extension MelixCLIRunner {
                         expectedMetadata: metadata,
                         allowedStatuses: ["succeeded"]
                     )
-                    context.setStepEnvelope(receipt, for: step.id)
+                    context.setStepEnvelope(normalizedResultEnvelope(receipt), for: step.id)
                     resumeSkippedCount += 1
                     metrics["melix.pipeline.resume_skipped_count"] = Double(resumeSkippedCount)
                     stepSummaries.append(
@@ -231,9 +231,9 @@ extension MelixCLIRunner {
                     guard let parsedEnvelope = MelixPipelineJSON.object(from: output) else {
                         throw MelixCLIError.runtime("Step \(step.id) did not return a JSON envelope.")
                     }
-                    context.setStepEnvelope(parsedEnvelope, for: step.id)
-                    try MelixPipelineChecks.validate(step.checks, envelope: parsedEnvelope, context: context)
-                    envelope = parsedEnvelope
+                    envelope = normalizedResultEnvelope(parsedEnvelope)
+                    context.setStepEnvelope(envelope, for: step.id)
+                    try MelixPipelineChecks.validate(step.checks, envelope: envelope, context: context)
                 }
                 envelope = attachStepMetadata(metadata, to: envelope)
 
@@ -494,6 +494,26 @@ extension MelixCLIRunner {
             return
         }
         paths.append(path)
+    }
+
+    private func normalizedResultEnvelope(_ envelope: [String: Any]) -> [String: Any] {
+        guard var result = envelope["result"] as? [String: Any],
+              (result["output_path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+        else {
+            return envelope
+        }
+        for alias in ["artifact_path", "bundle_path", "managed_model_path", "report_path"] {
+            guard let outputPath = result[alias] as? String,
+                  outputPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            else {
+                continue
+            }
+            result["output_path"] = outputPath
+            var normalized = envelope
+            normalized["result"] = result
+            return normalized
+        }
+        return envelope
     }
 
     private func runSummary(
@@ -852,6 +872,49 @@ private enum MelixPipelineCommandBuilder {
     static func command(named name: String, args: [String: Any]) throws -> MelixCLICommand {
         try validateSupportedCommand(named: name)
         switch name {
+        case "convert":
+            return .convert(
+                ConvertOptions(
+                    modelID: try requiredString("model_id", args),
+                    outputDir: string("output_dir", args) ?? "",
+                    targetFormat: string("target_format", args) ?? "melix_model_bundle"
+                )
+            )
+        case "quantize":
+            return .quantize(
+                QuantizeOptions(
+                    modelID: try requiredString("model_id", args),
+                    outputDir: string("output_dir", args) ?? "",
+                    quantProfileID: string("quant_profile_id", args) ?? "",
+                    weightQuant: string("weight_quant", args) ?? "",
+                    kvQuant: string("kv_quant", args) ?? "",
+                    quantizationMode: try quantizationMode(args),
+                    sourceArtifactKind: try sourceArtifactKind(args),
+                    sourceArtifactPath: string("source_artifact_path", args) ?? "",
+                    quantizationBackend: try quantizationBackend(args),
+                    mlxLMQBits: try mlxLMIntegerString("mlx_lm_q_bits", args),
+                    mlxLMQGroupSize: try mlxLMIntegerString("mlx_lm_q_group_size", args),
+                    mlxLMQMode: try mlxLMQMode(args),
+                    calibrationDatasetURI: string("calibration_dataset_uri", args) ?? "",
+                    qualityDelta: string("quality_delta", args) ?? "",
+                    latencyDelta: string("latency_delta", args) ?? "",
+                    localInferenceSmokeMode: try localInferenceSmokeMode(args),
+                    localInferenceSmokePrompt: string("local_inference_smoke_prompt", args) ?? ""
+                )
+            )
+        case "upload":
+            return .upload(
+                UploadOptions(
+                    modelID: try requiredString("model_id", args),
+                    outputDir: string("output_dir", args) ?? "",
+                    targetRepo: try requiredString("target_repo", args),
+                    artifactPath: string("artifact_path", args) ?? "",
+                    artifactKind: string("artifact_kind", args) ?? "",
+                    artifactManifestPath: string("artifact_manifest_path", args) ?? "",
+                    publishBackend: string("publish_backend", args) ?? "",
+                    localPublishRoot: string("local_publish_root", args) ?? ""
+                )
+            )
         case "model.import":
             return .modelImport(
                 ModelImportOptions(
@@ -926,6 +989,28 @@ private enum MelixPipelineCommandBuilder {
                     ])
                 )
             )
+        case "alignment.train":
+            return .alignmentTrain(
+                AlignmentTrainOptions(
+                    modelID: try requiredString("model_id", args),
+                    datasetSourceKind: datasetSourceKind(args),
+                    datasetURI: try datasetURI(args),
+                    adapterName: try requiredString("adapter_name", args),
+                    targetRepo: string("target_repo", args) ?? "",
+                    algorithm: try alignmentAlgorithm(args),
+                    parameters: parameters(args, excluding: [
+                        "model_id",
+                        "dataset_uri",
+                        "hf_dataset_path",
+                        "dataset_source_kind",
+                        "adapter_name",
+                        "target_repo",
+                        "algorithm",
+                        "alignment_algorithm",
+                        "training_mode",
+                    ])
+                )
+            )
         case "lora.activate":
             return .loraActivate(
                 LoraActivateOptions(
@@ -935,6 +1020,8 @@ private enum MelixPipelineCommandBuilder {
                     activationMode: string("activation_mode", args) ?? ""
                 )
             )
+        case "lora.publish":
+            return try .loraPublish(loraPublishOptions(args))
         case "bench.run":
             return .benchRun(
                 BenchRunOptions(
@@ -1040,6 +1127,9 @@ private enum MelixPipelineCommandBuilder {
     }
 
     private static let supportedCommandNames: Set<String> = [
+        "convert",
+        "quantize",
+        "upload",
         "model.import",
         "model.hub.download",
         "model.roots.rescan",
@@ -1048,7 +1138,9 @@ private enum MelixPipelineCommandBuilder {
         "server.start",
         "chat.run",
         "lora.train",
+        "alignment.train",
         "lora.activate",
+        "lora.publish",
         "bench.run",
         "bench.matrix.run",
         "bench.export-csv",
@@ -1059,6 +1151,174 @@ private enum MelixPipelineCommandBuilder {
         "eval.export-samples-csv",
         "eval.export-samples-jsonl",
     ]
+
+    private static func alignmentAlgorithm(_ args: [String: Any]) throws -> String {
+        let algorithm = (string("algorithm", args) ?? string("alignment_algorithm", args) ?? string("training_mode", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard algorithm.isEmpty == false else {
+            throw MelixCLIError.missingRequired("Pipeline command argument algorithm is required.")
+        }
+        guard ["dpo", "orpo", "cpo", "grpo", "rlhf"].contains(algorithm) else {
+            throw MelixCLIError.usage("Pipeline command argument algorithm must be one of: dpo, orpo, cpo, grpo, rlhf.")
+        }
+        return algorithm
+    }
+
+    private static func quantizationMode(_ args: [String: Any]) throws -> String {
+        let mode = (string("quantization_mode", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard mode.isEmpty || MelixQuantizationAllowedValues.quantizationModes.contains(mode) else {
+            throw MelixCLIError.usage(
+                "Pipeline command argument quantization_mode must be one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.quantizationModes))."
+            )
+        }
+        return mode
+    }
+
+    private static func sourceArtifactKind(_ args: [String: Any]) throws -> String {
+        let kind = (string("source_artifact_kind", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard kind.isEmpty || MelixQuantizationAllowedValues.sourceArtifactKinds.contains(kind) else {
+            throw MelixCLIError.usage(
+                "Pipeline command argument source_artifact_kind must be one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.sourceArtifactKinds))."
+            )
+        }
+        return kind
+    }
+
+    private static func quantizationBackend(_ args: [String: Any]) throws -> String {
+        let backend = (string("quantization_backend", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard backend.isEmpty || MelixQuantizationAllowedValues.quantizationBackends.contains(backend) else {
+            throw MelixCLIError.usage(
+                "Pipeline command argument quantization_backend must be one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.quantizationBackends))."
+            )
+        }
+        return backend
+    }
+
+    private static func mlxLMQMode(_ args: [String: Any]) throws -> String {
+        let mode = (string("mlx_lm_q_mode", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard mode.isEmpty || MelixQuantizationAllowedValues.mlxLMQModes.contains(mode) else {
+            throw MelixCLIError.usage(
+                "Pipeline command argument mlx_lm_q_mode must be one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.mlxLMQModes))."
+            )
+        }
+        return mode
+    }
+
+    private static func mlxLMIntegerString(_ key: String, _ args: [String: Any]) throws -> String {
+        let value = (string(key, args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.isEmpty || Int(value) != nil else {
+            throw MelixCLIError.usage("Pipeline command argument \(key) must be an integer.")
+        }
+        return value
+    }
+
+    private static func localInferenceSmokeMode(_ args: [String: Any]) throws -> String {
+        let mode = (string("local_inference_smoke_mode", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard mode.isEmpty || ["structural", "runtime_generate"].contains(mode) else {
+            throw MelixCLIError.usage("Pipeline command argument local_inference_smoke_mode must be one of: structural, runtime_generate.")
+        }
+        return mode
+    }
+
+    private static func loraPublishOptions(_ args: [String: Any]) throws -> LoraPublishOptions {
+        let modelID = try requiredString("model_id", args)
+        let targetRepo = try requiredString("target_repo", args)
+        let exportKind = try loraPublishExportKind(args)
+        let adapterPath = (string("adapter_path", args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let mergedModelPath = (string("merged_model_path", args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let manifestPath = (string("manifest_path", args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let artifactPath = (string("artifact_path", args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedCount = [adapterPath, mergedModelPath, manifestPath, artifactPath]
+            .filter { $0.isEmpty == false }
+            .count
+        guard selectedCount == 1 else {
+            throw MelixCLIError.missingRequired(
+                "Exactly one of adapter_path, merged_model_path, manifest_path, or artifact_path is required for pipeline command lora.publish."
+            )
+        }
+
+        if adapterPath.isEmpty == false {
+            if exportKind == .mergedExport {
+                throw MelixCLIError.usage("Pipeline command argument export_kind merged is incompatible with adapter_path.")
+            }
+            return LoraPublishOptions(
+                modelID: modelID,
+                targetRepo: targetRepo,
+                exportKind: .adapterExport,
+                artifactPath: adapterPath,
+                artifactManifestPath: adapterPath,
+                publishBackend: string("publish_backend", args) ?? "",
+                localPublishRoot: string("local_publish_root", args) ?? ""
+            )
+        }
+        if mergedModelPath.isEmpty == false {
+            if exportKind == .adapterExport {
+                throw MelixCLIError.usage("Pipeline command argument export_kind adapter is incompatible with merged_model_path.")
+            }
+            return LoraPublishOptions(
+                modelID: modelID,
+                targetRepo: targetRepo,
+                exportKind: .mergedExport,
+                artifactPath: mergedModelPath,
+                publishBackend: string("publish_backend", args) ?? "",
+                localPublishRoot: string("local_publish_root", args) ?? ""
+            )
+        }
+        if manifestPath.isEmpty == false {
+            return LoraPublishOptions(
+                modelID: modelID,
+                targetRepo: targetRepo,
+                exportKind: exportKind,
+                artifactPath: manifestPath,
+                artifactManifestPath: manifestPath,
+                publishBackend: string("publish_backend", args) ?? "",
+                localPublishRoot: string("local_publish_root", args) ?? ""
+            )
+        }
+        guard let exportKind else {
+            throw MelixCLIError.missingRequired(
+                "Pipeline command argument export_kind is required when lora.publish uses artifact_path."
+            )
+        }
+        return LoraPublishOptions(
+            modelID: modelID,
+            targetRepo: targetRepo,
+            exportKind: exportKind,
+            artifactPath: artifactPath,
+            artifactManifestPath: (string("artifact_manifest_path", args) ?? artifactPath)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            publishBackend: string("publish_backend", args) ?? "",
+            localPublishRoot: string("local_publish_root", args) ?? ""
+        )
+    }
+
+    private static func loraPublishExportKind(_ args: [String: Any]) throws -> LoraPublishExportKind? {
+        let rawKind = (string("export_kind", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard rawKind.isEmpty == false else {
+            return nil
+        }
+        switch rawKind {
+        case "adapter", "adapter_export":
+            return .adapterExport
+        case "merged", "merged_export":
+            return .mergedExport
+        default:
+            throw MelixCLIError.usage("Pipeline command argument export_kind must be one of: adapter, merged.")
+        }
+    }
 
     private static func requiredString(_ key: String, _ args: [String: Any]) throws -> String {
         guard let value = string(key, args), value.isEmpty == false else {

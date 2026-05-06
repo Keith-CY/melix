@@ -10,6 +10,7 @@ import pytest
 
 import worker.productization.benchmark_export as benchmark_export_module
 from worker.productization.benchmark_export import (
+    _ScannedDirectoryEntries,
     _collect_benchmark_matrix_run,
     _collect_benchmark_run,
     _collect_evaluation_run,
@@ -56,6 +57,24 @@ def test_load_json_object_reads_bytes_without_text_file_wrapper(monkeypatch: pyt
 
     assert _load_json_object(payload_path) == {"job_id": "bench-1", "value": 1.25}
     assert binary_open_count == 1
+
+
+def test_scanned_directory_entry_membership_uses_name_sets(tmp_path: Path) -> None:
+    class ExplodingContains(tuple[str, ...]):
+        def __contains__(self, item: object) -> bool:
+            raise AssertionError("hot membership checks should use cached name sets")  # pragma: no cover
+
+    entries = _ScannedDirectoryEntries(
+        directory=tmp_path,
+        file_names=ExplodingContains(("bench-summary.json", "unrelated.txt")),
+        dir_names=ExplodingContains(("runs", "matrix-runs")),
+    )
+
+    assert entries.file_path("bench-summary.json") == tmp_path / "bench-summary.json"
+    assert entries.file_path("missing.json") is None
+    assert entries.has_dir("runs") is True
+    assert entries.has_dir("missing") is False
+    assert entries.matching_file_paths(prefix="bench-", suffix=".json") == (tmp_path / "bench-summary.json",)
 
 
 def test_collect_benchmark_run_reuses_scan_result_order_without_resorting(

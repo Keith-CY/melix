@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from functools import lru_cache
 import json
+import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -12,7 +13,6 @@ import sysconfig
 import tempfile
 import textwrap
 
-_CODE_BLOCK_PATTERN = re.compile(r"```(?:python)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
 
 
@@ -40,10 +40,32 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     normalized = raw_response.strip()
     if not normalized:
         return "", "empty_prediction"
-    matches = _CODE_BLOCK_PATTERN.findall(normalized)
-    if matches:
-        return matches[-1].strip(), "parsed_code_block"
+
+    last_code_block_bounds: tuple[int, int] | None = None
+    search_start = 0
+    while True:
+        opening = normalized.find("```", search_start)
+        if opening < 0:
+            break
+        content_start = _code_block_content_start(normalized, opening + 3)
+        closing = normalized.find("```", content_start)
+        if closing < 0:
+            break
+        last_code_block_bounds = (content_start, closing)
+        search_start = closing + 3
+
+    if last_code_block_bounds is not None:
+        start, end = last_code_block_bounds
+        return normalized[start:end].strip(), "parsed_code_block"
     return normalized, "parsed_code"
+
+
+def _code_block_content_start(text: str, start: int) -> int:
+    if text[start : start + 6].lower() == "python":
+        start += 6
+    while start < len(text) and text[start].isspace():
+        start += 1
+    return start
 
 
 def is_code_execution_policy_supported(code_exec_policy: str) -> bool:
@@ -232,13 +254,26 @@ def _load_payload_file(payload_path: Path) -> dict[str, object] | None:
 
 def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
     try:
-        size = path.stat().st_size
-        with path.open("rb") as file:
-            if size > byte_limit:
-                file.seek(-byte_limit, 2)
-            return file.read().decode("utf-8", errors="replace").strip(), size
+        fd = os.open(path, os.O_RDONLY)
     except OSError:
         return "", 0
+
+    try:
+        size = os.fstat(fd).st_size
+        read_limit = max(int(byte_limit), 0)
+        if size > read_limit:
+            os.lseek(fd, -read_limit, os.SEEK_END)
+            read_size = read_limit
+        else:
+            read_size = size
+        return os.read(fd, read_size).decode("utf-8", errors="replace").strip(), size
+    except OSError:
+        return "", 0
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def _read_limited_text(path: Path, byte_limit: int) -> str:
@@ -275,6 +310,64 @@ def _summarize_stdio(*, stdout_tail: str, stderr_tail: str) -> str:
 
 
 def _sandbox_profile(*, temp_root: Path) -> str:
+    static_profile = _sandbox_static_profile_fragments(_sandbox_static_profile_key())
+    temp_read_filters = " ".join(
+        f"(subpath {json.dumps(str(path))})"
+        for path in _sandbox_allow_path_variants((temp_root,))
+    )
+    return " ".join(
+        (
+            static_profile.prefix,
+            f"(allow file-read* {static_profile.runtime_read_filters} {temp_read_filters})",
+            f"(allow file-write* (subpath {json.dumps(str(temp_root))}))",
+        )
+    )
+
+
+@dataclass(frozen=True)
+class _SandboxStaticProfileFragments:
+    prefix: str
+    runtime_read_filters: str
+
+
+_SANDBOX_STATIC_PROFILE_KEY_CACHE: tuple[tuple[object, ...], tuple[object, ...]] | None = None
+
+
+def _sandbox_static_profile_environment_fingerprint() -> tuple[object, ...]:
+    return (
+        sys.executable,
+        sys.prefix,
+        sys.exec_prefix,
+        sys.base_prefix,
+        sys.base_exec_prefix,
+        id(sysconfig.get_paths),
+    )
+
+
+def _sandbox_static_profile_key() -> tuple[object, ...]:
+    global _SANDBOX_STATIC_PROFILE_KEY_CACHE
+    fingerprint = _sandbox_static_profile_environment_fingerprint()
+    if _SANDBOX_STATIC_PROFILE_KEY_CACHE is not None:
+        cached_fingerprint, cached_key = _SANDBOX_STATIC_PROFILE_KEY_CACHE
+        if cached_fingerprint == fingerprint:
+            return cached_key
+    key = (
+        *fingerprint[:-1],
+        tuple(sorted((key, value or "") for key, value in sysconfig.get_paths().items())),
+    )
+    _SANDBOX_STATIC_PROFILE_KEY_CACHE = (fingerprint, key)
+    return key
+
+
+def _sandbox_static_profile_key_cache_clear() -> None:
+    global _SANDBOX_STATIC_PROFILE_KEY_CACHE
+    _SANDBOX_STATIC_PROFILE_KEY_CACHE = None
+
+
+@lru_cache(maxsize=8)
+def _sandbox_static_profile_fragments(
+    _cache_key: tuple[object, ...],
+) -> _SandboxStaticProfileFragments:
     executable_paths = _sandbox_executable_paths()
     runtime_paths = _sandbox_runtime_read_paths()
     clauses = [
@@ -307,13 +400,14 @@ def _sandbox_profile(*, temp_root: Path) -> str:
             for path in executable_paths
         )
         clauses.append(f"(allow process-exec {executable_filters})")
-    read_filters = " ".join(
+    runtime_read_filters = " ".join(
         f"(subpath {json.dumps(str(path))})"
-        for path in _sandbox_allow_path_variants((*runtime_paths, temp_root))
+        for path in _sandbox_allow_path_variants(runtime_paths)
     )
-    clauses.append(f"(allow file-read* {read_filters})")
-    clauses.append(f"(allow file-write* (subpath {json.dumps(str(temp_root))}))")
-    return " ".join(clauses)
+    return _SandboxStaticProfileFragments(
+        prefix=" ".join(clauses),
+        runtime_read_filters=runtime_read_filters,
+    )
 
 
 def _sandbox_executable_paths() -> tuple[Path, ...]:

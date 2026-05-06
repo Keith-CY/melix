@@ -231,7 +231,10 @@ class MaintenanceCore:
         self._quantization_pipeline = OQQuantizationPipeline(registry)
         self._download_pipeline = download_pipeline or DownloadPipeline()
         self._local_import_pipeline = local_import_pipeline or LocalImportPipeline()
-        self._lora_training_pipeline = lora_training_pipeline or LoRATrainingPipeline()
+        self._lora_training_pipeline = lora_training_pipeline or LoRATrainingPipeline(
+            policy_runtime=registry.runtime,
+            reward_runtime=registry.runtime,
+        )
         self._adapter_activation_pipeline = adapter_activation_pipeline or AdapterActivationPipeline()
         self._upload_receipt_pipeline = upload_receipt_pipeline or UploadReceiptPipeline()
         self._operation_locks = ModelOpsConflictRegistry()
@@ -3525,10 +3528,11 @@ class MaintenanceCore:
             tokens = ["benchmark"]
         if len(tokens) >= context_length:
             return " ".join(tokens[:context_length])
-        repeated: list[str] = []
-        while len(repeated) < context_length:
-            repeated.extend(tokens)
-        return " ".join(repeated[:context_length])
+        full_repeats, remainder = divmod(context_length, len(tokens))
+        shaped_tokens = tokens * full_repeats
+        if remainder:
+            shaped_tokens += tokens[:remainder]
+        return " ".join(shaped_tokens)
 
     @staticmethod
     def _benchmark_execution_ext(

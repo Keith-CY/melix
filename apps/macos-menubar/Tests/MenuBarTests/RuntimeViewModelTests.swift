@@ -8101,10 +8101,13 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedLoraTrainingJobID == "saved-job")
         viewModel.selectQuantizationProfile("q6")
         viewModel.selectQuantizationProfile("q9")
+        viewModel.selectQuantizationMode(" QAT ")
+        viewModel.selectQuantizationMode("mystery")
         viewModel.selectLoraTrainingJob(id: " alternate-job ")
 
         #expect(viewModel.selectedQuantizationProfileID == "q6")
-        #expect(notifications.value == 2)
+        #expect(viewModel.selectedQuantizationMode == .qat)
+        #expect(notifications.value == 3)
         #expect(viewModel.selectedLoraTrainingJobID == "alternate-job")
 
         viewModel.loraRank = "99"
@@ -9395,6 +9398,153 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastModelOperation?.artifactBytes == 256)
         #expect(viewModel.lastModelOperation?.smokeTestPassed == true)
         #expect(viewModel.lastModelOperation?.calibrationSampleCount == 32)
+        let request = try #require(await client.recordedModelOperationRequests.last)
+        #expect(request.ext["quantization_mode"] == "ptq")
+        #expect(request.ext["source_artifact_kind"] == "base_model")
+    }
+
+    @Test("quantize action forwards QAT mode with selected adapter source artifact")
+    @MainActor
+    func quantizeActionForwardsQATModeWithSelectedAdapterSourceArtifact() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "quantize",
+                outputPath: "/tmp/melix-quantize/model-ops-qat/quantize.artifact",
+                manifestJSON: #"{"operation":"quantize","quantization_mode":"qat"}"#,
+                quantProfileID: "q4",
+                artifactKind: "quantized_model_bundle",
+                manifestPath: "/tmp/melix-quantize/model-ops-qat/quantize.artifact/manifest.json"
+            ),
+            forNamedOperation: "quantize"
+        )
+        var config = makeDesktopLoraTrainingConfig(adapterName: "qat-adapter")
+        config.derivedModelAlias = "melix-dev-text-qataware"
+        var job = makeDesktopLoraTrainingJobRecord(
+            id: "qat-job",
+            title: "QAT Adapter",
+            config: config,
+            status: .succeeded
+        )
+        job.manifestPath = "/tmp/melix-train/model-ops-qat/train_lora.adapter.json"
+        job.followUpArtifacts.adapterManifestPath = "/tmp/melix-train/model-ops-qat/train_lora.adapter.json"
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(client: client, loraTrainingJobStore: store)
+
+        await viewModel.start()
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.quantization)
+        viewModel.selectedQuantizationMode = .qat
+        await viewModel.quantizePrimaryModel()
+
+        let request = try #require(await client.recordedModelOperationRequests.last)
+        #expect(request.operation == "quantize")
+        #expect(request.modelID == "melix-dev-text-qataware")
+        #expect(request.ext["quantization_mode"] == "qat")
+        #expect(request.ext["source_artifact_kind"] == "merged_adapter")
+        #expect(request.ext["source_artifact_path"] == "/tmp/melix-train/model-ops-qat/train_lora.adapter.json")
+        #expect(request.ext["qat_fake_quant"] == "requested")
+    }
+
+    @Test("quantize action forwards QAT mode with latest operation manifest source artifact")
+    @MainActor
+    func quantizeActionForwardsQATModeWithLatestOperationManifestSourceArtifact() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/qat-source/convert.artifact",
+                manifestJSON: #"{"operation":"convert"}"#,
+                artifactKind: "converted_model_bundle",
+                manifestPath: "/tmp/melix-convert/qat-source/convert.artifact/manifest.json"
+            ),
+            forNamedOperation: "convert"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "quantize",
+                outputPath: "/tmp/melix-quantize/qat-from-manifest/quantize.artifact",
+                manifestJSON: #"{"operation":"quantize","quantization_mode":"qat"}"#,
+                artifactKind: "quantized_model_bundle",
+                manifestPath: "/tmp/melix-quantize/qat-from-manifest/quantize.artifact/manifest.json"
+            ),
+            forNamedOperation: "quantize"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await viewModel.convertPrimaryModel()
+        viewModel.selectedQuantizationMode = .qat
+        await viewModel.quantizePrimaryModel()
+
+        let request = try #require(await client.recordedModelOperationRequests.last)
+        #expect(request.operation == "quantize")
+        #expect(request.ext["quantization_mode"] == "qat")
+        #expect(request.ext["source_artifact_kind"] == "merged_adapter")
+        #expect(request.ext["source_artifact_path"] == "/tmp/melix-convert/qat-source/convert.artifact/manifest.json")
+    }
+
+    @Test("quantize action forwards QAT mode with latest operation output source artifact")
+    @MainActor
+    func quantizeActionForwardsQATModeWithLatestOperationOutputSourceArtifact() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/qat-output-source/convert.artifact",
+                manifestJSON: #"{"operation":"convert"}"#,
+                artifactKind: "converted_model_bundle"
+            ),
+            forNamedOperation: "convert"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "quantize",
+                outputPath: "/tmp/melix-quantize/qat-from-output/quantize.artifact",
+                manifestJSON: #"{"operation":"quantize","quantization_mode":"qat"}"#,
+                artifactKind: "quantized_model_bundle",
+                manifestPath: "/tmp/melix-quantize/qat-from-output/quantize.artifact/manifest.json"
+            ),
+            forNamedOperation: "quantize"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await viewModel.convertPrimaryModel()
+        viewModel.selectedQuantizationMode = .qat
+        await viewModel.quantizePrimaryModel()
+
+        let request = try #require(await client.recordedModelOperationRequests.last)
+        #expect(request.operation == "quantize")
+        #expect(request.ext["quantization_mode"] == "qat")
+        #expect(request.ext["source_artifact_kind"] == "merged_adapter")
+        #expect(request.ext["source_artifact_path"] == "/tmp/melix-convert/qat-output-source/convert.artifact")
+    }
+
+    @Test("quantize action omits QAT source artifact when no prior artifact exists")
+    @MainActor
+    func quantizeActionOmitsQATSourceArtifactWhenNoPriorArtifactExists() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "quantize",
+                outputPath: "/tmp/melix-quantize/qat-no-source/quantize.artifact",
+                manifestJSON: #"{"operation":"quantize","quantization_mode":"qat"}"#,
+                artifactKind: "quantized_model_bundle",
+                manifestPath: "/tmp/melix-quantize/qat-no-source/quantize.artifact/manifest.json"
+            ),
+            forNamedOperation: "quantize"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.selectedQuantizationMode = .qat
+        await viewModel.quantizePrimaryModel()
+
+        let request = try #require(await client.recordedModelOperationRequests.last)
+        #expect(request.operation == "quantize")
+        #expect(request.ext["quantization_mode"] == "qat")
+        #expect(request.ext["source_artifact_kind"] == "merged_adapter")
+        #expect(request.ext["source_artifact_path"] == nil)
     }
 
     @Test("convert action stores typed packaging summary")

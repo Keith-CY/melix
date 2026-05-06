@@ -94,6 +94,39 @@ def test_prepare_video_input_accepts_local_uri_and_mime_type_resolution() -> Non
     assert len(prepared.sha256_hex) == 64
 
 
+class _CountingMedia:
+    def __init__(self) -> None:
+        self.byte_length_reads = 0
+
+    def __getattribute__(self, name: str):
+        if name == "byte_length":
+            byte_length_reads = object.__getattribute__(self, "byte_length_reads")
+            object.__setattr__(self, "byte_length_reads", byte_length_reads + 1)
+            return 123
+        return object.__getattribute__(self, name)
+
+    def __getattr__(self, name: str):
+        return "" if name in {"mime_type", "format", "filename"} else 0
+
+
+class _CountingVideoPart:
+    def __init__(self, media: _CountingMedia) -> None:
+        self.media = media
+        self.video_bytes = b""
+        self.video_uri = "https://example.com/media/demo.mov"
+
+
+def test_prepare_video_input_reuses_uri_byte_length_for_metadata_and_identity_hash() -> None:
+    media = _CountingMedia()
+    part = _CountingVideoPart(media)
+
+    prepared = prepare_video_input(part)
+
+    assert prepared.byte_length == 123
+    assert media.byte_length_reads == 1
+    assert len(prepared.sha256_hex) == 64
+
+
 def test_prepare_video_input_infers_format_from_plain_local_path() -> None:
     part = common_pb2.MessagePart(
         video_uri="/tmp/local-demo.m4v",

@@ -44,6 +44,7 @@ from worker.model_ops.mlx_lm_runner import (
 )
 from worker.model_ops.upload_receipt_pipeline import (
     HuggingFacePublishBackend,
+    LocalFilesystemPublishBackend,
     PublishResult,
     SourceArtifactDescriptor,
     UploadReceiptPipeline,
@@ -2702,6 +2703,83 @@ def test_upload_job_publishes_adapter_bundle_to_hugging_face(tmp_path: Path) -> 
     assert staged_manifest["published_repo"] == "melix/adapters/melix-dev-adapter"
 
 
+def test_upload_receipt_pipeline_local_filesystem_backend_writes_publish_bundle(tmp_path: Path) -> None:
+    adapter_dir = tmp_path / "adapter-source"
+    adapter_dir.mkdir()
+    weights_path = adapter_dir / "adapters.safetensors"
+    config_path = adapter_dir / "adapter_config.json"
+    manifest_path = adapter_dir / "train_lora.adapter.json"
+    weights_path.write_bytes(b"adapter")
+    config_path.write_text('{"fine_tune_type":"lora"}\n', encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "artifact_kind": "adapter",
+                "adapter_name": "local-adapter",
+                "job_id": "train-1",
+                "source_model": "melix-dev-text",
+                "weights_path": str(weights_path),
+                "adapter_config_path": str(config_path),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = UploadReceiptPipeline().run(
+        maintenance_pb2.ConvertModelRequest(
+            source_model="melix-dev-text",
+            generate_manifest=True,
+            ext={
+                "operation": "upload",
+                "artifact_kind": "adapter_export",
+                "artifact_path": str(manifest_path),
+                "target_repo": "melix/adapters/local-adapter",
+                "publish_backend": "local_filesystem",
+                "local_publish_root": str(tmp_path / "local-publish"),
+            },
+        ),
+        job_id="upload-local-1",
+        output_dir=tmp_path / "upload-local",
+    )
+
+    publish_root = tmp_path / "local-publish" / "melix" / "adapters" / "local-adapter"
+    payload = result.manifest_payload
+    assert payload["status"] == "published"
+    assert payload["upload_backend"] == "local_filesystem"
+    assert payload["published_url"] == publish_root.as_uri()
+    assert payload["published_ref"] == str(publish_root)
+    assert payload["distribution_contract"] == "adapter_only"
+    assert (publish_root / "adapter" / "adapters.safetensors").is_file()
+    assert (publish_root / "adapter" / "adapter_config.json").is_file()
+    assert (publish_root / "train_lora.adapter.json").is_file()
+
+
+def test_local_filesystem_publish_backend_handles_file_source_and_backend_edges(tmp_path: Path) -> None:
+    source_path = tmp_path / "artifact.json"
+    source_path.write_text('{"ok":true}\n', encoding="utf-8")
+    target_file = tmp_path / "publish" / "artifact"
+    target_file.parent.mkdir()
+    target_file.write_text("stale", encoding="utf-8")
+
+    result = LocalFilesystemPublishBackend(root=tmp_path / "publish").publish(
+        source_path=source_path,
+        target_repo="/",
+        artifact_kind="model_export",
+    )
+
+    assert result.backend == "local_filesystem"
+    assert result.target_repo == "/"
+    assert result.published_files == ["artifact.json"]
+    assert (tmp_path / "publish" / "artifact" / "artifact.json").read_text(encoding="utf-8") == '{"ok":true}\n'
+    assert isinstance(UploadReceiptPipeline._resolve_publisher_from_ext({}), HuggingFacePublishBackend)
+    with pytest.raises(ModelOperationError, match="local_publish_root"):
+        UploadReceiptPipeline._resolve_publisher_from_ext({"publish_backend": "local_filesystem"})
+    with pytest.raises(ModelOperationError, match="publish_backend must be one of"):
+        UploadReceiptPipeline._resolve_publisher_from_ext({"publish_backend": "unknown"})
+
+
 def test_upload_job_publishes_fused_derived_model_as_merged_export(tmp_path: Path) -> None:
     dataset_dir = _write_training_dataset_package(tmp_path)
     publish_backend = FakePublishBackend()
@@ -5036,6 +5114,10 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Pa
     assert core._benchmark_batch_sizes({"batch_size": "oops"}) == (1,)
     assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
     assert core._shape_benchmark_prompt("one two three", context_length=2) == "one two"
+    assert core._shape_benchmark_prompt("one two three", context_length=8) == (
+        "one two three one two three one two"
+    )
+    assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
     with pytest.raises(ModelOperationError):
         core._measure_text_bench_sample(
             loaded_model=core._registry.load_model(WorkerModelCatalog.dev_text_model()),

@@ -191,9 +191,15 @@ public enum MelixCLICommandCodec {
             appendOption("--quantization-mode", value: options.quantizationMode, into: &arguments)
             appendOption("--source-artifact-kind", value: options.sourceArtifactKind, into: &arguments)
             appendOption("--source-artifact-path", value: options.sourceArtifactPath, into: &arguments)
+            appendOption("--quantization-backend", value: options.quantizationBackend, into: &arguments)
+            appendOption("--mlx-lm-q-bits", value: options.mlxLMQBits, into: &arguments)
+            appendOption("--mlx-lm-q-group-size", value: options.mlxLMQGroupSize, into: &arguments)
+            appendOption("--mlx-lm-q-mode", value: options.mlxLMQMode, into: &arguments)
             appendOption("--calibration-dataset-uri", value: options.calibrationDatasetURI, into: &arguments)
             appendOption("--quality-delta", value: options.qualityDelta, into: &arguments)
             appendOption("--latency-delta", value: options.latencyDelta, into: &arguments)
+            appendOption("--local-inference-smoke-mode", value: options.localInferenceSmokeMode, into: &arguments)
+            appendOption("--local-inference-smoke-prompt", value: options.localInferenceSmokePrompt, into: &arguments)
             json = options.json
         case .upload(let options):
             arguments = ["upload"]
@@ -203,6 +209,8 @@ public enum MelixCLICommandCodec {
             appendOption("--artifact-path", value: options.artifactPath, into: &arguments)
             appendOption("--artifact-kind", value: options.artifactKind, into: &arguments)
             appendOption("--artifact-manifest-path", value: options.artifactManifestPath, into: &arguments)
+            appendOption("--publish-backend", value: options.publishBackend, into: &arguments)
+            appendOption("--local-publish-root", value: options.localPublishRoot, into: &arguments)
             json = options.json
         case .modelImport(let options):
             arguments = ["model", "import"]
@@ -409,6 +417,8 @@ public enum MelixCLICommandCodec {
                 // runner; emit only `--manifest-path` and the runner infers.
                 appendOption("--manifest-path", value: options.artifactManifestPath, into: &arguments)
             }
+            appendOption("--publish-backend", value: options.publishBackend, into: &arguments)
+            appendOption("--local-publish-root", value: options.localPublishRoot, into: &arguments)
             json = options.json
         case .benchRun(let options):
             arguments = ["bench", "run"]
@@ -671,6 +681,10 @@ public enum MelixCLICommandCodec {
     private static func appendAlignmentParameters(_ parameters: [String: String], into arguments: inout [String]) {
         let mapping: [(String, String)] = [
             ("grpo_candidate_count", "--grpo-candidate-count"),
+            ("candidate_generation_mode", "--candidate-generation-mode"),
+            ("candidate_scoring_mode", "--candidate-scoring-mode"),
+            ("candidate_generation_max_tokens", "--candidate-generation-max-tokens"),
+            ("source_adapter_path", "--source-adapter-path"),
             ("reference_model_path", "--reference-model-path"),
             ("reward_model_manifest_path", "--reward-model-manifest-path"),
             ("kl_penalty", "--kl-penalty"),

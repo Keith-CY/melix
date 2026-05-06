@@ -17,6 +17,24 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
         "print('hi')",
         "parsed_code_block",
     )
+    assert code_eval_runner.extract_candidate_code(
+        "first attempt:\n```python\nprint('old')\n```\nfinal answer:\n```python\nprint('new')\n```"
+    ) == ("print('new')", "parsed_code_block")
+    assert code_eval_runner.extract_candidate_code("```javascript\nprint('tag stays')\n```") == (
+        "javascript\nprint('tag stays')",
+        "parsed_code_block",
+    )
+    assert code_eval_runner.extract_candidate_code(
+        "```python\nprint('complete')\n```\n```python\nprint('unterminated')"
+    ) == ("print('complete')", "parsed_code_block")
+    blocks = [
+        f"draft {index}\n```python\ndef candidate():\n    return {index}\n```"
+        for index in range(32)
+    ]
+    assert code_eval_runner.extract_candidate_code("\n".join(blocks)) == (
+        "def candidate():\n    return 31",
+        "parsed_code_block",
+    )
 
 
 def test_is_code_execution_policy_supported_requires_sandboxed_policy_and_binary(monkeypatch) -> None:
@@ -341,22 +359,32 @@ def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -
     assert code_eval_runner._read_limited_stdio(directory_path, 4) == ("", 0)
 
 
-def test_read_limited_stdio_handles_stat_open_race(
+def test_read_limited_stdio_handles_open_race(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output_path = tmp_path / "output.txt"
     output_path.write_text("secret output", encoding="utf-8")
 
-    original_open = Path.open
+    def fake_open(path, flags, *args, **kwargs):
+        raise FileNotFoundError(str(path))
 
-    def fake_open(self: Path, *args, **kwargs):
-        if self == output_path:
-            raise FileNotFoundError(str(self))
-        return original_open(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "open", fake_open)
+    monkeypatch.setattr(code_eval_runner.os, "open", fake_open)
 
     assert code_eval_runner._read_limited_stdio(output_path, 4) == ("", 0)
+
+
+def test_read_limited_stdio_ignores_close_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_path = tmp_path / "output.txt"
+    output_path.write_text("0123456789abcdef", encoding="utf-8")
+
+    def fake_close(fd: int) -> None:
+        raise OSError("close failed")
+
+    monkeypatch.setattr(code_eval_runner.os, "close", fake_close)
+
+    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
 
 
 def test_output_limit_reuses_limited_stdio_sizes(monkeypatch) -> None:
@@ -448,6 +476,83 @@ def test_sandbox_executable_paths_keep_wrapper_allowed_when_launcher_is_preferre
 
     assert paths[0] == launcher.resolve()
     assert resolved.resolve() in paths
+
+
+def test_sandbox_profile_reuses_static_runtime_fragments(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+    code_eval_runner._sandbox_static_profile_key_cache_clear()
+    runtime_calls = 0
+    executable_calls = 0
+    get_paths_calls = 0
+
+    def fake_runtime_paths() -> tuple[Path, ...]:
+        nonlocal runtime_calls
+        runtime_calls += 1
+        return (tmp_path / "python-runtime",)
+
+    def fake_executable_paths() -> tuple[Path, ...]:
+        nonlocal executable_calls
+        executable_calls += 1
+        return (tmp_path / "python",)
+
+    def fake_get_paths() -> dict[str, str]:
+        nonlocal get_paths_calls
+        get_paths_calls += 1
+        return {"stdlib": str(tmp_path / "stdlib")}
+
+    monkeypatch.setattr(code_eval_runner, "_sandbox_runtime_read_paths", fake_runtime_paths)
+    monkeypatch.setattr(code_eval_runner, "_sandbox_executable_paths", fake_executable_paths)
+    monkeypatch.setattr(code_eval_runner.sysconfig, "get_paths", fake_get_paths)
+
+    first_root = tmp_path / "eval-a"
+    second_root = tmp_path / "eval-b"
+    first_profile = code_eval_runner._sandbox_profile(temp_root=first_root)
+    second_profile = code_eval_runner._sandbox_profile(temp_root=second_root)
+
+    assert runtime_calls == 1
+    assert executable_calls == 1
+    assert get_paths_calls == 1
+    assert str(first_root) in first_profile
+    assert str(second_root) not in first_profile
+    assert str(second_root) in second_profile
+    assert str(tmp_path / "python-runtime") in second_profile
+
+    code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+    code_eval_runner._sandbox_static_profile_key_cache_clear()
+
+
+def test_sandbox_profile_cache_key_tracks_python_environment(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+    code_eval_runner._sandbox_static_profile_key_cache_clear()
+    runtime_calls = 0
+
+    def fake_runtime_paths() -> tuple[Path, ...]:
+        nonlocal runtime_calls
+        runtime_calls += 1
+        return (tmp_path / f"runtime-{runtime_calls}",)
+
+    monkeypatch.setattr(code_eval_runner, "_sandbox_runtime_read_paths", fake_runtime_paths)
+    monkeypatch.setattr(code_eval_runner, "_sandbox_executable_paths", lambda: (tmp_path / "python",))
+
+    monkeypatch.setattr(code_eval_runner.sys, "executable", str(tmp_path / "python-a"))
+    first_profile = code_eval_runner._sandbox_profile(temp_root=tmp_path / "eval-a")
+    second_profile = code_eval_runner._sandbox_profile(temp_root=tmp_path / "eval-b")
+    monkeypatch.setattr(code_eval_runner.sys, "executable", str(tmp_path / "python-b"))
+    third_profile = code_eval_runner._sandbox_profile(temp_root=tmp_path / "eval-c")
+
+    assert runtime_calls == 2
+    assert "runtime-1" in first_profile
+    assert "runtime-1" in second_profile
+    assert "runtime-2" in third_profile
+
+    code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+    code_eval_runner._sandbox_static_profile_key_cache_clear()
 
 
 def test_sandbox_allow_path_variants_falls_back_when_resolve_raises() -> None:

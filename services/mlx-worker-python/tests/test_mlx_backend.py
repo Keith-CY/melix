@@ -13,6 +13,7 @@ from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime import mlx_text_runtime as mlx_text_runtime_module
+from worker.runtime import runtime_utils
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.mlx_text_runtime import RuntimeUnavailableError, resolve_text_stop_contract
@@ -234,6 +235,148 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].dflash_rollback_count == 2
 
 
+def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_utils.clear_callable_accepts_kwarg_cache()
+    signature_calls: dict[str, int] = {}
+    original_signature = runtime_utils.inspect.signature
+
+    def tracked_signature(callable_obj):
+        name = getattr(callable_obj, "__name__", repr(callable_obj))
+        signature_calls[name] = signature_calls.get(name, 0) + 1
+        return original_signature(callable_obj)
+
+    monkeypatch.setattr(runtime_utils.inspect, "signature", tracked_signature)
+
+    def fake_load(model_source: str, **kwargs):
+        _ = (model_source, kwargs)
+        return object(), FakeTokenizer()
+
+    def fake_sampler_factory(*, temp: float, top_p: float, top_k: int):
+        _ = (temp, top_p, top_k)
+        return "fake-sampler"
+
+    seen_stop_values: list[list[str] | None] = []
+
+    def fake_stream_generate(model, tokenizer, prompt: str, max_tokens: int, sampler, *, stop=None):
+        _ = (model, tokenizer, prompt, max_tokens, sampler)
+        seen_stop_values.append(stop)
+        yield FakeGenerationResponse(text="ok", prompt_tokens=1, generation_tokens=1)
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=fake_sampler_factory,
+    )
+    loaded_model = backend.load_model(
+        WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
+    )
+    sampling = common_pb2.SamplingConfig(max_output_tokens=8, stop=["</turn>"])
+
+    for _ in range(2):
+        chunks = list(backend.generate_tokens(loaded_model, "prompt", sampling, Event()))
+        assert [chunk.text for chunk in chunks] == ["ok"]
+
+    assert seen_stop_values == [["</turn>", "</s>"], ["</turn>", "</s>"]]
+    assert signature_calls.get("fake_stream_generate") == 1
+    runtime_utils.clear_callable_accepts_kwarg_cache()
+
+
+def test_auto_backend_scores_reward_responses_with_mlx_generation() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        seen["load"] = (model_source, kwargs)
+        return object(), FakeTokenizer()
+
+    def fake_sampler_factory(*, temp: float, top_p: float, top_k: int):
+        seen["sampler"] = {"temp": temp, "top_p": top_p, "top_k": top_k}
+        return "score-sampler"
+
+    def fake_stream_generate(model, tokenizer, prompt: str, max_tokens: int, sampler):
+        seen["stream"] = {
+            "model": model,
+            "tokenizer": tokenizer,
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+            "sampler": sampler,
+        }
+        yield FakeGenerationResponse(text="Score: ", prompt_tokens=8, generation_tokens=1)
+        yield FakeGenerationResponse(text="87", prompt_tokens=8, generation_tokens=2)
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=fake_sampler_factory,
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/reward"})
+    model_spec.ext["melix.reward_model.score_prompt_template"] = (
+        "Prompt={prompt}\nResponse={response}\nReturn score:"
+    )
+    model_spec.ext["melix.reward_model.score_max_tokens"] = "12"
+    loaded_model = backend.load_model(model_spec)
+
+    score = backend.score_response(loaded_model, "Explain safely.", "Helpful answer.")
+
+    assert score == pytest.approx(0.87)
+    assert seen["load"] == ("mlx-community/reward", {"lazy": False})
+    assert seen["sampler"] == {"temp": 0.0, "top_p": 1.0, "top_k": 1}
+    assert seen["stream"] == {
+        "model": loaded_model["model"],
+        "tokenizer": loaded_model["tokenizer"],
+        "prompt": "Prompt=Explain safely.\nResponse=Helpful answer.\nReturn score:",
+        "max_tokens": 12,
+        "sampler": "score-sampler",
+    }
+
+
+def test_reward_score_prompt_and_parser_cover_fallbacks() -> None:
+    prompt = mlx_text_runtime_module._reward_score_prompt(
+        {"metadata": {"melix.reward_model.scoring_prompt_template": "Metadata {prompt} {response}"}},
+        prompt="Prompt",
+        response="Response",
+        execution_ext={
+            "melix.reward_model.score_prompt_template": "Override {prompt} => {response}",
+        },
+    )
+    assert prompt == "Override Prompt => Response"
+
+    default_prompt = mlx_text_runtime_module._reward_score_prompt(
+        object(),
+        prompt="Explain safely.",
+        response="Helpful answer.",
+        execution_ext=None,
+    )
+    assert "Explain safely." in default_prompt
+    assert "Helpful answer." in default_prompt
+    assert mlx_text_runtime_module._reward_score_max_tokens(
+        {"metadata": {"melix.reward_model.max_tokens": "12"}},
+        execution_ext={"melix.reward_model.score_max_tokens": "18"},
+    ) == 18
+    assert mlx_text_runtime_module._reward_score_max_tokens(
+        {"metadata": {"melix.reward_model.score_max_tokens": "not-an-int"}},
+        execution_ext=None,
+    ) == 8
+    assert mlx_text_runtime_module._parse_reward_score_text("0.42") == pytest.approx(0.42)
+
+    with pytest.raises(RuntimeUnavailableError):
+        mlx_text_runtime_module._parse_reward_score_text("no numeric score")
+    with pytest.raises(RuntimeUnavailableError):
+        mlx_text_runtime_module._parse_reward_score_text("-0.5")
+
+
+def test_auto_backend_score_response_reports_unavailable_runtime() -> None:
+    backend = AutoMLXBackend(
+        load_fn=lambda model_source, **kwargs: (object(), FakeTokenizer()),
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "unused",
+    )
+    backend._available = False
+    backend._error = ModuleNotFoundError("mlx-lm is not installed")
+
+    with pytest.raises(RuntimeUnavailableError, match="mlx-lm is not installed"):
+        backend.score_response({}, "Prompt", "Response")
+
+
 def test_text_stop_contract_merges_request_metadata_and_tokenizer_eos() -> None:
     contract = resolve_text_stop_contract(
         {
@@ -312,6 +455,42 @@ def test_auto_backend_passes_resolved_stop_sequences_when_supported() -> None:
     )
 
     assert seen["stop"] == ["</request>", "</model>", "</s>"]
+    assert [chunk.text for chunk in chunks] == ["done"]
+
+
+def test_auto_backend_does_not_pass_stop_to_variadic_stream_generate() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        _ = model_source, kwargs
+        return object(), FakeTokenizer()
+
+    def fake_stream_generate(*args, **kwargs):
+        seen["kwargs"] = dict(kwargs)
+        yield FakeGenerationResponse(text="done", prompt_tokens=1, generation_tokens=1, finish_reason="stop")
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.ext["melix.stop_sequences"] = "</model>"
+    loaded_model = backend.load_model(model_spec)
+
+    chunks = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=4, stop=["</request>"]),
+            Event(),
+        )
+    )
+
+    assert "stop" not in seen["kwargs"]
+    assert "stop_words" not in seen["kwargs"]
+    assert "stop_sequences" not in seen["kwargs"]
+    assert mlx_text_runtime_module._callable_declares_kwarg(42, "stop") is False
     assert [chunk.text for chunk in chunks] == ["done"]
 
 

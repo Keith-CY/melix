@@ -23,13 +23,13 @@ mlx = [
   "mlx-vlm>=0.4.4,<0.5",
 ]
 audio-stt = [
-  "mlx-audio==0.4.2",
+  "mlx-audio==0.4.3",
 ]
 audio-tts = [
-  "mlx-audio==0.4.2",
+  "mlx-audio==0.4.3",
 ]
 audio = [
-  "mlx-audio==0.4.2",
+  "mlx-audio==0.4.3",
 ]
 
 [tool.pytest.ini_options]

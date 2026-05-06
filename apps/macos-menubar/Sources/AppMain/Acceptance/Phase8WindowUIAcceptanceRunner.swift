@@ -19,6 +19,12 @@ private let phase8MatrixConcurrencyLevel: UInt32 = 1
 private let phase8MatrixRequests: UInt32 = 4
 private let phase8EvaluationSampleSize: UInt32 = 4
 private let phase8EvaluationScoringMode = "multiple_choice_accuracy"
+private let phase8WindowUIBusinessLineEvidenceLevel = "window_route_matrix"
+private let phase8WindowUIBusinessLineRealCLIEvidenceLevel = "window_route_matrix_with_real_cli_runtime"
+private let phase8WindowUIReleaseReadyBlocker = "real_local_runtime_matrix_not_run"
+private let phase8WindowUIUnreadyCLIBundleBlocker = "real_local_runtime_bundle_not_release_ready"
+private let phase8WindowUIMissingCLICaseBlocker = "real_local_runtime_case_missing"
+private let phase8WindowUIUnreadyCLICaseBlocker = "real_local_runtime_case_not_release_ready"
 
 public enum Phase8WindowUIAcceptanceError: Error, LocalizedError {
     case missingCLIEvidenceBundle(String)
@@ -193,6 +199,238 @@ private struct Phase8WindowUIAcceptanceUIState: Codable, Equatable, Sendable {
     let selectedServerLifecycle: String
 }
 
+private enum Phase8WindowUIBusinessLineKind: Equatable, Sendable {
+    case training(RuntimeLoraTrainingMode)
+    case quantization(RuntimeQuantizationMode)
+}
+
+private struct Phase8WindowUIBusinessLineCase: Equatable, Sendable {
+    let caseID: String
+    let cliCaseID: String
+    let businessLine: String
+    let kind: Phase8WindowUIBusinessLineKind
+}
+
+private struct Phase8WindowUIBusinessLineEvidence: Codable, Equatable, Sendable {
+    let caseID: String
+    let cliCaseID: String
+    let businessLine: String
+    let evidenceLevel: String
+    let selectedSurface: String
+    let selectedToolSection: String
+    let selectedTrainingMode: String
+    let selectedQuantizationMode: String
+    let selectedQuantizationProfileID: String
+    let runnableAction: String
+    let routedCommand: String
+    let visible: Bool
+    let selectable: Bool
+    let runnable: Bool
+    let inspectable: Bool
+    let cliExecutionMode: String
+    let cliCaseStatus: String
+    let cliCaseEvidenceTier: String
+    let cliCaseReleaseReady: Bool
+    let releaseReady: Bool
+    let releaseReadyBlocker: String
+}
+
+private let phase8WindowUIBusinessLineCases: [Phase8WindowUIBusinessLineCase] = [
+    .init(
+        caseID: "base_lora_export_local_inference",
+        cliCaseID: "lora_export_inference",
+        businessLine: "BaseModel -> LoRA -> export -> local inference",
+        kind: .training(.lora)
+    ),
+    .init(
+        caseID: "base_qlora_export_local_inference",
+        cliCaseID: "qlora_export_inference",
+        businessLine: "BaseModel -> QLoRA -> export -> local inference",
+        kind: .training(.qlora)
+    ),
+    .init(
+        caseID: "base_dora_export_local_inference",
+        cliCaseID: "dora_export_inference",
+        businessLine: "BaseModel -> DoRA -> export -> local inference",
+        kind: .training(.dora)
+    ),
+    .init(
+        caseID: "lora_dpo_export_local_inference",
+        cliCaseID: "lora_dpo_export_inference",
+        businessLine: "BaseModel -> LoRA -> DPO -> export -> local inference",
+        kind: .training(.dpo)
+    ),
+    .init(
+        caseID: "lora_orpo_export_local_inference",
+        cliCaseID: "lora_orpo_export_inference",
+        businessLine: "BaseModel -> LoRA -> ORPO -> export -> local inference",
+        kind: .training(.orpo)
+    ),
+    .init(
+        caseID: "lora_cpo_export_local_inference",
+        cliCaseID: "lora_cpo_export_inference",
+        businessLine: "BaseModel -> LoRA -> CPO -> export -> local inference",
+        kind: .training(.cpo)
+    ),
+    .init(
+        caseID: "lora_grpo_export_local_inference",
+        cliCaseID: "lora_grpo_export_inference",
+        businessLine: "BaseModel -> LoRA -> GRPO -> export -> local inference",
+        kind: .training(.grpo)
+    ),
+    .init(
+        caseID: "lora_rlhf_export_local_inference",
+        cliCaseID: "lora_rlhf_export_inference",
+        businessLine: "BaseModel -> LoRA -> RLHF using #366 reward model -> export -> local inference",
+        kind: .training(.rlhf)
+    ),
+    .init(
+        caseID: "lora_preference_ptq_local_inference",
+        cliCaseID: "lora_preference_ptq_quantized_inference",
+        businessLine: "BaseModel -> LoRA/preference result -> merge/export -> PTQ -> local inference",
+        kind: .quantization(.ptq)
+    ),
+    .init(
+        caseID: "qat_quantized_local_inference",
+        cliCaseID: "qat_quantized_inference",
+        businessLine: "BaseModel -> QAT/QAT-aware export -> quantized local inference",
+        kind: .quantization(.qat)
+    ),
+]
+
+internal struct Phase8Issue365CLIEvidenceBundle: Decodable, Equatable, Sendable {
+    let executionMode: String
+    let releaseReady: Bool
+    let cases: [Phase8Issue365CLIEvidenceCase]
+
+    func makeCaseIndex() -> [String: Phase8Issue365CLIEvidenceCase] {
+        var indexedCases: [String: Phase8Issue365CLIEvidenceCase] = [:]
+        for evidenceCase in cases where evidenceCase.caseID.isEmpty == false {
+            indexedCases[evidenceCase.caseID] = evidenceCase
+        }
+        return indexedCases
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case executionMode = "execution_mode"
+        case releaseReady = "release_ready"
+        case cases
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.executionMode = try container.decodeIfPresent(String.self, forKey: .executionMode) ?? ""
+        self.releaseReady = try container.decodeIfPresent(Bool.self, forKey: .releaseReady) ?? false
+        self.cases = try container.decodeIfPresent([Phase8Issue365CLIEvidenceCase].self, forKey: .cases) ?? []
+    }
+}
+
+internal struct Phase8Issue365CLIEvidenceCase: Decodable, Equatable, Sendable {
+    let caseID: String
+    let status: String
+    let evidenceTier: String
+    let releaseReady: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case caseID = "case_id"
+        case status
+        case evidenceTier = "evidence_tier"
+        case releaseReady = "release_ready"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.caseID = try container.decodeIfPresent(String.self, forKey: .caseID) ?? ""
+        self.status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
+        self.evidenceTier = try container.decodeIfPresent(String.self, forKey: .evidenceTier) ?? ""
+        self.releaseReady = try container.decodeIfPresent(Bool.self, forKey: .releaseReady) ?? false
+    }
+}
+
+internal struct Phase8WindowUIBusinessLineReleaseGate: Equatable, Sendable {
+    let evidenceLevel: String
+    let cliExecutionMode: String
+    let cliCaseStatus: String
+    let cliCaseEvidenceTier: String
+    let cliCaseReleaseReady: Bool
+    let releaseReady: Bool
+    let releaseReadyBlocker: String
+}
+
+internal enum Phase8WindowUIReleaseGateResolver {
+    static func releaseGate(
+        cliCaseID: String,
+        cliEvidenceBundle: Phase8Issue365CLIEvidenceBundle,
+        cliCaseIndex: [String: Phase8Issue365CLIEvidenceCase]? = nil
+    ) -> Phase8WindowUIBusinessLineReleaseGate {
+        let cliCase = (cliCaseIndex ?? cliEvidenceBundle.makeCaseIndex())[cliCaseID]
+        let cliExecutionMode = cliEvidenceBundle.executionMode
+        let cliCaseStatus = cliCase?.status ?? ""
+        let cliCaseEvidenceTier = cliCase?.evidenceTier ?? ""
+        let cliCaseReleaseReady = cliCase?.releaseReady ?? false
+
+        guard cliExecutionMode == "real" else {
+            return .init(
+                evidenceLevel: phase8WindowUIBusinessLineEvidenceLevel,
+                cliExecutionMode: cliExecutionMode,
+                cliCaseStatus: cliCaseStatus,
+                cliCaseEvidenceTier: cliCaseEvidenceTier,
+                cliCaseReleaseReady: cliCaseReleaseReady,
+                releaseReady: false,
+                releaseReadyBlocker: phase8WindowUIReleaseReadyBlocker
+            )
+        }
+
+        // Prefer the top-level bundle blocker before per-case diagnosis when
+        // the real CLI matrix itself is not release-ready.
+        guard cliEvidenceBundle.releaseReady else {
+            return .init(
+                evidenceLevel: phase8WindowUIBusinessLineEvidenceLevel,
+                cliExecutionMode: cliExecutionMode,
+                cliCaseStatus: cliCaseStatus,
+                cliCaseEvidenceTier: cliCaseEvidenceTier,
+                cliCaseReleaseReady: cliCaseReleaseReady,
+                releaseReady: false,
+                releaseReadyBlocker: phase8WindowUIUnreadyCLIBundleBlocker
+            )
+        }
+
+        guard cliCase != nil else {
+            return .init(
+                evidenceLevel: phase8WindowUIBusinessLineEvidenceLevel,
+                cliExecutionMode: cliExecutionMode,
+                cliCaseStatus: "",
+                cliCaseEvidenceTier: "",
+                cliCaseReleaseReady: false,
+                releaseReady: false,
+                releaseReadyBlocker: "\(phase8WindowUIMissingCLICaseBlocker):\(cliCaseID)"
+            )
+        }
+
+        guard cliCaseStatus == "succeeded", cliCaseReleaseReady else {
+            return .init(
+                evidenceLevel: phase8WindowUIBusinessLineEvidenceLevel,
+                cliExecutionMode: cliExecutionMode,
+                cliCaseStatus: cliCaseStatus,
+                cliCaseEvidenceTier: cliCaseEvidenceTier,
+                cliCaseReleaseReady: cliCaseReleaseReady,
+                releaseReady: false,
+                releaseReadyBlocker: "\(phase8WindowUIUnreadyCLICaseBlocker):\(cliCaseID)"
+            )
+        }
+
+        return .init(
+            evidenceLevel: phase8WindowUIBusinessLineRealCLIEvidenceLevel,
+            cliExecutionMode: cliExecutionMode,
+            cliCaseStatus: cliCaseStatus,
+            cliCaseEvidenceTier: cliCaseEvidenceTier,
+            cliCaseReleaseReady: cliCaseReleaseReady,
+            releaseReady: true,
+            releaseReadyBlocker: ""
+        )
+    }
+}
+
 private struct Phase8WindowUIAcceptanceBundle: Codable, Equatable, Sendable {
     let schemaVersion: String
     let surface: String
@@ -212,6 +450,7 @@ private struct Phase8WindowUIAcceptanceBundle: Codable, Equatable, Sendable {
     let evaluationDataset: String
     let cliEvidenceBundlePath: String
     let screenshotPath: String
+    let businessLines: [Phase8WindowUIBusinessLineEvidence]
     let baseChatAssistantText: String
     let derivedChatAssistantText: String
     let loraTrainJobID: String
@@ -293,6 +532,7 @@ public final class Phase8WindowUIAcceptanceRunner {
         guard fileManager.fileExists(atPath: cliBundleURL.path) else {
             throw Phase8WindowUIAcceptanceError.missingCLIEvidenceBundle(cliBundleURL.path)
         }
+        let cliEvidenceBundle = try loadCLIEvidenceBundle(from: cliBundleURL)
 
         let bundleRoot = URL(fileURLWithPath: config.melixHome, isDirectory: true)
             .appendingPathComponent("acceptance", isDirectory: true)
@@ -417,6 +657,8 @@ public final class Phase8WindowUIAcceptanceRunner {
             outputURL: exportsRoot.appendingPathComponent("evaluation-samples.jsonl")
         )
 
+        let businessLines = collectBusinessLineEvidence(cliEvidenceBundle: cliEvidenceBundle)
+
         await viewModel.refreshDesktopFoundation()
         viewModel.selectSurface(.server)
         viewModel.selectServerSession(id: serverSessionID)
@@ -449,6 +691,7 @@ public final class Phase8WindowUIAcceptanceRunner {
             evaluationDataset: config.evaluationDataset,
             cliEvidenceBundlePath: config.cliEvidenceBundlePath,
             screenshotPath: screenshotURL.path,
+            businessLines: businessLines,
             baseChatAssistantText: baseChatReceipt.assistantText,
             derivedChatAssistantText: derivedChatReceipt.assistantText,
             loraTrainJobID: loraTrainJobID,
@@ -481,6 +724,150 @@ public final class Phase8WindowUIAcceptanceRunner {
             screenshotPath: screenshotURL.path,
             cliEvidenceBundlePath: config.cliEvidenceBundlePath,
             modelID: materializeReceipt.modelID
+        )
+    }
+
+    private func loadCLIEvidenceBundle(from bundleURL: URL) throws -> Phase8Issue365CLIEvidenceBundle {
+        let decoder = JSONDecoder()
+        let data = try Data(contentsOf: bundleURL)
+        return try decoder.decode(Phase8Issue365CLIEvidenceBundle.self, from: data)
+    }
+
+    private func collectBusinessLineEvidence(
+        cliEvidenceBundle: Phase8Issue365CLIEvidenceBundle
+    ) -> [Phase8WindowUIBusinessLineEvidence] {
+        let cliCaseIndex = cliEvidenceBundle.makeCaseIndex()
+        return phase8WindowUIBusinessLineCases.map { businessLine in
+            switch businessLine.kind {
+            case .training(let mode):
+                return collectTrainingBusinessLineEvidence(
+                    businessLine,
+                    mode: mode,
+                    releaseGate: releaseGate(
+                        for: businessLine,
+                        cliEvidenceBundle: cliEvidenceBundle,
+                        cliCaseIndex: cliCaseIndex
+                    )
+                )
+            case .quantization(let mode):
+                return collectQuantizationBusinessLineEvidence(
+                    businessLine,
+                    mode: mode,
+                    releaseGate: releaseGate(
+                        for: businessLine,
+                        cliEvidenceBundle: cliEvidenceBundle,
+                        cliCaseIndex: cliCaseIndex
+                    )
+                )
+            }
+        }
+    }
+
+    private func releaseGate(
+        for businessLine: Phase8WindowUIBusinessLineCase,
+        cliEvidenceBundle: Phase8Issue365CLIEvidenceBundle,
+        cliCaseIndex: [String: Phase8Issue365CLIEvidenceCase]
+    ) -> Phase8WindowUIBusinessLineReleaseGate {
+        Phase8WindowUIReleaseGateResolver.releaseGate(
+            cliCaseID: businessLine.cliCaseID,
+            cliEvidenceBundle: cliEvidenceBundle,
+            cliCaseIndex: cliCaseIndex
+        )
+    }
+
+    private func collectTrainingBusinessLineEvidence(
+        _ businessLine: Phase8WindowUIBusinessLineCase,
+        mode: RuntimeLoraTrainingMode,
+        releaseGate: Phase8WindowUIBusinessLineReleaseGate
+    ) -> Phase8WindowUIBusinessLineEvidence {
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.training)
+        viewModel.selectedLoraModelID = config.modelID
+        viewModel.loraDatasetURI = config.trainingFixture
+        viewModel.loraAdapterName = "\(phase8AdapterName)-\(mode.rawValue)"
+        viewModel.loraTrainingMode = mode
+        if mode.isAlignmentMode {
+            viewModel.loraReferenceModelPath = "/tmp/melix/reference-model"
+            viewModel.loraKLPenalty = "0.02"
+        }
+        if mode == .grpo {
+            viewModel.loraGRPOCandidateCount = "4"
+        }
+        if mode == .rlhf {
+            viewModel.loraRewardModelManifestPath = "/tmp/melix/reward-model/manifest.json"
+        }
+
+        let visible = RuntimeLoraTrainingMode.allCases.contains(mode)
+        let selectable = viewModel.loraTrainingMode == mode
+        let runnable = viewModel.selectedLoraModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && viewModel.loraDatasetURI.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let inspectable = viewModel.selectedSurface == .tools && viewModel.selectedToolSection == .training
+        let routedCommand = mode.isAlignmentMode ? "alignment.train" : "lora.train"
+
+        return Phase8WindowUIBusinessLineEvidence(
+            caseID: businessLine.caseID,
+            cliCaseID: businessLine.cliCaseID,
+            businessLine: businessLine.businessLine,
+            evidenceLevel: releaseGate.evidenceLevel,
+            selectedSurface: viewModel.selectedSurface.rawValue,
+            selectedToolSection: viewModel.selectedToolSection.rawValue,
+            selectedTrainingMode: mode.rawValue,
+            selectedQuantizationMode: "",
+            selectedQuantizationProfileID: "",
+            runnableAction: "Start Training",
+            routedCommand: routedCommand,
+            visible: visible,
+            selectable: selectable,
+            runnable: runnable,
+            inspectable: inspectable,
+            cliExecutionMode: releaseGate.cliExecutionMode,
+            cliCaseStatus: releaseGate.cliCaseStatus,
+            cliCaseEvidenceTier: releaseGate.cliCaseEvidenceTier,
+            cliCaseReleaseReady: releaseGate.cliCaseReleaseReady,
+            releaseReady: releaseGate.releaseReady,
+            releaseReadyBlocker: releaseGate.releaseReadyBlocker
+        )
+    }
+
+    private func collectQuantizationBusinessLineEvidence(
+        _ businessLine: Phase8WindowUIBusinessLineCase,
+        mode: RuntimeQuantizationMode,
+        releaseGate: Phase8WindowUIBusinessLineReleaseGate
+    ) -> Phase8WindowUIBusinessLineEvidence {
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+        viewModel.selectQuantizationMode(mode.rawValue)
+        viewModel.selectQuantizationProfile("q4")
+
+        let visible = RuntimeQuantizationMode.allCases.contains(mode)
+        let selectable = viewModel.selectedQuantizationMode == mode
+        let runnable = viewModel.modelOperationTargetModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let inspectable = viewModel.selectedSurface == .tools
+            && viewModel.selectedToolSection == .downloads
+            && viewModel.availableQuantizationProfileIDs.contains(viewModel.selectedQuantizationProfileID)
+
+        return Phase8WindowUIBusinessLineEvidence(
+            caseID: businessLine.caseID,
+            cliCaseID: businessLine.cliCaseID,
+            businessLine: businessLine.businessLine,
+            evidenceLevel: releaseGate.evidenceLevel,
+            selectedSurface: viewModel.selectedSurface.rawValue,
+            selectedToolSection: viewModel.selectedToolSection.rawValue,
+            selectedTrainingMode: "",
+            selectedQuantizationMode: mode.rawValue,
+            selectedQuantizationProfileID: viewModel.selectedQuantizationProfileID,
+            runnableAction: "Quantize Model",
+            routedCommand: "model.quantize",
+            visible: visible,
+            selectable: selectable,
+            runnable: runnable,
+            inspectable: inspectable,
+            cliExecutionMode: releaseGate.cliExecutionMode,
+            cliCaseStatus: releaseGate.cliCaseStatus,
+            cliCaseEvidenceTier: releaseGate.cliCaseEvidenceTier,
+            cliCaseReleaseReady: releaseGate.cliCaseReleaseReady,
+            releaseReady: releaseGate.releaseReady,
+            releaseReadyBlocker: releaseGate.releaseReadyBlocker
         )
     }
 

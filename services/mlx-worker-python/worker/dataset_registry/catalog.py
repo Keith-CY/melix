@@ -427,14 +427,24 @@ def read_hf_dataset_snapshot_rows(
     split: str = "",
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    files = _selected_dataset_files(Path(snapshot_path).expanduser().resolve(), split=split)
+    resolved_snapshot_path = Path(snapshot_path).expanduser().resolve()
     rows: list[dict[str, Any]] = []
-    for path in files:
+    for path in _iter_selected_dataset_files(resolved_snapshot_path, split=split):
         remaining = None if limit is None else max(limit - len(rows), 0)
         if remaining == 0:
             return rows
         rows.extend(_read_rows_from_file(path, limit=remaining))
     return rows
+
+
+def _iter_selected_dataset_files(snapshot_path: Path, *, split: str) -> Iterator[Path]:
+    normalized_split = _normalized(split)
+    if normalized_split:
+        yield from _selected_dataset_files(snapshot_path, split=normalized_split)
+        return
+    for path in _iter_supported_dataset_files(snapshot_path):
+        if path.name not in _README_NAMES:
+            yield path
 
 
 def _selected_dataset_files(snapshot_path: Path, *, split: str) -> tuple[Path, ...]:
@@ -568,10 +578,21 @@ def _build_dataset_snapshot(
     snapshot_dir: Path,
     revision: str,
 ) -> DatasetSnapshot:
-    files = tuple(_dataset_files(snapshot_dir))
-    total_bytes = sum(file.size_bytes for file in files)
-    splits = tuple(sorted(set(_inferred_split(file.relative_path) for file in files) - {""}))
-    configs = tuple(sorted(set(_inferred_config(file.relative_path) for file in files) - {""}))
+    dataset_files: list[DatasetFile] = []
+    total_bytes = 0
+    split_names: set[str] = set()
+    config_names: set[str] = set()
+    for dataset_file in _dataset_files(snapshot_dir):
+        dataset_files.append(dataset_file)
+        total_bytes += dataset_file.size_bytes
+        split, config = _inferred_split_and_config(dataset_file.relative_path)
+        if split:
+            split_names.add(split)
+        if config:
+            config_names.add(config)
+    files = tuple(dataset_files)
+    splits = tuple(sorted(split_names))
+    configs = tuple(sorted(config_names))
     revision_label = revision or snapshot_dir.name
     return DatasetSnapshot(
         dataset_id=f"{repo_id}@{revision_label}",
@@ -628,31 +649,40 @@ def _dataset_file_format(path: Path) -> str:
 
 
 def _inferred_split(relative_path: str) -> str:
-    path = Path(relative_path)
-    candidates = [path.stem]
-    candidates.extend(part for part in path.parts[:-1] if part not in {"data", "default"})
-    for candidate in candidates:
-        prefix = candidate.split("-", 1)[0].split("_", 1)[0].lower()
-        if prefix in _SPLIT_ALIASES:
-            return _SPLIT_ALIASES[prefix]
-    return ""
+    return _inferred_split_and_config(relative_path)[0]
 
 
 def _inferred_config(relative_path: str) -> str:
-    parts = Path(relative_path).parts
+    return _inferred_split_and_config(relative_path)[1]
+
+
+def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
+    parts = tuple(part for part in relative_path.replace("\\", "/").split("/") if part)
+    if not parts:
+        return "", "default"
+    filename = parts[-1]
+    stem = filename.rsplit(".", 1)[0]
+    candidates = [stem]
+    candidates.extend(part for part in parts[:-1] if part not in {"data", "default"})
+    split = ""
+    for candidate in candidates:
+        prefix = candidate.split("-", 1)[0].split("_", 1)[0].lower()
+        if prefix in _SPLIT_ALIASES:
+            split = _SPLIT_ALIASES[prefix]
+            break
     if len(parts) < 2:
-        return "default"
+        return split, "default"
     first = parts[0]
     if first in {"data", "train", "test", "validation", "valid", "dev"}:
-        return "default"
-    return first
+        return split, "default"
+    return split, first
 
 
 def _path_matches_split(relative_path: Path, split: str) -> bool:
     normalized_split = split.lower()
     for part in relative_path.parts:
         lowered = part.lower()
-        stem = Path(part).stem.lower()
+        stem = _string_stem(part).lower()
         if (
             lowered == normalized_split
             or lowered.startswith(f"{normalized_split}-")
@@ -663,6 +693,15 @@ def _path_matches_split(relative_path: Path, split: str) -> bool:
         ):
             return True
     return False
+
+
+def _string_stem(name: str) -> str:
+    if not name or name.endswith("."):
+        return name
+    dot_index = name.rfind(".")
+    if dot_index <= 0:
+        return name
+    return name[:dot_index]
 
 
 def _hf_dataset_repo_id(cache_repo_dir: Path) -> str | None:

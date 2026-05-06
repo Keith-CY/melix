@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import unquote_plus, urlencode
 from urllib.request import Request, urlopen
 
 from worker.productization.device_identity import collect_device_identity
@@ -14,6 +14,9 @@ from worker.productization.device_identity import collect_device_identity
 
 MEMORY_COMFORT_BUDGET_FACTOR = 0.60
 RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
+
+_BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
+_EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -183,11 +186,13 @@ class HubCatalog:
         card_data = payload.get("cardData") if isinstance(payload.get("cardData"), dict) else {}
         repo_id = _string(payload.get("id") or payload.get("modelId"))
         tags = _string_list(payload.get("tags"))
+        lowered_tags = _lowered_tag_set(tags)
         library_name = _string(payload.get("library_name") or card_data.get("library_name"))
         sibling_files = _sibling_files(payload.get("siblings"))
         mlx_compatible = _is_mlx_compatible(
             repo_id=repo_id,
             tags=tags,
+            lowered_tags=lowered_tags,
             library_name=library_name,
             card_data=card_data,
         )
@@ -196,6 +201,7 @@ class HubCatalog:
             repo_id=repo_id,
             pipeline_tag=_string(payload.get("pipeline_tag") or card_data.get("pipeline_tag")),
             tags=tags,
+            lowered_tags=lowered_tags,
             mlx_compatible=mlx_compatible,
             local_memory_gb=self._local_memory_gb,
         )
@@ -252,15 +258,37 @@ class HubCatalog:
 
 
 def _next_cursor_from_link(link_header: str) -> str:
-    for raw_part in link_header.split(","):
-        part = raw_part.strip()
-        if 'rel="next"' not in part:
-            continue
-        if not part.startswith("<") or ">" not in part:
-            continue
-        next_url = part[1:part.index(">")]
-        query = parse_qs(urlparse(next_url).query)
-        return _string(query.get("cursor", [""])[0])
+    search_start = 0
+    while True:
+        url_start = link_header.find("<", search_start)
+        if url_start < 0:
+            return ""
+        url_end = link_header.find(">", url_start + 1)
+        if url_end < 0:
+            return ""
+        next_url_start = link_header.find("<", url_end + 1)
+        relation_end = next_url_start if next_url_start >= 0 else len(link_header)
+        if 'rel="next"' in link_header[url_end + 1 : relation_end]:
+            return _cursor_query_value(link_header[url_start + 1 : url_end])
+        search_start = relation_end
+
+
+def _cursor_query_value(url: str) -> str:
+    query_start = url.find("?")
+    if query_start < 0:
+        return ""
+    query_end = url.find("#", query_start + 1)
+    if query_end < 0:
+        query_end = len(url)
+    parameter_start = query_start + 1
+    while parameter_start < query_end:
+        parameter_end = url.find("&", parameter_start, query_end)
+        if parameter_end < 0:
+            parameter_end = query_end
+        value_start = parameter_start + len("cursor=")
+        if url.startswith("cursor=", parameter_start):
+            return unquote_plus(url[value_start:parameter_end])
+        parameter_start = parameter_end + 1
     return ""
 
 
@@ -284,6 +312,14 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, str) and value:
         return [value]
     return []
+
+
+def _lowered_tag_set(tags: list[str]) -> set[str]:
+    return {tag.lower() for tag in tags}
+
+
+def _normalized_lowered_tags(tags: list[str], lowered_tags: set[str] | None = None) -> set[str]:
+    return lowered_tags if lowered_tags is not None else _lowered_tag_set(tags)
 
 
 def _sibling_files(value: Any) -> list[str]:
@@ -335,20 +371,20 @@ def _is_mlx_compatible(
     tags: list[str],
     library_name: str,
     card_data: dict[str, Any],
+    lowered_tags: set[str] | None = None,
 ) -> bool:
-    lowered_tags = {tag.lower() for tag in tags}
-    card_tags = {
-        tag.lower()
-        for tag in _string_list(card_data.get("tags"))
-    }
-    lowered_repo_id = repo_id.lower()
-    if "mlx" in lowered_tags or "mlx" in card_tags:
+    lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
+    if "mlx" in lowered_tags:
         return True
     if library_name.lower() == "mlx":
         return True
+    lowered_repo_id = repo_id.lower()
     if "mlx" in lowered_repo_id:
         return True
-    return repo_id.startswith("mlx-community/")
+    card_tags = card_data.get("tags")
+    if not card_tags:
+        return False
+    return "mlx" in {tag.lower() for tag in _string_list(card_tags)}
 
 
 def _local_fit_evidence(
@@ -359,14 +395,17 @@ def _local_fit_evidence(
     tags: list[str],
     mlx_compatible: bool,
     local_memory_gb: float,
+    lowered_tags: set[str] | None = None,
 ) -> dict[str, Any]:
+    lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
     artifact_bytes = _estimated_artifact_bytes(payload)
     parameter_count = _parameter_count(payload.get("safetensors"))
-    quantization_summary = _quantization_summary(tags)
+    quantization_summary = _quantization_summary(tags, lowered_tags=lowered_tags)
     estimated_resident_bytes = _estimated_resident_bytes(
         artifact_bytes=artifact_bytes,
         parameter_count=parameter_count,
         tags=tags,
+        lowered_tags=lowered_tags,
     )
     gated = _gated(payload.get("gated"))
     reasons: list[str] = []
@@ -516,11 +555,10 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
 
 
 def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
-    if allow_bare:
-        pattern = r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b"
-    else:
-        pattern = r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b"
-    match = re.search(pattern, text, re.IGNORECASE)
+    if not text:
+        return 0
+    pattern = _BARE_SIZE_HINT_RE if allow_bare else _EXPLICIT_SIZE_HINT_RE
+    match = pattern.search(text)
     if not match:
         return 0
     value = float(match.group(1))
@@ -547,18 +585,19 @@ def _estimated_resident_bytes(
     artifact_bytes: int,
     parameter_count: int,
     tags: list[str],
+    lowered_tags: set[str] | None = None,
 ) -> int:
     if artifact_bytes > 0:
         base_size = artifact_bytes
     elif parameter_count > 0:
-        base_size = parameter_count * _bytes_per_parameter(tags)
+        base_size = parameter_count * _bytes_per_parameter(tags, lowered_tags=lowered_tags)
     else:
         return 0
     return math.ceil(base_size * RESIDENT_MEMORY_OVERHEAD_FACTOR)
 
 
-def _bytes_per_parameter(tags: list[str]) -> float:
-    lowered = {tag.lower() for tag in tags}
+def _bytes_per_parameter(tags: list[str], *, lowered_tags: set[str] | None = None) -> float:
+    lowered = _normalized_lowered_tags(tags, lowered_tags)
     joined = " ".join(lowered)
     if "2bit" in joined or "2-bit" in joined:
         return 0.25
@@ -575,8 +614,8 @@ def _bytes_per_parameter(tags: list[str]) -> float:
     return 2.0
 
 
-def _quantization_summary(tags: list[str]) -> str:
-    lowered = {tag.lower() for tag in tags}
+def _quantization_summary(tags: list[str], *, lowered_tags: set[str] | None = None) -> str:
+    lowered = _normalized_lowered_tags(tags, lowered_tags)
     ordered = [
         ("2-bit", {"2bit", "2-bit"}),
         ("3-bit", {"3bit", "3-bit"}),

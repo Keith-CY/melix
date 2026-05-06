@@ -2130,12 +2130,26 @@ def _character_bigrams(value: str) -> dict[str, int]:
     return counts
 
 
+def _accepted_event_matching_edges(
+    scores: list[list[float]],
+    accepted: list[list[bool]],
+) -> tuple[tuple[tuple[int, float], ...], ...]:
+    return tuple(
+        tuple(
+            (pred_index, float(score))
+            for pred_index, score in enumerate(score_row)
+            if pred_index < len(accepted_row) and accepted_row[pred_index]
+        )
+        for score_row, accepted_row in zip(scores, accepted, strict=False)
+    )
+
+
 def _maximum_weight_event_matching(
     scores: list[list[float]],
     accepted: list[list[bool]],
 ) -> list[tuple[int, int, float]]:
     gold_count = len(scores)
-    pred_count = max((len(row) for row in scores), default=0)
+    accepted_edges = _accepted_event_matching_edges(scores, accepted)
     memo: dict[tuple[int, int], tuple[float, tuple[tuple[int, int, float], ...]]] = {}
 
     def better(
@@ -2156,13 +2170,10 @@ def _maximum_weight_event_matching(
             return (0.0, ())
 
         best = solve(gold_index + 1, used_pred_mask)
-        for pred_index in range(pred_count):
+        for pred_index, score in accepted_edges[gold_index]:
             if used_pred_mask & (1 << pred_index):
                 continue
-            if pred_index >= len(scores[gold_index]) or not accepted[gold_index][pred_index]:
-                continue
             next_score, next_pairs = solve(gold_index + 1, used_pred_mask | (1 << pred_index))
-            score = float(scores[gold_index][pred_index])
             pair = (gold_index, pred_index, _round_metric(score))
             candidate = (score + next_score, (pair,) + next_pairs)
             if better(candidate, best):

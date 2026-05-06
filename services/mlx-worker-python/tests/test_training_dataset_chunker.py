@@ -62,6 +62,18 @@ class _TrackingStr(str):
         raise AssertionError("message payload should not be deep-copied")
 
 
+class _ItemsCountingDict(dict):
+    """Dict that records how often top-level item filtering is requested."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.items_calls = 0
+
+    def items(self):  # type: ignore[override]
+        self.items_calls += 1
+        return super().items()
+
+
 def test_short_single_turn_sample_passes_through_unchanged() -> None:
     tokenizer = _FakeTokenizer()
     sample = {
@@ -279,6 +291,33 @@ def test_chunked_outputs_copy_message_dicts_without_deepcopying_string_payloads(
             assert message is not source_message
     chunked[0]["messages"][0]["content"] = "mutated"
     assert sample["messages"][0]["content"] == user_content
+
+
+def test_chunked_outputs_filter_top_level_keys_once_per_source_sample() -> None:
+    tokenizer = _FakeTokenizer()
+    metadata = {f"tag-{idx}": idx for idx in range(80)}
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    sample = _ItemsCountingDict(
+        {
+            "id": "chunked-top-level-scan",
+            "metadata": metadata,
+            "tools": tools,
+            "messages": [
+                {"role": "user", "content": _words(600)},
+                {"role": "assistant", "content": "ack"},
+            ],
+        }
+    )
+
+    chunked, stats = chunk_long_samples([sample], chunk_size=80, tokenizer=tokenizer)
+
+    assert stats.chunk_count == len(chunked) >= 8
+    assert sample.items_calls == 1
+    for idx, emitted in enumerate(chunked):
+        assert emitted["id"] == f"chunked-top-level-scan#chunk-{idx}"
+        assert emitted["metadata"] is metadata
+        assert emitted["tools"] is tools
+        assert emitted["messages"] is not sample["messages"]
 
 
 def test_multi_turn_single_pair_exceeds_chunk_size_falls_through_to_segmentation() -> None:
