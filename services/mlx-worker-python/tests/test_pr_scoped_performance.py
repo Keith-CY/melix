@@ -2041,6 +2041,7 @@ def test_worker_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["preloaded_model_count"] == 2000.0
     assert payload["loop_count"] == 250.0
     assert payload["request_count"] == 3000.0
+    assert payload["request_lifecycle_elapsed_ms_mean"] > 0
     assert payload["request_stats_elapsed_ms_mean"] > 0
     assert payload["resident_bytes_mean"] > 0
     assert payload["sample_count"] == 3.0
