@@ -19,6 +19,14 @@ class ArrayLikeSegment:
     def __init__(self, values):
         self._values = values
 
+    @property
+    def flat(self):
+        for value in self._values:
+            if isinstance(value, (list, tuple)):
+                yield from value
+            else:
+                yield value
+
     def tolist(self):
         return self._values
 
@@ -32,7 +40,9 @@ def _build_audio(sample_count: int):
             segments.append(chunk)
         else:
             midpoint = len(chunk) // 2
-            segments.append(ArrayLikeSegment((chunk[:midpoint], tuple(chunk[midpoint:]))))
+            segments.append(
+                ArrayLikeSegment((chunk[:midpoint], chunk[midpoint], tuple(chunk[midpoint + 1 :])))
+            )
     return segments
 
 
