@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reduce redundant work in the paired bootstrap confidence interval path by sorting the bootstrap replicate vector once and reusing it for the lower and upper percentile bounds, while preserving deterministic statistical evidence payload semantics.
+Reduce redundant work in the paired bootstrap confidence interval path by sorting the bootstrap replicate vector once and computing each replicate mean from a running total instead of materializing a temporary sample list, while preserving deterministic statistical evidence payload semantics.
 
 ## Touched Files
 
@@ -30,7 +30,7 @@ Register `statistical-evidence-bootstrap-single-sort` in the PR-scoped performan
 
 - Preserve bootstrap and analytical interval payload semantics.
 - Sort bootstrap replicates once per interval instead of once per percentile bound.
-- Preserve the existing per-bootstrap sampling semantics while reducing duplicate percentile work.
+- Preserve the existing per-bootstrap sampling semantics while reducing duplicate percentile work and avoiding temporary per-replicate sample lists.
 - Changed-scope automated coverage is at least 95%.
 - Local base-vs-head probe shows lower elapsed time and/or peak traced bytes without changing guard metrics.
 - `git diff --check` passes.
@@ -50,14 +50,19 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_statistical_evidence_bootstrap_probe_script_emits_metrics
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage json -o coverage.json
-python scripts/changed_scope_coverage.py --coverage-json coverage.json \
+python3 scripts/changed_scope_coverage.py --coverage-json coverage.json \
   services/mlx-worker-python/worker/productization/statistical_evidence.py \
   services/mlx-worker-python/tests/test_statistical_evidence.py \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py \
   scripts/statistical_evidence_bootstrap_probe.py
 
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python scripts/statistical_evidence_bootstrap_probe.py
-python scripts/pr_scoped_performance_run.py --probe-id statistical-evidence-bootstrap-single-sort --repo-root . --output /tmp/statistical-evidence-probe.json
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/statistical_evidence_bootstrap_probe.py
+python3 scripts/pr_scoped_performance_run.py \
+  --registry infra/perf/pr_scoped_probes.json \
+  --probe-id statistical-evidence-bootstrap-single-sort \
+  --base-repo /path/to/base-repo \
+  --head-repo /path/to/head-repo \
+  --output /tmp/statistical-evidence-probe.json
 
 git diff --check
 ```
