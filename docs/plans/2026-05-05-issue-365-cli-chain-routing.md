@@ -66,6 +66,11 @@ local runtime acceptance requirements.
   plus the MLX-LM quantization knobs, and route the PTQ acceptance case through
   a fused merged export with `quantization_backend=mlx_lm_convert` instead of
   exercising only the manifest-only quantization path.
+- Add public `melix alignment train` and command-codec routing for
+  `--candidate-generation-mode`, `--candidate-scoring-mode`, and
+  `--candidate-generation-max-tokens` so Issue 365 GRPO acceptance can request
+  live policy-runtime candidate generation and reward-model scoring instead of
+  silently falling back to scored-trace replay.
 - Publish the PTQ fused derived model from
   `lora.activate.result.derived_model_path` via `merged_model_path` so the real
   pipeline uses the activation result field that the runtime actually returns.
@@ -83,7 +88,9 @@ local runtime acceptance requirements.
 - Real local runtime acceptance for every business line. This slice can preflight
   and run real-mode cases, but it does not provide the required local model,
   dataset, reward-model, or runtime evidence bundle for all cases.
-- GRPO candidate generation from a live policy runtime.
+- Release-ready GRPO candidate generation from a live policy runtime. This
+  slice now makes the CLI and acceptance harness request that mode, but it does
+  not provide a final passing real-runtime GRPO release bundle.
 - RLHF reward-model integration from issue 366.
 - MLX-native full-tensor QAT trainer implementation. This slice covers
   QAT-aware export evidence plus a real MLX-LM converted final bundle.
@@ -120,6 +127,9 @@ Success metrics:
 - Quantized PTQ/QAT real-mode subsets must not be marked successful unless the
   quantize step reports `local_runtime_generate` smoke evidence with
   `status=passed` and `release_gate.local_inference_smoke_result=passed`.
+- The GRPO real-mode case must require `candidate_generation_mode=runtime_generate`,
+  `candidate_scoring_mode=reward_model`, and a reward-model manifest before it
+  can be treated as release-ready.
 
 ## Verification
 
@@ -378,20 +388,21 @@ Results on 2026-05-05 after adding the acceptance bundle harness:
 
 ## Remaining Issue 365 Gaps
 
-- Real GRPO policy-runtime candidate generation, scoring, and policy updates.
+- Passing real GRPO policy-runtime candidate generation, reward-model scoring,
+  and policy updates. The CLI and acceptance harness now route the required
+  runtime/scoring controls, but the real release bundle still has to pass.
 - RLHF reward-model inference and PPO/reward-guided update integration from
   issue 366.
-- QAT training and QAT-aware quantized export.
 - Full CLI chain tests backed by real local runtime evidence for every listed
   business line.
 - Real local runtime evidence now exists for `lora_export_inference`,
   `qlora_export_inference`, `dora_export_inference`,
   `lora_dpo_export_inference`, `lora_orpo_export_inference`,
   `lora_cpo_export_inference`, and
-  `lora_preference_ptq_quantized_inference`, but the remaining three CLI
-  chains still require real local runtime evidence:
-  `lora_grpo_export_inference`, `lora_rlhf_export_inference`, and
-  `qat_quantized_inference`.
+  `lora_preference_ptq_quantized_inference`, plus stacked QAT evidence in
+  PR #446. After #446 lands, the remaining two CLI chains still require real
+  local runtime evidence:
+  `lora_grpo_export_inference` and `lora_rlhf_export_inference`.
 - Window UI runnable/inspectable acceptance for every listed business line.
 - Final release evidence that separates deterministic/unit/scored-trace results
   from real local runtime results.

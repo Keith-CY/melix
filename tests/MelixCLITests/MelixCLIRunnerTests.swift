@@ -1175,6 +1175,8 @@ struct MelixCLIRunnerTests {
                 "adapter_name": "issue365-dpo",
                 "algorithm": " DPO ",
                 "reference_model_path": "${steps.train_lora.result.output_path}",
+                "candidate_generation_mode": "scored_trace",
+                "candidate_scoring_mode": "dataset_score",
                 "max_steps": 2
               },
               "checks": {
@@ -1334,6 +1336,10 @@ struct MelixCLIRunnerTests {
         #expect(Array(operationCommands[1].prefix(2)) == ["alignment", "train"])
         #expect(operationCommands[1].contains("--reference-model-path"))
         #expect(operationCommands[1].contains("/tmp/melix/train_lora/issue365-sft.adapter.json"))
+        #expect(operationCommands[1].contains("--candidate-generation-mode"))
+        #expect(operationCommands[1].contains("scored_trace"))
+        #expect(operationCommands[1].contains("--candidate-scoring-mode"))
+        #expect(operationCommands[1].contains("dataset_score"))
         #expect(operationCommands[1].contains("--algorithm"))
         #expect(operationCommands[1].contains("dpo"))
         #expect(operationCommands[1].contains(where: { $0.contains("dataset_source_kind") }) == false)
@@ -4943,6 +4949,9 @@ struct MelixCLIRunnerTests {
                     algorithm: "grpo",
                     parameters: [
                         "grpo_candidate_count": "4",
+                        "candidate_generation_mode": "runtime_generate",
+                        "candidate_scoring_mode": "reward_model",
+                        "candidate_generation_max_tokens": "16",
                         "reference_model_path": "/tmp/reference-model",
                         "reward_model_manifest_path": "/tmp/reward/manifest.json",
                     ],
@@ -4961,6 +4970,9 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["training_mode"] == "grpo")
         #expect(call.ext["alignment_algorithm"] == "grpo")
         #expect(call.ext["grpo_candidate_count"] == "4")
+        #expect(call.ext["candidate_generation_mode"] == "runtime_generate")
+        #expect(call.ext["candidate_scoring_mode"] == "reward_model")
+        #expect(call.ext["candidate_generation_max_tokens"] == "16")
         #expect(call.ext["reference_model_path"] == "/tmp/reference-model")
         #expect(call.ext["reward_model_manifest_path"] == "/tmp/reward/manifest.json")
     }

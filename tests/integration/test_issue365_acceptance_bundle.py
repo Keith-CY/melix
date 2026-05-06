@@ -145,6 +145,18 @@ def test_issue365_acceptance_bundle_plan_covers_required_cli_matrix(tmp_path: Pa
         if step["command"] == "alignment.train"
     }
     assert alignment_algorithms == {"dpo", "orpo", "cpo", "grpo", "rlhf"}
+    grpo_pipeline = next(
+        pipeline
+        for pipeline in pipelines
+        if pipeline["name"] == "issue365-lora_grpo_export_inference"
+    )
+    grpo_steps = {step["id"]: step for step in grpo_pipeline["steps"]}
+    assert grpo_steps["grpo_align"]["args"]["candidate_generation_mode"] == "runtime_generate"
+    assert grpo_steps["grpo_align"]["args"]["candidate_scoring_mode"] == "reward_model"
+    assert grpo_steps["grpo_align"]["args"]["reward_model_manifest_path"] == (
+        "${inputs.reward_model_manifest_path}"
+    )
+    assert grpo_steps["grpo_align"]["args"]["candidate_generation_max_tokens"] == 16
 
     quantization_modes = {
         step["args"]["quantization_mode"]
@@ -290,6 +302,37 @@ def test_issue365_acceptance_bundle_real_preflight_blocks_missing_local_inputs(
     rlhf = next(case for case in bundle["cases"] if case["case_id"] == "lora_rlhf_export_inference")
     blocker_codes = {blocker["code"] for blocker in rlhf["real_runtime_preflight"]["blockers"]}
     assert {"missing_sft_dataset_uri", "missing_reward_scored_dataset_uri", "missing_reward_model_manifest_path"} <= blocker_codes
+
+
+def test_issue365_acceptance_bundle_real_preflight_blocks_grpo_without_reward_model(
+    tmp_path: Path,
+) -> None:
+    melix_cli = _write_executable(tmp_path / "melix")
+    sft = tmp_path / "datasets" / "sft"
+    prompt_candidate = tmp_path / "datasets" / "prompt_candidate"
+    sft.mkdir(parents=True)
+    prompt_candidate.mkdir(parents=True)
+    executor = RecordingExecutor(statuses=["succeeded"])
+
+    bundle = issue365_acceptance_bundle.build_acceptance_bundle(
+        issue365_acceptance_bundle.Issue365AcceptanceConfig(
+            repo_root=Path(__file__).resolve().parents[2],
+            output_dir=tmp_path / "bundle",
+            execution_mode="real",
+            melix_cli=str(melix_cli),
+            sft_dataset_uri=str(sft),
+            prompt_candidate_dataset_uri=str(prompt_candidate),
+            reward_model_manifest_path=str(tmp_path / "missing-reward-model.json"),
+            case_ids=("lora_grpo_export_inference",),
+            timestamp="2026-05-05T000000Z",
+        ),
+        executor=executor,
+    )
+
+    assert executor.commands == []
+    assert bundle["summary"]["blocked_count"] == 1
+    blockers = bundle["cases"][0]["real_runtime_preflight"]["blockers"]
+    assert {blocker["code"] for blocker in blockers} == {"missing_reward_model_manifest_path"}
 
 
 def test_issue365_acceptance_bundle_real_case_filter_runs_only_selected_ready_case(

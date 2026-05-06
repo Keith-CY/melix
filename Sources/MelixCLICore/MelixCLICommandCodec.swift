@@ -681,6 +681,9 @@ public enum MelixCLICommandCodec {
     private static func appendAlignmentParameters(_ parameters: [String: String], into arguments: inout [String]) {
         let mapping: [(String, String)] = [
             ("grpo_candidate_count", "--grpo-candidate-count"),
+            ("candidate_generation_mode", "--candidate-generation-mode"),
+            ("candidate_scoring_mode", "--candidate-scoring-mode"),
+            ("candidate_generation_max_tokens", "--candidate-generation-max-tokens"),
             ("reference_model_path", "--reference-model-path"),
             ("reward_model_manifest_path", "--reward-model-manifest-path"),
             ("kl_penalty", "--kl-penalty"),

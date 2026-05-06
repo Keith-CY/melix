@@ -191,7 +191,13 @@ def issue365_pipeline_cases() -> tuple[Issue365PipelineCase, ...]:
         _alignment_case(
             "grpo",
             "${inputs.prompt_candidate_dataset_uri}",
-            extra_alignment_args={"grpo_candidate_count": 4},
+            extra_alignment_args={
+                "grpo_candidate_count": 4,
+                "candidate_generation_mode": "runtime_generate",
+                "candidate_scoring_mode": "reward_model",
+                "candidate_generation_max_tokens": 16,
+                "reward_model_manifest_path": "${inputs.reward_model_manifest_path}",
+            },
             requirement="BaseModel -> LoRA -> GRPO -> export -> local inference.",
         ),
         _alignment_case(
@@ -571,7 +577,7 @@ def _alignment_required_inputs(algorithm: str) -> tuple[str, ...]:
     if algorithm in {"dpo", "orpo", "cpo"}:
         return ("sft_dataset_uri", "preference_dataset_uri")
     if algorithm == "grpo":
-        return ("sft_dataset_uri", "prompt_candidate_dataset_uri")
+        return ("sft_dataset_uri", "prompt_candidate_dataset_uri", "reward_model_manifest_path")
     if algorithm == "rlhf":
         return ("sft_dataset_uri", "reward_scored_dataset_uri", "reward_model_manifest_path")
     raise ValueError(f"Unsupported alignment algorithm: {algorithm}")
