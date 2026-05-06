@@ -891,6 +891,10 @@ private enum MelixPipelineCommandBuilder {
                     quantizationMode: try quantizationMode(args),
                     sourceArtifactKind: try sourceArtifactKind(args),
                     sourceArtifactPath: string("source_artifact_path", args) ?? "",
+                    quantizationBackend: try quantizationBackend(args),
+                    mlxLMQBits: try mlxLMIntegerString("mlx_lm_q_bits", args),
+                    mlxLMQGroupSize: try mlxLMIntegerString("mlx_lm_q_group_size", args),
+                    mlxLMQMode: try mlxLMQMode(args),
                     calibrationDatasetURI: string("calibration_dataset_uri", args) ?? "",
                     qualityDelta: string("quality_delta", args) ?? "",
                     latencyDelta: string("latency_delta", args) ?? "",
@@ -1179,6 +1183,34 @@ private enum MelixPipelineCommandBuilder {
             throw MelixCLIError.usage("Pipeline command argument source_artifact_kind must be one of: base_model, merged_adapter, adapter_export.")
         }
         return kind
+    }
+
+    private static func quantizationBackend(_ args: [String: Any]) throws -> String {
+        let backend = (string("quantization_backend", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard backend.isEmpty || ["manifest_only", "mlx_lm_convert"].contains(backend) else {
+            throw MelixCLIError.usage("Pipeline command argument quantization_backend must be one of: manifest_only, mlx_lm_convert.")
+        }
+        return backend
+    }
+
+    private static func mlxLMQMode(_ args: [String: Any]) throws -> String {
+        let mode = (string("mlx_lm_q_mode", args) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard mode.isEmpty || ["affine", "mxfp4", "nvfp4", "mxfp8"].contains(mode) else {
+            throw MelixCLIError.usage("Pipeline command argument mlx_lm_q_mode must be one of: affine, mxfp4, nvfp4, mxfp8.")
+        }
+        return mode
+    }
+
+    private static func mlxLMIntegerString(_ key: String, _ args: [String: Any]) throws -> String {
+        let value = (string(key, args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.isEmpty || Int(value) != nil else {
+            throw MelixCLIError.usage("Pipeline command argument \(key) must be an integer.")
+        }
+        return value
     }
 
     private static func localInferenceSmokeMode(_ args: [String: Any]) throws -> String {

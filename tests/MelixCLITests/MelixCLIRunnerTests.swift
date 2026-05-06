@@ -445,10 +445,14 @@ struct MelixCLIRunnerTests {
                 "quantization_mode": "ptq",
                 "source_artifact_kind": "merged_adapter",
                 "source_artifact_path": "/tmp/merged-model",
+                "quantization_backend": " MLX_LM_CONVERT ",
+                "mlx_lm_q_bits": " 4 ",
+                "mlx_lm_q_group_size": " 128 ",
+                "mlx_lm_q_mode": " Affine ",
                 "calibration_dataset_uri": "/tmp/calibration.jsonl",
                 "quality_delta": "-0.01",
                 "latency_delta": "-0.15",
-                "local_inference_smoke_mode": "runtime_generate",
+                "local_inference_smoke_mode": " Runtime_Generate ",
                 "local_inference_smoke_prompt": "Reply with ISSUE365_OK"
               }
             },
@@ -660,6 +664,14 @@ struct MelixCLIRunnerTests {
         #expect(alignArguments.contains("grpo"))
         #expect(quantizeArguments.contains("--source-artifact-kind"))
         #expect(quantizeArguments.contains("merged_adapter"))
+        #expect(quantizeArguments.contains("--quantization-backend"))
+        #expect(quantizeArguments.contains("mlx_lm_convert"))
+        #expect(quantizeArguments.contains("--mlx-lm-q-mode"))
+        #expect(quantizeArguments.contains("affine"))
+        #expect(quantizeArguments.contains("--mlx-lm-q-bits"))
+        #expect(quantizeArguments.contains("4"))
+        #expect(quantizeArguments.contains("--mlx-lm-q-group-size"))
+        #expect(quantizeArguments.contains("128"))
         #expect(quantizeArguments.contains("--local-inference-smoke-mode"))
         #expect(quantizeArguments.contains("runtime_generate"))
     }
@@ -1197,6 +1209,8 @@ struct MelixCLIRunnerTests {
                 "quantization_mode": " PTQ ",
                 "source_artifact_kind": " MERGED_ADAPTER ",
                 "source_artifact_path": "${steps.publish_merged.result.output_path}",
+                "quantization_backend": " MLX_LM_CONVERT ",
+                "mlx_lm_q_mode": " AFFINE ",
                 "calibration_dataset_uri": "/tmp/calibration.jsonl",
                 "quality_delta": "-0.01",
                 "latency_delta": "-0.12",
@@ -1337,6 +1351,10 @@ struct MelixCLIRunnerTests {
         #expect(operationCommands[3].contains("merged_adapter"))
         #expect(operationCommands[3].contains("--source-artifact-path"))
         #expect(operationCommands[3].contains("/tmp/melix/publish/issue365-dpo-merged"))
+        #expect(operationCommands[3].contains("--quantization-backend"))
+        #expect(operationCommands[3].contains("mlx_lm_convert"))
+        #expect(operationCommands[3].contains("--mlx-lm-q-mode"))
+        #expect(operationCommands[3].contains("affine"))
         #expect(operationCommands[3].contains("--local-inference-smoke-mode"))
         #expect(operationCommands[3].contains("runtime_generate"))
         #expect(operationCommands[3].contains("--local-inference-smoke-prompt"))
@@ -1980,6 +1998,90 @@ struct MelixCLIRunnerTests {
                 "Pipeline command argument source_artifact_kind must be one of: base_model, merged_adapter, adapter_export."
             ),
             (
+                "quantize-invalid-backend",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "quantize-invalid-backend",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "quantize",
+                      "command": "quantize",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "quantization_backend": "script"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument quantization_backend must be one of: manifest_only, mlx_lm_convert."
+            ),
+            (
+                "quantize-invalid-mlx-q-mode",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "quantize-invalid-mlx-q-mode",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "quantize",
+                      "command": "quantize",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "mlx_lm_q_mode": "log"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument mlx_lm_q_mode must be one of: affine, mxfp4, nvfp4, mxfp8."
+            ),
+            (
+                "quantize-invalid-mlx-q-bits",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "quantize-invalid-mlx-q-bits",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "quantize",
+                      "command": "quantize",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "mlx_lm_q_bits": "four"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument mlx_lm_q_bits must be an integer."
+            ),
+            (
+                "quantize-invalid-mlx-q-group-size",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "quantize-invalid-mlx-q-group-size",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "quantize",
+                      "command": "quantize",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "mlx_lm_q_group_size": "wide"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument mlx_lm_q_group_size must be an integer."
+            ),
+            (
                 "quantize-invalid-smoke-mode",
                 #"""
                 {
@@ -2491,6 +2593,10 @@ struct MelixCLIRunnerTests {
                     quantizationMode: "qat",
                     sourceArtifactKind: "merged_adapter",
                     sourceArtifactPath: "/tmp/melix-export/merged",
+                    quantizationBackend: "mlx_lm_convert",
+                    mlxLMQBits: "4",
+                    mlxLMQGroupSize: "128",
+                    mlxLMQMode: "affine",
                     calibrationDatasetURI: "/tmp/melix-datasets/calibration",
                     qualityDelta: "-0.01",
                     latencyDelta: "-0.15",
@@ -2538,6 +2644,10 @@ struct MelixCLIRunnerTests {
         #expect(quantizeCall.ext["quantization_mode"] == "qat")
         #expect(quantizeCall.ext["source_artifact_kind"] == "merged_adapter")
         #expect(quantizeCall.ext["source_artifact_path"] == "/tmp/melix-export/merged")
+        #expect(quantizeCall.ext["quantization_backend"] == "mlx_lm_convert")
+        #expect(quantizeCall.ext["mlx_lm_q_bits"] == "4")
+        #expect(quantizeCall.ext["mlx_lm_q_group_size"] == "128")
+        #expect(quantizeCall.ext["mlx_lm_q_mode"] == "affine")
         #expect(quantizeCall.ext["calibration_dataset_uri"] == "/tmp/melix-datasets/calibration")
         #expect(quantizeCall.ext["quality_delta"] == "-0.01")
         #expect(quantizeCall.ext["latency_delta"] == "-0.15")
@@ -5747,6 +5857,10 @@ struct MelixCLIRunnerTests {
                 "quantization_mode": "qat",
                 "source_artifact_kind": "merged_adapter",
                 "source_artifact_path": "/tmp/melix-export/merged",
+                "quantization_backend": "mlx_lm_convert",
+                "mlx_lm_q_bits": "4",
+                "mlx_lm_q_group_size": "128",
+                "mlx_lm_q_mode": "affine",
                 "calibration_dataset_uri": "/tmp/melix-datasets/calibration",
                 "quality_delta": "-0.01",
                 "latency_delta": "-0.15",
@@ -5783,6 +5897,14 @@ struct MelixCLIRunnerTests {
         #expect(commands[1].contains("merged_adapter"))
         #expect(commands[1].contains("--source-artifact-path"))
         #expect(commands[1].contains("/tmp/melix-export/merged"))
+        #expect(commands[1].contains("--quantization-backend"))
+        #expect(commands[1].contains("mlx_lm_convert"))
+        #expect(commands[1].contains("--mlx-lm-q-bits"))
+        #expect(commands[1].contains("4"))
+        #expect(commands[1].contains("--mlx-lm-q-group-size"))
+        #expect(commands[1].contains("128"))
+        #expect(commands[1].contains("--mlx-lm-q-mode"))
+        #expect(commands[1].contains("affine"))
         #expect(commands[1].contains("--calibration-dataset-uri"))
         #expect(commands[1].contains("/tmp/melix-datasets/calibration"))
         #expect(commands[1].contains("--quality-delta"))

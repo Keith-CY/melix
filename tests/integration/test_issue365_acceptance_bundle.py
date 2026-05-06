@@ -158,8 +158,15 @@ def test_issue365_acceptance_bundle_plan_covers_required_cli_matrix(tmp_path: Pa
         if pipeline["name"] == "issue365-lora_preference_ptq_quantized_inference"
     )
     ptq_steps = {step["id"]: step for step in ptq_pipeline["steps"]}
-    assert ptq_steps["ptq_publish_export"]["args"]["export_kind"] == "adapter"
-    assert ptq_steps["ptq_quantize"]["args"]["source_artifact_kind"] == "adapter_export"
+    assert ptq_steps["ptq_fuse_merged_model"]["command"] == "lora.activate"
+    assert ptq_steps["ptq_fuse_merged_model"]["args"]["activation_mode"] == "fused_derived_model"
+    assert ptq_steps["ptq_publish_export"]["args"]["merged_model_path"] == (
+        "${steps.ptq_fuse_merged_model.result.derived_model_path}"
+    )
+    assert ptq_steps["ptq_publish_export"]["args"]["export_kind"] == "merged"
+    assert ptq_steps["ptq_quantize"]["args"]["source_artifact_kind"] == "merged_adapter"
+    assert ptq_steps["ptq_quantize"]["args"]["quantization_backend"] == "mlx_lm_convert"
+    assert ptq_steps["ptq_quantize"]["args"]["mlx_lm_q_mode"] == "affine"
     assert ptq_steps["ptq_quantize"]["args"]["local_inference_smoke_mode"] == "runtime_generate"
     assert ptq_steps["ptq_quantize"]["checks"]["equals"] == {
         "result.local_inference_smoke.status": "passed",
