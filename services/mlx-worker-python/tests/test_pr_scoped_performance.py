@@ -268,6 +268,16 @@ def test_scope_report_selects_multimodal_fast_path_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "multimodal-fast-path-signature-top-level-key-cache"
 
 
+def test_scope_report_selects_multimodal_preprocessing_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/multimodal_preprocessing.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "multimodal-preprocessing-local-uri-parse-elision"
+
+
 def test_scope_report_selects_worker_registry_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -845,6 +855,25 @@ def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_multimodal_preprocessing_uri_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/multimodal_preprocessing_uri_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["iteration_count"] == 3.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["urlparse_calls_mean"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
 def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -979,6 +1008,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "mlx-vlm-gemma4-weight-presence-single-pass",
         "model-registry-plain-local-manifest-stat-elision",
         "multimodal-fast-path-signature-top-level-key-cache",
+        "multimodal-preprocessing-local-uri-parse-elision",
         "package-macos-resolve-fallback-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",

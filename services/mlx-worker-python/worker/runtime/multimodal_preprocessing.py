@@ -156,8 +156,7 @@ def _prepare_image_part(part) -> PreparedImageInput:
     raise MultimodalPreprocessError("No image input provided.")
 
 
-def _path_from_uri(uri: str) -> Path:
-    parsed = urlparse(uri)
+def _path_from_parsed_uri(uri: str, parsed) -> Path:
     if parsed.scheme in {"", "file"}:
         if parsed.scheme == "file":
             candidate = Path(unquote(parsed.path))
@@ -169,10 +168,14 @@ def _path_from_uri(uri: str) -> Path:
     raise MultimodalPreprocessError(f"Unsupported image URI scheme: {parsed.scheme}")
 
 
+def _path_from_uri(uri: str) -> Path:
+    return _path_from_parsed_uri(uri, urlparse(uri))
+
+
 def _bytes_from_image_uri(uri: str) -> tuple[bytes, str, str, str, str]:
     parsed = urlparse(uri)
     if parsed.scheme in {"", "file"}:
-        path = _path_from_uri(uri)
+        path = _path_from_parsed_uri(uri, parsed)
         return (
             path.read_bytes(),
             uri,
