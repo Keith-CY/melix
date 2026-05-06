@@ -158,7 +158,7 @@ class MLXAudioTranscriptionRuntime:
         return 0
 
     def transcribe(self, loaded_model: AudioRuntimeLoadedModel, request) -> TranscriptionResult:
-        prepared = prepare_audio_input(request)
+        prepared = prepare_audio_input(request, read_uri_bytes=not bool(request.audio_uri))
         started_at = perf_counter()
         cleanup_path: Path | None = None
         audio_path = prepared.local_path

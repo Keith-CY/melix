@@ -365,6 +365,16 @@ def test_scope_report_selects_mlx_lm_runner_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "mlx-lm-structured-result-tail-parse"
 
 
+def test_scope_report_selects_mlx_audio_local_uri_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-audio-local-uri-zero-copy-preprocess"
+
+
 def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1004,6 +1014,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "job-registry-restore-sort-elision",
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
+        "mlx-audio-local-uri-zero-copy-preprocess",
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
         "model-registry-plain-local-manifest-stat-elision",
@@ -2293,6 +2304,41 @@ def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:
     assert metrics["payload_value"] == 42.0
     assert metrics["line_count"] == 50002.0
     assert metrics["sample_count"] == 5.0
+
+
+def test_mlx_audio_local_uri_probe_script_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-audio-local-uri-zero-copy-preprocess"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["local_uri_read_bytes_calls_mean"] == 0.0
+    assert metrics["audio_size_bytes"] == 8_388_608.0
+    assert metrics["sample_count"] == 5.0
+
+
+def test_mlx_audio_local_uri_probe_script_main_covers_checked_in_file(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "mlx_audio_local_uri_probe.py"
+    spec = importlib.util.spec_from_file_location("mlx_audio_local_uri_probe_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.AUDIO_SIZE_BYTES = 1024
+    module.SAMPLE_COUNT = 1
+
+    assert module.main() == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert payload["local_uri_read_bytes_calls_mean"] == 0.0
+    assert payload["audio_size_bytes"] == 1024.0
+    assert payload["sample_count"] == 1.0
 
 
 def test_lora_reward_summary_probe_script_emits_metrics() -> None:

@@ -30,12 +30,13 @@ class PreparedAudioInput:
         return self.bytes_data.decode("utf-8", errors="replace").strip()
 
 
-def prepare_audio_input(request) -> PreparedAudioInput:
+def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudioInput:
     started_at = perf_counter()
     media = getattr(request, "audio", None)
     mime_type = getattr(media, "mime_type", "")
     format_name = request.format or getattr(media, "format", "")
     filename = getattr(media, "filename", "")
+    input_bytes: int | None = None
 
     if request.audio_bytes:
         bytes_data = bytes(request.audio_bytes)
@@ -44,7 +45,11 @@ def prepare_audio_input(request) -> PreparedAudioInput:
         reference = "inline:audio"
     elif request.audio_uri:
         path = _path_from_uri(request.audio_uri)
-        bytes_data = path.read_bytes()
+        if read_uri_bytes:
+            bytes_data = path.read_bytes()
+        else:
+            bytes_data = b""
+            input_bytes = path.stat().st_size
         local_path = str(path)
         source_kind = "uri"
         reference = request.audio_uri
@@ -55,7 +60,8 @@ def prepare_audio_input(request) -> PreparedAudioInput:
     else:
         raise AudioPreprocessError("No audio input provided.")
 
-    input_bytes = len(bytes_data)
+    if input_bytes is None:
+        input_bytes = len(bytes_data)
     chunk_count = max(1, ceil(input_bytes / 8))
     duration_seconds = max(0.001, round(input_bytes / 16000.0, 6))
     latency_ms = max(0.0, (perf_counter() - started_at) * 1000.0)
