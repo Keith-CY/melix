@@ -2069,6 +2069,20 @@ struct DesktopDownloadsToolSectionView: View {
                     Spacer(minLength: 12)
 
                     Picker(
+                        "Quant Mode",
+                        selection: Binding(
+                            get: { viewModel.selectedQuantizationMode },
+                            set: { viewModel.selectedQuantizationMode = $0 }
+                        )
+                    ) {
+                        ForEach(RuntimeQuantizationMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 128)
+
+                    Picker(
                         "Quant Profile",
                         selection: Binding(
                             get: { viewModel.selectedQuantizationProfileID },

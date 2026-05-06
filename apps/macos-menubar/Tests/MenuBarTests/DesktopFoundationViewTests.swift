@@ -5994,6 +5994,25 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         #expect(config.timestamp.isEmpty == false)
     }
 
+    @Test("phase 8 window ui downloads surface exposes quantization modes")
+    @MainActor
+    func phase8WindowUIDownloadsSurfaceExposesQuantizationModes() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+        viewModel.selectedQuantizationMode = .qat
+
+        let view = hostView(DesktopDownloadsToolSectionView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(RuntimeQuantizationMode.ptq.id == "ptq")
+        #expect(RuntimeQuantizationMode.ptq.title == "PTQ")
+        #expect(RuntimeQuantizationMode.qat.id == "qat")
+        #expect(RuntimeQuantizationMode.qat.title == "QAT")
+        #expect(viewModel.selectedQuantizationMode == .qat)
+    }
+
     @Test("phase 8 window ui acceptance runner writes a screenshot and evidence bundle")
     @MainActor
     func phase8WindowUIAcceptanceRunnerWritesEvidenceBundle() async throws {
@@ -6196,6 +6215,31 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         )
         #expect(bundleJSON["cli_evidence_bundle_path"] as? String == cliBundlePath.path)
         #expect(bundleJSON["screenshot_path"] as? String == result.screenshotPath)
+        let businessLines = try #require(bundleJSON["business_lines"] as? [[String: Any]])
+        #expect(businessLines.count == 10)
+        let caseIDs = Set(businessLines.compactMap { $0["case_id"] as? String })
+        #expect(caseIDs == Set([
+            "base_lora_export_local_inference",
+            "base_qlora_export_local_inference",
+            "base_dora_export_local_inference",
+            "lora_dpo_export_local_inference",
+            "lora_orpo_export_local_inference",
+            "lora_cpo_export_local_inference",
+            "lora_grpo_export_local_inference",
+            "lora_rlhf_export_local_inference",
+            "lora_preference_ptq_local_inference",
+            "qat_quantized_local_inference",
+        ]))
+        #expect(businessLines.allSatisfy { $0["visible"] as? Bool == true })
+        #expect(businessLines.allSatisfy { $0["selectable"] as? Bool == true })
+        #expect(businessLines.allSatisfy { $0["runnable"] as? Bool == true })
+        #expect(businessLines.allSatisfy { $0["inspectable"] as? Bool == true })
+        #expect(businessLines.allSatisfy { $0["release_ready"] as? Bool == false })
+        let dpoLine = try #require(businessLines.first { $0["case_id"] as? String == "lora_dpo_export_local_inference" })
+        #expect(dpoLine["routed_command"] as? String == "alignment.train")
+        let qatLine = try #require(businessLines.first { $0["case_id"] as? String == "qat_quantized_local_inference" })
+        #expect(qatLine["selected_quantization_mode"] as? String == "qat")
+        #expect(qatLine["routed_command"] as? String == "model.quantize")
 
         let recordedCommands = await workflowRunner.snapshotRecordedCommands()
         #expect(recordedCommands.contains(where: {
