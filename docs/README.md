@@ -23,6 +23,7 @@ Practical guides for common tasks:
 | [Getting Started](getting-started.md) | Fresh-checkout setup, first CLI flows, and the local stack |
 | [Contributing](contributing.md) | Workflow, verification commands, PR expectations, and coverage rules |
 | [Engineering Standards](engineering-standards.md) | Repository-wide coding, documentation, and tooling conventions |
+| [Marketing And Storytelling Kit](marketing/README.md) | Product overview, LoRA narrative, reusable copy, and screenshot evidence |
 
 ---
 
