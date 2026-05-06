@@ -428,12 +428,8 @@ def read_hf_dataset_snapshot_rows(
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     resolved_snapshot_path = Path(snapshot_path).expanduser().resolve()
-    if not _normalized(split) and limit is not None:
-        files = _iter_limited_dataset_files(resolved_snapshot_path)
-    else:
-        files = iter(_selected_dataset_files(resolved_snapshot_path, split=split))
     rows: list[dict[str, Any]] = []
-    for path in files:
+    for path in _iter_selected_dataset_files(resolved_snapshot_path, split=split):
         remaining = None if limit is None else max(limit - len(rows), 0)
         if remaining == 0:
             return rows
@@ -441,7 +437,11 @@ def read_hf_dataset_snapshot_rows(
     return rows
 
 
-def _iter_limited_dataset_files(snapshot_path: Path) -> Iterator[Path]:
+def _iter_selected_dataset_files(snapshot_path: Path, *, split: str) -> Iterator[Path]:
+    normalized_split = _normalized(split)
+    if normalized_split:
+        yield from _selected_dataset_files(snapshot_path, split=normalized_split)
+        return
     for path in _iter_supported_dataset_files(snapshot_path):
         if path.name not in _README_NAMES:
             yield path

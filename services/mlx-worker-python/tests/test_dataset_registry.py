@@ -244,6 +244,59 @@ def test_dataset_catalog_unlimited_unfiltered_read_preserves_full_selection(
     assert selected_calls == [""]
 
 
+def test_dataset_catalog_row_reader_stops_file_scan_after_unsplit_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    first_file = data_dir / "part-00000.jsonl"
+    second_file = data_dir / "part-00001.jsonl"
+    first_file.write_text('{"prompt":"first"}\n', encoding="utf-8")
+    second_file.write_text('{"prompt":"second"}\n', encoding="utf-8")
+    read_paths: list[Path] = []
+    original_read_rows = catalog._read_rows_from_file
+
+    def tracking_read_rows(path: Path, *, limit: int | None = None) -> list[dict[str, object]]:
+        read_paths.append(path)
+        return original_read_rows(path, limit=limit)
+
+    monkeypatch.setattr(catalog, "_read_rows_from_file", tracking_read_rows)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=1)
+
+    assert rows == [{"prompt": "first"}]
+    assert read_paths == [first_file]
+
+
+def test_dataset_catalog_row_reader_keeps_split_filtering_eager_for_missing_split(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    train_path = data_dir / "train.jsonl"
+    validation_path = data_dir / "validation.jsonl"
+    train_path.write_text('{"prompt":"train"}\n', encoding="utf-8")
+    validation_path.write_text('{"prompt":"validation"}\n', encoding="utf-8")
+    considered_paths: list[Path] = []
+    original_iter_supported = catalog._iter_supported_dataset_files
+
+    def tracking_iter_supported(path: Path):
+        for candidate in original_iter_supported(path):
+            considered_paths.append(candidate)
+            yield candidate
+
+    monkeypatch.setattr(catalog, "_iter_supported_dataset_files", tracking_iter_supported)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, split="test", limit=1)
+
+    assert rows == []
+    assert sorted(set(considered_paths)) == [train_path, validation_path]
+
+
 def test_dataset_catalog_reads_json_and_csv_snapshots(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshot"
     data_dir = snapshot_dir / "custom"

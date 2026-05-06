@@ -241,8 +241,8 @@ class MLXAudioSpeechRuntime:
         except TypeError:
             model = load_model(model_spec.model_path)
 
-        speech_generate_parameters = frozenset(signature(model.generate).parameters)
-        generate_parameter_names = tuple(speech_generate_parameters)
+        generate_parameter_names = tuple(signature(model.generate).parameters)
+        speech_generate_parameters = frozenset(generate_parameter_names)
         params = speech_generate_parameters
         supports_voice = "voice" in params
         supports_instructions = "instruct" in params
@@ -275,22 +275,25 @@ class MLXAudioSpeechRuntime:
         if requested_format != "wav":
             raise ValueError("mlx-audio speech backend only supports wav output.")
 
-        params = loaded_model.speech_generate_parameters or frozenset(
-            loaded_model.generate_parameter_names or tuple(signature(loaded_model.model.generate).parameters)
-        )
+        supports_voice = loaded_model.voice_mode in {"hybrid", "named"}
+        supports_instructions = loaded_model.supports_instructions
+        if not loaded_model.speech_generate_parameters and not loaded_model.generate_parameter_names:
+            params = frozenset(signature(loaded_model.model.generate).parameters)
+            supports_voice = "voice" in params
+            supports_instructions = "instruct" in params
         kwargs = {
             "text": request.input,
             "verbose": False,
         }
         voice_fallback_count = 0
 
-        if "voice" in params and request.voice:
+        if supports_voice and request.voice:
             kwargs["voice"] = request.voice
 
-        if "instruct" in params:
+        if supports_instructions:
             if request.instructions:
                 kwargs["instruct"] = request.instructions
-            elif "voice" not in params and request.voice:
+            elif not supports_voice and request.voice:
                 kwargs["instruct"] = request.voice
                 voice_fallback_count = 1
 

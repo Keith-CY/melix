@@ -300,14 +300,23 @@ class RequestStreamAssembler:
 
         arguments = payload.get("arguments", {})
         call_id = str(payload.get("id") or payload.get("call_id") or "").strip()
-        arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
         # Prefer model-provided call ids for dedupe so identical repeated calls
-        # can be emitted. Legacy call-id-less fragments keep content dedupe to
-        # suppress non-monotonic replay from older parsers.
-        key = ("call_id", call_id) if call_id else ("legacy", f"{name}\0{arguments_fragment}")
-        if key in self._emitted_tool_keys:
-            self._metrics["duplicate_tool_delta_count"] += 1
-            return None
+        # can be emitted. When a call id has already been seen, skip before
+        # canonicalizing arguments because the fragment will be discarded.
+        if call_id:
+            key = ("call_id", call_id)
+            if key in self._emitted_tool_keys:
+                self._metrics["duplicate_tool_delta_count"] += 1
+                return None
+            arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+        else:
+            arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+            # Legacy call-id-less fragments keep content dedupe to suppress
+            # non-monotonic replay from older parsers.
+            key = ("legacy", f"{name}\0{arguments_fragment}")
+            if key in self._emitted_tool_keys:
+                self._metrics["duplicate_tool_delta_count"] += 1
+                return None
         self._emitted_tool_keys.add(key)
 
         self._tool_fragment_index += 1

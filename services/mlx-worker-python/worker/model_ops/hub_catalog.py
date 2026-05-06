@@ -15,6 +15,9 @@ from worker.productization.device_identity import collect_device_identity
 MEMORY_COMFORT_BUDGET_FACTOR = 0.60
 RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
 
+_BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
+_EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class HubModelSummaryRecord:
@@ -531,11 +534,8 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
 
 
 def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
-    if allow_bare:
-        pattern = r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b"
-    else:
-        pattern = r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b"
-    match = re.search(pattern, text, re.IGNORECASE)
+    pattern = _BARE_SIZE_HINT_RE if allow_bare else _EXPLICIT_SIZE_HINT_RE
+    match = pattern.search(text)
     if not match:
         return 0
     value = float(match.group(1))
