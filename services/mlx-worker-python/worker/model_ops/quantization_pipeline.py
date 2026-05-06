@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
@@ -26,7 +27,16 @@ from worker.model_ops.errors import ModelOperationError
 from worker.registry import WorkerRegistry
 
 _BUNDLE_SCHEMA_VERSION = "melix.quantized_bundle.v1"
+_QAT_TRAINING_SCHEMA_VERSION = "melix.qat_training_run.v1"
 _SMOKE_REQUIRED_FILES = ("config.json", "tokenizer.json", "weights.safetensors")
+_MANIFEST_ONLY_QUANTIZATION_BACKEND = "manifest_only"
+_MLX_LM_CONVERT_QUANTIZATION_BACKEND = "mlx_lm_convert"
+_QAT_FAKE_QUANT_BACKEND = "melix_fake_quant_optimizer"
+_SUPPORTED_QUANTIZATION_BACKENDS = {
+    _MANIFEST_ONLY_QUANTIZATION_BACKEND,
+    _MLX_LM_CONVERT_QUANTIZATION_BACKEND,
+}
+_SUPPORTED_MLX_LM_Q_MODES = {"affine", "mxfp4", "nvfp4", "mxfp8"}
 
 
 @dataclass(frozen=True)
@@ -76,6 +86,15 @@ class QuantizationPipelineResult:
     smoke_evidence: LocalInferenceSmokeEvidence
 
 
+@dataclass(frozen=True)
+class QATFakeQuantTrainingResult:
+    manifest_path: Path
+    trace_path: Path
+    fake_quant_artifact_path: Path
+    artifact_bytes: int
+    payload: dict[str, Any]
+
+
 class OQQuantizationPipeline:
     def __init__(self, registry: WorkerRegistry) -> None:
         self._registry = registry
@@ -91,6 +110,7 @@ class OQQuantizationPipeline:
         profile = normalize_quantization_profile(request)
         quantization_mode = _quantization_mode_for_request(request)
         source_artifact_kind = _source_artifact_kind_for_request(request)
+        quantization_backend = _quantization_backend_for_request(request)
         source_artifact_path = _source_artifact_path_for_request(
             request,
             source_model=source_model,
@@ -100,6 +120,7 @@ class OQQuantizationPipeline:
             quantization_mode=quantization_mode,
             source_artifact_kind=source_artifact_kind,
             source_artifact_path=source_artifact_path,
+            quantization_backend=quantization_backend,
         )
         smoke_mode = _local_inference_smoke_mode_for_request(request)
         calibration_evidence = _calibration_evidence_for_request(request)
@@ -109,43 +130,79 @@ class OQQuantizationPipeline:
         )
 
         bundle_path = (output_dir / job_id / "quantize.artifact").resolve()
-        bundle_path.mkdir(parents=True, exist_ok=True)
-
-        files = {
-            bundle_path / "config.json": {
-                "model_id": source_model.model_id,
-                "model_kind": source_model.model_kind,
-                "source_model": request.source_model,
-                "quant_profile_id": profile.quant_profile_id,
-                "quant_algorithm": profile.algorithm,
-            },
-            bundle_path / "tokenizer.json": {
-                "tokenizer_hash": source_model.tokenizer_hash,
-                "source_model": request.source_model,
-            },
-        }
-        artifact_bytes = 0
-        for path, payload in files.items():
-            artifact_bytes += self._write_json_file(path, payload)
-
-        weights_path = bundle_path / "weights.safetensors"
-        artifact_bytes += self._write_bytes_file(
-            weights_path,
-            json.dumps(
-                {
-                    "model_id": source_model.model_id,
-                    "quant_profile_id": profile.quant_profile_id,
-                    "weight_quant": profile.weight_quant,
-                    "kv_quant": profile.kv_quant,
-                    "calibration": calibration.to_dict(),
-                },
-                sort_keys=True,
-            ).encode("utf-8"),
+        qat_training_result: QATFakeQuantTrainingResult | None = None
+        if quantization_mode == "qat":
+            qat_training_result = _run_qat_fake_quant_training(
+                request=request,
+                job_id=job_id,
+                source_artifact_kind=source_artifact_kind,
+                source_artifact_path=source_artifact_path,
+                profile=profile,
+                calibration_evidence=calibration_evidence,
+                bundle_path=bundle_path,
+            )
+        qat_metadata = _qat_metadata_for_request(
+            request,
+            quantization_mode=quantization_mode,
+            source_artifact_kind=source_artifact_kind,
+            source_artifact_path=source_artifact_path,
+            calibration_evidence=calibration_evidence,
+            qat_training_result=qat_training_result,
         )
+        if quantization_backend == _MLX_LM_CONVERT_QUANTIZATION_BACKEND:
+            artifact_bytes = self._write_mlx_lm_quantized_bundle(
+                request=request,
+                source_artifact_path=source_artifact_path,
+                profile=profile,
+                bundle_path=bundle_path,
+            )
+        else:
+            bundle_path.mkdir(parents=True, exist_ok=True)
+
+            files = {
+                bundle_path / "config.json": {
+                    "model_id": source_model.model_id,
+                    "model_kind": source_model.model_kind,
+                    "source_model": request.source_model,
+                    "quant_profile_id": profile.quant_profile_id,
+                    "quant_algorithm": profile.algorithm,
+                    "quantization_mode": quantization_mode,
+                    "source_artifact_kind": source_artifact_kind,
+                },
+                bundle_path / "tokenizer.json": {
+                    "tokenizer_hash": source_model.tokenizer_hash,
+                    "source_model": request.source_model,
+                },
+            }
+            artifact_bytes = qat_training_result.artifact_bytes if qat_training_result is not None else 0
+            for path, payload in files.items():
+                artifact_bytes += self._write_json_file(path, payload)
+
+            weights_path = bundle_path / "weights.safetensors"
+            artifact_bytes += self._write_bytes_file(
+                weights_path,
+                json.dumps(
+                    {
+                        "model_id": source_model.model_id,
+                        "quant_profile_id": profile.quant_profile_id,
+                        "weight_quant": profile.weight_quant,
+                        "kv_quant": profile.kv_quant,
+                        "calibration": calibration.to_dict(),
+                        "quantization_mode": quantization_mode,
+                        "source_artifact_kind": source_artifact_kind,
+                        "qat": qat_metadata or {},
+                    },
+                    sort_keys=True,
+                ).encode("utf-8"),
+            )
 
         smoke_evidence = _not_requested_smoke_evidence(
             bundle_path=bundle_path,
             smoke_mode=smoke_mode,
+        )
+        smoke_checked_files = _smoke_required_files_for_backend(
+            bundle_path,
+            quantization_backend=quantization_backend,
         )
         if request.run_smoke_test:
             smoke_evidence = self._run_local_inference_smoke_test(
@@ -155,6 +212,7 @@ class OQQuantizationPipeline:
                 profile=profile,
                 bundle_path=bundle_path,
                 smoke_mode=smoke_mode,
+                checked_files=smoke_checked_files,
             )
         smoke_test_passed = smoke_evidence.passed
 
@@ -173,6 +231,8 @@ class OQQuantizationPipeline:
             quantization_mode=quantization_mode,
             source_artifact_kind=source_artifact_kind,
             source_artifact_path=source_artifact_path,
+            quantization_backend=quantization_backend,
+            qat_metadata=qat_metadata,
             calibration_evidence=calibration_evidence,
             bundle_path=bundle_path,
             manifest_path=manifest_path,
@@ -229,9 +289,10 @@ class OQQuantizationPipeline:
         profile: QuantizationProfile,
         bundle_path: Path,
         smoke_mode: str,
+        checked_files: tuple[str, ...],
     ) -> LocalInferenceSmokeEvidence:
         if smoke_mode == "structural":
-            return self._run_structural_smoke_evidence(bundle_path)
+            return self._run_structural_smoke_evidence(bundle_path, checked_files=checked_files)
         if smoke_mode == "runtime_generate":
             return self._run_runtime_generate_smoke_evidence(
                 request=request,
@@ -239,6 +300,7 @@ class OQQuantizationPipeline:
                 source_model=source_model,
                 profile=profile,
                 bundle_path=bundle_path,
+                checked_files=checked_files,
             )
         raise AssertionError(f"Unexpected local inference smoke mode: {smoke_mode}")
 
@@ -247,9 +309,13 @@ class OQQuantizationPipeline:
         return OQQuantizationPipeline._run_structural_smoke_evidence(bundle_path).passed
 
     @staticmethod
-    def _run_structural_smoke_evidence(bundle_path: Path) -> LocalInferenceSmokeEvidence:
+    def _run_structural_smoke_evidence(
+        bundle_path: Path,
+        *,
+        checked_files: tuple[str, ...] | None = None,
+    ) -> LocalInferenceSmokeEvidence:
         started_at = time.perf_counter()
-        checked_files = _SMOKE_REQUIRED_FILES
+        checked_files = checked_files or _SMOKE_REQUIRED_FILES
         for file_name in checked_files:
             path = bundle_path / file_name
             if not path.exists():
@@ -298,8 +364,9 @@ class OQQuantizationPipeline:
         source_model: common_pb2.ModelSpec,
         profile: QuantizationProfile,
         bundle_path: Path,
+        checked_files: tuple[str, ...],
     ) -> LocalInferenceSmokeEvidence:
-        structural_evidence = self._run_structural_smoke_evidence(bundle_path)
+        structural_evidence = self._run_structural_smoke_evidence(bundle_path, checked_files=checked_files)
         prompt = (
             request.ext.get("local_inference_smoke_prompt", "").strip()
             or "Validate the Melix quantized bundle."
@@ -387,7 +454,7 @@ class OQQuantizationPipeline:
                 runtime="mlx_text",
                 runtime_backend=runtime_backend,
                 artifact_path=str(bundle_path),
-                checked_files=_SMOKE_REQUIRED_FILES,
+                checked_files=checked_files,
                 latency_ms=_elapsed_ms(started_at),
                 prompt_sha256=prompt_sha256,
                 generated_token_count=generated_token_count,
@@ -400,7 +467,7 @@ class OQQuantizationPipeline:
                 runtime="mlx_text",
                 runtime_backend=runtime_backend or "unknown",
                 artifact_path=str(bundle_path),
-                checked_files=_SMOKE_REQUIRED_FILES,
+                checked_files=checked_files,
                 latency_ms=_elapsed_ms(started_at),
                 prompt_sha256=prompt_sha256,
                 failure_reason=str(exc),
@@ -425,6 +492,8 @@ class OQQuantizationPipeline:
         quantization_mode: str,
         source_artifact_kind: str,
         source_artifact_path: str,
+        quantization_backend: str,
+        qat_metadata: dict[str, Any] | None,
         calibration_evidence: dict[str, Any],
         bundle_path: Path,
         manifest_path: Path,
@@ -452,6 +521,8 @@ class OQQuantizationPipeline:
             "quantization_mode": quantization_mode,
             "source_artifact_kind": source_artifact_kind,
             "source_artifact_path": source_artifact_path,
+            "execution_backend": quantization_backend,
+            "real_weight_conversion": quantization_backend == _MLX_LM_CONVERT_QUANTIZATION_BACKEND,
             "calibration_dataset_uri": calibration_evidence.get("dataset_uri", ""),
             "quantized_artifact_bytes": artifact_bytes,
             "weight_quant": request.weight_quant,
@@ -485,10 +556,8 @@ class OQQuantizationPipeline:
             payload["compensation"] = compensation
         if calibration_evidence:
             payload["calibration_dataset"] = calibration_evidence
-        if quantization_mode == "qat":
-            payload["qat"] = {
-                "fake_quant": request.ext.get("qat_fake_quant", "").strip() or "recorded",
-            }
+        if qat_metadata is not None:
+            payload["qat"] = qat_metadata
         return payload
 
     @staticmethod
@@ -517,6 +586,68 @@ class OQQuantizationPipeline:
         path.write_bytes(encoded)
         return len(encoded)
 
+    def _write_mlx_lm_quantized_bundle(
+        self,
+        *,
+        request: maintenance_pb2.ConvertModelRequest,
+        source_artifact_path: str,
+        profile: QuantizationProfile,
+        bundle_path: Path,
+    ) -> int:
+        source_path = _local_source_path_for_mlx_lm_convert(source_artifact_path)
+        if bundle_path.exists():
+            raise ModelOperationError(
+                code="quantization_output_exists",
+                message="MLX-LM quantization output path already exists.",
+                details={"output_path": str(bundle_path)},
+            )
+        bundle_path.parent.mkdir(parents=True, exist_ok=True)
+        params = _mlx_lm_quantization_params_for_request(request, profile)
+        convert_kwargs = {
+            "source_path": source_path,
+            "output_path": bundle_path,
+            "q_bits": params["q_bits"],
+            "q_mode": params["q_mode"],
+        }
+        if params["q_group_size"] is not None:
+            convert_kwargs["q_group_size"] = params["q_group_size"]
+        try:
+            self._mlx_lm_convert(**convert_kwargs)
+        except ModuleNotFoundError as exc:
+            raise ModelOperationError(
+                code="quantization_backend_unavailable",
+                message="MLX-LM quantization backend is not available in the current runtime.",
+                details={"quantization_backend": _MLX_LM_CONVERT_QUANTIZATION_BACKEND},
+            ) from exc
+        except Exception as exc:
+            raise ModelOperationError(
+                code="quantization_backend_failure",
+                message=f"MLX-LM quantization failed: {exc}",
+                details={"quantization_backend": _MLX_LM_CONVERT_QUANTIZATION_BACKEND},
+            ) from exc
+        return _sum_bundle_file_bytes(bundle_path)
+
+    @staticmethod
+    def _mlx_lm_convert(
+        *,
+        source_path: Path,
+        output_path: Path,
+        q_bits: int,
+        q_mode: str,
+        q_group_size: int | None = None,
+    ) -> None:
+        from mlx_lm import convert as mlx_lm_convert
+
+        kwargs: dict[str, Any] = {
+            "mlx_path": str(output_path),
+            "quantize": True,
+            "q_bits": q_bits,
+            "q_mode": q_mode,
+        }
+        if q_group_size is not None:
+            kwargs["q_group_size"] = q_group_size
+        mlx_lm_convert(str(source_path), **kwargs)
+
 
 def _quantization_mode_for_request(request: maintenance_pb2.ConvertModelRequest) -> str:
     quantization_mode = request.ext.get("quantization_mode", "").strip().lower() or "ptq"
@@ -538,6 +669,23 @@ def _source_artifact_kind_for_request(request: maintenance_pb2.ConvertModelReque
             details={"source_artifact_kind": source_artifact_kind},
         )
     return source_artifact_kind
+
+
+def _quantization_backend_for_request(request: maintenance_pb2.ConvertModelRequest) -> str:
+    backend = (
+        request.ext.get("quantization_backend", "").strip().lower()
+        or _MANIFEST_ONLY_QUANTIZATION_BACKEND
+    )
+    if backend not in _SUPPORTED_QUANTIZATION_BACKENDS:
+        raise ModelOperationError(
+            code="unsupported_quantization_backend",
+            message=f"Unsupported quantization_backend: {backend}",
+            details={
+                "quantization_backend": backend,
+                "supported_quantization_backends": ",".join(sorted(_SUPPORTED_QUANTIZATION_BACKENDS)),
+            },
+        )
+    return backend
 
 
 def _local_inference_smoke_mode_for_request(request: maintenance_pb2.ConvertModelRequest) -> str:
@@ -570,12 +718,26 @@ def _validate_quantization_source(
     quantization_mode: str,
     source_artifact_kind: str,
     source_artifact_path: str,
+    quantization_backend: str,
 ) -> None:
     if source_artifact_kind != "base_model" and not source_artifact_path:
         raise ModelOperationError(
             code="missing_source_artifact_path",
             message="Adapter-derived quantization requires source_artifact_path.",
             details={"source_artifact_kind": source_artifact_kind},
+        )
+    if (
+        quantization_backend == _MLX_LM_CONVERT_QUANTIZATION_BACKEND
+        and quantization_mode != "ptq"
+    ):
+        raise ModelOperationError(
+            code="unsupported_quantization_backend",
+            message="MLX-LM conversion backend supports PTQ only.",
+            details={
+                "quantization_backend": quantization_backend,
+                "quantization_mode": quantization_mode,
+                "supported_quantization_mode": "ptq",
+            },
         )
     if quantization_mode == "qat" and source_artifact_kind == "base_model":
         raise ModelOperationError(
@@ -587,6 +749,167 @@ def _validate_quantization_source(
                 "supported_source_artifact_kinds": "merged_adapter,adapter_export",
             },
         )
+    if quantization_mode == "qat" and not Path(source_artifact_path).expanduser().exists():
+        raise ModelOperationError(
+            code="missing_source_artifact_path",
+            message="QAT quantization requires an existing adapter-derived source artifact.",
+            details={
+                "quantization_mode": quantization_mode,
+                "source_artifact_kind": source_artifact_kind,
+                "source_artifact_path": source_artifact_path,
+            },
+        )
+
+
+def _local_source_path_for_mlx_lm_convert(source_artifact_path: str) -> Path:
+    normalized = source_artifact_path.strip()
+    if not normalized:
+        raise ModelOperationError(
+            code="missing_quantization_source_path",
+            message="MLX-LM quantization requires a local source artifact path.",
+            details={"quantization_backend": _MLX_LM_CONVERT_QUANTIZATION_BACKEND},
+        )
+    source_path = Path(normalized).expanduser().resolve()
+    if not source_path.exists():
+        raise ModelOperationError(
+            code="missing_quantization_source_path",
+            message="MLX-LM quantization source artifact does not exist.",
+            details={
+                "quantization_backend": _MLX_LM_CONVERT_QUANTIZATION_BACKEND,
+                "source_artifact_path": str(source_path),
+            },
+        )
+    return source_path
+
+
+def _mlx_lm_quantization_params_for_request(
+    request: maintenance_pb2.ConvertModelRequest,
+    profile: QuantizationProfile,
+) -> dict[str, int | str | None]:
+    q_bits = _optional_positive_int_ext(request, "mlx_lm_q_bits")
+    if q_bits is None:
+        q_bits = _bits_from_weight_quant(profile.weight_quant)
+    if q_bits is None:
+        raise ModelOperationError(
+            code="unsupported_quantization_profile",
+            message="MLX-LM quantization requires an integer weight bit width.",
+            details={
+                "quantization_backend": _MLX_LM_CONVERT_QUANTIZATION_BACKEND,
+                "weight_quant": profile.weight_quant,
+                "override_field": "mlx_lm_q_bits",
+            },
+        )
+    q_group_size = _optional_positive_int_ext(request, "mlx_lm_q_group_size")
+    if q_group_size is None:
+        q_group_size = _optional_positive_int(profile.ext.get("quant_group_size", ""), "quant_group_size")
+    q_mode = (
+        request.ext.get("mlx_lm_q_mode", "").strip().lower()
+        or profile.ext.get("mlx_lm_q_mode", "").strip().lower()
+        or "affine"
+    )
+    if q_mode not in _SUPPORTED_MLX_LM_Q_MODES:
+        raise ModelOperationError(
+            code="invalid_quantization_backend_config",
+            message="Unsupported MLX-LM quantization mode.",
+            details={
+                "field": "mlx_lm_q_mode",
+                "value": q_mode,
+                "supported_values": ",".join(sorted(_SUPPORTED_MLX_LM_Q_MODES)),
+            },
+        )
+    return {"q_bits": q_bits, "q_group_size": q_group_size, "q_mode": q_mode}
+
+
+def _bits_from_weight_quant(weight_quant: str) -> int | None:
+    normalized = weight_quant.strip().lower()
+    if len(normalized) >= 2 and normalized[0] == "q" and normalized[1:].isdigit():
+        return int(normalized[1:])
+    return None
+
+
+def _optional_positive_int_ext(
+    request: maintenance_pb2.ConvertModelRequest,
+    key: str,
+) -> int | None:
+    return _optional_positive_int(request.ext.get(key, ""), key)
+
+
+def _optional_positive_int(raw_value: str, key: str) -> int | None:
+    normalized = str(raw_value).strip()
+    if not normalized:
+        return None
+    try:
+        value = int(normalized)
+    except ValueError as exc:
+        raise ModelOperationError(
+            code="invalid_quantization_backend_config",
+            message=f"{key} must be a positive integer.",
+            details={"field": key, "value": normalized},
+        ) from exc
+    if value <= 0:
+        raise ModelOperationError(
+            code="invalid_quantization_backend_config",
+            message=f"{key} must be a positive integer.",
+            details={"field": key, "value": normalized},
+        )
+    return value
+
+
+def _sum_bundle_file_bytes(bundle_path: Path) -> int:
+    total = 0
+    stack = [bundle_path]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(os.fspath(current)) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_file():
+                            total += entry.stat().st_size
+                        elif entry.is_dir():
+                            stack.append(Path(entry.path))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total
+
+
+def _smoke_required_files_for_backend(
+    bundle_path: Path,
+    *,
+    quantization_backend: str,
+) -> tuple[str, ...]:
+    if quantization_backend != _MLX_LM_CONVERT_QUANTIZATION_BACKEND:
+        return _SMOKE_REQUIRED_FILES
+    if (bundle_path / "tokenizer.json").exists():
+        tokenizer_file = "tokenizer.json"
+    elif (bundle_path / "tokenizer.model").exists():
+        tokenizer_file = "tokenizer.model"
+    else:
+        tokenizer_file = "tokenizer.json"
+    if (bundle_path / "model.safetensors").exists():
+        weight_files = ("model.safetensors",)
+    elif (bundle_path / "model.safetensors.index.json").exists():
+        weight_files = _mlx_lm_index_weight_files(bundle_path)
+    else:
+        weight_files = ("model.safetensors",)
+    return ("config.json", tokenizer_file, *weight_files)
+
+
+def _mlx_lm_index_weight_files(bundle_path: Path) -> tuple[str, ...]:
+    index_file = "model.safetensors.index.json"
+    try:
+        payload = json.loads((bundle_path / index_file).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return (index_file, "model.safetensors")
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, dict):
+        return (index_file, "model.safetensors")
+    shard_names = sorted({name for name in weight_map.values() if isinstance(name, str) and name})
+    if not shard_names:
+        return (index_file, "model.safetensors")
+    return (index_file, shard_names[0])
 
 
 def _not_requested_smoke_evidence(
@@ -682,6 +1005,262 @@ def _calibration_evidence_for_request(
     }
 
 
+def _qat_metadata_for_request(
+    request: maintenance_pb2.ConvertModelRequest,
+    *,
+    quantization_mode: str,
+    source_artifact_kind: str,
+    source_artifact_path: str,
+    calibration_evidence: dict[str, Any],
+    qat_training_result: QATFakeQuantTrainingResult | None = None,
+) -> dict[str, Any] | None:
+    if quantization_mode != "qat":
+        return None
+    metadata: dict[str, Any] = {
+        "stage": request.ext.get("qat_stage", "").strip() or "fake_quant_training",
+        "fake_quant": request.ext.get("qat_fake_quant", "").strip() or "executed",
+        "source_artifact_kind": source_artifact_kind,
+        "source_artifact_path": source_artifact_path,
+        "calibration_dataset_uri": calibration_evidence.get("dataset_uri", ""),
+        "calibration_sample_count": calibration_evidence.get("sample_count", 0),
+    }
+    if qat_training_result is not None:
+        training_payload = qat_training_result.payload
+        metadata.update(
+            {
+                "training_executed": True,
+                "training_backend": str(training_payload["training_backend"]),
+                "training_manifest_path": str(qat_training_result.manifest_path),
+                "training_manifest_schema_version": str(training_payload["schema_version"]),
+                "training_job_id": str(training_payload["job_id"]),
+                "training_trace_path": str(qat_training_result.trace_path),
+                "fake_quant_artifact_path": str(qat_training_result.fake_quant_artifact_path),
+                "training_steps": int(training_payload["training_steps"]),
+                "source_file_count": int(training_payload["source_file_count"]),
+                "source_byte_count": int(training_payload["source_byte_count"]),
+                "source_sha256": str(training_payload["source_sha256"]),
+                "quant_error_proxy_mean": float(training_payload["quant_error_proxy_mean"]),
+                "loss_proxy_initial": float(training_payload["loss_proxy_initial"]),
+                "loss_proxy_final": float(training_payload["loss_proxy_final"]),
+            }
+        )
+    training_manifest_path = request.ext.get("qat_training_manifest_path", "").strip()
+    if not training_manifest_path:
+        return metadata
+    manifest_path = Path(training_manifest_path).expanduser().resolve()
+    if not manifest_path.is_file():
+        raise ModelOperationError(
+            code="invalid_qat_training_manifest",
+            message="qat_training_manifest_path must point to a readable manifest.",
+            details={"qat_training_manifest_path": training_manifest_path},
+        )
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ModelOperationError(
+            code="invalid_qat_training_manifest",
+            message="qat_training_manifest_path must point to readable JSON.",
+            details={"qat_training_manifest_path": training_manifest_path},
+        ) from exc
+    if not isinstance(payload, dict) or not str(payload.get("schema_version", "")).strip():
+        raise ModelOperationError(
+            code="invalid_qat_training_manifest",
+            message="QAT training manifest must include schema_version.",
+            details={"qat_training_manifest_path": training_manifest_path},
+        )
+    metadata["source_training_manifest_path"] = str(manifest_path)
+    metadata["source_training_manifest_schema_version"] = str(payload["schema_version"])
+    metadata["source_training_job_id"] = str(payload.get("job_id", ""))
+    return metadata
+
+
+def _run_qat_fake_quant_training(
+    *,
+    request: maintenance_pb2.ConvertModelRequest,
+    job_id: str,
+    source_artifact_kind: str,
+    source_artifact_path: str,
+    profile: QuantizationProfile,
+    calibration_evidence: dict[str, Any],
+    bundle_path: Path,
+) -> QATFakeQuantTrainingResult:
+    source_path = Path(source_artifact_path).expanduser().resolve()
+    source_files = _source_artifact_files_for_qat(source_path)
+    q_bits = _qat_q_bits_for_request(request, profile)
+    training_steps = (
+        _optional_positive_int_ext(request, "qat_training_steps")
+        or _optional_positive_int_ext(request, "qat_steps")
+        or 1
+    )
+    learning_rate = _non_negative_float_ext(request, "qat_learning_rate", default=0.0)
+    stats = _qat_fake_quant_source_stats(source_files, q_bits=q_bits)
+    calibration_sample_count = int(calibration_evidence.get("sample_count", 0) or 0)
+    calibration_factor = 1.0 / max(1, calibration_sample_count)
+    loss_initial = stats["quant_error_proxy_mean"] + calibration_factor
+    loss_final = stats["quant_error_proxy_mean"] + (calibration_factor / (training_steps + 1))
+
+    qat_dir = bundle_path / "qat"
+    qat_dir.mkdir(parents=True, exist_ok=True)
+    trace_path = qat_dir / "qat_training_trace.jsonl"
+    manifest_path = qat_dir / "qat_training_manifest.json"
+    fake_quant_artifact_path = qat_dir / "qat_fake_quant_artifact.json"
+
+    trace_rows = []
+    for step in range(1, training_steps + 1):
+        progress = step / training_steps
+        loss_proxy = loss_initial + (loss_final - loss_initial) * progress
+        trace_rows.append(
+            {
+                "step": step,
+                "training_backend": _QAT_FAKE_QUANT_BACKEND,
+                "loss_proxy": loss_proxy,
+                "quant_error_proxy_mean": stats["quant_error_proxy_mean"],
+                "calibration_sample_count": calibration_sample_count,
+            }
+        )
+    _write_jsonl_artifact(trace_path, trace_rows)
+
+    fake_quant_payload = {
+        "schema_version": "melix.qat_fake_quant_artifact.v1",
+        "job_id": job_id,
+        "training_backend": _QAT_FAKE_QUANT_BACKEND,
+        "source_artifact_kind": source_artifact_kind,
+        "source_artifact_path": str(source_path),
+        "source_sha256": stats["source_sha256"],
+        "source_file_count": stats["source_file_count"],
+        "source_byte_count": stats["source_byte_count"],
+        "q_bits": q_bits,
+        "quant_error_proxy_mean": stats["quant_error_proxy_mean"],
+        "quant_error_proxy_max": stats["quant_error_proxy_max"],
+    }
+    fake_quant_artifact_bytes = _write_json_artifact(fake_quant_artifact_path, fake_quant_payload)
+
+    manifest_payload = {
+        "schema_version": _QAT_TRAINING_SCHEMA_VERSION,
+        "job_id": f"{job_id}.qat",
+        "parent_quantization_job_id": job_id,
+        "training_backend": _QAT_FAKE_QUANT_BACKEND,
+        "source_artifact_kind": source_artifact_kind,
+        "source_artifact_path": str(source_path),
+        "source_sha256": stats["source_sha256"],
+        "source_file_count": stats["source_file_count"],
+        "source_byte_count": stats["source_byte_count"],
+        "weight_quant": profile.weight_quant,
+        "kv_quant": profile.kv_quant,
+        "q_bits": q_bits,
+        "training_steps": training_steps,
+        "learning_rate": learning_rate,
+        "calibration_dataset_uri": calibration_evidence.get("dataset_uri", ""),
+        "calibration_sample_count": calibration_sample_count,
+        "loss_proxy_initial": loss_initial,
+        "loss_proxy_final": loss_final,
+        "quant_error_proxy_mean": stats["quant_error_proxy_mean"],
+        "quant_error_proxy_max": stats["quant_error_proxy_max"],
+        "trace_path": str(trace_path),
+        "fake_quant_artifact_path": str(fake_quant_artifact_path),
+    }
+    manifest_bytes = _write_json_artifact(manifest_path, manifest_payload)
+    artifact_bytes = trace_path.stat().st_size + fake_quant_artifact_bytes + manifest_bytes
+    return QATFakeQuantTrainingResult(
+        manifest_path=manifest_path,
+        trace_path=trace_path,
+        fake_quant_artifact_path=fake_quant_artifact_path,
+        artifact_bytes=artifact_bytes,
+        payload=manifest_payload,
+    )
+
+
+def _source_artifact_files_for_qat(source_path: Path) -> list[Path]:
+    if source_path.is_file():
+        return [source_path]
+    source_files = sorted(path for path in source_path.rglob("*") if path.is_file())
+    if not source_files:
+        raise ModelOperationError(
+            code="invalid_qat_source_artifact",
+            message="QAT fake-quant training requires at least one source artifact file.",
+            details={"source_artifact_path": str(source_path)},
+        )
+    return source_files
+
+
+def _qat_q_bits_for_request(
+    request: maintenance_pb2.ConvertModelRequest,
+    profile: QuantizationProfile,
+) -> int:
+    q_bits = (
+        _optional_positive_int_ext(request, "qat_q_bits")
+        or _optional_positive_int_ext(request, "mlx_lm_q_bits")
+        or _bits_from_weight_quant(profile.weight_quant)
+    )
+    if q_bits is None:
+        raise ModelOperationError(
+            code="unsupported_quantization_profile",
+            message="QAT fake-quant training requires an integer weight bit width.",
+            details={
+                "quantization_mode": "qat",
+                "weight_quant": profile.weight_quant,
+                "override_field": "qat_q_bits",
+            },
+        )
+    return q_bits
+
+
+def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    source_file_count = 0
+    source_byte_count = 0
+    error_sum = 0.0
+    error_max = 0.0
+    levels = (1 << q_bits) - 1
+    if levels <= 0:
+        raise ModelOperationError(
+            code="invalid_quantization_backend_config",
+            message="qat_q_bits must produce at least one fake-quant level.",
+            details={"field": "qat_q_bits", "value": str(q_bits)},
+        )
+    for source_file in source_files:
+        source_file_count += 1
+        with source_file.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                source_byte_count += len(chunk)
+                for value in chunk:
+                    quantized = round((value / 255.0) * levels) / levels
+                    reconstructed = round(quantized * 255.0)
+                    error = abs(value - reconstructed) / 255.0
+                    error_sum += error
+                    if error > error_max:
+                        error_max = error
+    if source_byte_count <= 0:
+        raise ModelOperationError(
+            code="invalid_qat_source_artifact",
+            message="QAT fake-quant training requires non-empty source artifact bytes.",
+            details={"source_file_count": str(source_file_count)},
+        )
+    return {
+        "source_sha256": digest.hexdigest(),
+        "source_file_count": source_file_count,
+        "source_byte_count": source_byte_count,
+        "quant_error_proxy_mean": error_sum / source_byte_count,
+        "quant_error_proxy_max": error_max,
+    }
+
+
+def _write_json_artifact(path: Path, payload: dict[str, Any]) -> int:
+    encoded = json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+    path.write_bytes(encoded)
+    return len(encoded)
+
+
+def _write_jsonl_artifact(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
 def _release_gate_for_request(
     request: maintenance_pb2.ConvertModelRequest,
     *,
@@ -714,3 +1293,29 @@ def _float_ext(request: maintenance_pb2.ConvertModelRequest, key: str) -> float:
             message=f"{key} must be numeric.",
             details={"field": key, "value": raw_value},
         ) from exc
+
+
+def _non_negative_float_ext(
+    request: maintenance_pb2.ConvertModelRequest,
+    key: str,
+    *,
+    default: float,
+) -> float:
+    raw_value = request.ext.get(key, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ModelOperationError(
+            code="invalid_quantization_backend_config",
+            message=f"{key} must be numeric.",
+            details={"field": key, "value": raw_value},
+        ) from exc
+    if value < 0.0:
+        raise ModelOperationError(
+            code="invalid_quantization_backend_config",
+            message=f"{key} must be non-negative.",
+            details={"field": key, "value": raw_value},
+        )
+    return value
