@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import Mock
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
@@ -192,6 +193,20 @@ def test_is_mlx_compatible_preserves_card_data_tag_signal_after_fast_paths() -> 
         card_data={"tags": ["MLX"]},
         lowered_tags={"transformers"},
     ) is True
+
+
+def test_is_mlx_compatible_skips_empty_card_tag_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    string_list = Mock(side_effect=AssertionError("empty cardData.tags should not be normalized"))
+    monkeypatch.setattr(hub_catalog_module, "_string_list", string_list)
+
+    assert _is_mlx_compatible(
+        repo_id="plain/standard-model",
+        tags=["transformers"],
+        library_name="transformers",
+        card_data={},
+        lowered_tags={"transformers"},
+    ) is False
+    string_list.assert_not_called()
 
 
 def test_is_mlx_compatible_keeps_library_name_fast_path() -> None:

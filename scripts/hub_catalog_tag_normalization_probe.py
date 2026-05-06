@@ -19,11 +19,11 @@ from worker.model_ops.hub_catalog import HubCatalog
 
 def _payload(index: int) -> dict[str, Any]:
     return {
-        "id": f"mlx-community/probe-{index}",
-        "author": "mlx-community",
+        "id": f"plain-community/probe-{index}",
+        "author": "plain-community",
         "pipeline_tag": "text-generation",
-        "tags": ["MLX", "Safetensors", "4-BIT", "OptiQ", f"family-{index % 17}"],
-        "library_name": "mlx",
+        "tags": ["Transformers", "Safetensors", "4-BIT", "OptiQ", f"family-{index % 17}"],
+        "library_name": "transformers",
         "siblings": [{"rfilename": "config.json"}],
         "safetensors": {"total": 2_000_000_000 + index},
         "cardData": {},
@@ -33,36 +33,36 @@ def _payload(index: int) -> dict[str, Any]:
 def _run_sample(record_count: int) -> tuple[float, int, int]:
     catalog = HubCatalog(local_memory_gb=64.0)
     payloads = [_payload(index) for index in range(record_count)]
-    helper = getattr(hub_catalog_module, "_lowered_tag_set", None)
+    helper = getattr(hub_catalog_module, "_string_list", None)
     call_count = 0
 
     if helper is None:
         started = time.perf_counter()
         records = [catalog._summary_record(payload) for payload in payloads]
         elapsed_ms = (time.perf_counter() - started) * 1000.0
-        call_count = record_count * 3
+        call_count = record_count * 2  # pragma: no cover - compatibility fallback for very old base checkouts
     else:
         original_helper = helper
 
-        def counting_lowered_tag_set(tags: list[str]) -> set[str]:
+        def counting_string_list(value: Any) -> list[str]:
             nonlocal call_count
             call_count += 1
-            return original_helper(tags)
+            return original_helper(value)
 
-        setattr(hub_catalog_module, "_lowered_tag_set", counting_lowered_tag_set)
+        setattr(hub_catalog_module, "_string_list", counting_string_list)
         try:
             started = time.perf_counter()
             records = [catalog._summary_record(payload) for payload in payloads]
             elapsed_ms = (time.perf_counter() - started) * 1000.0
         finally:
-            setattr(hub_catalog_module, "_lowered_tag_set", original_helper)
+            setattr(hub_catalog_module, "_string_list", original_helper)
 
     if len(records) != record_count:
         raise SystemExit(f"unexpected record count: {len(records)}")
     if {record.quantization_summary for record in records} != {"4-bit, optiq"}:
         raise SystemExit("unexpected quantization summary")
-    if not all(record.estimated_resident_bytes > 0 for record in records):
-        raise SystemExit("missing resident-byte estimates")
+    if {record.local_fit_status for record in records} != {"blocked"}:  # pragma: no cover - defensive probe guard
+        raise SystemExit("unexpected local-fit status")
     return elapsed_ms, call_count, len(records)
 
 

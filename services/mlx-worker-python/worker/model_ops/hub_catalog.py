@@ -359,7 +359,10 @@ def _is_mlx_compatible(
     lowered_repo_id = repo_id.lower()
     if "mlx" in lowered_repo_id:
         return True
-    return "mlx" in {tag.lower() for tag in _string_list(card_data.get("tags"))}
+    card_tags = card_data.get("tags")
+    if not card_tags:
+        return False
+    return "mlx" in {tag.lower() for tag in _string_list(card_tags)}
 
 
 def _local_fit_evidence(
