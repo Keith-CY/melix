@@ -96,9 +96,10 @@ def test_scope_report_selects_hub_catalog_probe() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert probe_ids == {
         "hub-catalog-tag-normalization-single-pass",
+        "hub-catalog-next-cursor-fast-parse",
         "hub-catalog-size-hint-regex-precompile",
     }
 
@@ -926,6 +927,25 @@ def test_hub_catalog_size_hint_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_hub_catalog_next_cursor_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_HUB_CATALOG_CURSOR_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_HUB_CATALOG_CURSOR_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/hub_catalog_next_cursor_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["cursor_parse_calls_mean"] == 8.0
+    assert metrics["checksum"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_statistical_evidence_bootstrap_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1227,6 +1247,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "dataset-registry-snapshot-inference-single-pass",
         "event-extraction-alignment-accepted-edge-cache",
         "hub-catalog-tag-normalization-single-pass",
+        "hub-catalog-next-cursor-fast-parse",
         "hub-catalog-size-hint-regex-precompile",
         "benchmark-evaluation-report-running-aggregates",
         "stream-assembler-parser-mode-cache",

@@ -184,6 +184,37 @@ def test_hub_catalog_raises_hub_payload_invalid_on_malformed_json() -> None:
     assert error.value.code == "hub_payload_invalid"
 
 
+def test_next_cursor_from_link_extracts_encoded_next_cursor_without_full_query_parse() -> None:
+    assert not hasattr(hub_catalog_module, "urlparse")
+    assert not hasattr(hub_catalog_module, "parse_qs")
+    link_header = (
+        '<https://huggingface.co/api/models?cursor=ignored>; rel="prev", '
+        '<https://huggingface.co/api/models?limit=10&cursor=abc%2Fdef+ghi&full=true#page>; rel="next"'
+    )
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "abc/def ghi"
+
+
+def test_next_cursor_from_link_returns_empty_for_missing_or_malformed_next_cursor() -> None:
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor=prev>; rel="prev"') == ""
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models>; rel="next"') == ""
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?limit=10>; rel="next"') == ""
+    assert hub_catalog_module._next_cursor_from_link('https://huggingface.co/api/models?cursor=broken; rel="next"') == ""
+
+
+def test_search_models_uses_next_cursor_from_link_header() -> None:
+    response = FakeHTTPResponse([{"id": "mlx-community/example", "tags": ["mlx"], "siblings": [], "cardData": {}}])
+    response.headers["Link"] = '<https://huggingface.co/api/models?limit=1&cursor=page%2B2>; rel="next"'
+
+    def opener(_request: Request):
+        return response
+
+    catalog = HubCatalog(opener=opener)
+    page = catalog.search_models(query="mlx", page_size=1, cursor="", mlx_only=False)
+
+    assert page.next_cursor == "page+2"
+
+
 def test_search_models_with_mlx_only_false_returns_all_results() -> None:
     payload = [
         {

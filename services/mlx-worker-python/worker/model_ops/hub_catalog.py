@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import unquote_plus, urlencode
 from urllib.request import Request, urlopen
 
 from worker.productization.device_identity import collect_device_identity
@@ -265,8 +265,22 @@ def _next_cursor_from_link(link_header: str) -> str:
         if not part.startswith("<") or ">" not in part:
             continue
         next_url = part[1:part.index(">")]
-        query = parse_qs(urlparse(next_url).query)
-        return _string(query.get("cursor", [""])[0])
+        return _cursor_query_value(next_url)
+    return ""
+
+
+def _cursor_query_value(url: str) -> str:
+    query_start = url.find("?")
+    if query_start < 0:
+        return ""
+    query = url[query_start + 1:]
+    fragment_start = query.find("#")
+    if fragment_start >= 0:
+        query = query[:fragment_start]
+    for parameter in query.split("&"):
+        key, separator, value = parameter.partition("=")
+        if separator and key == "cursor":
+            return unquote_plus(value)
     return ""
 
 
