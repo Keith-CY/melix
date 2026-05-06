@@ -564,6 +564,9 @@ struct MelixCLIParserTests {
                 parameters: [
                     "hf_dataset_path": "org/preference",
                     "grpo_candidate_count": "4",
+                    "candidate_generation_mode": "runtime_generate",
+                    "candidate_scoring_mode": "reward_model",
+                    "candidate_generation_max_tokens": "16",
                     "kl_penalty": "0.02",
                 ],
                 json: true
@@ -572,6 +575,12 @@ struct MelixCLIParserTests {
         let alignmentArguments = try MelixCLICommandCodec.arguments(for: alignmentCommand)
         #expect(alignmentArguments.contains("--hf-dataset-path"))
         #expect(alignmentArguments.contains("org/preference"))
+        #expect(alignmentArguments.contains("--candidate-generation-mode"))
+        #expect(alignmentArguments.contains("runtime_generate"))
+        #expect(alignmentArguments.contains("--candidate-scoring-mode"))
+        #expect(alignmentArguments.contains("reward_model"))
+        #expect(alignmentArguments.contains("--candidate-generation-max-tokens"))
+        #expect(alignmentArguments.contains("16"))
         #expect(try MelixCLIParser.parse(alignmentArguments) == alignmentCommand)
     }
 
@@ -1343,6 +1352,9 @@ struct MelixCLIParserTests {
             "--adapter-name", "aligned-adapter",
             "--algorithm", "grpo",
             "--grpo-candidate-count", "4",
+            "--candidate-generation-mode", " Runtime_Generate ",
+            "--candidate-scoring-mode", " Reward_Model ",
+            "--candidate-generation-max-tokens", "16",
             "--reference-model-path", "/tmp/reference-model",
             "--reward-model-manifest-path", "/tmp/reward/manifest.json",
             "--sample-limit", "8",
@@ -1361,6 +1373,9 @@ struct MelixCLIParserTests {
         #expect(options.adapterName == "aligned-adapter")
         #expect(options.algorithm == "grpo")
         #expect(options.parameters["grpo_candidate_count"] == "4")
+        #expect(options.parameters["candidate_generation_mode"] == "runtime_generate")
+        #expect(options.parameters["candidate_scoring_mode"] == "reward_model")
+        #expect(options.parameters["candidate_generation_max_tokens"] == "16")
         #expect(options.parameters["reference_model_path"] == "/tmp/reference-model")
         #expect(options.parameters["reward_model_manifest_path"] == "/tmp/reward/manifest.json")
         #expect(options.parameters["sample_limit"] == "8")
@@ -1379,6 +1394,32 @@ struct MelixCLIParserTests {
                 "--algorithm", "ppo",
             ],
             equals: .usage("Invalid value for --algorithm. Expected one of: dpo, orpo, cpo, grpo, rlhf.")
+        )
+    }
+
+    @Test("alignment train rejects unsupported candidate generation controls")
+    func alignmentTrainRejectsUnsupportedCandidateGenerationControls() throws {
+        try assertError(
+            for: [
+                "alignment", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "aligned-adapter",
+                "--algorithm", "grpo",
+                "--candidate-generation-mode", "remote",
+            ],
+            equals: .usage("Invalid value for --candidate-generation-mode. Expected one of: scored_trace, runtime_generate.")
+        )
+        try assertError(
+            for: [
+                "alignment", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "aligned-adapter",
+                "--algorithm", "grpo",
+                "--candidate-scoring-mode", "dataset",
+            ],
+            equals: .usage("Invalid value for --candidate-scoring-mode. Expected one of: dataset_score, seed_overlap_proxy, reward_model.")
         )
     }
 

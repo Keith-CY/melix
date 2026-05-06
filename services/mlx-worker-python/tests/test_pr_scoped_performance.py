@@ -69,6 +69,29 @@ from worker.productization.pr_scoped_performance import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REGISTRY_PATH = REPO_ROOT / "infra/perf/pr_scoped_probes.json"
+DATASET_REGISTRY_SELECTED_PROBE_IDS = [
+    "dataset-registry-limited-read-streaming",
+    "dataset-registry-snapshot-inference-single-pass",
+    "dataset-registry-preview-limit-short-circuit",
+]
+MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS = [
+    "mlx-audio-speech-signature-cache",
+    "mlx-audio-wav-streaming-pcm",
+    "mlx-audio-local-uri-zero-copy-preprocess",
+    "mlx-audio-generate-signature-cache",
+]
+SCOPE_MATCHER_SELECTED_PROBE_IDS = [
+    "benchmark-export-run-scan-single-pass",
+    "evaluation-job-id-high-water-mark",
+    "evaluation-sample-probe-aggregation",
+    "evaluation-latency-percentile-vector-reuse",
+    "evaluation-dialogue-diagnostics-top-k",
+    "download-pipeline-directory-size-single-stat",
+]
+
+
+def _selected_probe_ids(scope: dict[str, object]) -> list[str]:
+    return [probe["id"] for probe in _dict_list(scope["selected_probes"])]
 
 
 @pytest.fixture()
@@ -134,12 +157,8 @@ def test_scope_report_selects_dataset_registry_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/dataset_registry/catalog.py"],
     )
 
-    assert scope["selected_count"] == 3
-    assert {probe["id"] for probe in scope["selected_probes"]} == {
-        "dataset-registry-limited-read-streaming",
-        "dataset-registry-snapshot-inference-single-pass",
-        "dataset-registry-preview-limit-short-circuit",
-    }
+    assert scope["selected_count"] == len(DATASET_REGISTRY_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == DATASET_REGISTRY_SELECTED_PROBE_IDS
 
 
 def test_scope_report_selects_mlx_audio_wav_probe() -> None:
@@ -148,8 +167,9 @@ def test_scope_report_selects_mlx_audio_wav_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "mlx-audio-wav-streaming-pcm"
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-wav-streaming-pcm" in _selected_probe_ids(scope)
 
 
 def test_scope_report_selects_mlx_audio_signature_probe() -> None:
@@ -158,8 +178,9 @@ def test_scope_report_selects_mlx_audio_signature_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "mlx-audio-generate-signature-cache"
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-generate-signature-cache" in _selected_probe_ids(scope)
 
 
 def test_scope_report_selects_video_preprocessing_probe() -> None:
@@ -178,8 +199,9 @@ def test_scope_report_selects_mlx_audio_speech_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "mlx-audio-speech-signature-cache"
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-speech-signature-cache" in _selected_probe_ids(scope)
 
 
 def test_scope_report_selects_only_matching_probe() -> None:
@@ -441,8 +463,9 @@ def test_scope_report_selects_mlx_audio_local_uri_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "mlx-audio-local-uri-zero-copy-preprocess"
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-local-uri-zero-copy-preprocess" in _selected_probe_ids(scope)
 
 
 def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
@@ -751,14 +774,11 @@ def test_scope_report_large_changed_set_preserves_exact_selection_semantics() ->
 
     assert scope["force_all"] is False
     assert scope["changed_files"] == sorted({path for path in changed_files if path})
-    assert [probe["id"] for probe in scope["selected_probes"]] == [
-        "benchmark-export-run-scan-single-pass",
-        "evaluation-job-id-high-water-mark",
-        "evaluation-sample-probe-aggregation",
-        "evaluation-latency-percentile-vector-reuse",
-        "download-pipeline-directory-size-single-stat",
-    ]
-    assert scope["selected_count"] == 5
+    assert (
+        [probe["id"] for probe in scope["selected_probes"]]
+        == SCOPE_MATCHER_SELECTED_PROBE_IDS
+    )
+    assert scope["selected_count"] == len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
 
 
 def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
@@ -1309,6 +1329,9 @@ def test_registered_probes_expose_focused_commands() -> None:
         "rerank-core-top-k-heap-selection",
         "runtime-utils-kwarg-signature-cache",
         "mlx-audio-wav-streaming-pcm",
+        "mlx-audio-generate-signature-cache",
+        "mlx-audio-speech-signature-cache",
+        "video-preprocessing-uri-byte-length-reuse",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-dialogue-diagnostics-top-k",
         "evaluation-job-id-high-water-mark",
@@ -1809,7 +1832,9 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert evaluation_store_metrics["csv_line_count"] == 10001.0
     assert scope_matcher_metrics["build_scope_report_ms_mean"] > 0
     assert scope_matcher_metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
-    assert scope_matcher_metrics["selected_probe_count_mean"] == 6.0
+    assert scope_matcher_metrics["selected_probe_count_mean"] == float(
+        len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
+    )
     assert scope_matcher_metrics["force_all_selected_mean"] == 0.0
     assert training_dataset_metrics["elapsed_ms_mean"] > 0
     assert training_dataset_metrics["peak_bytes_mean"] > 0
@@ -2179,7 +2204,9 @@ def test_dispatch_probe_impl_supports_pr_scoped_scope_matcher_probe() -> None:
 
     assert metrics["build_scope_report_ms_mean"] > 0
     assert metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
-    assert metrics["selected_probe_count_mean"] == 6.0
+    assert metrics["selected_probe_count_mean"] == float(
+        len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
+    )
     assert metrics["force_all_selected_mean"] == 0.0
 
 

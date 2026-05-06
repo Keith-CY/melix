@@ -2,6 +2,17 @@ import Foundation
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
+enum MelixQuantizationAllowedValues {
+    static let quantizationModes = ["ptq", "qat"]
+    static let sourceArtifactKinds = ["base_model", "merged_adapter", "adapter_export"]
+    static let quantizationBackends = ["manifest_only", "mlx_lm_convert"]
+    static let mlxLMQModes = ["affine", "mxfp4", "nvfp4", "mxfp8"]
+
+    static func renderedList(_ values: [String]) -> String {
+        values.joined(separator: ", ")
+    }
+}
+
 public struct LoraListOptions: Equatable, Sendable {
     public let modelID: String
     public let json: Bool
@@ -878,6 +889,8 @@ public struct QuantizeOptions: Equatable, Sendable {
     public let localInferenceSmokePrompt: String
     public let json: Bool
 
+    // The parser and pipeline runner pass optional enum-like fields already
+    // trimmed and lowercased; this initializer preserves direct caller input.
     public init(
         modelID: String,
         outputDir: String = "",
@@ -1534,7 +1547,7 @@ public enum MelixCLIParser {
       melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
-      melix alignment train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --algorithm dpo|orpo|cpo|grpo|rlhf [--target-repo REPO] [--grpo-candidate-count N] [--reference-model-path PATH] [--reward-model-manifest-path PATH] [--kl-penalty N] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--json]
+      melix alignment train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --algorithm dpo|orpo|cpo|grpo|rlhf [--target-repo REPO] [--grpo-candidate-count N] [--candidate-generation-mode scored_trace|runtime_generate] [--candidate-scoring-mode dataset_score|seed_overlap_proxy|reward_model] [--candidate-generation-max-tokens N] [--reference-model-path PATH] [--reward-model-manifest-path PATH] [--kl-penalty N] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--json]
       melix lora dataset inspect --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora dataset build --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--output-dir PATH] [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
@@ -1636,20 +1649,26 @@ public enum MelixCLIParser {
         let quantizationMode = (values.single["--quantization-mode"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if !quantizationMode.isEmpty, ["ptq", "qat"].contains(quantizationMode) == false {
-            throw MelixCLIError.usage("Invalid value for --quantization-mode. Expected one of: ptq, qat.")
+        if !quantizationMode.isEmpty, MelixQuantizationAllowedValues.quantizationModes.contains(quantizationMode) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --quantization-mode. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.quantizationModes))."
+            )
         }
         let sourceArtifactKind = (values.single["--source-artifact-kind"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if !sourceArtifactKind.isEmpty, ["base_model", "merged_adapter", "adapter_export"].contains(sourceArtifactKind) == false {
-            throw MelixCLIError.usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
+        if !sourceArtifactKind.isEmpty, MelixQuantizationAllowedValues.sourceArtifactKinds.contains(sourceArtifactKind) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --source-artifact-kind. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.sourceArtifactKinds))."
+            )
         }
         let quantizationBackend = (values.single["--quantization-backend"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if !quantizationBackend.isEmpty, ["manifest_only", "mlx_lm_convert"].contains(quantizationBackend) == false {
-            throw MelixCLIError.usage("Invalid value for --quantization-backend. Expected one of: manifest_only, mlx_lm_convert.")
+        if !quantizationBackend.isEmpty, MelixQuantizationAllowedValues.quantizationBackends.contains(quantizationBackend) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --quantization-backend. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.quantizationBackends))."
+            )
         }
         let mlxLMQBits = (values.single["--mlx-lm-q-bits"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !mlxLMQBits.isEmpty, Int(mlxLMQBits) == nil {
@@ -1662,8 +1681,10 @@ public enum MelixCLIParser {
         let mlxLMQMode = (values.single["--mlx-lm-q-mode"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if !mlxLMQMode.isEmpty, ["affine", "mxfp4", "nvfp4", "mxfp8"].contains(mlxLMQMode) == false {
-            throw MelixCLIError.usage("Invalid value for --mlx-lm-q-mode. Expected one of: affine, mxfp4, nvfp4, mxfp8.")
+        if !mlxLMQMode.isEmpty, MelixQuantizationAllowedValues.mlxLMQModes.contains(mlxLMQMode) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --mlx-lm-q-mode. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.mlxLMQModes))."
+            )
         }
         let localInferenceSmokeMode = (values.single["--local-inference-smoke-mode"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2307,6 +2328,20 @@ public enum MelixCLIParser {
             if ["dpo", "orpo", "cpo", "grpo", "rlhf"].contains(algorithm) == false {
                 throw MelixCLIError.usage("Invalid value for --algorithm. Expected one of: dpo, orpo, cpo, grpo, rlhf.")
             }
+            let candidateGenerationMode = (values.single["--candidate-generation-mode"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if candidateGenerationMode.isEmpty == false,
+               ["scored_trace", "runtime_generate"].contains(candidateGenerationMode) == false {
+                throw MelixCLIError.usage("Invalid value for --candidate-generation-mode. Expected one of: scored_trace, runtime_generate.")
+            }
+            let candidateScoringMode = (values.single["--candidate-scoring-mode"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if candidateScoringMode.isEmpty == false,
+               ["dataset_score", "seed_overlap_proxy", "reward_model"].contains(candidateScoringMode) == false {
+                throw MelixCLIError.usage("Invalid value for --candidate-scoring-mode. Expected one of: dataset_score, seed_overlap_proxy, reward_model.")
+            }
             let datasetSourceKind = datasetURI.isEmpty ? "hf_dataset" : "local_package"
             var parameters: [String: String] = [:]
             for option in [
@@ -2332,6 +2367,7 @@ public enum MelixCLIParser {
                 "--completion-feature",
                 "--text-feature",
                 "--grpo-candidate-count",
+                "--candidate-generation-max-tokens",
                 "--reference-model-path",
                 "--reward-model-manifest-path",
                 "--kl-penalty",
@@ -2339,6 +2375,12 @@ public enum MelixCLIParser {
                 if let value = values.single[option] {
                     parameters[normalizedParameterKey(option)] = value
                 }
+            }
+            if candidateGenerationMode.isEmpty == false {
+                parameters["candidate_generation_mode"] = candidateGenerationMode
+            }
+            if candidateScoringMode.isEmpty == false {
+                parameters["candidate_scoring_mode"] = candidateScoringMode
             }
             if let presetID = values.single["--preset"] {
                 parameters["preset_id"] = presetID
@@ -4921,6 +4963,9 @@ public actor MelixCLIRunner {
                 appendOption("--sample-limit", value: ext["sample_limit"], into: &arguments)
                 appendOption("--gradient-accumulation", value: ext["gradient_accumulation"], into: &arguments)
                 appendOption("--grpo-candidate-count", value: ext["grpo_candidate_count"], into: &arguments)
+                appendOption("--candidate-generation-mode", value: ext["candidate_generation_mode"], into: &arguments)
+                appendOption("--candidate-scoring-mode", value: ext["candidate_scoring_mode"], into: &arguments)
+                appendOption("--candidate-generation-max-tokens", value: ext["candidate_generation_max_tokens"], into: &arguments)
                 appendOption("--reference-model-path", value: ext["reference_model_path"], into: &arguments)
                 appendOption("--reward-model-manifest-path", value: ext["reward_model_manifest_path"], into: &arguments)
                 appendOption("--kl-penalty", value: ext["kl_penalty"], into: &arguments)
