@@ -38,10 +38,11 @@ class LoRATrainingPipeline:
         self,
         runner: MLXLMRunner | None = None,
         policy_runtime: Any | None = None,
+        reward_runtime: Any | None = None,
         hf_dataset_fetcher: HFDatasetFetcher | None = None,
         experiment_store: LoraExperimentStore | None = None,
     ) -> None:
-        self._runner = runner or MLXLMRunner(policy_runtime=policy_runtime)
+        self._runner = runner or MLXLMRunner(policy_runtime=policy_runtime, reward_runtime=reward_runtime)
         self._hf_dataset_fetcher = hf_dataset_fetcher
         self._experiment_store = experiment_store or LoraExperimentStore()
 
@@ -559,6 +560,7 @@ def _resolve_resume_context(ext: dict[str, str]) -> dict[str, Any]:
                 "resume_from_path",
                 "resume_adapter_file",
                 "resume_manifest_path",
+                "source_adapter_path",
             )
             if ext.get(key, "").strip()
         ),

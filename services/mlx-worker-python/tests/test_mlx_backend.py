@@ -234,6 +234,102 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].dflash_rollback_count == 2
 
 
+def test_auto_backend_scores_reward_responses_with_mlx_generation() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        seen["load"] = (model_source, kwargs)
+        return object(), FakeTokenizer()
+
+    def fake_sampler_factory(*, temp: float, top_p: float, top_k: int):
+        seen["sampler"] = {"temp": temp, "top_p": top_p, "top_k": top_k}
+        return "score-sampler"
+
+    def fake_stream_generate(model, tokenizer, prompt: str, max_tokens: int, sampler):
+        seen["stream"] = {
+            "model": model,
+            "tokenizer": tokenizer,
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+            "sampler": sampler,
+        }
+        yield FakeGenerationResponse(text="Score: ", prompt_tokens=8, generation_tokens=1)
+        yield FakeGenerationResponse(text="87", prompt_tokens=8, generation_tokens=2)
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=fake_sampler_factory,
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/reward"})
+    model_spec.ext["melix.reward_model.score_prompt_template"] = (
+        "Prompt={prompt}\nResponse={response}\nReturn score:"
+    )
+    model_spec.ext["melix.reward_model.score_max_tokens"] = "12"
+    loaded_model = backend.load_model(model_spec)
+
+    score = backend.score_response(loaded_model, "Explain safely.", "Helpful answer.")
+
+    assert score == pytest.approx(0.87)
+    assert seen["load"] == ("mlx-community/reward", {"lazy": False})
+    assert seen["sampler"] == {"temp": 0.0, "top_p": 1.0, "top_k": 1}
+    assert seen["stream"] == {
+        "model": loaded_model["model"],
+        "tokenizer": loaded_model["tokenizer"],
+        "prompt": "Prompt=Explain safely.\nResponse=Helpful answer.\nReturn score:",
+        "max_tokens": 12,
+        "sampler": "score-sampler",
+    }
+
+
+def test_reward_score_prompt_and_parser_cover_fallbacks() -> None:
+    prompt = mlx_text_runtime_module._reward_score_prompt(
+        {"metadata": {"melix.reward_model.scoring_prompt_template": "Metadata {prompt} {response}"}},
+        prompt="Prompt",
+        response="Response",
+        execution_ext={
+            "melix.reward_model.score_prompt_template": "Override {prompt} => {response}",
+        },
+    )
+    assert prompt == "Override Prompt => Response"
+
+    default_prompt = mlx_text_runtime_module._reward_score_prompt(
+        object(),
+        prompt="Explain safely.",
+        response="Helpful answer.",
+        execution_ext=None,
+    )
+    assert "Explain safely." in default_prompt
+    assert "Helpful answer." in default_prompt
+    assert mlx_text_runtime_module._reward_score_max_tokens(
+        {"metadata": {"melix.reward_model.max_tokens": "12"}},
+        execution_ext={"melix.reward_model.score_max_tokens": "18"},
+    ) == 18
+    assert mlx_text_runtime_module._reward_score_max_tokens(
+        {"metadata": {"melix.reward_model.score_max_tokens": "not-an-int"}},
+        execution_ext=None,
+    ) == 8
+    assert mlx_text_runtime_module._parse_reward_score_text("0.42") == pytest.approx(0.42)
+
+    with pytest.raises(RuntimeUnavailableError):
+        mlx_text_runtime_module._parse_reward_score_text("no numeric score")
+    with pytest.raises(RuntimeUnavailableError):
+        mlx_text_runtime_module._parse_reward_score_text("-0.5")
+
+
+def test_auto_backend_score_response_reports_unavailable_runtime() -> None:
+    backend = AutoMLXBackend(
+        load_fn=lambda model_source, **kwargs: (object(), FakeTokenizer()),
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "unused",
+    )
+    backend._available = False
+    backend._error = ModuleNotFoundError("mlx-lm is not installed")
+
+    with pytest.raises(RuntimeUnavailableError, match="mlx-lm is not installed"):
+        backend.score_response({}, "Prompt", "Response")
+
+
 def test_text_stop_contract_merges_request_metadata_and_tokenizer_eos() -> None:
     contract = resolve_text_stop_contract(
         {

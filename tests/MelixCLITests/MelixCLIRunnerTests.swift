@@ -4952,6 +4952,7 @@ struct MelixCLIRunnerTests {
                         "candidate_generation_mode": "runtime_generate",
                         "candidate_scoring_mode": "reward_model",
                         "candidate_generation_max_tokens": "16",
+                        "source_adapter_path": "/tmp/source/train_lora.adapter.json",
                         "reference_model_path": "/tmp/reference-model",
                         "reward_model_manifest_path": "/tmp/reward/manifest.json",
                     ],
@@ -4973,6 +4974,7 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["candidate_generation_mode"] == "runtime_generate")
         #expect(call.ext["candidate_scoring_mode"] == "reward_model")
         #expect(call.ext["candidate_generation_max_tokens"] == "16")
+        #expect(call.ext["source_adapter_path"] == "/tmp/source/train_lora.adapter.json")
         #expect(call.ext["reference_model_path"] == "/tmp/reference-model")
         #expect(call.ext["reward_model_manifest_path"] == "/tmp/reward/manifest.json")
     }
@@ -5534,6 +5536,7 @@ struct MelixCLIRunnerTests {
                 "sample_limit": "8",
                 "gradient_accumulation": "4",
                 "grpo_candidate_count": "4",
+                "source_adapter_path": "/tmp/source/train_lora.adapter.json",
             ]
         )
 
@@ -5548,6 +5551,8 @@ struct MelixCLIRunnerTests {
         #expect(commands[0].contains("8"))
         #expect(commands[0].contains("--gradient-accumulation"))
         #expect(commands[0].contains("4"))
+        #expect(commands[0].contains("--source-adapter-path"))
+        #expect(commands[0].contains("/tmp/source/train_lora.adapter.json"))
     }
 
     @Test("subprocess-backed lora publish builds explicit adapter and merged publish arguments")

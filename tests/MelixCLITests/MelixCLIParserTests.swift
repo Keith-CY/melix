@@ -1343,6 +1343,7 @@ struct MelixCLIParserTests {
     @Test("parses alignment train with preference and RL parameters")
     func parsesAlignmentTrainCommand() throws {
         #expect(MelixCLIParser.usageText.contains("melix alignment train"))
+        #expect(MelixCLIParser.usageText.contains("--source-adapter-path is the upstream/base LoRA adapter"))
 
         let command = try MelixCLIParser.parse([
             "alignment",
@@ -1355,6 +1356,7 @@ struct MelixCLIParserTests {
             "--candidate-generation-mode", " Runtime_Generate ",
             "--candidate-scoring-mode", " Reward_Model ",
             "--candidate-generation-max-tokens", "16",
+            "--source-adapter-path", "/tmp/source/train_lora.adapter.json",
             "--reference-model-path", "/tmp/reference-model",
             "--reward-model-manifest-path", "/tmp/reward/manifest.json",
             "--sample-limit", "8",
@@ -1376,6 +1378,7 @@ struct MelixCLIParserTests {
         #expect(options.parameters["candidate_generation_mode"] == "runtime_generate")
         #expect(options.parameters["candidate_scoring_mode"] == "reward_model")
         #expect(options.parameters["candidate_generation_max_tokens"] == "16")
+        #expect(options.parameters["source_adapter_path"] == "/tmp/source/train_lora.adapter.json")
         #expect(options.parameters["reference_model_path"] == "/tmp/reference-model")
         #expect(options.parameters["reward_model_manifest_path"] == "/tmp/reward/manifest.json")
         #expect(options.parameters["sample_limit"] == "8")
@@ -1420,6 +1423,21 @@ struct MelixCLIParserTests {
                 "--candidate-scoring-mode", "dataset",
             ],
             equals: .usage("Invalid value for --candidate-scoring-mode. Expected one of: dataset_score, seed_overlap_proxy, reward_model.")
+        )
+    }
+
+    @Test("alignment train rejects LoRA checkpoint resume flags")
+    func alignmentTrainRejectsLoraCheckpointResumeFlags() throws {
+        try assertError(
+            for: [
+                "alignment", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "aligned-adapter",
+                "--algorithm", "grpo",
+                "--resume-adapter", "/tmp/lora-checkpoint",
+            ],
+            equals: .usage("--resume-adapter and --resume-from-manifest are only for melix lora train checkpoint resumption. For melix alignment train, use --source-adapter-path for the upstream/base LoRA adapter to carry into GRPO/RLHF output.")
         )
     }
 

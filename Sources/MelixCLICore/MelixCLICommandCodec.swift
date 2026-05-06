@@ -684,6 +684,7 @@ public enum MelixCLICommandCodec {
             ("candidate_generation_mode", "--candidate-generation-mode"),
             ("candidate_scoring_mode", "--candidate-scoring-mode"),
             ("candidate_generation_max_tokens", "--candidate-generation-max-tokens"),
+            ("source_adapter_path", "--source-adapter-path"),
             ("reference_model_path", "--reference-model-path"),
             ("reward_model_manifest_path", "--reward-model-manifest-path"),
             ("kl_penalty", "--kl-penalty"),

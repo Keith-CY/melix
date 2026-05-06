@@ -19,6 +19,7 @@ from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.lora_training_pipeline import (
+    LoRATrainingPipeline,
     _content_hash,
     _int_ext,
     _latest_checkpoint_from_directory,
@@ -180,6 +181,87 @@ def test_mlx_lm_runner_routes_alignment_rl_to_scored_trace_backend(tmp_path: Pat
     assert result.metrics.candidate_group_reward_margin_mean == pytest.approx(0.3)
     assert result.metrics.candidate_group_reward_variance_mean == pytest.approx(0.0225)
     assert result.metrics.policy_update_trace_path.endswith("policy_updates.jsonl")
+
+
+def test_mlx_lm_runner_alignment_rl_preserves_source_adapter_artifacts(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "grpo", "grpo_candidate_count": "2"},
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Draft two summaries.",
+                "candidates": [
+                    {"text": "Short summary.", "score": 0.7},
+                    {"text": "Verbose summary.", "score": 0.4},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source_adapter_dir = tmp_path / "source-adapter"
+    source_adapter_dir.mkdir()
+    source_weights = source_adapter_dir / "adapters.safetensors"
+    source_weights.write_bytes(b"real-mlx-lora-weights")
+    (source_adapter_dir / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "adapter_path": str(source_adapter_dir),
+                "fine_tune_type": "lora",
+                "num_layers": 2,
+                "lora_parameters": {"keys": ["self_attn.q_proj"], "rank": 8},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo-source-adapter",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="prompt_candidate",
+        resume_source_path=source_weights,
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().train(request)
+    adapter_config = json.loads(result.adapter_config_path.read_text(encoding="utf-8"))
+
+    assert result.weights_path.read_bytes() == b"real-mlx-lora-weights"
+    assert Path(result.metrics.latest_checkpoint_path).read_bytes() == b"real-mlx-lora-weights"
+    assert adapter_config["adapter_path"] == str(tmp_path / "adapter-output")
+    assert adapter_config["num_layers"] == 2
+    assert adapter_config["lora_parameters"]["keys"] == ["self_attn.q_proj"]
+    assert adapter_config["alignment_algorithm"] == "grpo"
+    assert adapter_config["alignment_source_adapter_weights_path"] == str(source_weights)
+    assert result.metrics.resume_source_path == str(source_weights)
+
+
+def test_alignment_rl_rejects_missing_source_adapter_weights(tmp_path: Path) -> None:
+    from worker.model_ops.rl_alignment_training import _alignment_adapter_weights_bytes
+
+    missing_weights = tmp_path / "missing-adapters.safetensors"
+    with pytest.raises(ModelOperationError) as exc:
+        _alignment_adapter_weights_bytes(
+            source_weights_path=missing_weights,
+            job_id="train-grpo-missing-source",
+            base_model_id="melix-dev-text",
+            alignment_algorithm="grpo",
+            trace_rows=[],
+        )
+
+    assert exc.value.code == "invalid_resume_source"
+    assert exc.value.details["source_weights_path"] == str(missing_weights)
 
 
 def test_mlx_lm_runner_generates_grpo_candidates_with_policy_runtime(tmp_path: Path) -> None:
@@ -563,6 +645,7 @@ def test_alignment_rl_reward_model_scoring_helpers_cover_trace_and_error_paths(
                 "schema_version": "melix.reward_model_adapter.v1",
                 "reward_model_id": "fallback-reward",
                 "reward_head_type": "scalar",
+                "score_prompt_template": "Prompt={prompt}\nResponse={response}\nScore:",
             }
         )
         + "\n",
@@ -573,6 +656,7 @@ def test_alignment_rl_reward_model_scoring_helpers_cover_trace_and_error_paths(
     assert reward_model_spec.model_id == "fallback-reward"
     assert reward_model_spec.model_path == str(manifest_path.parent)
     assert reward_model_spec.ext["melix.reward_model.reward_head_type"] == "scalar"
+    assert reward_model_spec.ext["melix.reward_model.score_prompt_template"].startswith("Prompt=")
 
     with pytest.raises(ModelOperationError) as missing_manifest:
         _load_reward_model_manifest(tmp_path / "missing" / "manifest.json")
@@ -703,6 +787,87 @@ def test_text_runtime_score_response_delegates_backend_and_executor() -> None:
 
     with pytest.raises(RuntimeUnavailableError):
         MLXTextRuntime(backend=MissingScoreBackend()).score_response({}, "Prompt.", "Response.")
+
+
+def test_lora_training_pipeline_wires_reward_runtime_into_default_runner(tmp_path: Path) -> None:
+    class RewardBackend:
+        runtime_name = "pipeline-reward-runtime"
+
+        def __init__(self) -> None:
+            self.loaded_model_path = ""
+            self.responses: list[str] = []
+
+        def load_model(self, model_spec):
+            self.loaded_model_path = model_spec.model_path
+            return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+        def score_response(self, loaded_model, prompt: str, response: str, execution_ext=None):
+            del loaded_model, prompt, execution_ext
+            self.responses.append(response)
+            return 0.82
+
+    reward_model_dir = tmp_path / "reward-model"
+    reward_model_dir.mkdir()
+    reward_manifest_path = reward_model_dir / "manifest.json"
+    reward_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.reward_model_adapter.v1",
+                "reward_model_id": "pipeline-reward",
+                "model_path": str(reward_model_dir),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    dataset_dir = _write_dataset_package(
+        tmp_path / "reward-scored-dataset",
+        manifest_payload={
+            "schema_version": "melix.training_dataset_package.v1",
+            "dataset_id": "reward-scored",
+            "format": "reward_scored",
+            "sample_count": 1,
+            "version": "1",
+        },
+        sample_lines=[
+            json.dumps(
+                {
+                    "prompt": "Assess the response.",
+                    "response": "Helpful response.",
+                    "reward_score": 0.3,
+                }
+            )
+        ],
+    )
+    reward_backend = RewardBackend()
+    pipeline = LoRATrainingPipeline(
+        policy_runtime=MLXTextRuntime(backend=RewardBackend()),
+        reward_runtime=MLXTextRuntime(backend=reward_backend),
+    )
+
+    result = pipeline.run(
+        job_id="reward-runtime-pipeline",
+        request_ext={
+            "operation": "train_lora",
+            "training_mode": "rlhf",
+            "adapter_name": "reward-runtime-adapter",
+            "dataset_uri": str(dataset_dir),
+            "reward_model_manifest_path": str(reward_manifest_path),
+            "candidate_scoring_mode": "reward_model",
+        },
+        source_model=_text_model(model_path=str(tmp_path / "policy-model")),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    alignment_payload = json.loads(
+        Path(result.manifest["alignment_run_manifest_path"]).read_text(encoding="utf-8")
+    )
+    assert reward_backend.loaded_model_path == str(reward_model_dir)
+    assert reward_backend.responses == ["Helpful response."]
+    assert alignment_payload["training_backend"] == "reward_model_scored_trace"
+    assert alignment_payload["metrics"]["reward_scoring_backend"] == "pipeline-reward-runtime"
+    assert alignment_payload["metrics"]["reward_mean"] == pytest.approx(0.82)
 
 
 @pytest.mark.parametrize(
@@ -1973,6 +2138,9 @@ def test_resolve_resume_context_handles_manifest_directory_and_missing_sources(t
         "resume_manifest_path": manifest.resolve(),
         "resume_source_job_id": "run-42",
     }
+
+    source_adapter_context = _resolve_resume_context({"source_adapter_path": str(manifest)})
+    assert source_adapter_context == manifest_context
 
     directory_context = _resolve_resume_context({"resume_source_path": str(checkpoint.parent.parent)})
     assert directory_context == {

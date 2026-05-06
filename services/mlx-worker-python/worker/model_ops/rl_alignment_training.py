@@ -144,19 +144,8 @@ def train_alignment_rl_trace(
     latest_checkpoint_path = checkpoint_dir / "adapters.safetensors"
 
     _write_jsonl(policy_update_trace_path, policy_updates.trace_rows)
-    adapter_config = {
+    adapter_config = _load_resume_adapter_config(request.resume_source_path) or {
         "fine_tune_type": "lora",
-        "alignment_algorithm": alignment.alignment_algorithm,
-        "execution_backend": policy_updates.execution_backend,
-        "policy_update_trace_path": str(policy_update_trace_path),
-        "reward_model_manifest_path": alignment.reward_model_manifest_path,
-        "reference_model_path": alignment.reference_model_path,
-        "kl_penalty": alignment.kl_penalty,
-        "grpo_candidate_count": alignment.grpo_candidate_count,
-        "candidate_generation_mode": policy_updates.candidate_generation_mode,
-        "candidate_generation_backend": policy_updates.candidate_generation_backend,
-        "candidate_scoring_mode": policy_updates.candidate_scoring_mode,
-        "reward_scoring_backend": policy_updates.reward_scoring_backend,
         "lora_parameters": {
             "rank": request.config.rank,
             "dropout": request.config.dropout,
@@ -164,15 +153,34 @@ def train_alignment_rl_trace(
             "keys": request.config.expanded_target_modules,
         },
     }
+    if "adapter_path" in adapter_config:
+        adapter_config["adapter_path"] = str(request.adapter_output_dir)
+    adapter_config.update(
+        {
+            "alignment_algorithm": alignment.alignment_algorithm,
+            "execution_backend": policy_updates.execution_backend,
+            "policy_update_trace_path": str(policy_update_trace_path),
+            "reward_model_manifest_path": alignment.reward_model_manifest_path,
+            "reference_model_path": alignment.reference_model_path,
+            "kl_penalty": alignment.kl_penalty,
+            "grpo_candidate_count": alignment.grpo_candidate_count,
+            "candidate_generation_mode": policy_updates.candidate_generation_mode,
+            "candidate_generation_backend": policy_updates.candidate_generation_backend,
+            "candidate_scoring_mode": policy_updates.candidate_scoring_mode,
+            "reward_scoring_backend": policy_updates.reward_scoring_backend,
+            "alignment_source_adapter_weights_path": (
+                str(request.resume_source_path) if request.resume_source_path is not None else ""
+            ),
+        }
+    )
     adapter_config_path.write_text(json.dumps(adapter_config, indent=2) + "\n", encoding="utf-8")
-    weights_payload = {
-        "schema_version": "melix.scored_alignment_adapter.v1",
-        "job_id": request.job_id,
-        "base_model_id": request.base_model_id,
-        "alignment_algorithm": alignment.alignment_algorithm,
-        "policy_update_digest": _trace_digest(policy_updates.trace_rows),
-    }
-    weights_bytes = json.dumps(weights_payload, sort_keys=True).encode("utf-8")
+    weights_bytes = _alignment_adapter_weights_bytes(
+        source_weights_path=request.resume_source_path,
+        job_id=request.job_id,
+        base_model_id=request.base_model_id,
+        alignment_algorithm=alignment.alignment_algorithm,
+        trace_rows=policy_updates.trace_rows,
+    )
     weights_path.write_bytes(weights_bytes)
     latest_checkpoint_path.write_bytes(weights_bytes)
 
@@ -211,6 +219,44 @@ def train_alignment_rl_trace(
         ),
         execution_backend=policy_updates.execution_backend,
     )
+
+
+def _load_resume_adapter_config(resume_source_path: Path | None) -> dict[str, Any] | None:
+    if resume_source_path is None:
+        return None
+    config_path = resume_source_path.parent / "adapter_config.json"
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return dict(payload) if isinstance(payload, dict) else None
+
+
+def _alignment_adapter_weights_bytes(
+    *,
+    source_weights_path: Path | None,
+    job_id: str,
+    base_model_id: str,
+    alignment_algorithm: str,
+    trace_rows: list[dict[str, Any]],
+) -> bytes:
+    if source_weights_path is not None:
+        try:
+            return source_weights_path.read_bytes()
+        except OSError as exc:
+            raise ModelOperationError(
+                code="invalid_resume_source",
+                message="Source adapter weights are missing or unreadable.",
+                details={"source_weights_path": str(source_weights_path)},
+            ) from exc
+    weights_payload = {
+        "schema_version": "melix.scored_alignment_adapter.v1",
+        "job_id": job_id,
+        "base_model_id": base_model_id,
+        "alignment_algorithm": alignment_algorithm,
+        "policy_update_digest": _trace_digest(trace_rows),
+    }
+    return json.dumps(weights_payload, sort_keys=True).encode("utf-8")
 
 
 def _load_training_rows(path: Path) -> list[dict[str, Any]]:
@@ -656,6 +702,8 @@ def _reward_model_spec_from_manifest(
         "adapter_manifest_path",
         "adapter_weights_path",
         "base_model_id",
+        "score_prompt_template",
+        "scoring_prompt_template",
     ):
         value = manifest_payload.get(key)
         if value is not None and str(value).strip():
