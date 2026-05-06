@@ -20,6 +20,21 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
     assert code_eval_runner.extract_candidate_code(
         "first attempt:\n```python\nprint('old')\n```\nfinal answer:\n```python\nprint('new')\n```"
     ) == ("print('new')", "parsed_code_block")
+    assert code_eval_runner.extract_candidate_code("```javascript\nprint('tag stays')\n```") == (
+        "javascript\nprint('tag stays')",
+        "parsed_code_block",
+    )
+    assert code_eval_runner.extract_candidate_code(
+        "```python\nprint('complete')\n```\n```python\nprint('unterminated')"
+    ) == ("print('complete')", "parsed_code_block")
+    blocks = [
+        f"draft {index}\n```python\ndef candidate():\n    return {index}\n```"
+        for index in range(32)
+    ]
+    assert code_eval_runner.extract_candidate_code("\n".join(blocks)) == (
+        "def candidate():\n    return 31",
+        "parsed_code_block",
+    )
 
 
 def test_is_code_execution_policy_supported_requires_sandboxed_policy_and_binary(monkeypatch) -> None:

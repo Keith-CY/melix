@@ -6,7 +6,6 @@ from functools import lru_cache
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -14,7 +13,6 @@ import sysconfig
 import tempfile
 import textwrap
 
-_CODE_BLOCK_PATTERN = re.compile(r"```(?:python)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
 
 
@@ -42,12 +40,32 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     normalized = raw_response.strip()
     if not normalized:
         return "", "empty_prediction"
-    last_code_block: str | None = None
-    for match in _CODE_BLOCK_PATTERN.finditer(normalized):
-        last_code_block = match.group(1)
-    if last_code_block is not None:
-        return last_code_block.strip(), "parsed_code_block"
+
+    last_code_block_bounds: tuple[int, int] | None = None
+    search_start = 0
+    while True:
+        opening = normalized.find("```", search_start)
+        if opening < 0:
+            break
+        content_start = _code_block_content_start(normalized, opening + 3)
+        closing = normalized.find("```", content_start)
+        if closing < 0:
+            break
+        last_code_block_bounds = (content_start, closing)
+        search_start = closing + 3
+
+    if last_code_block_bounds is not None:
+        start, end = last_code_block_bounds
+        return normalized[start:end].strip(), "parsed_code_block"
     return normalized, "parsed_code"
+
+
+def _code_block_content_start(text: str, start: int) -> int:
+    if text[start : start + 6].lower() == "python":
+        start += 6
+    while start < len(text) and text[start].isspace():
+        start += 1
+    return start
 
 
 def is_code_execution_policy_supported(code_exec_policy: str) -> bool:
