@@ -1048,9 +1048,31 @@ def test_mlx_audio_generate_signature_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
 
 
+def test_dataset_registry_snapshot_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_REGISTRY_PROBE_FILE_COUNT", "3")
+    monkeypatch.setenv("MELIX_DATASET_REGISTRY_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_snapshot_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["legacy_inference_helper_calls_mean"] == 0.0
+    assert metrics["file_count_mean"] == 4.0
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "dataset-registry-limited-read-streaming",
+        "dataset-registry-snapshot-inference-single-pass",
         "event-extraction-alignment-accepted-edge-cache",
         "hub-catalog-tag-normalization-single-pass",
         "benchmark-evaluation-report-running-aggregates",

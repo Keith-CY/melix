@@ -59,6 +59,44 @@ def test_dataset_catalog_discovers_default_huggingface_cache_snapshot(tmp_path: 
     assert dataset["restore_command"] == "melix dataset hub download --repo-id org/repo --revision main"
 
 
+def test_dataset_catalog_builds_snapshot_inference_in_one_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    snapshot_dir = _write_hf_dataset_snapshot(home)
+    (snapshot_dir / "custom").mkdir()
+    (snapshot_dir / "custom" / "validation-00000.parquet").write_bytes(b"validation")
+    (snapshot_dir / "custom" / "test.json").write_text("[]", encoding="utf-8")
+
+    def fail_split(_relative_path: str) -> str:
+        raise AssertionError("snapshot build should infer split/config together")
+
+    monkeypatch.setattr(catalog, "_inferred_split", fail_split)
+    monkeypatch.setattr(catalog, "_inferred_config", fail_split)
+
+    payload = DatasetCatalog(environment={"HOME": str(home)}).registry_snapshot_payload()
+
+    dataset = payload["datasets"][0]
+    assert dataset["splits"] == ["test", "train", "validation"]
+    assert dataset["configs"] == ["custom", "default"]
+    assert {file["relative_path"] for file in dataset["files"]} == {
+        "README.md",
+        "custom/test.json",
+        "custom/validation-00000.parquet",
+        "data/train-00000-of-00001.jsonl",
+    }
+
+
+def test_dataset_catalog_inferred_split_and_config_preserves_legacy_helpers() -> None:
+    assert catalog._inferred_split("custom/validation-00000.parquet") == "validation"
+    assert catalog._inferred_config("custom/validation-00000.parquet") == "custom"
+    assert catalog._inferred_split_and_config("data/train-00000-of-00001.jsonl") == ("train", "default")
+    assert catalog._inferred_split_and_config("custom\\test.json") == ("test", "custom")
+    assert catalog._inferred_split_and_config("README.md") == ("", "default")
+    assert catalog._inferred_split_and_config("") == ("", "default")
+
+
 def test_dataset_catalog_reports_unavailable_roots_and_filters_snapshots(tmp_path: Path) -> None:
     home = tmp_path / "home"
     _write_hf_dataset_snapshot(home)

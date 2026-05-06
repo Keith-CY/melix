@@ -67,6 +67,43 @@
     ]
   },
   {
+    "id": "dataset-registry-snapshot-inference-single-pass",
+    "name": "Dataset registry snapshot inference single pass",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/dataset_registry/catalog.py",
+      "services/mlx-worker-python/tests/test_dataset_registry.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/dataset_registry_snapshot_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_dataset_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_dataset_registry_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dataset_registry_snapshot_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_dataset_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_dataset_registry_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dataset_registry_snapshot_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/dataset_registry/catalog.py services/mlx-worker-python/tests/test_dataset_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/dataset_registry_snapshot_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/dataset_registry_snapshot_probe.py ]; then python scripts/dataset_registry_snapshot_probe.py; else python -c \"import base64; exec(base64.b64decode(\\\"aW1wb3J0IGpzb24KaW1wb3J0IG9zCmltcG9ydCBzdGF0aXN0aWNzCmltcG9ydCBzeXMKaW1wb3J0IHRlbXBmaWxlCmltcG9ydCB0aW1lCmltcG9ydCB0cmFjZW1hbGxvYwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKcmVwb19yb290ID0gUGF0aC5jd2QoKQpzeXMucGF0aC5pbnNlcnQoMCwgb3MuZnNwYXRoKHJlcG9fcm9vdCkpCnN5cy5wYXRoLmluc2VydCgwLCBvcy5mc3BhdGgocmVwb19yb290IC8gInNlcnZpY2VzL21seC13b3JrZXItcHl0aG9uIikpCmltcG9ydCB3b3JrZXIuZGF0YXNldF9yZWdpc3RyeS5jYXRhbG9nIGFzIGNhdGFsb2cKZnJvbSB3b3JrZXIuZGF0YXNldF9yZWdpc3RyeS5jYXRhbG9nIGltcG9ydCBEYXRhc2V0Q2F0YWxvZwoKZGVmIHdyaXRlX3Byb2JlX3NuYXBzaG90KGhvbWUsIGZpbGVfY291bnQpOgogICAgY2FjaGVfcmVwb19kaXIgPSBob21lIC8gIi5jYWNoZSIgLyAiaHVnZ2luZ2ZhY2UiIC8gImh1YiIgLyAiZGF0YXNldHMtLW9yZy0tcHJvYmUiCiAgICBzbmFwc2hvdF9kaXIgPSBjYWNoZV9yZXBvX2RpciAvICJzbmFwc2hvdHMiIC8gInNuYXBzaG90LXByb2JlIgogICAgcmVmc19kaXIgPSBjYWNoZV9yZXBvX2RpciAvICJyZWZzIgogICAgcmVmc19kaXIubWtkaXIocGFyZW50cz1UcnVlKQogICAgcmVmc19kaXIuam9pbnBhdGgoIm1haW4iKS53cml0ZV90ZXh0KCJzbmFwc2hvdC1wcm9iZSIsIGVuY29kaW5nPSJ1dGYtOCIpCiAgICBleHBlY3RlZF9maWxlcyA9IDAKICAgIHNwbGl0cyA9ICgidHJhaW4iLCAidmFsaWRhdGlvbiIsICJ0ZXN0IikKICAgIHJvd19wYXlsb2FkID0ganNvbi5kdW1wcyh7InByb21wdCI6ICJoZWxsbyIsICJhbnN3ZXIiOiAid29ybGQifSkgKyAiXG4iCiAgICBmb3IgaW5kZXggaW4gcmFuZ2UoZmlsZV9jb3VudCk6CiAgICAgICAgY29uZmlnID0gZiJjb25maWcte2luZGV4ICUgMTI6MDJkfSIKICAgICAgICBzcGxpdCA9IHNwbGl0c1tpbmRleCAlIGxlbihzcGxpdHMpXQogICAgICAgIGRhdGFfZGlyID0gc25hcHNob3RfZGlyIC8gY29uZmlnCiAgICAgICAgZGF0YV9kaXIubWtkaXIocGFyZW50cz1UcnVlLCBleGlzdF9vaz1UcnVlKQogICAgICAgIChkYXRhX2RpciAvIGYie3NwbGl0fS17aW5kZXg6MDVkfS5qc29ubCIpLndyaXRlX3RleHQocm93X3BheWxvYWQsIGVuY29kaW5nPSJ1dGYtOCIpCiAgICAgICAgZXhwZWN0ZWRfZmlsZXMgKz0gMQogICAgc25hcHNob3RfZGlyLmpvaW5wYXRoKCJSRUFETUUubWQiKS53cml0ZV90ZXh0KCIjIFByb2JlIGRhdGFzZXRcbiIsIGVuY29kaW5nPSJ1dGYtOCIpCiAgICByZXR1cm4gZXhwZWN0ZWRfZmlsZXMgKyAxCgpmaWxlX2NvdW50ID0gMjQwMApzYW1wbGVzID0gNQplbGFwc2VkX3NhbXBsZXMgPSBbXQpwZWFrX3NhbXBsZXMgPSBbXQpoZWxwZXJfY2FsbF9zYW1wbGVzID0gW10KZmlsZV9jb3VudF9zYW1wbGVzID0gW10Kb3JpZ2luYWxfc3BsaXQgPSBjYXRhbG9nLl9pbmZlcnJlZF9zcGxpdApvcmlnaW5hbF9jb25maWcgPSBjYXRhbG9nLl9pbmZlcnJlZF9jb25maWcKZm9yIF8gaW4gcmFuZ2Uoc2FtcGxlcyk6CiAgICB3aXRoIHRlbXBmaWxlLlRlbXBvcmFyeURpcmVjdG9yeShwcmVmaXg9Im1lbGl4LWRhdGFzZXQtcmVnaXN0cnktcHJvYmUtIikgYXMgdG1wOgogICAgICAgIGhvbWUgPSBQYXRoKHRtcCkgLyAiaG9tZSIKICAgICAgICBleHBlY3RlZF9maWxlcyA9IHdyaXRlX3Byb2JlX3NuYXBzaG90KGhvbWUsIGZpbGVfY291bnQpCiAgICAgICAgbm9ubG9jYWxfaGVscGVyID0gWzBdCiAgICAgICAgZGVmIGNvdW50ZWRfc3BsaXQocmVsYXRpdmVfcGF0aCk6CiAgICAgICAgICAgIG5vbmxvY2FsX2hlbHBlclswXSArPSAxCiAgICAgICAgICAgIHJldHVybiBvcmlnaW5hbF9zcGxpdChyZWxhdGl2ZV9wYXRoKQogICAgICAgIGRlZiBjb3VudGVkX2NvbmZpZyhyZWxhdGl2ZV9wYXRoKToKICAgICAgICAgICAgbm9ubG9jYWxfaGVscGVyWzBdICs9IDEKICAgICAgICAgICAgcmV0dXJuIG9yaWdpbmFsX2NvbmZpZyhyZWxhdGl2ZV9wYXRoKQogICAgICAgIGNhdGFsb2cuX2luZmVycmVkX3NwbGl0ID0gY291bnRlZF9zcGxpdAogICAgICAgIGNhdGFsb2cuX2luZmVycmVkX2NvbmZpZyA9IGNvdW50ZWRfY29uZmlnCiAgICAgICAgdHJ5OgogICAgICAgICAgICB0cmFjZW1hbGxvYy5zdGFydCgpCiAgICAgICAgICAgIHN0YXJ0ZWQgPSB0aW1lLnBlcmZfY291bnRlcigpCiAgICAgICAgICAgIHBheWxvYWQgPSBEYXRhc2V0Q2F0YWxvZyhlbnZpcm9ubWVudD17IkhPTUUiOiBvcy5mc3BhdGgoaG9tZSl9KS5yZWdpc3RyeV9zbmFwc2hvdF9wYXlsb2FkKCkKICAgICAgICAgICAgZWxhcHNlZF9tcyA9ICh0aW1lLnBlcmZfY291bnRlcigpIC0gc3RhcnRlZCkgKiAxMDAwLjAKICAgICAgICAgICAgX2N1cnJlbnQsIHBlYWsgPSB0cmFjZW1hbGxvYy5nZXRfdHJhY2VkX21lbW9yeSgpCiAgICAgICAgICAgIHRyYWNlbWFsbG9jLnN0b3AoKQogICAgICAgIGZpbmFsbHk6CiAgICAgICAgICAgIGNhdGFsb2cuX2luZmVycmVkX3NwbGl0ID0gb3JpZ2luYWxfc3BsaXQKICAgICAgICAgICAgY2F0YWxvZy5faW5mZXJyZWRfY29uZmlnID0gb3JpZ2luYWxfY29uZmlnCiAgICAgICAgICAgIGlmIHRyYWNlbWFsbG9jLmlzX3RyYWNpbmcoKToKICAgICAgICAgICAgICAgIHRyYWNlbWFsbG9jLnN0b3AoKQogICAgICAgIGRhdGFzZXRzID0gcGF5bG9hZC5nZXQoImRhdGFzZXRzIiwgW10pCiAgICAgICAgaWYgbGVuKGRhdGFzZXRzKSAhPSAxOgogICAgICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KCJ1bmV4cGVjdGVkIGRhdGFzZXQgY291bnQiKQogICAgICAgIGRhdGFzZXQgPSBkYXRhc2V0c1swXQogICAgICAgIGlmIGxlbihkYXRhc2V0LmdldCgiZmlsZXMiLCBbXSkpICE9IGV4cGVjdGVkX2ZpbGVzOgogICAgICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KCJ1bmV4cGVjdGVkIGRhdGFzZXQgZmlsZSBjb3VudCIpCiAgICAgICAgaWYgZGF0YXNldC5nZXQoInNwbGl0cyIpICE9IFsidGVzdCIsICJ0cmFpbiIsICJ2YWxpZGF0aW9uIl06CiAgICAgICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoInVuZXhwZWN0ZWQgc3BsaXRzIikKICAgICAgICBpZiBsZW4oZGF0YXNldC5nZXQoImNvbmZpZ3MiLCBbXSkpICE9IDEzOgogICAgICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KCJ1bmV4cGVjdGVkIGNvbmZpZ3MiKQogICAgICAgIGVsYXBzZWRfc2FtcGxlcy5hcHBlbmQoZWxhcHNlZF9tcykKICAgICAgICBwZWFrX3NhbXBsZXMuYXBwZW5kKGZsb2F0KHBlYWspKQogICAgICAgIGhlbHBlcl9jYWxsX3NhbXBsZXMuYXBwZW5kKGZsb2F0KG5vbmxvY2FsX2hlbHBlclswXSkpCiAgICAgICAgZmlsZV9jb3VudF9zYW1wbGVzLmFwcGVuZChmbG9hdChleHBlY3RlZF9maWxlcykpCnByaW50KGpzb24uZHVtcHMoeyJlbGFwc2VkX21zX21lYW4iOiBzdGF0aXN0aWNzLmZtZWFuKGVsYXBzZWRfc2FtcGxlcyksICJwZWFrX2J5dGVzX21lYW4iOiBzdGF0aXN0aWNzLmZtZWFuKHBlYWtfc2FtcGxlcyksICJsZWdhY3lfaW5mZXJlbmNlX2hlbHBlcl9jYWxsc19tZWFuIjogc3RhdGlzdGljcy5mbWVhbihoZWxwZXJfY2FsbF9zYW1wbGVzKSwgImZpbGVfY291bnRfbWVhbiI6IHN0YXRpc3RpY3MuZm1lYW4oZmlsZV9jb3VudF9zYW1wbGVzKSwgInNhbXBsZV9jb3VudCI6IGZsb2F0KHNhbXBsZXMpfSwgc29ydF9rZXlzPVRydWUpKQo=\\\"))\"; fi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "legacy_inference_helper_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0
+      }
+    ]
+  },
+  {
     "id": "multimodal-fast-path-signature-top-level-key-cache",
     "name": "Multimodal fast-path signature top-level key cache",
     "runner": "ubuntu-latest",
