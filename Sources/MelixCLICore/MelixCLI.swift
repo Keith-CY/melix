@@ -179,6 +179,8 @@ public struct LoraPublishOptions: Equatable, Sendable {
     public let exportKind: LoraPublishExportKind?
     public let artifactPath: String
     public let artifactManifestPath: String
+    public let publishBackend: String
+    public let localPublishRoot: String
     public let json: Bool
 
     public init(
@@ -187,6 +189,8 @@ public struct LoraPublishOptions: Equatable, Sendable {
         exportKind: LoraPublishExportKind?,
         artifactPath: String,
         artifactManifestPath: String = "",
+        publishBackend: String = "",
+        localPublishRoot: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -194,6 +198,8 @@ public struct LoraPublishOptions: Equatable, Sendable {
         self.exportKind = exportKind
         self.artifactPath = artifactPath
         self.artifactManifestPath = artifactManifestPath
+        self.publishBackend = publishBackend
+        self.localPublishRoot = localPublishRoot
         self.json = json
     }
 }
@@ -864,6 +870,8 @@ public struct QuantizeOptions: Equatable, Sendable {
     public let calibrationDatasetURI: String
     public let qualityDelta: String
     public let latencyDelta: String
+    public let localInferenceSmokeMode: String
+    public let localInferenceSmokePrompt: String
     public let json: Bool
 
     public init(
@@ -878,6 +886,8 @@ public struct QuantizeOptions: Equatable, Sendable {
         calibrationDatasetURI: String = "",
         qualityDelta: String = "",
         latencyDelta: String = "",
+        localInferenceSmokeMode: String = "",
+        localInferenceSmokePrompt: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -891,6 +901,8 @@ public struct QuantizeOptions: Equatable, Sendable {
         self.calibrationDatasetURI = calibrationDatasetURI
         self.qualityDelta = qualityDelta
         self.latencyDelta = latencyDelta
+        self.localInferenceSmokeMode = localInferenceSmokeMode
+        self.localInferenceSmokePrompt = localInferenceSmokePrompt
         self.json = json
     }
 }
@@ -902,6 +914,8 @@ public struct UploadOptions: Equatable, Sendable {
     public let artifactPath: String
     public let artifactKind: String
     public let artifactManifestPath: String
+    public let publishBackend: String
+    public let localPublishRoot: String
     public let json: Bool
 
     public init(
@@ -911,6 +925,8 @@ public struct UploadOptions: Equatable, Sendable {
         artifactPath: String = "",
         artifactKind: String = "",
         artifactManifestPath: String = "",
+        publishBackend: String = "",
+        localPublishRoot: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -919,6 +935,8 @@ public struct UploadOptions: Equatable, Sendable {
         self.artifactPath = artifactPath
         self.artifactKind = artifactKind
         self.artifactManifestPath = artifactManifestPath
+        self.publishBackend = publishBackend
+        self.localPublishRoot = localPublishRoot
         self.json = json
     }
 }
@@ -1465,8 +1483,8 @@ public enum MelixCLIParser {
     Usage:
       melix doctor [--json]
       melix convert --model-id MODEL_ID [--output-dir PATH] [--target-format FORMAT] [--json]
-      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--quantization-mode (ptq|qat)] [--source-artifact-kind (base_model|merged_adapter|adapter_export)] [--source-artifact-path PATH] [--calibration-dataset-uri PATH] [--quality-delta N] [--latency-delta N] [--json]
-      melix upload --model-id MODEL_ID --target-repo REPO [--output-dir PATH] [--artifact-path PATH] [--artifact-kind KIND] [--artifact-manifest-path PATH] [--json]
+      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--quantization-mode (ptq|qat)] [--source-artifact-kind (base_model|merged_adapter|adapter_export)] [--source-artifact-path PATH] [--calibration-dataset-uri PATH] [--quality-delta N] [--latency-delta N] [--local-inference-smoke-mode (structural|runtime_generate)] [--local-inference-smoke-prompt TEXT] [--json]
+      melix upload --model-id MODEL_ID --target-repo REPO [--output-dir PATH] [--artifact-path PATH] [--artifact-kind KIND] [--artifact-manifest-path PATH] [--publish-backend BACKEND] [--local-publish-root PATH] [--json]
       melix model list [--json]
       melix model inspect --model-id MODEL_ID [--json]
       melix model load --model-id MODEL_ID [--memory-budget-bytes N] [--json]
@@ -1509,7 +1527,7 @@ public enum MelixCLIParser {
       melix lora dataset build --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--output-dir PATH] [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
       melix lora remove-derived --model-id MODEL_ID (--derived-model-id ID | --manifest-path PATH) [--json]
-      melix lora publish --model-id MODEL_ID --target-repo REPO (--adapter-path PATH | --merged-model-path PATH | --manifest-path PATH) [--export-kind (adapter|merged)] [--json]
+      melix lora publish --model-id MODEL_ID --target-repo REPO (--adapter-path PATH | --merged-model-path PATH | --manifest-path PATH) [--export-kind (adapter|merged)] [--publish-backend BACKEND] [--local-publish-root PATH] [--json]
       melix lora experiments list [--model-id MODEL_ID] [--json]
       melix lora experiments show --group-id GROUP_ID [--model-id MODEL_ID] [--json]
       melix lora resume --group-id GROUP_ID [--model-id MODEL_ID] [--preset PRESET] [--adapter-name NAME] [--dataset-uri URI] [--json]
@@ -1611,6 +1629,10 @@ public enum MelixCLIParser {
         if !sourceArtifactKind.isEmpty, ["base_model", "merged_adapter", "adapter_export"].contains(sourceArtifactKind) == false {
             throw MelixCLIError.usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
         }
+        let localInferenceSmokeMode = values.single["--local-inference-smoke-mode"] ?? ""
+        if !localInferenceSmokeMode.isEmpty, ["structural", "runtime_generate"].contains(localInferenceSmokeMode) == false {
+            throw MelixCLIError.usage("Invalid value for --local-inference-smoke-mode. Expected one of: structural, runtime_generate.")
+        }
         return .quantize(
             .init(
                 modelID: modelID,
@@ -1624,6 +1646,8 @@ public enum MelixCLIParser {
                 calibrationDatasetURI: values.single["--calibration-dataset-uri"] ?? "",
                 qualityDelta: values.single["--quality-delta"] ?? "",
                 latencyDelta: values.single["--latency-delta"] ?? "",
+                localInferenceSmokeMode: localInferenceSmokeMode,
+                localInferenceSmokePrompt: values.single["--local-inference-smoke-prompt"] ?? "",
                 json: values.flags.contains("--json")
             )
         )
@@ -1645,6 +1669,8 @@ public enum MelixCLIParser {
                 artifactPath: values.single["--artifact-path"] ?? "",
                 artifactKind: values.single["--artifact-kind"] ?? "",
                 artifactManifestPath: values.single["--artifact-manifest-path"] ?? "",
+                publishBackend: values.single["--publish-backend"] ?? "",
+                localPublishRoot: values.single["--local-publish-root"] ?? "",
                 json: values.flags.contains("--json")
             )
         )
@@ -2503,6 +2529,8 @@ public enum MelixCLIParser {
                     exportKind: exportKind,
                     artifactPath: artifactPath,
                     artifactManifestPath: artifactManifestPath,
+                    publishBackend: values.single["--publish-backend"] ?? "",
+                    localPublishRoot: values.single["--local-publish-root"] ?? "",
                     json: values.flags.contains("--json")
                 )
             )
@@ -3935,6 +3963,12 @@ public actor MelixCLIRunner {
             if !options.latencyDelta.isEmpty {
                 ext["latency_delta"] = options.latencyDelta
             }
+            if !options.localInferenceSmokeMode.isEmpty {
+                ext["local_inference_smoke_mode"] = options.localInferenceSmokeMode
+            }
+            if !options.localInferenceSmokePrompt.isEmpty {
+                ext["local_inference_smoke_prompt"] = options.localInferenceSmokePrompt
+            }
             let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "quantize",
@@ -3955,6 +3989,12 @@ public actor MelixCLIRunner {
             }
             if !options.artifactManifestPath.isEmpty {
                 ext["artifact_manifest_path"] = options.artifactManifestPath
+            }
+            if !options.publishBackend.isEmpty {
+                ext["publish_backend"] = options.publishBackend
+            }
+            if !options.localPublishRoot.isEmpty {
+                ext["local_publish_root"] = options.localPublishRoot
             }
             let result = try await performModelOperation(
                 modelID: options.modelID,
@@ -4535,6 +4575,12 @@ public actor MelixCLIRunner {
             if !options.artifactManifestPath.isEmpty {
                 ext["artifact_manifest_path"] = options.artifactManifestPath
             }
+            if !options.publishBackend.isEmpty {
+                ext["publish_backend"] = options.publishBackend
+            }
+            if !options.localPublishRoot.isEmpty {
+                ext["local_publish_root"] = options.localPublishRoot
+            }
             let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "upload",
@@ -4959,6 +5005,8 @@ public actor MelixCLIRunner {
             appendOption("--calibration-dataset-uri", value: ext["calibration_dataset_uri"], into: &arguments)
             appendOption("--quality-delta", value: ext["quality_delta"], into: &arguments)
             appendOption("--latency-delta", value: ext["latency_delta"], into: &arguments)
+            appendOption("--local-inference-smoke-mode", value: ext["local_inference_smoke_mode"], into: &arguments)
+            appendOption("--local-inference-smoke-prompt", value: ext["local_inference_smoke_prompt"], into: &arguments)
             arguments.append("--json")
             return arguments
         case "upload":
@@ -4978,6 +5026,8 @@ public actor MelixCLIRunner {
                         appendOption("--merged-model-path", value: artifactPath, into: &arguments)
                     }
                 }
+                appendOption("--publish-backend", value: ext["publish_backend"], into: &arguments)
+                appendOption("--local-publish-root", value: ext["local_publish_root"], into: &arguments)
                 arguments.append("--json")
                 return arguments
             }
@@ -4989,6 +5039,8 @@ public actor MelixCLIRunner {
             appendOption("--artifact-path", value: ext["artifact_path"], into: &arguments)
             appendOption("--artifact-kind", value: ext["artifact_kind"], into: &arguments)
             appendOption("--artifact-manifest-path", value: ext["artifact_manifest_path"], into: &arguments)
+            appendOption("--publish-backend", value: ext["publish_backend"], into: &arguments)
+            appendOption("--local-publish-root", value: ext["local_publish_root"], into: &arguments)
             arguments.append("--json")
             return arguments
         default:

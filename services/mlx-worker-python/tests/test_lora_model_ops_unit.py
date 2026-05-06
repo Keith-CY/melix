@@ -1546,7 +1546,7 @@ def test_preference_training_iterate_batches_rejects_too_small_dataset() -> None
         next(iterate_preference_batches(dataset, batch_size=2, max_seq_length=16))
 
 
-def test_preference_training_iterate_batches_rejects_distributed_sharding() -> None:
+def test_preference_training_iterate_batches_shards_comm_group_batches() -> None:
     pytest.importorskip("mlx.core")
     from worker.model_ops.preference_training import (
         PreferencePair,
@@ -1559,30 +1559,60 @@ def test_preference_training_iterate_batches_rejects_distributed_sharding() -> N
 
         def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
             del add_special_tokens
-            return {
-                "Prompt": [0],
-                "Good": [2],
-                "Bad": [3],
-            }[text]
+            suffix = int(text.rsplit("-", maxsplit=1)[-1])
+            return [suffix]
 
     class FakeCommGroup:
-        pass
+        def __init__(self, *, rank: int, size: int) -> None:
+            self._rank = rank
+            self._size = size
+
+        def rank(self) -> int:
+            return self._rank
+
+        def size(self) -> int:
+            return self._size
 
     dataset = PreferenceTokenDataset(
         [
-            PreferencePair(prompt="Prompt", chosen="Good", rejected="Bad"),
-            PreferencePair(prompt="Prompt", chosen="Good", rejected="Bad"),
+            PreferencePair(prompt="Prompt-0", chosen="Good-0", rejected="Bad-10"),
+            PreferencePair(prompt="Prompt-1", chosen="Good-1", rejected="Bad-11"),
+            PreferencePair(prompt="Prompt-2", chosen="Good-2", rejected="Bad-12"),
+            PreferencePair(prompt="Prompt-3", chosen="Good-3", rejected="Bad-13"),
         ],
         SimpleTokenizer(),
     )
 
-    with pytest.raises(NotImplementedError, match="Distributed preference batch sharding"):
+    rank_zero_batch = next(
+        iterate_preference_batches(
+            dataset,
+            batch_size=4,
+            max_seq_length=16,
+            seed=0,
+            comm_group=FakeCommGroup(rank=0, size=2),
+        )
+    )
+    rank_one_batch = next(
+        iterate_preference_batches(
+            dataset,
+            batch_size=4,
+            max_seq_length=16,
+            seed=0,
+            comm_group=FakeCommGroup(rank=1, size=2),
+        )
+    )
+
+    assert rank_zero_batch[1].tolist() == [[1, 3], [1, 3]]
+    assert rank_one_batch[1].tolist() == [[1, 3], [1, 3]]
+    assert rank_zero_batch[0][:, 1].tolist() == [0, 2]
+    assert rank_one_batch[0][:, 1].tolist() == [1, 3]
+    with pytest.raises(ValueError, match="divisible by the number of workers"):
         next(
             iterate_preference_batches(
                 dataset,
-                batch_size=2,
+                batch_size=4,
                 max_seq_length=16,
-                comm_group=FakeCommGroup(),
+                comm_group=FakeCommGroup(rank=0, size=3),
             )
         )
 

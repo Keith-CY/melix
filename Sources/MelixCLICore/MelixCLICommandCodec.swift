@@ -194,6 +194,8 @@ public enum MelixCLICommandCodec {
             appendOption("--calibration-dataset-uri", value: options.calibrationDatasetURI, into: &arguments)
             appendOption("--quality-delta", value: options.qualityDelta, into: &arguments)
             appendOption("--latency-delta", value: options.latencyDelta, into: &arguments)
+            appendOption("--local-inference-smoke-mode", value: options.localInferenceSmokeMode, into: &arguments)
+            appendOption("--local-inference-smoke-prompt", value: options.localInferenceSmokePrompt, into: &arguments)
             json = options.json
         case .upload(let options):
             arguments = ["upload"]
@@ -203,6 +205,8 @@ public enum MelixCLICommandCodec {
             appendOption("--artifact-path", value: options.artifactPath, into: &arguments)
             appendOption("--artifact-kind", value: options.artifactKind, into: &arguments)
             appendOption("--artifact-manifest-path", value: options.artifactManifestPath, into: &arguments)
+            appendOption("--publish-backend", value: options.publishBackend, into: &arguments)
+            appendOption("--local-publish-root", value: options.localPublishRoot, into: &arguments)
             json = options.json
         case .modelImport(let options):
             arguments = ["model", "import"]
@@ -409,6 +413,8 @@ public enum MelixCLICommandCodec {
                 // runner; emit only `--manifest-path` and the runner infers.
                 appendOption("--manifest-path", value: options.artifactManifestPath, into: &arguments)
             }
+            appendOption("--publish-backend", value: options.publishBackend, into: &arguments)
+            appendOption("--local-publish-root", value: options.localPublishRoot, into: &arguments)
             json = options.json
         case .benchRun(let options):
             arguments = ["bench", "run"]
