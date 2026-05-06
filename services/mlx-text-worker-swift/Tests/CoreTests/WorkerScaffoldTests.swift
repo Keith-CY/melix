@@ -960,13 +960,17 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertNotNil(summary.tokensPerSecond)
     }
 
-    func testVendoredChatSessionClearUsesAsyncSerialAccess() async {
-        let session = ChatSession(
-            makeLiveSwiftMLXModelContainer(promptTokens: [1, 2, 3]),
-            instructions: "system"
-        )
+    func testVendoredChatSessionClearUsesAsyncSerialAccess() async throws {
+        try await withTemporaryDefaultMetallib {
+            await Device.withDefaultDevice(.cpu) {
+                let session = ChatSession(
+                    makeLiveSwiftMLXModelContainer(promptTokens: [1, 2, 3]),
+                    instructions: "system"
+                )
 
-        await session.clear()
+                await session.clear()
+            }
+        }
     }
 
     @available(*, deprecated, message: "Exercises the deprecated ModelContainer chat-template compatibility shim.")
