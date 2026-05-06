@@ -258,29 +258,37 @@ class HubCatalog:
 
 
 def _next_cursor_from_link(link_header: str) -> str:
-    for raw_part in link_header.split(","):
-        part = raw_part.strip()
-        if 'rel="next"' not in part:
-            continue
-        if not part.startswith("<") or ">" not in part:
-            continue
-        next_url = part[1:part.index(">")]
-        return _cursor_query_value(next_url)
-    return ""
+    search_start = 0
+    while True:
+        url_start = link_header.find("<", search_start)
+        if url_start < 0:
+            return ""
+        url_end = link_header.find(">", url_start + 1)
+        if url_end < 0:
+            return ""
+        next_url_start = link_header.find("<", url_end + 1)
+        relation_end = next_url_start if next_url_start >= 0 else len(link_header)
+        if 'rel="next"' in link_header[url_end + 1 : relation_end]:
+            return _cursor_query_value(link_header[url_start + 1 : url_end])
+        search_start = relation_end
 
 
 def _cursor_query_value(url: str) -> str:
     query_start = url.find("?")
     if query_start < 0:
         return ""
-    query = url[query_start + 1:]
-    fragment_start = query.find("#")
-    if fragment_start >= 0:
-        query = query[:fragment_start]
-    for parameter in query.split("&"):
-        key, separator, value = parameter.partition("=")
-        if separator and key == "cursor":
-            return unquote_plus(value)
+    query_end = url.find("#", query_start + 1)
+    if query_end < 0:
+        query_end = len(url)
+    parameter_start = query_start + 1
+    while parameter_start < query_end:
+        parameter_end = url.find("&", parameter_start, query_end)
+        if parameter_end < 0:
+            parameter_end = query_end
+        value_start = parameter_start + len("cursor=")
+        if url.startswith("cursor=", parameter_start):
+            return unquote_plus(url[value_start:parameter_end])
+        parameter_start = parameter_end + 1
     return ""
 
 
