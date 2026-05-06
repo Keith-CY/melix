@@ -239,6 +239,34 @@ def test_classify_startup_failure_skips_worker_logs_for_host_port_conflict(
     assert read_paths == ["control-plane.stderr.log"]
 
 
+def test_classify_startup_failure_skips_all_logs_when_error_text_identifies_host_port_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control_plane_stderr = tmp_path / "control-plane.stderr.log"
+    worker_stderr = tmp_path / "python-worker.stderr.log"
+    control_plane_stderr.write_text("fatal error: unrelated stale crash\n", encoding="utf-8")
+    worker_stderr.write_text("Traceback: worker should not be inspected\n", encoding="utf-8")
+
+    def tracked_read(path: Path, *, chunk_size: int = 8192) -> str:
+        raise AssertionError(f"logs should not be read when error_text already identifies a port conflict: {path}")
+
+    monkeypatch.setattr(startup_signals_module, "_read_last_nonempty_line", tracked_read)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+            "control_plane_stderr_path": str(control_plane_stderr),
+            "python_worker_stderr_path": str(worker_stderr),
+        },
+        error_text="bind() failed: Address already in use",
+    )
+
+    assert report.classification == "host_port_conflict"
+    assert report.log_excerpt == "bind() failed: Address already in use"
+
+
 def test_classify_startup_failure_skips_worker_logs_for_control_plane_crash(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
