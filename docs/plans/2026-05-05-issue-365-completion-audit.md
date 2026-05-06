@@ -35,11 +35,16 @@ and what remains before the roadmap can be treated as implemented.
   - #451, `Issue 365: wire reward runtime scoring`
   - #457, `Bridge Window acceptance to Issue 365 runtime evidence`
 - Issue comments inspected:
-  - 2026-05-04 roadmap gap review comment. Its CPO, GRPO, RLHF,
-    `melix.alignment_run.v1`, quantization release-gate, QAT, dataset-contract,
-    and `melix alignment train` findings are either covered by the merged PRs
-    above, covered by the open #442/#446/#451/#457 stack, or retained below as
-    release/Window/#366 boundary gaps.
+  - 2026-05-04 roadmap gap review comment. Its findings are mapped as follows:
+    - CPO, GRPO, RLHF, and `melix.alignment_run.v1` are covered by the merged
+      PRs above or the open #442/#451 stack.
+    - Quantization release-gate and PTQ runtime evidence are covered by the
+      open #442 stack.
+    - QAT export/runtime evidence is covered by the open #446 stack.
+    - Dataset-contract and `melix alignment train` findings are covered by the
+      merged PRs above or the open #442/#451 stack.
+    - Window route evidence, Window-to-real-CLI readiness, and reward-model
+      training/PPO boundaries are retained below as release/Window/#366 gaps.
 
 ## Prompt-To-Artifact Checklist
 
