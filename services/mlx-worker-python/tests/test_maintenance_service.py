@@ -5114,6 +5114,10 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Pa
     assert core._benchmark_batch_sizes({"batch_size": "oops"}) == (1,)
     assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
     assert core._shape_benchmark_prompt("one two three", context_length=2) == "one two"
+    assert core._shape_benchmark_prompt("one two three", context_length=8) == (
+        "one two three one two three one two"
+    )
+    assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
     with pytest.raises(ModelOperationError):
         core._measure_text_bench_sample(
             loaded_model=core._registry.load_model(WorkerModelCatalog.dev_text_model()),
