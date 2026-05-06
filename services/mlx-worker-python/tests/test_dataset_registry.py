@@ -241,7 +241,7 @@ def test_dataset_catalog_unlimited_unfiltered_read_preserves_full_selection(
     rows = read_hf_dataset_snapshot_rows(snapshot_dir)
 
     assert rows == [{"prompt": "first"}, {"prompt": "second"}]
-    assert selected_calls == [""]
+    assert selected_calls == []
 
 
 def test_dataset_catalog_row_reader_stops_file_scan_after_unsplit_limit(
@@ -311,6 +311,36 @@ def test_dataset_catalog_reads_json_and_csv_snapshots(tmp_path: Path) -> None:
     assert read_hf_dataset_snapshot_rows(snapshot_dir, split="train") == [{"prompt": "csv-row", "answer": "ok"}]
     assert read_hf_dataset_snapshot_rows(snapshot_dir, split="missing", limit=1) == []
     assert read_hf_dataset_snapshot_rows(snapshot_dir, limit=1) == [{"prompt": "csv-row", "answer": "ok"}]
+
+
+def test_dataset_catalog_path_split_matching_avoids_temporary_path_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingPath:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("split matching should use string stems, not Path(part).stem")
+
+    monkeypatch.setattr(catalog, "Path", FailingPath)
+
+    assert catalog._path_matches_split(Path("data/validation-00000.jsonl"), "validation") is True
+    assert catalog._path_matches_split(Path("custom/test.arrow"), "test") is True
+    assert catalog._path_matches_split(Path("train_dir/part-00000.parquet"), "train") is True
+    assert catalog._path_matches_split(Path("custom/eval.jsonl"), "train") is False
+
+
+def test_dataset_catalog_string_stem_matches_pathlib_for_split_names() -> None:
+    names = [
+        "train.jsonl",
+        "validation_foo.parquet",
+        "test-00000-of-00001.arrow",
+        "archive.train.jsonl",
+        ".hidden",
+        "train.",
+        "train..jsonl",
+    ]
+
+    for name in names:
+        assert catalog._string_stem(name) == Path(name).stem
 
 
 def test_dataset_catalog_reads_parquet_and_arrow_with_fake_pyarrow(

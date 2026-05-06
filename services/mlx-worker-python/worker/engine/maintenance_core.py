@@ -3527,10 +3527,11 @@ class MaintenanceCore:
             tokens = ["benchmark"]
         if len(tokens) >= context_length:
             return " ".join(tokens[:context_length])
-        repeated: list[str] = []
-        while len(repeated) < context_length:
-            repeated.extend(tokens)
-        return " ".join(repeated[:context_length])
+        full_repeats, remainder = divmod(context_length, len(tokens))
+        shaped_tokens = tokens * full_repeats
+        if remainder:
+            shaped_tokens += tokens[:remainder]
+        return " ".join(shaped_tokens)
 
     @staticmethod
     def _benchmark_execution_ext(

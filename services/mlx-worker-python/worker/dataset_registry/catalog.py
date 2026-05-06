@@ -682,7 +682,7 @@ def _path_matches_split(relative_path: Path, split: str) -> bool:
     normalized_split = split.lower()
     for part in relative_path.parts:
         lowered = part.lower()
-        stem = Path(part).stem.lower()
+        stem = _string_stem(part).lower()
         if (
             lowered == normalized_split
             or lowered.startswith(f"{normalized_split}-")
@@ -693,6 +693,15 @@ def _path_matches_split(relative_path: Path, split: str) -> bool:
         ):
             return True
     return False
+
+
+def _string_stem(name: str) -> str:
+    if not name or name.endswith("."):
+        return name
+    dot_index = name.rfind(".")
+    if dot_index <= 0:
+        return name
+    return name[:dot_index]
 
 
 def _hf_dataset_repo_id(cache_repo_dir: Path) -> str | None:

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import Mock
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
 
 import worker.model_ops.hub_catalog as hub_catalog_module
-from worker.model_ops.hub_catalog import HubCatalog, HubCatalogError, _is_mlx_compatible, _local_fit_evidence
+from worker.model_ops.hub_catalog import (
+    HubCatalog,
+    HubCatalogError,
+    _is_mlx_compatible,
+    _local_fit_evidence,
+    _size_hint_from_text,
+)
 
 
 KB = 1024
@@ -194,6 +201,20 @@ def test_is_mlx_compatible_preserves_card_data_tag_signal_after_fast_paths() -> 
     ) is True
 
 
+def test_is_mlx_compatible_skips_empty_card_tag_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    string_list = Mock(side_effect=AssertionError("empty cardData.tags should not be normalized"))
+    monkeypatch.setattr(hub_catalog_module, "_string_list", string_list)
+
+    assert _is_mlx_compatible(
+        repo_id="plain/standard-model",
+        tags=["transformers"],
+        library_name="transformers",
+        card_data={},
+        lowered_tags={"transformers"},
+    ) is False
+    string_list.assert_not_called()
+
+
 def test_is_mlx_compatible_keeps_library_name_fast_path() -> None:
     assert _is_mlx_compatible(
         repo_id="plain/library-tagged-model",
@@ -202,6 +223,37 @@ def test_is_mlx_compatible_keeps_library_name_fast_path() -> None:
         card_data={"tags": []},
         lowered_tags={"transformers"},
     ) is True
+
+
+def test_next_cursor_from_link_extracts_encoded_next_cursor_without_full_query_parse() -> None:
+    assert not hasattr(hub_catalog_module, "urlparse")
+    assert not hasattr(hub_catalog_module, "parse_qs")
+    link_header = (
+        '<https://huggingface.co/api/models?cursor=ignored>; rel="prev", '
+        '<https://huggingface.co/api/models?limit=10&cursor=abc%2Fdef+ghi&full=true#page>; rel="next"'
+    )
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "abc/def ghi"
+
+
+def test_next_cursor_from_link_returns_empty_for_missing_or_malformed_next_cursor() -> None:
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor=prev>; rel="prev"') == ""
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models>; rel="next"') == ""
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?limit=10>; rel="next"') == ""
+    assert hub_catalog_module._next_cursor_from_link('https://huggingface.co/api/models?cursor=broken; rel="next"') == ""
+
+
+def test_search_models_uses_next_cursor_from_link_header() -> None:
+    response = FakeHTTPResponse([{"id": "mlx-community/example", "tags": ["mlx"], "siblings": [], "cardData": {}}])
+    response.headers["Link"] = '<https://huggingface.co/api/models?limit=1&cursor=page%2B2>; rel="next"'
+
+    def opener(_request: Request):
+        return response
+
+    catalog = HubCatalog(opener=opener)
+    page = catalog.search_models(query="mlx", page_size=1, cursor="", mlx_only=False)
+
+    assert page.next_cursor == "page+2"
 
 
 def test_search_models_with_mlx_only_false_returns_all_results() -> None:
@@ -353,6 +405,14 @@ def test_search_models_marks_large_mlx_model_as_heavy_not_blocked() -> None:
     assert model.recommended_action == "review_risk"
     assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
     assert any("memory comfort budget" in reason for reason in model.local_fit_reasons)
+
+
+def test_size_hint_from_empty_text_skips_regex_search(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hub_catalog_module, "_BARE_SIZE_HINT_RE", object())
+    monkeypatch.setattr(hub_catalog_module, "_EXPLICIT_SIZE_HINT_RE", object())
+
+    assert _size_hint_from_text("", allow_bare=True) == 0
+    assert _size_hint_from_text("", allow_bare=False) == 0
 
 
 def test_search_models_ignores_sibling_sizes_without_weight_or_config_filenames() -> None:

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import unquote_plus, urlencode
 from urllib.request import Request, urlopen
 
 from worker.productization.device_identity import collect_device_identity
@@ -265,8 +265,22 @@ def _next_cursor_from_link(link_header: str) -> str:
         if not part.startswith("<") or ">" not in part:
             continue
         next_url = part[1:part.index(">")]
-        query = parse_qs(urlparse(next_url).query)
-        return _string(query.get("cursor", [""])[0])
+        return _cursor_query_value(next_url)
+    return ""
+
+
+def _cursor_query_value(url: str) -> str:
+    query_start = url.find("?")
+    if query_start < 0:
+        return ""
+    query = url[query_start + 1:]
+    fragment_start = query.find("#")
+    if fragment_start >= 0:
+        query = query[:fragment_start]
+    for parameter in query.split("&"):
+        key, separator, value = parameter.partition("=")
+        if separator and key == "cursor":
+            return unquote_plus(value)
     return ""
 
 
@@ -359,7 +373,10 @@ def _is_mlx_compatible(
     lowered_repo_id = repo_id.lower()
     if "mlx" in lowered_repo_id:
         return True
-    return "mlx" in {tag.lower() for tag in _string_list(card_data.get("tags"))}
+    card_tags = card_data.get("tags")
+    if not card_tags:
+        return False
+    return "mlx" in {tag.lower() for tag in _string_list(card_tags)}
 
 
 def _local_fit_evidence(
@@ -530,6 +547,8 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
 
 
 def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
+    if not text:
+        return 0
     pattern = _BARE_SIZE_HINT_RE if allow_bare else _EXPLICIT_SIZE_HINT_RE
     match = pattern.search(text)
     if not match:
