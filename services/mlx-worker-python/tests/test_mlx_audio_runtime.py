@@ -253,6 +253,127 @@ def test_mlx_audio_speech_runtime_reuses_generate_signature_from_load(
     assert signature_calls == 1
 
 
+def test_mlx_audio_speech_runtime_reuses_cached_generate_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import worker.runtime.mlx_audio_runtime as mlx_audio_runtime
+
+    captured_calls: list[dict[str, object]] = []
+
+    class FakeChunk:
+        def __init__(self, audio):
+            self.audio = audio
+            self.sample_rate = 24_000
+
+    class FakeTTSModel:
+        def generate(self, text, voice=None, instruct=None, verbose=False):
+            captured_calls.append(
+                {"text": text, "voice": voice, "instruct": instruct, "verbose": verbose}
+            )
+            yield FakeChunk([0.1, -0.1])
+
+    def fake_load_model(model_path: str, strict: bool = True):
+        return FakeTTSModel()
+
+    signature_calls = 0
+    original_signature = mlx_audio_runtime.signature
+
+    def tracked_signature(callable_object):
+        nonlocal signature_calls
+        signature_calls += 1
+        return original_signature(callable_object)
+
+    monkeypatch.setattr(mlx_audio_runtime, "signature", tracked_signature)
+    _install_fake_mlx_audio(monkeypatch, tts_loader=fake_load_model)
+
+    runtime = mlx_audio_runtime.MLXAudioSpeechRuntime()
+    loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
+
+    assert signature_calls == 1
+
+    for index in range(2):
+        result = runtime.speak(
+            loaded,
+            inference_pb2.SpeakRequest(
+                input=f"cached signature {index}",
+                voice="alloy",
+                instructions="Speak calmly.",
+                format="wav",
+            ),
+        )
+        assert result.audio_bytes.startswith(b"RIFF")
+
+    assert signature_calls == 1
+    assert captured_calls == [
+        {
+            "text": "cached signature 0",
+            "voice": "alloy",
+            "instruct": "Speak calmly.",
+            "verbose": False,
+        },
+        {
+            "text": "cached signature 1",
+            "voice": "alloy",
+            "instruct": "Speak calmly.",
+            "verbose": False,
+        },
+    ]
+
+
+def test_mlx_audio_speech_runtime_preserves_signature_fallback_for_legacy_loaded_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    import worker.runtime.mlx_audio_runtime as mlx_audio_runtime
+
+    class FakeChunk:
+        def __init__(self, audio):
+            self.audio = audio
+            self.sample_rate = 24_000
+
+    class FakeTTSModel:
+        def generate(self, text, voice=None, instruct=None, verbose=False):
+            _ = text
+            _ = voice
+            _ = instruct
+            _ = verbose
+            yield FakeChunk([0.1, -0.1])
+
+    def fake_load_model(model_path: str, strict: bool = True):
+        _ = model_path
+        _ = strict
+        return FakeTTSModel()
+
+    signature_calls = 0
+    original_signature = mlx_audio_runtime.signature
+
+    def tracked_signature(callable_object):
+        nonlocal signature_calls
+        signature_calls += 1
+        return original_signature(callable_object)
+
+    monkeypatch.setattr(mlx_audio_runtime, "signature", tracked_signature)
+    _install_fake_mlx_audio(monkeypatch, tts_loader=fake_load_model)
+
+    runtime = mlx_audio_runtime.MLXAudioSpeechRuntime()
+    loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
+    legacy_loaded = replace(loaded, speech_generate_parameters=frozenset())
+
+    assert signature_calls == 1
+    result = runtime.speak(
+        legacy_loaded,
+        inference_pb2.SpeakRequest(
+            input="legacy cached payload",
+            voice="alloy",
+            instructions="Speak calmly.",
+            format="wav",
+        ),
+    )
+
+    assert result.audio_bytes.startswith(b"RIFF")
+    assert signature_calls == 2
+
+
 def test_mlx_audio_speech_runtime_falls_back_to_voice_descriptor_only_for_instructional_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

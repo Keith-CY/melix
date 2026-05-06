@@ -163,6 +163,16 @@ def test_scope_report_selects_video_preprocessing_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "video-preprocessing-uri-byte-length-reuse"
 
 
+def test_scope_report_selects_mlx_audio_speech_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-audio-speech-signature-cache"
+
+
 def test_scope_report_selects_only_matching_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1094,6 +1104,26 @@ def test_video_preprocessing_uri_probe_script_emits_metrics(
     assert metrics["iterations_per_sample"] == 50000.0
     assert metrics["byte_length_getattrs_per_call"] == 1.0
     assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_mlx_audio_speech_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MLX_AUDIO_SIGNATURE_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_MLX_AUDIO_SIGNATURE_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/mlx_audio_speech_signature_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations_per_sample"] == 3.0
+    assert metrics["inspect_signature_calls_mean"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["output_bytes_mean"] > 0
 
 
 def test_registered_probes_expose_focused_commands() -> None:
