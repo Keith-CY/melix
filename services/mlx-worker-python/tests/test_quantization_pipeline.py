@@ -727,10 +727,32 @@ def test_quantize_job_rejects_unknown_quantization_backend(tmp_path: Path) -> No
     assert events[-1].failed.error.details["quantization_backend"] == "shell-script"
 
 
-def test_quantize_job_rejects_qat_for_mlx_lm_convert_backend(tmp_path: Path) -> None:
+def test_quantize_job_runs_qat_aware_mlx_lm_convert_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = build_service(tmp_path)
     source_artifact_path = tmp_path / "merged-model"
     source_artifact_path.mkdir()
+    (source_artifact_path / "config.json").write_text("{}\n", encoding="utf-8")
+    (source_artifact_path / "model.safetensors").write_bytes(b"melix-merged-source")
+
+    convert_calls: list[dict[str, object]] = []
+
+    def fake_mlx_lm_convert(**kwargs: object) -> None:
+        convert_calls.append(kwargs)
+        output_path = kwargs["output_path"]
+        assert isinstance(output_path, Path)
+        output_path.mkdir(parents=True)
+        (output_path / "config.json").write_text("{}\n", encoding="utf-8")
+        (output_path / "tokenizer.json").write_text("{}\n", encoding="utf-8")
+        (output_path / "model.safetensors").write_bytes(b"real-mlx-qat-aware-weights")
+
+    monkeypatch.setattr(
+        OQQuantizationPipeline,
+        "_mlx_lm_convert",
+        staticmethod(fake_mlx_lm_convert),
+    )
 
     events = list(
         service.ConvertModel(
@@ -740,21 +762,53 @@ def test_quantize_job_rejects_qat_for_mlx_lm_convert_backend(tmp_path: Path) -> 
                 weight_quant="q4",
                 kv_quant="q8",
                 generate_manifest=True,
+                run_smoke_test=True,
                 ext={
                     "operation": "quantize",
                     "quantization_backend": "mlx_lm_convert",
                     "quantization_mode": "qat",
                     "source_artifact_kind": "merged_adapter",
                     "source_artifact_path": str(source_artifact_path),
+                    "qat_fake_quant": "enabled",
+                    "qat_training_steps": "2",
+                    "mlx_lm_q_mode": "affine",
                 },
             ),
             context=None,
         )
     )
 
-    assert events[-1].failed.error.code == "unsupported_quantization_backend"
-    assert events[-1].failed.error.details["quantization_backend"] == "mlx_lm_convert"
-    assert events[-1].failed.error.details["quantization_mode"] == "qat"
+    assert events[-1].HasField("completed")
+    assert len(convert_calls) == 1
+    assert convert_calls[0]["source_path"] == source_artifact_path.resolve()
+    manifest_payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    bundle_path = Path(events[-1].completed.output_path)
+    qat = manifest_payload["qat"]
+    qat_files = [
+        Path(qat["training_manifest_path"]),
+        Path(qat["training_trace_path"]),
+        Path(qat["fake_quant_artifact_path"]),
+    ]
+    expected_artifact_bytes = sum(
+        (bundle_path / file_name).stat().st_size
+        for file_name in ("config.json", "tokenizer.json", "model.safetensors")
+    ) + sum(path.stat().st_size for path in qat_files)
+
+    assert manifest_payload["quantization_mode"] == "qat"
+    assert manifest_payload["execution_backend"] == "mlx_lm_convert"
+    assert manifest_payload["real_weight_conversion"] is True
+    assert manifest_payload["source_artifact_kind"] == "merged_adapter"
+    assert manifest_payload["artifact_bytes"] == expected_artifact_bytes
+    assert manifest_payload["release_gate"]["local_inference_smoke_result"] == "passed"
+    assert manifest_payload["local_inference_smoke"]["checked_files"] == [
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors",
+    ]
+    assert qat["training_backend"] == "melix_fake_quant_optimizer"
+    assert qat["training_steps"] == 2
+    assert qat["source_file_count"] == 2
+    assert all(path.is_file() for path in qat_files)
 
 
 def test_quantize_job_rejects_mlx_lm_convert_without_local_source(tmp_path: Path) -> None:

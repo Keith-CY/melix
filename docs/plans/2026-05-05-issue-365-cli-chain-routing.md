@@ -69,6 +69,10 @@ local runtime acceptance requirements.
 - Publish the PTQ fused derived model from
   `lora.activate.result.derived_model_path` via `merged_model_path` so the real
   pipeline uses the activation result field that the runtime actually returns.
+- Route the QAT-aware acceptance case through the same fused merged export shape,
+  run a two-layer `debug_fast` QLoRA probe for bounded runtime cost, record
+  Melix fake-quant/QAT evidence, and request `quantization_backend=mlx_lm_convert`
+  so the final quantized bundle can be loaded for real local runtime smoke.
 - Route PTQ/QAT acceptance through the quantized bundle manifest's
   `local_inference_smoke` and `release_gate.local_inference_smoke_result`
   checks instead of treating `quantized_model_bundle` directories as generic
@@ -81,7 +85,8 @@ local runtime acceptance requirements.
   dataset, reward-model, or runtime evidence bundle for all cases.
 - GRPO candidate generation from a live policy runtime.
 - RLHF reward-model integration from issue 366.
-- QAT trainer/export implementation.
+- MLX-native full-tensor QAT trainer implementation. This slice covers
+  QAT-aware export evidence plus a real MLX-LM converted final bundle.
 - Native Window UI acceptance.
 - Closing issue 365.
 
@@ -334,6 +339,22 @@ MLX-LM conversion backend:
   `tokenizer_config.json`, and `manifest.json`.
 - `MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-ptq-backend-real" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-ptq-backend-real-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-ptq-backend-real-swift.sock" bash scripts/dev_down.sh`:
   stopped the named PTQ backend runtime stack.
+
+Results on 2026-05-06 after routing the QAT acceptance case through fused
+merged export and QAT-aware MLX-LM conversion:
+
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
+  13 passed.
+- `python3 scripts/issue365_acceptance_bundle.py --execution-mode plan --case-id qat_quantized_inference --output-dir .runtime/issue365/qat-aware-plan-r2 --timestamp 2026-05-06T181500Z --json`:
+  wrote a selected-case plan bundle with four steps:
+  `qat_train -> qat_fuse_merged_model -> qat_publish_export -> qat_quantize`.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-qat-aware-clean" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-qat-aware-clean-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-qat-aware-clean-swift.sock" MELIX_HTTP_PORT=12476 python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id qat_quantized_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --calibration-dataset-uri "$PWD/.runtime/issue365/input-datasets/calibration" --output-dir .runtime/issue365/qat-aware-real-probe-r5 --timestamp 2026-05-06T183000Z --json`:
+  selected real QAT case passed with `release_ready=true`; the quantize receipt
+  recorded `execution_backend=mlx_lm_convert`, `real_weight_conversion=true`,
+  `source_artifact_kind=merged_adapter`, and
+  `release_gate.local_inference_smoke_result=passed`.
+- `find .runtime -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) -print`:
+  passed with no generated screenshot artifacts found.
 
 Results on 2026-05-05 after adding the acceptance bundle harness:
 

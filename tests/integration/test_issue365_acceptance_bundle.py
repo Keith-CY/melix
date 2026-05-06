@@ -181,8 +181,17 @@ def test_issue365_acceptance_bundle_plan_covers_required_cli_matrix(tmp_path: Pa
         if pipeline["name"] == "issue365-qat_quantized_inference"
     )
     qat_steps = {step["id"]: step for step in qat_pipeline["steps"]}
-    assert qat_steps["qat_publish_export"]["args"]["export_kind"] == "adapter"
-    assert qat_steps["qat_quantize"]["args"]["source_artifact_kind"] == "adapter_export"
+    assert qat_steps["qat_train"]["args"]["total_layers"] == 2
+    assert qat_steps["qat_train"]["args"]["num_layers"] == 2
+    assert qat_steps["qat_fuse_merged_model"]["command"] == "lora.activate"
+    assert qat_steps["qat_fuse_merged_model"]["args"]["activation_mode"] == "fused_derived_model"
+    assert qat_steps["qat_publish_export"]["args"]["merged_model_path"] == (
+        "${steps.qat_fuse_merged_model.result.derived_model_path}"
+    )
+    assert qat_steps["qat_publish_export"]["args"]["export_kind"] == "merged"
+    assert qat_steps["qat_quantize"]["args"]["source_artifact_kind"] == "merged_adapter"
+    assert qat_steps["qat_quantize"]["args"]["quantization_backend"] == "mlx_lm_convert"
+    assert qat_steps["qat_quantize"]["args"]["mlx_lm_q_mode"] == "affine"
     assert qat_steps["qat_quantize"]["args"]["local_inference_smoke_mode"] == "runtime_generate"
     assert qat_steps["qat_quantize"]["checks"] == ptq_steps["ptq_quantize"]["checks"]
     assert all(step["command"] != "chat.run" for step in qat_pipeline["steps"])

@@ -442,6 +442,7 @@ def _ptq_case() -> Issue365PipelineCase:
 
 def _qat_case() -> Issue365PipelineCase:
     train_step = "qat_train"
+    fuse_step = "qat_fuse_merged_model"
     publish_step = "qat_publish_export"
     quantize_step = "qat_quantize"
     return Issue365PipelineCase(
@@ -468,7 +469,19 @@ def _qat_case() -> Issue365PipelineCase:
                     "training_mode": "qlora",
                     "preset_id": "debug_fast",
                     "max_steps": 2,
+                    "total_layers": 2,
+                    "num_layers": 2,
                     "qat_fake_quant": "enabled",
+                },
+            },
+            {
+                "id": fuse_step,
+                "command": "lora.activate",
+                "args": {
+                    "model_id": "${inputs.model_id}",
+                    "adapter_path": f"${{steps.{train_step}.result.output_path}}",
+                    "derived_model_alias": "issue365-qat-merged",
+                    "activation_mode": "fused_derived_model",
                 },
             },
             {
@@ -477,8 +490,8 @@ def _qat_case() -> Issue365PipelineCase:
                 "args": {
                     "model_id": "${inputs.model_id}",
                     "target_repo": "melix/issue365-qat-export",
-                    "manifest_path": f"${{steps.{train_step}.result.output_path}}",
-                    "export_kind": "adapter",
+                    "merged_model_path": f"${{steps.{fuse_step}.result.derived_model_path}}",
+                    "export_kind": "merged",
                     "publish_backend": "local_filesystem",
                     "local_publish_root": "${inputs.local_publish_root}",
                 },
@@ -493,8 +506,10 @@ def _qat_case() -> Issue365PipelineCase:
                     "weight_quant": "q4",
                     "kv_quant": "q8",
                     "quantization_mode": "qat",
-                    "source_artifact_kind": "adapter_export",
+                    "source_artifact_kind": "merged_adapter",
                     "source_artifact_path": f"${{steps.{publish_step}.result.output_path}}",
+                    "quantization_backend": "mlx_lm_convert",
+                    "mlx_lm_q_mode": "affine",
                     "calibration_dataset_uri": "${inputs.calibration_dataset_uri}",
                     "quality_delta": 0,
                     "latency_delta": 0,

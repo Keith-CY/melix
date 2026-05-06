@@ -131,24 +131,7 @@ class OQQuantizationPipeline:
 
         bundle_path = (output_dir / job_id / "quantize.artifact").resolve()
         qat_training_result: QATFakeQuantTrainingResult | None = None
-        if quantization_mode == "qat":
-            qat_training_result = _run_qat_fake_quant_training(
-                request=request,
-                job_id=job_id,
-                source_artifact_kind=source_artifact_kind,
-                source_artifact_path=source_artifact_path,
-                profile=profile,
-                calibration_evidence=calibration_evidence,
-                bundle_path=bundle_path,
-            )
-        qat_metadata = _qat_metadata_for_request(
-            request,
-            quantization_mode=quantization_mode,
-            source_artifact_kind=source_artifact_kind,
-            source_artifact_path=source_artifact_path,
-            calibration_evidence=calibration_evidence,
-            qat_training_result=qat_training_result,
-        )
+        qat_metadata: dict[str, Any] | None = None
         if quantization_backend == _MLX_LM_CONVERT_QUANTIZATION_BACKEND:
             artifact_bytes = self._write_mlx_lm_quantized_bundle(
                 request=request,
@@ -156,8 +139,37 @@ class OQQuantizationPipeline:
                 profile=profile,
                 bundle_path=bundle_path,
             )
+            if quantization_mode == "qat":
+                qat_training_result = _run_qat_fake_quant_training(
+                    request=request,
+                    job_id=job_id,
+                    source_artifact_kind=source_artifact_kind,
+                    source_artifact_path=source_artifact_path,
+                    profile=profile,
+                    calibration_evidence=calibration_evidence,
+                    bundle_path=bundle_path,
+                )
+                artifact_bytes += qat_training_result.artifact_bytes
         else:
             bundle_path.mkdir(parents=True, exist_ok=True)
+            if quantization_mode == "qat":
+                qat_training_result = _run_qat_fake_quant_training(
+                    request=request,
+                    job_id=job_id,
+                    source_artifact_kind=source_artifact_kind,
+                    source_artifact_path=source_artifact_path,
+                    profile=profile,
+                    calibration_evidence=calibration_evidence,
+                    bundle_path=bundle_path,
+                )
+            qat_metadata = _qat_metadata_for_request(
+                request,
+                quantization_mode=quantization_mode,
+                source_artifact_kind=source_artifact_kind,
+                source_artifact_path=source_artifact_path,
+                calibration_evidence=calibration_evidence,
+                qat_training_result=qat_training_result,
+            )
 
             files = {
                 bundle_path / "config.json": {
@@ -196,6 +208,15 @@ class OQQuantizationPipeline:
                 ).encode("utf-8"),
             )
 
+        if quantization_mode == "qat" and qat_metadata is None:
+            qat_metadata = _qat_metadata_for_request(
+                request,
+                quantization_mode=quantization_mode,
+                source_artifact_kind=source_artifact_kind,
+                source_artifact_path=source_artifact_path,
+                calibration_evidence=calibration_evidence,
+                qat_training_result=qat_training_result,
+            )
         smoke_evidence = _not_requested_smoke_evidence(
             bundle_path=bundle_path,
             smoke_mode=smoke_mode,
@@ -725,19 +746,6 @@ def _validate_quantization_source(
             code="missing_source_artifact_path",
             message="Adapter-derived quantization requires source_artifact_path.",
             details={"source_artifact_kind": source_artifact_kind},
-        )
-    if (
-        quantization_backend == _MLX_LM_CONVERT_QUANTIZATION_BACKEND
-        and quantization_mode != "ptq"
-    ):
-        raise ModelOperationError(
-            code="unsupported_quantization_backend",
-            message="MLX-LM conversion backend supports PTQ only.",
-            details={
-                "quantization_backend": quantization_backend,
-                "quantization_mode": quantization_mode,
-                "supported_quantization_mode": "ptq",
-            },
         )
     if quantization_mode == "qat" and source_artifact_kind == "base_model":
         raise ModelOperationError(
