@@ -172,6 +172,7 @@ def test_issue365_acceptance_bundle_plan_covers_required_cli_matrix(tmp_path: Pa
     ptq_steps = {step["id"]: step for step in ptq_pipeline["steps"]}
     assert ptq_steps["ptq_fuse_merged_model"]["command"] == "lora.activate"
     assert ptq_steps["ptq_fuse_merged_model"]["args"]["activation_mode"] == "fused_derived_model"
+    assert ptq_steps["ptq_fuse_merged_model"]["checks"]["required_result_fields"] == ["derived_model_path"]
     assert ptq_steps["ptq_publish_export"]["args"]["merged_model_path"] == (
         "${steps.ptq_fuse_merged_model.result.derived_model_path}"
     )
@@ -197,6 +198,7 @@ def test_issue365_acceptance_bundle_plan_covers_required_cli_matrix(tmp_path: Pa
     assert qat_steps["qat_train"]["args"]["num_layers"] == 2
     assert qat_steps["qat_fuse_merged_model"]["command"] == "lora.activate"
     assert qat_steps["qat_fuse_merged_model"]["args"]["activation_mode"] == "fused_derived_model"
+    assert qat_steps["qat_fuse_merged_model"]["checks"]["required_result_fields"] == ["derived_model_path"]
     assert qat_steps["qat_publish_export"]["args"]["merged_model_path"] == (
         "${steps.qat_fuse_merged_model.result.derived_model_path}"
     )

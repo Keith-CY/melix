@@ -407,6 +407,7 @@ def _ptq_case() -> Issue365PipelineCase:
                     "derived_model_alias": "issue365-ptq-merged",
                     "activation_mode": "fused_derived_model",
                 },
+                "checks": {"required_result_fields": ["derived_model_path"]},
             },
             {
                 "id": publish_step,
@@ -489,6 +490,7 @@ def _qat_case() -> Issue365PipelineCase:
                     "derived_model_alias": "issue365-qat-merged",
                     "activation_mode": "fused_derived_model",
                 },
+                "checks": {"required_result_fields": ["derived_model_path"]},
             },
             {
                 "id": publish_step,

@@ -1169,8 +1169,10 @@ private enum MelixPipelineCommandBuilder {
         let mode = (string("quantization_mode", args) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard mode.isEmpty || ["ptq", "qat"].contains(mode) else {
-            throw MelixCLIError.usage("Pipeline command argument quantization_mode must be one of: ptq, qat.")
+        guard mode.isEmpty || MelixQuantizationAllowedValues.quantizationModes.contains(mode) else {
+            throw MelixCLIError.usage(
+                "Pipeline command argument quantization_mode must be one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.quantizationModes))."
+            )
         }
         return mode
     }
@@ -1179,8 +1181,10 @@ private enum MelixPipelineCommandBuilder {
         let kind = (string("source_artifact_kind", args) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard kind.isEmpty || ["base_model", "merged_adapter", "adapter_export"].contains(kind) else {
-            throw MelixCLIError.usage("Pipeline command argument source_artifact_kind must be one of: base_model, merged_adapter, adapter_export.")
+        guard kind.isEmpty || MelixQuantizationAllowedValues.sourceArtifactKinds.contains(kind) else {
+            throw MelixCLIError.usage(
+                "Pipeline command argument source_artifact_kind must be one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.sourceArtifactKinds))."
+            )
         }
         return kind
     }
@@ -1189,8 +1193,10 @@ private enum MelixPipelineCommandBuilder {
         let backend = (string("quantization_backend", args) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard backend.isEmpty || ["manifest_only", "mlx_lm_convert"].contains(backend) else {
-            throw MelixCLIError.usage("Pipeline command argument quantization_backend must be one of: manifest_only, mlx_lm_convert.")
+        guard backend.isEmpty || MelixQuantizationAllowedValues.quantizationBackends.contains(backend) else {
+            throw MelixCLIError.usage(
+                "Pipeline command argument quantization_backend must be one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.quantizationBackends))."
+            )
         }
         return backend
     }
@@ -1199,8 +1205,10 @@ private enum MelixPipelineCommandBuilder {
         let mode = (string("mlx_lm_q_mode", args) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard mode.isEmpty || ["affine", "mxfp4", "nvfp4", "mxfp8"].contains(mode) else {
-            throw MelixCLIError.usage("Pipeline command argument mlx_lm_q_mode must be one of: affine, mxfp4, nvfp4, mxfp8.")
+        guard mode.isEmpty || MelixQuantizationAllowedValues.mlxLMQModes.contains(mode) else {
+            throw MelixCLIError.usage(
+                "Pipeline command argument mlx_lm_q_mode must be one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.mlxLMQModes))."
+            )
         }
         return mode
     }

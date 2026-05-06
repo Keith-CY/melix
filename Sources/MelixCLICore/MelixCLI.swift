@@ -2,6 +2,17 @@ import Foundation
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
+enum MelixQuantizationAllowedValues {
+    static let quantizationModes = ["ptq", "qat"]
+    static let sourceArtifactKinds = ["base_model", "merged_adapter", "adapter_export"]
+    static let quantizationBackends = ["manifest_only", "mlx_lm_convert"]
+    static let mlxLMQModes = ["affine", "mxfp4", "nvfp4", "mxfp8"]
+
+    static func renderedList(_ values: [String]) -> String {
+        values.joined(separator: ", ")
+    }
+}
+
 public struct LoraListOptions: Equatable, Sendable {
     public let modelID: String
     public let json: Bool
@@ -878,6 +889,8 @@ public struct QuantizeOptions: Equatable, Sendable {
     public let localInferenceSmokePrompt: String
     public let json: Bool
 
+    // The parser and pipeline runner pass optional enum-like fields already
+    // trimmed and lowercased; this initializer preserves direct caller input.
     public init(
         modelID: String,
         outputDir: String = "",
@@ -1636,20 +1649,26 @@ public enum MelixCLIParser {
         let quantizationMode = (values.single["--quantization-mode"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if !quantizationMode.isEmpty, ["ptq", "qat"].contains(quantizationMode) == false {
-            throw MelixCLIError.usage("Invalid value for --quantization-mode. Expected one of: ptq, qat.")
+        if !quantizationMode.isEmpty, MelixQuantizationAllowedValues.quantizationModes.contains(quantizationMode) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --quantization-mode. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.quantizationModes))."
+            )
         }
         let sourceArtifactKind = (values.single["--source-artifact-kind"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if !sourceArtifactKind.isEmpty, ["base_model", "merged_adapter", "adapter_export"].contains(sourceArtifactKind) == false {
-            throw MelixCLIError.usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
+        if !sourceArtifactKind.isEmpty, MelixQuantizationAllowedValues.sourceArtifactKinds.contains(sourceArtifactKind) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --source-artifact-kind. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.sourceArtifactKinds))."
+            )
         }
         let quantizationBackend = (values.single["--quantization-backend"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if !quantizationBackend.isEmpty, ["manifest_only", "mlx_lm_convert"].contains(quantizationBackend) == false {
-            throw MelixCLIError.usage("Invalid value for --quantization-backend. Expected one of: manifest_only, mlx_lm_convert.")
+        if !quantizationBackend.isEmpty, MelixQuantizationAllowedValues.quantizationBackends.contains(quantizationBackend) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --quantization-backend. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.quantizationBackends))."
+            )
         }
         let mlxLMQBits = (values.single["--mlx-lm-q-bits"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !mlxLMQBits.isEmpty, Int(mlxLMQBits) == nil {
@@ -1662,8 +1681,10 @@ public enum MelixCLIParser {
         let mlxLMQMode = (values.single["--mlx-lm-q-mode"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if !mlxLMQMode.isEmpty, ["affine", "mxfp4", "nvfp4", "mxfp8"].contains(mlxLMQMode) == false {
-            throw MelixCLIError.usage("Invalid value for --mlx-lm-q-mode. Expected one of: affine, mxfp4, nvfp4, mxfp8.")
+        if !mlxLMQMode.isEmpty, MelixQuantizationAllowedValues.mlxLMQModes.contains(mlxLMQMode) == false {
+            throw MelixCLIError.usage(
+                "Invalid value for --mlx-lm-q-mode. Expected one of: \(MelixQuantizationAllowedValues.renderedList(MelixQuantizationAllowedValues.mlxLMQModes))."
+            )
         }
         let localInferenceSmokeMode = (values.single["--local-inference-smoke-mode"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
