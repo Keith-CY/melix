@@ -9,6 +9,7 @@ from worker.engine.rerank_core import RerankCore
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime import rerank_backends
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.rerank_backends import (
@@ -599,6 +600,58 @@ def test_contiguous_query_scan_does_not_allocate_document_slices() -> None:
     )
     with pytest.raises(AssertionError, match="without slicing"):
         NoSliceTokens(("swift", "runtime"))[0:1]
+
+
+def test_contiguous_query_scan_skips_full_comparison_until_first_token_matches(monkeypatch) -> None:
+    calls: list[int] = []
+    original_sequence_matches_at = rerank_backends._sequence_matches_at
+
+    def tracking_sequence_matches_at(haystack, needle, start):
+        calls.append(start)
+        return original_sequence_matches_at(haystack, needle, start)
+
+    monkeypatch.setattr(rerank_backends, "_sequence_matches_at", tracking_sequence_matches_at)
+
+    assert JinaV3RerankFamilyAdapter._contains_contiguous_query(
+        ("padding", "runtime", "control", "swift", "runtime"),
+        ("swift", "runtime"),
+    )
+    assert calls == [3]
+
+    calls.clear()
+    assert not JinaV3RerankFamilyAdapter._contains_contiguous_query(
+        ("padding", "runtime", "control", "worker"),
+        ("swift", "runtime"),
+    )
+    assert calls == []
+
+
+def test_ordered_pair_bonus_skips_second_token_reads_for_noncandidate_pair_starts() -> None:
+    class CountingTokens:
+        def __init__(self, tokens: tuple[str, ...]) -> None:
+            self.tokens = tokens
+            self.accessed_indexes: list[int] = []
+
+        def __len__(self) -> int:
+            return len(self.tokens)
+
+        def __getitem__(self, index: int) -> str:
+            self.accessed_indexes.append(index)
+            return self.tokens[index]
+
+    padding = tuple(f"padding-{index}" for index in range(20))
+    document_tokens = CountingTokens(padding + ("swift", "runtime"))
+
+    assert (
+        JinaV3RerankFamilyAdapter._ordered_pair_bonus(
+            ("swift", "runtime"),
+            document_tokens,
+            query_pairs=frozenset({("swift", "runtime")}),
+            query_pair_start_tokens=frozenset({"swift"}),
+        )
+        == 0.15
+    )
+    assert document_tokens.accessed_indexes == list(range(21)) + [21]
 
 
 @pytest.mark.parametrize(

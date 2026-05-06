@@ -69,6 +69,7 @@ class RerankQueryContext:
     query_tokens: tuple[str, ...]
     query_token_set: frozenset[str]
     ordered_pairs: frozenset[tuple[str, str]]
+    ordered_pair_start_tokens: frozenset[str]
     tie_breaker_seed: object
 
 
@@ -95,11 +96,13 @@ class RerankFamilyAdapter:
         if query_token_set is None:
             query_token_set = set(query_tokens)
         normalized_query_tokens = tuple(query_tokens)
+        ordered_pairs = frozenset(_build_adjacent_pairs(normalized_query_tokens))
         return RerankQueryContext(
             query=query,
             query_tokens=normalized_query_tokens,
             query_token_set=frozenset(query_token_set),
-            ordered_pairs=frozenset(_build_adjacent_pairs(normalized_query_tokens)),
+            ordered_pairs=ordered_pairs,
+            ordered_pair_start_tokens=frozenset(pair[0] for pair in ordered_pairs),
             tie_breaker_seed=backend.build_tie_breaker_seed(query),
         )
 
@@ -217,6 +220,7 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
                 reusable_query_tokens,
                 document_tokens,
                 query_pairs=query_context.ordered_pairs,
+                query_pair_start_tokens=query_context.ordered_pair_start_tokens,
             )
         has_all_query_terms = overlap_count >= len(reusable_query_token_set)
         if has_all_query_terms:
@@ -242,16 +246,22 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         document_tokens: Sequence[str],
         *,
         query_pairs: frozenset[tuple[str, str]] | None = None,
+        query_pair_start_tokens: frozenset[str] | None = None,
     ) -> float:
         if len(query_tokens) < 2 or len(document_tokens) < 2:
             return 0.0
 
         if query_pairs is None:
             query_pairs = frozenset(_build_adjacent_pairs(query_tokens))
+        if query_pair_start_tokens is None:
+            query_pair_start_tokens = frozenset(pair[0] for pair in query_pairs)
         matched_pairs: set[tuple[str, str]] = set()
         query_pair_count = len(query_pairs)
         for index in range(len(document_tokens) - 1):
-            pair = (document_tokens[index], document_tokens[index + 1])
+            first_token = document_tokens[index]
+            if first_token not in query_pair_start_tokens:
+                continue
+            pair = (first_token, document_tokens[index + 1])
             if pair not in query_pairs:
                 continue
             matched_pairs.add(pair)
@@ -270,8 +280,11 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         if not query_tokens or len(query_tokens) > len(document_tokens):
             return False
         query_length = len(query_tokens)
+        first_query_token = query_tokens[0]
         last_start = len(document_tokens) - query_length
         for start in range(last_start + 1):
+            if document_tokens[start] != first_query_token:
+                continue
             if _sequence_matches_at(document_tokens, query_tokens, start):
                 return True
         return False
@@ -332,6 +345,7 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
                 reusable_query_tokens,
                 document_tokens,
                 query_pairs=query_context.ordered_pairs,
+                query_pair_start_tokens=query_context.ordered_pair_start_tokens,
             )
         if overlap_count >= len(reusable_query_token_set):
             exact_order, prefix_match = JinaV3RerankFamilyAdapter._query_order_matches(
