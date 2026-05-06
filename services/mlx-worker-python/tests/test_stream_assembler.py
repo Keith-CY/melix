@@ -72,6 +72,51 @@ def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
     assert assembler._next_structural_tag() == (RequestStreamAssembler._TOOL_OPEN, 0)
 
 
+def test_plain_buffer_without_tag_marker_flushes_without_structural_scans(monkeypatch) -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-no-marker-fast-path",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    def fail_structural_scan() -> None:
+        raise AssertionError("plain buffers should not scan for structural tags")
+
+    monkeypatch.setattr(assembler, "_next_structural_tag", fail_structural_scan)
+    deltas = assembler.accept(StreamFragment(raw_text="plain text chunk without markup"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == [
+        "plain text chunk without markup"
+    ]
+    assert completed.assistant_text == "plain text chunk without markup"
+    assert completed.metrics["stream_prefix_hold_chars"] == 0
+    assert completed.metrics["stream_short_reply_flush_count"] == 0
+
+
+def test_plain_buffer_with_marker_still_holds_partial_structural_prefix() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-marker-still-held",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    first = assembler.accept(StreamFragment(raw_text="alpha<tool_ca"))
+    second = assembler.accept(
+        StreamFragment(
+            raw_text='alpha<tool_call>{"name":"search","arguments":{"q":"alpha"}}</tool_call>'
+        )
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in first if delta.content_text] == ["alpha"]
+    assert [delta.tool_call.tool_name for delta in second if delta.tool_call] == ["search"]
+    assert completed.assistant_text == "alpha"
+    assert completed.metrics["stream_prefix_hold_chars"] == len("<tool_ca")
+
+
 def test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call() -> None:
     class RecordingBuffer:
         def __init__(self) -> None:
