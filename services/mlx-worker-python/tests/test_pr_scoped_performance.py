@@ -135,6 +135,16 @@ def test_scope_report_selects_training_dataset_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "training-dataset-token-percentiles-single-sort"
 
 
+def test_scope_report_selects_dataset_registry_preview_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/dataset_registry/catalog.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "dataset-registry-preview-limit-short-circuit"
+
+
 def test_scope_report_selects_startup_signals_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -739,6 +749,24 @@ def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_dataset_registry_preview_limit_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_PREVIEW_PROBE_FILES", "4")
+    monkeypatch.setenv("MELIX_DATASET_PREVIEW_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/dataset_registry_preview_limit_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["file_count"] == 4.0
+    assert metrics["rows_returned"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_statistical_evidence_bootstrap_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -840,6 +868,7 @@ def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
 
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
+        "dataset-registry-preview-limit-short-circuit",
         "hub-catalog-tag-normalization-single-pass",
         "benchmark-evaluation-report-running-aggregates",
         "statistical-evidence-bootstrap-percentile-single-sort",
