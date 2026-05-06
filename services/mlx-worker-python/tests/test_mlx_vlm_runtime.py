@@ -23,8 +23,13 @@ from worker.runtime.mlx_vlm_runtime import (
     AutoMLXVLMBackend,
     MLXVLMRuntime,
     RuntimeUnavailableError,
+    _CallableTokenizerProcessor,
+    _Gemma4TextBackedModelShim,
+    _callable_has_named_kwarg,
     _gemma4_loaded_execution_mode,
     _gemma4_multimodal_weight_presence,
+    _mlx_peak_memory_gb,
+    _patch_gemma4_scaled_linear_quantization,
 )
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.temp_media_lifecycle import TempMediaSession
@@ -921,6 +926,223 @@ def test_gemma4_multimodal_weight_presence_accepts_dict_keys_view() -> None:
     assert _gemma4_multimodal_weight_presence(weights.keys()) == (False, True)
 
 
+def test_gemma4_scaled_linear_patch_accepts_newer_language_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeScaledLinear:
+        pass
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "nn", None, raising=False)
+    monkeypatch.setattr(
+        mlx_vlm_runtime_module.importlib.import_module("mlx_vlm.models.gemma4.language"),
+        "ScaledLinear",
+        FakeScaledLinear,
+        raising=False,
+    )
+
+    _patch_gemma4_scaled_linear_quantization()
+
+    assert hasattr(FakeScaledLinear, "to_quantized")
+
+
+def test_callables_and_text_backed_shims_expose_upstream_compatible_surfaces() -> None:
+    import mlx.core as mx
+
+    class FakeEmbedding:
+        def __call__(self, input_ids):
+            return mx.ones((*input_ids.shape, 2))
+
+    class FakeInnerModel:
+        embed_tokens = FakeEmbedding()
+        embed_scale = 2.0
+        hidden_size_per_layer_input = 1
+
+        def get_per_layer_inputs(self, input_ids):
+            return mx.ones((*input_ids.shape, 1, 1))
+
+    language_model = SimpleNamespace(
+        config=SimpleNamespace(model_type="gemma4_text", image_token_id=258880),
+        model=FakeInnerModel(),
+    )
+    model = _Gemma4TextBackedModelShim(language_model)
+    features = model.get_input_embeddings(mx.array([[1, 2]]), pixel_values=object(), ignored=True)
+
+    assert model.language_model is language_model
+    assert model.config.model_type == "gemma4"
+    assert model.config.image_token_id == 258880
+    assert model.config.audio_token_id == -2
+    assert tuple(features.inputs_embeds.shape) == (1, 2, 2)
+    assert tuple(features.per_layer_inputs.shape) == (1, 2, 1, 1)
+
+    tokenizer_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class FakeTokenizer:
+        def __call__(self, *args, **kwargs):
+            tokenizer_calls.append((args, kwargs))
+            return "tokens"
+
+    processor = _CallableTokenizerProcessor(
+        SimpleNamespace(_tokenizer=FakeTokenizer(), detokenizer="detok")
+    )
+
+    assert processor.detokenizer == "detok"
+    assert processor("prompt", padding=True) == "tokens"
+    assert tokenizer_calls == [(("prompt",), {"padding": True})]
+
+
+def test_callable_has_named_kwarg_requires_explicit_parameter() -> None:
+    def explicit(*, draft_model):
+        _ = draft_model
+
+    def variadic(**kwargs):
+        _ = kwargs
+
+    assert _callable_has_named_kwarg(explicit, "draft_model") is True
+    assert _callable_has_named_kwarg(variadic, "draft_model") is False
+    assert _callable_has_named_kwarg(object(), "draft_model") is False
+
+
+def test_mlx_peak_memory_prefers_current_api() -> None:
+    calls: list[str] = []
+
+    current_api = SimpleNamespace(
+        get_peak_memory=lambda: calls.append("current") or 2_000_000_000,
+        metal=SimpleNamespace(get_peak_memory=lambda: calls.append("metal") or 1_000_000_000),
+    )
+    legacy_api = SimpleNamespace(
+        metal=SimpleNamespace(get_peak_memory=lambda: calls.append("legacy-metal") or 3_000_000_000)
+    )
+
+    assert _mlx_peak_memory_gb(current_api) == 2.0
+    assert _mlx_peak_memory_gb(legacy_api) == 3.0
+    assert _mlx_peak_memory_gb(SimpleNamespace()) == 0.0
+    assert calls == ["current", "legacy-metal"]
+
+
+def test_gemma4_text_only_language_model_loader_wraps_and_sanitizes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mlx.core as mx
+    import mlx.nn as nn
+    import mlx_vlm.models.gemma4.language as language
+
+    calls: dict[str, object] = {}
+
+    class FakeTextConfig:
+        @classmethod
+        def from_dict(cls, config):
+            calls["config"] = dict(config)
+            return SimpleNamespace(model_type="gemma4_text")
+
+    class FakeLanguageModel:
+        def __init__(self, config):
+            self.config = config
+            self.model = SimpleNamespace(hidden_size_per_layer_input=0)
+
+        def sanitize(self, weights):
+            calls["sanitize"] = dict(weights)
+            return {"clean.scales": object(), "clean.weight": object()}
+
+        def load_weights(self, weights):
+            calls["load_weights"] = list(weights)
+
+        def parameters(self):
+            return []
+
+        def eval(self):
+            calls["eval"] = True
+
+    def fake_quantize(model, *, group_size, bits, mode, class_predicate):
+        calls["quantize"] = (model, group_size, bits, mode)
+        assert class_predicate("custom", object()) == {"bits": 8}
+        assert class_predicate("plain", object()) is False
+        assert class_predicate(
+            "odd",
+            SimpleNamespace(to_quantized=lambda: None, weight=SimpleNamespace(size=63)),
+        ) is False
+        assert class_predicate(
+            "clean",
+            SimpleNamespace(to_quantized=lambda: None, weight=SimpleNamespace(size=64)),
+        ) is True
+
+    monkeypatch.setattr(language, "TextConfig", FakeTextConfig)
+    monkeypatch.setattr(language, "LanguageModel", FakeLanguageModel)
+    monkeypatch.setattr(nn, "quantize", fake_quantize)
+    monkeypatch.setattr(mx, "eval", lambda parameters: calls.setdefault("mx_eval", parameters))
+
+    model = AutoMLXVLMBackend._load_gemma4_text_only_language_model(
+        config={
+            "model_type": "gemma4_text",
+            "quantization": {
+                "group_size": 64,
+                "bits": 4,
+                "mode": "affine",
+                "custom": {"bits": 8},
+            },
+        },
+        weights={"clean.scales": object(), "unused": object()},
+    )
+
+    assert isinstance(model, _Gemma4TextBackedModelShim)
+    assert calls["config"]["model_type"] == "gemma4_text"
+    assert calls["sanitize"].keys() == {"clean.scales", "unused"}
+    assert calls["eval"] is True
+    assert calls["mx_eval"] == []
+    assert [name for name, _value in calls["load_weights"]] == ["clean.scales", "clean.weight"]
+
+
+def test_gemma4_text_backed_loader_uses_tokenizer_for_text_only_exports(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import mlx.core as mx
+    import mlx_vlm.utils as utils
+
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    (model_path / "model.safetensors").write_bytes(b"")
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(utils, "get_model_path", lambda *_args, **_kwargs: model_path)
+    monkeypatch.setattr(utils, "load_config", lambda *_args, **_kwargs: {"model_type": "gemma4_text"})
+
+    def fake_load_text_only_language_model(*, config, weights):
+        calls["model_args"] = (config, weights)
+        return "text-model"
+
+    monkeypatch.setattr(
+        AutoMLXVLMBackend,
+        "_load_gemma4_text_only_language_model",
+        staticmethod(fake_load_text_only_language_model),
+    )
+    monkeypatch.setattr(
+        utils,
+        "load_tokenizer",
+        lambda *_args, **_kwargs: SimpleNamespace(_tokenizer=lambda *a, **k: None),
+    )
+    monkeypatch.setattr(mx, "load", lambda path: {"model.layers.0.weight": path})
+
+    model, processor, execution_mode = AutoMLXVLMBackend._load_gemma4_text_backed_model(
+        model_spec=common_pb2.ModelSpec(model_path=str(model_path), revision="main"),
+        original_error=RuntimeError("original"),
+    )
+
+    assert model == "text-model"
+    assert calls["model_args"][0] == {"model_type": "gemma4_text"}
+    assert list(calls["model_args"][1]) == ["model.layers.0.weight"]
+    assert isinstance(processor, _CallableTokenizerProcessor)
+    assert execution_mode == "text_backed"
+
+
+def test_mtp_batch_response_helpers_read_current_upstream_shape() -> None:
+    response = SimpleNamespace(
+        texts=["hello"],
+        stats=SimpleNamespace(prompt_tokens=3, generation_tokens=2),
+    )
+
+    assert MLXVLMRuntime._batch_response_text(response) == "hello"
+    assert MLXVLMRuntime._response_number(response, "prompt_tokens") == 3
+    assert MLXVLMRuntime._response_number(response, "generation_tokens") == 2
+
+
 def test_mlx_vlm_runtime_overrides_stale_text_backed_metadata_for_loaded_gemma4_vision_models() -> None:
     def fake_load(model_path: str, revision: str = "main"):
         _ = model_path
@@ -1047,7 +1269,6 @@ def test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_gen
         *,
         prompts,
         max_tokens: int,
-        temperature: float,
         draft_model,
         draft_kind: str,
         draft_block_size: int,
@@ -1059,7 +1280,6 @@ def test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_gen
             {
                 "prompts": list(prompts),
                 "max_tokens": max_tokens,
-                "temperature": temperature,
                 "draft_model": draft_model,
                 "draft_kind": draft_kind,
                 "draft_block_size": draft_block_size,
@@ -1122,7 +1342,6 @@ def test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_gen
         {
             "prompts": ["Say hello."],
             "max_tokens": 16,
-            "temperature": 0.0,
             "draft_model": {
                 "draft_model_id": "mlx-community/gemma-4-E2B-it-assistant-bf16",
                 "kind": "mtp",
@@ -1146,6 +1365,137 @@ def test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_gen
     assert event.speculative_target_verify_ms == 5.5
 
 
+def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available() -> None:
+    apply_calls: list[str] = []
+    generate_step_calls: list[dict[str, object]] = []
+
+    class FakeDetokenizer:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def reset(self) -> None:
+            self.text = ""
+
+        def add_token(self, token: int) -> None:
+            self.text += {101: "MTP ", 102: "step"}.get(token, "")
+
+        def finalize(self) -> None:
+            pass
+
+    class FakeProcessor:
+        chat_template = "{{ prompt }}"
+        eos_token = "<eos>"
+        pad_token = None
+
+        def __init__(self) -> None:
+            self.detokenizer = FakeDetokenizer()
+
+        def __call__(self, prompts, **kwargs):
+            import mlx.core as mx
+
+            _ = prompts
+            _ = kwargs
+            return SimpleNamespace(
+                input_ids=mx.array([[1, 2, 3]]),
+                attention_mask=mx.array([[1, 1, 1]]),
+            )
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), FakeProcessor()
+
+    def fake_load_drafter(model_id: str, *, kind: str = "mtp"):
+        return {"draft_model_id": model_id, "kind": kind}
+
+    def fake_generate_step(
+        input_ids,
+        model,
+        pixel_values,
+        mask,
+        *,
+        max_tokens: int,
+        draft_model,
+        draft_kind: str,
+        draft_block_size: int,
+        prefill_step_size,
+    ):
+        generate_step_calls.append(
+            {
+                "input_ids_shape": tuple(input_ids.shape),
+                "model": model,
+                "pixel_values": pixel_values,
+                "mask_shape": tuple(mask.shape),
+                "max_tokens": max_tokens,
+                "draft_model": draft_model,
+                "draft_kind": draft_kind,
+                "draft_block_size": draft_block_size,
+                "prefill_step_size": prefill_step_size,
+            }
+        )
+        yield 101, None
+        yield 102, None
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda _processor, _config, prompt, **kwargs: (
+                apply_calls.append(prompt) or f"formatted::{prompt}"
+            ),
+            load_drafter_fn=fake_load_drafter,
+            generate_step_fn=fake_generate_step,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    loaded_model["metadata"]["melix.vlm.execution_mode"] = "text_backed"
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=0,
+                max_output_tokens=16,
+            ),
+            Event(),
+            acceleration_policy=common_pb2.AccelerationPolicy(
+                mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                draft_model_id="draft-model",
+                num_draft_tokens=6,
+                allow_baseline_fallback=False,
+            ),
+        )
+    )
+
+    assert apply_calls == ["Say hello."]
+    assert events[-1].text == "MTP step"
+    assert events[-1].prompt_tokens == 3
+    assert events[-1].completion_tokens == 2
+    assert events[-1].speculative_fallback_count == 0
+    assert events[-1].speculative_num_draft_tokens == 6
+    assert events[-1].speculative_draft_model_configured is True
+    assert generate_step_calls == [
+        {
+            "input_ids_shape": (1, 3),
+            "model": loaded_model["model"],
+            "pixel_values": None,
+            "mask_shape": (1, 3),
+            "max_tokens": 16,
+            "draft_model": {"draft_model_id": "draft-model", "kind": "mtp"},
+            "draft_kind": "mtp",
+            "draft_block_size": 6,
+            "prefill_step_size": None,
+        }
+    ]
+
+
 def test_auto_mlx_vlm_backend_detects_installed_optional_mtp_api() -> None:
     backend = AutoMLXVLMBackend()
     if not getattr(backend, "_available", False):
@@ -1157,8 +1507,18 @@ def test_auto_mlx_vlm_backend_detects_installed_optional_mtp_api() -> None:
     assert backend.load_fn is not None
     assert backend.stream_generate_fn is not None
     assert backend.apply_chat_template_fn is not None
+    generate_step_support = backend.generate_step_fn is not None and (
+        _callable_has_named_kwarg(backend.generate_step_fn, "draft_model")
+        and _callable_has_named_kwarg(backend.generate_step_fn, "draft_kind")
+        and _callable_has_named_kwarg(backend.generate_step_fn, "draft_block_size")
+    )
+    batch_generate_support = backend.batch_generate_fn is not None and (
+        _callable_has_named_kwarg(backend.batch_generate_fn, "draft_model")
+        and _callable_has_named_kwarg(backend.batch_generate_fn, "draft_kind")
+        and _callable_has_named_kwarg(backend.batch_generate_fn, "draft_block_size")
+    )
     assert backend.supports_mtp_speculative() is (
-        backend.batch_generate_fn is not None and backend.load_drafter_fn is not None
+        backend.load_drafter_fn is not None and (generate_step_support or batch_generate_support)
     )
 
 
@@ -1265,6 +1625,25 @@ def test_mlx_vlm_runtime_falls_back_when_mtp_drafter_api_is_unavailable_and_fall
 
 
 def test_mlx_vlm_runtime_stops_mtp_path_when_cancelled_before_backend_work() -> None:
+    def fake_batch_generate(
+        model,
+        processor,
+        *,
+        prompts,
+        draft_model,
+        draft_kind,
+        draft_block_size,
+        **kwargs,
+    ):
+        _ = model
+        _ = processor
+        _ = prompts
+        _ = draft_model
+        _ = draft_kind
+        _ = draft_block_size
+        _ = kwargs
+        return [SimpleNamespace(text="unexpected")]
+
     runtime = MLXVLMRuntime(
         backend=AutoMLXVLMBackend(
             load_fn=lambda model_path, revision="main": (
@@ -1274,7 +1653,7 @@ def test_mlx_vlm_runtime_stops_mtp_path_when_cancelled_before_backend_work() -> 
             stream_generate_fn=lambda *args, **kwargs: iter(()),
             apply_chat_template_fn=lambda *args, **kwargs: "",
             load_drafter_fn=lambda model_id, *, kind="mtp": object(),
-            batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="unexpected")],
+            batch_generate_fn=fake_batch_generate,
         )
     )
     loaded_model = runtime.load_model(imported_gemma4_vlm_model())
@@ -1306,8 +1685,22 @@ def test_mlx_vlm_runtime_stops_mtp_path_when_cancelled_before_backend_work() -> 
 def test_mlx_vlm_runtime_stops_mtp_path_when_cancelled_after_batch_generate() -> None:
     cancel_event = Event()
 
-    def fake_batch_generate(*args, **kwargs):
-        _ = args
+    def fake_batch_generate(
+        model,
+        processor,
+        *,
+        prompts,
+        draft_model,
+        draft_kind,
+        draft_block_size,
+        **kwargs,
+    ):
+        _ = model
+        _ = processor
+        _ = prompts
+        _ = draft_model
+        _ = draft_kind
+        _ = draft_block_size
         _ = kwargs
         cancel_event.set()
         return [SimpleNamespace(text="hidden")]
@@ -1348,6 +1741,25 @@ def test_mlx_vlm_runtime_stops_mtp_path_when_cancelled_after_batch_generate() ->
 
 
 def test_mlx_vlm_runtime_skips_empty_mtp_batch_response() -> None:
+    def fake_batch_generate(
+        model,
+        processor,
+        *,
+        prompts,
+        draft_model,
+        draft_kind,
+        draft_block_size,
+        **kwargs,
+    ):
+        _ = model
+        _ = processor
+        _ = prompts
+        _ = draft_model
+        _ = draft_kind
+        _ = draft_block_size
+        _ = kwargs
+        return [SimpleNamespace(text="")]
+
     runtime = MLXVLMRuntime(
         backend=AutoMLXVLMBackend(
             load_fn=lambda model_path, revision="main": (
@@ -1357,7 +1769,7 @@ def test_mlx_vlm_runtime_skips_empty_mtp_batch_response() -> None:
             stream_generate_fn=lambda *args, **kwargs: iter(()),
             apply_chat_template_fn=lambda *args, **kwargs: "",
             load_drafter_fn=lambda model_id, *, kind="mtp": object(),
-            batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="")],
+            batch_generate_fn=fake_batch_generate,
         )
     )
     loaded_model = runtime.load_model(imported_gemma4_vlm_model())

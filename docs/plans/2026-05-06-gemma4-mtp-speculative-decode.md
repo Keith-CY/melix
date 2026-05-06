@@ -13,9 +13,9 @@ for default and unsupported requests.
   `allow_baseline_fallback`, and `num_draft_tokens`.
 - Implement the first slice only in `python_vlm` / `MLXVLMRuntime` for prompt-only
   Gemma 4 text-backed generation.
-- Runtime-detect upstream `mlx-vlm` support for `batch_generate` and
-  `load_drafter`; do not add a pinned dependency that is unavailable from the
-  current lock resolver.
+- Runtime-detect upstream `mlx-vlm` support for `generate_step`,
+  `batch_generate`, and `load_drafter`; do not add a pinned dependency that is
+  unavailable from the current lock resolver.
 - Keep speculative decoding disabled unless a request configures a compatible
   target plus assistant pair.
 - Reject or baseline-fallback unsupported cases according to
@@ -40,7 +40,7 @@ for default and unsupported requests.
   `speculative_draft_model_configured`, and best-effort acceptance/rollback
   fields when upstream returns them.
 - Success metric: prompt-only Gemma 4 text-backed requests with a configured MTP
-  assistant call upstream `batch_generate` with `draft_kind="mtp"` and the
+  assistant call upstream drafter decoding with `draft_kind="mtp"` and the
   requested draft block size.
 
 ## Implementation Plan
@@ -48,11 +48,12 @@ for default and unsupported requests.
 1. Add focused tests for the runtime MTP happy path, fallback and hard-error
    boundaries, engine acceleration-policy forwarding, and assistant catalog
    metadata.
-2. Extend `AutoMLXVLMBackend` with optional `batch_generate` and `load_drafter`
-   hooks plus drafter caching.
+2. Extend `AutoMLXVLMBackend` with optional `generate_step`, `batch_generate`,
+   and `load_drafter` hooks plus drafter caching.
 3. Route eligible `MLXVLMRuntime.generate_tokens` calls to upstream
-   `batch_generate`; otherwise use the existing `stream_generate` baseline path
-   or raise a clear error.
+   `generate_step(..., draft_kind="mtp")` when available, otherwise to a
+   compatible `batch_generate`; otherwise use the existing `stream_generate`
+   baseline path or raise a clear error.
 4. Forward `ExecutionMetadata.acceleration` from `EngineCore.generate` only to
    runtimes that explicitly accept `acceleration_policy`.
 5. Add Gemma 4 assistant metadata detection in the Python model catalog.
@@ -71,11 +72,11 @@ for default and unsupported requests.
 ## Verification Results
 
 - Focused runtime, engine, and catalog pytest:
-  `145 passed, 2 warnings`.
+  `153 passed, 2 warnings`.
 - Full Python worker regression:
-  `make py-test` passed with `1794 passed, 5 skipped, 2 warnings`.
+  `make py-test` passed with `1802 passed, 5 skipped, 2 warnings`.
 - Changed-line coverage for the touched Python scope:
-  `97.01%` (`389/401`).
+  `95.94%` (`307/320`) for the latest live-MTP validation update.
 - Diff hygiene:
   `git diff --check` passed.
 - Local runtime capability probe:
@@ -98,6 +99,22 @@ for default and unsupported requests.
   `speculative_draft_model_configured=false`.
 - The matching hard-error guard with `allow_baseline_fallback=false` raised:
   `MTP speculative decode is unavailable for this request: target execution mode is multimodal.`
+- Local live MTP success smoke, offline from the Hugging Face cache, used
+  `mlx-community/gemma-4-e4b-it-OptiQ-4bit` as the text-backed target and
+  `mlx-community/gemma-4-E4B-it-assistant-bf16` as the MTP drafter. The run used
+  a temporary upstream `mlx-vlm 0.5.0` environment because the repository lock
+  still resolves `mlx-vlm 0.4.4`.
+- The first downloaded upstream `mlx-community/gemma-4-E4B-it-bf16` target was
+  rejected for the Melix MTP success path because its cached weights include
+  vision and audio modules and therefore load as `multimodal`.
+- The live MTP success run loaded the OptiQ target as `text_backed` through
+  `MLXVLMRuntime`, routed decoding through upstream
+  `generate_step(..., draft_kind="mtp")`, and completed with
+  `speculative_draft_model_configured=true`,
+  `speculative_fallback_count=0`, and `speculative_num_draft_tokens=6`.
+- The same run produced one token event with `prompt_tokens=13`,
+  `completion_tokens=8`, `first_token_latency_ms=274.97`,
+  `generation_tps=28.95`, and `peak_memory=6.54 GB`.
 
 ## Acceptance
 
