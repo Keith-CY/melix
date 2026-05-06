@@ -65,7 +65,7 @@ class BenchmarkQueueRecord:
 
 class BenchmarkQueueStore:
     def __init__(self) -> None:
-        self._decoded_record_cache: dict[Path, _RecordCacheEntry] = {}
+        self._decoded_record_cache: dict[str, _RecordCacheEntry] = {}
 
     def enqueue(
         self,
@@ -93,10 +93,9 @@ class BenchmarkQueueStore:
                         continue
                     if not stat.S_ISREG(stat_result.st_mode):
                         continue
-                    path = Path(entry.path)
                     records.append(
                         self._load_record(
-                            path,
+                            entry.path,
                             metadata_key=self._metadata_key_from_stat(stat_result),
                         )
                     )
@@ -142,23 +141,26 @@ class BenchmarkQueueStore:
             json.dumps(persisted_record.to_dict(), indent=2) + "\n",
             encoding="utf-8",
         )
-        self._decoded_record_cache[path] = _RecordCacheEntry(
+        self._decoded_record_cache[os.fspath(path)] = _RecordCacheEntry(
             metadata_key=self._metadata_key(path),
             record=persisted_record,
         )
 
     def _load_record(
         self,
-        path: Path,
+        path: Path | str,
         *,
         metadata_key: tuple[int, int, int, int] | None = None,
     ) -> BenchmarkQueueRecord:
-        current_metadata_key = self._metadata_key(path) if metadata_key is None else metadata_key
-        cached = self._decoded_record_cache.get(path)
+        cache_key = os.fspath(path)
+        current_metadata_key = (
+            self._metadata_key(Path(path)) if metadata_key is None else metadata_key
+        )
+        cached = self._decoded_record_cache.get(cache_key)
         if cached is not None and cached.metadata_key == current_metadata_key:
             return cached.record
-        record = BenchmarkQueueRecord.from_dict(json.loads(path.read_bytes()))
-        self._decoded_record_cache[path] = _RecordCacheEntry(
+        record = BenchmarkQueueRecord.from_dict(json.loads(Path(path).read_bytes()))
+        self._decoded_record_cache[cache_key] = _RecordCacheEntry(
             metadata_key=current_metadata_key,
             record=record,
         )
