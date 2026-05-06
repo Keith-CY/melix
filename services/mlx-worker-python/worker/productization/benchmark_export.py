@@ -5,7 +5,7 @@ import json
 import io
 import time
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 
@@ -17,14 +17,20 @@ class _ScannedDirectoryEntries:
     directory: Path
     file_names: tuple[str, ...]
     dir_names: tuple[str, ...]
+    file_name_set: frozenset[str] = field(init=False, repr=False)
+    dir_name_set: frozenset[str] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "file_name_set", frozenset(self.file_names))
+        object.__setattr__(self, "dir_name_set", frozenset(self.dir_names))
 
     def file_path(self, name: str) -> Path | None:
-        if name not in self.file_names:
+        if name not in self.file_name_set:
             return None
         return self.directory / name
 
     def has_dir(self, name: str) -> bool:
-        return name in self.dir_names
+        return name in self.dir_name_set
 
     def matching_file_paths(self, *, prefix: str, suffix: str) -> tuple[Path, ...]:
         return tuple(
