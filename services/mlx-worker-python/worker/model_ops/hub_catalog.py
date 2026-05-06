@@ -352,18 +352,14 @@ def _is_mlx_compatible(
     lowered_tags: set[str] | None = None,
 ) -> bool:
     lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
-    card_tags = {
-        tag.lower()
-        for tag in _string_list(card_data.get("tags"))
-    }
-    lowered_repo_id = repo_id.lower()
-    if "mlx" in lowered_tags or "mlx" in card_tags:
+    if "mlx" in lowered_tags:
         return True
     if library_name.lower() == "mlx":
         return True
+    lowered_repo_id = repo_id.lower()
     if "mlx" in lowered_repo_id:
         return True
-    return repo_id.startswith("mlx-community/")
+    return "mlx" in {tag.lower() for tag in _string_list(card_data.get("tags"))}
 
 
 def _local_fit_evidence(

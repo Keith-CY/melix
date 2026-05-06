@@ -33,7 +33,9 @@ def main() -> None:
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
     held_suffix_hits = 0
+    partial_suffix_hits = 0
     prefix_identity_hits = 0
+    partial_elapsed_samples: list[float] = []
 
     assembler = _build_assembler()
     expected_prefixes = assembler._structural_tag_prefixes
@@ -51,10 +53,20 @@ def main() -> None:
         tracemalloc.stop()
         peak_samples.append(float(peak))
 
+        started = time.perf_counter()
+        for _index in range(iterations):
+            if assembler._partial_structural_tag_suffix() == "<tool":
+                partial_suffix_hits += 1
+        partial_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
     expected_hits = iterations * sample_count
     if held_suffix_hits != expected_hits:
         raise RuntimeError(
             f"unexpected partial suffix hits: {held_suffix_hits} != {expected_hits}"
+        )
+    if partial_suffix_hits != expected_hits:
+        raise RuntimeError(
+            f"unexpected partial suffix resolutions: {partial_suffix_hits} != {expected_hits}"
         )
     if prefix_identity_hits != expected_hits:
         raise RuntimeError(
@@ -66,10 +78,16 @@ def main() -> None:
             {
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
                 "elapsed_ms_min": round(min(elapsed_samples), 6),
+                "partial_suffix_elapsed_ms_mean": round(
+                    statistics.fmean(partial_elapsed_samples),
+                    6,
+                ),
+                "partial_suffix_elapsed_ms_min": round(min(partial_elapsed_samples), 6),
                 "peak_bytes_mean": round(statistics.fmean(peak_samples), 3),
                 "iteration_count": float(iterations),
                 "sample_count": float(sample_count),
                 "held_suffix_hits": float(held_suffix_hits),
+                "partial_suffix_hits": float(partial_suffix_hits),
                 "prefix_identity_hits": float(prefix_identity_hits),
             },
             sort_keys=True,

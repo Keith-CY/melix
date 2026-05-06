@@ -152,12 +152,22 @@ def test_parse_changed_lines_counts_blank_context_lines_with_prefix_dispatch() -
     assert changed == {"foo.py": {3}}
 
 
-def test_parse_changed_lines_uses_precompiled_patterns_and_prefix_marker_check(monkeypatch) -> None:
-    def fail_module_level_regex(*args: object, **kwargs: object) -> object:  # pragma: no cover
-        raise AssertionError("hot parser should use precompiled regex objects")
+def test_parse_changed_lines_uses_literal_dispatch_and_prefix_marker_check(monkeypatch) -> None:
+    def fail_parse_diff_header_new_path(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("hot parser should call literal header parser only after prefix dispatch")
 
-    monkeypatch.setattr(changed_scope_coverage.re, "match", fail_module_level_regex)
-    monkeypatch.setattr(changed_scope_coverage.re, "search", fail_module_level_regex)
+    original_parse_diff_header_new_path = changed_scope_coverage._parse_diff_header_new_path
+
+    def tracked_parse_diff_header_new_path(line: str) -> str | None:
+        if not line.startswith(changed_scope_coverage._DIFF_HEADER_PREFIX):  # pragma: no cover
+            return fail_parse_diff_header_new_path(line)
+        return original_parse_diff_header_new_path(line)
+
+    monkeypatch.setattr(
+        changed_scope_coverage,
+        "_parse_diff_header_new_path",
+        tracked_parse_diff_header_new_path,
+    )
 
     diff_text = "\n".join(
         [
@@ -174,6 +184,49 @@ def test_parse_changed_lines_uses_precompiled_patterns_and_prefix_marker_check(m
     changed = changed_scope_coverage._parse_changed_lines(diff_text)
 
     assert changed == {"foo.py": {1, 3}}
+
+
+def test_parse_changed_lines_resets_after_malformed_hunk_header() -> None:
+    diff_text = "\n".join(
+        [
+            "diff --git a/foo.py b/foo.py",
+            "--- a/foo.py",
+            "+++ b/foo.py",
+            "@@ -1 +1 @@",
+            "+valid",
+            "@@ malformed @@",
+            "+ignored",
+            "@@ -5 +7 @@",
+            "+tail",
+        ]
+    )
+
+    changed = changed_scope_coverage._parse_changed_lines(diff_text)
+
+    assert changed == {"foo.py": {1, 7}}
+
+
+def test_parse_changed_lines_ignores_malformed_literal_headers() -> None:
+    diff_text = "\n".join(
+        [
+            "diff --git a/broken.py",
+            "@@ -1 +1 @@",
+            "+ignored_without_valid_file",
+            "diff --git a/foo.py b/foo.py",
+            "--- a/foo.py",
+            "+++ b/foo.py",
+            "@@ -1 +not-a-number @@",
+            "+ignored_without_valid_hunk",
+            "@@ -1 +4 @@",
+            "+valid",
+        ]
+    )
+
+    assert changed_scope_coverage._parse_diff_header_new_path("not a diff") is None
+    assert changed_scope_coverage._parse_hunk_new_start("@@ -1 @@") is None
+    changed = changed_scope_coverage._parse_changed_lines(diff_text)
+
+    assert changed == {"foo.py": {4}}
 
 
 def test_is_diff_file_marker_matches_only_real_file_markers() -> None:
