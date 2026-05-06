@@ -411,6 +411,44 @@ def test_list_records_reuses_cached_decoded_records_for_unchanged_files(
     assert loads == 1
 
 
+def test_list_records_warm_cache_uses_direntry_string_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / "queue"
+    queue_root.mkdir()
+    payload = BenchmarkQueueRecord(
+        queue_item_id="queue-1",
+        job_kind="benchmark",
+        model_id="melix-dev-text",
+        suite_ids=("smoke",),
+        parameters={"sample_size": "32"},
+        status="queued",
+        created_at_unix_ms=100,
+        updated_at_unix_ms=100,
+    ).to_dict()
+    (queue_root / "queue-1.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    store = BenchmarkQueueStore()
+
+    first = store.list_records(queue_root=queue_root)
+
+    path_constructions = 0
+    original_path = Path
+
+    def tracked_path(*args: object, **kwargs: object) -> Path:  # pragma: no cover
+        nonlocal path_constructions  # pragma: no cover
+        path_constructions += 1  # pragma: no cover
+        return original_path(*args, **kwargs)  # pragma: no cover
+
+    monkeypatch.setattr("worker.productization.benchmark_queue.Path", tracked_path)
+
+    second = store.list_records(queue_root=queue_root)
+
+    assert [record.queue_item_id for record in first] == ["queue-1"]
+    assert [record.queue_item_id for record in second] == ["queue-1"]
+    assert path_constructions == 0
+
+
 def test_list_records_decodes_uncached_records_from_bytes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
