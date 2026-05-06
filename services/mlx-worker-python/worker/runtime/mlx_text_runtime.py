@@ -7,6 +7,7 @@ import importlib.util
 import inspect
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
@@ -53,6 +54,9 @@ class RuntimeToolCallEvent:
     arguments_json_fragment: str
 
 
+_REWARD_SCORE_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)")
+
+
 @dataclass(frozen=True)
 class ResolvedTextStopContract:
     sequences: tuple[str, ...]
@@ -62,6 +66,49 @@ class ResolvedTextStopContract:
 
 def _normalized_ext_value(model_spec, key: str) -> str:
     return str(getattr(model_spec, "ext", {}).get(key, "") or "").strip()
+
+
+def _reward_score_prompt(
+    loaded_model: Any,
+    *,
+    prompt: str,
+    response: str,
+    execution_ext: dict[str, str] | None,
+) -> str:
+    ext: dict[str, str] = {}
+    if isinstance(loaded_model, dict):
+        for key in ("model_ext", "metadata", "ext"):
+            raw_ext = loaded_model.get(key)
+            if isinstance(raw_ext, dict):
+                ext.update({str(raw_key): str(raw_value) for raw_key, raw_value in raw_ext.items()})
+    if execution_ext:
+        ext.update({str(key): str(value) for key, value in execution_ext.items()})
+
+    template = (
+        ext.get("melix.reward_model.score_prompt_template")
+        or ext.get("melix.reward_model.scoring_prompt_template")
+        or ""
+    )
+    if template.strip():
+        return template.replace("{prompt}", prompt).replace("{response}", response)
+
+    return (
+        "Score the assistant response for helpfulness and correctness on a 0 to 1 scale.\n"
+        "Return only one decimal number between 0 and 1.\n\n"
+        f"User prompt:\n{prompt}\n\n"
+        f"Assistant response:\n{response}\n\n"
+        "Score:"
+    )
+
+
+def _parse_reward_score_text(text: str) -> float:
+    for match in _REWARD_SCORE_RE.finditer(text):
+        value = float(match.group(0))
+        if 0.0 <= value <= 1.0:
+            return value
+        if 1.0 < value <= 100.0:
+            return value / 100.0
+    raise RuntimeUnavailableError("Reward model did not return a numeric score between 0 and 1.")
 
 
 _TEXT_STOP_SEQUENCE_KEYS = (
@@ -376,6 +423,35 @@ class AutoMLXBackend:
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return 0
+
+    def score_response(
+        self,
+        loaded_model,
+        prompt: str,
+        response: str,
+        execution_ext: dict[str, str] | None = None,
+    ) -> float:
+        if not self._available:
+            raise RuntimeUnavailableError("mlx-lm is not installed") from self._error
+        self._ensure_runtime()
+        sampler = self._sampler_factory(temp=0.0, top_p=1.0, top_k=1)
+        score_prompt = _reward_score_prompt(
+            loaded_model,
+            prompt=prompt,
+            response=response,
+            execution_ext=execution_ext,
+        )
+        score_text = "".join(
+            str(getattr(chunk, "text", ""))
+            for chunk in self._stream_generate_fn(
+                loaded_model["model"],
+                loaded_model["tokenizer"],
+                score_prompt,
+                max_tokens=8,
+                sampler=sampler,
+            )
+        )
+        return _parse_reward_score_text(score_text)
 
     def generate_tokens(
         self,

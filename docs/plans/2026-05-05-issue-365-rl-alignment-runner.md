@@ -31,6 +31,12 @@ readiness.
   traces, training metrics, and `melix.alignment_run.v1`.
 - Support explicit `candidate_scoring_mode=reward_model` for GRPO/RLHF when a
   reward runtime and readable reward-model manifest are provided.
+- Wire the default worker runtime into the RL alignment runner as the production
+  reward runtime so CLI/acceptance runs can request reward-model scoring without
+  relying on test-only runner injection.
+- Add a generic MLX-LM text reward scorer that loads the reward-model manifest
+  target, prompts the local model for a scalar score, and parses a `0..1` score
+  for GRPO/RLHF reward-model scoring evidence.
 - Support `rlhf` from `reward_scored` datasets with an existing reward model
   manifest reference.
 - Produce adapter weights/config artifacts and checkpoint lineage for scored
@@ -71,6 +77,10 @@ Success metrics:
   generated-candidate evidence without being marked release-ready.
 - GRPO/RLHF jobs can opt into reward-runtime scoring and record reward model
   backend, reward model id, and per-response score evidence.
+- The production MaintenanceCore default path passes a reward runtime into the
+  default LoRA training runner.
+- The MLX-LM reward scorer must use a deterministic scalar-score sampling shape
+  and fail when the model output does not contain a parseable score.
 - Alignment manifests include scored policy-update metrics.
 - Adapter manifests preserve alignment backlinks and checkpoint lineage.
 - Changed-scope coverage remains at least 95 percent.
@@ -80,16 +90,16 @@ Success metrics:
 Targeted commands:
 
 ```bash
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py services/mlx-worker-python/tests/test_training_dataset_builder.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py services/mlx-worker-python/tests/test_training_dataset_builder.py
 git diff --check
 ```
 
 Coverage and metrics:
 
 ```bash
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py services/mlx-worker-python/tests/test_training_dataset_builder.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py services/mlx-worker-python/tests/test_training_dataset_builder.py
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="/Users/ChenYu/Documents/Github/melix/.uv-cache" uv run --project services/mlx-worker-python coverage json -o /tmp/issue365-rl-alignment-runner-coverage.json
-python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-rl-alignment-runner-coverage.json --diff-from origin/main services/mlx-worker-python/worker/model_ops/mlx_lm_runner.py services/mlx-worker-python/worker/model_ops/rl_alignment_training.py services/mlx-worker-python/worker/model_ops/lora_training_pipeline.py services/mlx-worker-python/worker/model_ops/training_config.py services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py docs/plans/2026-05-05-issue-365-rl-alignment-runner.md
+python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-rl-alignment-runner-coverage.json --diff-from origin/main services/mlx-worker-python/worker/model_ops/mlx_lm_runner.py services/mlx-worker-python/worker/model_ops/rl_alignment_training.py services/mlx-worker-python/worker/model_ops/lora_training_pipeline.py services/mlx-worker-python/worker/model_ops/training_config.py services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py docs/plans/2026-05-05-issue-365-rl-alignment-runner.md
 ```
 
 Results on 2026-05-05 before runtime-generation extension:
@@ -116,11 +126,21 @@ Results on 2026-05-05 after reward-runtime scoring extension:
 - `python3 -m compileall -q services/mlx-worker-python/worker/model_ops/rl_alignment_training.py services/mlx-worker-python/worker/model_ops/mlx_lm_runner.py services/mlx-worker-python/worker/model_ops/lora_training_pipeline.py services/mlx-worker-python/worker/model_ops/training_config.py services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py`: passed.
 - `git diff --check`: passed.
 
+Results on 2026-05-06 after production reward-runtime wiring and generic MLX-LM
+reward scoring:
+
+- `swift build`: passed and produced the worktree-local `melix` CLI.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_training_dataset_builder.py`: 248 passed, 9 skipped.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage json -o coverage.json`: passed.
+- `python3 scripts/python_changed_line_coverage.py --coverage-json coverage.json --diff-from codex/issue365-qat-runtime services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/worker/model_ops/rl_alignment_training.py services/mlx-worker-python/worker/model_ops/lora_training_pipeline.py services/mlx-worker-python/worker/engine/maintenance_core.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py`: 100.00% total changed-line coverage (96/96).
+- `python3 -m compileall -q services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/worker/model_ops/rl_alignment_training.py services/mlx-worker-python/worker/model_ops/lora_training_pipeline.py services/mlx-worker-python/worker/engine/maintenance_core.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py`: passed.
+- `git diff --check`: passed.
+
 ## Remaining Issue 365 Gaps
 
 - Reward-model training and PPO/RL policy updates from issue 366.
-- Real local-runtime release evidence for reward-model scoring outside the
-  scripted reward-runtime tests.
+- Passing real local-runtime release evidence for reward-model scoring with a
+  local reward-model manifest.
 - PTQ/QAT real local inference release evidence.
 - Full CLI chain tests for every business line.
 - Window UI runnable and inspectable acceptance for every business line.

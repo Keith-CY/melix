@@ -656,6 +656,8 @@ def _reward_model_spec_from_manifest(
         "adapter_manifest_path",
         "adapter_weights_path",
         "base_model_id",
+        "score_prompt_template",
+        "scoring_prompt_template",
     ):
         value = manifest_payload.get(key)
         if value is not None and str(value).strip():

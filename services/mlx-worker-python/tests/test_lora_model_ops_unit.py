@@ -19,6 +19,7 @@ from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.lora_training_pipeline import (
+    LoRATrainingPipeline,
     _content_hash,
     _int_ext,
     _latest_checkpoint_from_directory,
@@ -563,6 +564,7 @@ def test_alignment_rl_reward_model_scoring_helpers_cover_trace_and_error_paths(
                 "schema_version": "melix.reward_model_adapter.v1",
                 "reward_model_id": "fallback-reward",
                 "reward_head_type": "scalar",
+                "score_prompt_template": "Prompt={prompt}\nResponse={response}\nScore:",
             }
         )
         + "\n",
@@ -573,6 +575,7 @@ def test_alignment_rl_reward_model_scoring_helpers_cover_trace_and_error_paths(
     assert reward_model_spec.model_id == "fallback-reward"
     assert reward_model_spec.model_path == str(manifest_path.parent)
     assert reward_model_spec.ext["melix.reward_model.reward_head_type"] == "scalar"
+    assert reward_model_spec.ext["melix.reward_model.score_prompt_template"].startswith("Prompt=")
 
     with pytest.raises(ModelOperationError) as missing_manifest:
         _load_reward_model_manifest(tmp_path / "missing" / "manifest.json")
@@ -703,6 +706,87 @@ def test_text_runtime_score_response_delegates_backend_and_executor() -> None:
 
     with pytest.raises(RuntimeUnavailableError):
         MLXTextRuntime(backend=MissingScoreBackend()).score_response({}, "Prompt.", "Response.")
+
+
+def test_lora_training_pipeline_wires_reward_runtime_into_default_runner(tmp_path: Path) -> None:
+    class RewardBackend:
+        runtime_name = "pipeline-reward-runtime"
+
+        def __init__(self) -> None:
+            self.loaded_model_path = ""
+            self.responses: list[str] = []
+
+        def load_model(self, model_spec):
+            self.loaded_model_path = model_spec.model_path
+            return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+        def score_response(self, loaded_model, prompt: str, response: str, execution_ext=None):
+            del loaded_model, prompt, execution_ext
+            self.responses.append(response)
+            return 0.82
+
+    reward_model_dir = tmp_path / "reward-model"
+    reward_model_dir.mkdir()
+    reward_manifest_path = reward_model_dir / "manifest.json"
+    reward_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.reward_model_adapter.v1",
+                "reward_model_id": "pipeline-reward",
+                "model_path": str(reward_model_dir),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    dataset_dir = _write_dataset_package(
+        tmp_path / "reward-scored-dataset",
+        manifest_payload={
+            "schema_version": "melix.training_dataset_package.v1",
+            "dataset_id": "reward-scored",
+            "format": "reward_scored",
+            "sample_count": 1,
+            "version": "1",
+        },
+        sample_lines=[
+            json.dumps(
+                {
+                    "prompt": "Assess the response.",
+                    "response": "Helpful response.",
+                    "reward_score": 0.3,
+                }
+            )
+        ],
+    )
+    reward_backend = RewardBackend()
+    pipeline = LoRATrainingPipeline(
+        policy_runtime=MLXTextRuntime(backend=RewardBackend()),
+        reward_runtime=MLXTextRuntime(backend=reward_backend),
+    )
+
+    result = pipeline.run(
+        job_id="reward-runtime-pipeline",
+        request_ext={
+            "operation": "train_lora",
+            "training_mode": "rlhf",
+            "adapter_name": "reward-runtime-adapter",
+            "dataset_uri": str(dataset_dir),
+            "reward_model_manifest_path": str(reward_manifest_path),
+            "candidate_scoring_mode": "reward_model",
+        },
+        source_model=_text_model(model_path=str(tmp_path / "policy-model")),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    alignment_payload = json.loads(
+        Path(result.manifest["alignment_run_manifest_path"]).read_text(encoding="utf-8")
+    )
+    assert reward_backend.loaded_model_path == str(reward_model_dir)
+    assert reward_backend.responses == ["Helpful response."]
+    assert alignment_payload["training_backend"] == "reward_model_scored_trace"
+    assert alignment_payload["metrics"]["reward_scoring_backend"] == "pipeline-reward-runtime"
+    assert alignment_payload["metrics"]["reward_mean"] == pytest.approx(0.82)
 
 
 @pytest.mark.parametrize(
