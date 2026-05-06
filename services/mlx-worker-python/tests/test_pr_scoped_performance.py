@@ -229,6 +229,16 @@ def test_scope_report_selects_multimodal_fast_path_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "multimodal-fast-path-signature-top-level-key-cache"
 
 
+def test_scope_report_selects_multimodal_preprocessing_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/multimodal_preprocessing.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "multimodal-preprocessing-image-uri-single-parse"
+
+
 def test_scope_report_selects_worker_registry_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -784,6 +794,19 @@ def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_multimodal_image_uri_parse_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/multimodal_image_uri_parse_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["prepared_image_count"] == 640.0
+    assert metrics["urlparse_calls_mean"] == 640.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -871,6 +894,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "mlx-vlm-gemma4-weight-presence-single-pass",
         "model-registry-plain-local-manifest-stat-elision",
         "multimodal-fast-path-signature-top-level-key-cache",
+        "multimodal-preprocessing-image-uri-single-parse",
         "package-macos-resolve-fallback-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
