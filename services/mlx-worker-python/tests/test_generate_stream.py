@@ -120,6 +120,48 @@ class StopContractStreamingBackend:
         )
 
 
+class AccelerationCapturingRuntime:
+    runtime_name = "fake-acceleration-runtime"
+
+    def __init__(self) -> None:
+        self.seen_acceleration_policies: list[common_pb2.AccelerationPolicy | None] = []
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        _ = model_spec
+        return 0
+
+    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+        _ = messages
+        _ = loaded_model
+        _ = template_kwargs
+        _ = execution_ext
+        return "rendered prompt"
+
+    def prompt_token_count(self, prompt):
+        _ = prompt
+        return 2
+
+    def generate_tokens(
+        self,
+        loaded_model,
+        prompt,
+        sampling,
+        cancel_event,
+        execution_ext=None,
+        acceleration_policy=None,
+    ):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        _ = cancel_event
+        _ = execution_ext
+        self.seen_acceleration_policies.append(acceleration_policy)
+        yield RuntimeTokenEvent(text="accelerated", prompt_tokens=2, completion_tokens=1, finish_reason="stop")
+
+
 def build_services():
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StreamingFakeBackend()),
@@ -439,3 +481,49 @@ def test_generate_rejects_non_object_chat_template_kwargs_payloads() -> None:
     error = next(event.error.error for event in events if event.HasField("error"))
     assert error.code == "runtime_error"
     assert "must decode to an object" in error.message
+
+
+def test_generate_forwards_acceleration_policy_to_runtimes_that_accept_it() -> None:
+    runtime = AccelerationCapturingRuntime()
+    registry = WorkerRegistry(
+        runtime=runtime,  # type: ignore[arg-type]
+        model_catalog=WorkerModelCatalog(environment={}),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    policy = common_pb2.AccelerationPolicy(
+        mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+        draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+        num_draft_tokens=6,
+        allow_baseline_fallback=True,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-acceleration-policy"),
+            model_handle=load_response.model_handle,
+            acceleration=policy,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Say hello")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["accelerated"]
+    assert len(runtime.seen_acceleration_policies) == 1
+    seen_policy = runtime.seen_acceleration_policies[0]
+    assert seen_policy is not None
+    assert seen_policy.mode == common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE
+    assert seen_policy.draft_model_id == "mlx-community/gemma-4-E2B-it-assistant-bf16"
+    assert seen_policy.num_draft_tokens == 6
+    assert seen_policy.allow_baseline_fallback is True

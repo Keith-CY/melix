@@ -8,6 +8,7 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 from worker.registry import WorkerRegistry
 from worker.runtime.mlx_text_runtime import RuntimeToolCallEvent, RuntimeTokenEvent
 from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
+from worker.runtime.runtime_utils import callable_accepts_kwarg as _callable_accepts_kwarg
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
 
 
@@ -48,12 +49,15 @@ class EngineCore:
                 if hasattr(runtime, "prompt_token_count")
                 else len(prompt.split())
             )
+            generate_kwargs: dict[str, object] = {"execution_ext": request.execution.ext}
+            if _callable_accepts_kwarg(runtime.generate_tokens, "acceleration_policy"):
+                generate_kwargs["acceleration_policy"] = request.execution.acceleration
             for runtime_event in runtime.generate_tokens(
                 loaded_model.runtime_model,
                 prompt,
                 effective_sampling,
                 state.cancel_event,
-                execution_ext=request.execution.ext,
+                **generate_kwargs,
             ):
                 if state.cancel_event.is_set():
                     break

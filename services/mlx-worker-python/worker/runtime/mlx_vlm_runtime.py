@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
+import inspect
 import importlib.util
 import logging
 import os
@@ -10,6 +11,7 @@ from pathlib import Path
 from threading import Event
 from typing import Any, Callable, Iterable
 
+from packages.protocol.python.worker.v1 import common_pb2
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
@@ -35,6 +37,43 @@ class MaterializedMediaPaths:
     video_paths: tuple[str, ...]
 
 
+class _Gemma4TextBackedModelShim:
+    def __init__(self, language_model: Any) -> None:
+        self.language_model = language_model
+        self.config = type("Gemma4TextBackedConfig", (), {})()
+        self.config.__dict__.update(getattr(language_model.config, "__dict__", {}))
+        self.config.model_type = "gemma4"
+        self.config.image_token_id = getattr(self.config, "image_token_id", -1)
+        self.config.audio_token_id = getattr(self.config, "audio_token_id", -2)
+
+    def get_input_embeddings(self, input_ids=None, pixel_values=None, **kwargs):
+        _ = pixel_values
+        _ = kwargs
+        from mlx_vlm.models.base import InputEmbeddingsFeatures
+
+        inputs_embeds = self.language_model.model.embed_tokens(input_ids)
+        inputs_embeds = inputs_embeds * self.language_model.model.embed_scale
+        per_layer_inputs = None
+        if self.language_model.model.hidden_size_per_layer_input:
+            per_layer_inputs = self.language_model.model.get_per_layer_inputs(input_ids)
+        return InputEmbeddingsFeatures(
+            inputs_embeds=inputs_embeds,
+            per_layer_inputs=per_layer_inputs,
+        )
+
+
+class _CallableTokenizerProcessor:
+    def __init__(self, tokenizer_wrapper: Any) -> None:
+        self._tokenizer_wrapper = tokenizer_wrapper
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._tokenizer_wrapper, attr)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        tokenizer = getattr(self._tokenizer_wrapper, "_tokenizer", self._tokenizer_wrapper)
+        return tokenizer(*args, **kwargs)
+
+
 def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[bool, bool]:
     has_vision = False
     has_audio = False
@@ -46,6 +85,31 @@ def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[boo
         if has_vision and has_audio:
             break
     return has_vision, has_audio
+
+
+def _callable_has_named_kwarg(callable_obj: Any, keyword: str) -> bool:
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return False
+    parameter = signature.parameters.get(keyword)
+    if parameter is None:
+        return False
+    return parameter.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
+
+
+def _mlx_peak_memory_gb(mx_module: Any) -> float:
+    get_peak_memory = getattr(mx_module, "get_peak_memory", None)
+    if callable(get_peak_memory):
+        return float(get_peak_memory() / 1_000_000_000)
+    metal = getattr(mx_module, "metal", None)
+    metal_get_peak_memory = getattr(metal, "get_peak_memory", None)
+    if callable(metal_get_peak_memory):
+        return float(metal_get_peak_memory() / 1_000_000_000)
+    return 0.0
 
 
 def _gemma4_loaded_execution_mode(model: Any, processor: Any) -> str:
@@ -60,7 +124,8 @@ def _patch_gemma4_scaled_linear_quantization() -> None:
     import mlx.nn as nn
     import mlx_vlm.models.gemma4.language as gemma4_language
 
-    if hasattr(gemma4_language.ScaledLinear, "to_quantized"):
+    scaled_linear = getattr(gemma4_language, "ScaledLinear", None)
+    if scaled_linear is None or hasattr(scaled_linear, "to_quantized"):
         return
 
     class QuantizedScaledLinear(nn.QuantizedLinear):
@@ -104,7 +169,7 @@ def _patch_gemma4_scaled_linear_quantization() -> None:
             mode=mode,
         )
 
-    gemma4_language.ScaledLinear.to_quantized = to_quantized
+    scaled_linear.to_quantized = to_quantized
 
 
 @dataclass
@@ -112,7 +177,11 @@ class AutoMLXVLMBackend:
     load_fn: Any | None = None
     stream_generate_fn: Any | None = None
     apply_chat_template_fn: Any | None = None
+    batch_generate_fn: Any | None = None
+    generate_step_fn: Any | None = None
+    load_drafter_fn: Any | None = None
     runtime_name: str = "mlx-vlm-unavailable"
+    _drafter_cache: dict[tuple[str, str], Any] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         if self.load_fn is not None and self.stream_generate_fn is not None and self.apply_chat_template_fn is not None:
@@ -135,12 +204,56 @@ class AutoMLXVLMBackend:
             self._error = exc
             self.runtime_name = "mlx-vlm-unavailable"
             raise RuntimeUnavailableError("mlx-vlm is not installed") from exc
+        try:
+            from mlx_vlm.generate import batch_generate, generate_step
+        except (ImportError, ModuleNotFoundError):
+            batch_generate = None
+            generate_step = None
+        try:
+            from mlx_vlm.speculative.drafters import load_drafter
+        except (ImportError, ModuleNotFoundError):
+            load_drafter = None
         self._available = True
         self._error = None
         self.runtime_name = "mlx-vlm"
         self.load_fn = load
         self.stream_generate_fn = stream_generate
         self.apply_chat_template_fn = apply_chat_template
+        self.batch_generate_fn = self.batch_generate_fn or batch_generate
+        self.generate_step_fn = self.generate_step_fn or generate_step
+        self.load_drafter_fn = self.load_drafter_fn or load_drafter
+
+    def supports_mtp_speculative(self) -> bool:
+        if self.load_drafter_fn is None:
+            return False
+        if self.generate_step_fn is not None and (
+            _callable_has_named_kwarg(self.generate_step_fn, "draft_model")
+            and _callable_has_named_kwarg(self.generate_step_fn, "draft_kind")
+            and _callable_has_named_kwarg(self.generate_step_fn, "draft_block_size")
+        ):
+            return True
+        if self.batch_generate_fn is None:
+            return False
+        return (
+            _callable_has_named_kwarg(self.batch_generate_fn, "draft_model")
+            and _callable_has_named_kwarg(self.batch_generate_fn, "draft_kind")
+            and _callable_has_named_kwarg(self.batch_generate_fn, "draft_block_size")
+        )
+
+    def load_drafter(self, model_id: str, *, kind: str = "mtp") -> Any:
+        self._ensure_runtime()
+        if self.load_drafter_fn is None:
+            raise RuntimeUnavailableError("mlx-vlm drafter loading is unavailable")
+        cache_key = (model_id, kind)
+        cached = self._drafter_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        if _callable_accepts_kwarg(self.load_drafter_fn, "kind"):
+            drafter = self.load_drafter_fn(model_id, kind=kind)
+        else:
+            drafter = self.load_drafter_fn(model_id)
+        self._drafter_cache[cache_key] = drafter
+        return drafter
 
     def load_model(self, model_spec):
         if not self._available:
@@ -225,6 +338,21 @@ class AutoMLXVLMBackend:
         if has_vision_weights:
             raise original_error
 
+        if config.get("model_type") == "gemma4_text":
+            from mlx_vlm.utils import load_tokenizer
+
+            model = AutoMLXVLMBackend._load_gemma4_text_only_language_model(
+                config=config,
+                weights=weights,
+            )
+            processor = _CallableTokenizerProcessor(
+                load_tokenizer(
+                    model_path,
+                    return_tokenizer=True,
+                )
+            )
+            return model, processor, "text_backed"
+
         model_class, _ = get_model_and_args(config=config)
         config.setdefault("text_config", config.pop("llm_config", {}))
         config.setdefault("vision_config", {})
@@ -282,6 +410,40 @@ class AutoMLXVLMBackend:
         )
         execution_mode = "text_backed"
         return model, processor, execution_mode
+
+    @staticmethod
+    def _load_gemma4_text_only_language_model(*, config: dict[str, Any], weights: dict[str, Any]):
+        import mlx.core as mx
+        import mlx.nn as nn
+        from mlx_vlm.models.gemma4.language import LanguageModel, TextConfig
+
+        model_config = TextConfig.from_dict(config)
+        model = LanguageModel(model_config)
+        quantization = config.get("quantization")
+        if quantization is not None:
+            def get_class_predicate(path: str, module: Any):
+                if path in quantization:
+                    return quantization[path]
+                if not hasattr(module, "to_quantized"):
+                    return False
+                if hasattr(module, "weight") and module.weight.size % 64 != 0:
+                    return False
+                return f"{path}.scales" in weights
+
+            nn.quantize(
+                model,
+                group_size=quantization["group_size"],
+                bits=quantization["bits"],
+                mode=quantization.get("mode", "affine"),
+                class_predicate=get_class_predicate,
+            )
+
+        if hasattr(model, "sanitize"):
+            weights = model.sanitize(weights)
+        model.load_weights(list(weights.items()))
+        mx.eval(model.parameters())
+        model.eval()
+        return _Gemma4TextBackedModelShim(model)
 
 
 class MLXVLMRuntime:
@@ -395,10 +557,34 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         execution_ext: dict[str, str] | None = None,
+        acceleration_policy: common_pb2.AccelerationPolicy | None = None,
     ):
         _ = execution_ext
         metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
+        speculative_fallback_reason = ""
+        if self._mtp_speculative_requested(acceleration_policy):
+            speculative_fallback_reason = self._mtp_speculative_unsupported_reason(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                sampling=sampling,
+                execution_mode=execution_mode,
+                acceleration_policy=acceleration_policy,
+            )
+            if not speculative_fallback_reason:
+                yield from self._generate_mtp_speculative_tokens(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    sampling=sampling,
+                    cancel_event=cancel_event,
+                    acceleration_policy=acceleration_policy,
+                )
+                return
+            if not bool(getattr(acceleration_policy, "allow_baseline_fallback", False)):
+                raise RuntimeError(
+                    f"MTP speculative decode is unavailable for this request: {speculative_fallback_reason}."
+                )
+
         if execution_mode == "text_backed" and prepared_request.images:
             raise RuntimeError(
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
@@ -495,6 +681,9 @@ class MLXVLMRuntime:
                         generation_tps=float(getattr(response, "generation_tps", 0.0) or 0.0),
                         peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
                         finish_reason="stop",
+                        speculative_fallback_count=1 if speculative_fallback_reason else None,
+                        speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
+                        speculative_draft_model_configured=False if speculative_fallback_reason else None,
                     )
 
             event_iterable = backend_events() if self._executor is None else self._executor.iterate(backend_events)
@@ -509,6 +698,302 @@ class MLXVLMRuntime:
                 temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
                 temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
             )
+
+    def _generate_mtp_speculative_tokens(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+        cancel_event: Event,
+        acceleration_policy: common_pb2.AccelerationPolicy,
+    ):
+        self._ensure_fast_path_probe(loaded_model, prepared_request)
+        if cancel_event.is_set():
+            return
+        prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        draft_model_id = str(getattr(acceleration_policy, "draft_model_id", "") or "").strip()
+        draft_block_size = self._mtp_draft_block_size(acceleration_policy)
+
+        def backend_events():
+            self._backend._ensure_runtime()
+            if cancel_event.is_set():
+                return
+            drafter = self._backend.load_drafter(draft_model_id, kind="mtp")
+            if self._backend.generate_step_fn is not None:
+                yield from self._generate_mtp_speculative_step_events(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    sampling=sampling,
+                    cancel_event=cancel_event,
+                    drafter=drafter,
+                    draft_block_size=draft_block_size,
+                    prompt_tokens=prompt_tokens,
+                )
+                return
+
+            batch_kwargs: dict[str, Any] = {
+                "prompts": [prepared_request.prompt_text],
+                "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+                "draft_model": drafter,
+                "draft_kind": "mtp",
+                "draft_block_size": draft_block_size,
+            }
+
+            started_at = time.perf_counter()
+            response_batch = self._backend.batch_generate_fn(
+                loaded_model["model"],
+                loaded_model["processor"],
+                **batch_kwargs,
+            )
+            if cancel_event.is_set():
+                return
+            response = self._first_batch_response(response_batch)
+            text = self._batch_response_text(response)
+            if not text:
+                return
+            first_token_at = time.perf_counter()
+            self._last_probe = replace(
+                self._last_probe,
+                preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+                preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+                preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+                first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
+                video_effective_frame_count=prepared_request.effective_video_frame_count,
+                video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+                video_window_ms=prepared_request.effective_video_window_ms,
+                cache_identity="",
+                cache_scope_id="",
+                cache_hit=False,
+            )
+            completion_tokens = int(
+                self._response_number(response, "generation_tokens", "completion_tokens", default=1)
+                or 1
+            )
+            yield RuntimeTokenEvent(
+                text=text,
+                prompt_tokens=int(self._response_number(response, "prompt_tokens", default=prompt_tokens) or prompt_tokens),
+                completion_tokens=completion_tokens,
+                prompt_tps=float(self._response_number(response, "prompt_tps", default=0.0) or 0.0),
+                generation_tps=float(self._response_number(response, "generation_tps", default=0.0) or 0.0),
+                peak_memory=float(self._response_number(response, "peak_memory", default=0.0) or 0.0),
+                finish_reason=str(getattr(response, "finish_reason", "") or "stop"),
+                speculative_acceptance_rate=self._optional_response_float(response, "speculative_acceptance_rate"),
+                speculative_rollback_rate=self._optional_response_float(response, "speculative_rollback_rate"),
+                speculative_accepted_tokens=self._optional_response_int(response, "speculative_accepted_tokens"),
+                speculative_rejected_tokens=self._optional_response_int(response, "speculative_rejected_tokens"),
+                speculative_fallback_count=int(
+                    self._response_number(response, "speculative_fallback_count", default=0) or 0
+                ),
+                speculative_num_draft_tokens=draft_block_size,
+                speculative_draft_model_configured=True,
+                speculative_draft_propose_ms=self._optional_response_float(response, "speculative_draft_propose_ms"),
+                speculative_target_verify_ms=self._optional_response_float(response, "speculative_target_verify_ms"),
+            )
+
+        event_iterable = backend_events() if self._executor is None else self._executor.iterate(backend_events)
+        for event in event_iterable:
+            yield event
+
+    def _generate_mtp_speculative_step_events(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+        cancel_event: Event,
+        drafter: Any,
+        draft_block_size: int,
+        prompt_tokens: int,
+    ):
+        import mlx.core as mx
+        from mlx_vlm.utils import prepare_inputs
+
+        started_at = time.perf_counter()
+        formatted_prompt = self._backend.apply_chat_template_fn(
+            loaded_model["processor"],
+            loaded_model["model"].config,
+            prepared_request.prompt_text,
+            num_images=0,
+        )
+        add_special_tokens = (
+            getattr(loaded_model["processor"], "chat_template", None) is None
+            if getattr(loaded_model["model"].config, "model_type", "") in ["gemma3", "gemma3n", "gemma4"]
+            else True
+        )
+        inputs = prepare_inputs(
+            loaded_model["processor"],
+            prompts=[formatted_prompt],
+            add_special_tokens=add_special_tokens,
+            return_tensors="mlx",
+        )
+        input_ids = inputs["input_ids"]
+        mask = inputs.get("attention_mask")
+        prompt_tokens = int(getattr(input_ids, "shape", [0, prompt_tokens])[-1] or prompt_tokens)
+
+        detokenizer = loaded_model["processor"].detokenizer
+        detokenizer.reset()
+        first_token_at: float | None = None
+        completion_tokens = 0
+        for token, _logprobs in self._backend.generate_step_fn(
+            input_ids,
+            loaded_model["model"],
+            None,
+            mask,
+            max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
+            draft_model=drafter,
+            draft_kind="mtp",
+            draft_block_size=draft_block_size,
+            prefill_step_size=None,
+        ):
+            if cancel_event.is_set():
+                return
+            if first_token_at is None:
+                first_token_at = time.perf_counter()
+            token_values = token if isinstance(token, list) else [token]
+            for token_value in token_values:
+                detokenizer.add_token(int(token_value))
+                completion_tokens += 1
+        detokenizer.finalize()
+        text = str(getattr(detokenizer, "text", "") or "")
+        if not text:
+            return
+        finished_at = time.perf_counter()
+        self._last_probe = replace(
+            self._last_probe,
+            preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+            preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+            preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+            first_token_latency_ms=max(0.0, ((first_token_at or finished_at) - started_at) * 1000.0),
+            video_effective_frame_count=prepared_request.effective_video_frame_count,
+            video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+            video_window_ms=prepared_request.effective_video_window_ms,
+            cache_identity="",
+            cache_scope_id="",
+            cache_hit=False,
+        )
+        generation_time = max(0.0, finished_at - (first_token_at or finished_at))
+        yield RuntimeTokenEvent(
+            text=text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            prompt_tps=0.0,
+            generation_tps=(completion_tokens / generation_time) if generation_time > 0 else 0.0,
+            peak_memory=_mlx_peak_memory_gb(mx),
+            finish_reason="stop",
+            speculative_fallback_count=0,
+            speculative_num_draft_tokens=draft_block_size,
+            speculative_draft_model_configured=True,
+        )
+
+    @staticmethod
+    def _mtp_speculative_requested(acceleration_policy: common_pb2.AccelerationPolicy | None) -> bool:
+        if acceleration_policy is None:
+            return False
+        return int(getattr(acceleration_policy, "mode", 0) or 0) == int(
+            common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE
+        )
+
+    def _mtp_speculative_unsupported_reason(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+        execution_mode: str,
+        acceleration_policy: common_pb2.AccelerationPolicy | None,
+    ) -> str:
+        if acceleration_policy is None:
+            return "missing acceleration policy"
+        if not str(getattr(acceleration_policy, "draft_model_id", "") or "").strip():
+            return "draft_model_id is required"
+        if not self._is_gemma4_target(loaded_model):
+            return "target model is not Gemma 4"
+        if execution_mode != "text_backed":
+            return f"target execution mode is {execution_mode}"
+        if prepared_request.images or prepared_request.videos:
+            return "media inputs are not supported by the Gemma 4 MTP path yet"
+        if not self._sampling_is_greedy(sampling):
+            return "only greedy sampling is supported"
+        self._backend._ensure_runtime()
+        if not self._backend.supports_mtp_speculative():
+            return "the installed mlx-vlm runtime does not expose MTP drafter support"
+        return ""
+
+    @staticmethod
+    def _is_gemma4_target(loaded_model) -> bool:
+        if not isinstance(loaded_model, dict):
+            return False
+        metadata = loaded_model.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        family_id = str(metadata.get("vision_family_id") or loaded_model.get("vision_family_id") or "").strip()
+        if family_id == "gemma4-v1":
+            return True
+        model_type = str(getattr(getattr(loaded_model.get("model"), "config", None), "model_type", "") or "").lower()
+        return model_type.startswith("gemma4")
+
+    @classmethod
+    def _sampling_is_greedy(cls, sampling) -> bool:
+        temperature = float(getattr(sampling, "temperature", 0.0) or 0.0)
+        top_p = cls._effective_top_p(sampling)
+        top_k = int(getattr(sampling, "top_k", 0) or 0)
+        return abs(temperature) < 1e-9 and abs(top_p - 1.0) < 1e-9 and top_k == 0
+
+    @staticmethod
+    def _effective_top_p(sampling) -> float:
+        return float(getattr(sampling, "top_p", 0.0) or 1.0)
+
+    @staticmethod
+    def _mtp_draft_block_size(acceleration_policy: common_pb2.AccelerationPolicy) -> int:
+        return int(getattr(acceleration_policy, "num_draft_tokens", 0) or 6)
+
+    @staticmethod
+    def _first_batch_response(response_batch: Any) -> Any:
+        if isinstance(response_batch, (list, tuple)):
+            return response_batch[0] if response_batch else ""
+        return response_batch
+
+    @staticmethod
+    def _batch_response_text(response: Any) -> str:
+        if isinstance(response, str):
+            return response
+        texts = getattr(response, "texts", None)
+        if isinstance(texts, (list, tuple)) and texts:
+            return str(texts[0])
+        for attr_name in ("text", "response", "content"):
+            value = getattr(response, attr_name, None)
+            if value is not None:
+                return str(value)
+        return str(response or "")
+
+    @staticmethod
+    def _response_number(response: Any, *attr_names: str, default: float | int = 0) -> float | int:
+        for attr_name in attr_names:
+            value = getattr(response, attr_name, None)
+            if value is not None:
+                return value
+        stats = getattr(response, "stats", None)
+        if stats is not None:
+            for attr_name in attr_names:
+                value = getattr(stats, attr_name, None)
+                if value is not None:
+                    return value
+        return default
+
+    @classmethod
+    def _optional_response_float(cls, response: Any, attr_name: str) -> float | None:
+        value = cls._response_number(response, attr_name, default=None)
+        if value is None:
+            return None
+        return float(value)
+
+    @classmethod
+    def _optional_response_int(cls, response: Any, attr_name: str) -> int | None:
+        value = cls._response_number(response, attr_name, default=None)
+        if value is None:
+            return None
+        return int(value)
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
         return self._last_probe

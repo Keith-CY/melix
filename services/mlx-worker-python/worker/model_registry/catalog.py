@@ -810,6 +810,37 @@ def _gemma4_index_has_vision_weights(
     )
 
 
+def _gemma4_mtp_assistant_metadata(
+    *,
+    model_id: str,
+    model_dir: Path,
+    config_payload: Mapping[str, object] | None,
+    text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] | None = None,
+) -> dict[str, str]:
+    if not _is_gemma4_vlm_config(config_payload):
+        return {}
+
+    readme_text = _read_text_prefix(
+        model_dir / "README.md",
+        text_prefix_cache=text_prefix_cache,
+    ).lower()
+    try:
+        config_text = json.dumps(dict(config_payload or {})).lower()
+    except (TypeError, ValueError):
+        config_text = ""
+    combined = " ".join((model_id.lower(), readme_text, config_text))
+    if "assistant" not in combined and "drafter" not in combined:
+        return {}
+    if "mtp" not in combined and "speculative-decoding" not in combined:
+        return {}
+    return {
+        "melix.speculative.role": "assistant",
+        "melix.speculative.kind": "mtp",
+        "melix.speculative.target_family": "gemma4-v1",
+        "melix.serving.hidden": "true",
+    }
+
+
 def _vlm_capability_metadata(
     *,
     model_path: str,
@@ -1427,6 +1458,14 @@ class WorkerModelCatalog:
                     json_cache=json_cache,
                 )
             )
+        ext.update(
+            _gemma4_mtp_assistant_metadata(
+                model_id=model_id,
+                model_dir=model_dir,
+                config_payload=config_payload,
+                text_prefix_cache=self._text_prefix_cache,
+            )
+        )
         _merge_generation_config_metadata(
             model_dir,
             ext=ext,
@@ -1527,6 +1566,14 @@ class WorkerModelCatalog:
                     json_cache=json_cache,
                 )
             )
+        normalized_ext.update(
+            _gemma4_mtp_assistant_metadata(
+                model_id=model_id,
+                model_dir=runtime_model_dir,
+                config_payload=config_payload,
+                text_prefix_cache=self._text_prefix_cache,
+            )
+        )
         if model_kind == "image":
             normalized_ext.update(
                 _image_capability_metadata(
