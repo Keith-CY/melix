@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
@@ -22,6 +23,34 @@ from worker.productization.event_extraction import (
     RemoteEventExtractionTarget,
     write_event_prediction_rows,
 )
+
+
+def test_event_dialogue_diagnostics_keeps_top_five_without_full_sort(monkeypatch) -> None:
+    traces = [
+        {"dialogue_id": f"dlg-{index}", "line_number": index, "status": "ok", "total_duration_ms": float(index)}
+        for index in range(30)
+    ]
+    traces[3]["provider_usage"] = {"prompt_tokens": 2.0, "ignored_bool": True}
+
+    def fail_sorted(*args, **kwargs):  # pragma: no cover - exercised only on regression
+        if args and args[0] is traces:
+            raise AssertionError("slowest dialogue diagnostics should not fully sort all traces")
+        return original_sorted(*args, **kwargs)
+
+    original_sorted = builtins.sorted
+    monkeypatch.setattr(builtins, "sorted", fail_sorted)
+
+    diagnostics = EvaluationCore._event_extraction_dialogue_diagnostics(traces)
+
+    assert diagnostics["provider_usage_totals"] == {"prompt_tokens": 2}
+    assert diagnostics["dialogue_status_counts"] == {"ok": 30, "failed": 0, "aborted": 0}
+    assert diagnostics["slowest_dialogues"] == [
+        {"dialogue_id": "dlg-29", "line_number": 29, "duration_ms": 29.0, "status": "ok"},
+        {"dialogue_id": "dlg-28", "line_number": 28, "duration_ms": 28.0, "status": "ok"},
+        {"dialogue_id": "dlg-27", "line_number": 27, "duration_ms": 27.0, "status": "ok"},
+        {"dialogue_id": "dlg-26", "line_number": 26, "duration_ms": 26.0, "status": "ok"},
+        {"dialogue_id": "dlg-25", "line_number": 25, "duration_ms": 25.0, "status": "ok"},
+    ]
 
 
 def test_default_event_extraction_prompt_spec_uses_baseline_v6_feedback_rules() -> None:
