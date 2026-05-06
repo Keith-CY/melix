@@ -296,7 +296,9 @@ def test_dispatch_probe_impl_supports_evaluation_final_result_probe() -> None:
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["read_rows_calls_mean"] == 0.0
     assert metrics["sample_count"] == 15000.0
+    assert metrics["cache_hit_count"] == 5.0
 
 
 
