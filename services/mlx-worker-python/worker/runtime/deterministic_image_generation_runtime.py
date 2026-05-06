@@ -152,6 +152,9 @@ class DeterministicImageGenerationRuntime:
             label="image edit mask",
         )
 
+        source_digest = self._edit_input_digest(source_bytes)
+        mask_digest = self._edit_input_digest(mask_bytes) if mask_bytes is not None else "none"
+
         artifacts: list[common_pb2.ImageArtifactMetadata] = []
         artifact_publish_ms = 0.0
         lineage_ext = self._lineage_ext(
@@ -211,8 +214,8 @@ class DeterministicImageGenerationRuntime:
                 variant=index,
                 model_id=str(loaded_model.get("model_id", "image-model")),
                 strength=float(request.strength or 0.0),
-                source_bytes=source_bytes,
-                mask_bytes=mask_bytes,
+                source_digest=source_digest,
+                mask_digest=mask_digest,
             )
             artifact_path = output_dir / f"output-{index}.{image_format}"
             artifact_publish_ms += self._write_bytes(artifact_path, payload)
@@ -410,6 +413,10 @@ class DeterministicImageGenerationRuntime:
         return cls._normalized_format(suffix or "png")
 
     @staticmethod
+    def _edit_input_digest(payload: bytes) -> str:
+        return hashlib.sha256(payload).hexdigest()[:12]
+
+    @staticmethod
     def _render_edit_payload(
         *,
         prompt: str,
@@ -418,11 +425,9 @@ class DeterministicImageGenerationRuntime:
         variant: int,
         model_id: str,
         strength: float,
-        source_bytes: bytes,
-        mask_bytes: bytes | None,
+        source_digest: str,
+        mask_digest: str,
     ) -> bytes:
-        source_digest = hashlib.sha256(source_bytes).hexdigest()[:12]
-        mask_digest = hashlib.sha256(mask_bytes).hexdigest()[:12] if mask_bytes is not None else "none"
         payload = (
             f"MELIX_IMAGE_EDIT\n"
             f"MODEL={model_id}\n"

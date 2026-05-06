@@ -182,6 +182,51 @@ def test_image_edit_persists_lineage_and_generated_artifact(tmp_path: Path) -> N
     assert Path(generated_artifact.storage_uri).read_bytes() == response.images[0]
 
 
+def test_image_edit_reuses_input_digests_across_variants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_service, inference_service, _ = build_services(tmp_path)
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
+    source_path = tmp_path / "edit-source.png"
+    mask_path = tmp_path / "edit-mask.png"
+    source_path.write_bytes(b"SOURCE_IMAGE")
+    mask_path.write_bytes(b"MASK_IMAGE")
+    digest_payloads: list[bytes] = []
+
+    def record_digest(payload: bytes) -> str:
+        digest_payloads.append(payload)
+        if payload == b"SOURCE_IMAGE":
+            return "source-once"
+        if payload == b"MASK_IMAGE":
+            return "mask-once"
+        return "unexpected"
+
+    monkeypatch.setattr(
+        DeterministicImageGenerationRuntime,
+        "_edit_input_digest",
+        staticmethod(record_digest),
+    )
+
+    response = inference_service.ImageEdit(
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="image-edit-digests"),
+            model_handle=model_handle,
+            prompt="add stars",
+            image_uri=source_path.as_uri(),
+            mask_uri=mask_path.as_uri(),
+            size="256x256",
+            response_format="png",
+            n=4,
+        ),
+        context=None,
+    )
+
+    assert response.error.code == ""
+    assert len(response.images) == 4
+    assert digest_payloads == [b"SOURCE_IMAGE", b"MASK_IMAGE"]
+    for payload in response.images:
+        assert b"SOURCE_SHA=source-once" in payload
+        assert b"MASK_SHA=mask-once" in payload
+
+
 def test_image_iterate_and_variation_preserve_lineage_metadata(tmp_path: Path) -> None:
     runtime_service, inference_service, _ = build_services(tmp_path)
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
