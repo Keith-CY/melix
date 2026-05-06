@@ -10,6 +10,11 @@ import worker.model_ops.hub_catalog as hub_catalog_module
 from worker.model_ops.hub_catalog import HubCatalog, HubCatalogError, _is_mlx_compatible, _local_fit_evidence
 
 
+KB = 1024
+MB = 1024 ** 2
+GB = 1024 ** 3
+
+
 class FakeHTTPResponse:
     def __init__(self, payload: object):
         self._payload = json.dumps(payload).encode("utf-8")
@@ -561,6 +566,18 @@ def test_get_model_card_includes_local_fit_evidence_from_readme_size_hint() -> N
     card = catalog.get_model_card(repo_id="mlx-community/readme-size")
 
     assert card.local_fit_status == "good"
-    assert card.estimated_artifact_bytes == 570 * 1024 * 1024
+    assert card.estimated_artifact_bytes == 570 * MB
     assert card.quantization_summary == "4-bit, optiq"
     assert card.base_models == ["base/model"]
+
+
+def test_size_hint_parser_uses_precompiled_patterns(monkeypatch: pytest.MonkeyPatch) -> None:
+    def dynamic_search_forbidden(*_args, **_kwargs):
+        raise AssertionError("size hint parsing should use precompiled pattern.search")
+
+    monkeypatch.setattr(hub_catalog_module.re, "search", dynamic_search_forbidden)
+
+    assert hub_catalog_module._size_hint_from_text("2.5 GB", allow_bare=True) == int(2.5 * GB)
+    assert hub_catalog_module._size_hint_from_text("Model size: 768 MB", allow_bare=False) == 768 * MB
+    assert hub_catalog_module._size_hint_from_text("Readme says 768 MB", allow_bare=False) == 0
+    assert hub_catalog_module._size_hint_from_text("MODEL SIZE | 512 kb", allow_bare=False) == 512 * KB

@@ -31,6 +31,37 @@
     ]
   },
   {
+    "id": "hub-catalog-size-hint-regex-precompile",
+    "name": "Hub catalog size hint regex precompile",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_ops/hub_catalog.py",
+      "services/mlx-worker-python/tests/test_hub_catalog.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/hub_catalog_size_hint_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_hub_catalog_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_hub_catalog_size_hint_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_hub_catalog_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_hub_catalog_size_hint_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/hub_catalog.py services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/hub_catalog_size_hint_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/hub_catalog_size_hint_probe.py ]; then python scripts/hub_catalog_size_hint_probe.py; else python - <<\"PYPROBE\"\nimport json, os, statistics, sys, time, tracemalloc\nfrom pathlib import Path\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\nfrom worker.model_ops.hub_catalog import _size_hint_from_text\ndef text(index):\n    value = 128 + (index % 2048)\n    mode = index % 4\n    if mode == 0:\n        return f\"{value} MB\", True, value * 1024 * 1024\n    if mode == 1:\n        return f\"Model size: {value} MB\", False, value * 1024 * 1024\n    if mode == 2:\n        return f\"README\\nMODEL SIZE | {value} kb\\nother metadata\", False, value * 1024\n    return f\"description only {value} MB\", False, 0\ndef run_sample(iterations):\n    started = time.perf_counter()\n    checksum = 0\n    matched = 0\n    for index in range(iterations):\n        item_text, allow_bare, expected = text(index)\n        parsed = _size_hint_from_text(item_text, allow_bare=allow_bare)\n        if parsed != expected:\n            raise SystemExit(f\"unexpected size hint at {index}: {parsed} != {expected}\")\n        checksum ^= parsed\n        if parsed:\n            matched += 1\n    return (time.perf_counter() - started) * 1000.0, checksum, matched\niterations = int(os.environ.get(\"MELIX_HUB_CATALOG_SIZE_HINT_ITERATIONS\", \"200000\"))\nsample_count = int(os.environ.get(\"MELIX_HUB_CATALOG_SIZE_HINT_SAMPLES\", \"5\"))\nelapsed_samples = []\npeak_samples = []\nchecksum = matched = 0\nfor _ in range(sample_count):\n    tracemalloc.start()\n    elapsed_ms, checksum, matched = run_sample(iterations)\n    _, peak = tracemalloc.get_traced_memory()\n    tracemalloc.stop()\n    elapsed_samples.append(elapsed_ms)\n    peak_samples.append(peak)\nprint(json.dumps({\"elapsed_ms_mean\": statistics.fmean(elapsed_samples), \"peak_bytes_mean\": statistics.fmean(peak_samples), \"size_hint_calls_mean\": float(iterations), \"matched_hint_count\": float(matched), \"checksum\": float(checksum), \"sample_count\": float(sample_count)}, sort_keys=True))\nPYPROBE\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "size_hint_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "multimodal-fast-path-signature-top-level-key-cache",
     "name": "Multimodal fast-path signature top-level key cache",
     "runner": "ubuntu-latest",

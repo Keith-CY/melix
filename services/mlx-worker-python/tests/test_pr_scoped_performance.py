@@ -85,8 +85,12 @@ def test_scope_report_selects_hub_catalog_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/model_ops/hub_catalog.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "hub-catalog-tag-normalization-single-pass"
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "hub-catalog-tag-normalization-single-pass",
+        "hub-catalog-size-hint-regex-precompile",
+    }
 
 
 def test_scope_report_selects_stream_assembler_probe() -> None:
@@ -739,6 +743,25 @@ def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_hub_catalog_size_hint_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_HUB_CATALOG_SIZE_HINT_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_HUB_CATALOG_SIZE_HINT_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/hub_catalog_size_hint_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["size_hint_calls_mean"] == 8.0
+    assert metrics["matched_hint_count"] == 6.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_statistical_evidence_bootstrap_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -841,6 +864,7 @@ def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "hub-catalog-tag-normalization-single-pass",
+        "hub-catalog-size-hint-regex-precompile",
         "benchmark-evaluation-report-running-aggregates",
         "statistical-evidence-bootstrap-percentile-single-sort",
         "stream-assembler-parser-mode-cache",
