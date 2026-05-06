@@ -417,8 +417,12 @@ def test_scope_report_selects_statistical_evidence_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/productization/statistical_evidence.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "statistical-evidence-bootstrap-single-sort"
+    selected_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert selected_ids == {
+        "statistical-evidence-bootstrap-single-sort",
+        "statistical-evidence-category-breakdown-single-pass",
+    }
 
 
 def test_scope_report_selects_pr_scoped_scope_script_probe() -> None:
@@ -1028,6 +1032,30 @@ def test_statistical_evidence_bootstrap_probe_script_emits_metrics(
     assert metrics["lower_bound_mean"] <= metrics["upper_bound_mean"]
 
 
+def test_statistical_evidence_category_breakdown_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STAT_CATEGORY_ROWS", "18")
+    monkeypatch.setenv("MELIX_STAT_CATEGORY_COUNT", "3")
+    monkeypatch.setenv("MELIX_STAT_CATEGORY_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/statistical_evidence_category_breakdown_probe.py"),
+            run_name="__main__",
+        )
+
+    assert excinfo.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["row_count"] == 18.0
+    assert metrics["category_count"] == 3.0
+    assert metrics["checksum"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_training_dataset_chunker_top_level_copy_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1444,6 +1472,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "pr-scoped-performance-report-results-scandir",
         "model-ops-bundle-artifact-byte-accounting",
         "statistical-evidence-bootstrap-single-sort",
+        "statistical-evidence-category-breakdown-single-pass",
     }
     registry_probe = None
     maintenance_probe = None

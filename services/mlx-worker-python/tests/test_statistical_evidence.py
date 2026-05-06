@@ -229,3 +229,41 @@ def test_build_category_breakdown_aggregates_supported_categories_only() -> None
             "delta_accuracy": 0.5,
         },
     }
+
+
+def test_build_category_breakdown_preserves_ordering_and_rounded_totals() -> None:
+    rows = tuple(
+        {
+            "category_label": f" category-{index % 3} ",
+            "base_correct": index % 2 == 0,
+            "target_correct": index % 4 != 0,
+        }
+        for index in range(12)
+    ) + (
+        {"category_label": "   ", "base_correct": True, "target_correct": True},
+        {"base_correct": True, "target_correct": True},
+    )
+
+    breakdown = build_category_breakdown(rows=rows)
+
+    assert list(breakdown) == ["category-0", "category-1", "category-2"]
+    assert breakdown == {
+        "category-0": {
+            "sample_size": 4,
+            "base_accuracy": 0.5,
+            "target_accuracy": 0.75,
+            "delta_accuracy": 0.25,
+        },
+        "category-1": {
+            "sample_size": 4,
+            "base_accuracy": 0.5,
+            "target_accuracy": 0.75,
+            "delta_accuracy": 0.25,
+        },
+        "category-2": {
+            "sample_size": 4,
+            "base_accuracy": 0.5,
+            "target_accuracy": 0.75,
+            "delta_accuracy": 0.25,
+        },
+    }
