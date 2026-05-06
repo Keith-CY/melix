@@ -265,20 +265,21 @@ class MLXAudioSpeechRuntime:
         if requested_format != "wav":
             raise ValueError("mlx-audio speech backend only supports wav output.")
 
-        params = signature(loaded_model.model.generate).parameters
+        supports_voice = loaded_model.voice_mode in {"hybrid", "named"}
+        supports_instructions = loaded_model.supports_instructions
         kwargs = {
             "text": request.input,
             "verbose": False,
         }
         voice_fallback_count = 0
 
-        if "voice" in params and request.voice:
+        if supports_voice and request.voice:
             kwargs["voice"] = request.voice
 
-        if "instruct" in params:
+        if supports_instructions:
             if request.instructions:
                 kwargs["instruct"] = request.instructions
-            elif "voice" not in params and request.voice:
+            elif not supports_voice and request.voice:
                 kwargs["instruct"] = request.voice
                 voice_fallback_count = 1
 

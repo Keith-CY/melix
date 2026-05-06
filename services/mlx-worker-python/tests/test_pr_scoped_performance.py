@@ -103,6 +103,16 @@ def test_scope_report_selects_stream_assembler_probe() -> None:
     }
 
 
+def test_scope_report_selects_mlx_audio_speech_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-audio-speech-signature-elision"
+
+
 def test_scope_report_selects_runtime_utils_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -821,6 +831,26 @@ def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_mlx_audio_speech_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_AUDIO_SPEECH_SIGNATURE_PROBE_CALLS", "3")
+    monkeypatch.setenv("MELIX_AUDIO_SPEECH_SIGNATURE_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/mlx_audio_speech_signature_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["speak_call_count"] == 3.0
+    assert metrics["inspect_signature_calls_mean"] == 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["output_bytes_total"] > 0
+
+
 def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -856,6 +886,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
         "runtime-utils-kwarg-signature-cache",
+        "mlx-audio-speech-signature-elision",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
         "evaluation-final-result-materialization-streaming",

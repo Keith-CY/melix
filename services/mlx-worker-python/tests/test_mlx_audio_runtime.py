@@ -152,6 +152,65 @@ def test_mlx_audio_speech_runtime_detects_voice_mode_and_maps_voice_and_instruct
     ]
 
 
+def test_mlx_audio_speech_runtime_reuses_loaded_signature_metadata_during_speak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import worker.runtime.mlx_audio_runtime as mlx_audio_runtime
+    from worker.runtime.mlx_audio_runtime import MLXAudioSpeechRuntime
+
+    captured_calls: list[dict[str, object]] = []
+
+    class FakeChunk:
+        def __init__(self, audio):
+            self.audio = audio
+            self.sample_rate = 24_000
+
+    class FakeTTSModel:
+        def generate(self, text, voice=None, instruct=None, verbose=False):
+            captured_calls.append(
+                {
+                    "text": text,
+                    "voice": voice,
+                    "instruct": instruct,
+                    "verbose": verbose,
+                }
+            )
+            yield FakeChunk([0.1, -0.1, 0.0])
+
+    def fake_load_model(model_path: str, strict: bool = True):
+        return FakeTTSModel()
+
+    _install_fake_mlx_audio(monkeypatch, tts_loader=fake_load_model)
+    runtime = MLXAudioSpeechRuntime()
+    loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
+    monkeypatch.setattr(
+        mlx_audio_runtime,
+        "signature",
+        lambda _callable: pytest.fail("speak() should reuse loaded speech signature metadata"),
+    )
+
+    result = runtime.speak(
+        loaded,
+        inference_pb2.SpeakRequest(
+            input="cached signature metadata",
+            voice="alloy",
+            instructions="Speak brightly.",
+            format="wav",
+        ),
+    )
+
+    assert result.format == "wav"
+    assert result.audio_bytes.startswith(b"RIFF")
+    assert captured_calls == [
+        {
+            "text": "cached signature metadata",
+            "voice": "alloy",
+            "instruct": "Speak brightly.",
+            "verbose": False,
+        }
+    ]
+
+
 def test_mlx_audio_speech_runtime_falls_back_to_voice_descriptor_only_for_instructional_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
