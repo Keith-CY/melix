@@ -344,22 +344,32 @@ def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -
     assert code_eval_runner._read_limited_stdio(directory_path, 4) == ("", 0)
 
 
-def test_read_limited_stdio_handles_stat_open_race(
+def test_read_limited_stdio_handles_open_race(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output_path = tmp_path / "output.txt"
     output_path.write_text("secret output", encoding="utf-8")
 
-    original_open = Path.open
+    def fake_open(path, flags, *args, **kwargs):
+        raise FileNotFoundError(str(path))
 
-    def fake_open(self: Path, *args, **kwargs):
-        if self == output_path:
-            raise FileNotFoundError(str(self))
-        return original_open(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "open", fake_open)
+    monkeypatch.setattr(code_eval_runner.os, "open", fake_open)
 
     assert code_eval_runner._read_limited_stdio(output_path, 4) == ("", 0)
+
+
+def test_read_limited_stdio_ignores_close_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_path = tmp_path / "output.txt"
+    output_path.write_text("0123456789abcdef", encoding="utf-8")
+
+    def fake_close(fd: int) -> None:
+        raise OSError("close failed")
+
+    monkeypatch.setattr(code_eval_runner.os, "close", fake_close)
+
+    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
 
 
 def test_output_limit_reuses_limited_stdio_sizes(monkeypatch) -> None:
