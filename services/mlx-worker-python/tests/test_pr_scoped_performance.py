@@ -153,6 +153,16 @@ def test_scope_report_selects_mlx_audio_signature_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "mlx-audio-generate-signature-cache"
 
 
+def test_scope_report_selects_video_preprocessing_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/video_preprocessing.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "video-preprocessing-uri-byte-length-reuse"
+
+
 def test_scope_report_selects_only_matching_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1067,6 +1077,23 @@ def test_dataset_registry_snapshot_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["legacy_inference_helper_calls_mean"] == 0.0
     assert metrics["file_count_mean"] == 4.0
+
+
+def test_video_preprocessing_uri_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/video_preprocessing_uri_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["iterations_per_sample"] == 50000.0
+    assert metrics["byte_length_getattrs_per_call"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
 
 
 def test_registered_probes_expose_focused_commands() -> None:
