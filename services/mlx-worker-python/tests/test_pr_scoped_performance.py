@@ -141,8 +141,12 @@ def test_scope_report_selects_training_dataset_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/model_ops/training_dataset.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "training-dataset-token-percentiles-single-sort"
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "training-dataset-token-percentiles-single-sort",
+        "training-dataset-validation-sample-limit",
+    }
 
 
 def test_scope_report_selects_startup_signals_probe() -> None:
@@ -918,6 +922,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
         "training-dataset-token-percentiles-single-sort",
+        "training-dataset-validation-sample-limit",
         "maintenance-bench-report-readback",
         "maintenance-percentile-vector-reuse",
         "phase8-metrics-closure-audit-reuse",

@@ -679,6 +679,42 @@
     ]
   },
   {
+    "id": "training-dataset-validation-sample-limit",
+    "name": "Training dataset validation sample-limit loading",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_ops/training_dataset.py",
+      "services/mlx-worker-python/tests/test_training_dataset_builder.py",
+      "scripts/training_dataset_validation_limit_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_training_dataset_builder.py::test_load_training_dataset_package_limits_validation_samples services/mlx-worker-python/tests/test_training_dataset_builder.py::test_load_training_dataset_package_stops_reading_validation_after_sample_limit",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_training_dataset_builder.py::test_load_training_dataset_package_limits_validation_samples services/mlx-worker-python/tests/test_training_dataset_builder.py::test_load_training_dataset_package_stops_reading_validation_after_sample_limit && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/training_dataset.py services/mlx-worker-python/tests/test_training_dataset_builder.py",
+    "probe_command": "if [ -f scripts/training_dataset_validation_limit_probe.py ]; then\n  PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python scripts/training_dataset_validation_limit_probe.py\nelse\n  PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python - <<'PY'\nimport json\nimport statistics\nimport sys\nimport tempfile\nimport time\nimport tracemalloc\nfrom pathlib import Path\nsys.path[:0] = [str(Path.cwd()), str(Path.cwd() / \"services/mlx-worker-python\")]\nfrom worker.model_ops.training_dataset import load_training_dataset_package\nrows = 50000\nsamples = []\nwith tempfile.TemporaryDirectory(prefix=\"melix-validation-limit-probe-\") as temp_dir:\n    package_path = Path(temp_dir) / \"package\"\n    package_path.mkdir()\n    (package_path / \"manifest.json\").write_text(json.dumps({\"schema_version\": \"melix.training_dataset_package.v1\", \"dataset_id\": \"validation-limit-probe\", \"format\": \"text_completion\", \"sample_count\": 1, \"version\": \"1\", \"validation_sample_count\": rows}) + \"\\n\", encoding=\"utf-8\")\n    (package_path / \"samples.jsonl\").write_text(json.dumps({\"text\": \"train-row\"}) + \"\\n\", encoding=\"utf-8\")\n    with (package_path / \"valid.jsonl\").open(\"w\", encoding=\"utf-8\") as handle:\n        for index in range(rows):\n            handle.write(json.dumps({\"text\": f\"validation-{index}\"}) + \"\\n\")\n    for _ in range(5):\n        tracemalloc.start()\n        started = time.perf_counter()\n        package = load_training_dataset_package(str(package_path), sample_limit=1)\n        elapsed_ms = (time.perf_counter() - started) * 1000.0\n        _, peak_bytes = tracemalloc.get_traced_memory()\n        tracemalloc.stop()\n        samples.append((elapsed_ms, float(peak_bytes), float(package.validation_sample_count)))\nprint(json.dumps({\"elapsed_ms_mean\": statistics.fmean(sample[0] for sample in samples), \"peak_bytes_mean\": statistics.fmean(sample[1] for sample in samples), \"validation_sample_count_mean\": statistics.fmean(sample[2] for sample in samples), \"synthetic_validation_rows\": float(rows)}, sort_keys=True))\nPY\nfi",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "validation_sample_count_mean",
+        "unit": "rows",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "maintenance-bench-report-readback",
     "name": "Maintenance bench report readback",
     "runner": "ubuntu-latest",
