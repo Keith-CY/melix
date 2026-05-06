@@ -298,6 +298,24 @@ def test_rebuild_index_falls_back_to_manifest_when_run_record_is_invalid(tmp_pat
     assert payload["runs"][0]["created_at_unix_ms"] == 222
 
 
+def test_rebuild_index_skips_empty_failed_job_directories(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "model-ops"
+    _write_manifest(
+        jobs_root,
+        run_id="model-ops-0002",
+        adapter_name="successful-adapter",
+        updated_at_unix_ms=333,
+        created_at_unix_ms=222,
+    )
+    failed_dir = jobs_root / "train_lora" / "model-ops-0001"
+    failed_dir.mkdir(parents=True)
+
+    payload = LoraExperimentStore().rebuild_index(jobs_root)
+
+    assert [run["run_id"] for run in payload["runs"]] == ["model-ops-0002"]
+    assert payload["runs"][0]["adapter_name"] == "successful-adapter"
+
+
 def test_load_index_uses_existing_index_and_rebuilds_when_missing(tmp_path: Path) -> None:
     jobs_root = tmp_path / "model-ops"
     store = LoraExperimentStore()

@@ -560,6 +560,7 @@ def _resolve_resume_context(ext: dict[str, str]) -> dict[str, Any]:
                 "resume_from_path",
                 "resume_adapter_file",
                 "resume_manifest_path",
+                "source_adapter_path",
             )
             if ext.get(key, "").strip()
         ),

@@ -183,6 +183,70 @@ def test_mlx_lm_runner_routes_alignment_rl_to_scored_trace_backend(tmp_path: Pat
     assert result.metrics.policy_update_trace_path.endswith("policy_updates.jsonl")
 
 
+def test_mlx_lm_runner_alignment_rl_preserves_source_adapter_artifacts(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "grpo", "grpo_candidate_count": "2"},
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Draft two summaries.",
+                "candidates": [
+                    {"text": "Short summary.", "score": 0.7},
+                    {"text": "Verbose summary.", "score": 0.4},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source_adapter_dir = tmp_path / "source-adapter"
+    source_adapter_dir.mkdir()
+    source_weights = source_adapter_dir / "adapters.safetensors"
+    source_weights.write_bytes(b"real-mlx-lora-weights")
+    (source_adapter_dir / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "adapter_path": str(source_adapter_dir),
+                "fine_tune_type": "lora",
+                "num_layers": 2,
+                "lora_parameters": {"keys": ["self_attn.q_proj"], "rank": 8},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo-source-adapter",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="prompt_candidate",
+        resume_source_path=source_weights,
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().train(request)
+    adapter_config = json.loads(result.adapter_config_path.read_text(encoding="utf-8"))
+
+    assert result.weights_path.read_bytes() == b"real-mlx-lora-weights"
+    assert Path(result.metrics.latest_checkpoint_path).read_bytes() == b"real-mlx-lora-weights"
+    assert adapter_config["adapter_path"] == str(tmp_path / "adapter-output")
+    assert adapter_config["num_layers"] == 2
+    assert adapter_config["lora_parameters"]["keys"] == ["self_attn.q_proj"]
+    assert adapter_config["alignment_algorithm"] == "grpo"
+    assert adapter_config["alignment_source_adapter_weights_path"] == str(source_weights)
+    assert result.metrics.resume_source_path == str(source_weights)
+
+
 def test_mlx_lm_runner_generates_grpo_candidates_with_policy_runtime(tmp_path: Path) -> None:
     class ScriptedPolicyBackend:
         runtime_name = "scripted-policy-runtime"
@@ -2057,6 +2121,9 @@ def test_resolve_resume_context_handles_manifest_directory_and_missing_sources(t
         "resume_manifest_path": manifest.resolve(),
         "resume_source_job_id": "run-42",
     }
+
+    source_adapter_context = _resolve_resume_context({"source_adapter_path": str(manifest)})
+    assert source_adapter_context == manifest_context
 
     directory_context = _resolve_resume_context({"resume_source_path": str(checkpoint.parent.parent)})
     assert directory_context == {

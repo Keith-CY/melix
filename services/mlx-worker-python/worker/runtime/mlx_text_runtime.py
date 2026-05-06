@@ -78,11 +78,10 @@ def _reward_score_prompt(
     ext: dict[str, str] = {}
     if isinstance(loaded_model, dict):
         for key in ("model_ext", "metadata", "ext"):
-            raw_ext = loaded_model.get(key)
-            if isinstance(raw_ext, dict):
+            if isinstance(raw_ext := loaded_model.get(key), dict):
                 ext.update({str(raw_key): str(raw_value) for raw_key, raw_value in raw_ext.items()})
     if execution_ext:
-        ext.update({str(key): str(value) for key, value in execution_ext.items()})
+        ext.update(execution_ext)
 
     template = (
         ext.get("melix.reward_model.score_prompt_template")

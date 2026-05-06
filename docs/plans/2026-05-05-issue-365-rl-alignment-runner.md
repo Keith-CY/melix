@@ -44,6 +44,9 @@ readiness.
 - Record policy-update metrics derived from scored samples, including reward
   mean/percentiles, candidate group margin/variance, update count, selected
   candidate count, KL penalty, and reward-model lineage where applicable.
+- Preserve source LoRA adapter weights/config when a GRPO/RLHF alignment run is
+  resumed from an upstream base LoRA adapter so adapter-backed publish/activate
+  and local inference smoke tests load the expected artifacts.
 - Keep final acceptance honest by marking scored-trace execution as
   deterministic and runtime generation as runtime-generated scored-trace
   execution, and reward-model scoring as reward-runtime scored-trace execution,
@@ -54,7 +57,8 @@ readiness.
 - Reward-model training and standalone reward-model artifact generation from
   issue 366.
 - PPO/GRPO gradient updates through MLX-LM.
-- End-to-end real local runtime release evidence.
+- End-to-end real local runtime release evidence across every issue 365
+  business line.
 - Window UI acceptance.
 - Closing issue 365.
 
@@ -77,6 +81,11 @@ Success metrics:
   generated-candidate evidence without being marked release-ready.
 - GRPO/RLHF jobs can opt into reward-runtime scoring and record reward model
   backend, reward model id, and per-response score evidence.
+- GRPO/RLHF acceptance bundles can pass real local runtime evidence through
+  LoRA training, alignment, publish, adapter-backed activation, chat, and
+  evaluation when provided a local reward-model manifest and local text model.
+- Resumed alignment adapters preserve the source adapter artifacts required by
+  adapter-backed runtime loading.
 - The production MaintenanceCore default path passes a reward runtime into the
   default LoRA training runner.
 - The MLX-LM reward scorer must use a deterministic scalar-score sampling shape
@@ -136,11 +145,18 @@ reward scoring:
 - `python3 -m compileall -q services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/worker/model_ops/rl_alignment_training.py services/mlx-worker-python/worker/model_ops/lora_training_pipeline.py services/mlx-worker-python/worker/engine/maintenance_core.py services/mlx-worker-python/tests/test_mlx_backend.py services/mlx-worker-python/tests/test_lora_model_ops_unit.py`: passed.
 - `git diff --check`: passed.
 
+Results on 2026-05-06 after review follow-up, source adapter propagation, and
+real GRPO/RLHF reward-runtime evidence:
+
+- `find .runtime -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) -print`: no screenshot files found.
+- `swift test --filter 'MelixCLIParserTests/parsesAlignmentTrainCommand|MelixCLIRunnerTests/alignmentTrainForwardsExpectedOperationPayload|MelixCLIRunnerTests/subprocessBackedLegacyAlignmentTrainingModeUsesAlignmentTrain'`: 3 tests passed; the build also linked the worktree-local `melix` CLI.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-reward-real" .build/arm64-apple-macosx/debug/melix pipeline run --file .runtime/issue365/real-grpo-reward-runtime-probe-r5/pipelines/lora_grpo_export_inference.pipeline.json --receipt-dir .runtime/issue365/real-grpo-reward-runtime-probe-r6-dry/receipts --trace-id dry-source-adapter --format json-v1 --dry-run`: passed; `002-grpo_align.json` planned `--source-adapter-path ${steps.grpo_base_lora.result.output_path}`.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-reward-real" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-reward-real-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-reward-real-swift.sock" MELIX_HTTP_PORT=12477 MELIX_DEV_TEXT_MODEL_PATH="/Users/ChenYu/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/40d69f3d88f45e9c38aea318c318ebc9ded5b783" python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id lora_grpo_export_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --model-id "mlx-community/Qwen3.5-0.8B-OptiQ-4bit" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --prompt-candidate-dataset-uri "$PWD/.runtime/issue365/input-datasets/prompt_candidate" --reward-model-manifest-path "$PWD/.runtime/issue365/reward-model/manifest.json" --output-dir .runtime/issue365/real-grpo-reward-runtime-probe-r6 --timestamp 2026-05-06T210500Z --json`: passed; `lora_grpo_export_inference` release-ready with no missing evidence.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-reward-real" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-reward-real-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-reward-real-swift.sock" MELIX_HTTP_PORT=12477 MELIX_DEV_TEXT_MODEL_PATH="/Users/ChenYu/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/40d69f3d88f45e9c38aea318c318ebc9ded5b783" python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id lora_rlhf_export_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --model-id "mlx-community/Qwen3.5-0.8B-OptiQ-4bit" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --reward-scored-dataset-uri "$PWD/.runtime/issue365/input-datasets/reward_scored" --reward-model-manifest-path "$PWD/.runtime/issue365/reward-model/manifest.json" --output-dir .runtime/issue365/real-rlhf-reward-runtime-probe-r1 --timestamp 2026-05-06T210700Z --json`: passed; `lora_rlhf_export_inference` release-ready with no missing evidence.
+
 ## Remaining Issue 365 Gaps
 
 - Reward-model training and PPO/RL policy updates from issue 366.
-- Passing real local-runtime release evidence for reward-model scoring with a
-  local reward-model manifest.
 - PTQ/QAT real local inference release evidence.
 - Full CLI chain tests for every business line.
 - Window UI runnable and inspectable acceptance for every business line.

@@ -1547,7 +1547,7 @@ public enum MelixCLIParser {
       melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
-      melix alignment train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --algorithm dpo|orpo|cpo|grpo|rlhf [--target-repo REPO] [--grpo-candidate-count N] [--candidate-generation-mode scored_trace|runtime_generate] [--candidate-scoring-mode dataset_score|seed_overlap_proxy|reward_model] [--candidate-generation-max-tokens N] [--reference-model-path PATH] [--reward-model-manifest-path PATH] [--kl-penalty N] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--json]
+      melix alignment train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --algorithm dpo|orpo|cpo|grpo|rlhf [--target-repo REPO] [--source-adapter-path PATH] [--grpo-candidate-count N] [--candidate-generation-mode scored_trace|runtime_generate] [--candidate-scoring-mode dataset_score|seed_overlap_proxy|reward_model] [--candidate-generation-max-tokens N] [--reference-model-path PATH] [--reward-model-manifest-path PATH] [--kl-penalty N] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--json]
       melix lora dataset inspect --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora dataset build --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--output-dir PATH] [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
@@ -2368,6 +2368,7 @@ public enum MelixCLIParser {
                 "--text-feature",
                 "--grpo-candidate-count",
                 "--candidate-generation-max-tokens",
+                "--source-adapter-path",
                 "--reference-model-path",
                 "--reward-model-manifest-path",
                 "--kl-penalty",
@@ -4966,6 +4967,7 @@ public actor MelixCLIRunner {
                 appendOption("--candidate-generation-mode", value: ext["candidate_generation_mode"], into: &arguments)
                 appendOption("--candidate-scoring-mode", value: ext["candidate_scoring_mode"], into: &arguments)
                 appendOption("--candidate-generation-max-tokens", value: ext["candidate_generation_max_tokens"], into: &arguments)
+                appendOption("--source-adapter-path", value: ext["source_adapter_path"], into: &arguments)
                 appendOption("--reference-model-path", value: ext["reference_model_path"], into: &arguments)
                 appendOption("--reward-model-manifest-path", value: ext["reward_model_manifest_path"], into: &arguments)
                 appendOption("--kl-penalty", value: ext["kl_penalty"], into: &arguments)
