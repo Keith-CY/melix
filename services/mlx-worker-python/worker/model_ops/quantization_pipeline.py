@@ -1173,7 +1173,18 @@ def _run_qat_fake_quant_training(
 def _source_artifact_files_for_qat(source_path: Path) -> list[Path]:
     if source_path.is_file():
         return [source_path]
-    source_files = sorted(path for path in source_path.rglob("*") if path.is_file())
+    source_files: list[Path] = []
+    stack = [source_path]
+    while stack:
+        current_path = stack.pop()
+        with os.scandir(current_path) as entries:
+            for entry in entries:
+                entry_path = Path(entry.path)
+                if entry.is_file():
+                    source_files.append(entry_path)
+                elif entry.is_dir(follow_symlinks=False):
+                    stack.append(entry_path)
+    source_files.sort()
     if not source_files:
         raise ModelOperationError(
             code="invalid_qat_source_artifact",

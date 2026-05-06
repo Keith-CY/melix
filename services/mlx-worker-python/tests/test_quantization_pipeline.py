@@ -17,6 +17,7 @@ from worker.model_ops.quantization_pipeline import (
     OQQuantizationPipeline,
     _local_source_path_for_mlx_lm_convert,
     _smoke_required_files_for_backend,
+    _source_artifact_files_for_qat,
     _sum_bundle_file_bytes,
 )
 from worker.model_ops.quantization_profiles import (
@@ -1323,6 +1324,26 @@ def test_quantize_job_rejects_qat_with_invalid_training_manifest(tmp_path: Path)
 
     assert events[-1].failed.error.code == "invalid_qat_training_manifest"
     assert events[-1].failed.error.details["qat_training_manifest_path"] == str(qat_training_manifest_path)
+
+
+def test_qat_source_artifact_files_use_scandir_stack_without_rglob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_artifact_path = tmp_path / "merged-adapter"
+    nested_path = source_artifact_path / "nested"
+    nested_path.mkdir(parents=True)
+    top_file = source_artifact_path / "adapter_config.json"
+    nested_file = nested_path / "adapters.safetensors"
+    top_file.write_text("{}\n", encoding="utf-8")
+    nested_file.write_bytes(b"weights")
+
+    def fail_rglob(self: Path, pattern: str):  # pragma: no cover - exercised only on regression
+        raise AssertionError("QAT source artifact discovery should not allocate Path.rglob() results")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    assert _source_artifact_files_for_qat(source_artifact_path) == [top_file, nested_file]
 
 
 def test_quantize_job_rejects_qat_with_empty_source_artifact(tmp_path: Path) -> None:
