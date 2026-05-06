@@ -122,14 +122,11 @@ def _paired_bootstrap_interval(
     sampler = random.Random(bootstrap_seed)
     sample_size = len(outcomes)
     inverse_sample_size = 1.0 / sample_size
-    randrange = sampler.randrange
+    choices = sampler.choices
     replicates: list[float] = []
     append_replicate = replicates.append
     for _ in range(bootstrap_iterations):
-        append_replicate(
-            sum(outcomes[randrange(sample_size)] for _ in range(sample_size))
-            * inverse_sample_size
-        )
+        append_replicate(sum(choices(outcomes, k=sample_size)) * inverse_sample_size)
 
     alpha = (1.0 - confidence_level) / 2.0
     ordered_replicates = sorted(replicates)

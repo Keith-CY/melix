@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reduce redundant work in the paired bootstrap confidence interval path by sorting the bootstrap replicate vector once and computing each replicate mean from a running total instead of materializing a temporary sample list, while preserving deterministic statistical evidence payload semantics.
+Reduce redundant work in the paired bootstrap confidence interval path by sorting the bootstrap replicate vector once and using the standard-library bulk equal-weight sampler for each bootstrap replicate, while preserving the paired bootstrap payload shape and deterministic seed behavior.
 
 ## Touched Files
 
@@ -30,9 +30,9 @@ Register `statistical-evidence-bootstrap-single-sort` in the PR-scoped performan
 
 - Preserve bootstrap and analytical interval payload semantics.
 - Sort bootstrap replicates once per interval instead of once per percentile bound.
-- Preserve the existing per-bootstrap sampling semantics while reducing duplicate percentile work and avoiding temporary per-replicate sample lists.
+- Preserve the existing per-bootstrap equal-weight-with-replacement sampling semantics while reducing duplicate percentile work and using `random.Random.choices(...)` for the inner draw loop.
 - Changed-scope automated coverage is at least 95%.
-- Local base-vs-head probe shows lower elapsed time and/or peak traced bytes without changing guard metrics.
+- Local base-vs-head probe shows lower elapsed time and/or peak traced bytes while preserving valid interval guard ordering.
 - `git diff --check` passes.
 
 ## Verification Commands

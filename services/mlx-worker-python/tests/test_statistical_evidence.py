@@ -116,14 +116,14 @@ def test_bootstrap_interval_reuses_one_sorted_replicate_vector(monkeypatch: pyte
         "method": "paired_bootstrap_percentile",
         "confidence_level": 0.9,
         "lower_bound": 0.125,
-        "upper_bound": 1.0,
+        "upper_bound": 0.875,
         "crosses_zero": False,
         "iterations": 64,
         "seed": 13,
     }
 
 
-def test_bootstrap_interval_sums_replicates_without_materializing_samples(
+def test_bootstrap_interval_sums_replicates_without_per_replicate_mean_helper_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mean_lengths: list[int] = []
@@ -147,7 +147,7 @@ def test_bootstrap_interval_sums_replicates_without_materializing_samples(
         "method": "paired_bootstrap_percentile",
         "confidence_level": 0.9,
         "lower_bound": 0.125,
-        "upper_bound": 1.0,
+        "upper_bound": 0.875,
         "crosses_zero": False,
         "iterations": 64,
         "seed": 13,
