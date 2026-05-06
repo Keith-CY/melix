@@ -184,6 +184,26 @@ def test_hub_catalog_raises_hub_payload_invalid_on_malformed_json() -> None:
     assert error.value.code == "hub_payload_invalid"
 
 
+def test_is_mlx_compatible_preserves_card_data_tag_signal_after_fast_paths() -> None:
+    assert _is_mlx_compatible(
+        repo_id="plain/card-tagged-model",
+        tags=["transformers"],
+        library_name="transformers",
+        card_data={"tags": ["MLX"]},
+        lowered_tags={"transformers"},
+    ) is True
+
+
+def test_is_mlx_compatible_keeps_library_name_fast_path() -> None:
+    assert _is_mlx_compatible(
+        repo_id="plain/library-tagged-model",
+        tags=["transformers"],
+        library_name="MLX",
+        card_data={"tags": []},
+        lowered_tags={"transformers"},
+    ) is True
+
+
 def test_search_models_with_mlx_only_false_returns_all_results() -> None:
     payload = [
         {

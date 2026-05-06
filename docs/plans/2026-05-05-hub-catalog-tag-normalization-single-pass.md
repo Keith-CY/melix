@@ -34,7 +34,7 @@ The probe also emits `peak_bytes_mean` as observational context, but the CI gate
 ## Success Metrics
 
 - Preserve Hub catalog output semantics for MLX compatibility, quantization summary, and resident-byte estimates.
-- Reduce tag normalization from three lower-case set builds per record to one per record on the optimized path.
+- Avoid card-data tag normalization when an earlier MLX compatibility signal already proves the record is compatible.
 - Keep changed-scope automated coverage at or above 95%.
 
 ## Verification Commands
@@ -44,5 +44,5 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_hub_catalog_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_hub_catalog_tag_normalization_probe_script_emits_metrics && PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/hub_catalog.py services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/hub_catalog_tag_normalization_probe.py
 
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python scripts/hub_catalog_tag_normalization_probe.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/hub_catalog_tag_normalization_probe.py
 ```
