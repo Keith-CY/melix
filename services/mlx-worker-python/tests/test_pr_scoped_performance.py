@@ -69,6 +69,17 @@ from worker.productization.pr_scoped_performance import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REGISTRY_PATH = REPO_ROOT / "infra/perf/pr_scoped_probes.json"
+DATASET_REGISTRY_SELECTED_PROBE_IDS = [
+    "dataset-registry-limited-read-streaming",
+    "dataset-registry-snapshot-inference-single-pass",
+    "dataset-registry-preview-limit-short-circuit",
+]
+MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS = [
+    "mlx-audio-speech-signature-cache",
+    "mlx-audio-wav-streaming-pcm",
+    "mlx-audio-local-uri-zero-copy-preprocess",
+    "mlx-audio-generate-signature-cache",
+]
 SCOPE_MATCHER_SELECTED_PROBE_IDS = [
     "benchmark-export-run-scan-single-pass",
     "evaluation-job-id-high-water-mark",
@@ -77,6 +88,10 @@ SCOPE_MATCHER_SELECTED_PROBE_IDS = [
     "evaluation-dialogue-diagnostics-top-k",
     "download-pipeline-directory-size-single-stat",
 ]
+
+
+def _selected_probe_ids(scope: dict[str, object]) -> list[str]:
+    return [probe["id"] for probe in _dict_list(scope["selected_probes"])]
 
 
 @pytest.fixture()
@@ -142,12 +157,8 @@ def test_scope_report_selects_dataset_registry_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/dataset_registry/catalog.py"],
     )
 
-    assert scope["selected_count"] == 3
-    assert {probe["id"] for probe in scope["selected_probes"]} == {
-        "dataset-registry-limited-read-streaming",
-        "dataset-registry-snapshot-inference-single-pass",
-        "dataset-registry-preview-limit-short-circuit",
-    }
+    assert scope["selected_count"] == len(DATASET_REGISTRY_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == DATASET_REGISTRY_SELECTED_PROBE_IDS
 
 
 def test_scope_report_selects_mlx_audio_wav_probe() -> None:
@@ -156,8 +167,9 @@ def test_scope_report_selects_mlx_audio_wav_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "mlx-audio-wav-streaming-pcm"
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-wav-streaming-pcm" in _selected_probe_ids(scope)
 
 
 def test_scope_report_selects_mlx_audio_signature_probe() -> None:
@@ -166,8 +178,9 @@ def test_scope_report_selects_mlx_audio_signature_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "mlx-audio-generate-signature-cache"
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-generate-signature-cache" in _selected_probe_ids(scope)
 
 
 def test_scope_report_selects_video_preprocessing_probe() -> None:
@@ -186,8 +199,9 @@ def test_scope_report_selects_mlx_audio_speech_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "mlx-audio-speech-signature-cache"
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-speech-signature-cache" in _selected_probe_ids(scope)
 
 
 def test_scope_report_selects_only_matching_probe() -> None:
@@ -449,8 +463,9 @@ def test_scope_report_selects_mlx_audio_local_uri_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "mlx-audio-local-uri-zero-copy-preprocess"
+    assert scope["selected_count"] == len(MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS)
+    assert _selected_probe_ids(scope) == MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS
+    assert "mlx-audio-local-uri-zero-copy-preprocess" in _selected_probe_ids(scope)
 
 
 def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
