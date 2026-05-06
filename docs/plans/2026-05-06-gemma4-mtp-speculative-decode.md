@@ -83,6 +83,21 @@ for default and unsupported requests.
   `batch_generate` and `mlx_vlm.speculative` are not available in this
   environment. The MTP path is therefore covered with runtime detection and
   fake upstream hooks until the upstream API is present locally.
+- Local live model smoke, offline from the Hugging Face cache:
+  `unsloth/gemma-4-E4B-it-MLX-8bit` loaded through `MLXVLMRuntime` and
+  `AutoMLXVLMBackend` with `runtime_name=mlx-vlm`, `mlx=0.31.2`,
+  `mlx-lm=0.31.3`, `mlx-vlm=0.4.4`, and
+  `melix.vlm.execution_mode=multimodal`.
+- The same live model produced baseline prompt-only text `"Local pass"` with
+  `2` token events, `prompt_tokens=17`, `completion_tokens=3`, and
+  `first_token_latency_ms=2858.60`.
+- A speculative policy against the same live multimodal target with
+  `allow_baseline_fallback=true` returned baseline text and surfaced fallback
+  metrics on the final token event:
+  `speculative_fallback_count=1`, `speculative_num_draft_tokens=0`, and
+  `speculative_draft_model_configured=false`.
+- The matching hard-error guard with `allow_baseline_fallback=false` raised:
+  `MTP speculative decode is unavailable for this request: target execution mode is multimodal.`
 
 ## Acceptance
 
