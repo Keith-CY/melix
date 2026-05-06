@@ -1358,6 +1358,98 @@ def test_prepare_vision_request_preserves_multi_image_order_in_payload_and_hash(
     assert request_a.multimodal_hash_hex != request_b.multimodal_hash_hex
 
 
+def test_prepare_vision_request_reuses_duplicate_local_image_uri_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_path = tmp_path / "duplicate-uri-image.txt"
+    image_path.write_bytes(b"shared image payload")
+    read_calls: list[Path] = []
+    original_read_bytes = Path.read_bytes
+
+    def tracked_read_bytes(path: Path) -> bytes:
+        if path == image_path:
+            read_calls.append(path)
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
+
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Compare repeated references."),
+                    common_pb2.MessagePart(
+                        image_uri=image_path.as_uri(),
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_URI,
+                            filename="first-name.txt",
+                        ),
+                    ),
+                    common_pb2.MessagePart(
+                        image_uri=image_path.as_uri(),
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_URI,
+                            filename="second-name.txt",
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    assert read_calls == [image_path]
+    assert [image.bytes_data for image in request.images] == [b"shared image payload", b"shared image payload"]
+    assert [image.filename for image in request.images] == ["first-name.txt", "second-name.txt"]
+    assert request.images[0].sha256_hex == request.images[1].sha256_hex
+    assert request.preprocess_input_bytes == len(b"shared image payload") * 2
+
+
+def test_prepare_vision_request_does_not_cache_remote_image_fetches(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeHeaders:
+        def get_content_type(self) -> str:
+            return "image/png"
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def read(self) -> bytes:
+            return self.payload
+
+    payloads = [b"remote payload one", b"remote payload two"]
+
+    def fake_urlopen(url: str, timeout: float = 5.0):
+        return FakeResponse(payloads.pop(0))
+
+    monkeypatch.setattr(multimodal_preprocessing, "urlopen", fake_urlopen)
+
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(image_uri="https://example.com/repeated.png"),
+                    common_pb2.MessagePart(image_uri="https://example.com/repeated.png"),
+                ],
+            )
+        ]
+    )
+
+    assert [image.bytes_data for image in request.images] == [b"remote payload one", b"remote payload two"]
+    assert payloads == []
+
+
 def test_prepare_vision_request_rejects_missing_remote_and_unsupported_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1428,6 +1520,19 @@ def test_bytes_from_local_image_uri_reuses_single_parsed_uri(
     assert format_name == "txt"
     assert filename == image_path.name
     assert calls == [image_path.as_uri()]
+
+
+def test_prepare_image_part_preserves_direct_uri_helper_behavior(tmp_path: Path) -> None:
+    image_path = tmp_path / "direct-image-part.txt"
+    image_path.write_bytes(b"direct image part bytes")
+
+    image = _prepare_image_part(common_pb2.MessagePart(image_uri=image_path.as_uri()))
+
+    assert image.bytes_data == b"direct image part bytes"
+    assert image.reference == image_path.as_uri()
+    assert image.format == "txt"
+    assert image.filename == image_path.name
+    assert image.sha256_hex
 
 
 def test_prepare_image_part_rejects_parts_without_any_image_payload() -> None:

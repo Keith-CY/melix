@@ -91,6 +91,7 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
     images: list[PreparedImageInput] = []
     videos: list[PreparedVideoInput] = []
     input_bytes = 0
+    image_uri_cache: dict[str, tuple[bytes, str, str, str, str, str]] = {}
 
     for message in messages:
         for part in message.parts:
@@ -99,7 +100,7 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
                 if text:
                     prompt_segments.append(text)
             if part.image_bytes or part.image_uri:
-                image = _prepare_image_part(part)
+                image = _prepare_image_part(part, image_uri_cache=image_uri_cache)
                 images.append(image)
                 input_bytes += image.byte_length
             if part.video_bytes or part.video_uri:
@@ -133,7 +134,10 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
     )
 
 
-def _prepare_image_part(part) -> PreparedImageInput:
+def _prepare_image_part(
+    part,
+    image_uri_cache: dict[str, tuple[bytes, str, str, str, str, str]] | None = None,
+) -> PreparedImageInput:
     media = getattr(part, "media", None)
     mime_type = getattr(media, "mime_type", "")
     format_name = getattr(media, "format", "")
@@ -152,7 +156,9 @@ def _prepare_image_part(part) -> PreparedImageInput:
         )
 
     if part.image_uri:
-        bytes_data, reference, detected_mime_type, detected_format, detected_filename = _bytes_from_image_uri(part.image_uri)
+        bytes_data, reference, detected_mime_type, detected_format, detected_filename, sha256_hex = (
+            _cached_image_uri_payload(part.image_uri, image_uri_cache)
+        )
         return PreparedImageInput(
             bytes_data=bytes_data,
             source_kind="uri",
@@ -160,10 +166,34 @@ def _prepare_image_part(part) -> PreparedImageInput:
             mime_type=mime_type or detected_mime_type,
             format=format_name or detected_format,
             filename=filename or detected_filename,
-            sha256_hex=_sha256_hex(bytes_data),
+            sha256_hex=sha256_hex,
         )
 
     raise MultimodalPreprocessError("No image input provided.")
+
+
+def _cached_image_uri_payload(
+    uri: str,
+    image_uri_cache: dict[str, tuple[bytes, str, str, str, str, str]] | None,
+) -> tuple[bytes, str, str, str, str, str]:
+    if image_uri_cache is None:
+        bytes_data, reference, detected_mime_type, detected_format, detected_filename = _bytes_from_image_uri(uri)
+        return bytes_data, reference, detected_mime_type, detected_format, detected_filename, _sha256_hex(bytes_data)
+
+    cached = image_uri_cache.get(uri)
+    if cached is None:
+        bytes_data, reference, detected_mime_type, detected_format, detected_filename = _bytes_from_image_uri(uri)
+        cached = (
+            bytes_data,
+            reference,
+            detected_mime_type,
+            detected_format,
+            detected_filename,
+            _sha256_hex(bytes_data),
+        )
+        if not reference.startswith(("http://", "https://")):
+            image_uri_cache[uri] = cached
+    return cached
 
 
 def _parse_image_reference(uri: str) -> ParsedImageReference:
