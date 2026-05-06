@@ -14,6 +14,7 @@ from worker.model_registry.catalog import (
     WorkerModelCatalog,
     _apply_registry_identity_metadata,
     _default_embedding_family_for_backend,
+    _gemma4_mtp_assistant_metadata,
     _gemma4_index_has_vision_weights,
     _has_mlx_signal,
     _has_model_weight_files,
@@ -2247,6 +2248,69 @@ def test_registry_snapshot_marks_dflash_draft_metadata_from_local_config(tmp_pat
     assert model.ext["melix.draft.architecture"] == "DFlashDraftModel"
     assert model.ext["melix.dflash.block_size"] == "8"
     assert model.ext["melix.dflash.target_layer_ids"] == "5,12,19"
+
+
+def test_registry_snapshot_marks_gemma4_mtp_assistant_as_draft_only(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-E2B-it-assistant-bf16" / "main"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": None,
+        },
+    )
+    (variant_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "tags:\n"
+        "- speculative-decoding\n"
+        "- mtp\n"
+        "- drafter\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    model = discovered["mlx-community/gemma-4-E2B-it-assistant-bf16"]
+    assert model.model_kind == "vlm"
+    assert model.ext["vision_family_id"] == "gemma4-v1"
+    assert model.ext["melix.vlm.execution_mode"] == "text_backed"
+    assert model.ext["melix.speculative.role"] == "assistant"
+    assert model.ext["melix.speculative.kind"] == "mtp"
+    assert model.ext["melix.speculative.target_family"] == "gemma4-v1"
+    assert model.ext["melix.serving.hidden"] == "true"
+
+
+def test_gemma4_mtp_assistant_metadata_handles_unserializable_config_values(tmp_path: Path) -> None:
+    model_dir = tmp_path / "assistant"
+    model_dir.mkdir()
+    (model_dir / "README.md").write_text(
+        "---\nlibrary_name: mlx\ntags:\n- mtp\n- drafter\n---\n",
+        encoding="utf-8",
+    )
+
+    metadata = _gemma4_mtp_assistant_metadata(
+        model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+        model_dir=model_dir,
+        config_payload={
+            "model_type": "gemma4",
+            "unserializable": object(),
+        },
+    )
+
+    assert metadata["melix.speculative.role"] == "assistant"
+    assert metadata["melix.speculative.kind"] == "mtp"
 
 
 def test_registry_snapshot_keeps_qwen3moe_lora_blocked_without_confirmed_expert_metadata(

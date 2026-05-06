@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import importlib.util
 import logging
@@ -10,6 +10,7 @@ from pathlib import Path
 from threading import Event
 from typing import Any, Callable, Iterable
 
+from packages.protocol.python.worker.v1 import common_pb2
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
@@ -112,7 +113,10 @@ class AutoMLXVLMBackend:
     load_fn: Any | None = None
     stream_generate_fn: Any | None = None
     apply_chat_template_fn: Any | None = None
+    batch_generate_fn: Any | None = None
+    load_drafter_fn: Any | None = None
     runtime_name: str = "mlx-vlm-unavailable"
+    _drafter_cache: dict[tuple[str, str], Any] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         if self.load_fn is not None and self.stream_generate_fn is not None and self.apply_chat_template_fn is not None:
@@ -135,12 +139,46 @@ class AutoMLXVLMBackend:
             self._error = exc
             self.runtime_name = "mlx-vlm-unavailable"
             raise RuntimeUnavailableError("mlx-vlm is not installed") from exc
+        try:
+            from mlx_vlm.generate import batch_generate
+        except (ImportError, ModuleNotFoundError):
+            batch_generate = None
+        try:
+            from mlx_vlm.speculative.drafters import load_drafter
+        except (ImportError, ModuleNotFoundError):
+            load_drafter = None
         self._available = True
         self._error = None
         self.runtime_name = "mlx-vlm"
         self.load_fn = load
         self.stream_generate_fn = stream_generate
         self.apply_chat_template_fn = apply_chat_template
+        self.batch_generate_fn = self.batch_generate_fn or batch_generate
+        self.load_drafter_fn = self.load_drafter_fn or load_drafter
+
+    def supports_mtp_speculative(self) -> bool:
+        if self.batch_generate_fn is None or self.load_drafter_fn is None:
+            return False
+        return (
+            _callable_accepts_kwarg(self.batch_generate_fn, "draft_model")
+            and _callable_accepts_kwarg(self.batch_generate_fn, "draft_kind")
+            and _callable_accepts_kwarg(self.batch_generate_fn, "draft_block_size")
+        )
+
+    def load_drafter(self, model_id: str, *, kind: str = "mtp") -> Any:
+        self._ensure_runtime()
+        if self.load_drafter_fn is None:
+            raise RuntimeUnavailableError("mlx-vlm drafter loading is unavailable")
+        cache_key = (model_id, kind)
+        cached = self._drafter_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        if _callable_accepts_kwarg(self.load_drafter_fn, "kind"):
+            drafter = self.load_drafter_fn(model_id, kind=kind)
+        else:
+            drafter = self.load_drafter_fn(model_id)
+        self._drafter_cache[cache_key] = drafter
+        return drafter
 
     def load_model(self, model_spec):
         if not self._available:
@@ -395,10 +433,34 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         execution_ext: dict[str, str] | None = None,
+        acceleration_policy: common_pb2.AccelerationPolicy | None = None,
     ):
         _ = execution_ext
         metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
+        speculative_fallback_reason = ""
+        if self._mtp_speculative_requested(acceleration_policy):
+            speculative_fallback_reason = self._mtp_speculative_unsupported_reason(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                sampling=sampling,
+                execution_mode=execution_mode,
+                acceleration_policy=acceleration_policy,
+            )
+            if not speculative_fallback_reason:
+                yield from self._generate_mtp_speculative_tokens(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    sampling=sampling,
+                    cancel_event=cancel_event,
+                    acceleration_policy=acceleration_policy,
+                )
+                return
+            if not bool(getattr(acceleration_policy, "allow_baseline_fallback", False)):
+                raise RuntimeError(
+                    f"MTP speculative decode is unavailable for this request: {speculative_fallback_reason}."
+                )
+
         if execution_mode == "text_backed" and prepared_request.images:
             raise RuntimeError(
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
@@ -495,6 +557,9 @@ class MLXVLMRuntime:
                         generation_tps=float(getattr(response, "generation_tps", 0.0) or 0.0),
                         peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
                         finish_reason="stop",
+                        speculative_fallback_count=1 if speculative_fallback_reason else None,
+                        speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
+                        speculative_draft_model_configured=False if speculative_fallback_reason else None,
                     )
 
             event_iterable = backend_events() if self._executor is None else self._executor.iterate(backend_events)
@@ -509,6 +574,191 @@ class MLXVLMRuntime:
                 temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
                 temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
             )
+
+    def _generate_mtp_speculative_tokens(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+        cancel_event: Event,
+        acceleration_policy: common_pb2.AccelerationPolicy,
+    ):
+        self._ensure_fast_path_probe(loaded_model, prepared_request)
+        if cancel_event.is_set():
+            return
+        prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        draft_model_id = str(getattr(acceleration_policy, "draft_model_id", "") or "").strip()
+        draft_block_size = self._mtp_draft_block_size(acceleration_policy)
+
+        def backend_events():
+            self._backend._ensure_runtime()
+            if cancel_event.is_set():
+                return
+            drafter = self._backend.load_drafter(draft_model_id, kind="mtp")
+            batch_kwargs: dict[str, Any] = {
+                "prompts": [prepared_request.prompt_text],
+                "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+                "temperature": float(getattr(sampling, "temperature", 0.0) or 0.0),
+                "draft_model": drafter,
+                "draft_kind": "mtp",
+                "draft_block_size": draft_block_size,
+            }
+
+            started_at = time.perf_counter()
+            response_batch = self._backend.batch_generate_fn(
+                loaded_model["model"],
+                loaded_model["processor"],
+                **batch_kwargs,
+            )
+            if cancel_event.is_set():
+                return
+            response = self._first_batch_response(response_batch)
+            text = self._batch_response_text(response)
+            if not text:
+                return
+            first_token_at = time.perf_counter()
+            self._last_probe = replace(
+                self._last_probe,
+                preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+                preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+                preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+                first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
+                video_effective_frame_count=prepared_request.effective_video_frame_count,
+                video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+                video_window_ms=prepared_request.effective_video_window_ms,
+                cache_identity="",
+                cache_scope_id="",
+                cache_hit=False,
+            )
+            completion_tokens = int(
+                self._response_number(response, "generation_tokens", "completion_tokens", default=1)
+                or 1
+            )
+            yield RuntimeTokenEvent(
+                text=text,
+                prompt_tokens=int(self._response_number(response, "prompt_tokens", default=prompt_tokens) or prompt_tokens),
+                completion_tokens=completion_tokens,
+                prompt_tps=float(self._response_number(response, "prompt_tps", default=0.0) or 0.0),
+                generation_tps=float(self._response_number(response, "generation_tps", default=0.0) or 0.0),
+                peak_memory=float(self._response_number(response, "peak_memory", default=0.0) or 0.0),
+                finish_reason=str(getattr(response, "finish_reason", "") or "stop"),
+                speculative_acceptance_rate=self._optional_response_float(response, "speculative_acceptance_rate"),
+                speculative_rollback_rate=self._optional_response_float(response, "speculative_rollback_rate"),
+                speculative_accepted_tokens=self._optional_response_int(response, "speculative_accepted_tokens"),
+                speculative_rejected_tokens=self._optional_response_int(response, "speculative_rejected_tokens"),
+                speculative_fallback_count=int(
+                    self._response_number(response, "speculative_fallback_count", default=0) or 0
+                ),
+                speculative_num_draft_tokens=draft_block_size,
+                speculative_draft_model_configured=True,
+                speculative_draft_propose_ms=self._optional_response_float(response, "speculative_draft_propose_ms"),
+                speculative_target_verify_ms=self._optional_response_float(response, "speculative_target_verify_ms"),
+            )
+
+        event_iterable = backend_events() if self._executor is None else self._executor.iterate(backend_events)
+        for event in event_iterable:
+            yield event
+
+    @staticmethod
+    def _mtp_speculative_requested(acceleration_policy: common_pb2.AccelerationPolicy | None) -> bool:
+        if acceleration_policy is None:
+            return False
+        return int(getattr(acceleration_policy, "mode", 0) or 0) == int(
+            common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE
+        )
+
+    def _mtp_speculative_unsupported_reason(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+        execution_mode: str,
+        acceleration_policy: common_pb2.AccelerationPolicy | None,
+    ) -> str:
+        if acceleration_policy is None:
+            return "missing acceleration policy"
+        if not str(getattr(acceleration_policy, "draft_model_id", "") or "").strip():
+            return "draft_model_id is required"
+        if not self._is_gemma4_target(loaded_model):
+            return "target model is not Gemma 4"
+        if execution_mode != "text_backed":
+            return f"target execution mode is {execution_mode}"
+        if prepared_request.images or prepared_request.videos:
+            return "media inputs are not supported by the Gemma 4 MTP path yet"
+        if not self._sampling_is_greedy(sampling):
+            return "only greedy sampling is supported"
+        self._backend._ensure_runtime()
+        if not self._backend.supports_mtp_speculative():
+            return "the installed mlx-vlm runtime does not expose MTP drafter support"
+        return ""
+
+    @staticmethod
+    def _is_gemma4_target(loaded_model) -> bool:
+        if not isinstance(loaded_model, dict):
+            return False
+        metadata = loaded_model.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        family_id = str(metadata.get("vision_family_id") or loaded_model.get("vision_family_id") or "").strip()
+        if family_id == "gemma4-v1":
+            return True
+        model_type = str(getattr(getattr(loaded_model.get("model"), "config", None), "model_type", "") or "").lower()
+        return model_type.startswith("gemma4")
+
+    @classmethod
+    def _sampling_is_greedy(cls, sampling) -> bool:
+        temperature = float(getattr(sampling, "temperature", 0.0) or 0.0)
+        top_p = cls._effective_top_p(sampling)
+        top_k = int(getattr(sampling, "top_k", 0) or 0)
+        return abs(temperature) < 1e-9 and abs(top_p - 1.0) < 1e-9 and top_k == 0
+
+    @staticmethod
+    def _effective_top_p(sampling) -> float:
+        return float(getattr(sampling, "top_p", 0.0) or 1.0)
+
+    @staticmethod
+    def _mtp_draft_block_size(acceleration_policy: common_pb2.AccelerationPolicy) -> int:
+        return int(getattr(acceleration_policy, "num_draft_tokens", 0) or 6)
+
+    @staticmethod
+    def _first_batch_response(response_batch: Any) -> Any:
+        if isinstance(response_batch, (list, tuple)):
+            return response_batch[0] if response_batch else ""
+        return response_batch
+
+    @staticmethod
+    def _batch_response_text(response: Any) -> str:
+        if isinstance(response, str):
+            return response
+        for attr_name in ("text", "response", "content"):
+            value = getattr(response, attr_name, None)
+            if value is not None:
+                return str(value)
+        return str(response or "")
+
+    @staticmethod
+    def _response_number(response: Any, *attr_names: str, default: float | int = 0) -> float | int:
+        for attr_name in attr_names:
+            value = getattr(response, attr_name, None)
+            if value is not None:
+                return value
+        return default
+
+    @classmethod
+    def _optional_response_float(cls, response: Any, attr_name: str) -> float | None:
+        value = cls._response_number(response, attr_name, default=None)
+        if value is None:
+            return None
+        return float(value)
+
+    @classmethod
+    def _optional_response_int(cls, response: Any, attr_name: str) -> int | None:
+        value = cls._response_number(response, attr_name, default=None)
+        if value is None:
+            return None
+        return int(value)
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
         return self._last_probe

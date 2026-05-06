@@ -22,6 +22,7 @@ from worker.runtime import mlx_vlm_runtime as mlx_vlm_runtime_module
 from worker.runtime.mlx_vlm_runtime import (
     AutoMLXVLMBackend,
     MLXVLMRuntime,
+    RuntimeUnavailableError,
     _gemma4_loaded_execution_mode,
     _gemma4_multimodal_weight_presence,
 )
@@ -1020,6 +1021,539 @@ def test_mlx_vlm_runtime_supports_prompt_only_generation_for_text_backed_models(
     assert "".join(event.text for event in events) == "Hello!"
     assert apply_calls == [("Say hello.", 0)]
     assert stream_calls == [("formatted::Say hello.", None)]
+
+
+def test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_generation() -> None:
+    drafter_loads: list[tuple[str, str]] = []
+    batch_calls: list[dict[str, object]] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace()
+
+    def fake_stream_generate(*args, **kwargs):  # pragma: no cover
+        _ = args
+        _ = kwargs
+        raise AssertionError("MTP speculative decode should not call stream_generate")
+
+    def fake_load_drafter(model_id: str, *, kind: str = "mtp"):
+        drafter_loads.append((model_id, kind))
+        return {"draft_model_id": model_id, "kind": kind}
+
+    def fake_batch_generate(
+        model,
+        processor,
+        *,
+        prompts,
+        max_tokens: int,
+        temperature: float,
+        draft_model,
+        draft_kind: str,
+        draft_block_size: int,
+        **kwargs,
+    ):
+        _ = model
+        _ = processor
+        batch_calls.append(
+            {
+                "prompts": list(prompts),
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "draft_model": draft_model,
+                "draft_kind": draft_kind,
+                "draft_block_size": draft_block_size,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return [
+            SimpleNamespace(
+                text="MTP hello",
+                prompt_tokens=5,
+                generation_tokens=2,
+                speculative_acceptance_rate=0.75,
+                speculative_rollback_rate=0.25,
+                speculative_accepted_tokens=6,
+                speculative_rejected_tokens=2,
+                speculative_draft_propose_ms=4.5,
+                speculative_target_verify_ms=5.5,
+            )
+        ]
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=lambda *args, **kwargs: "formatted::unused",
+            load_drafter_fn=fake_load_drafter,
+            batch_generate_fn=fake_batch_generate,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+    policy = common_pb2.AccelerationPolicy(
+        mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+        draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+        num_draft_tokens=6,
+        allow_baseline_fallback=False,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=0,
+                max_output_tokens=16,
+            ),
+            Event(),
+            acceleration_policy=policy,
+        )
+    )
+
+    assert [event.text for event in events] == ["MTP hello"]
+    assert drafter_loads == [("mlx-community/gemma-4-E2B-it-assistant-bf16", "mtp")]
+    assert batch_calls == [
+        {
+            "prompts": ["Say hello."],
+            "max_tokens": 16,
+            "temperature": 0.0,
+            "draft_model": {
+                "draft_model_id": "mlx-community/gemma-4-E2B-it-assistant-bf16",
+                "kind": "mtp",
+            },
+            "draft_kind": "mtp",
+            "draft_block_size": 6,
+            "kwargs": {},
+        }
+    ]
+    event = events[-1]
+    assert event.prompt_tokens == 5
+    assert event.completion_tokens == 2
+    assert event.speculative_fallback_count == 0
+    assert event.speculative_num_draft_tokens == 6
+    assert event.speculative_draft_model_configured is True
+    assert event.speculative_acceptance_rate == 0.75
+    assert event.speculative_rollback_rate == 0.25
+    assert event.speculative_accepted_tokens == 6
+    assert event.speculative_rejected_tokens == 2
+    assert event.speculative_draft_propose_ms == 4.5
+    assert event.speculative_target_verify_ms == 5.5
+
+
+def test_auto_mlx_vlm_backend_detects_installed_optional_mtp_api() -> None:
+    backend = AutoMLXVLMBackend()
+    if not getattr(backend, "_available", False):
+        pytest.skip("mlx-vlm is not installed")
+
+    backend._ensure_runtime()
+
+    assert backend.runtime_name == "mlx-vlm"
+    assert backend.load_fn is not None
+    assert backend.stream_generate_fn is not None
+    assert backend.apply_chat_template_fn is not None
+    assert backend.supports_mtp_speculative() is (
+        backend.batch_generate_fn is not None and backend.load_drafter_fn is not None
+    )
+
+
+def test_auto_mlx_vlm_backend_load_drafter_requires_loader() -> None:
+    backend = AutoMLXVLMBackend(
+        load_fn=lambda model_path, revision="main": (object(), object()),
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        apply_chat_template_fn=lambda *args, **kwargs: "",
+    )
+
+    with pytest.raises(RuntimeUnavailableError, match="drafter loading"):
+        backend.load_drafter("mlx-community/gemma-4-E2B-it-assistant-bf16")
+
+
+def test_auto_mlx_vlm_backend_caches_drafter_loads_with_legacy_loader_signature() -> None:
+    loads: list[str] = []
+    drafter = object()
+
+    def fake_batch_generate(
+        model,
+        processor,
+        *,
+        prompts,
+        draft_model,
+        draft_kind,
+        draft_block_size,
+    ):
+        _ = model
+        _ = processor
+        _ = prompts
+        _ = draft_model
+        _ = draft_kind
+        _ = draft_block_size
+        return []
+
+    def fake_load_drafter(model_id: str):
+        loads.append(model_id)
+        return drafter
+
+    backend = AutoMLXVLMBackend(
+        load_fn=lambda model_path, revision="main": (object(), object()),
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        apply_chat_template_fn=lambda *args, **kwargs: "",
+        batch_generate_fn=fake_batch_generate,
+        load_drafter_fn=fake_load_drafter,
+    )
+
+    assert backend.supports_mtp_speculative() is True
+    assert backend.load_drafter("draft-model", kind="mtp") is drafter
+    assert backend.load_drafter("draft-model", kind="mtp") is drafter
+    assert loads == ["draft-model"]
+
+
+def test_mlx_vlm_runtime_falls_back_when_mtp_drafter_api_is_unavailable_and_fallback_allowed() -> None:
+    stream_calls: list[str] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace()
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = image
+        _ = kwargs
+        stream_calls.append(prompt)
+        yield SimpleNamespace(text="baseline", prompt_tokens=5, generation_tokens=1)
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=lambda processor, config, prompt, num_images=0: f"formatted::{prompt}",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+    policy = common_pb2.AccelerationPolicy(
+        mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+        draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+        num_draft_tokens=6,
+        allow_baseline_fallback=True,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+            Event(),
+            acceleration_policy=policy,
+        )
+    )
+
+    assert [event.text for event in events] == ["baseline"]
+    assert stream_calls == ["formatted::Say hello."]
+    assert events[-1].speculative_fallback_count == 1
+    assert events[-1].speculative_num_draft_tokens == 0
+    assert events[-1].speculative_draft_model_configured is False
+
+
+def test_mlx_vlm_runtime_stops_mtp_path_when_cancelled_before_backend_work() -> None:
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (
+                SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+                SimpleNamespace(),
+            ),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+            load_drafter_fn=lambda model_id, *, kind="mtp": object(),
+            batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="unexpected")],
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+    policy = common_pb2.AccelerationPolicy(
+        mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+        draft_model_id="draft-model",
+        num_draft_tokens=6,
+    )
+    cancel_event = Event()
+    cancel_event.set()
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+            cancel_event,
+            acceleration_policy=policy,
+        )
+    )
+
+    assert events == []
+
+
+def test_mlx_vlm_runtime_stops_mtp_path_when_cancelled_after_batch_generate() -> None:
+    cancel_event = Event()
+
+    def fake_batch_generate(*args, **kwargs):
+        _ = args
+        _ = kwargs
+        cancel_event.set()
+        return [SimpleNamespace(text="hidden")]
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (
+                SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+                SimpleNamespace(),
+            ),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+            load_drafter_fn=lambda model_id, *, kind="mtp": object(),
+            batch_generate_fn=fake_batch_generate,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+            cancel_event,
+            acceleration_policy=common_pb2.AccelerationPolicy(
+                mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                draft_model_id="draft-model",
+                num_draft_tokens=6,
+            ),
+        )
+    )
+
+    assert events == []
+
+
+def test_mlx_vlm_runtime_skips_empty_mtp_batch_response() -> None:
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (
+                SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+                SimpleNamespace(),
+            ),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+            load_drafter_fn=lambda model_id, *, kind="mtp": object(),
+            batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="")],
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+            Event(),
+            acceleration_policy=common_pb2.AccelerationPolicy(
+                mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                draft_model_id="draft-model",
+                num_draft_tokens=6,
+            ),
+        )
+    )
+
+    assert events == []
+
+
+def test_mlx_vlm_runtime_errors_when_mtp_drafter_api_is_unavailable_and_fallback_disabled() -> None:
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (
+                SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+                SimpleNamespace(),
+            ),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+    policy = common_pb2.AccelerationPolicy(
+        mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+        draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+        num_draft_tokens=6,
+        allow_baseline_fallback=False,
+    )
+
+    with pytest.raises(RuntimeError, match="MTP speculative decode"):
+        list(
+            runtime.generate_tokens(
+                loaded_model,
+                prepared,
+                common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+                Event(),
+                acceleration_policy=policy,
+            )
+        )
+
+
+def test_mlx_vlm_runtime_falls_back_for_non_greedy_mtp_requests_when_allowed() -> None:
+    stream_calls: list[str] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace()
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = image
+        _ = kwargs
+        stream_calls.append(prompt)
+        yield SimpleNamespace(text="sampled baseline", prompt_tokens=5, generation_tokens=1)
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=lambda processor, config, prompt, num_images=0: f"formatted::{prompt}",
+            load_drafter_fn=lambda model_id, *, kind="mtp": object(),
+            batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="unexpected")],
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+    policy = common_pb2.AccelerationPolicy(
+        mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+        draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+        num_draft_tokens=6,
+        allow_baseline_fallback=True,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(temperature=0.7, top_p=0.95, top_k=40, max_output_tokens=16),
+            Event(),
+            acceleration_policy=policy,
+        )
+    )
+
+    assert [event.text for event in events] == ["sampled baseline"]
+    assert stream_calls == ["formatted::Say hello."]
+    assert events[-1].speculative_fallback_count == 1
+    assert events[-1].speculative_draft_model_configured is False
+
+
+def test_mlx_vlm_runtime_reports_mtp_unsupported_reasons_without_loading_drafter() -> None:
+    runtime = MLXVLMRuntime()
+    policy = common_pb2.AccelerationPolicy(
+        mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+        draft_model_id="draft-model",
+        num_draft_tokens=6,
+    )
+    loaded_gemma4 = {
+        "metadata": {
+            "vision_family_id": "gemma4-v1",
+            "melix.vlm.execution_mode": "text_backed",
+        },
+        "model": SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+    }
+    prompt_only = PreparedVisionRequest(
+        prompt_text="Say hello.",
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+    )
+    with_image = PreparedVisionRequest(
+        prompt_text="Describe.",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"image",
+                source_kind="inline",
+                reference="inline:image",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image.jpg",
+                sha256_hex="deadbeef",
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(b"image"),
+        preprocess_peak_memory_bytes=len(b"image"),
+    )
+
+    missing_draft = common_pb2.AccelerationPolicy(mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE)
+    assert "draft_model_id" in runtime._mtp_speculative_unsupported_reason(
+        loaded_model=loaded_gemma4,
+        prepared_request=prompt_only,
+        sampling=common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0),
+        execution_mode="text_backed",
+        acceleration_policy=missing_draft,
+    )
+    assert "not Gemma 4" in runtime._mtp_speculative_unsupported_reason(
+        loaded_model={"metadata": {"vision_family_id": "llava-v1"}},
+        prepared_request=prompt_only,
+        sampling=common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0),
+        execution_mode="text_backed",
+        acceleration_policy=policy,
+    )
+    assert "target execution mode" in runtime._mtp_speculative_unsupported_reason(
+        loaded_model=loaded_gemma4,
+        prepared_request=prompt_only,
+        sampling=common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0),
+        execution_mode="multimodal",
+        acceleration_policy=policy,
+    )
+    assert "media inputs" in runtime._mtp_speculative_unsupported_reason(
+        loaded_model=loaded_gemma4,
+        prepared_request=with_image,
+        sampling=common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0),
+        execution_mode="text_backed",
+        acceleration_policy=policy,
+    )
+    assert MLXVLMRuntime._is_gemma4_target(object()) is False
+    assert MLXVLMRuntime._is_gemma4_target({"metadata": object(), "model": loaded_gemma4["model"]}) is True
+
+
+def test_mlx_vlm_runtime_mtp_response_helpers_handle_alternate_shapes() -> None:
+    assert MLXVLMRuntime._first_batch_response("direct") == "direct"
+    assert MLXVLMRuntime._batch_response_text("text") == "text"
+    assert MLXVLMRuntime._batch_response_text(SimpleNamespace(response="reply")) == "reply"
+    assert MLXVLMRuntime._batch_response_text(SimpleNamespace()) == "namespace()"
+    assert MLXVLMRuntime._optional_response_float(SimpleNamespace(), "missing") is None
+    assert MLXVLMRuntime._optional_response_int(SimpleNamespace(), "missing") is None
 
 
 def test_mlx_vlm_runtime_supports_prompt_only_generation_for_multimodal_models() -> None:
