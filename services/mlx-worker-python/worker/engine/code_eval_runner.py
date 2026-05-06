@@ -313,12 +313,25 @@ class _SandboxStaticProfileFragments:
 
 
 def _sandbox_static_profile_key() -> tuple[object, ...]:
+    return _cached_sandbox_static_profile_key(_sandbox_static_profile_environment_fingerprint())
+
+
+def _sandbox_static_profile_environment_fingerprint() -> tuple[str, str, str, str, str]:
     return (
         sys.executable,
         sys.prefix,
         sys.exec_prefix,
         sys.base_prefix,
         sys.base_exec_prefix,
+    )
+
+
+@lru_cache(maxsize=1)
+def _cached_sandbox_static_profile_key(
+    environment_fingerprint: tuple[str, str, str, str, str],
+) -> tuple[object, ...]:
+    return (
+        *environment_fingerprint,
         tuple(sorted((key, value or "") for key, value in sysconfig.get_paths().items())),
     )
 
