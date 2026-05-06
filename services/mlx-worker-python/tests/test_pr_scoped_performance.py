@@ -96,9 +96,10 @@ def test_scope_report_selects_hub_catalog_probe() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert probe_ids == {
         "hub-catalog-tag-normalization-single-pass",
+        "hub-catalog-next-cursor-fast-parse",
         "hub-catalog-size-hint-regex-precompile",
     }
 
@@ -133,8 +134,12 @@ def test_scope_report_selects_dataset_registry_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/dataset_registry/catalog.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "dataset-registry-limited-read-streaming"
+    assert scope["selected_count"] == 3
+    assert {probe["id"] for probe in scope["selected_probes"]} == {
+        "dataset-registry-limited-read-streaming",
+        "dataset-registry-snapshot-inference-single-pass",
+        "dataset-registry-preview-limit-short-circuit",
+    }
 
 
 def test_scope_report_selects_mlx_audio_wav_probe() -> None:
@@ -335,8 +340,12 @@ def test_scope_report_selects_dataset_registry_preview_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/dataset_registry/catalog.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "dataset-registry-preview-limit-short-circuit"
+    assert scope["selected_count"] == 3
+    assert {probe["id"] for probe in scope["selected_probes"]} == {
+        "dataset-registry-limited-read-streaming",
+        "dataset-registry-snapshot-inference-single-pass",
+        "dataset-registry-preview-limit-short-circuit",
+    }
 
 
 def test_scope_report_selects_worker_registry_probe() -> None:
@@ -609,6 +618,16 @@ def test_scope_report_selects_maintenance_percentile_probe() -> None:
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
     assert "maintenance-percentile-vector-reuse" in probe_ids
+
+
+def test_scope_report_selects_maintenance_prompt_shape_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/maintenance_core.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "maintenance-prompt-shape-vector-repeat" in probe_ids
 
 
 def test_scope_report_selects_upload_receipt_published_files_probe() -> None:
@@ -926,6 +945,25 @@ def test_hub_catalog_size_hint_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_hub_catalog_next_cursor_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_HUB_CATALOG_CURSOR_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_HUB_CATALOG_CURSOR_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/hub_catalog_next_cursor_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["cursor_parse_calls_mean"] == 8.0
+    assert metrics["checksum"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_statistical_evidence_bootstrap_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1108,6 +1146,29 @@ def test_dataset_registry_limit_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_dataset_registry_split_match_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_SPLIT_MATCH_PROBE_FILE_COUNT", "12")
+    monkeypatch.setenv("MELIX_DATASET_SPLIT_MATCH_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_split_match_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["file_count"] == 12.0
+    assert metrics["matched_files_mean"] == 3.0
+    assert metrics["path_constructor_calls_mean"] == 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_mlx_audio_wav_streaming_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1229,6 +1290,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "dataset-registry-snapshot-inference-single-pass",
         "event-extraction-alignment-accepted-edge-cache",
         "hub-catalog-tag-normalization-single-pass",
+        "hub-catalog-next-cursor-fast-parse",
         "hub-catalog-size-hint-regex-precompile",
         "benchmark-evaluation-report-running-aggregates",
         "stream-assembler-parser-mode-cache",
@@ -1278,6 +1340,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "dataset-registry-preview-limit-short-circuit",
         "maintenance-bench-report-readback",
         "maintenance-percentile-vector-reuse",
+        "maintenance-prompt-shape-vector-repeat",
         "phase8-metrics-closure-audit-reuse",
         "pr-scoped-performance-registry-cache",
         "real-model-support-hf-cache-latest-snapshot",

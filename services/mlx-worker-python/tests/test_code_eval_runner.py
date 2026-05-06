@@ -20,6 +20,21 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
     assert code_eval_runner.extract_candidate_code(
         "first attempt:\n```python\nprint('old')\n```\nfinal answer:\n```python\nprint('new')\n```"
     ) == ("print('new')", "parsed_code_block")
+    assert code_eval_runner.extract_candidate_code("```javascript\nprint('tag stays')\n```") == (
+        "javascript\nprint('tag stays')",
+        "parsed_code_block",
+    )
+    assert code_eval_runner.extract_candidate_code(
+        "```python\nprint('complete')\n```\n```python\nprint('unterminated')"
+    ) == ("print('complete')", "parsed_code_block")
+    blocks = [
+        f"draft {index}\n```python\ndef candidate():\n    return {index}\n```"
+        for index in range(32)
+    ]
+    assert code_eval_runner.extract_candidate_code("\n".join(blocks)) == (
+        "def candidate():\n    return 31",
+        "parsed_code_block",
+    )
 
 
 def test_is_code_execution_policy_supported_requires_sandboxed_policy_and_binary(monkeypatch) -> None:
@@ -468,8 +483,10 @@ def test_sandbox_profile_reuses_static_runtime_fragments(
     monkeypatch,
 ) -> None:
     code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+    code_eval_runner._sandbox_static_profile_key_cache_clear()
     runtime_calls = 0
     executable_calls = 0
+    get_paths_calls = 0
 
     def fake_runtime_paths() -> tuple[Path, ...]:
         nonlocal runtime_calls
@@ -481,8 +498,14 @@ def test_sandbox_profile_reuses_static_runtime_fragments(
         executable_calls += 1
         return (tmp_path / "python",)
 
+    def fake_get_paths() -> dict[str, str]:
+        nonlocal get_paths_calls
+        get_paths_calls += 1
+        return {"stdlib": str(tmp_path / "stdlib")}
+
     monkeypatch.setattr(code_eval_runner, "_sandbox_runtime_read_paths", fake_runtime_paths)
     monkeypatch.setattr(code_eval_runner, "_sandbox_executable_paths", fake_executable_paths)
+    monkeypatch.setattr(code_eval_runner.sysconfig, "get_paths", fake_get_paths)
 
     first_root = tmp_path / "eval-a"
     second_root = tmp_path / "eval-b"
@@ -491,12 +514,14 @@ def test_sandbox_profile_reuses_static_runtime_fragments(
 
     assert runtime_calls == 1
     assert executable_calls == 1
+    assert get_paths_calls == 1
     assert str(first_root) in first_profile
     assert str(second_root) not in first_profile
     assert str(second_root) in second_profile
     assert str(tmp_path / "python-runtime") in second_profile
 
     code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+    code_eval_runner._sandbox_static_profile_key_cache_clear()
 
 
 def test_sandbox_profile_cache_key_tracks_python_environment(
@@ -504,6 +529,7 @@ def test_sandbox_profile_cache_key_tracks_python_environment(
     monkeypatch,
 ) -> None:
     code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+    code_eval_runner._sandbox_static_profile_key_cache_clear()
     runtime_calls = 0
 
     def fake_runtime_paths() -> tuple[Path, ...]:
@@ -526,6 +552,7 @@ def test_sandbox_profile_cache_key_tracks_python_environment(
     assert "runtime-2" in third_profile
 
     code_eval_runner._sandbox_static_profile_fragments.cache_clear()
+    code_eval_runner._sandbox_static_profile_key_cache_clear()
 
 
 def test_sandbox_allow_path_variants_falls_back_when_resolve_raises() -> None:
