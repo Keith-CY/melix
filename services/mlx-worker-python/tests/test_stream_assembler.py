@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from worker.runtime import stream_assembler
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
 
 
@@ -420,6 +421,38 @@ def test_duplicate_tool_call_fragments_are_skipped_when_raw_stream_replays_out_o
 
     assert [delta.tool_call.tool_name for delta in first if delta.tool_call] == ["search"]
     assert [delta.tool_call for delta in replay if delta.tool_call] == []
+    assert completed.metrics["duplicate_tool_delta_count"] == 1
+    assert completed.metrics["non_monotonic_stream_count"] == 1
+
+
+def test_duplicate_model_call_id_skips_argument_serialization(monkeypatch) -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-duplicate-call-id-fast-path",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    dumps_calls = 0
+    original_dumps = stream_assembler.json.dumps
+
+    def counting_dumps(*args, **kwargs):
+        nonlocal dumps_calls
+        dumps_calls += 1
+        return original_dumps(*args, **kwargs)
+
+    monkeypatch.setattr(stream_assembler.json, "dumps", counting_dumps)
+    raw_tool_call = (
+        '<tool_call>{"id":"call-duplicate","name":"search","arguments":'
+        '{"query":"alpha","payload":[1,2,3,4,5]}}</tool_call>'
+    )
+
+    first = assembler.accept(StreamFragment(raw_text=raw_tool_call))
+    replay = assembler.accept(StreamFragment(raw_text=f"prefix {raw_tool_call}"))
+    completed = assembler.completed()
+
+    assert [delta.tool_call.call_id for delta in first if delta.tool_call] == ["call-duplicate"]
+    assert [delta.tool_call for delta in replay if delta.tool_call] == []
+    assert dumps_calls == 1
     assert completed.metrics["duplicate_tool_delta_count"] == 1
     assert completed.metrics["non_monotonic_stream_count"] == 1
 

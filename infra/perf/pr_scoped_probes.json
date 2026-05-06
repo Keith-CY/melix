@@ -88,7 +88,7 @@
   },
   {
     "id": "stream-assembler-parser-mode-cache",
-    "name": "Stream assembler parser-mode cache",
+    "name": "Stream assembler duplicate call-id short-circuit",
     "runner": "ubuntu-latest",
     "watch_globs": [
       "services/mlx-worker-python/worker/runtime/stream_assembler.py",
@@ -98,7 +98,7 @@
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_stream_assembler.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_stream_assembler_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
     "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_stream_assembler.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_stream_assembler_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/stream_assembler.py services/mlx-worker-python/tests/test_stream_assembler.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
-    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 - <<'PY'\nimport json\nimport statistics\nimport time\nfrom worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment\n\nchunks = []\nraw = ''\nfor index in range(1200):\n    if index % 120 == 0:\n        piece = '<think>plan</think><tool_call>{\\\"id\\\":\\\"call-%d\\\",\\\"name\\\":\\\"search\\\",\\\"arguments\\\":{\\\"q\\\":\\\"alpha\\\"}}</tool_call>' % index\n    elif index % 17 == 0:\n        piece = 'alpha<tool_ca'\n    else:\n        piece = ' token-%d ' % index\n    raw += piece\n    chunks.append(raw)\n\nelapsed = []\ntool_counts = []\nfor _ in range(8):\n    assembler = RequestStreamAssembler('probe', True, '', 'qwen')\n    started = time.perf_counter()\n    tool_count = 0\n    for chunk in chunks:\n        tool_count += sum(1 for delta in assembler.accept(StreamFragment(raw_text=chunk)) if delta.tool_call is not None)\n    completed = assembler.completed()\n    elapsed.append((time.perf_counter() - started) * 1000.0)\n    tool_counts.append(tool_count)\n    if completed.metrics['tool_call_markup_leak_count'] != 0:\n        raise SystemExit('tool markup leaked')\nif len(set(tool_counts)) != 1 or tool_counts[0] != 10:\n    raise SystemExit(f'unexpected tool counts: {tool_counts!r}')\nprint(json.dumps({'elapsed_ms_mean': statistics.fmean(elapsed), 'raw_char_count': float(len(raw)), 'tool_call_count': float(tool_counts[0])}, sort_keys=True))\nPY",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 - <<'PY'\nimport json\nimport statistics\nimport time\nfrom worker.runtime import stream_assembler\nfrom worker.runtime.stream_assembler import RequestStreamAssembler\n\nbody = json.dumps({\n    \"id\": \"call-duplicate\",\n    \"name\": \"search\",\n    \"arguments\": {\n        \"query\": \"alpha\",\n        \"payload\": [f\"token-{index}\" for index in range(512)],\n        \"nested\": {\"enabled\": True, \"limit\": 8192},\n    },\n})\niterations = 5000\nsample_count = 7\nelapsed = []\ndumps_calls = []\nduplicate_counts = []\noriginal_dumps = stream_assembler.json.dumps\nfor _ in range(sample_count):\n    assembler = RequestStreamAssembler(\"probe-duplicate-call-id\", True, \"\", \"qwen\")\n    calls = 0\n    def counting_dumps(*args, **kwargs):\n        nonlocal_calls[0] += 1\n        return original_dumps(*args, **kwargs)\n    nonlocal_calls = [0]\n    stream_assembler.json.dumps = counting_dumps\n    try:\n        started = time.perf_counter()\n        first = assembler._tool_delta(body)\n        for _index in range(iterations):\n            duplicate = assembler._tool_delta(body)\n            if duplicate is not None:\n                raise SystemExit(\"duplicate call id emitted a tool delta\")\n        elapsed.append((time.perf_counter() - started) * 1000.0)\n    finally:\n        stream_assembler.json.dumps = original_dumps\n    if first is None or first.call_id != \"call-duplicate\":\n        raise SystemExit(\"first call id did not emit\")\n    completed = assembler.completed()\n    duplicate_count = completed.metrics[\"duplicate_tool_delta_count\"]\n    if duplicate_count != iterations:\n        raise SystemExit(f\"unexpected duplicate count: {duplicate_count}\")\n    dumps_calls.append(float(nonlocal_calls[0]))\n    duplicate_counts.append(float(duplicate_count))\nprint(original_dumps({\n    \"elapsed_ms_mean\": round(statistics.fmean(elapsed), 6),\n    \"json_dumps_calls_mean\": round(statistics.fmean(dumps_calls), 3),\n    \"duplicate_tool_delta_count\": round(statistics.fmean(duplicate_counts), 3),\n    \"iteration_count\": float(iterations),\n}, sort_keys=True))\nPY",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -107,6 +107,12 @@
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_pct": 5.0
+      },
+      {
+        "key": "json_dumps_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
       }
     ]
   },
