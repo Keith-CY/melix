@@ -60,8 +60,6 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             continue
         if first_char == "\\" and line.startswith("\\ "):
             continue
-        if (first_char == "+" or first_char == "-") and _is_diff_file_marker(line):
-            continue
         if first_char == "+":
             current_changed_lines.add(new_line)
             new_line += 1
