@@ -8,15 +8,15 @@ product path from base model, through adapter training and alignment, through
 export/merge and PTQ/QAT quantization, into local inference, CLI evidence, and
 Window UI evidence.
 
-The GitHub issue is currently closed as a roadmap artifact, but the
-implementation acceptance criteria are not complete. This audit is the current
-source-of-truth checklist for what is finished, what is covered by open PRs,
-and what remains before the roadmap can be treated as implemented.
+This audit is the final Issue 365 source-of-truth evidence map. It records the
+merged implementation slices, the merged-tree real-runtime evidence rerun, the
+Window bridge evidence, and the #366 boundary.
 
 ## Audit Snapshot
 
-- Date: 2026-05-06
-- Base inspected: `origin/main` at `d04a057c7`
+- Date: 2026-05-07
+- Base inspected: `origin/main` at
+  `1e49c42a4bf4c6b0a48a51e5b8c84411be2ff52b`
 - Merged Issue 365 PRs inspected:
   - #368, `Add Issue 365 alignment and quantization contracts`
   - #369, `Implement Issue 365 offline preference trainer routing`
@@ -24,193 +24,165 @@ and what remains before the roadmap can be treated as implemented.
   - #394, `Add scored RL alignment runner`
   - #397, `Add MLX quantization convert backend`
   - #400, `Add CLI pipeline chain routing slice`
-- Related mainline support PRs inspected:
-  - #393, `Add dataset management and selection` (useful dataset materialization
-    support, but no desktop UI surface and not final Issue 365 acceptance)
-- Open Issue 365 PRs inspected:
   - #412, `Add Issue 365 Window acceptance matrix`
+  - #442, `Route Issue 365 PTQ through MLX-LM conversion`
+    - merge commit `964ba30f351336f04b20d05bd63500764daa5309`
+  - #446, `Add Issue 365 QAT-aware MLX export`
+    - merge commit `295d367bb7e05a8ac6a69b8a6075ee7386be7e8e`
+  - #451, `Issue 365: wire reward runtime scoring`
+    - merge commit `c595c48b8f0897c12a2d0e2eb571ca96ecdc884c`
+  - #457, `Bridge Window acceptance to Issue 365 runtime evidence`
+    - merge commit `1e49c42a4bf4c6b0a48a51e5b8c84411be2ff52b`
+- Related support PRs inspected:
+  - #393, `Add dataset management and selection`
+
+## Issue Comment Adoption
+
+The 2026-05-04 roadmap audit comment is reasonable and adoptable. Its findings
+are now covered as follows:
+
+- CPO, GRPO, RLHF mode contracts, dataset contracts, and alignment lineage are
+  covered by #368, #394, and #451.
+- DPO, ORPO, and CPO real offline preference trainer paths are covered by #369.
+- Quantization manifest release-gate fields, PTQ runtime conversion, and local
+  smoke evidence are covered by #368, #386, #397, and #442.
+- QAT-aware export/runtime manifest behavior is covered by #397 and #446.
+- `melix alignment train` parser, runner, codec, and pipeline routing are
+  covered by #368 and #400.
+- Window route evidence and Window-to-real-CLI readiness are covered by #412
+  and #457.
+- Reward-model training and PPO/reward-guided policy optimization remain #366
+  scope. Issue 365 consumes reward-model manifests and records reward lineage;
+  it does not claim reward-model construction or PPO.
+
+The 2026-05-06 owner follow-up comment mapped the same work to the
+#442/#446/#451/#457 stack. That stack has now landed, and the final evidence was
+rerun from the merged `origin/main` tree.
+
+## CI And Merge Note
+
+PRs #442, #446, #451, and #457 were merged while GitHub-hosted `macos-15` CI
+jobs were stuck in a long `QUEUED` state. At the time of the merge path:
+
+- the branch protection REST API reported `main` as not protected
+- the repository `main` ruleset had `enforcement=disabled`
+- the PRs were mergeable but `UNSTABLE` because checks were still pending
+
+This is an audit caveat rather than an ignored branch-protection failure. The
+compensating evidence is the merged-tree rerun below from
+`origin/main=1e49c42a4`, after the stack landed.
+
+## Final Merged-Tree Evidence
+
+### CLI Real Runtime Bundle
+
+- Worktree: `.worktrees/issue365-final-main-audit`
+- Base: `origin/main=1e49c42a4bf4c6b0a48a51e5b8c84411be2ff52b`
+- Runtime instance: `i365-final-main`
+- HTTP port: `12490`
+- Worker sockets:
+  - `/tmp/mx365-final-main-python.sock`
+  - `/tmp/mx365-final-main-swift.sock`
+- Bundle path:
+  `.runtime/issue365/final-main-real-runtime-bundle-r2/bundle.json`
+- Result:
+  - `execution_mode=real`
+  - `release_ready=true`
+  - `succeeded_count=10`
+  - `failed_count=0`
+  - `blocked_count=0`
+
+The first merged-tree CLI attempt wrote
+`.runtime/issue365/final-main-real-runtime-bundle/bundle.json` and failed 7
+alignment/quantization cases because the runtime input dataset directories were
+empty. After populating the `preference_pair`, `prompt_candidate`,
+`reward_scored`, `calibration`, and reward-model manifest fixtures, the `r2`
+bundle passed all 10 cases.
+
+Succeeded real CLI cases:
+
+- `lora_export_inference`
+- `qlora_export_inference`
+- `dora_export_inference`
+- `lora_dpo_export_inference`
+- `lora_orpo_export_inference`
+- `lora_cpo_export_inference`
+- `lora_grpo_export_inference`
+- `lora_rlhf_export_inference`
+- `lora_preference_ptq_quantized_inference`
+- `qat_quantized_inference`
+
+### Window Bridge Bundle
+
+- Worktree: `.worktrees/issue365-final-main-audit`
+- Command entrypoint:
+  `MELIX_PHASE8_WINDOW_UI_ACCEPTANCE=1 swift run --package-path apps/macos-menubar melix-menubar`
+- Window bundle path:
+  `.runtime/home-issue365-final-main/acceptance/phase8/window-ui/2026-05-07TFINALMAINR2Z/bundle.json`
+- Consumed CLI bundle:
+  `.runtime/issue365/final-main-real-runtime-bundle-r2/bundle.json`
+- Screenshot PNG:
+  generated during acceptance and removed from ignored `.runtime` storage after
+  verification per operator request
+- Result:
+  - `schema_version=melix.phase8.window_ui_acceptance.v1`
+  - `business_line_count=10`
+  - `release_ready_count=10`
+  - `blockers=[]`
+
+Window timing metrics from the bundle:
+
+- `phase8.ui.cli_bridge_ms=42897.08983898163`
+- `phase8.ui.snapshot_render_ms=472.7550745010376`
+- `phase8.ui.base_chat_roundtrip_ms=7414.916038513184`
+- `phase8.ui.derived_chat_roundtrip_ms=5460.765957832336`
+- `phase8.ui.bench_run_ms=7431.174993515015`
+- `phase8.ui.bench_matrix_run_ms=7478.310942649841`
+- `phase8.ui.evaluation_run_ms=5341.758966445923`
 
 ## Prompt-To-Artifact Checklist
 
-| Issue requirement | Current evidence | Status |
+| Issue requirement | Final merged evidence | Status |
 | --- | --- | --- |
-| `lora`, `qlora`, and `dora` supervised adapter training remains supported. | Existing LoRA training pipeline and regression tests remain in `services/mlx-worker-python/tests/test_lora_model_ops.py` and CLI tests. | Covered as baseline regression scope, not reclassified as complete Issue 365 release evidence by itself. |
-| `dpo`, `orpo`, and `cpo` accept `preference_pair` datasets. | #368 adds contracts; #369 adds offline preference trainer routing and preference metrics. | Implemented on `origin/main`. |
-| `dpo`, `orpo`, and `cpo` run real trainer paths rather than manifest-only placeholders. | #369 routes preference training through worker-side preference trainer logic and records preference metrics. | Implemented on `origin/main`, with targeted unit and worker evidence in the PR body. |
-| `grpo` accepts prompt/candidate datasets and records candidate/reward traces. | #368 adds `prompt_candidate` validation. #394 adds a scored-trace runner plus opt-in `runtime_generate` policy-runtime candidate generation and explicit reward-runtime scoring. | Partially covered on `origin/main`. Release-ready GRPO still needs real local runtime release evidence and real policy-update evidence. |
-| `rlhf` consumes reward-model lineage from #366 and records reward-model lineage. | #368 validates readable reward manifests. #394 records reward-scored traces and an opt-in reward-runtime response scoring interface. | Partially covered on `origin/main`. Reward-model training artifacts and PPO/reward-guided policy updates from #366 are still missing. |
-| Every preference/RL run emits `melix.alignment_run.v1`. | #368 adds alignment run manifests and adapter backlinks; tests assert `melix.alignment_run.v1`. #394 expands scored-trace, runtime-generated GRPO, and reward-runtime scoring metrics. | Implemented for contract and current worker paths on `origin/main`; release-ready GRPO/RLHF evidence remains incomplete. |
-| Adapter manifests backlink to alignment manifests through `alignment_run_manifest_path`. | #368 implementation evidence and worker tests cover adapter backlinking. | Implemented on `origin/main`. |
-| Quantized bundle manifests record `quantization_mode`, `source_artifact_kind`, and release-gate evidence. | #368 and #386 extend quantization manifests and typed local smoke evidence. | Implemented on `origin/main`. |
-| PTQ can quantize exported or merged artifacts. | Current `origin/main` has manifest/runtime evidence. #397 adds an opt-in `mlx_lm_convert` backend for real PTQ conversion. #400 proves the acceptance harness fails a PTQ case unless quantize emits passing `runtime_generate` local smoke evidence. | Partially covered on `origin/main`; #397 covers the next backend slice, and #400 records the current PTQ runtime-smoke failure as non-completion evidence. |
-| QAT runs before final quantized export and records quantization-aware settings. | #397 records QAT-aware export lineage, requires existing adapter-derived source artifacts, and writes deterministic fake-quant optimizer trace/manifest/artifact evidence. | Partially covered on `origin/main`. MLX-native QAT over full model tensors and real local-runtime release evidence are still missing. |
-| QLoRA records quantized-base behavior and rejects unsafe targets. | Existing LoRA/QLoRA contract tests cover mode validation. #400 adds selected `qlora_export_inference` real-local-runtime evidence. | Partially covered on `origin/main`; final full-matrix release evidence is still missing. |
-| CLI exposes `melix alignment train` separately from `melix lora train`. | #368 adds parser/runner/codec support and tests. | Implemented on `origin/main`. |
-| CLI supports a full chained workflow across training, alignment, publish/export, quantize, local inference, and eval/bench evidence. | #400 adds `melix pipeline run` routing for post-training steps plus an Issue 365 acceptance bundle harness. The harness records real-mode preflight blockers for missing CLI, dataset, calibration, and reward-model prerequisites before long-running execution. It also records successful selected real-local-runtime evidence for LoRA, QLoRA, DoRA, DPO, ORPO, and CPO chains, and failed PTQ runtime-smoke evidence when quantize cannot emit a runnable safetensors-backed bundle. | Partially covered on `origin/main`; #400 covers routing, plan/dry-run evidence orchestration, prerequisite evidence, six selected real chains, and a stricter PTQ failure gate, not final full-matrix acceptance. |
-| Required CLI chain tests exist for every listed business line. | Existing tests cover focused slices. #400 writes all 10 required chain cases into a machine-readable plan/dry-run matrix and supports `--case-id` subset execution for real-mode runs. The latest PTQ selected-case run is intentionally failed evidence: `local_inference_smoke.status=failed` and `release_gate.local_inference_smoke_result=failed`. | Partially covered on `origin/main`. Real local runtime execution is still missing or not passing for GRPO, RLHF, PTQ, and QAT chains. |
-| Window UI exposes every CLI business line. | Existing Window routing code and tests expose alignment mode state and forwarding paths. #412 adds a Window PTQ/QAT mode selector and an open 10-case Window business-line routing matrix. | Partially covered by open PR #412. Final real-runtime Window acceptance remains missing. |
-| Window UI acceptance proves every business line is visible, selectable, runnable, and inspectable. | #412 extends the Phase 8 Window UI acceptance bundle with all 10 Issue 365 business lines and records route-level visible/selectable/runnable/inspectable state with `release_ready=false`. | Partially covered by open PR #412. This is routing/inspectability evidence, not final real local runtime acceptance. |
-| Release evidence separates deterministic/unit/scored-trace results from real local runtime results. | PR bodies and plans label deterministic/scored-trace limitations. #400 adds a bundle schema that marks plan/dry-run evidence as not release-ready and marks missing real-mode prerequisites as blocked rather than successful. | Partially covered on `origin/main`. A final real-local-runtime release evidence bundle is still missing. |
-| No business line is marked complete when only deterministic evidence exists. | Plans explicitly state remaining gaps, and #412 remains non-release-ready while unmerged. #400's bundle keeps plan/dry-run evidence `release_ready=false` and only permits real-mode release readiness after succeeded real pipeline cases. | Process guard exists, but final release gate and full real evidence are missing. |
+| `lora`, `qlora`, and `dora` supervised adapter training remains supported. | The merged-tree real CLI bundle records `lora_export_inference`, `qlora_export_inference`, and `dora_export_inference` as `succeeded` and `release_ready=true`. | Complete. |
+| `dpo`, `orpo`, and `cpo` accept `preference_pair` datasets. | #368 adds the dataset contract and #369 adds offline preference trainer routing. The merged-tree real CLI bundle records all three preference chains as `succeeded` and `release_ready=true`. | Complete. |
+| `dpo`, `orpo`, and `cpo` run real trainer paths rather than manifest-only placeholders. | #369 routes preference training through worker-side trainer logic and records preference metrics. The final real CLI bundle validates DPO/ORPO/CPO through full pipeline execution. | Complete. |
+| `grpo` accepts prompt/candidate datasets and records candidate/reward traces. | #368 adds `prompt_candidate`; #394 adds scored-trace and generated-candidate evidence; #451 adds reward-runtime scoring. The final real CLI bundle records `lora_grpo_export_inference` as `succeeded` and `release_ready=true`. | Complete for #365 scope. |
+| `rlhf` consumes reward-model lineage from #366 and records reward-model lineage. | #368 validates readable reward manifests; #394/#451 record reward-scored traces and runtime reward-model consumption. The final real CLI bundle records `lora_rlhf_export_inference` as `succeeded` and `release_ready=true`. | Complete for #365 lineage scope; reward-model training and PPO remain #366. |
+| Every preference/RL run emits `melix.alignment_run.v1`. | #368 adds alignment manifests and adapter backlinks; #394/#451 expand scored-trace and runtime reward metrics. | Complete. |
+| Adapter manifests backlink to alignment manifests through `alignment_run_manifest_path`. | #368 implementation and worker tests cover adapter backlinking. | Complete. |
+| Quantized bundle manifests record `quantization_mode`, `source_artifact_kind`, and release-gate evidence. | #368/#386 add manifest and smoke evidence; #442/#446 exercise PTQ/QAT paths in the final real CLI bundle. | Complete. |
+| PTQ can quantize exported or merged artifacts. | #397/#442 route PTQ through MLX-LM conversion. The final real CLI bundle records `lora_preference_ptq_quantized_inference` as `succeeded` and `release_ready=true`. | Complete. |
+| QAT runs before final quantized export and records quantization-aware settings. | #397/#446 add QAT-aware export and trace/manifest evidence. The final real CLI bundle records `qat_quantized_inference` as `succeeded` and `release_ready=true`. | Complete. |
+| QLoRA records quantized-base behavior and rejects unsafe targets. | Existing validation remains covered and the final real CLI bundle records `qlora_export_inference` as `succeeded` and `release_ready=true`. | Complete. |
+| CLI exposes `melix alignment train` separately from `melix lora train`. | #368 adds parser/runner/codec support; #400 routes it through the pipeline harness. | Complete. |
+| CLI supports a full chained workflow across training, alignment, publish/export, quantize, local inference, and eval/bench evidence. | #400 adds the 10-case harness. The final merged-tree real bundle passes all required cases. | Complete. |
+| Required CLI chain tests exist for every listed business line. | The final real CLI bundle executes all 10 required business-line cases from the merged tree. | Complete. |
+| Window UI exposes every CLI business line. | #412 exposes the Window 10-case business-line matrix. | Complete. |
+| Window UI acceptance proves every business line is visible, selectable, runnable, and inspectable. | #457 bridges Window business-line evidence to the final real CLI bundle. The final Window bundle records 10 business lines, 10 release-ready cases, and no blockers. | Complete. |
+| Release evidence separates deterministic/unit/scored-trace results from real local runtime results. | The Issue 365 bundle schema keeps plan/dry-run evidence non-release-ready and the final `r2` bundle is explicitly `execution_mode=real`. This audit separates unit/scored-trace history from final real CLI and Window bridge evidence. | Complete. |
+| No business line is marked complete when only deterministic evidence exists. | The final completion claim is based on merged-tree real CLI runtime evidence plus Window bridge evidence, not deterministic-only output. | Complete. |
 
-## Verified Covered Work
+## Scope Boundary
 
-### Contract Foundation
+Issue 365 is complete for the post-training alignment and quantization product
+path it owns. The following are explicit non-claims:
 
-Implemented by #368 on `origin/main`:
-
-- alignment modes: `dpo`, `orpo`, `cpo`, `grpo`, `rlhf`
-- dataset contracts: `preference_pair`, `prompt_candidate`, `reward_scored`,
-  and `calibration`
-- `melix.alignment_run.v1` output and adapter backlinks
-- quantization manifest fields and release-gate evidence
-- `melix alignment train` parser and runner surface
-
-### Offline Preference Trainers
-
-Implemented by #369 on `origin/main`:
-
-- DPO, ORPO, and CPO worker-side preference trainer routing
-- preference-pair loading and validation
-- preference metrics in alignment manifests:
-  - `preference_loss_final`
-  - `chosen_logprob_mean`
-  - `rejected_logprob_mean`
-  - `chosen_rejected_margin`
-  - `win_rate_proxy`
-
-### Quantization Runtime Smoke Evidence
-
-Implemented by #386 on `origin/main`:
-
-- typed `local_inference_smoke` manifest evidence
-- `release_gate.local_inference_smoke_result` derived from structured evidence
-- opt-in `runtime_generate` smoke mode
-- structured failure evidence for missing or failed smoke paths
-
-## Open Draft Work
-
-### PR #394: Scored RL Alignment Runner
-
-#394 adds a deterministic scored-trace runner for GRPO and RLHF
-datasets. It also adds opt-in GRPO `candidate_generation_mode=runtime_generate`
-support that loads the policy runtime once per job, generates candidates, scores
-them with a seed-overlap proxy, and records generated-candidate evidence in
-policy-update traces plus `melix.alignment_run.v1` metrics. It now also adds
-explicit `candidate_scoring_mode=reward_model`, loads an injected reward runtime
-once per job, and records reward-scoring backend/id evidence for GRPO candidates
-or RLHF responses. It is useful implementation progress, but it does not
-satisfy final GRPO/RLHF acceptance because it still excludes PPO/reward-guided
-updates, real local runtime release evidence, reward-model training artifacts
-from #366, and Window UI acceptance.
-
-### PR #397: MLX Quantization Convert Backend
-
-#397 adds opt-in real PTQ weight conversion through MLX-LM conversion.
-It also tightens QAT-aware export evidence by requiring existing
-adapter-derived source artifacts and recording fake-quant, source, optional QAT
-training-manifest, and calibration lineage in the quantized bundle. It now also
-runs a deterministic Melix fake-quant optimizer for QAT requests and records the
-generated QAT training trace, training manifest, fake-quant artifact, source
-digest, and quant-error proxy metrics. It is useful PTQ/QAT-evidence progress,
-but it explicitly excludes MLX-native QAT over full model tensors and full
-CLI/Window acceptance.
-
-### PR #400: CLI Pipeline Chain Routing
-
-#400 adds pipeline routing for `alignment.train`, `lora.publish`,
-`quantize`, `convert`, and `upload` in both the supported-command registry and
-the command builder. It also adds an Issue 365 acceptance bundle harness that
-writes the full 10-case CLI matrix and explicitly separates planning,
-deterministic dry-run, and real-local-runtime evidence. The harness records
-per-case real-mode preflight evidence, blocks missing local prerequisites with
-machine-readable blocker codes, and supports `--case-id` subset execution so
-operators can run a real local runtime slice without requiring unused RLHF or
-quantization inputs. The PR now also fixes MLX-LM preference batch comm-group
-sharding and records successful selected real-local-runtime bundles for LoRA,
-QLoRA, DoRA, DPO, ORPO, and CPO chains. It also exposes quantize
-`--local-inference-smoke-mode` and `--local-inference-smoke-prompt` through CLI
-and pipeline routing, then tightens PTQ/QAT acceptance around the quantized
-bundle manifest's typed `runtime_generate` smoke evidence instead of treating
-quantized artifact directories as generic `chat.run` targets. The latest
-`lora_preference_ptq_quantized_inference` real probe fails with
-`local_inference_smoke.status=failed`,
-`local_inference_smoke.evidence_kind=local_runtime_generate`,
-`local_inference_smoke.smoke_mode=runtime_generate`, and
-`release_gate.local_inference_smoke_result=failed` because the produced
-quantized artifact has no safetensors. This is useful release-evidence
-infrastructure and real supervised/preference coverage, but it still does not
-provide full real local runtime acceptance for every business line.
-
-### PR #412: Window Acceptance Matrix
-
-Open PR #412 adds a Window UI PTQ/QAT quantization mode state, exposes the mode
-selector beside the existing quantization profile selector, and forwards
-explicit `quantization_mode`, `source_artifact_kind`, and QAT source-artifact
-hints through Window model-operation requests. It also extends the Phase 8
-Window UI acceptance bundle with all 10 Issue 365 business lines and records
-visible/selectable/runnable/inspectable route state for each case while keeping
-`release_ready=false`. This is useful Window routing and inspectability
-evidence, but it intentionally excludes final real-local-runtime Window
-acceptance for every business line.
-
-## Missing Completion Items
-
-The objective is not achieved until all of these are implemented and verified:
-
-1. Release-ready GRPO online candidate generation from a loaded policy runtime
-   with real local runtime evidence, not only scripted/deterministic tests.
-2. Release-ready GRPO reward-model scoring and policy update evidence, not only
-   scripted reward-runtime scoring, seed-overlap proxy scoring, or scored-trace
-   replay.
-3. RLHF reward-model training artifact integration plus reward-guided/PPO-style
-   policy updates from #366 artifacts.
-4. MLX-native QAT training over full model tensors and real local-runtime QAT
-   release evidence. Deterministic fake-quant optimizer execution is partially
-   covered by #397, but release-ready MLX-native QAT is not.
-5. Full real-runtime CLI chain execution for the remaining business lines not
-   yet covered by selected #400 evidence:
-   - BaseModel -> LoRA -> GRPO -> export -> local inference
-   - BaseModel -> LoRA -> RLHF using #366 reward model -> export -> local inference
-   - BaseModel -> LoRA/preference result -> merge/export -> PTQ -> local inference
-     currently has failed #400 evidence, not completion evidence.
-   - BaseModel -> LoRA (QAT) -> QAT-aware export -> quantized local inference
-6. Real local runtime evidence for the final CLI acceptance matrix. #400 now
-   records real-mode prerequisites, blockers, and successful selected LoRA,
-   QLoRA, DoRA, DPO, ORPO, and CPO runs, but it does not cover the full
-   10-case matrix; its latest PTQ real probe is a failed runtime-smoke gate.
-7. Window UI runnable and inspectable real-runtime acceptance for every
-   CLI-supported business line. Open PR #412 adds route-level matrix evidence,
-   but not final real-runtime acceptance.
-8. A final populated release evidence bundle that distinguishes:
-   - unit tests
-   - deterministic fixture tests
-   - scored-trace evidence
-   - real local runtime evidence
-
-## Recommended Next Implementation Order
-
-1. Land #412 when CI and review are clean.
-2. Re-run the PTQ selected case after #397's real-conversion backend and #400's
-   stricter runtime-smoke gate are integrated, and require passing
-   `local_runtime_generate` evidence before counting PTQ complete.
-3. Use or extend the #400 acceptance bundle harness to run a configured
-   real-local-runtime matrix with actual local datasets, model artifacts,
-   reward-model artifacts, and runtime availability, then emit the final
-   machine-readable #365 evidence bundle.
-4. Promote QAT from deterministic fake-quant optimizer evidence to an
-   MLX-native worker backend path, or keep MLX-native QAT explicitly unsupported
-   with a final acceptance failure until the backend exists.
-5. Integrate #366 reward-model training artifacts and PPO/reward-guided policy
-   updates into RLHF before claiming RLHF completion.
-6. Extend the #412 Window UI acceptance matrix to consume the same
-   real-runtime matrix evidence rather than treating route/screenshot evidence
-   as release readiness.
+- Reward-model training and PPO/reward-guided policy optimization remain #366.
+- The Window evidence proves route visibility, selectability, runnability,
+  inspectability, and release readiness through the mapped real CLI bundle. It
+  does not claim separate manual click-through execution for every business line.
+- Runtime `.runtime` evidence is local operator evidence and is intentionally
+  not committed.
 
 ## Audit Conclusion
 
-Issue #365 is not complete. The current repository has strong contract,
-manifest, offline preference, RL-alignment-runner, quantization, and CLI-chain
-evidence foundations, plus open Window routing evidence in #412. The remaining
-acceptance items require real runtime paths and release evidence, so this audit
-must not be used to mark the objective complete.
+Issue #365 is complete within its scoped roadmap criteria. The current
+`origin/main` tree includes the alignment, quantization, CLI, and Window bridge
+slices, and the final merged-tree evidence passes:
+
+- full real CLI matrix: 10/10 succeeded, `release_ready=true`
+- Window bridge matrix: 10/10 release-ready business lines, no blockers
+
+The #366 reward-model training/PPO boundary remains outside this completion
+claim.
