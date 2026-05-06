@@ -523,6 +523,92 @@ def test_materialize_local_evaluation_dataset_builds_final_result_package_from_c
     assert sample["target"] == "Paris"
 
 
+def test_materialize_local_evaluation_dataset_cache_hit_skips_local_row_parsing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text(
+        json.dumps({"payload": {"question": "Capital of France?", "target": "Paris"}}) + "\n",
+        encoding="utf-8",
+    )
+    request = EvaluationMaterializationRequest(
+        source_kind="jsonl",
+        source_path=source_path,
+        profile=EvaluationProfileDefinition(
+            profile_type="final_result",
+            result_kind="text",
+            extraction_mode="heuristic_final",
+            scoring_mode="normalized_exact_match",
+            threshold=1.0,
+        ),
+        field_mapping=EvaluationFieldMapping(
+            input_text_path="payload.question",
+            target_path="payload.target",
+        ),
+        dataset_id="capital.dev.v1",
+        suite_id="capital",
+    )
+    cache_root = tmp_path / "cache"
+
+    first = materialize_local_evaluation_dataset(request=request, cache_root=cache_root)
+
+    def _fail_read_local_rows(source_kind: str, source_path: Path) -> list[dict[str, object]]:
+        raise AssertionError("cache hit should not parse local rows")
+
+    monkeypatch.setattr(evaluation_final_result_module, "_read_local_rows", _fail_read_local_rows)
+
+    second = materialize_local_evaluation_dataset(request=request, cache_root=cache_root)
+
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    assert second.cache_key == first.cache_key
+    assert second.package_path == first.package_path
+
+
+def test_materialize_local_evaluation_dataset_cache_hit_still_validates_field_mapping(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text(
+        json.dumps({"payload": {"question": "Capital of France?", "target": "Paris"}}) + "\n",
+        encoding="utf-8",
+    )
+    valid_request = EvaluationMaterializationRequest(
+        source_kind="jsonl",
+        source_path=source_path,
+        profile=EvaluationProfileDefinition(
+            profile_type="final_result",
+            result_kind="text",
+            extraction_mode="heuristic_final",
+            scoring_mode="normalized_exact_match",
+            threshold=1.0,
+        ),
+        field_mapping=EvaluationFieldMapping(
+            input_text_path="payload.question",
+            target_path="payload.target",
+        ),
+        dataset_id="capital.dev.v1",
+        suite_id="capital",
+    )
+    cache_root = tmp_path / "cache"
+    materialize_local_evaluation_dataset(request=valid_request, cache_root=cache_root)
+
+    invalid_request = EvaluationMaterializationRequest(
+        source_kind="jsonl",
+        source_path=source_path,
+        profile=valid_request.profile,
+        field_mapping=EvaluationFieldMapping(target_path="payload.target"),
+        dataset_id="capital.dev.v1",
+        suite_id="capital",
+    )
+
+    with pytest.raises(ModelOperationError) as excinfo:
+        materialize_local_evaluation_dataset(request=invalid_request, cache_root=cache_root)
+
+    assert excinfo.value.code == "invalid_evaluation_source"
+
+
 def test_materialize_local_evaluation_dataset_invalidates_cache_when_local_source_changes(
     tmp_path: Path,
 ) -> None:
