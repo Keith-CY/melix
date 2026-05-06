@@ -445,12 +445,14 @@ struct MelixCLIRunnerTests {
                 "quantization_mode": "ptq",
                 "source_artifact_kind": "merged_adapter",
                 "source_artifact_path": "/tmp/merged-model",
-                "quantization_backend": "mlx_lm_convert",
-                "mlx_lm_q_mode": "affine",
+                "quantization_backend": " MLX_LM_CONVERT ",
+                "mlx_lm_q_bits": " 4 ",
+                "mlx_lm_q_group_size": " 128 ",
+                "mlx_lm_q_mode": " Affine ",
                 "calibration_dataset_uri": "/tmp/calibration.jsonl",
                 "quality_delta": "-0.01",
                 "latency_delta": "-0.15",
-                "local_inference_smoke_mode": "runtime_generate",
+                "local_inference_smoke_mode": " Runtime_Generate ",
                 "local_inference_smoke_prompt": "Reply with ISSUE365_OK"
               }
             },
@@ -666,6 +668,10 @@ struct MelixCLIRunnerTests {
         #expect(quantizeArguments.contains("mlx_lm_convert"))
         #expect(quantizeArguments.contains("--mlx-lm-q-mode"))
         #expect(quantizeArguments.contains("affine"))
+        #expect(quantizeArguments.contains("--mlx-lm-q-bits"))
+        #expect(quantizeArguments.contains("4"))
+        #expect(quantizeArguments.contains("--mlx-lm-q-group-size"))
+        #expect(quantizeArguments.contains("128"))
         #expect(quantizeArguments.contains("--local-inference-smoke-mode"))
         #expect(quantizeArguments.contains("runtime_generate"))
     }
@@ -2032,6 +2038,48 @@ struct MelixCLIRunnerTests {
                 }
                 """#,
                 "Pipeline command argument mlx_lm_q_mode must be one of: affine, mxfp4, nvfp4, mxfp8."
+            ),
+            (
+                "quantize-invalid-mlx-q-bits",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "quantize-invalid-mlx-q-bits",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "quantize",
+                      "command": "quantize",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "mlx_lm_q_bits": "four"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument mlx_lm_q_bits must be an integer."
+            ),
+            (
+                "quantize-invalid-mlx-q-group-size",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "quantize-invalid-mlx-q-group-size",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "quantize",
+                      "command": "quantize",
+                      "args": {
+                        "model_id": "melix-dev-text",
+                        "mlx_lm_q_group_size": "wide"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument mlx_lm_q_group_size must be an integer."
             ),
             (
                 "quantize-invalid-smoke-mode",

@@ -892,8 +892,8 @@ private enum MelixPipelineCommandBuilder {
                     sourceArtifactKind: try sourceArtifactKind(args),
                     sourceArtifactPath: string("source_artifact_path", args) ?? "",
                     quantizationBackend: try quantizationBackend(args),
-                    mlxLMQBits: string("mlx_lm_q_bits", args) ?? "",
-                    mlxLMQGroupSize: string("mlx_lm_q_group_size", args) ?? "",
+                    mlxLMQBits: try mlxLMIntegerString("mlx_lm_q_bits", args),
+                    mlxLMQGroupSize: try mlxLMIntegerString("mlx_lm_q_group_size", args),
                     mlxLMQMode: try mlxLMQMode(args),
                     calibrationDatasetURI: string("calibration_dataset_uri", args) ?? "",
                     qualityDelta: string("quality_delta", args) ?? "",
@@ -1203,6 +1203,14 @@ private enum MelixPipelineCommandBuilder {
             throw MelixCLIError.usage("Pipeline command argument mlx_lm_q_mode must be one of: affine, mxfp4, nvfp4, mxfp8.")
         }
         return mode
+    }
+
+    private static func mlxLMIntegerString(_ key: String, _ args: [String: Any]) throws -> String {
+        let value = (string(key, args) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.isEmpty || Int(value) != nil else {
+            throw MelixCLIError.usage("Pipeline command argument \(key) must be an integer.")
+        }
+        return value
     }
 
     private static func localInferenceSmokeMode(_ args: [String: Any]) throws -> String {

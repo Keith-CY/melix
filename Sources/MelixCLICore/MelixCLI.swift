@@ -1633,23 +1633,41 @@ public enum MelixCLIParser {
         guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
             throw MelixCLIError.missingRequired("--model-id is required for melix quantize.")
         }
-        let quantizationMode = values.single["--quantization-mode"] ?? ""
+        let quantizationMode = (values.single["--quantization-mode"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         if !quantizationMode.isEmpty, ["ptq", "qat"].contains(quantizationMode) == false {
             throw MelixCLIError.usage("Invalid value for --quantization-mode. Expected one of: ptq, qat.")
         }
-        let sourceArtifactKind = values.single["--source-artifact-kind"] ?? ""
+        let sourceArtifactKind = (values.single["--source-artifact-kind"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         if !sourceArtifactKind.isEmpty, ["base_model", "merged_adapter", "adapter_export"].contains(sourceArtifactKind) == false {
             throw MelixCLIError.usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
         }
-        let quantizationBackend = values.single["--quantization-backend"] ?? ""
+        let quantizationBackend = (values.single["--quantization-backend"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         if !quantizationBackend.isEmpty, ["manifest_only", "mlx_lm_convert"].contains(quantizationBackend) == false {
             throw MelixCLIError.usage("Invalid value for --quantization-backend. Expected one of: manifest_only, mlx_lm_convert.")
         }
-        let mlxLMQMode = values.single["--mlx-lm-q-mode"] ?? ""
+        let mlxLMQBits = (values.single["--mlx-lm-q-bits"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !mlxLMQBits.isEmpty, Int(mlxLMQBits) == nil {
+            throw MelixCLIError.usage("Invalid value for --mlx-lm-q-bits. Expected an integer.")
+        }
+        let mlxLMQGroupSize = (values.single["--mlx-lm-q-group-size"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !mlxLMQGroupSize.isEmpty, Int(mlxLMQGroupSize) == nil {
+            throw MelixCLIError.usage("Invalid value for --mlx-lm-q-group-size. Expected an integer.")
+        }
+        let mlxLMQMode = (values.single["--mlx-lm-q-mode"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         if !mlxLMQMode.isEmpty, ["affine", "mxfp4", "nvfp4", "mxfp8"].contains(mlxLMQMode) == false {
             throw MelixCLIError.usage("Invalid value for --mlx-lm-q-mode. Expected one of: affine, mxfp4, nvfp4, mxfp8.")
         }
-        let localInferenceSmokeMode = values.single["--local-inference-smoke-mode"] ?? ""
+        let localInferenceSmokeMode = (values.single["--local-inference-smoke-mode"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         if !localInferenceSmokeMode.isEmpty, ["structural", "runtime_generate"].contains(localInferenceSmokeMode) == false {
             throw MelixCLIError.usage("Invalid value for --local-inference-smoke-mode. Expected one of: structural, runtime_generate.")
         }
@@ -1664,8 +1682,8 @@ public enum MelixCLIParser {
                 sourceArtifactKind: sourceArtifactKind,
                 sourceArtifactPath: values.single["--source-artifact-path"] ?? "",
                 quantizationBackend: quantizationBackend,
-                mlxLMQBits: values.single["--mlx-lm-q-bits"] ?? "",
-                mlxLMQGroupSize: values.single["--mlx-lm-q-group-size"] ?? "",
+                mlxLMQBits: mlxLMQBits,
+                mlxLMQGroupSize: mlxLMQGroupSize,
                 mlxLMQMode: mlxLMQMode,
                 calibrationDatasetURI: values.single["--calibration-dataset-uri"] ?? "",
                 qualityDelta: values.single["--quality-delta"] ?? "",

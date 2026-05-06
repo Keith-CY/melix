@@ -357,17 +357,17 @@ struct MelixCLIParserTests {
             "--quant-profile-id", "q4",
             "--weight-quant", "q4",
             "--kv-quant", "q8",
-            "--quantization-mode", "qat",
-            "--source-artifact-kind", "merged_adapter",
+            "--quantization-mode", " QAT ",
+            "--source-artifact-kind", " Merged_Adapter ",
             "--source-artifact-path", "/tmp/melix-export/merged",
-            "--quantization-backend", "mlx_lm_convert",
-            "--mlx-lm-q-bits", "4",
-            "--mlx-lm-q-group-size", "128",
-            "--mlx-lm-q-mode", "affine",
+            "--quantization-backend", " MLX_LM_CONVERT ",
+            "--mlx-lm-q-bits", " 4 ",
+            "--mlx-lm-q-group-size", " 128 ",
+            "--mlx-lm-q-mode", " Affine ",
             "--calibration-dataset-uri", "/tmp/melix-datasets/calibration",
             "--quality-delta", "-0.01",
             "--latency-delta", "-0.15",
-            "--local-inference-smoke-mode", "runtime_generate",
+            "--local-inference-smoke-mode", " Runtime_Generate ",
             "--local-inference-smoke-prompt", "Reply with ISSUE365_OK",
             "--json",
         ])
@@ -2641,6 +2641,22 @@ struct MelixCLIParserTests {
                 "--mlx-lm-q-mode", "log",
             ],
             equals: .usage("Invalid value for --mlx-lm-q-mode. Expected one of: affine, mxfp4, nvfp4, mxfp8.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--mlx-lm-q-bits", "four",
+            ],
+            equals: .usage("Invalid value for --mlx-lm-q-bits. Expected an integer.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--mlx-lm-q-group-size", "wide",
+            ],
+            equals: .usage("Invalid value for --mlx-lm-q-group-size. Expected an integer.")
         )
         try assertError(
             for: [
