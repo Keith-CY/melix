@@ -312,15 +312,38 @@ class _SandboxStaticProfileFragments:
     runtime_read_filters: str
 
 
-def _sandbox_static_profile_key() -> tuple[object, ...]:
+_SANDBOX_STATIC_PROFILE_KEY_CACHE: tuple[tuple[object, ...], tuple[object, ...]] | None = None
+
+
+def _sandbox_static_profile_environment_fingerprint() -> tuple[object, ...]:
     return (
         sys.executable,
         sys.prefix,
         sys.exec_prefix,
         sys.base_prefix,
         sys.base_exec_prefix,
+        id(sysconfig.get_paths),
+    )
+
+
+def _sandbox_static_profile_key() -> tuple[object, ...]:
+    global _SANDBOX_STATIC_PROFILE_KEY_CACHE
+    fingerprint = _sandbox_static_profile_environment_fingerprint()
+    if _SANDBOX_STATIC_PROFILE_KEY_CACHE is not None:
+        cached_fingerprint, cached_key = _SANDBOX_STATIC_PROFILE_KEY_CACHE
+        if cached_fingerprint == fingerprint:
+            return cached_key
+    key = (
+        *fingerprint[:-1],
         tuple(sorted((key, value or "") for key, value in sysconfig.get_paths().items())),
     )
+    _SANDBOX_STATIC_PROFILE_KEY_CACHE = (fingerprint, key)
+    return key
+
+
+def _sandbox_static_profile_key_cache_clear() -> None:
+    global _SANDBOX_STATIC_PROFILE_KEY_CACHE
+    _SANDBOX_STATIC_PROFILE_KEY_CACHE = None
 
 
 @lru_cache(maxsize=8)
