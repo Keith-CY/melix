@@ -169,6 +169,17 @@ def build_services(backend=None):
     return registry, WorkerRuntimeService(registry), WorkerInferenceService(registry)
 
 
+def test_worker_registry_multimodal_request_kind_uses_expected_membership() -> None:
+    multimodal_kinds = ("ocr", "vlm", "transcription", "speech", "image")
+    non_multimodal_kinds = ("text", "embedding", "rerank", "", "unknown")
+
+    for runtime_kind in multimodal_kinds:
+        assert WorkerRegistry._is_multimodal_request_kind(runtime_kind) is True
+
+    for runtime_kind in non_multimodal_kinds:
+        assert WorkerRegistry._is_multimodal_request_kind(runtime_kind) is False
+
+
 def test_worker_registry_sparse_model_request_fast_path_preserves_semantics() -> None:
     sparse = common_pb2.ModelSpec(model_id="melix-dev-text")
     empty = common_pb2.ModelSpec()
