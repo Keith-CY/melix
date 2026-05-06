@@ -1347,6 +1347,9 @@ def test_code_eval_stdio_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert metrics["stdio_stat_calls_mean"] == 6000.0
     assert metrics["output_limit_exceeded_mean"] == 1.0
     assert metrics["tail_chars_mean"] > 0
+    assert metrics["sandbox_profile_elapsed_ms_mean"] > 0
+    assert metrics["sandbox_profile_static_builds_mean"] == 1.0
+    assert metrics["sandbox_profile_iteration_count"] == 1500.0
 
 
 def test_code_eval_code_block_extract_probe_script_emits_metrics(
