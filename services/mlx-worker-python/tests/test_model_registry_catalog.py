@@ -820,6 +820,43 @@ def test_catalog_overlay_registration_and_snapshot_payload(tmp_path: Path) -> No
 
 
 
+def test_registry_snapshot_skips_runtime_rebuild_when_cached_snapshot_is_current(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(tmp_path), "HOME": str(tmp_path / "home")})
+    rebuild_calls: list[str] = []
+    original_rebuild = catalog._rebuild_runtime_models
+
+    def tracking_rebuild(*, snapshot: catalog_module.RegistrySnapshot | None = None) -> None:
+        rebuild_calls.append("rebuild")
+        original_rebuild(snapshot=snapshot)
+
+    monkeypatch.setattr(catalog, "_rebuild_runtime_models", tracking_rebuild)
+
+    warm_snapshot = catalog.registry_snapshot()
+    current_models = catalog._models
+    assert rebuild_calls == ["rebuild"]
+
+    assert catalog.registry_snapshot() is warm_snapshot
+    assert catalog.registry_snapshot_payload()["models"] == []
+    assert rebuild_calls == ["rebuild"]
+    assert catalog._models is current_models
+
+    overlay = common_pb2.ModelSpec(model_id="overlay-model", model_path=str(tmp_path / "overlay"), model_kind="text")
+    catalog.register_model(overlay)
+    assert rebuild_calls == ["rebuild", "rebuild"]
+    assert catalog.registry_snapshot() is warm_snapshot
+    assert rebuild_calls == ["rebuild", "rebuild"]
+    assert catalog.remove_model("overlay-model") is True
+    assert rebuild_calls == ["rebuild", "rebuild", "rebuild"]
+
+    rescanned_snapshot = catalog.registry_snapshot(rescan=True)
+    assert rescanned_snapshot is not warm_snapshot
+    assert rebuild_calls == ["rebuild", "rebuild", "rebuild", "rebuild"]
+
+
+
 def test_catalog_rescan_prunes_text_prefix_cache_for_disappeared_metadata_path(tmp_path: Path) -> None:
     root = tmp_path / "root"
     model_dir = root / "plain-local"
