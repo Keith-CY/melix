@@ -490,7 +490,7 @@ def test_auto_backend_does_not_pass_stop_to_variadic_stream_generate() -> None:
     assert "stop" not in seen["kwargs"]
     assert "stop_words" not in seen["kwargs"]
     assert "stop_sequences" not in seen["kwargs"]
-    assert mlx_text_runtime_module._callable_declares_kwarg(42, "stop") is False
+    assert runtime_utils.callable_declares_kwarg(42, "stop") is False
     assert [chunk.text for chunk in chunks] == ["done"]
 
 

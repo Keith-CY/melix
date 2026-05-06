@@ -19,13 +19,13 @@ from worker.runtime.multimodal_preprocessing import (
     PreparedVisionRequest,
 )
 from worker.runtime import mlx_vlm_runtime as mlx_vlm_runtime_module
+from worker.runtime import runtime_utils
 from worker.runtime.mlx_vlm_runtime import (
     AutoMLXVLMBackend,
     MLXVLMRuntime,
     RuntimeUnavailableError,
     _CallableTokenizerProcessor,
     _Gemma4TextBackedModelShim,
-    _callable_has_named_kwarg,
     _gemma4_loaded_execution_mode,
     _gemma4_multimodal_weight_presence,
     _mlx_peak_memory_gb,
@@ -540,6 +540,95 @@ def test_mlx_vlm_runtime_records_video_fallback_when_backend_omits_video_argumen
     assert "does not accept video=" in caplog.text
 
 
+def test_mlx_vlm_runtime_does_not_treat_variadic_kwargs_as_video_support(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stream_calls: list[dict[str, object]] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="qwen2_vl"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0):
+        _ = processor
+        _ = config
+        _ = num_images
+        return f"formatted::{prompt}"
+
+    def fake_stream_generate(*args, **kwargs):
+        _ = args
+        stream_calls.append(dict(kwargs))
+        yield SimpleNamespace(text="variadic fallback summary", generation_tokens=1)
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = PreparedVisionRequest(
+        prompt_text="Describe the video.",
+        images=[],
+        videos=[
+            PreparedVideoInput(
+                source_kind="inline",
+                reference="inline:video",
+                bytes_data=b"fake-video-payload",
+                mime_type="video/mp4",
+                format="mp4",
+                filename="sample.mp4",
+                byte_length=len(b"fake-video-payload"),
+                duration_ms=1000,
+                frame_budget=4,
+                start_ms=0,
+                end_ms=1000,
+                sha256_hex="beef",
+            )
+        ],
+        video_frame_policies=[
+            PreparedVideoFramePolicy(
+                reference="inline:video",
+                sampling_strategy="uniform",
+                requested_frame_budget=4,
+                effective_frame_count=4,
+                clip_start_ms=0,
+                clip_end_ms=1000,
+                clip_duration_ms=1000,
+            )
+        ],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(b"fake-video-payload"),
+        preprocess_peak_memory_bytes=len(b"fake-video-payload"),
+        prompt_hash_hex="11" * 32,
+        multimodal_hash_hex="22" * 32,
+    )
+
+    caplog.set_level("WARNING", logger=mlx_vlm_runtime_module.__name__)
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+        )
+    )
+
+    assert [event.text for event in events] == ["variadic fallback summary"]
+    assert "video" not in stream_calls[0]
+    assert stream_calls[0]["image"] is None
+    assert runtime.last_probe_snapshot().multimodal_fallback_reason == "backend_video_kwarg_unsupported"
+    assert "does not accept video=" in caplog.text
+
+
 def test_mlx_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
     def fake_load(model_path: str, revision: str = "main"):
         _ = model_path
@@ -988,16 +1077,38 @@ def test_callables_and_text_backed_shims_expose_upstream_compatible_surfaces() -
     assert tokenizer_calls == [(("prompt",), {"padding": True})]
 
 
-def test_callable_has_named_kwarg_requires_explicit_parameter() -> None:
+def test_callable_declares_kwarg_requires_explicit_parameter() -> None:
     def explicit(*, draft_model):
         _ = draft_model
 
     def variadic(**kwargs):
         _ = kwargs
 
-    assert _callable_has_named_kwarg(explicit, "draft_model") is True
-    assert _callable_has_named_kwarg(variadic, "draft_model") is False
-    assert _callable_has_named_kwarg(object(), "draft_model") is False
+    assert runtime_utils.callable_declares_kwarg(explicit, "draft_model") is True
+    assert runtime_utils.callable_declares_kwarg(variadic, "draft_model") is False
+    assert runtime_utils.callable_declares_kwarg(object(), "draft_model") is False
+    assert runtime_utils.callable_accepts_kwarg(variadic, "draft_model") is True
+
+
+def test_auto_mlx_vlm_backend_mtp_detection_requires_declared_draft_kwargs() -> None:
+    drafter_calls: list[dict[str, object]] = []
+
+    def fake_load_drafter(*args, **kwargs):
+        drafter_calls.append({"args": args, "kwargs": kwargs})
+        return {"draft_model_id": args[0]}
+
+    backend = AutoMLXVLMBackend(
+        load_fn=lambda model_path, revision="main": (object(), object()),
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        apply_chat_template_fn=lambda *args, **kwargs: "",
+        batch_generate_fn=lambda *args, **kwargs: [],
+        generate_step_fn=lambda *args, **kwargs: iter(()),
+        load_drafter_fn=fake_load_drafter,
+    )
+
+    assert backend.supports_mtp_speculative() is False
+    assert backend.load_drafter("draft-model", kind="mtp") == {"draft_model_id": "draft-model"}
+    assert drafter_calls == [{"args": ("draft-model",), "kwargs": {}}]
 
 
 def test_mlx_peak_memory_prefers_current_api() -> None:
@@ -1508,14 +1619,14 @@ def test_auto_mlx_vlm_backend_detects_installed_optional_mtp_api() -> None:
     assert backend.stream_generate_fn is not None
     assert backend.apply_chat_template_fn is not None
     generate_step_support = backend.generate_step_fn is not None and (
-        _callable_has_named_kwarg(backend.generate_step_fn, "draft_model")
-        and _callable_has_named_kwarg(backend.generate_step_fn, "draft_kind")
-        and _callable_has_named_kwarg(backend.generate_step_fn, "draft_block_size")
+        runtime_utils.callable_declares_kwarg(backend.generate_step_fn, "draft_model")
+        and runtime_utils.callable_declares_kwarg(backend.generate_step_fn, "draft_kind")
+        and runtime_utils.callable_declares_kwarg(backend.generate_step_fn, "draft_block_size")
     )
     batch_generate_support = backend.batch_generate_fn is not None and (
-        _callable_has_named_kwarg(backend.batch_generate_fn, "draft_model")
-        and _callable_has_named_kwarg(backend.batch_generate_fn, "draft_kind")
-        and _callable_has_named_kwarg(backend.batch_generate_fn, "draft_block_size")
+        runtime_utils.callable_declares_kwarg(backend.batch_generate_fn, "draft_model")
+        and runtime_utils.callable_declares_kwarg(backend.batch_generate_fn, "draft_kind")
+        and runtime_utils.callable_declares_kwarg(backend.batch_generate_fn, "draft_block_size")
     )
     assert backend.supports_mtp_speculative() is (
         backend.load_drafter_fn is not None and (generate_step_support or batch_generate_support)

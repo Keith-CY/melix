@@ -14,6 +14,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
 from worker.runtime import mlx_audio_runtime
+from worker.runtime import runtime_utils
 from worker.runtime.audio_runtime_protocols import AudioRuntimeLoadedModel
 from packages.protocol.python.worker.v1 import inference_pb2
 
@@ -41,8 +42,11 @@ def _loaded_model(model: FakeTTSModel) -> AudioRuntimeLoadedModel:
         "output_formats": ("wav",),
     }
     field_names = {field.name for field in fields(AudioRuntimeLoadedModel)}
+    generate_signature = runtime_utils.callable_kwarg_signature(model.generate)
+    if "speech_generate_parameters" in field_names:
+        kwargs["speech_generate_parameters"] = generate_signature.declared_kwargs
     if "generate_parameter_names" in field_names:
-        kwargs["generate_parameter_names"] = tuple(mlx_audio_runtime.signature(model.generate).parameters)
+        kwargs["generate_parameter_names"] = generate_signature.parameter_names
     return AudioRuntimeLoadedModel(**kwargs)
 
 
@@ -52,9 +56,10 @@ def run_probe() -> dict[str, float]:
     elapsed_samples: list[float] = []
     signature_call_samples: list[float] = []
     byte_count = 0
-    original_signature = mlx_audio_runtime.signature
+    original_signature = runtime_utils.inspect.signature
 
     for _ in range(sample_count):
+        runtime_utils.clear_callable_accepts_kwarg_cache()
         signature_calls = 0
 
         def tracked_signature(callable_obj):
@@ -63,7 +68,7 @@ def run_probe() -> dict[str, float]:
             return original_signature(callable_obj)
 
         model = FakeTTSModel()
-        mlx_audio_runtime.signature = tracked_signature
+        runtime_utils.inspect.signature = tracked_signature
         try:
             loaded_model = _loaded_model(model)
             runtime = mlx_audio_runtime.MLXAudioSpeechRuntime()
@@ -81,7 +86,8 @@ def run_probe() -> dict[str, float]:
             elapsed_samples.append((time.perf_counter() - started_at) * 1000.0)
             signature_call_samples.append(float(signature_calls))
         finally:
-            mlx_audio_runtime.signature = original_signature
+            runtime_utils.inspect.signature = original_signature
+            runtime_utils.clear_callable_accepts_kwarg_cache()
 
     if byte_count <= 0:
         raise RuntimeError("mlx-audio signature probe produced no audio bytes")

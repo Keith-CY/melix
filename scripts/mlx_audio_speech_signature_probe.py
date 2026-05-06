@@ -14,7 +14,7 @@ sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
 from packages.protocol.python.worker.v1 import inference_pb2
 from worker.model_registry.catalog import WorkerModelCatalog
-import worker.runtime.mlx_audio_runtime as mlx_audio_runtime
+from worker.runtime import runtime_utils
 from worker.runtime.mlx_audio_runtime import MLXAudioSpeechRuntime
 
 
@@ -53,7 +53,7 @@ def main() -> None:
     _install_fake_mlx_audio()
     runtime = MLXAudioSpeechRuntime()
 
-    original_signature = mlx_audio_runtime.signature
+    original_signature = runtime_utils.inspect.signature
     signature_calls = 0
 
     def tracked_signature(callable_obj):
@@ -61,8 +61,9 @@ def main() -> None:
         signature_calls += 1
         return original_signature(callable_obj)
 
-    mlx_audio_runtime.signature = tracked_signature
+    runtime_utils.inspect.signature = tracked_signature
     try:
+        runtime_utils.clear_callable_accepts_kwarg_cache()
         loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
         request = inference_pb2.SpeakRequest(
             input="signature reuse probe",
@@ -88,7 +89,8 @@ def main() -> None:
             samples.append((time.perf_counter() - started) * 1000.0)
             per_request_signature_calls.append(float(signature_calls - before_calls))
     finally:
-        mlx_audio_runtime.signature = original_signature
+        runtime_utils.inspect.signature = original_signature
+        runtime_utils.clear_callable_accepts_kwarg_cache()
 
     print(
         json.dumps(
