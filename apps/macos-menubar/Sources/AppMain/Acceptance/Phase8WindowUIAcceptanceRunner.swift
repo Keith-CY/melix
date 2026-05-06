@@ -298,12 +298,12 @@ private let phase8WindowUIBusinessLineCases: [Phase8WindowUIBusinessLineCase] = 
     ),
 ]
 
-struct Phase8Issue365CLIEvidenceBundle: Decodable, Equatable, Sendable {
+internal struct Phase8Issue365CLIEvidenceBundle: Decodable, Equatable, Sendable {
     let executionMode: String
     let releaseReady: Bool
     let cases: [Phase8Issue365CLIEvidenceCase]
 
-    var caseByID: [String: Phase8Issue365CLIEvidenceCase] {
+    func makeCaseIndex() -> [String: Phase8Issue365CLIEvidenceCase] {
         var indexedCases: [String: Phase8Issue365CLIEvidenceCase] = [:]
         for evidenceCase in cases where evidenceCase.caseID.isEmpty == false {
             indexedCases[evidenceCase.caseID] = evidenceCase
@@ -325,7 +325,7 @@ struct Phase8Issue365CLIEvidenceBundle: Decodable, Equatable, Sendable {
     }
 }
 
-struct Phase8Issue365CLIEvidenceCase: Decodable, Equatable, Sendable {
+internal struct Phase8Issue365CLIEvidenceCase: Decodable, Equatable, Sendable {
     let caseID: String
     let status: String
     let evidenceTier: String
@@ -347,7 +347,7 @@ struct Phase8Issue365CLIEvidenceCase: Decodable, Equatable, Sendable {
     }
 }
 
-struct Phase8WindowUIBusinessLineReleaseGate: Equatable, Sendable {
+internal struct Phase8WindowUIBusinessLineReleaseGate: Equatable, Sendable {
     let evidenceLevel: String
     let cliExecutionMode: String
     let cliCaseStatus: String
@@ -357,12 +357,13 @@ struct Phase8WindowUIBusinessLineReleaseGate: Equatable, Sendable {
     let releaseReadyBlocker: String
 }
 
-enum Phase8WindowUIReleaseGateResolver {
+internal enum Phase8WindowUIReleaseGateResolver {
     static func releaseGate(
         cliCaseID: String,
-        cliEvidenceBundle: Phase8Issue365CLIEvidenceBundle
+        cliEvidenceBundle: Phase8Issue365CLIEvidenceBundle,
+        cliCaseIndex: [String: Phase8Issue365CLIEvidenceCase]? = nil
     ) -> Phase8WindowUIBusinessLineReleaseGate {
-        let cliCase = cliEvidenceBundle.caseByID[cliCaseID]
+        let cliCase = (cliCaseIndex ?? cliEvidenceBundle.makeCaseIndex())[cliCaseID]
         let cliExecutionMode = cliEvidenceBundle.executionMode
         let cliCaseStatus = cliCase?.status ?? ""
         let cliCaseEvidenceTier = cliCase?.evidenceTier ?? ""
@@ -380,6 +381,8 @@ enum Phase8WindowUIReleaseGateResolver {
             )
         }
 
+        // Prefer the top-level bundle blocker before per-case diagnosis when
+        // the real CLI matrix itself is not release-ready.
         guard cliEvidenceBundle.releaseReady else {
             return .init(
                 evidenceLevel: phase8WindowUIBusinessLineEvidenceLevel,
@@ -733,19 +736,28 @@ public final class Phase8WindowUIAcceptanceRunner {
     private func collectBusinessLineEvidence(
         cliEvidenceBundle: Phase8Issue365CLIEvidenceBundle
     ) -> [Phase8WindowUIBusinessLineEvidence] {
-        phase8WindowUIBusinessLineCases.map { businessLine in
+        let cliCaseIndex = cliEvidenceBundle.makeCaseIndex()
+        return phase8WindowUIBusinessLineCases.map { businessLine in
             switch businessLine.kind {
             case .training(let mode):
                 return collectTrainingBusinessLineEvidence(
                     businessLine,
                     mode: mode,
-                    releaseGate: releaseGate(for: businessLine, cliEvidenceBundle: cliEvidenceBundle)
+                    releaseGate: releaseGate(
+                        for: businessLine,
+                        cliEvidenceBundle: cliEvidenceBundle,
+                        cliCaseIndex: cliCaseIndex
+                    )
                 )
             case .quantization(let mode):
                 return collectQuantizationBusinessLineEvidence(
                     businessLine,
                     mode: mode,
-                    releaseGate: releaseGate(for: businessLine, cliEvidenceBundle: cliEvidenceBundle)
+                    releaseGate: releaseGate(
+                        for: businessLine,
+                        cliEvidenceBundle: cliEvidenceBundle,
+                        cliCaseIndex: cliCaseIndex
+                    )
                 )
             }
         }
@@ -753,11 +765,13 @@ public final class Phase8WindowUIAcceptanceRunner {
 
     private func releaseGate(
         for businessLine: Phase8WindowUIBusinessLineCase,
-        cliEvidenceBundle: Phase8Issue365CLIEvidenceBundle
+        cliEvidenceBundle: Phase8Issue365CLIEvidenceBundle,
+        cliCaseIndex: [String: Phase8Issue365CLIEvidenceCase]
     ) -> Phase8WindowUIBusinessLineReleaseGate {
         Phase8WindowUIReleaseGateResolver.releaseGate(
             cliCaseID: businessLine.cliCaseID,
-            cliEvidenceBundle: cliEvidenceBundle
+            cliEvidenceBundle: cliEvidenceBundle,
+            cliCaseIndex: cliCaseIndex
         )
     }
 
