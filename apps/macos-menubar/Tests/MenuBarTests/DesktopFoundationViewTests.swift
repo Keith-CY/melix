@@ -6013,6 +6013,100 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         #expect(viewModel.selectedQuantizationMode == .qat)
     }
 
+    @Test("phase 8 window ui release gate requires top-level and case-level real CLI evidence")
+    func phase8WindowUIReleaseGateRequiresRealCLIEvidence() throws {
+        let dryRunBundle = try decodePhase8Issue365CLIBundle(
+            #"""
+            {
+              "execution_mode": "dry-run",
+              "release_ready": false,
+              "cases": [
+                {
+                  "case_id": "lora_export_inference",
+                  "status": "planned",
+                  "evidence_tier": "deterministic_dry_run",
+                  "release_ready": false
+                }
+              ]
+            }
+            """#
+        )
+        let dryRunGate = Phase8WindowUIReleaseGateResolver.releaseGate(
+            cliCaseID: "lora_export_inference",
+            cliEvidenceBundle: dryRunBundle
+        )
+        #expect(dryRunGate.releaseReady == false)
+        #expect(dryRunGate.releaseReadyBlocker == "real_local_runtime_matrix_not_run")
+        #expect(dryRunGate.cliExecutionMode == "dry-run")
+        #expect(dryRunGate.cliCaseStatus == "planned")
+        #expect(dryRunGate.cliCaseEvidenceTier == "deterministic_dry_run")
+
+        let unreadyBundle = try decodePhase8Issue365CLIBundle(
+            #"""
+            {
+              "execution_mode": "real",
+              "release_ready": false,
+              "cases": [
+                {
+                  "case_id": "lora_export_inference",
+                  "status": "succeeded",
+                  "evidence_tier": "real_local_runtime",
+                  "release_ready": true
+                }
+              ]
+            }
+            """#
+        )
+        let unreadyGate = Phase8WindowUIReleaseGateResolver.releaseGate(
+            cliCaseID: "lora_export_inference",
+            cliEvidenceBundle: unreadyBundle
+        )
+        #expect(unreadyGate.releaseReady == false)
+        #expect(unreadyGate.releaseReadyBlocker == "real_local_runtime_bundle_not_release_ready")
+        #expect(unreadyGate.cliCaseReleaseReady == true)
+
+        let missingCaseBundle = try decodePhase8Issue365CLIBundle(
+            #"""
+            {
+              "execution_mode": "real",
+              "release_ready": true,
+              "cases": []
+            }
+            """#
+        )
+        let missingCaseGate = Phase8WindowUIReleaseGateResolver.releaseGate(
+            cliCaseID: "lora_export_inference",
+            cliEvidenceBundle: missingCaseBundle
+        )
+        #expect(missingCaseGate.releaseReady == false)
+        #expect(missingCaseGate.releaseReadyBlocker == "real_local_runtime_case_missing:lora_export_inference")
+        #expect(missingCaseGate.cliCaseStatus == "")
+
+        let failedCaseBundle = try decodePhase8Issue365CLIBundle(
+            #"""
+            {
+              "execution_mode": "real",
+              "release_ready": true,
+              "cases": [
+                {
+                  "case_id": "lora_export_inference",
+                  "status": "failed",
+                  "evidence_tier": "real_local_runtime",
+                  "release_ready": false
+                }
+              ]
+            }
+            """#
+        )
+        let failedCaseGate = Phase8WindowUIReleaseGateResolver.releaseGate(
+            cliCaseID: "lora_export_inference",
+            cliEvidenceBundle: failedCaseBundle
+        )
+        #expect(failedCaseGate.releaseReady == false)
+        #expect(failedCaseGate.releaseReadyBlocker == "real_local_runtime_case_not_release_ready:lora_export_inference")
+        #expect(failedCaseGate.cliCaseStatus == "failed")
+    }
+
     @Test("phase 8 window ui acceptance runner writes a screenshot and evidence bundle")
     @MainActor
     func phase8WindowUIAcceptanceRunnerWritesEvidenceBundle() async throws {
@@ -6029,7 +6123,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
             at: cliBundlePath.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data("{\"ok\":true}\n".utf8).write(to: cliBundlePath)
+        try Data(makeIssue365ReleaseReadyCLIBundleJSON().utf8).write(to: cliBundlePath)
         let materializedModelID = "melix-dev-qwen-local"
         let derivedModelID = "\(materializedModelID)-lora-adapter"
 
@@ -6234,10 +6328,22 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         #expect(businessLines.allSatisfy { $0["selectable"] as? Bool == true })
         #expect(businessLines.allSatisfy { $0["runnable"] as? Bool == true })
         #expect(businessLines.allSatisfy { $0["inspectable"] as? Bool == true })
-        #expect(businessLines.allSatisfy { $0["release_ready"] as? Bool == false })
+        #expect(businessLines.allSatisfy { $0["release_ready"] as? Bool == true })
+        #expect(businessLines.allSatisfy { $0["release_ready_blocker"] as? String == "" })
+        #expect(businessLines.allSatisfy { $0["evidence_level"] as? String == "window_route_matrix_with_real_cli_runtime" })
+        #expect(businessLines.allSatisfy { $0["cli_execution_mode"] as? String == "real" })
+        #expect(businessLines.allSatisfy { $0["cli_case_status"] as? String == "succeeded" })
+        #expect(businessLines.allSatisfy { $0["cli_case_evidence_tier"] as? String == "real_local_runtime" })
+        #expect(businessLines.allSatisfy { $0["cli_case_release_ready"] as? Bool == true })
+        let loraLine = try #require(
+            businessLines.first { $0["case_id"] as? String == "base_lora_export_local_inference" }
+        )
+        #expect(loraLine["cli_case_id"] as? String == "lora_export_inference")
         let dpoLine = try #require(businessLines.first { $0["case_id"] as? String == "lora_dpo_export_local_inference" })
+        #expect(dpoLine["cli_case_id"] as? String == "lora_dpo_export_inference")
         #expect(dpoLine["routed_command"] as? String == "alignment.train")
         let qatLine = try #require(businessLines.first { $0["case_id"] as? String == "qat_quantized_local_inference" })
+        #expect(qatLine["cli_case_id"] as? String == "qat_quantized_inference")
         #expect(qatLine["selected_quantization_mode"] as? String == "qat")
         #expect(qatLine["routed_command"] as? String == "model.quantize")
 
@@ -6900,6 +7006,91 @@ private final class RecordingPhase8WindowUIRenderer: Phase8WindowUIRendering {
         )
         try Data("png".utf8).write(to: outputURL)
     }
+}
+
+private func makeIssue365ReleaseReadyCLIBundleJSON() -> String {
+    #"""
+    {
+      "schema_version": "melix.issue365.acceptance_bundle.v1",
+      "execution_mode": "real",
+      "release_ready": true,
+      "known_gaps": [],
+      "summary": {
+        "case_count": 10,
+        "succeeded_count": 10,
+        "failed_count": 0,
+        "blocked_count": 0,
+        "release_ready_case_count": 10,
+        "release_ready": true
+      },
+      "cases": [
+        {
+          "case_id": "lora_export_inference",
+          "status": "succeeded",
+          "evidence_tier": "real_local_runtime",
+          "release_ready": true
+        },
+        {
+          "case_id": "qlora_export_inference",
+          "status": "succeeded",
+          "evidence_tier": "real_local_runtime",
+          "release_ready": true
+        },
+        {
+          "case_id": "dora_export_inference",
+          "status": "succeeded",
+          "evidence_tier": "real_local_runtime",
+          "release_ready": true
+        },
+        {
+          "case_id": "lora_dpo_export_inference",
+          "status": "succeeded",
+          "evidence_tier": "real_local_runtime",
+          "release_ready": true
+        },
+        {
+          "case_id": "lora_orpo_export_inference",
+          "status": "succeeded",
+          "evidence_tier": "real_local_runtime",
+          "release_ready": true
+        },
+        {
+          "case_id": "lora_cpo_export_inference",
+          "status": "succeeded",
+          "evidence_tier": "real_local_runtime",
+          "release_ready": true
+        },
+        {
+          "case_id": "lora_grpo_export_inference",
+          "status": "succeeded",
+          "evidence_tier": "real_local_runtime",
+          "release_ready": true
+        },
+        {
+          "case_id": "lora_rlhf_export_inference",
+          "status": "succeeded",
+          "evidence_tier": "real_local_runtime",
+          "release_ready": true
+        },
+        {
+          "case_id": "lora_preference_ptq_quantized_inference",
+          "status": "succeeded",
+          "evidence_tier": "real_local_runtime",
+          "release_ready": true
+        },
+        {
+          "case_id": "qat_quantized_inference",
+          "status": "succeeded",
+          "evidence_tier": "real_local_runtime",
+          "release_ready": true
+        }
+      ]
+    }
+    """#
+}
+
+private func decodePhase8Issue365CLIBundle(_ json: String) throws -> Phase8Issue365CLIEvidenceBundle {
+    try JSONDecoder().decode(Phase8Issue365CLIEvidenceBundle.self, from: Data(json.utf8))
 }
 
 @MainActor
