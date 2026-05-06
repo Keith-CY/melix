@@ -141,6 +141,11 @@ struct MelixCLIRunnerTests {
         #expect((metrics["melix.cli.parse_ms"] as? Double) != nil)
         #expect((metrics["melix.cli.command_ms"] as? Double) != nil)
         #expect((metrics["melix.cli.json_encode_ms"] as? Double) != nil)
+
+        let paddedJSON = try #require(MelixCLIJSON.jsonValue(from: "  {\"health_status\":\"healthy\"}\n") as? [String: Any])
+        let fallbackText = try #require(MelixCLIJSON.jsonValue(from: "  plain text\n") as? [String: String])
+        #expect(paddedJSON["health_status"] as? String == "healthy")
+        #expect(fallbackText["text"] == "plain text")
     }
 
     @Test("json v1 error envelopes are machine readable")
