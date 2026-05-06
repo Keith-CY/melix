@@ -129,8 +129,11 @@ def test_scope_report_selects_dataset_registry_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/dataset_registry/catalog.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "dataset-registry-limited-read-streaming"
+    assert scope["selected_count"] == 2
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "dataset-registry-limited-read-streaming",
+        "dataset-registry-snapshot-inference-single-pass",
+    ]
 
 
 def test_scope_report_selects_mlx_audio_wav_probe() -> None:
@@ -1053,6 +1056,29 @@ def test_dataset_registry_limit_probe_script_emits_metrics(
     assert metrics["synthetic_file_count"] == 6.0
     assert metrics["limit"] == 2.0
     assert metrics["dataset_files_yielded_mean"] == 4.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_dataset_registry_split_match_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_SPLIT_MATCH_PROBE_FILE_COUNT", "12")
+    monkeypatch.setenv("MELIX_DATASET_SPLIT_MATCH_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_split_match_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["file_count"] == 12.0
+    assert metrics["matched_files_mean"] == 3.0
+    assert metrics["path_constructor_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
