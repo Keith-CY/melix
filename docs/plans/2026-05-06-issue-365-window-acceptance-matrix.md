@@ -4,11 +4,20 @@
 
 Continue https://github.com/Keith-CY/melix/issues/365 by making the native
 Window UI evidence bundle enumerate every required business line and by adding
-an explicit PTQ/QAT mode selector to the Window quantization surface.
+an explicit PTQ/QAT mode selector to the Window quantization surface. The
+follow-up real-evidence bridge makes the Window UI bundle consume the same
+Issue 365 CLI acceptance bundle so each Window business line can chain to the
+matching real local runtime case.
 
 Issue 365 is still not complete after this slice. The evidence added here is
-Window UI routing and inspectability evidence. It does not claim final
-real-local-runtime release readiness for any business line.
+Window UI routing and inspectability evidence plus a chained CLI real-runtime
+release gate. A Window business line is only marked `release_ready=true` when
+the configured CLI bundle is `execution_mode=real`, the top-level CLI bundle is
+`release_ready=true`, and the matching CLI case is `status=succeeded` with
+`release_ready=true`. This does not mean every business line was independently
+clicked through in the Window UI; it means the Window route is visible,
+selectable, runnable, and inspectable while the same business line is backed by
+the release-ready CLI real-runtime case.
 
 ## Scope
 
@@ -26,15 +35,28 @@ real-local-runtime release readiness for any business line.
   - DPO, ORPO, CPO, GRPO, and RLHF alignment workflows.
   - PTQ quantized local inference workflow.
   - QAT/QAT-aware quantized local inference workflow.
-- Mark the matrix evidence as non-release-ready until real local runtime runs
-  succeed for the same cases.
+- Map each Window business-line case to the corresponding Issue 365 CLI case:
+  - `base_lora_export_local_inference` -> `lora_export_inference`
+  - `base_qlora_export_local_inference` -> `qlora_export_inference`
+  - `base_dora_export_local_inference` -> `dora_export_inference`
+  - `lora_dpo_export_local_inference` -> `lora_dpo_export_inference`
+  - `lora_orpo_export_local_inference` -> `lora_orpo_export_inference`
+  - `lora_cpo_export_local_inference` -> `lora_cpo_export_inference`
+  - `lora_grpo_export_local_inference` -> `lora_grpo_export_inference`
+  - `lora_rlhf_export_local_inference` -> `lora_rlhf_export_inference`
+  - `lora_preference_ptq_local_inference` -> `lora_preference_ptq_quantized_inference`
+  - `qat_quantized_local_inference` -> `qat_quantized_inference`
+- Keep the matrix evidence non-release-ready when the CLI bundle is missing
+  real execution mode, is not top-level release-ready, lacks the mapped case,
+  or has a mapped case that is not succeeded and release-ready.
 
 ### Excluded
 
 - Real GRPO/RLHF policy updates.
 - Reward-model training artifacts from issue 366.
 - MLX-native full-tensor QAT execution.
-- Full real-runtime CLI or Window acceptance execution for every business line.
+- Independent Window click-through execution for every business line beyond the
+  existing route/runnable/inspectable checks.
 - Screenshot artifact preservation.
 - Closing issue 365.
 
@@ -49,7 +71,11 @@ Success metrics:
 - Quantization command construction keeps the existing unit-test dispatch path.
 - The Window acceptance bundle contains exactly 10 business-line entries.
 - Each matrix entry records visible/selectable/runnable/inspectable routing
-  state and keeps `release_ready=false`.
+  state and the mapped CLI case id/status/evidence tier.
+- Matrix entries only use
+  `evidence_level=window_route_matrix_with_real_cli_runtime` and
+  `release_ready=true` when the mapped real CLI case is release-ready under a
+  top-level release-ready real CLI bundle.
 - Changed-scope tests remain green with at least 95 percent changed-line
   coverage for the touched Swift scope.
 
@@ -89,7 +115,8 @@ Results on 2026-05-06:
 
 ## Remaining Issue 365 Gaps
 
-- Real local runtime evidence for every CLI and Window business line.
 - Final populated release evidence bundle.
 - GRPO/RLHF policy-update implementation and reward-model artifact integration.
 - MLX-native full QAT backend execution and release-gated evidence.
+- Independent Window click-through execution for every business line beyond the
+  route-level acceptance checks.
