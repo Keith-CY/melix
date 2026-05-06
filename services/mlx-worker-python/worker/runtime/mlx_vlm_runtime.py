@@ -8,7 +8,7 @@ import os
 import time
 from pathlib import Path
 from threading import Event
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
@@ -35,15 +35,16 @@ class MaterializedMediaPaths:
     video_paths: tuple[str, ...]
 
 
-def _gemma4_multimodal_weight_presence(weight_names: list[str] | tuple[str, ...] | set[str]) -> tuple[bool, bool]:
-    has_vision = any(
-        name.startswith("vision_tower.") or name.startswith("embed_vision.")
-        for name in weight_names
-    )
-    has_audio = any(
-        name.startswith("audio_tower.") or name.startswith("embed_audio.")
-        for name in weight_names
-    )
+def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[bool, bool]:
+    has_vision = False
+    has_audio = False
+    for name in weight_names:
+        if not has_vision and (name.startswith("vision_tower.") or name.startswith("embed_vision.")):
+            has_vision = True
+        elif not has_audio and (name.startswith("audio_tower.") or name.startswith("embed_audio.")):
+            has_audio = True
+        if has_vision and has_audio:
+            break
     return has_vision, has_audio
 
 
@@ -220,7 +221,7 @@ class AutoMLXVLMBackend:
                 continue
             weights.update(mx.load(entry.path))
 
-        has_vision_weights, has_audio_weights = _gemma4_multimodal_weight_presence(list(weights))
+        has_vision_weights, has_audio_weights = _gemma4_multimodal_weight_presence(weights.keys())
         if has_vision_weights:
             raise original_error
 

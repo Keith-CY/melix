@@ -1,5 +1,36 @@
 [
   {
+    "id": "hub-catalog-tag-normalization-single-pass",
+    "name": "Hub catalog tag normalization single pass",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_ops/hub_catalog.py",
+      "services/mlx-worker-python/tests/test_hub_catalog.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/hub_catalog_tag_normalization_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_hub_catalog_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_hub_catalog_tag_normalization_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_hub_catalog_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_hub_catalog_tag_normalization_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/hub_catalog.py services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/hub_catalog_tag_normalization_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/hub_catalog_tag_normalization_probe.py ]; then python scripts/hub_catalog_tag_normalization_probe.py; else python - <<\"PYPROBE\"\nimport json, statistics, sys, time, tracemalloc\nfrom pathlib import Path\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\nfrom worker.model_ops.hub_catalog import HubCatalog\ndef payload(index):\n    return {\"id\": f\"mlx-community/probe-{index}\", \"author\": \"mlx-community\", \"pipeline_tag\": \"text-generation\", \"tags\": [\"MLX\", \"Safetensors\", \"4-BIT\", \"OptiQ\", f\"family-{index % 17}\"], \"library_name\": \"mlx\", \"siblings\": [{\"rfilename\": \"config.json\"}], \"safetensors\": {\"total\": 2000000000 + index}, \"cardData\": {}}\nrecord_count = 5000\nsamples = []\npeaks = []\nfor _ in range(5):\n    catalog = HubCatalog(local_memory_gb=64.0)\n    payloads = [payload(index) for index in range(record_count)]\n    tracemalloc.start()\n    started = time.perf_counter()\n    records = [catalog._summary_record(item) for item in payloads]\n    elapsed = (time.perf_counter() - started) * 1000.0\n    _, peak = tracemalloc.get_traced_memory()\n    tracemalloc.stop()\n    if len(records) != record_count or {record.quantization_summary for record in records} != {\"4-bit, optiq\"}:\n        raise SystemExit(\"unexpected hub catalog probe records\")\n    samples.append(elapsed)\n    peaks.append(peak)\nprint(json.dumps({\"elapsed_ms_mean\": statistics.fmean(samples), \"peak_bytes_mean\": statistics.fmean(peaks), \"tag_normalization_calls_mean\": float(record_count * 3), \"record_count\": float(record_count), \"sample_count\": 5.0}, sort_keys=True))\nPYPROBE\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "tag_normalization_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "multimodal-fast-path-signature-top-level-key-cache",
     "name": "Multimodal fast-path signature top-level key cache",
     "runner": "ubuntu-latest",
@@ -13,6 +44,61 @@
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_multimodal_fast_paths.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_multimodal_fast_path_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_multimodal_fast_path_signature_probe_script_emits_metrics",
     "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_multimodal_fast_paths.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_multimodal_fast_path_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_multimodal_fast_path_signature_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/multimodal_fast_paths.py services/mlx-worker-python/tests/test_multimodal_fast_paths.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/multimodal_fast_path_signature_probe.py",
     "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/multimodal_fast_path_signature_probe.py ]; then python scripts/multimodal_fast_path_signature_probe.py; else python - <<\"PY\"\nimport json\nimport statistics\nimport sys\nimport time\nimport tracemalloc\nfrom pathlib import Path\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\nfrom worker.runtime.multimodal_fast_paths import fast_path_probe_signature\nfrom worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest\nimage = PreparedImageInput(bytes_data=b\"synthetic-image-payload\", source_kind=\"inline\", reference=\"inline:sample.jpg\", mime_type=\"image/jpeg\", format=\"jpg\", filename=\"sample.jpg\", sha256_hex=\"f\" * 64)\nrequest = PreparedVisionRequest(prompt_text=\"Describe the image in detail.\", images=[image], videos=[], video_frame_policies=[], preprocess_latency_ms=1.0, preprocess_input_bytes=image.byte_length, preprocess_peak_memory_bytes=image.byte_length, prompt_hash_hex=\"p\" * 64, multimodal_hash_hex=\"m\" * 64)\nloaded_model = {\"model_id\": \"melix-dev-vlm\", \"revision\": \"main\", \"tokenizer_hash\": \"tok-abcdef\", \"quant_profile_id\": \"q8\", \"metadata\": {\"melix.vlm.execution_mode\": \"multimodal\", \"vision_family_id\": \"gemma4-v1\", \"vision_prompt_profile_id\": \"gemma4-chatml-v1\", \"vision_tokenization_mode\": \"interleaved\", \"vision_max_images_per_prompt\": \"8\", \"melix.multimodal_adapter_hash\": \"adapter-a\"}}\nexpected_signature = fast_path_probe_signature(loaded_model, request)\niterations = 120000\nsample_count = 5\nelapsed_samples = []\npeak_samples = []\nsignature_count = 0\nfor _ in range(sample_count):\n    tracemalloc.start()\n    start = time.perf_counter()\n    for _index in range(iterations):\n        signature = fast_path_probe_signature(loaded_model, request)\n        if signature != expected_signature:\n            raise AssertionError(\"fast-path probe signature changed during probe\")\n        signature_count += 1\n    elapsed_samples.append((time.perf_counter() - start) * 1000.0)\n    _current, peak = tracemalloc.get_traced_memory()\n    tracemalloc.stop()\n    peak_samples.append(float(peak))\nprint(json.dumps({\"elapsed_ms_mean\": statistics.fmean(elapsed_samples), \"peak_bytes_mean\": statistics.fmean(peak_samples), \"sample_count\": float(sample_count), \"iterations_per_sample\": float(iterations), \"signature_count\": float(signature_count), \"top_level_item_count\": 4.0}, sort_keys=True))\nPY\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
+    "id": "runtime-utils-kwarg-signature-cache",
+    "name": "Runtime utils kwarg signature cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/runtime_utils.py",
+      "services/mlx-worker-python/tests/test_runtime_utils.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/runtime_utils_kwarg_cache_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_runtime_utils.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_runtime_utils_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_runtime_utils_kwarg_cache_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_runtime_utils.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_runtime_utils_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_runtime_utils_kwarg_cache_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/runtime_utils.py services/mlx-worker-python/tests/test_runtime_utils.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/runtime_utils_kwarg_cache_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/runtime_utils_kwarg_cache_probe.py ]; then python scripts/runtime_utils_kwarg_cache_probe.py; else python3 -c \"import base64; exec(base64.b64decode(\\\"aW1wb3J0IGluc3BlY3QsanNvbixzdGF0aXN0aWNzLHN5cyx0aW1lCmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aApyZXBvX3Jvb3Q9UGF0aC5jd2QoKQpzeXMucGF0aC5pbnNlcnQoMCxzdHIocmVwb19yb290KSkKc3lzLnBhdGguaW5zZXJ0KDAsc3RyKHJlcG9fcm9vdC8nc2VydmljZXMvbWx4LXdvcmtlci1weXRob24nKSkKZnJvbSB3b3JrZXIucnVudGltZSBpbXBvcnQgcnVudGltZV91dGlscwoKZGVmIHNhbXBsZV9mdW5jdGlvbigqLCB0ZW1wZXJhdHVyZT0wLjAsIHRvcF9wPTEuMCk6CiAgICBwYXNzCml0ZXJhdGlvbnM9NDAwMDAKc2FtcGxlX2NvdW50PTUKZWxhcHNlZD1bXQpjYWxscz1bXQpvcmlnPWluc3BlY3Quc2lnbmF0dXJlCmZvciBfIGluIHJhbmdlKHNhbXBsZV9jb3VudCk6CiAgICBpZiBoYXNhdHRyKHJ1bnRpbWVfdXRpbHMsJ2NsZWFyX2NhbGxhYmxlX2FjY2VwdHNfa3dhcmdfY2FjaGUnKToKICAgICAgICBydW50aW1lX3V0aWxzLmNsZWFyX2NhbGxhYmxlX2FjY2VwdHNfa3dhcmdfY2FjaGUoKQogICAgY291bnRlcj1bMF0KICAgIGRlZiB0cmFja2VkKGNhbGxhYmxlX29iaik6CiAgICAgICAgY291bnRlclswXSs9MQogICAgICAgIHJldHVybiBvcmlnKGNhbGxhYmxlX29iaikKICAgIHJ1bnRpbWVfdXRpbHMuaW5zcGVjdC5zaWduYXR1cmU9dHJhY2tlZAogICAgc3RhcnRlZD10aW1lLnBlcmZfY291bnRlcigpCiAgICBmb3IgaW5kZXggaW4gcmFuZ2UoaXRlcmF0aW9ucyk6CiAgICAgICAga2V5d29yZD0ndGVtcGVyYXR1cmUnIGlmIGluZGV4ICUgMiA9PSAwIGVsc2UgJ3RvcF9wJwogICAgICAgIGlmIG5vdCBydW50aW1lX3V0aWxzLmNhbGxhYmxlX2FjY2VwdHNfa3dhcmcoc2FtcGxlX2Z1bmN0aW9uLCBrZXl3b3JkKToKICAgICAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChmJ3VuZXhwZWN0ZWQgbWlzc2luZyBrd2FyZzoge2tleXdvcmR9JykKICAgIGVsYXBzZWQuYXBwZW5kKCh0aW1lLnBlcmZfY291bnRlcigpLXN0YXJ0ZWQpKjEwMDAuMCkKICAgIGNhbGxzLmFwcGVuZChjb3VudGVyWzBdKQpydW50aW1lX3V0aWxzLmluc3BlY3Quc2lnbmF0dXJlPW9yaWcKaWYgaGFzYXR0cihydW50aW1lX3V0aWxzLCdjbGVhcl9jYWxsYWJsZV9hY2NlcHRzX2t3YXJnX2NhY2hlJyk6CiAgICBydW50aW1lX3V0aWxzLmNsZWFyX2NhbGxhYmxlX2FjY2VwdHNfa3dhcmdfY2FjaGUoKQpwcmludChqc29uLmR1bXBzKHsnZWxhcHNlZF9tc19tZWFuJzpzdGF0aXN0aWNzLmZtZWFuKGVsYXBzZWQpLCdpbnNwZWN0X3NpZ25hdHVyZV9jYWxsc19tZWFuJzpzdGF0aXN0aWNzLmZtZWFuKGNhbGxzKSwnaXRlcmF0aW9uc19wZXJfc2FtcGxlJzpmbG9hdChpdGVyYXRpb25zKSwnc2FtcGxlX2NvdW50JzpmbG9hdChzYW1wbGVfY291bnQpfSwgc29ydF9rZXlzPVRydWUpKQ==\\\"))\"; fi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "inspect_signature_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
+    "id": "stream-assembler-parser-mode-cache",
+    "name": "Stream assembler parser-mode cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/stream_assembler.py",
+      "services/mlx-worker-python/tests/test_stream_assembler.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_stream_assembler.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_stream_assembler_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_stream_assembler.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_stream_assembler_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/stream_assembler.py services/mlx-worker-python/tests/test_stream_assembler.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 - <<'PY'\nimport json\nimport statistics\nimport time\nfrom worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment\n\nchunks = []\nraw = ''\nfor index in range(1200):\n    if index % 120 == 0:\n        piece = '<think>plan</think><tool_call>{\\\"id\\\":\\\"call-%d\\\",\\\"name\\\":\\\"search\\\",\\\"arguments\\\":{\\\"q\\\":\\\"alpha\\\"}}</tool_call>' % index\n    elif index % 17 == 0:\n        piece = 'alpha<tool_ca'\n    else:\n        piece = ' token-%d ' % index\n    raw += piece\n    chunks.append(raw)\n\nelapsed = []\ntool_counts = []\nfor _ in range(8):\n    assembler = RequestStreamAssembler('probe', True, '', 'qwen')\n    started = time.perf_counter()\n    tool_count = 0\n    for chunk in chunks:\n        tool_count += sum(1 for delta in assembler.accept(StreamFragment(raw_text=chunk)) if delta.tool_call is not None)\n    completed = assembler.completed()\n    elapsed.append((time.perf_counter() - started) * 1000.0)\n    tool_counts.append(tool_count)\n    if completed.metrics['tool_call_markup_leak_count'] != 0:\n        raise SystemExit('tool markup leaked')\nif len(set(tool_counts)) != 1 or tool_counts[0] != 10:\n    raise SystemExit(f'unexpected tool counts: {tool_counts!r}')\nprint(json.dumps({'elapsed_ms_mean': statistics.fmean(elapsed), 'raw_char_count': float(len(raw)), 'tool_call_count': float(tool_counts[0])}, sort_keys=True))\nPY",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -52,6 +138,41 @@
         "unit": "calls",
         "direction": "lower_is_better",
         "warn_pct": 0.0
+      }
+    ]
+  },
+  {
+    "id": "stream-assembler-structural-prefix-cache",
+    "name": "Stream assembler structural prefix cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/stream_assembler.py",
+      "services/mlx-worker-python/tests/test_stream_assembler.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/stream_assembler_structural_prefix_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_stream_assembler.py::test_structural_tag_prefixes_are_cached_per_parser_mode services/mlx-worker-python/tests/test_stream_assembler.py::test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_stream_assembler_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_stream_assembler_structural_prefix_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_stream_assembler.py::test_structural_tag_prefixes_are_cached_per_parser_mode services/mlx-worker-python/tests/test_stream_assembler.py::test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_stream_assembler_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_stream_assembler_structural_prefix_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/stream_assembler.py services/mlx-worker-python/tests/test_stream_assembler.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/stream_assembler_structural_prefix_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/stream_assembler_structural_prefix_probe.py ]; then python scripts/stream_assembler_structural_prefix_probe.py; else python - <<\"PY\"\nimport json, statistics, sys, time, tracemalloc\nfrom pathlib import Path\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\nfrom worker.runtime.stream_assembler import RequestStreamAssembler\nassembler = RequestStreamAssembler(request_id=\"probe-structural-prefixes\", reasoning_enabled=True, structured_output_mode=\"\", tool_parser_mode=\"qwen\")\nassembler._buffer = \"chunk-ending-with-partial-<tool\"\nexpected_prefixes = assembler._structural_tag_prefixes\niterations = 250000\nsample_count = 7\nelapsed_samples = []\npeak_samples = []\nheld_suffix_hits = prefix_identity_hits = 0\nfor _ in range(sample_count):\n    tracemalloc.start()\n    started = time.perf_counter()\n    for _index in range(iterations):\n        if assembler._has_partial_structural_tag_suffix():\n            held_suffix_hits += 1\n        if assembler._structural_tag_prefixes is expected_prefixes:\n            prefix_identity_hits += 1\n    elapsed_samples.append((time.perf_counter() - started) * 1000.0)\n    _, peak = tracemalloc.get_traced_memory()\n    tracemalloc.stop()\n    peak_samples.append(float(peak))\nexpected_hits = iterations * sample_count\nif held_suffix_hits != expected_hits:\n    raise RuntimeError(f\"unexpected partial suffix hits: {held_suffix_hits} != {expected_hits}\")\nif prefix_identity_hits != expected_hits:\n    raise RuntimeError(f\"prefix tuple was not stable: {prefix_identity_hits} != {expected_hits}\")\nprint(json.dumps({\"elapsed_ms_mean\": round(statistics.fmean(elapsed_samples), 6), \"elapsed_ms_min\": round(min(elapsed_samples), 6), \"peak_bytes_mean\": round(statistics.fmean(peak_samples), 3), \"iteration_count\": float(iterations), \"sample_count\": float(sample_count), \"held_suffix_hits\": float(held_suffix_hits), \"prefix_identity_hits\": float(prefix_identity_hits)}, sort_keys=True))\nPY\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "informational"
+      },
+      {
+        "key": "prefix_identity_hits",
+        "unit": "count",
+        "direction": "informational"
       }
     ]
   },
@@ -750,6 +871,43 @@
     ]
   },
   {
+    "id": "mlx-vlm-gemma4-weight-presence-single-pass",
+    "name": "MLX-VLM Gemma4 weight-presence single-pass scan",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py",
+      "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/mlx_vlm_gemma4_weight_presence_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_gemma4_multimodal_weight_presence_detects_text_backed_exports services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_gemma4_multimodal_weight_presence_scans_weight_names_once services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_gemma4_multimodal_weight_presence_accepts_dict_keys_view services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_mlx_vlm_runtime_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mlx_vlm_gemma4_weight_presence_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mlx_vlm_gemma4_weight_presence_probe_script_main_covers_checked_in_file",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_gemma4_multimodal_weight_presence_detects_text_backed_exports services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_gemma4_multimodal_weight_presence_scans_weight_names_once services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_gemma4_multimodal_weight_presence_accepts_dict_keys_view services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_mlx_vlm_runtime_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mlx_vlm_gemma4_weight_presence_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mlx_vlm_gemma4_weight_presence_probe_script_main_covers_checked_in_file && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py services/mlx-worker-python/tests/test_mlx_vlm_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/mlx_vlm_gemma4_weight_presence_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/mlx_vlm_gemma4_weight_presence_probe.py ]; then python scripts/mlx_vlm_gemma4_weight_presence_probe.py; else python - <<\"PY\"\nimport json, statistics, time, tracemalloc\nWEIGHT_NAME_COUNT=50000; ITERATION_COUNT=40; SAMPLE_COUNT=5\ndef legacy(weight_names):\n    materialized=list(weight_names)\n    has_vision=any(name.startswith(\"vision_tower.\") or name.startswith(\"embed_vision.\") for name in materialized)\n    has_audio=any(name.startswith(\"audio_tower.\") or name.startswith(\"embed_audio.\") for name in materialized)\n    return has_vision, has_audio\ndef build_weights():\n    names=[f\"language_model.model.layers.{index}.self_attn.q_proj.weight\" for index in range(WEIGHT_NAME_COUNT)]\n    names[-3]=\"vision_tower.encoder.layers.0.self_attn.q_proj.weight\"; names[-2]=\"audio_tower.encoder.layers.0.self_attn.q_proj.weight\"; names[-1]=\"language_model.model.layers.tail.mlp.down_proj.weight\"\n    sentinel=object(); return {name: sentinel for name in names}\nweights=build_weights(); elapsed=[]; peaks=[]; visited=[]; checksum=0; has_vision=False; has_audio=False\nfor _ in range(SAMPLE_COUNT):\n    tracemalloc.start(); started=time.perf_counter(); sample_visited=0\n    for _ in range(ITERATION_COUNT):\n        has_vision, has_audio=legacy(weights.keys())\n        if not has_vision or not has_audio: raise RuntimeError(\"expected multimodal weight names\")\n        sample_visited += len(weights) * 2; checksum += int(has_vision) + int(has_audio)\n    elapsed.append((time.perf_counter()-started)*1000.0); _, peak=tracemalloc.get_traced_memory(); tracemalloc.stop(); peaks.append(float(peak)); visited.append(float(sample_visited))\nprint(json.dumps({\"checksum\": float(checksum), \"elapsed_ms_mean\": round(statistics.fmean(elapsed), 6), \"has_audio\": float(has_audio), \"has_vision\": float(has_vision), \"iteration_count\": float(ITERATION_COUNT), \"peak_bytes_mean\": round(statistics.fmean(peaks), 6), \"sample_count\": float(SAMPLE_COUNT), \"visited_names_mean\": round(statistics.fmean(visited), 6), \"weight_name_count\": float(len(weights))}, sort_keys=True))\nPY\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "visited_names_mean",
+        "unit": "names",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "job-registry-restore-sort-elision",
     "name": "Job registry restore sort elision",
     "runner": "ubuntu-latest",
@@ -831,8 +989,8 @@
       "scripts/rerank_top_k_probe.py"
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_rank_scores_preserves_sort_contract_for_bounded_top_k services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_rank_scores_uses_heap_for_bounded_top_k services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_rank_scores_keeps_full_sort_when_unbounded services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_returns_sorted_scores_and_honors_top_k services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_rerank_core_top_k_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_rank_scores_preserves_sort_contract_for_bounded_top_k services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_rank_scores_uses_heap_for_bounded_top_k services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_rank_scores_keeps_full_sort_when_unbounded services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_returns_sorted_scores_and_honors_top_k services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_rerank_core_top_k_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/engine/rerank_core.py services/mlx-worker-python/tests/test_rerank_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
-    "probe_command": "if [ -f scripts/rerank_top_k_probe.py ]; then PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python scripts/rerank_top_k_probe.py; else python3 - <<'PY'\nimport gc, json, time, tracemalloc\ndef legacy(scores, top_k):\n    ranked = sorted(enumerate(scores), key=lambda item: (-item[1], item[0]))\n    return ranked[:top_k] if top_k < len(ranked) else ranked\ndocument_count=50000; top_k=10; iteration_count=12; sample_count=7\nscores=[(((i*7919)%104729)/104729.0)+(0.000001*(i%17)) for i in range(document_count)]\nexpected=legacy(scores, top_k); elapsed=[]; peaks=[]; checksum=0.0\nfor _ in range(sample_count):\n    gc.collect(); tracemalloc.start(); started=time.perf_counter()\n    for _ in range(iteration_count):\n        result=legacy(scores, top_k)\n        if result != expected: raise RuntimeError('rank mismatch')\n        checksum += sum((index + 1) * score for index, score in result)\n    elapsed.append((time.perf_counter()-started)*1000.0); _, peak=tracemalloc.get_traced_memory(); tracemalloc.stop(); peaks.append(float(peak))\nprint(json.dumps({'checksum': round(checksum, 6), 'document_count': float(document_count), 'elapsed_ms_mean': round(sum(elapsed)/len(elapsed), 6), 'iteration_count': float(iteration_count), 'peak_bytes_mean': round(sum(peaks)/len(peaks), 6), 'result_count': float(len(expected)), 'sample_count': float(sample_count), 'top_k': float(top_k)}, sort_keys=True))\nPY\nfi",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_rank_scores_preserves_sort_contract_for_bounded_top_k services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_rank_scores_uses_heap_for_bounded_top_k services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_rank_scores_keeps_full_sort_when_unbounded services/mlx-worker-python/tests/test_rerank_runtime.py::test_rerank_returns_sorted_scores_and_honors_top_k services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_rerank_core_top_k_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/engine/rerank_core.py services/mlx-worker-python/tests/test_rerank_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "if [ -f scripts/rerank_top_k_probe.py ]; then PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 scripts/rerank_top_k_probe.py; else python3 - <<'PY'\nimport gc, json, time, tracemalloc\ndef legacy(scores, top_k):\n    ranked = sorted(enumerate(scores), key=lambda item: (-item[1], item[0]))\n    return ranked[:top_k] if top_k < len(ranked) else ranked\ndocument_count=50000; top_k=10; iteration_count=12; sample_count=7\nscores=[(((i*7919)%104729)/104729.0)+(0.000001*(i%17)) for i in range(document_count)]\nexpected=legacy(scores, top_k); elapsed=[]; peaks=[]; checksum=0.0\nfor _ in range(sample_count):\n    gc.collect(); tracemalloc.start(); started=time.perf_counter()\n    for _ in range(iteration_count):\n        result=legacy(scores, top_k)\n        if result != expected: raise RuntimeError('rank mismatch')\n        checksum += sum((index + 1) * score for index, score in result)\n    elapsed.append((time.perf_counter()-started)*1000.0); _, peak=tracemalloc.get_traced_memory(); tracemalloc.stop(); peaks.append(float(peak))\nprint(json.dumps({'checksum': round(checksum, 6), 'document_count': float(document_count), 'elapsed_ms_mean': round(sum(elapsed)/len(elapsed), 6), 'iteration_count': float(iteration_count), 'peak_bytes_mean': round(sum(peaks)/len(peaks), 6), 'result_count': float(len(expected)), 'sample_count': float(sample_count), 'top_k': float(top_k)}, sort_keys=True))\nPY\nfi",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -1191,6 +1349,37 @@
     ]
   },
   {
+    "id": "code-eval-stdio-tail-single-stat",
+    "name": "Code evaluation stdio tail single stat",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/engine/code_eval_runner.py",
+      "services/mlx-worker-python/tests/test_code_eval_runner.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/code_eval_stdio_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_returns_timeout_result services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_uses_stderr_when_payload_is_missing services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_skips_parent_test_counting_after_successful_payload services/mlx-worker-python/tests/test_code_eval_runner.py::test_read_limited_text_handles_missing_and_oversized_files services/mlx-worker-python/tests/test_code_eval_runner.py::test_output_limit_reuses_limited_stdio_sizes services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_code_eval_stdio_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_code_eval_stdio_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_returns_timeout_result services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_uses_stderr_when_payload_is_missing services/mlx-worker-python/tests/test_code_eval_runner.py::test_run_python_code_evaluation_skips_parent_test_counting_after_successful_payload services/mlx-worker-python/tests/test_code_eval_runner.py::test_read_limited_text_handles_missing_and_oversized_files services/mlx-worker-python/tests/test_code_eval_runner.py::test_output_limit_reuses_limited_stdio_sizes services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_code_eval_stdio_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_code_eval_stdio_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/engine/code_eval_runner.py services/mlx-worker-python/tests/test_code_eval_runner.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/code_eval_stdio_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python -c \"exec('\\\\nimport json\\\\nimport statistics\\\\nimport sys\\\\nimport tempfile\\\\nimport time\\\\nfrom pathlib import Path\\\\n\\\\nrepo_root = Path.cwd()\\\\nsys.path.insert(0, str(repo_root))\\\\nsys.path.insert(0, str(repo_root / \\\"services/mlx-worker-python\\\"))\\\\nfrom worker.engine import code_eval_runner\\\\n\\\\nbyte_limit = 4096\\\\niterations = 3000\\\\nelapsed = []\\\\ntail_lengths = []\\\\nflags = []\\\\nwith tempfile.TemporaryDirectory(prefix=\\\"melix-code-eval-stdio-probe-\\\") as temp_dir:\\\\n    root = Path(temp_dir)\\\\n    stdout = root / \\\"stdout.txt\\\"\\\\n    stderr = root / \\\"stderr.txt\\\"\\\\n    stdout.write_text(\\\"x\\\" * (byte_limit * 4), encoding=\\\"utf-8\\\")\\\\n    stderr.write_text(\\\"warning\\\\\\\\n\\\" * 128, encoding=\\\"utf-8\\\")\\\\n    use_new = hasattr(code_eval_runner, \\\"_read_limited_stdio\\\")\\\\n    stat_calls = (2.0 if use_new else 4.0) * iterations\\\\n    for _ in range(5):\\\\n        start = time.perf_counter()\\\\n        stdout_tail = \\\"\\\"\\\\n        stderr_tail = \\\"\\\"\\\\n        exceeded = False\\\\n        for _iteration in range(iterations):\\\\n            if use_new:\\\\n                stdout_tail, stdout_size = code_eval_runner._read_limited_stdio(stdout, byte_limit)\\\\n                stderr_tail, stderr_size = code_eval_runner._read_limited_stdio(stderr, byte_limit)\\\\n                exceeded = stdout_size >= byte_limit or stderr_size >= byte_limit\\\\n            else:\\\\n                stdout_tail = code_eval_runner._read_limited_text(stdout, byte_limit)\\\\n                stderr_tail = code_eval_runner._read_limited_text(stderr, byte_limit)\\\\n                exceeded = any(\\\\n                    path.exists() and path.stat().st_size >= byte_limit\\\\n                    for path in (stdout, stderr)\\\\n                )\\\\n        elapsed.append((time.perf_counter() - start) * 1000)\\\\n        tail_lengths.append(float(len(stdout_tail) + len(stderr_tail)))\\\\n        flags.append(1.0 if exceeded else 0.0)\\\\nprint(json.dumps({\\\\n    \\\"elapsed_ms_mean\\\": statistics.mean(elapsed),\\\\n    \\\"stdio_stat_calls_mean\\\": stat_calls,\\\\n    \\\"tail_chars_mean\\\": statistics.mean(tail_lengths),\\\\n    \\\"output_limit_exceeded_mean\\\": statistics.mean(flags),\\\\n    \\\"iteration_count\\\": float(iterations),\\\\n}, sort_keys=True))\\\\n')\"",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "stdio_stat_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "changed-scope-coverage-empty-path-short-circuit",
     "name": "Changed-scope coverage empty-path short circuit",
     "runner": "ubuntu-latest",
@@ -1286,5 +1475,130 @@
         "warn_pct": 0.0
       }
     ]
+  },
+  {
+    "id": "deterministic-embedding-project-digest-allocation",
+    "name": "Deterministic embedding projection allocation",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/embedding_backends.py",
+      "services/mlx-worker-python/tests/test_embedding_runtime.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/deterministic_embedding_project_digest_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_embedding_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_embedding_project_digest_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_deterministic_embedding_project_digest_probe_script_smoke",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_embedding_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_embedding_project_digest_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_deterministic_embedding_project_digest_probe_script_smoke && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/embedding_backends.py services/mlx-worker-python/tests/test_embedding_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/deterministic_embedding_project_digest_probe.py",
+    "probe_command": "if [ -f scripts/deterministic_embedding_project_digest_probe.py ]; then PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 scripts/deterministic_embedding_project_digest_probe.py; else PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 -c 'import gc,json,time,tracemalloc; from worker.runtime.embedding_backends import BERTEmbeddingBackend; b=BERTEmbeddingBackend(); d=4096; n=500; s=3; texts=[f\"bert::synthetic projection row {i % 251}::{i}\" for i in range(n)]; es=[]; ps=[]; c=0.0\nfor _ in range(s):\n gc.collect(); tracemalloc.start(); t=time.perf_counter()\n for text in texts:\n  v=b._project_digest(text,d)\n  if len(v)!=d: raise AssertionError(f\"unexpected vector length: {len(v)}\")\n  c += v[0] + v[-1]\n es.append((time.perf_counter()-t)*1000.0); ps.append(float(tracemalloc.get_traced_memory()[1])); tracemalloc.stop()\nprint(json.dumps({\"elapsed_ms_mean\":round(sum(es)/len(es),6),\"peak_bytes_mean\":round(sum(ps)/len(ps),6),\"sample_count\":float(s),\"vector_count\":float(n),\"dimensions\":float(d),\"checksum\":round(c,6)}, sort_keys=True))'; fi",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
+    "id": "statistical-evidence-bootstrap-single-sort",
+    "name": "Statistical evidence bootstrap single sort",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/statistical_evidence.py",
+      "services/mlx-worker-python/tests/test_statistical_evidence.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "infra/perf/pr_scoped_probes.json",
+      "scripts/statistical_evidence_bootstrap_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_statistical_evidence.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_statistical_evidence_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_statistical_evidence_bootstrap_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_statistical_evidence.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_statistical_evidence_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_statistical_evidence_bootstrap_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/statistical_evidence.py services/mlx-worker-python/tests/test_statistical_evidence.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/statistical_evidence_bootstrap_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/statistical_evidence_bootstrap_probe.py ]; then python scripts/statistical_evidence_bootstrap_probe.py; else python - <<\"PY\"\nimport json, os, statistics, sys, time, tracemalloc\nfrom pathlib import Path\nrepo_root = Path.cwd(); sys.path.insert(0, str(repo_root)); sys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\nfrom worker.productization.statistical_evidence import build_paired_statistical_evidence\nsample_size = int(os.environ.get(\"MELIX_STAT_EVIDENCE_SAMPLE_SIZE\", \"320\")); bootstrap_iterations = int(os.environ.get(\"MELIX_STAT_EVIDENCE_BOOTSTRAP_ITERATIONS\", \"1200\")); sample_count = int(os.environ.get(\"MELIX_STAT_EVIDENCE_PROBE_SAMPLES\", \"5\"))\noutcomes = tuple(1.0 if index % 7 in (0, 2, 3) else -1.0 if index % 11 == 0 else 0.0 for index in range(sample_size))\nelapsed_samples = []; peak_samples = []; lower_bounds = []; upper_bounds = []\nfor sample_index in range(sample_count):\n    tracemalloc.start(); started = time.perf_counter()\n    evidence = build_paired_statistical_evidence(paired_outcomes=outcomes, confidence_level=0.95, bootstrap_iterations=bootstrap_iterations, bootstrap_seed=1729 + sample_index)\n    elapsed_samples.append((time.perf_counter() - started) * 1000.0); _, peak = tracemalloc.get_traced_memory(); tracemalloc.stop(); peak_samples.append(float(peak))\n    bootstrap = evidence[\"bootstrap\"]; lower_bounds.append(float(bootstrap[\"lower_bound\"])); upper_bounds.append(float(bootstrap[\"upper_bound\"]))\nif any(lower > upper for lower, upper in zip(lower_bounds, upper_bounds, strict=True)):\n    raise SystemExit(\"bootstrap interval lower bound exceeded upper bound\")\nprint(json.dumps({\"elapsed_ms_mean\": statistics.fmean(elapsed_samples), \"peak_bytes_mean\": statistics.fmean(peak_samples), \"sample_count\": float(sample_count), \"sample_size\": float(sample_size), \"bootstrap_iterations\": float(bootstrap_iterations), \"lower_bound_mean\": statistics.fmean(lower_bounds), \"upper_bound_mean\": statistics.fmean(upper_bounds)}, sort_keys=True))\nPY\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "sorted_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
+    "id": "startup-signals-lazy-worker-log-excerpts",
+    "name": "Startup signals lazy worker log excerpts",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/startup_signals.py",
+      "services/mlx-worker-python/tests/test_startup_signals.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/startup_signals_log_probe.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "metrics": [
+      {
+        "key": "conflict_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 15.0
+      },
+      {
+        "key": "conflict_log_reads_mean",
+        "unit": "reads",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "control_crash_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 15.0
+      },
+      {
+        "key": "control_crash_log_reads_mean",
+        "unit": "reads",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "worker_crash_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 15.0
+      },
+      {
+        "key": "worker_crash_log_reads_mean",
+        "unit": "reads",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_startup_signals.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_startup_signals_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_startup_signals_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_startup_signals.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_startup_signals_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_startup_signals_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/startup_signals.py services/mlx-worker-python/tests/test_startup_signals.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/startup_signals_log_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/startup_signals_log_probe.py ]; then python scripts/startup_signals_log_probe.py; else python - <<\"PY_FALLBACK\"\nimport json\nimport statistics\nimport sys\nimport tempfile\nimport time\nfrom pathlib import Path\nrepo_root = Path.cwd()\nsys.path.insert(0, str(repo_root))\nsys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\nimport worker.productization.startup_signals as startup_signals\ndef write_logs(root):\n    cp = root / \"control-plane.stderr.log\"\n    worker = root / \"python-worker.stderr.log\"\n    noise = \"boot line with enough content to make reads realistic\\n\" * 2500\n    cp.write_text(noise + \"fatal error: control plane crashed\\n\", encoding=\"utf-8\")\n    worker.write_text(noise + \"Traceback: worker bootstrap failed\\n\", encoding=\"utf-8\")\n    return {\"http_port\": 11434, \"ready_probe_url\": \"http://127.0.0.1:11434/v1/models\", \"control_plane_stderr_path\": str(cp), \"python_worker_stderr_path\": str(worker)}\ndef measure(manifest, error_text, expected, iterations):\n    original = startup_signals._read_last_nonempty_line\n    reads = 0\n    def tracked(path, *, chunk_size=8192):\n        nonlocal reads\n        reads += 1\n        return original(path, chunk_size=chunk_size)\n    startup_signals._read_last_nonempty_line = tracked\n    try:\n        started = time.perf_counter()\n        for _ in range(iterations):\n            report = startup_signals.classify_startup_failure(manifest, error_text=error_text)\n            if report.classification != expected:\n                raise AssertionError((expected, report.classification))\n        elapsed = (time.perf_counter() - started) * 1000.0\n    finally:\n        startup_signals._read_last_nonempty_line = original\n    return elapsed, float(reads)\niterations = 400\nsamples = 5\nconflict_elapsed=[]; conflict_reads=[]; control_elapsed=[]; control_reads=[]; worker_elapsed=[]; worker_reads=[]\nwith tempfile.TemporaryDirectory() as d:\n    manifest = write_logs(Path(d))\n    for _ in range(samples):\n        elapsed, reads = measure(manifest, \"bind() failed: Address already in use\", \"host_port_conflict\", iterations)\n        conflict_elapsed.append(elapsed); conflict_reads.append(reads / iterations)\n        elapsed, reads = measure(manifest, \"handshake failed\", \"control_plane_crash\", iterations)\n        control_elapsed.append(elapsed); control_reads.append(reads / iterations)\n        worker_manifest = dict(manifest); worker_manifest.pop(\"control_plane_stderr_path\")\n        elapsed, reads = measure(worker_manifest, \"handshake failed\", \"worker_crash\", iterations)\n        worker_elapsed.append(elapsed); worker_reads.append(reads / iterations)\nprint(json.dumps({\"conflict_elapsed_ms_mean\": round(statistics.fmean(conflict_elapsed), 6), \"conflict_log_reads_mean\": round(statistics.fmean(conflict_reads), 6), \"control_crash_elapsed_ms_mean\": round(statistics.fmean(control_elapsed), 6), \"control_crash_log_reads_mean\": round(statistics.fmean(control_reads), 6), \"iterations\": float(iterations), \"sample_count\": float(samples), \"worker_crash_elapsed_ms_mean\": round(statistics.fmean(worker_elapsed), 6), \"worker_crash_log_reads_mean\": round(statistics.fmean(worker_reads), 6)}, sort_keys=True))\nPY_FALLBACK\nfi' ",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "notes": "Compares startup failure classification log-read work for control-plane-resolved failures versus worker-crash fallback."
   }
 ]

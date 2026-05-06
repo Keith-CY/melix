@@ -29,7 +29,26 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
     )
 
     assert tool_enabled._structural_tag_prefixes == think_prefixes + tool_prefixes
+    assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_disabled._structural_tag_prefixes == think_prefixes
+    assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
+    assert tool_disabled._structural_tag_prefixes is tool_disabled._structural_tag_prefixes
+    assert tool_disabled._structural_tag_prefixes is RequestStreamAssembler._THINK_PREFIXES
+
+
+def test_parser_mode_flags_are_computed_once_at_initialization() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-cached-parser-mode-flags",
+        reasoning_enabled=False,
+        structured_output_mode=" json_schema ",
+        tool_parser_mode=" qwen ",
+    )
+
+    assert assembler._is_json_structured_output is True
+    assert assembler._is_json_only_structured_output is False
+    assert assembler._tool_parsing_enabled is True
+    assert assembler._request_context_mode == "tool_parser"
+    assert assembler._structural_tag_prefixes is assembler._structural_tag_prefixes_value
 
 
 def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:

@@ -673,3 +673,118 @@ def test_materialize_hf_evaluation_dataset_invalidates_cache_when_rows_change(
     assert second.package_path != first.package_path
     assert sample["input"]["text"] == "Capital of Italy?"
     assert sample["target"] == "Rome"
+
+
+def test_hf_evaluation_materialization_prefers_local_cache_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    cache_repo = home / ".cache" / "huggingface" / "hub" / "datasets--org--cached"
+    snapshot = cache_repo / "snapshots" / "abc123"
+    data_dir = snapshot / "data"
+    data_dir.mkdir(parents=True)
+    (cache_repo / "refs").mkdir()
+    (cache_repo / "refs" / "main").write_text("abc123", encoding="utf-8")
+    (data_dir / "train-00000-of-00001.jsonl").write_text(
+        json.dumps(
+            {
+                "question": "Capital of France?",
+                "gold": "Paris",
+                "id": "sample-1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    def fail_fetcher(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        raise AssertionError(f"unexpected remote fetch {endpoint} {params}")
+
+    materialized = materialize_hf_evaluation_dataset(
+        source=HFEvaluationDatasetSource(
+            dataset_path="org/cached",
+            dataset_revision="main",
+            split="train",
+        ),
+        profile=EvaluationProfileDefinition(
+            profile_type="final_result",
+            result_kind="text",
+            extraction_mode="heuristic_final",
+            scoring_mode="normalized_exact_match",
+            threshold=1.0,
+        ),
+        field_mapping=EvaluationFieldMapping(
+            input_text_path="question",
+            target_path="gold",
+            sample_id_path="id",
+        ),
+        dataset_id="cached.dev.v1",
+        suite_id="cached",
+        cache_root=tmp_path / "cache",
+        fetch_json=fail_fetcher,
+    )
+
+    manifest = json.loads((materialized.package_path / "manifest.json").read_text(encoding="utf-8"))
+    sample = json.loads((materialized.package_path / "samples.jsonl").read_text(encoding="utf-8").strip())
+
+    assert manifest["source_kind"] == "hf_cache_snapshot"
+    assert manifest["hf_snapshot_id"] == "abc123"
+    assert manifest["hf_snapshot_path"] == str(snapshot.resolve())
+    assert sample["id"] == "sample-1"
+    assert sample["input"]["text"] == "Capital of France?"
+    assert sample["target"] == "Paris"
+
+
+def test_hf_evaluation_materialization_surfaces_local_snapshot_read_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    cache_repo = home / ".cache" / "huggingface" / "hub" / "datasets--org--cached"
+    snapshot = cache_repo / "snapshots" / "abc123"
+    data_dir = snapshot / "data"
+    data_dir.mkdir(parents=True)
+    (cache_repo / "refs").mkdir()
+    (cache_repo / "refs" / "main").write_text("abc123", encoding="utf-8")
+    (data_dir / "train-00000-of-00001.parquet").write_bytes(b"broken-parquet")
+    monkeypatch.setenv("HOME", str(home))
+
+    def fail_reader(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        raise ModelOperationError(
+            code="unavailable",
+            message="pyarrow is required to read local parquet dataset snapshots.",
+        )
+
+    def fail_fetcher(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        raise AssertionError(f"unexpected remote fetch after local read failure {endpoint} {params}")
+
+    monkeypatch.setattr(evaluation_final_result_module, "read_hf_dataset_snapshot_rows", fail_reader)
+
+    with pytest.raises(ModelOperationError) as error:
+        materialize_hf_evaluation_dataset(
+            source=HFEvaluationDatasetSource(
+                dataset_path="org/cached",
+                dataset_revision="main",
+                split="train",
+            ),
+            profile=EvaluationProfileDefinition(
+                profile_type="final_result",
+                result_kind="text",
+                extraction_mode="heuristic_final",
+                scoring_mode="normalized_exact_match",
+                threshold=1.0,
+            ),
+            field_mapping=EvaluationFieldMapping(
+                input_text_path="question",
+                target_path="gold",
+                sample_id_path="id",
+            ),
+            dataset_id="cached.dev.v1",
+            suite_id="cached",
+            cache_root=tmp_path / "cache",
+            fetch_json=fail_fetcher,
+        )
+
+    assert error.value.code == "unavailable"

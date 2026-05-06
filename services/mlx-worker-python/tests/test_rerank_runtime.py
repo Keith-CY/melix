@@ -60,7 +60,7 @@ def test_rerank_rank_scores_preserves_sort_contract_for_bounded_top_k() -> None:
 
 
 def test_rerank_rank_scores_uses_heap_for_bounded_top_k(monkeypatch) -> None:
-    nsmallest = Mock(return_value=[(2, 0.8), (4, 0.7)])
+    nsmallest = Mock(return_value=[(-0.8, 2, 0.8), (-0.7, 4, 0.7)])
     monkeypatch.setattr("worker.engine.rerank_core.heapq.nsmallest", nsmallest)
 
     ranked = RerankCore._rank_scores([0.1, 0.2, 0.8, 0.3, 0.7], top_k=2)
@@ -68,6 +68,7 @@ def test_rerank_rank_scores_uses_heap_for_bounded_top_k(monkeypatch) -> None:
     assert ranked == [(2, 0.8), (4, 0.7)]
     nsmallest.assert_called_once()
     assert nsmallest.call_args.args[0] == 2
+    assert "key" not in nsmallest.call_args.kwargs
 
 
 def test_rerank_rank_scores_keeps_full_sort_when_unbounded(monkeypatch) -> None:

@@ -35,3 +35,13 @@ The probe builds a deterministic synthetic score vector for a large rerank resul
 - Preserve full-sort behavior when `top_k` is omitted, zero, or greater than the result size.
 - Improve `elapsed_ms_mean` for `top_k << document_count` against `origin/main`.
 - Maintain at least 95% changed-scope coverage for touched executable Python files.
+
+## 2026-05-05 follow-up slice
+
+This follow-up keeps the same registered probe and narrows the already-bounded
+heap path by materializing sortable `(-score, index, score)` triples for the heap
+instead of passing a per-item key lambda to `heapq.nsmallest(...)`. The returned
+API remains `[(index, score), ...]`, so response ordering and tie-break semantics
+stay unchanged while the bounded selection path avoids repeated Python key
+callback dispatch. The registered coverage and probe commands use `python3` for
+repository command-policy compliance.

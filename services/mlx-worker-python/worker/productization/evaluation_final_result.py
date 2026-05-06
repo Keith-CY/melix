@@ -15,6 +15,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from worker.dataset_registry.catalog import (
+    DatasetSnapshot,
+    read_hf_dataset_snapshot_rows,
+    resolve_cached_hf_dataset_snapshot,
+)
 from worker.model_ops.errors import ModelOperationError
 
 _DEFAULT_IGNORED_PATHS = {
@@ -165,6 +170,38 @@ def materialize_hf_evaluation_dataset(
     cache_root: Path,
     fetch_json: HFEvaluationDatasetFetcher | None = None,
 ) -> MaterializedEvaluationDataset:
+    local_snapshot = resolve_cached_hf_dataset_snapshot(
+        repo_id=source.dataset_path,
+        revision=source.dataset_revision or "main",
+    )
+    if local_snapshot is not None:
+        rows = read_hf_dataset_snapshot_rows(
+            local_snapshot.snapshot_path,
+            split=source.split or "train",
+        )
+        if rows:
+            resolved_name = source.dataset_name or (local_snapshot.configs[0] if local_snapshot.configs else "default")
+            source_slug = _hf_source_slug(source.dataset_path)
+            resolved_source = HFEvaluationDatasetSource(
+                dataset_path=source.dataset_path,
+                dataset_name=resolved_name,
+                dataset_revision=source.dataset_revision or local_snapshot.revision,
+                split=source.split or "train",
+            )
+            return _materialize_evaluation_rows(
+                rows=rows,
+                profile=profile,
+                field_mapping=field_mapping,
+                dataset_id=dataset_id or f"{source_slug}.dev.v1",
+                suite_id=suite_id or source_slug,
+                cache_root=cache_root,
+                source_metadata=_hf_cache_source_metadata(
+                    source=resolved_source,
+                    snapshot=local_snapshot,
+                    rows=rows,
+                ),
+            )
+
     fetcher = fetch_json or _fetch_hf_dataset_server_json
     resolved_name = source.dataset_name or _resolve_hf_dataset_name(source, fetcher)
     rows = _fetch_hf_dataset_rows(
@@ -371,6 +408,24 @@ def _hf_source_metadata(*, source: HFEvaluationDatasetSource, rows: list[dict[st
         ),
         "hf_rows_sha256": hashlib.sha256(rows_payload.encode("utf-8")).hexdigest(),
     }
+
+
+def _hf_cache_source_metadata(
+    *,
+    source: HFEvaluationDatasetSource,
+    snapshot: DatasetSnapshot,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    metadata = _hf_source_metadata(source=source, rows=rows)
+    metadata.update(
+        {
+            "source_kind": "hf_cache_snapshot",
+            "hf_snapshot_id": snapshot.snapshot_id,
+            "hf_snapshot_path": str(snapshot.snapshot_path),
+            "hf_cache_repo_path": str(snapshot.cache_repo_path),
+        }
+    )
+    return metadata
 
 
 def _sha256_for_path(path: Path, *, chunk_size: int = 1024 * 1024) -> str:

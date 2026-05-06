@@ -58,6 +58,24 @@ class RequestStreamAssembler:
         self._reasoning_enabled = reasoning_enabled
         self._structured_output_mode = structured_output_mode.strip().lower()
         self._tool_parser_mode = tool_parser_mode.strip().lower()
+        self._tool_parsing_enabled_value = bool(self._tool_parser_mode)
+        self._is_json_structured_output_value = self._structured_output_mode in {
+            "json_object",
+            "json_schema",
+        }
+        self._is_json_only_structured_output_value = (
+            self._is_json_structured_output_value and not self._tool_parsing_enabled_value
+        )
+        self._structural_tag_prefixes_value = self._THINK_PREFIXES
+        if self._tool_parsing_enabled_value:
+            self._request_context_mode_value = "tool_parser"
+            self._structural_tag_prefixes_value = self._THINK_PREFIXES + self._TOOL_PREFIXES
+        elif self._is_json_structured_output_value:
+            self._request_context_mode_value = "structured_json"
+        elif self._reasoning_enabled:
+            self._request_context_mode_value = "reasoning_only"
+        else:
+            self._request_context_mode_value = "plain"
         self._raw_seen = ""
         self._buffer = ""
         self._json_started = False
@@ -111,31 +129,23 @@ class RequestStreamAssembler:
 
     @property
     def _is_json_structured_output(self) -> bool:
-        return self._structured_output_mode in {"json_object", "json_schema"}
+        return self._is_json_structured_output_value
 
     @property
     def _is_json_only_structured_output(self) -> bool:
-        return self._is_json_structured_output and not self._tool_parser_mode
+        return self._is_json_only_structured_output_value
 
     @property
     def _tool_parsing_enabled(self) -> bool:
-        return bool(self._tool_parser_mode)
+        return self._tool_parsing_enabled_value
 
     @property
     def _request_context_mode(self) -> str:
-        if self._tool_parsing_enabled:
-            return "tool_parser"
-        if self._is_json_structured_output:
-            return "structured_json"
-        if self._reasoning_enabled:
-            return "reasoning_only"
-        return "plain"
+        return self._request_context_mode_value
 
     @property
     def _structural_tag_prefixes(self) -> tuple[str, ...]:
-        if self._tool_parsing_enabled:
-            return self._THINK_PREFIXES + self._TOOL_PREFIXES
-        return self._THINK_PREFIXES
+        return self._structural_tag_prefixes_value
 
     def _unseen_delta(self, raw: str) -> str:
         if raw.startswith(self._raw_seen):

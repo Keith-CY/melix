@@ -3,6 +3,12 @@ name: package-self-contained-app
 on:
   workflow_dispatch:
   pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - labeled
     paths:
       - ".github/workflows/package-self-contained-app.yml"
       - "apps/macos-menubar/**"
@@ -36,6 +42,7 @@ concurrency:
 
 jobs:
   package-app:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'package-app')
     runs-on: macos-15
     outputs:
       artifact_name: ${{ steps.compute-build-metadata.outputs.artifact_name }}
@@ -48,6 +55,32 @@ jobs:
           python-version: "3.13"
 
       - uses: astral-sh/setup-uv@v7
+
+      - name: Restore Python dependency cache
+        uses: actions/cache@v4
+        with:
+          path: .uv-cache
+          key: ${{ runner.os }}-uv-package-${{ hashFiles('uv.lock', 'pyproject.toml', 'services/mlx-worker-python/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-package-
+            ${{ runner.os }}-uv-
+
+      - name: Restore Swift build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .swift-home
+            .build/ModuleCache.noindex
+            .build
+            packages/protocol/swift/.build
+            services/control-plane-swift/.build
+            services/mlx-text-worker-swift/.build
+            apps/macos-menubar/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swift-package-${{ hashFiles('Package.swift', 'Package.resolved', 'packages/protocol/swift/Package.swift', 'packages/protocol/swift/Package.resolved', 'services/control-plane-swift/Package.swift', 'services/control-plane-swift/Package.resolved', 'services/mlx-text-worker-swift/Package.swift', 'services/mlx-text-worker-swift/Package.resolved', 'apps/macos-menubar/Package.swift', 'apps/macos-menubar/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-package-
+            ${{ runner.os }}-swift-
 
       - name: Bootstrap Python worker environment
         run: bash scripts/ci_progress.sh "Package app bootstrap" make bootstrap

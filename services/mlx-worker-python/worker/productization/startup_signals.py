@@ -162,14 +162,7 @@ def classify_startup_failure(
         manifest.get("control_plane_stderr_path"),
         manifest.get("control_plane_stdout_path"),
     )
-    worker_excerpt = _log_excerpt(
-        manifest.get("python_worker_stderr_path"),
-        manifest.get("swift_text_worker_stderr_path"),
-        manifest.get("python_worker_stdout_path"),
-        manifest.get("swift_text_worker_stdout_path"),
-    )
     combined_control_plane = f"{error_text}\n{control_plane_excerpt}".lower()
-    combined_worker = worker_excerpt.lower()
 
     if any(pattern in combined_control_plane for pattern in PORT_CONFLICT_PATTERNS):
         primary_log_path = str(manifest.get("control_plane_stderr_path", ""))
@@ -186,18 +179,30 @@ def classify_startup_failure(
         detail = f"Melix never reached {ready_probe_url}. Inspect the control-plane logs for the crash cause."
         excerpt = control_plane_excerpt
         classification = "control_plane_crash"
-    elif worker_excerpt and any(pattern in combined_worker for pattern in CRASH_PATTERNS):
-        primary_log_path = str(manifest.get("python_worker_stderr_path") or manifest.get("swift_text_worker_stderr_path") or "")
-        summary = "A worker crashed before Melix became ready."
-        detail = "Inspect the worker logs and restart Melix after fixing the failing runtime."
-        excerpt = worker_excerpt
-        classification = "worker_crash"
     else:
-        primary_log_path = str(manifest.get("control_plane_stderr_path", ""))
-        summary = f"Melix startup timed out before {ready_probe_url} became ready."
-        detail = "Inspect the startup logs and ready probe path to determine whether the services hung or never launched."
-        excerpt = control_plane_excerpt or worker_excerpt or error_text
-        classification = "startup_hang"
+        worker_excerpt_value = _log_excerpt(
+            manifest.get("python_worker_stderr_path"),
+            manifest.get("swift_text_worker_stderr_path"),
+            manifest.get("python_worker_stdout_path"),
+            manifest.get("swift_text_worker_stdout_path"),
+        )
+        combined_worker = worker_excerpt_value.lower()
+        if worker_excerpt_value and any(pattern in combined_worker for pattern in CRASH_PATTERNS):
+            primary_log_path = str(
+                manifest.get("python_worker_stderr_path")
+                or manifest.get("swift_text_worker_stderr_path")
+                or ""
+            )
+            summary = "A worker crashed before Melix became ready."
+            detail = "Inspect the worker logs and restart Melix after fixing the failing runtime."
+            excerpt = worker_excerpt_value
+            classification = "worker_crash"
+        else:
+            primary_log_path = str(manifest.get("control_plane_stderr_path", ""))
+            summary = f"Melix startup timed out before {ready_probe_url} became ready."
+            detail = "Inspect the startup logs and ready probe path to determine whether the services hung or never launched."
+            excerpt = control_plane_excerpt or worker_excerpt_value or error_text
+            classification = "startup_hang"
 
     return StartupFailureReport(
         classification=classification,

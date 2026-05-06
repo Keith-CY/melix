@@ -14,6 +14,7 @@ from typing import Any, Iterator, NoReturn
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2
 
+from worker.dataset_registry.catalog import DatasetCatalog
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.conversion_pipeline import ModelConversionPipeline
 from worker.model_ops.download_pipeline import DownloadPipeline
@@ -220,6 +221,7 @@ class MaintenanceCore:
         adapter_activation_pipeline: AdapterActivationPipeline | None = None,
         upload_receipt_pipeline: UploadReceiptPipeline | None = None,
         benchmark_suite_catalog: BenchmarkSuiteCatalog | None = None,
+        dataset_catalog: DatasetCatalog | None = None,
     ) -> None:
         self._registry = registry
         self._jobs_root = Path(jobs_root)
@@ -238,6 +240,7 @@ class MaintenanceCore:
         self._benchmark_store = None
         self._benchmark_queue_store = BenchmarkQueueStore()
         self._benchmark_suite_catalog = benchmark_suite_catalog or BenchmarkSuiteCatalog()
+        self._dataset_catalog = dataset_catalog or DatasetCatalog()
         self._restore_derived_models_into_catalog()
 
     @staticmethod
@@ -351,6 +354,9 @@ class MaintenanceCore:
             "activate_adapter",
             "remove_derived_model",
             "registry_snapshot",
+            "dataset_snapshot",
+            "dataset_download",
+            "dataset_remove",
         }:
             yield maintenance_pb2.ConvertModelEvent(
                 failed=maintenance_pb2.ConvertFailed(
@@ -394,6 +400,49 @@ class MaintenanceCore:
             yield maintenance_pb2.ConvertModelEvent(
                 started=maintenance_pb2.ConvertStarted(job_id=job.job_id)
             )
+
+            if operation in {"dataset_snapshot", "dataset_download", "dataset_remove"}:
+                try:
+                    result = self._run_dataset_operation(
+                        operation=operation,
+                        job_id=job.job_id,
+                        request=request,
+                        output_dir=output_dir,
+                    )
+                except ModelOperationError as exc:
+                    self._job_registry.fail(job.job_id, exc.code, exc.message)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        failed=maintenance_pb2.ConvertFailed(
+                            error=common_pb2.ErrorStatus(
+                                code=exc.code,
+                                message=exc.message,
+                                retriable=exc.retriable,
+                                details=exc.details,
+                            )
+                        )
+                    )
+                    return
+
+                for stage, pct in result["progress_events"]:
+                    self._job_registry.progress(job.job_id, stage, pct)
+                    yield maintenance_pb2.ConvertModelEvent(
+                        progress=maintenance_pb2.ConvertProgress(stage=stage, pct=pct)
+                    )
+                manifest_payload = result["manifest"]
+                manifest_json = json.dumps(manifest_payload, sort_keys=True)
+                artifact_path = output_dir / f"{operation}.json"
+                artifact_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
+                self._job_registry.attach_manifest(job.job_id, manifest_json)
+                if request.generate_manifest:
+                    yield maintenance_pb2.ConvertModelEvent(
+                        manifest=maintenance_pb2.ConvertManifest(manifest_json=manifest_json)
+                    )
+                completed_output_path = str(result.get("output_path") or artifact_path)
+                self._job_registry.complete(job.job_id, completed_output_path)
+                yield maintenance_pb2.ConvertModelEvent(
+                    completed=maintenance_pb2.ConvertCompleted(output_path=completed_output_path)
+                )
+                return
 
             if operation == "quantize":
                 stage_sequence = [
@@ -1724,6 +1773,9 @@ class MaintenanceCore:
             "activate_adapter": "activate_adapter.derived_model.json",
             "remove_derived_model": "remove_derived_model.lifecycle.json",
             "registry_snapshot": "registry_snapshot.json",
+            "dataset_snapshot": "dataset_snapshot.json",
+            "dataset_download": "dataset_download.json",
+            "dataset_remove": "dataset_remove.json",
         }[operation]
         return output_dir / filename
 
@@ -1768,7 +1820,83 @@ class MaintenanceCore:
                 or request.source_model
                 or operation
             )
+        if operation in {"dataset_download", "dataset_remove", "dataset_snapshot"}:
+            return (
+                request.ext.get("melix.hf_dataset_repo_id", "")
+                or request.ext.get("repo_id", "")
+                or request.source_model
+                or operation
+            )
         return request.source_model or operation
+
+    def _run_dataset_operation(
+        self,
+        *,
+        operation: str,
+        job_id: str,
+        request: maintenance_pb2.ConvertModelRequest,
+        output_dir: Path,
+    ) -> dict[str, Any]:
+        ext = dict(request.ext)
+        progress_events: list[tuple[str, float]] = [("prepare", 0.1)]
+        if operation == "dataset_snapshot":
+            repo_id = ext.get("melix.hf_dataset_repo_id", "").strip() or ext.get("repo_id", "").strip()
+            revision = ext.get("melix.hf_revision", "").strip() or ext.get("revision", "").strip()
+            manifest = {
+                "schema_version": "melix.dataset_operation.v1",
+                "operation": operation,
+                "job_id": job_id,
+                "source_model": request.source_model,
+                "output_dir": str(output_dir),
+                "dataset_registry": self._dataset_catalog.registry_snapshot_payload(
+                    repo_id=repo_id,
+                    revision=revision,
+                ),
+            }
+            progress_events.append(("scan", 1.0))
+            return {
+                "manifest": manifest,
+                "progress_events": progress_events,
+                "output_path": output_dir / "dataset_snapshot.json",
+            }
+
+        if operation == "dataset_download":
+            repo_id = ext.get("melix.hf_dataset_repo_id", "").strip() or request.source_model.strip()
+            revision = ext.get("melix.hf_revision", "").strip() or "main"
+            result = self._dataset_catalog.download_hf_dataset(
+                repo_id=repo_id,
+                revision=revision,
+                hf_token=ext.get("melix.hf_token", "").strip() or ext.get("hf_token", "").strip(),
+                job_id=job_id,
+                output_dir=output_dir,
+            )
+            progress_events.append(("materialize", 1.0))
+            return {
+                "manifest": result.manifest,
+                "progress_events": progress_events,
+                "output_path": result.snapshot.snapshot_path,
+            }
+
+        if operation == "dataset_remove":
+            repo_id = ext.get("melix.hf_dataset_repo_id", "").strip() or ext.get("repo_id", "").strip() or request.source_model.strip()
+            result = self._dataset_catalog.remove_hf_dataset_snapshot(
+                repo_id=repo_id,
+                revision=ext.get("melix.hf_revision", "").strip() or ext.get("revision", "").strip(),
+                snapshot_id=ext.get("melix.hf_snapshot_id", "").strip() or ext.get("snapshot_id", "").strip(),
+                job_id=job_id,
+                output_dir=output_dir,
+            )
+            progress_events.append(("remove_snapshot", 1.0))
+            return {
+                "manifest": result.manifest,
+                "progress_events": progress_events,
+                "output_path": output_dir / "dataset_remove.json",
+            }
+
+        raise ModelOperationError(
+            code="invalid_argument",
+            message=f"Unsupported dataset operation: {operation}",
+        )
 
     def _run_specialized_model_operation(
         self,

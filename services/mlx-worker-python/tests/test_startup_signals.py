@@ -4,6 +4,9 @@ import json
 import socket
 from pathlib import Path
 
+import pytest
+
+import worker.productization.startup_signals as startup_signals_module
 from worker.productization.startup_signals import (
     _read_last_nonempty_line,
     check_for_updates,
@@ -171,6 +174,70 @@ def test_classify_startup_failure_reports_worker_crash(tmp_path: Path) -> None:
     assert report.classification == "worker_crash"
     assert "worker" in report.summary.lower()
     assert "Traceback" in report.log_excerpt
+
+
+def test_classify_startup_failure_skips_worker_logs_for_host_port_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control_plane_stderr = tmp_path / "control-plane.stderr.log"
+    worker_stderr = tmp_path / "python-worker.stderr.log"
+    control_plane_stderr.write_text("bind() failed: Address already in use\n", encoding="utf-8")
+    worker_stderr.write_text("Traceback: worker should not be inspected\n", encoding="utf-8")
+    read_paths: list[str] = []
+
+    def tracked_read(path: Path, *, chunk_size: int = 8192) -> str:
+        read_paths.append(path.name)
+        if path == worker_stderr:
+            raise AssertionError("worker log should not be read for host port conflicts")
+        return _read_last_nonempty_line(path, chunk_size=chunk_size)
+
+    monkeypatch.setattr(startup_signals_module, "_read_last_nonempty_line", tracked_read)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+            "control_plane_stderr_path": str(control_plane_stderr),
+            "python_worker_stderr_path": str(worker_stderr),
+        },
+        error_text="handshake failed",
+    )
+
+    assert report.classification == "host_port_conflict"
+    assert read_paths == ["control-plane.stderr.log"]
+
+
+def test_classify_startup_failure_skips_worker_logs_for_control_plane_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control_plane_stderr = tmp_path / "control-plane.stderr.log"
+    worker_stderr = tmp_path / "python-worker.stderr.log"
+    control_plane_stderr.write_text("fatal error: crashed\n", encoding="utf-8")
+    worker_stderr.write_text("Traceback: worker should not be inspected\n", encoding="utf-8")
+    read_paths: list[str] = []
+
+    def tracked_read(path: Path, *, chunk_size: int = 8192) -> str:
+        read_paths.append(path.name)
+        if path == worker_stderr:
+            raise AssertionError("worker log should not be read for control-plane crashes")
+        return _read_last_nonempty_line(path, chunk_size=chunk_size)
+
+    monkeypatch.setattr(startup_signals_module, "_read_last_nonempty_line", tracked_read)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+            "control_plane_stderr_path": str(control_plane_stderr),
+            "python_worker_stderr_path": str(worker_stderr),
+        },
+        error_text="handshake failed",
+    )
+
+    assert report.classification == "control_plane_crash"
+    assert read_paths == ["control-plane.stderr.log"]
 
 
 def test_classify_startup_failure_reports_control_plane_crash(tmp_path: Path) -> None:
