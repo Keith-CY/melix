@@ -52,6 +52,7 @@ class AudioRuntimeLoadedModel:
     voice_mode: str = ""
     supports_instructions: bool = False
     output_formats: tuple[str, ...] = ()
+    generate_parameter_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

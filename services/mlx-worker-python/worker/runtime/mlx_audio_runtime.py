@@ -241,9 +241,9 @@ class MLXAudioSpeechRuntime:
         except TypeError:
             model = load_model(model_spec.model_path)
 
-        params = signature(model.generate).parameters
-        supports_voice = "voice" in params
-        supports_instructions = "instruct" in params
+        generate_parameter_names = tuple(signature(model.generate).parameters)
+        supports_voice = "voice" in generate_parameter_names
+        supports_instructions = "instruct" in generate_parameter_names
         if supports_voice and supports_instructions:
             voice_mode = "hybrid"
         elif supports_instructions:
@@ -261,6 +261,7 @@ class MLXAudioSpeechRuntime:
             voice_mode=voice_mode,
             supports_instructions=supports_instructions,
             output_formats=("wav",),
+            generate_parameter_names=generate_parameter_names,
         )
 
     def estimate_resident_bytes(self, model_spec) -> int:
@@ -271,7 +272,7 @@ class MLXAudioSpeechRuntime:
         if requested_format != "wav":
             raise ValueError("mlx-audio speech backend only supports wav output.")
 
-        params = signature(loaded_model.model.generate).parameters
+        params = loaded_model.generate_parameter_names or tuple(signature(loaded_model.model.generate).parameters)
         kwargs = {
             "text": request.input,
             "verbose": False,

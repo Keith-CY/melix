@@ -1909,5 +1909,36 @@
         "warn_pct": 5.0
       }
     ]
+  },
+  {
+    "id": "mlx-audio-generate-signature-cache",
+    "name": "MLX audio generate signature cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py",
+      "services/mlx-worker-python/worker/runtime/audio_runtime_protocols.py",
+      "services/mlx-worker-python/tests/test_mlx_audio_runtime.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/mlx_audio_generate_signature_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_mlx_audio_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_mlx_audio_signature_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mlx_audio_generate_signature_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_mlx_audio_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_mlx_audio_signature_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mlx_audio_generate_signature_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py services/mlx-worker-python/worker/runtime/audio_runtime_protocols.py services/mlx-worker-python/tests/test_mlx_audio_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/mlx_audio_generate_signature_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/mlx_audio_generate_signature_probe.py ]; then python scripts/mlx_audio_generate_signature_probe.py; else python3 -c \"import base64; exec(base64.b64decode(\\\"CmltcG9ydCBqc29uCmltcG9ydCBvcwppbXBvcnQgc3RhdGlzdGljcwppbXBvcnQgc3lzCmltcG9ydCB0aW1lCmZyb20gZGF0YWNsYXNzZXMgaW1wb3J0IGZpZWxkcwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKcmVwb19yb290ID0gUGF0aC5jd2QoKQpzeXMucGF0aC5pbnNlcnQoMCwgc3RyKHJlcG9fcm9vdCkpCnN5cy5wYXRoLmluc2VydCgwLCBzdHIocmVwb19yb290IC8gInNlcnZpY2VzL21seC13b3JrZXItcHl0aG9uIikpCmZyb20gd29ya2VyLnJ1bnRpbWUgaW1wb3J0IG1seF9hdWRpb19ydW50aW1lCmZyb20gd29ya2VyLnJ1bnRpbWUuYXVkaW9fcnVudGltZV9wcm90b2NvbHMgaW1wb3J0IEF1ZGlvUnVudGltZUxvYWRlZE1vZGVsCmZyb20gcGFja2FnZXMucHJvdG9jb2wucHl0aG9uLndvcmtlci52MSBpbXBvcnQgaW5mZXJlbmNlX3BiMgpjbGFzcyBGYWtlQ2h1bms6CiAgICBkZWYgX19pbml0X18oc2VsZik6CiAgICAgICAgc2VsZi5hdWRpbyA9IFswLjEsIC0wLjEsIDAuMF0KICAgICAgICBzZWxmLnNhbXBsZV9yYXRlID0gMjQwMDAKY2xhc3MgRmFrZVRUU01vZGVsOgogICAgZGVmIGdlbmVyYXRlKHNlbGYsIHRleHQsIHZvaWNlPU5vbmUsIGluc3RydWN0PU5vbmUsIHNwZWVkPTEuMCwgdmVyYm9zZT1GYWxzZSk6CiAgICAgICAgXyA9ICh0ZXh0LCB2b2ljZSwgaW5zdHJ1Y3QsIHNwZWVkLCB2ZXJib3NlKQogICAgICAgIHlpZWxkIEZha2VDaHVuaygpCmRlZiBsb2FkZWRfbW9kZWwobW9kZWwpOgogICAga3dhcmdzID0geyJiYWNrZW5kX2lkIjogIm1seF9hdWRpby50dHMiLCAiZmFtaWx5X2lkIjogInF3ZW4zLXR0cyIsICJydW50aW1lX25hbWUiOiAibWx4LWF1ZGlvLXR0cyIsICJtb2RlbCI6IG1vZGVsLCAidm9pY2VfbW9kZSI6ICJoeWJyaWQiLCAic3VwcG9ydHNfaW5zdHJ1Y3Rpb25zIjogVHJ1ZSwgIm91dHB1dF9mb3JtYXRzIjogKCJ3YXYiLCl9CiAgICBmaWVsZF9uYW1lcyA9IHtmaWVsZC5uYW1lIGZvciBmaWVsZCBpbiBmaWVsZHMoQXVkaW9SdW50aW1lTG9hZGVkTW9kZWwpfQogICAgaWYgImdlbmVyYXRlX3BhcmFtZXRlcl9uYW1lcyIgaW4gZmllbGRfbmFtZXM6CiAgICAgICAga3dhcmdzWyJnZW5lcmF0ZV9wYXJhbWV0ZXJfbmFtZXMiXSA9IHR1cGxlKG1seF9hdWRpb19ydW50aW1lLnNpZ25hdHVyZShtb2RlbC5nZW5lcmF0ZSkucGFyYW1ldGVycykKICAgIHJldHVybiBBdWRpb1J1bnRpbWVMb2FkZWRNb2RlbCgqKmt3YXJncykKaXRlcmF0aW9ucyA9IGludChvcy5lbnZpcm9uLmdldCgiTUVMSVhfTUxYX0FVRElPX1NJR05BVFVSRV9QUk9CRV9JVEVSQVRJT05TIiwgIjUwMDAiKSkKc2FtcGxlX2NvdW50ID0gaW50KG9zLmVudmlyb24uZ2V0KCJNRUxJWF9NTFhfQVVESU9fU0lHTkFUVVJFX1BST0JFX1NBTVBMRVMiLCAiNSIpKQplbGFwc2VkX3NhbXBsZXMgPSBbXQpzaWduYXR1cmVfY2FsbF9zYW1wbGVzID0gW10KYnl0ZV9jb3VudCA9IDAKb3JpZ2luYWxfc2lnbmF0dXJlID0gbWx4X2F1ZGlvX3J1bnRpbWUuc2lnbmF0dXJlCmZvciBfIGluIHJhbmdlKHNhbXBsZV9jb3VudCk6CiAgICBzaWduYXR1cmVfY2FsbHMgPSAwCiAgICBkZWYgdHJhY2tlZF9zaWduYXR1cmUoY2FsbGFibGVfb2JqKToKICAgICAgICBub25sb2NhbF9zaWduYXR1cmVfY2FsbHNbMF0gKz0gMQogICAgICAgIHJldHVybiBvcmlnaW5hbF9zaWduYXR1cmUoY2FsbGFibGVfb2JqKQogICAgbm9ubG9jYWxfc2lnbmF0dXJlX2NhbGxzID0gWzBdCiAgICBtb2RlbCA9IEZha2VUVFNNb2RlbCgpCiAgICBtbHhfYXVkaW9fcnVudGltZS5zaWduYXR1cmUgPSB0cmFja2VkX3NpZ25hdHVyZQogICAgdHJ5OgogICAgICAgIGxvYWRlZCA9IGxvYWRlZF9tb2RlbChtb2RlbCkKICAgICAgICBydW50aW1lID0gbWx4X2F1ZGlvX3J1bnRpbWUuTUxYQXVkaW9TcGVlY2hSdW50aW1lKCkKICAgICAgICByZXF1ZXN0ID0gaW5mZXJlbmNlX3BiMi5TcGVha1JlcXVlc3QoaW5wdXQ9InNpZ25hdHVyZSBjYWNoZSBwcm9iZSIsIHZvaWNlPSJhbGxveSIsIGluc3RydWN0aW9ucz0iU3BlYWsgY2FsbWx5LiIsIGZvcm1hdD0id2F2IikKICAgICAgICBub25sb2NhbF9zaWduYXR1cmVfY2FsbHNbMF0gPSAwCiAgICAgICAgc3RhcnRlZF9hdCA9IHRpbWUucGVyZl9jb3VudGVyKCkKICAgICAgICBmb3IgX2luZGV4IGluIHJhbmdlKGl0ZXJhdGlvbnMpOgogICAgICAgICAgICByZXN1bHQgPSBydW50aW1lLnNwZWFrKGxvYWRlZCwgcmVxdWVzdCkKICAgICAgICAgICAgYnl0ZV9jb3VudCArPSBsZW4ocmVzdWx0LmF1ZGlvX2J5dGVzKQogICAgICAgIGVsYXBzZWRfc2FtcGxlcy5hcHBlbmQoKHRpbWUucGVyZl9jb3VudGVyKCkgLSBzdGFydGVkX2F0KSAqIDEwMDAuMCkKICAgICAgICBzaWduYXR1cmVfY2FsbF9zYW1wbGVzLmFwcGVuZChmbG9hdChub25sb2NhbF9zaWduYXR1cmVfY2FsbHNbMF0pKQogICAgZmluYWxseToKICAgICAgICBtbHhfYXVkaW9fcnVudGltZS5zaWduYXR1cmUgPSBvcmlnaW5hbF9zaWduYXR1cmUKaWYgYnl0ZV9jb3VudCA8PSAwOgogICAgcmFpc2UgUnVudGltZUVycm9yKCJtbHgtYXVkaW8gc2lnbmF0dXJlIHByb2JlIHByb2R1Y2VkIG5vIGF1ZGlvIGJ5dGVzIikKcHJpbnQoanNvbi5kdW1wcyh7ImVsYXBzZWRfbXNfbWVhbiI6IHN0YXRpc3RpY3MuZm1lYW4oZWxhcHNlZF9zYW1wbGVzKSwgInNpZ25hdHVyZV9jYWxsc19tZWFuIjogc3RhdGlzdGljcy5mbWVhbihzaWduYXR1cmVfY2FsbF9zYW1wbGVzKSwgIml0ZXJhdGlvbnNfcGVyX3NhbXBsZSI6IGZsb2F0KGl0ZXJhdGlvbnMpLCAic2FtcGxlX2NvdW50IjogZmxvYXQoc2FtcGxlX2NvdW50KSwgImF1ZGlvX2J5dGVzX3RvdGFsIjogZmxvYXQoYnl0ZV9jb3VudCl9LCBzb3J0X2tleXM9VHJ1ZSkpCg==\\\"))\"; fi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "signature_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "informational"
+      }
+    ]
   }
 ]

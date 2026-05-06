@@ -143,6 +143,16 @@ def test_scope_report_selects_mlx_audio_wav_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "mlx-audio-wav-streaming-pcm"
 
 
+def test_scope_report_selects_mlx_audio_signature_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-audio-generate-signature-cache"
+
+
 def test_scope_report_selects_only_matching_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1013,6 +1023,28 @@ def test_mlx_audio_wav_streaming_probe_script_emits_metrics(
     assert metrics["sample_count"] == 240000.0
     assert metrics["wav_bytes"] == 480044.0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_mlx_audio_generate_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MLX_AUDIO_SIGNATURE_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_MLX_AUDIO_SIGNATURE_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/mlx_audio_generate_signature_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations_per_sample"] == 3.0
+    assert metrics["signature_calls_mean"] == 0.0
+    assert metrics["audio_bytes_total"] > 0
     assert metrics["elapsed_ms_mean"] >= 0
 
 
