@@ -236,10 +236,20 @@ def test_next_cursor_from_link_extracts_encoded_next_cursor_without_full_query_p
     assert hub_catalog_module._next_cursor_from_link(link_header) == "abc/def ghi"
 
 
+def test_next_cursor_from_link_scans_segments_without_splitting_on_url_commas() -> None:
+    link_header = (
+        '<https://huggingface.co/api/models?cursor=prev>; rel="prev", '
+        '<https://huggingface.co/api/models?note=a,b&cursor=page%2C2&full=true>; rel="next"'
+    )
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "page,2"
+
+
 def test_next_cursor_from_link_returns_empty_for_missing_or_malformed_next_cursor() -> None:
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor=prev>; rel="prev"') == ""
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models>; rel="next"') == ""
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?limit=10>; rel="next"') == ""
+    assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor>; rel="next"') == ""
     assert hub_catalog_module._next_cursor_from_link('https://huggingface.co/api/models?cursor=broken; rel="next"') == ""
 
 
