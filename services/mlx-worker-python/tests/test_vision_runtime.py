@@ -1199,6 +1199,90 @@ def test_prepare_vision_request_accepts_remote_http_inputs(monkeypatch: pytest.M
     assert request.preprocess_input_bytes == len(b"remote diagram text")
 
 
+def test_prepare_vision_request_parses_each_image_uri_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image = tmp_path / "diagram.txt"
+    image.write_text("diagram text")
+    original_urlparse = multimodal_preprocessing.urlparse
+    parse_calls: list[str] = []
+
+    def counting_urlparse(uri: str):
+        parse_calls.append(uri)
+        return original_urlparse(uri)
+
+    monkeypatch.setattr(multimodal_preprocessing, "urlparse", counting_urlparse)
+
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Read this image."),
+                    common_pb2.MessagePart(
+                        image_uri=str(image),
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_URI,
+                        ),
+                    ),
+                    common_pb2.MessagePart(
+                        image_uri=image.as_uri(),
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_URI,
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    assert [prepared.filename for prepared in request.images] == [image.name, image.name]
+    assert parse_calls == [str(image), image.as_uri()]
+
+
+def test_prepare_vision_request_parses_remote_image_uri_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeHeaders:
+        def get_content_type(self) -> str:
+            return "image/jpeg"
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"remote image bytes"
+
+    original_urlparse = multimodal_preprocessing.urlparse
+    parse_calls: list[str] = []
+
+    def counting_urlparse(uri: str):
+        parse_calls.append(uri)
+        return original_urlparse(uri)
+
+    monkeypatch.setattr(multimodal_preprocessing, "urlparse", counting_urlparse)
+    monkeypatch.setattr(multimodal_preprocessing, "urlopen", lambda url, timeout=5.0: FakeResponse())
+
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(image_uri="https://example.com/fixtures/photo.jpg")],
+            )
+        ]
+    )
+
+    assert request.images[0].filename == "photo.jpg"
+    assert request.images[0].format == "jpg"
+    assert parse_calls == ["https://example.com/fixtures/photo.jpg"]
+
+
 def test_prepare_vision_request_hash_changes_when_prompt_or_image_changes(tmp_path: Path) -> None:
     image_a = tmp_path / "image-a.txt"
     image_b = tmp_path / "image-b.txt"
