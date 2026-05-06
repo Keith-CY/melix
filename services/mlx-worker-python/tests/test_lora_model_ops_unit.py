@@ -247,6 +247,23 @@ def test_mlx_lm_runner_alignment_rl_preserves_source_adapter_artifacts(tmp_path:
     assert result.metrics.resume_source_path == str(source_weights)
 
 
+def test_alignment_rl_rejects_missing_source_adapter_weights(tmp_path: Path) -> None:
+    from worker.model_ops.rl_alignment_training import _alignment_adapter_weights_bytes
+
+    missing_weights = tmp_path / "missing-adapters.safetensors"
+    with pytest.raises(ModelOperationError) as exc:
+        _alignment_adapter_weights_bytes(
+            source_weights_path=missing_weights,
+            job_id="train-grpo-missing-source",
+            base_model_id="melix-dev-text",
+            alignment_algorithm="grpo",
+            trace_rows=[],
+        )
+
+    assert exc.value.code == "invalid_resume_source"
+    assert exc.value.details["source_weights_path"] == str(missing_weights)
+
+
 def test_mlx_lm_runner_generates_grpo_candidates_with_policy_runtime(tmp_path: Path) -> None:
     class ScriptedPolicyBackend:
         runtime_name = "scripted-policy-runtime"

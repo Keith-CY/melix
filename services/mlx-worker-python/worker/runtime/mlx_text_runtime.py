@@ -68,6 +68,20 @@ def _normalized_ext_value(model_spec, key: str) -> str:
     return str(getattr(model_spec, "ext", {}).get(key, "") or "").strip()
 
 
+def _reward_score_ext(
+    loaded_model: Any,
+    execution_ext: dict[str, str] | None,
+) -> dict[str, str]:
+    ext: dict[str, str] = {}
+    if isinstance(loaded_model, dict):
+        for key in ("model_ext", "metadata", "ext"):
+            if isinstance(raw_ext := loaded_model.get(key), dict):
+                ext.update({str(raw_key): str(raw_value) for raw_key, raw_value in raw_ext.items()})
+    if execution_ext:
+        ext.update({str(raw_key): str(raw_value) for raw_key, raw_value in execution_ext.items()})
+    return ext
+
+
 def _reward_score_prompt(
     loaded_model: Any,
     *,
@@ -75,14 +89,7 @@ def _reward_score_prompt(
     response: str,
     execution_ext: dict[str, str] | None,
 ) -> str:
-    ext: dict[str, str] = {}
-    if isinstance(loaded_model, dict):
-        for key in ("model_ext", "metadata", "ext"):
-            if isinstance(raw_ext := loaded_model.get(key), dict):
-                ext.update({str(raw_key): str(raw_value) for raw_key, raw_value in raw_ext.items()})
-    if execution_ext:
-        ext.update(execution_ext)
-
+    ext = _reward_score_ext(loaded_model, execution_ext)
     template = (
         ext.get("melix.reward_model.score_prompt_template")
         or ext.get("melix.reward_model.scoring_prompt_template")
@@ -98,6 +105,24 @@ def _reward_score_prompt(
         f"Assistant response:\n{response}\n\n"
         "Score:"
     )
+
+
+def _reward_score_max_tokens(
+    loaded_model: Any,
+    execution_ext: dict[str, str] | None,
+) -> int:
+    ext = _reward_score_ext(loaded_model, execution_ext)
+    for key in ("melix.reward_model.score_max_tokens", "melix.reward_model.max_tokens"):
+        raw_value = str(ext.get(key, "") or "").strip()
+        if not raw_value:
+            continue
+        try:
+            value = int(raw_value)
+        except ValueError:
+            continue
+        if value > 0:
+            return value
+    return 8
 
 
 def _parse_reward_score_text(text: str) -> float:
@@ -446,7 +471,7 @@ class AutoMLXBackend:
                 loaded_model["model"],
                 loaded_model["tokenizer"],
                 score_prompt,
-                max_tokens=8,
+                max_tokens=_reward_score_max_tokens(loaded_model, execution_ext),
                 sampler=sampler,
             )
         )

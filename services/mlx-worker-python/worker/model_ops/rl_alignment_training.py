@@ -243,8 +243,12 @@ def _alignment_adapter_weights_bytes(
     if source_weights_path is not None:
         try:
             return source_weights_path.read_bytes()
-        except OSError:
-            pass
+        except OSError as exc:
+            raise ModelOperationError(
+                code="invalid_resume_source",
+                message="Source adapter weights are missing or unreadable.",
+                details={"source_weights_path": str(source_weights_path)},
+            ) from exc
     weights_payload = {
         "schema_version": "melix.scored_alignment_adapter.v1",
         "job_id": job_id,

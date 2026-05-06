@@ -265,6 +265,7 @@ def test_auto_backend_scores_reward_responses_with_mlx_generation() -> None:
     model_spec.ext["melix.reward_model.score_prompt_template"] = (
         "Prompt={prompt}\nResponse={response}\nReturn score:"
     )
+    model_spec.ext["melix.reward_model.score_max_tokens"] = "12"
     loaded_model = backend.load_model(model_spec)
 
     score = backend.score_response(loaded_model, "Explain safely.", "Helpful answer.")
@@ -276,7 +277,7 @@ def test_auto_backend_scores_reward_responses_with_mlx_generation() -> None:
         "model": loaded_model["model"],
         "tokenizer": loaded_model["tokenizer"],
         "prompt": "Prompt=Explain safely.\nResponse=Helpful answer.\nReturn score:",
-        "max_tokens": 8,
+        "max_tokens": 12,
         "sampler": "score-sampler",
     }
 
@@ -300,10 +301,20 @@ def test_reward_score_prompt_and_parser_cover_fallbacks() -> None:
     )
     assert "Explain safely." in default_prompt
     assert "Helpful answer." in default_prompt
+    assert mlx_text_runtime_module._reward_score_max_tokens(
+        {"metadata": {"melix.reward_model.max_tokens": "12"}},
+        execution_ext={"melix.reward_model.score_max_tokens": "18"},
+    ) == 18
+    assert mlx_text_runtime_module._reward_score_max_tokens(
+        {"metadata": {"melix.reward_model.score_max_tokens": "not-an-int"}},
+        execution_ext=None,
+    ) == 8
     assert mlx_text_runtime_module._parse_reward_score_text("0.42") == pytest.approx(0.42)
 
     with pytest.raises(RuntimeUnavailableError):
         mlx_text_runtime_module._parse_reward_score_text("no numeric score")
+    with pytest.raises(RuntimeUnavailableError):
+        mlx_text_runtime_module._parse_reward_score_text("-0.5")
 
 
 def test_auto_backend_score_response_reports_unavailable_runtime() -> None:
