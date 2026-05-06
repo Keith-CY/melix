@@ -27,7 +27,7 @@ def main() -> int:
     original_signature = inspect.signature
 
     for _ in range(sample_count):
-        runtime_utils.clear_callable_accepts_kwarg_cache()
+        runtime_utils.clear_callable_kwarg_signature_cache()
         signature_calls = 0
 
         def tracked_signature(callable_obj: Any) -> inspect.Signature:
@@ -45,7 +45,7 @@ def main() -> int:
         signature_call_samples.append(signature_calls)
 
     runtime_utils.inspect.signature = original_signature
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
     metrics = {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),

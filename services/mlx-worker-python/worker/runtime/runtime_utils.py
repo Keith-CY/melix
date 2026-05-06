@@ -10,11 +10,11 @@ from typing import Any
 @dataclass(frozen=True)
 class CallableKwargSignature:
     parameter_names: tuple[str, ...]
-    declared_kwargs: frozenset[str]
+    keyword_accessible_params: frozenset[str]
     accepts_var_keyword: bool
 
     def declares(self, keyword: str) -> bool:
-        return keyword in self.declared_kwargs
+        return keyword in self.keyword_accessible_params
 
     def accepts(self, keyword: str) -> bool:
         return self.declares(keyword) or self.accepts_var_keyword
@@ -33,7 +33,7 @@ def _callable_kwarg_signature_uncached(
     except (TypeError, ValueError):
         return _EMPTY_KWARG_SIGNATURE
 
-    declared_kwargs: set[str] = set()
+    keyword_accessible_params: set[str] = set()
     parameter_names: list[str] = []
     accepts_var_keyword = False
     for index, (name, parameter) in enumerate(signature.parameters.items()):
@@ -45,9 +45,13 @@ def _callable_kwarg_signature_uncached(
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
             inspect.Parameter.KEYWORD_ONLY,
         ):
-            declared_kwargs.add(name)
+            keyword_accessible_params.add(name)
             parameter_names.append(name)
-    return CallableKwargSignature(tuple(parameter_names), frozenset(declared_kwargs), accepts_var_keyword)
+    return CallableKwargSignature(
+        tuple(parameter_names),
+        frozenset(keyword_accessible_params),
+        accepts_var_keyword,
+    )
 
 
 def _callable_cache_target(callable_obj: Any) -> tuple[Any, bool]:
@@ -96,7 +100,7 @@ def first_declared_kwarg(callable_obj: Any, keywords: tuple[str, ...]) -> str:
     return ""
 
 
-def clear_callable_accepts_kwarg_cache() -> None:
+def clear_callable_kwarg_signature_cache() -> None:
     _callable_kwarg_signature_cached.cache_clear()
 
 

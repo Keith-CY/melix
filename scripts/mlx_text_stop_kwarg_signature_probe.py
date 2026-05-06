@@ -67,7 +67,7 @@ def main() -> int:
 
     try:
         for _ in range(sample_count):
-            runtime_utils.clear_callable_accepts_kwarg_cache()
+            runtime_utils.clear_callable_kwarg_signature_cache()
             signature_calls = 0
             stream_signature_calls = 0
 
@@ -100,7 +100,7 @@ def main() -> int:
         if hasattr(mlx_text_runtime, "inspect"):
             mlx_text_runtime.inspect.signature = original_text_signature
         inspect.signature = original_signature
-        runtime_utils.clear_callable_accepts_kwarg_cache()
+        runtime_utils.clear_callable_kwarg_signature_cache()
 
     metrics = {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),

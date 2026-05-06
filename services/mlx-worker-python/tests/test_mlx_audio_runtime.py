@@ -212,7 +212,7 @@ def test_mlx_audio_speech_runtime_reuses_generate_signature_from_load(
     from worker.runtime.mlx_audio_runtime import MLXAudioSpeechRuntime
 
     signature_calls = 0
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
     original_signature = runtime_utils.inspect.signature
 
     class FakeChunk:
@@ -239,7 +239,7 @@ def test_mlx_audio_speech_runtime_reuses_generate_signature_from_load(
     loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
     assert loaded.generate_parameter_names == ("text", "voice", "instruct", "speed", "verbose")
     assert signature_calls == 1
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
     for index in range(3):
         result = runtime.speak(
@@ -280,7 +280,7 @@ def test_mlx_audio_speech_runtime_reuses_cached_generate_signature(
         return FakeTTSModel()
 
     signature_calls = 0
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
     original_signature = runtime_utils.inspect.signature
 
     def tracked_signature(callable_object):
@@ -323,7 +323,7 @@ def test_mlx_audio_speech_runtime_reuses_cached_generate_signature(
             "verbose": False,
         },
     ]
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
 
 def test_mlx_audio_speech_runtime_preserves_signature_fallback_for_legacy_loaded_models(
@@ -338,12 +338,18 @@ def test_mlx_audio_speech_runtime_preserves_signature_fallback_for_legacy_loaded
             self.audio = audio
             self.sample_rate = 24_000
 
+    captured_calls: list[dict[str, object]] = []
+
     class FakeTTSModel:
         def generate(self, text, voice=None, instruct=None, verbose=False):
-            _ = text
-            _ = voice
-            _ = instruct
-            _ = verbose
+            captured_calls.append(
+                {
+                    "text": text,
+                    "voice": voice,
+                    "instruct": instruct,
+                    "verbose": verbose,
+                }
+            )
             yield FakeChunk([0.1, -0.1])
 
     def fake_load_model(model_path: str, strict: bool = True):
@@ -352,7 +358,7 @@ def test_mlx_audio_speech_runtime_preserves_signature_fallback_for_legacy_loaded
         return FakeTTSModel()
 
     signature_calls = 0
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
     original_signature = runtime_utils.inspect.signature
 
     def tracked_signature(callable_object):
@@ -367,6 +373,8 @@ def test_mlx_audio_speech_runtime_preserves_signature_fallback_for_legacy_loaded
     loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
     legacy_loaded = replace(
         loaded,
+        voice_mode="",
+        supports_instructions=False,
         speech_generate_parameters=frozenset(),
         generate_parameter_names=(),
     )
@@ -384,7 +392,15 @@ def test_mlx_audio_speech_runtime_preserves_signature_fallback_for_legacy_loaded
 
     assert result.audio_bytes.startswith(b"RIFF")
     assert signature_calls == 1
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    assert captured_calls == [
+        {
+            "text": "legacy cached payload",
+            "voice": "alloy",
+            "instruct": "Speak calmly.",
+            "verbose": False,
+        }
+    ]
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
 
 def test_mlx_audio_speech_runtime_reuses_loaded_signature_metadata_during_speak(
@@ -416,7 +432,7 @@ def test_mlx_audio_speech_runtime_reuses_loaded_signature_metadata_during_speak(
         return FakeTTSModel()
 
     _install_fake_mlx_audio(monkeypatch, tts_loader=fake_load_model)
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
     runtime = MLXAudioSpeechRuntime()
     loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
     monkeypatch.setattr(
@@ -445,12 +461,13 @@ def test_mlx_audio_speech_runtime_reuses_loaded_signature_metadata_during_speak(
             "verbose": False,
         }
     ]
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
 
 def test_mlx_audio_speech_runtime_does_not_treat_variadic_kwargs_as_voice_support(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from worker.runtime import runtime_utils
     from worker.runtime.mlx_audio_runtime import MLXAudioSpeechRuntime
 
     captured_calls: list[dict[str, object]] = []
@@ -478,6 +495,12 @@ def test_mlx_audio_speech_runtime_does_not_treat_variadic_kwargs_as_voice_suppor
     assert loaded.voice_mode == "plain"
     assert loaded.supports_instructions is False
     assert loaded.generate_parameter_names == ()
+
+    monkeypatch.setattr(
+        runtime_utils.inspect,
+        "signature",
+        lambda _callable: pytest.fail("plain voice_mode should skip legacy signature fallback"),
+    )
 
     result = runtime.speak(
         loaded,

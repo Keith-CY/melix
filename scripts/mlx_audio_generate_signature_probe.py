@@ -44,7 +44,7 @@ def _loaded_model(model: FakeTTSModel) -> AudioRuntimeLoadedModel:
     field_names = {field.name for field in fields(AudioRuntimeLoadedModel)}
     generate_signature = runtime_utils.callable_kwarg_signature(model.generate)
     if "speech_generate_parameters" in field_names:
-        kwargs["speech_generate_parameters"] = generate_signature.declared_kwargs
+        kwargs["speech_generate_parameters"] = generate_signature.keyword_accessible_params
     if "generate_parameter_names" in field_names:
         kwargs["generate_parameter_names"] = generate_signature.parameter_names
     return AudioRuntimeLoadedModel(**kwargs)
@@ -59,7 +59,7 @@ def run_probe() -> dict[str, float]:
     original_signature = runtime_utils.inspect.signature
 
     for _ in range(sample_count):
-        runtime_utils.clear_callable_accepts_kwarg_cache()
+        runtime_utils.clear_callable_kwarg_signature_cache()
         signature_calls = 0
 
         def tracked_signature(callable_obj):
@@ -87,7 +87,7 @@ def run_probe() -> dict[str, float]:
             signature_call_samples.append(float(signature_calls))
         finally:
             runtime_utils.inspect.signature = original_signature
-            runtime_utils.clear_callable_accepts_kwarg_cache()
+            runtime_utils.clear_callable_kwarg_signature_cache()
 
     if byte_count <= 0:
         raise RuntimeError("mlx-audio signature probe produced no audio bytes")

@@ -252,7 +252,7 @@ class MLXAudioSpeechRuntime:
 
         generate_signature = callable_kwarg_signature(model.generate)
         generate_parameter_names = generate_signature.parameter_names
-        speech_generate_parameters = generate_signature.declared_kwargs
+        speech_generate_parameters = generate_signature.keyword_accessible_params
         supports_voice = generate_signature.declares("voice")
         supports_instructions = generate_signature.declares("instruct")
         if supports_voice and supports_instructions:
@@ -288,7 +288,11 @@ class MLXAudioSpeechRuntime:
 
         supports_voice = loaded_model.voice_mode in {"hybrid", "named"}
         supports_instructions = loaded_model.supports_instructions
-        if not loaded_model.speech_generate_parameters and not loaded_model.generate_parameter_names:
+        if (
+            not loaded_model.voice_mode
+            and not loaded_model.speech_generate_parameters
+            and not loaded_model.generate_parameter_names
+        ):
             generate_signature = callable_kwarg_signature(loaded_model.model.generate)
             supports_voice = generate_signature.declares("voice")
             supports_instructions = generate_signature.declares("instruct")

@@ -63,7 +63,7 @@ def main() -> None:
 
     runtime_utils.inspect.signature = tracked_signature
     try:
-        runtime_utils.clear_callable_accepts_kwarg_cache()
+        runtime_utils.clear_callable_kwarg_signature_cache()
         loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
         request = inference_pb2.SpeakRequest(
             input="signature reuse probe",
@@ -90,7 +90,7 @@ def main() -> None:
             per_request_signature_calls.append(float(signature_calls - before_calls))
     finally:
         runtime_utils.inspect.signature = original_signature
-        runtime_utils.clear_callable_accepts_kwarg_cache()
+        runtime_utils.clear_callable_kwarg_signature_cache()
 
     print(
         json.dumps(

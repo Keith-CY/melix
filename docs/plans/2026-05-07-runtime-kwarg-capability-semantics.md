@@ -28,7 +28,7 @@ Touched files:
 
 `worker.runtime.runtime_utils` owns a single cached callable kwarg capability analysis result. Runtime callers choose between:
 
-- `callable_declares_kwarg(...)` when a backend library must explicitly understand a keyword.
+- `callable_declares_kwarg(...)` when a backend library must explicitly declare a keyword-accessible parameter.
 - `callable_accepts_kwarg(...)` when forwarding to an adapter that safely accepts arbitrary `**kwargs`.
 
 Text stop-sequence forwarding, VLM MTP/video capability detection, and audio speech parameter detection use the explicit-declaration path. Engine/runtime adapter optional arguments keep using the accept-any-kwargs path.
