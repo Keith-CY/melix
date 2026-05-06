@@ -162,8 +162,9 @@ def test_scope_report_selects_evaluation_probes() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 3
+    assert scope["selected_count"] == 4
     assert probe_ids == {
+        "evaluation-dialogue-diagnostics-top-k",
         "evaluation-job-id-high-water-mark",
         "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
@@ -863,6 +864,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "runtime-utils-kwarg-signature-cache",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
+        "evaluation-dialogue-diagnostics-top-k",
         "evaluation-final-result-materialization-streaming",
         "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
