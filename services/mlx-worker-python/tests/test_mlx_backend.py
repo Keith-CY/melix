@@ -13,6 +13,7 @@ from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime import mlx_text_runtime as mlx_text_runtime_module
+from worker.runtime import runtime_utils
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.mlx_text_runtime import RuntimeUnavailableError, resolve_text_stop_contract
@@ -232,6 +233,52 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].speculative_draft_model_configured is True
     assert chunks[-1].dflash_enabled is True
     assert chunks[-1].dflash_rollback_count == 2
+
+
+def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_utils.clear_callable_accepts_kwarg_cache()
+    signature_calls: dict[str, int] = {}
+    original_signature = runtime_utils.inspect.signature
+
+    def tracked_signature(callable_obj):
+        name = getattr(callable_obj, "__name__", repr(callable_obj))
+        signature_calls[name] = signature_calls.get(name, 0) + 1
+        return original_signature(callable_obj)
+
+    monkeypatch.setattr(runtime_utils.inspect, "signature", tracked_signature)
+
+    def fake_load(model_source: str, **kwargs):
+        _ = (model_source, kwargs)
+        return object(), FakeTokenizer()
+
+    def fake_sampler_factory(*, temp: float, top_p: float, top_k: int):
+        _ = (temp, top_p, top_k)
+        return "fake-sampler"
+
+    seen_stop_values: list[list[str] | None] = []
+
+    def fake_stream_generate(model, tokenizer, prompt: str, max_tokens: int, sampler, *, stop=None):
+        _ = (model, tokenizer, prompt, max_tokens, sampler)
+        seen_stop_values.append(stop)
+        yield FakeGenerationResponse(text="ok", prompt_tokens=1, generation_tokens=1)
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=fake_sampler_factory,
+    )
+    loaded_model = backend.load_model(
+        WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
+    )
+    sampling = common_pb2.SamplingConfig(max_output_tokens=8, stop=["</turn>"])
+
+    for _ in range(2):
+        chunks = list(backend.generate_tokens(loaded_model, "prompt", sampling, Event()))
+        assert [chunk.text for chunk in chunks] == ["ok"]
+
+    assert seen_stop_values == [["</turn>", "</s>"], ["</turn>", "</s>"]]
+    assert signature_calls.get("fake_stream_generate") == 1
+    runtime_utils.clear_callable_accepts_kwarg_cache()
 
 
 def test_auto_backend_scores_reward_responses_with_mlx_generation() -> None:
