@@ -33,11 +33,12 @@ and what remains before the roadmap can be treated as implemented.
   - #442, `Route Issue 365 PTQ through MLX-LM conversion`
   - #446, `Add Issue 365 QAT-aware MLX export`
   - #451, `Issue 365: wire reward runtime scoring`
+  - #457, `Bridge Window acceptance to Issue 365 runtime evidence`
 - Issue comments inspected:
   - 2026-05-04 roadmap gap review comment. Its CPO, GRPO, RLHF,
     `melix.alignment_run.v1`, quantization release-gate, QAT, dataset-contract,
     and `melix alignment train` findings are either covered by the merged PRs
-    above, covered by the open #442/#446/#451 stack, or retained below as
+    above, covered by the open #442/#446/#451/#457 stack, or retained below as
     release/Window/#366 boundary gaps.
 
 ## Prompt-To-Artifact Checklist
@@ -58,10 +59,10 @@ and what remains before the roadmap can be treated as implemented.
 | CLI exposes `melix alignment train` separately from `melix lora train`. | #368 adds parser/runner/codec support and tests. | Implemented on `origin/main`. |
 | CLI supports a full chained workflow across training, alignment, publish/export, quantize, local inference, and eval/bench evidence. | #400 adds `melix pipeline run` routing for post-training steps plus an Issue 365 acceptance bundle harness. The open #442/#446/#451 stack now records a full real-local-runtime bundle at `.runtime/issue365/full-real-runtime-bundle-r2/bundle.json` with `release_ready=true`, `succeeded_count=10`, `failed_count=0`, `blocked_count=0`, and `known_gaps=[]`. | Covered on the open #442/#446/#451 stack; not merged to `origin/main` at this snapshot. |
 | Required CLI chain tests exist for every listed business line. | Existing tests cover focused slices. #400 writes all 10 required chain cases into a machine-readable plan/dry-run matrix and supports `--case-id` subset execution for real-mode runs. The full #451 bundle executed all 10 required cases in `execution_mode=real`. | Covered on the open #442/#446/#451 stack; final status is pending merge and release-evidence publication. |
-| Window UI exposes every CLI business line. | Existing Window routing code and tests expose alignment mode state and forwarding paths. #412 adds a Window PTQ/QAT mode selector and a 10-case Window business-line routing matrix. | Partially covered on `origin/main`. Final real-runtime Window acceptance remains missing. |
-| Window UI acceptance proves every business line is visible, selectable, runnable, and inspectable. | #412 extends the Phase 8 Window UI acceptance bundle with all 10 Issue 365 business lines and records route-level visible/selectable/runnable/inspectable state with `release_ready=false`. | Partially covered on `origin/main`. This is routing/inspectability evidence, not final real local runtime acceptance. |
-| Release evidence separates deterministic/unit/scored-trace results from real local runtime results. | PR bodies and plans label deterministic/scored-trace limitations. #400 adds a bundle schema that marks plan/dry-run evidence as not release-ready and marks missing real-mode prerequisites as blocked rather than successful. The #451 full CLI bundle is explicitly `execution_mode=real`. | Covered for CLI on the open #442/#446/#451 stack. A final consolidated release-evidence package and Window evidence remain missing. |
-| No business line is marked complete when only deterministic evidence exists. | Plans explicitly state remaining gaps, #412 records route-level evidence as `release_ready=false`, and #400's bundle keeps plan/dry-run evidence `release_ready=false` and only permits real-mode release readiness after succeeded real pipeline cases. The #451 full CLI bundle now has succeeded real evidence for every CLI case. | Covered for CLI on the open #442/#446/#451 stack; Window acceptance is still route-level only. |
+| Window UI exposes every CLI business line. | Existing Window routing code and tests expose alignment mode state and forwarding paths. #412 adds a Window PTQ/QAT mode selector and a 10-case Window business-line routing matrix. | Covered on `origin/main` for route-level exposure. |
+| Window UI acceptance proves every business line is visible, selectable, runnable, and inspectable. | #412 extends the Phase 8 Window UI acceptance bundle with all 10 Issue 365 business lines and records route-level visible/selectable/runnable/inspectable state. #457 consumes the #451 CLI bundle and maps each Window business line to the corresponding real CLI case before marking it release-ready. | Covered on the open #457 stack as route-level Window evidence chained to real CLI runtime evidence; not merged to `origin/main`, and not independent Window click-through execution. |
+| Release evidence separates deterministic/unit/scored-trace results from real local runtime results. | PR bodies and plans label deterministic/scored-trace limitations. #400 adds a bundle schema that marks plan/dry-run evidence as not release-ready and marks missing real-mode prerequisites as blocked rather than successful. The #451 full CLI bundle is explicitly `execution_mode=real`, and #457 marks Window release readiness only when the mapped CLI real-runtime case is release-ready. | Covered for CLI and Window-to-CLI readiness on the open #442/#446/#451/#457 stack. A final consolidated release-evidence package remains missing. |
+| No business line is marked complete when only deterministic evidence exists. | Plans explicitly state remaining gaps, #400's bundle keeps plan/dry-run evidence `release_ready=false`, and #457 keeps Window cases non-release-ready unless the mapped CLI bundle is real, top-level release-ready, and the mapped case succeeded and is release-ready. | Covered on the open #442/#446/#451/#457 stack; final status is pending merge and release-evidence publication. |
 
 ## Verified Covered Work
 
@@ -160,10 +161,9 @@ selector beside the existing quantization profile selector, and forwards
 explicit `quantization_mode`, `source_artifact_kind`, and QAT source-artifact
 hints through Window model-operation requests. It also extends the Phase 8
 Window UI acceptance bundle with all 10 Issue 365 business lines and records
-visible/selectable/runnable/inspectable route state for each case while keeping
-`release_ready=false`. This is useful Window routing and inspectability
-evidence, but it intentionally excludes final real-local-runtime Window
-acceptance for every business line.
+visible/selectable/runnable/inspectable route state for each case. The merged
+#412 evidence is useful Window routing and inspectability evidence, but it does
+not independently prove real local runtime readiness.
 
 ## Open Stacked Work With New CLI Evidence
 
@@ -209,24 +209,40 @@ full real-local-runtime CLI acceptance bundle:
 
 This changes the audit posture: the CLI matrix now has passing real local
 runtime evidence on the open stack, but Issue 365 still should not be marked
-implemented until that stack lands, Window real-runtime evidence is addressed,
-and the final release-evidence package is published.
+implemented until that stack lands, Window readiness is tied to the same real
+evidence, and the final release-evidence package is published.
+
+### PR #457: Window Real CLI Evidence Bridge
+
+#457 builds on #451 and maps every Phase 8 Window UI business-line case to the
+corresponding Issue 365 CLI real-runtime case. A Window case is marked
+release-ready only when the consumed CLI bundle has `execution_mode=real`, the
+top-level CLI bundle is `release_ready=true`, and the mapped CLI case is
+`status=succeeded` with `release_ready=true`.
+
+This is useful Window evidence because it keeps route visibility,
+selectability, runnability, and inspectability coupled to the same full real
+CLI bundle instead of treating route evidence as release proof. It still does
+not prove independent Window click-through execution for every business line,
+and it is still open-stack evidence until #457 lands.
 
 ## Missing Completion Items
 
 The objective is not achieved until all of these are implemented and verified:
 
-1. Land the open #442/#446/#451 stack, with green CI and PR evidence kept in
-   sync, so the passing full real CLI bundle is part of the repository history
-   rather than only local stacked-branch evidence.
-2. Window UI runnable and inspectable real-runtime acceptance for every
-   CLI-supported business line. #412 adds route-level matrix evidence, but not
-   final real-runtime acceptance.
+1. Land the open #442/#446/#451/#457 stack, with green CI and PR evidence kept
+   in sync, so the passing full real CLI bundle and Window bridge are part of
+   the repository history rather than only local stacked-branch evidence.
+2. Decide whether #365 requires independent Window click-through execution for
+   every CLI-supported business line. #457 proves Window route evidence chained
+   to real CLI readiness, but not full independent Window execution.
 3. A final populated release evidence bundle that distinguishes:
    - unit tests
    - deterministic fixture tests
    - scored-trace evidence
    - real local runtime evidence
+   - Window route evidence
+   - Window-to-real-CLI readiness evidence
 4. A final #366 boundary statement. #365 can consume a reward-model manifest
    for RLHF lineage, but reward-model training and PPO/reward-guided policy
    optimization remain #366 scope unless the issue owner explicitly expands
@@ -234,11 +250,11 @@ The objective is not achieved until all of these are implemented and verified:
 
 ## Recommended Next Implementation Order
 
-1. Watch and fix CI for #442, #446, and #451; once green, move the stack out of
-   draft and merge in order.
-2. Extend the #412 Window UI acceptance matrix to consume the same
-   real-runtime matrix evidence rather than treating route/screenshot evidence
-   as release readiness.
+1. Watch and fix CI for #442, #446, #451, and #457; once green, move the stack
+   out of draft and merge in order.
+2. After the stack lands, rerun the full real CLI acceptance bundle and the
+   Window bridge from the merged tree rather than relying on stacked-branch
+   evidence.
 3. Publish a final release evidence package that points to the merged unit,
    deterministic, scored-trace, full real CLI, and Window evidence.
 4. Keep #366 reward-model training and PPO/reward-guided policy optimization
@@ -248,8 +264,9 @@ The objective is not achieved until all of these are implemented and verified:
 ## Audit Conclusion
 
 Issue #365 is not complete. The current open stack now has the first passing
-full 10-case real-local-runtime CLI acceptance bundle, but that evidence is not
-merged and Window UI acceptance remains route-level rather than real-runtime.
-This audit must not be used to mark the objective complete until the stack
-lands, final release evidence is published, and the #366 boundary is stated
-without claiming reward-model training or PPO work as complete.
+full 10-case real-local-runtime CLI acceptance bundle plus a Window-to-real-CLI
+readiness bridge, but that evidence is not merged and the final release package
+does not exist yet. This audit must not be used to mark the objective complete
+until the stack lands, merged-tree evidence is rerun, final release evidence is
+published, and the #366 boundary is stated without claiming reward-model
+training or PPO work as complete.
