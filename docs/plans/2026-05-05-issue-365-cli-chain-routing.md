@@ -62,6 +62,13 @@ local runtime acceptance requirements.
   `--local-inference-smoke-mode` and `--local-inference-smoke-prompt` so PTQ
   and QAT acceptance can request the quantization pipeline's own typed
   `runtime_generate` local inference evidence.
+- Add public `melix quantize` and pipeline routing for `--quantization-backend`
+  plus the MLX-LM quantization knobs, and route the PTQ acceptance case through
+  a fused merged export with `quantization_backend=mlx_lm_convert` instead of
+  exercising only the manifest-only quantization path.
+- Publish the PTQ fused derived model from
+  `lora.activate.result.derived_model_path` via `merged_model_path` so the real
+  pipeline uses the activation result field that the runtime actually returns.
 - Route PTQ/QAT acceptance through the quantized bundle manifest's
   `local_inference_smoke` and `release_gate.local_inference_smoke_result`
   checks instead of treating `quantized_model_bundle` directories as generic
@@ -278,6 +285,56 @@ and pipeline options:
 - `git diff --check`:
   passed.
 
+Results on 2026-05-06 after routing the PTQ acceptance case through the real
+MLX-LM conversion backend:
+
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
+  13 passed.
+- `swift test --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`:
+  229 tests passed in 3 suites. Existing `try await store.save` warnings
+  remain.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
+  13 passed.
+- `swift test --enable-code-coverage --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`:
+  229 tests passed in 3 suites and wrote Swift coverage data.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python coverage json -o /tmp/issue365-ptq-runtime-python-coverage-r2.json`:
+  wrote JSON coverage.
+- `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/issue365-ptq-runtime-python-coverage-r2.json --diff-from origin/main scripts/issue365_acceptance_bundle.py tests/integration/test_issue365_acceptance_bundle.py docs/plans/2026-05-05-issue-365-cli-chain-routing.md`:
+  100.00 percent total changed-line coverage, 8/8 executable lines.
+- `python3 scripts/swift_changed_line_coverage.py --binary .build/arm64-apple-macosx/debug/melixPackageTests.xctest/Contents/MacOS/melixPackageTests --profdata .build/arm64-apple-macosx/debug/codecov/default.profdata --diff-from origin/main Sources/MelixCLICore/MelixCLI.swift Sources/MelixCLICore/MelixCLICommandCodec.swift Sources/MelixCLICore/MelixPipelineRunner.swift tests/MelixCLITests/MelixCLIParserTests.swift tests/MelixCLITests/MelixCLIRunnerTests.swift docs/plans/2026-05-05-issue-365-cli-chain-routing.md`:
+  100.00 percent total changed-line coverage, 156/156 executable lines.
+- `python3 scripts/issue365_acceptance_bundle.py --execution-mode plan --output-dir .runtime/issue365/ptq-backend-plan-r2 --timestamp 2026-05-06T183500Z --json`:
+  wrote a plan bundle with 10 planned cases and `release_ready=false`; the PTQ
+  pipeline now contains `ptq_fuse_merged_model`,
+  `merged_model_path=${steps.ptq_fuse_merged_model.result.derived_model_path}`,
+  `source_artifact_kind=merged_adapter`,
+  `quantization_backend=mlx_lm_convert`, and `mlx_lm_q_mode=affine`.
+- `python3 scripts/issue365_acceptance_bundle.py --execution-mode dry-run --melix-cli .build/arm64-apple-macosx/debug/melix --output-dir .runtime/issue365/ptq-backend-dry-run-r2 --timestamp 2026-05-06T184000Z --json`:
+  wrote a dry-run bundle with 10 succeeded cases, 0 failed cases, 0 blocked
+  cases, and `release_ready=false`.
+- `swift build --package-path services/mlx-text-worker-swift`:
+  built the Swift text worker for `--prefer-built`; existing third-party MLX
+  deprecation warnings and Swift concurrency warnings remain.
+- `swift build --package-path services/control-plane-swift`:
+  built the control plane for `--prefer-built`.
+- `MELIX_SERVICE_INSTANCE_NAME=issue365-ptq-backend-real MELIX_HTTP_PORT=12473 MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-ptq-backend-real" MELIX_HOME="$PWD/.runtime/home-issue365-ptq-backend-real" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-ptq-backend-real-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-ptq-backend-real-swift.sock" bash scripts/dev_up.sh --prefer-built`:
+  started a named real local runtime stack for the PTQ backend probe.
+- `MELIX_HOME="$PWD/.runtime/home-issue365-ptq-backend-real" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-ptq-backend-real-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-ptq-backend-real-swift.sock" MELIX_HTTP_PORT=12473 python3 scripts/issue365_acceptance_bundle.py --execution-mode real --case-id lora_preference_ptq_quantized_inference --melix-cli "$PWD/.build/arm64-apple-macosx/debug/melix" --sft-dataset-uri "$PWD/services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1" --preference-dataset-uri "$PWD/.runtime/issue365/input-datasets/preference_pair" --calibration-dataset-uri "$PWD/.runtime/issue365/input-datasets/calibration" --output-dir .runtime/issue365/ptq-backend-real-probe-r2 --timestamp 2026-05-06T182500Z --json`:
+  selected real PTQ case passed with `release_ready=true`; evidence bundle
+  written to `.runtime/issue365/ptq-backend-real-probe-r2/bundle.json`.
+- `.runtime/issue365/ptq-backend-real-probe-r2/receipts/lora_preference_ptq_quantized_inference/steps/005-ptq_quantize.json`:
+  recorded `execution_backend=mlx_lm_convert`, `real_weight_conversion=true`,
+  `source_artifact_kind=merged_adapter`, `local_inference_smoke.status=passed`,
+  `local_inference_smoke.evidence_kind=local_runtime_generate`,
+  `release_gate.local_inference_smoke_result=passed`, and checked
+  `config.json`, `tokenizer.json`, and `model.safetensors`.
+- `find .runtime/issue365/ptq-backend-real-probe-r2/artifacts/ptq -maxdepth 4 -type f | sort`:
+  confirmed the quantized artifact includes `model.safetensors`,
+  `model.safetensors.index.json`, `config.json`, `tokenizer.json`,
+  `tokenizer_config.json`, and `manifest.json`.
+- `MELIX_RUNTIME_DIR="$PWD/.runtime/sidecars/issue365-ptq-backend-real" MELIX_WORKER_SOCKET_PATH="/tmp/mx365-ptq-backend-real-python.sock" MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="/tmp/mx365-ptq-backend-real-swift.sock" bash scripts/dev_down.sh`:
+  stopped the named PTQ backend runtime stack.
+
 Results on 2026-05-05 after adding the acceptance bundle harness:
 
 - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_issue365_acceptance_bundle.py`:
@@ -308,15 +365,12 @@ Results on 2026-05-05 after adding the acceptance bundle harness:
   business line.
 - Real local runtime evidence now exists for `lora_export_inference`,
   `qlora_export_inference`, `dora_export_inference`,
-  `lora_dpo_export_inference`, `lora_orpo_export_inference`, and
-  `lora_cpo_export_inference`, but the remaining four CLI chains still require
-  real local runtime evidence: `lora_grpo_export_inference`,
-  `lora_rlhf_export_inference`, `lora_preference_ptq_quantized_inference`, and
+  `lora_dpo_export_inference`, `lora_orpo_export_inference`,
+  `lora_cpo_export_inference`, and
+  `lora_preference_ptq_quantized_inference`, but the remaining three CLI
+  chains still require real local runtime evidence:
+  `lora_grpo_export_inference`, `lora_rlhf_export_inference`, and
   `qat_quantized_inference`.
-- The latest `lora_preference_ptq_quantized_inference` real probe is
-  intentionally counted as failed evidence, not completion evidence, because
-  the quantize step recorded failed `runtime_generate` smoke and
-  `release_gate.local_inference_smoke_result=failed`.
 - Window UI runnable/inspectable acceptance for every listed business line.
 - Final release evidence that separates deterministic/unit/scored-trace results
   from real local runtime results.

@@ -348,6 +348,7 @@ def _alignment_case(
 def _ptq_case() -> Issue365PipelineCase:
     train_step = "ptq_base_lora"
     align_step = "ptq_dpo_align"
+    fuse_step = "ptq_fuse_merged_model"
     publish_step = "ptq_publish_export"
     quantize_step = "ptq_quantize"
     return Issue365PipelineCase(
@@ -358,6 +359,7 @@ def _ptq_case() -> Issue365PipelineCase:
             "base adapter training completed",
             "preference alignment completed",
             "merged or exported artifact exists",
+            "fused derived model exists for MLX-LM conversion",
             "PTQ quantization completed",
             "quantized local inference smoke completed",
             "quality and latency evidence recorded",
@@ -391,13 +393,23 @@ def _ptq_case() -> Issue365PipelineCase:
                 },
             },
             {
+                "id": fuse_step,
+                "command": "lora.activate",
+                "args": {
+                    "model_id": "${inputs.model_id}",
+                    "adapter_path": f"${{steps.{align_step}.result.output_path}}",
+                    "derived_model_alias": "issue365-ptq-merged",
+                    "activation_mode": "fused_derived_model",
+                },
+            },
+            {
                 "id": publish_step,
                 "command": "lora.publish",
                 "args": {
                     "model_id": "${inputs.model_id}",
                     "target_repo": "melix/issue365-ptq-export",
-                    "manifest_path": f"${{steps.{align_step}.result.output_path}}",
-                    "export_kind": "adapter",
+                    "merged_model_path": f"${{steps.{fuse_step}.result.derived_model_path}}",
+                    "export_kind": "merged",
                     "publish_backend": "local_filesystem",
                     "local_publish_root": "${inputs.local_publish_root}",
                 },
@@ -412,8 +424,10 @@ def _ptq_case() -> Issue365PipelineCase:
                     "weight_quant": "q4",
                     "kv_quant": "q8",
                     "quantization_mode": "ptq",
-                    "source_artifact_kind": "adapter_export",
+                    "source_artifact_kind": "merged_adapter",
                     "source_artifact_path": f"${{steps.{publish_step}.result.output_path}}",
+                    "quantization_backend": "mlx_lm_convert",
+                    "mlx_lm_q_mode": "affine",
                     "calibration_dataset_uri": "${inputs.calibration_dataset_uri}",
                     "quality_delta": 0,
                     "latency_delta": 0,

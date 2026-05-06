@@ -360,6 +360,10 @@ struct MelixCLIParserTests {
             "--quantization-mode", "qat",
             "--source-artifact-kind", "merged_adapter",
             "--source-artifact-path", "/tmp/melix-export/merged",
+            "--quantization-backend", "mlx_lm_convert",
+            "--mlx-lm-q-bits", "4",
+            "--mlx-lm-q-group-size", "128",
+            "--mlx-lm-q-mode", "affine",
             "--calibration-dataset-uri", "/tmp/melix-datasets/calibration",
             "--quality-delta", "-0.01",
             "--latency-delta", "-0.15",
@@ -408,6 +412,10 @@ struct MelixCLIParserTests {
         #expect(quantizeOptions.quantizationMode == "qat")
         #expect(quantizeOptions.sourceArtifactKind == "merged_adapter")
         #expect(quantizeOptions.sourceArtifactPath == "/tmp/melix-export/merged")
+        #expect(quantizeOptions.quantizationBackend == "mlx_lm_convert")
+        #expect(quantizeOptions.mlxLMQBits == "4")
+        #expect(quantizeOptions.mlxLMQGroupSize == "128")
+        #expect(quantizeOptions.mlxLMQMode == "affine")
         #expect(quantizeOptions.calibrationDatasetURI == "/tmp/melix-datasets/calibration")
         #expect(quantizeOptions.qualityDelta == "-0.01")
         #expect(quantizeOptions.latencyDelta == "-0.15")
@@ -2617,6 +2625,22 @@ struct MelixCLIParserTests {
                 "--source-artifact-kind", "checkpoint",
             ],
             equals: .usage("Invalid value for --source-artifact-kind. Expected one of: base_model, merged_adapter, adapter_export.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--quantization-backend", "script",
+            ],
+            equals: .usage("Invalid value for --quantization-backend. Expected one of: manifest_only, mlx_lm_convert.")
+        )
+        try assertError(
+            for: [
+                "quantize",
+                "--model-id", "melix-dev-text",
+                "--mlx-lm-q-mode", "log",
+            ],
+            equals: .usage("Invalid value for --mlx-lm-q-mode. Expected one of: affine, mxfp4, nvfp4, mxfp8.")
         )
         try assertError(
             for: [
