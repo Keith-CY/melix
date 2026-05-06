@@ -104,6 +104,9 @@ _SUPPORTED_TRAINING_MODES = (
     | _CPT_TRAINING_MODES
 )
 
+_NORMALIZED_TARGET_MODULE_PRESETS_KEY = "_normalized_target_module_presets"
+_NORMALIZED_DEFAULT_TARGET_MODULES_KEY = "_normalized_default_target_modules"
+
 _FAMILY_PROFILES: dict[str, dict[str, object]] = {
     "llama": {
         "family_kind": "dense",
@@ -249,6 +252,22 @@ _FAMILY_PROFILES: dict[str, dict[str, object]] = {
         },
     },
 }
+
+
+def _normalize_target_module_presets(profile: dict[str, object]) -> dict[str, tuple[str, ...]]:
+    return {
+        str(key).strip().lower(): tuple(str(item).strip().lower() for item in value)
+        for key, value in profile.get("target_module_presets", {}).items()
+    }
+
+
+def _normalize_default_target_modules(profile: dict[str, object]) -> tuple[str, ...]:
+    return tuple(str(item).strip().lower() for item in profile["default_target_modules"])
+
+
+for _profile in _FAMILY_PROFILES.values():
+    _profile[_NORMALIZED_TARGET_MODULE_PRESETS_KEY] = _normalize_target_module_presets(_profile)
+    _profile[_NORMALIZED_DEFAULT_TARGET_MODULES_KEY] = _normalize_default_target_modules(_profile)
 
 _ADVANCED_FAMILY_HOOKS: dict[str, dict[str, str]] = {
     "mixtral": {
@@ -901,20 +920,21 @@ def _resolve_family_hooks(source_model: common_pb2.ModelSpec, *, family_id: str)
 
 
 def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> list[str]:
-    presets = {
-        str(key).strip().lower(): [str(item).strip().lower() for item in value]
-        for key, value in profile.get("target_module_presets", {}).items()
-    }
-    default_targets = [str(item).strip().lower() for item in profile["default_target_modules"]]
+    presets = profile.get(_NORMALIZED_TARGET_MODULE_PRESETS_KEY)
+    if not isinstance(presets, dict):
+        presets = _normalize_target_module_presets(profile)
+    default_targets = profile.get(_NORMALIZED_DEFAULT_TARGET_MODULES_KEY)
+    if not isinstance(default_targets, tuple):
+        default_targets = _normalize_default_target_modules(profile)
     requested = [item.strip().lower() for item in raw_value.split(",") if item.strip()]
     if not requested:
-        return default_targets
+        return list(default_targets)
 
     resolved_targets: list[str] = []
     seen: set[str] = set()
     for requested_target in requested:
         target_key = requested_target.lstrip("@")
-        expanded_targets = presets.get(target_key, [requested_target])
+        expanded_targets = presets.get(target_key, (requested_target,))
         for expanded_target in expanded_targets:
             if expanded_target not in seen:
                 seen.add(expanded_target)

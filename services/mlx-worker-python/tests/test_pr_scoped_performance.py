@@ -203,6 +203,36 @@ def test_scope_report_selects_video_preprocessing_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "video-preprocessing-uri-byte-length-reuse"
 
 
+def test_scope_report_selects_training_config_target_module_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/training_config.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "training-config-target-module-cache"
+
+
+def test_training_config_target_modules_probe_script_smoke(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_TRAINING_CONFIG_TARGET_MODULE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_TRAINING_CONFIG_TARGET_MODULE_ITERATIONS", "3")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/training_config_target_modules_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["checksum"] == 54.0
+    assert metrics["iteration_count"] == 3.0
+    assert metrics["case_count"] == 4.0
+
+
 def test_scope_report_selects_mlx_audio_speech_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1424,6 +1454,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
         "quantization-qat-source-scan-scandir",
+        "training-config-target-module-cache",
         "training-dataset-token-percentiles-single-sort",
         "training-dataset-validation-sample-limit",
         "training-dataset-chunker-top-level-base-copy",
