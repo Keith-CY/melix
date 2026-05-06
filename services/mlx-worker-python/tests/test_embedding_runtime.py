@@ -355,6 +355,8 @@ def test_embed_runtime_reuses_duplicate_inputs_within_one_request() -> None:
         [2.0, 2.0, 2.0, 2.0],
     ]
     assert vectors[0] is not vectors[2]
+    vectors[0][0] = 99.0
+    assert vectors[2] == [1.0, 1.0, 1.0, 1.0]
 
 
 def test_load_model_rejects_unsupported_embedding_backend() -> None:
