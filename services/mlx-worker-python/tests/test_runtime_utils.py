@@ -68,6 +68,32 @@ def test_callable_accepts_kwarg_caches_bound_methods_by_underlying_function(
     runtime_utils.clear_callable_accepts_kwarg_cache()
 
 
+def test_callable_accepts_kwarg_bound_methods_preserve_parameter_scan_behavior() -> None:
+    runtime_utils.clear_callable_accepts_kwarg_cache()
+
+    class SampleRuntime:
+        def generate(
+            self,
+            prompt: str,
+            max_tokens: int = 128,
+            *,
+            temperature: float = 0.0,
+            top_p: float = 1.0,
+        ) -> str:
+            return f"{prompt}:{max_tokens}:{temperature}:{top_p}"
+
+    method = SampleRuntime().generate
+
+    assert runtime_utils.callable_accepts_kwarg(method, "self") is False
+    assert runtime_utils.callable_accepts_kwarg(method, "prompt") is True
+    assert runtime_utils.callable_accepts_kwarg(method, "max_tokens") is True
+    assert runtime_utils.callable_accepts_kwarg(method, "temperature") is True
+    assert runtime_utils.callable_accepts_kwarg(method, "top_p") is True
+    assert runtime_utils.callable_accepts_kwarg(method, "missing") is False
+
+    runtime_utils.clear_callable_accepts_kwarg_cache()
+
+
 def test_callable_accepts_kwarg_bound_methods_preserve_var_keyword_behavior() -> None:
     runtime_utils.clear_callable_accepts_kwarg_cache()
 

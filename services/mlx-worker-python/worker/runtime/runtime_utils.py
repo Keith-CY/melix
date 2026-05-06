@@ -17,20 +17,18 @@ def _callable_accepts_kwarg_uncached(
     except (TypeError, ValueError):
         return False
 
-    parameters = signature.parameters
-    if skip_first_parameter:
-        parameters = dict(list(parameters.items())[1:])
+    matching_parameter: inspect.Parameter | None = None
+    for index, (name, parameter) in enumerate(signature.parameters.items()):
+        if skip_first_parameter and index == 0:
+            continue
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+        if name == keyword:
+            matching_parameter = parameter
 
-    if any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters.values()
-    ):
-        return True
-
-    parameter = parameters.get(keyword)
-    if parameter is None:
+    if matching_parameter is None:
         return False
-    return parameter.kind in (
+    return matching_parameter.kind in (
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
         inspect.Parameter.KEYWORD_ONLY,
     )
