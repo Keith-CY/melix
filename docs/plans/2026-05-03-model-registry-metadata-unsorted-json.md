@@ -1,8 +1,8 @@
-# Plan: model registry metadata unsorted JSON fast path
+# Plan: model registry metadata direct MLX-signal fast path
 
 ## Goal
 
-Remove unnecessary `sort_keys=True` work from the model-registry MLX-signal metadata path so plain-local and Hugging Face config payload checks avoid redundant key sorting while preserving detection behavior.
+Remove unnecessary JSON serialization work from the model-registry MLX-signal metadata path so plain-local and Hugging Face config payload checks can accept direct `library_name`/`tags` signals before falling back to the existing text serialization scan.
 
 ## Scope
 
@@ -17,11 +17,10 @@ This is a Python-only slice and will be verified locally on Linux. No macOS-only
 
 ## Intended change
 
-- Keep the current JSON-string-based MLX-signal detection contract.
-- Stop requesting sorted JSON keys in:
-  - `_metadata_payload_has_mlx_signal(...)`
-  - the `config_payload` fast path inside `_has_mlx_signal(...)`
-- Add focused regression tests that prove these call sites no longer ask `json.dumps(..., sort_keys=True)`.
+- Keep the current JSON-string-based MLX-signal fallback detection contract.
+- Add a direct `config_payload` check for `library_name == "mlx"` and `tags` entries equal to `mlx` before serializing the payload.
+- Keep `_metadata_payload_has_mlx_signal(...)` on the existing serialization fallback.
+- Add focused regression tests that prove direct config metadata signals no longer call `json.dumps(...)`.
 - Update the existing `model-registry-plain-local-manifest-stat-elision` scoped probe test/coverage commands so changed-scope CI covers the new focused tests.
 
 ## Performance probe
@@ -58,7 +57,7 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
   services/mlx-worker-python/tests/test_model_registry_catalog.py::test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal \
   services/mlx-worker-python/tests/test_model_registry_catalog.py::test_has_mlx_signal_falls_back_to_config_text_for_unserializable_nonempty_payload \
   services/mlx-worker-python/tests/test_model_registry_catalog.py::test_metadata_payload_has_mlx_signal_does_not_request_sorted_json \
-  services/mlx-worker-python/tests/test_model_registry_catalog.py::test_has_mlx_signal_config_payload_fast_path_does_not_request_sorted_json \
+  services/mlx-worker-python/tests/test_model_registry_catalog.py::test_has_mlx_signal_config_payload_fast_path_avoids_json_dump \
   services/mlx-worker-python/tests/test_model_registry_catalog.py::test_registry_snapshot_does_not_stat_plain_local_manifest_after_tree_scan \
   services/mlx-worker-python/tests/test_model_registry_catalog.py::test_registry_snapshot_skips_invalid_depth_manifests_without_parsing \
   services/mlx-worker-python/tests/test_model_registry_catalog.py::test_load_json_dict_file_reads_json_bytes_without_text_decode \

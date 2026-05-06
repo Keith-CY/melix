@@ -264,6 +264,19 @@ def _metadata_payload_has_mlx_signal(metadata_payload: Mapping[str, object]) -> 
     return _metadata_text_has_mlx_signal(metadata_text)
 
 
+def _metadata_payload_has_direct_mlx_signal(metadata_payload: Mapping[str, object]) -> bool:
+    library_name = metadata_payload.get("library_name")
+    if isinstance(library_name, str) and library_name.strip().lower() == "mlx":
+        return True
+
+    tags = metadata_payload.get("tags")
+    if isinstance(tags, (list, tuple)):
+        for tag in tags:
+            if isinstance(tag, str) and tag.strip().lower() == "mlx":
+                return True
+    return False
+
+
 def _has_mlx_signal(
     *,
     model_dir: Path,
@@ -278,6 +291,8 @@ def _has_mlx_signal(
 
     for metadata_filename in ("README.md", "config.json", "model_index.json"):
         if metadata_filename == "config.json" and config_payload is not None and config_payload:
+            if _metadata_payload_has_direct_mlx_signal(config_payload):
+                return True
             try:
                 config_payload_text = json.dumps(config_payload).lower()
             except (TypeError, ValueError):
