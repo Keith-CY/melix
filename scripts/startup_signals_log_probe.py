@@ -37,16 +37,24 @@ def _measure_case(
     error_text: str,
     expected_classification: str,
     iterations: int,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     original_reader: Callable[..., str] = startup_signals._read_last_nonempty_line
+    original_exists = Path.exists
     read_count = 0
+    exists_count = 0
 
     def tracked_reader(path: Path, *, chunk_size: int = 8192) -> str:
         nonlocal read_count
         read_count += 1
         return original_reader(path, chunk_size=chunk_size)
 
+    def tracked_exists(path: Path) -> bool:
+        nonlocal exists_count  # pragma: no cover
+        exists_count += 1  # pragma: no cover
+        return original_exists(path)  # pragma: no cover
+
     startup_signals._read_last_nonempty_line = tracked_reader
+    Path.exists = tracked_exists
     try:
         started = time.perf_counter()
         for _ in range(iterations):
@@ -58,7 +66,8 @@ def _measure_case(
         elapsed_ms = (time.perf_counter() - started) * 1000.0
     finally:
         startup_signals._read_last_nonempty_line = original_reader
-    return elapsed_ms, float(read_count)
+        Path.exists = original_exists
+    return elapsed_ms, float(read_count), float(exists_count)
 
 
 def main() -> int:
@@ -66,15 +75,18 @@ def main() -> int:
     samples = 5
     conflict_elapsed: list[float] = []
     conflict_reads: list[float] = []
+    conflict_exists: list[float] = []
     control_elapsed: list[float] = []
     control_reads: list[float] = []
+    control_exists: list[float] = []
     worker_elapsed: list[float] = []
     worker_reads: list[float] = []
+    worker_exists: list[float] = []
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         manifest = _write_logs(Path(tmp_dir))
         for _ in range(samples):
-            elapsed, reads = _measure_case(
+            elapsed, reads, exists = _measure_case(
                 manifest,
                 error_text="bind() failed: Address already in use",
                 expected_classification="host_port_conflict",
@@ -82,8 +94,9 @@ def main() -> int:
             )
             conflict_elapsed.append(elapsed)
             conflict_reads.append(reads / iterations)
+            conflict_exists.append(exists / iterations)
 
-            elapsed, reads = _measure_case(
+            elapsed, reads, exists = _measure_case(
                 manifest,
                 error_text="handshake failed",
                 expected_classification="control_plane_crash",
@@ -91,10 +104,11 @@ def main() -> int:
             )
             control_elapsed.append(elapsed)
             control_reads.append(reads / iterations)
+            control_exists.append(exists / iterations)
 
             worker_manifest = dict(manifest)
             worker_manifest.pop("control_plane_stderr_path")
-            elapsed, reads = _measure_case(
+            elapsed, reads, exists = _measure_case(
                 worker_manifest,
                 error_text="handshake failed",
                 expected_classification="worker_crash",
@@ -102,17 +116,21 @@ def main() -> int:
             )
             worker_elapsed.append(elapsed)
             worker_reads.append(reads / iterations)
+            worker_exists.append(exists / iterations)
 
     print(
         json.dumps(
             {
                 "conflict_elapsed_ms_mean": round(statistics.fmean(conflict_elapsed), 6),
+                "conflict_log_path_exists_checks_mean": round(statistics.fmean(conflict_exists), 6),
                 "conflict_log_reads_mean": round(statistics.fmean(conflict_reads), 6),
                 "control_crash_elapsed_ms_mean": round(statistics.fmean(control_elapsed), 6),
+                "control_crash_log_path_exists_checks_mean": round(statistics.fmean(control_exists), 6),
                 "control_crash_log_reads_mean": round(statistics.fmean(control_reads), 6),
                 "iterations": float(iterations),
                 "sample_count": float(samples),
                 "worker_crash_elapsed_ms_mean": round(statistics.fmean(worker_elapsed), 6),
+                "worker_crash_log_path_exists_checks_mean": round(statistics.fmean(worker_exists), 6),
                 "worker_crash_log_reads_mean": round(statistics.fmean(worker_reads), 6),
             },
             sort_keys=True,

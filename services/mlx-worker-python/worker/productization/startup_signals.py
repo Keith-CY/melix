@@ -230,9 +230,10 @@ def _log_excerpt(*paths: object) -> str:
         if not path:
             continue
         resolved = Path(str(path)).expanduser()
-        if resolved.exists() is False:
+        try:
+            excerpt = _read_last_nonempty_line(resolved)
+        except OSError:
             continue
-        excerpt = _read_last_nonempty_line(resolved)
         if excerpt:
             excerpts.append(excerpt)
     return " | ".join(excerpts)

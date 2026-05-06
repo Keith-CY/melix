@@ -346,6 +346,24 @@ def test_classify_startup_failure_reports_control_plane_crash(tmp_path: Path) ->
     assert report.to_dict()["classification"] == "control_plane_crash"
 
 
+def test_log_excerpt_skips_missing_paths_without_exists_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_log = tmp_path / "missing.stderr.log"
+    existing_log = tmp_path / "control-plane.stderr.log"
+    existing_log.write_text("booting\nready\n", encoding="utf-8")
+
+    def fail_exists(self: Path) -> bool:
+        raise AssertionError(  # pragma: no cover
+            f"_log_excerpt should not preflight paths with exists(): {self}"
+        )
+
+    monkeypatch.setattr(Path, "exists", fail_exists)
+
+    assert startup_signals_module._log_excerpt(missing_log, existing_log) == "ready"
+
+
 def test_read_last_nonempty_line_ignores_trailing_blank_lines(tmp_path: Path) -> None:
     log_path = tmp_path / "control-plane.stderr.log"
     log_path.write_text("booting\nready\n\n", encoding="utf-8")
