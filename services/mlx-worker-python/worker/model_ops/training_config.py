@@ -19,6 +19,12 @@ class AlignmentTrainingConfig:
     grpo_candidate_count: int = 0
     kl_penalty: float = 0.0
     preference_margin_target: float = 0.0
+    candidate_generation_mode: str = "scored_trace"
+    candidate_scoring_mode: str = "dataset_score"
+    candidate_generation_temperature: float = 0.0
+    candidate_generation_top_p: float = 1.0
+    candidate_generation_top_k: int = 0
+    candidate_generation_max_tokens: int = 128
 
 
 @dataclass(frozen=True)
@@ -701,6 +707,69 @@ def _resolve_alignment_config(
             },
         )
 
+    candidate_generation_mode = (
+        ext.get("candidate_generation_mode", "").strip().lower()
+        or ext.get("grpo_candidate_generation_mode", "").strip().lower()
+        or "scored_trace"
+    )
+    if candidate_generation_mode not in {"scored_trace", "runtime_generate"}:
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message=f"Unsupported candidate_generation_mode: {candidate_generation_mode}",
+            details={
+                "training_mode": training_mode,
+                "candidate_generation_mode": candidate_generation_mode,
+            },
+        )
+    if training_mode != "grpo" and candidate_generation_mode != "scored_trace":
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="candidate_generation_mode=runtime_generate is only supported for GRPO.",
+            details={
+                "training_mode": training_mode,
+                "candidate_generation_mode": candidate_generation_mode,
+                "supported_training_mode": "grpo",
+            },
+        )
+
+    candidate_scoring_mode = (
+        ext.get("candidate_scoring_mode", "").strip().lower()
+        or ext.get("grpo_candidate_scoring_mode", "").strip().lower()
+        or ("seed_overlap_proxy" if candidate_generation_mode == "runtime_generate" else "dataset_score")
+    )
+    if training_mode in _RL_TRAINING_MODES:
+        expected_scoring_modes = (
+            {"seed_overlap_proxy", "reward_model"}
+            if candidate_generation_mode == "runtime_generate"
+            else {"dataset_score", "reward_model"}
+        )
+    else:
+        expected_scoring_modes = {"dataset_score"}
+    if candidate_scoring_mode not in expected_scoring_modes:
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message=(
+                f"candidate_scoring_mode={candidate_scoring_mode} is not supported "
+                f"for candidate_generation_mode={candidate_generation_mode}."
+            ),
+            details={
+                "training_mode": training_mode,
+                "candidate_generation_mode": candidate_generation_mode,
+                "candidate_scoring_mode": candidate_scoring_mode,
+                "supported_candidate_scoring_modes": ",".join(sorted(expected_scoring_modes)),
+            },
+        )
+    if candidate_scoring_mode == "reward_model" and not reward_model_manifest_path:
+        raise ModelOperationError(
+            code="invalid_alignment_config",
+            message="candidate_scoring_mode=reward_model requires reward_model_manifest_path.",
+            details={
+                "training_mode": training_mode,
+                "candidate_scoring_mode": candidate_scoring_mode,
+                "missing_field": "reward_model_manifest_path",
+            },
+        )
+
     return AlignmentTrainingConfig(
         alignment_algorithm=training_mode,
         dataset_contract=dataset_contract,
@@ -718,6 +787,36 @@ def _resolve_alignment_config(
             default=0.0,
             minimum=0.0,
             field_name="preference_margin_target",
+        ),
+        candidate_generation_mode=candidate_generation_mode,
+        candidate_scoring_mode=candidate_scoring_mode,
+        candidate_generation_temperature=_float_value(
+            ext.get("candidate_generation_temperature", "")
+            or ext.get("grpo_candidate_generation_temperature", ""),
+            default=0.0,
+            minimum=0.0,
+            field_name="candidate_generation_temperature",
+        ),
+        candidate_generation_top_p=_float_value(
+            ext.get("candidate_generation_top_p", "")
+            or ext.get("grpo_candidate_generation_top_p", ""),
+            default=1.0,
+            minimum=0.0,
+            field_name="candidate_generation_top_p",
+        ),
+        candidate_generation_top_k=_int_value(
+            ext.get("candidate_generation_top_k", "")
+            or ext.get("grpo_candidate_generation_top_k", ""),
+            default=0,
+            minimum=0,
+            field_name="candidate_generation_top_k",
+        ),
+        candidate_generation_max_tokens=_int_value(
+            ext.get("candidate_generation_max_tokens", "")
+            or ext.get("grpo_candidate_generation_max_tokens", ""),
+            default=128,
+            minimum=1,
+            field_name="candidate_generation_max_tokens",
         ),
     )
 

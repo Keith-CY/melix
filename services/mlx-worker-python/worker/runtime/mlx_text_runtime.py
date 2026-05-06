@@ -451,6 +451,33 @@ class MLXTextRuntime:
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))
 
+    def score_response(
+        self,
+        loaded_model,
+        prompt: str,
+        response: str,
+        execution_ext: dict[str, str] | None = None,
+    ) -> float:
+        scorer = getattr(self._backend, "score_response", None)
+        if not callable(scorer):
+            raise RuntimeUnavailableError("Text runtime backend does not support reward scoring.")
+
+        def call_scorer() -> float:
+            if _callable_accepts_kwarg(scorer, "execution_ext"):
+                value = scorer(
+                    loaded_model,
+                    prompt,
+                    response,
+                    execution_ext=execution_ext,
+                )
+            else:
+                value = scorer(loaded_model, prompt, response)
+            return float(value)
+
+        if self._executor is None:
+            return call_scorer()
+        return self._executor.run(call_scorer)
+
     def render_prompt(
         self,
         messages,

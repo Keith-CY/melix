@@ -1496,10 +1496,10 @@ struct PythonBridgeWorkerClientTests {
     @Test("repo-root initializer can dispatch with an existing python path")
     func repoRootInitializerCanDispatchWithAnExistingPythonPath() async throws {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()
-        let environment = ProcessInfo.processInfo.environment.merging([
-            "PYTHONPATH": "/tmp/existing-python-path",
-            "UV_CACHE_DIR": "\(fixtureRoot.path)/.custom-cache",
-        ]) { _, new in new }
+        let environment = processBridgeFixtureEnvironment(
+            fixtureRoot: fixtureRoot,
+            extra: ["PYTHONPATH": "/tmp/existing-python-path"]
+        )
         let client = PythonBridgeWorkerClient(
             socketPath: "/tmp/fixture.sock",
             repoRoot: fixtureRoot.path,
@@ -1514,7 +1514,7 @@ struct PythonBridgeWorkerClientTests {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()
         let runner = ProcessWorkerBridgeRunner(
             repoRoot: fixtureRoot.path,
-            environment: ProcessInfo.processInfo.environment
+            environment: processBridgeFixtureEnvironment(fixtureRoot: fixtureRoot)
         )
 
         let unaryLine = try await runner.runUnary(
@@ -1565,7 +1565,7 @@ struct PythonBridgeWorkerClientTests {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()
         let runner = ProcessWorkerBridgeRunner(
             repoRoot: fixtureRoot.path,
-            environment: ProcessInfo.processInfo.environment
+            environment: processBridgeFixtureEnvironment(fixtureRoot: fixtureRoot)
         )
 
         let line = try await runner.runUnary(
@@ -1585,7 +1585,7 @@ struct PythonBridgeWorkerClientTests {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()
         let runner = ProcessWorkerBridgeRunner(
             repoRoot: fixtureRoot.path,
-            environment: ProcessInfo.processInfo.environment
+            environment: processBridgeFixtureEnvironment(fixtureRoot: fixtureRoot)
         )
 
         let errorLine = try await runner.runUnary(
@@ -1605,7 +1605,7 @@ struct PythonBridgeWorkerClientTests {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()
         let runner = ProcessWorkerBridgeRunner(
             repoRoot: fixtureRoot.path,
-            environment: ProcessInfo.processInfo.environment
+            environment: processBridgeFixtureEnvironment(fixtureRoot: fixtureRoot)
         )
 
         do {
@@ -1646,7 +1646,7 @@ struct PythonBridgeWorkerClientTests {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()
         let runner = ProcessWorkerBridgeRunner(
             repoRoot: fixtureRoot.path,
-            environment: ProcessInfo.processInfo.environment
+            environment: processBridgeFixtureEnvironment(fixtureRoot: fixtureRoot)
         )
 
         do {
@@ -1806,6 +1806,16 @@ private func makeProcessBridgeFixtureRepo() throws -> URL {
         encoding: .utf8
     )
     return root
+}
+
+private func processBridgeFixtureEnvironment(
+    fixtureRoot: URL,
+    extra: [String: String] = [:]
+) -> [String: String] {
+    ProcessInfo.processInfo.environment.merging([
+        "MELIX_PYTHON_BRIDGE_EXECUTABLE": "/usr/bin/python3",
+        "UV_CACHE_DIR": "\(fixtureRoot.path)/.custom-cache",
+    ].merging(extra) { _, new in new }) { _, new in new }
 }
 
 private func makeTokenEvent(
