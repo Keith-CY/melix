@@ -1071,6 +1071,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "runtime-utils-kwarg-signature-cache",
         "mlx-audio-wav-streaming-pcm",
         "dev-up-mlx-metal-dist-info-scandir",
+        "evaluation-dialogue-diagnostics-top-k",
         "evaluation-job-id-high-water-mark",
         "evaluation-dialogue-diagnostics-top-k",
         "evaluation-final-result-materialization-streaming",
