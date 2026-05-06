@@ -356,12 +356,16 @@ def _chunk_sample(
         )
 
     chunks: list[dict] = []
+    # Preserve any non-messages keys from the source sample (id, tools,
+    # metadata) once per source sample, then shallow-copy that small top-level
+    # base for each emitted chunk. Large long-context samples can emit hundreds
+    # of chunks, so rebuilding this filtered dict inside the chunk loop repeats
+    # the same key scan and metadata reference assignments unnecessarily.
+    output_base = {k: v for k, v in sample.items() if k != "messages"}
     for idx, chunk in enumerate(chunked_messages):
-        # Preserve any non-messages keys from the source sample (id, tools,
-        # metadata) via a shallow top-level copy, then copy only the message
-        # dict containers so each chunk has an independent message list
-        # without re-copying immutable string payloads.
-        out = {k: v for k, v in sample.items() if k != "messages"}
+        # Copy only the message dict containers so each chunk has an independent
+        # message list without re-copying immutable string payloads.
+        out = output_base.copy()
         out["messages"] = _copy_messages(chunk)
         if sample_id:
             out["id"] = f"{sample_id}#chunk-{idx}"
