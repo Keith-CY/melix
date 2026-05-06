@@ -151,6 +151,16 @@ def test_scope_report_selects_runtime_utils_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "runtime-utils-kwarg-signature-cache"
 
 
+def test_scope_report_selects_mlx_text_stop_kwarg_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_text_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-text-stop-kwarg-signature-cache"
+
+
 def test_scope_report_selects_dataset_registry_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1141,6 +1151,28 @@ def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
 
 
+def test_mlx_text_stop_kwarg_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MLX_TEXT_STOP_KWARG_PROBE_ITERATIONS", "12")
+    monkeypatch.setenv("MELIX_MLX_TEXT_STOP_KWARG_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/mlx_text_stop_kwarg_signature_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations_per_sample"] == 12.0
+    assert metrics["stream_signature_calls_mean"] == 1.0
+    assert metrics["inspect_signature_calls_mean"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
 def test_dataset_registry_limit_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1328,6 +1360,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
         "runtime-utils-kwarg-signature-cache",
+        "mlx-text-stop-kwarg-signature-cache",
         "mlx-audio-wav-streaming-pcm",
         "mlx-audio-generate-signature-cache",
         "mlx-audio-speech-signature-cache",
