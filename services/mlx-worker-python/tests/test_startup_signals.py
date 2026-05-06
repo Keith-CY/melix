@@ -160,6 +160,37 @@ def test_classify_startup_failure_reports_host_port_conflict(tmp_path: Path) -> 
     assert "Address already in use" in report.log_excerpt
 
 
+def test_classify_startup_failure_skips_log_reads_when_error_text_reports_port_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control_plane_stderr = tmp_path / "control-plane.stderr.log"
+    worker_stderr = tmp_path / "python-worker.stderr.log"
+    control_plane_stderr.write_text("fatal error: should not be inspected\n", encoding="utf-8")
+    worker_stderr.write_text("Traceback: worker should not be inspected\n", encoding="utf-8")
+    read_paths: list[str] = []
+
+    def tracked_read(path: Path, *, chunk_size: int = 8192) -> str:
+        read_paths.append(path.name)
+        raise AssertionError("logs should not be read when error text already identifies the port conflict")
+
+    monkeypatch.setattr(startup_signals_module, "_read_last_nonempty_line", tracked_read)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+            "control_plane_stderr_path": str(control_plane_stderr),
+            "python_worker_stderr_path": str(worker_stderr),
+        },
+        error_text="bind() failed: Address already in use",
+    )
+
+    assert report.classification == "host_port_conflict"
+    assert report.log_excerpt == "bind() failed: Address already in use"
+    assert read_paths == []
+
+
 def test_classify_startup_failure_reports_worker_crash(tmp_path: Path) -> None:
     python_worker_stderr = tmp_path / "python-worker.stderr.log"
     python_worker_stderr.write_text("Traceback: worker bootstrap failed\n", encoding="utf-8")

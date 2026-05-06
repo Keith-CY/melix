@@ -1669,7 +1669,7 @@ def test_startup_signals_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert excinfo.value.code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["conflict_elapsed_ms_mean"] > 0
-    assert payload["conflict_log_reads_mean"] == 1.0
+    assert payload["conflict_log_reads_mean"] == 0.0
     assert payload["control_crash_elapsed_ms_mean"] > 0
     assert payload["control_crash_log_reads_mean"] == 1.0
     assert payload["worker_crash_elapsed_ms_mean"] > 0
