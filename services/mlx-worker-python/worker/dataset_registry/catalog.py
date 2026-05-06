@@ -578,10 +578,21 @@ def _build_dataset_snapshot(
     snapshot_dir: Path,
     revision: str,
 ) -> DatasetSnapshot:
-    files = tuple(_dataset_files(snapshot_dir))
-    total_bytes = sum(file.size_bytes for file in files)
-    splits = tuple(sorted(set(_inferred_split(file.relative_path) for file in files) - {""}))
-    configs = tuple(sorted(set(_inferred_config(file.relative_path) for file in files) - {""}))
+    dataset_files: list[DatasetFile] = []
+    total_bytes = 0
+    split_names: set[str] = set()
+    config_names: set[str] = set()
+    for dataset_file in _dataset_files(snapshot_dir):
+        dataset_files.append(dataset_file)
+        total_bytes += dataset_file.size_bytes
+        split, config = _inferred_split_and_config(dataset_file.relative_path)
+        if split:
+            split_names.add(split)
+        if config:
+            config_names.add(config)
+    files = tuple(dataset_files)
+    splits = tuple(sorted(split_names))
+    configs = tuple(sorted(config_names))
     revision_label = revision or snapshot_dir.name
     return DatasetSnapshot(
         dataset_id=f"{repo_id}@{revision_label}",
@@ -638,24 +649,33 @@ def _dataset_file_format(path: Path) -> str:
 
 
 def _inferred_split(relative_path: str) -> str:
-    path = Path(relative_path)
-    candidates = [path.stem]
-    candidates.extend(part for part in path.parts[:-1] if part not in {"data", "default"})
-    for candidate in candidates:
-        prefix = candidate.split("-", 1)[0].split("_", 1)[0].lower()
-        if prefix in _SPLIT_ALIASES:
-            return _SPLIT_ALIASES[prefix]
-    return ""
+    return _inferred_split_and_config(relative_path)[0]
 
 
 def _inferred_config(relative_path: str) -> str:
-    parts = Path(relative_path).parts
+    return _inferred_split_and_config(relative_path)[1]
+
+
+def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
+    parts = tuple(part for part in relative_path.replace("\\", "/").split("/") if part)
+    if not parts:
+        return "", "default"
+    filename = parts[-1]
+    stem = filename.rsplit(".", 1)[0]
+    candidates = [stem]
+    candidates.extend(part for part in parts[:-1] if part not in {"data", "default"})
+    split = ""
+    for candidate in candidates:
+        prefix = candidate.split("-", 1)[0].split("_", 1)[0].lower()
+        if prefix in _SPLIT_ALIASES:
+            split = _SPLIT_ALIASES[prefix]
+            break
     if len(parts) < 2:
-        return "default"
+        return split, "default"
     first = parts[0]
     if first in {"data", "train", "test", "validation", "valid", "dev"}:
-        return "default"
-    return first
+        return split, "default"
+    return split, first
 
 
 def _path_matches_split(relative_path: Path, split: str) -> bool:
