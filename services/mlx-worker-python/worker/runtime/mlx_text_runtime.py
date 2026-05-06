@@ -12,6 +12,7 @@ from typing import Any
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.runtime_utils import (
     callable_accepts_kwarg as _callable_accepts_kwarg,
+    first_declared_kwarg as _first_declared_kwarg,
     installed_package_version as _installed_package_version,
 )
 from worker.runtime.text_family_adapters import resolve_text_family_config
@@ -139,6 +140,7 @@ _TEXT_STOP_SEQUENCE_KEYS = (
     "melix.turn_boundary.stop_sequences",
     "stop_sequences",
 )
+_STREAM_STOP_KWARG_NAMES = ("stop", "stop_words", "stop_sequences")
 
 
 def _split_stop_sequence_value(value: Any) -> list[str]:
@@ -366,12 +368,14 @@ class AutoMLXBackend:
         stream_generate_fn=None,
         sampler_factory=None,
     ) -> None:
+        self._stream_stop_kwarg = ""
         if load_fn is not None and stream_generate_fn is not None and sampler_factory is not None:
             self._available = True
             self._error = None
             self._load_fn = load_fn
             self._stream_generate_fn = stream_generate_fn
             self._sampler_factory = sampler_factory
+            self._stream_stop_kwarg = _first_declared_kwarg(stream_generate_fn, _STREAM_STOP_KWARG_NAMES)
             self.runtime_name = "mlx-lm"
             return
 
@@ -402,6 +406,7 @@ class AutoMLXBackend:
             self._load_fn = load
             self._stream_generate_fn = stream_generate
             self._sampler_factory = make_sampler
+            self._stream_stop_kwarg = _first_declared_kwarg(stream_generate, _STREAM_STOP_KWARG_NAMES)
 
     def load_model(self, model_spec) -> dict[str, Any]:
         if not self._available:
@@ -486,11 +491,8 @@ class AutoMLXBackend:
         max_tokens = int(sampling.max_output_tokens) if int(sampling.max_output_tokens) > 0 else 256
         stop_contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
         stream_kwargs: dict[str, Any] = {}
-        if stop_contract.sequences:
-            for kwarg_name in ("stop", "stop_words", "stop_sequences"):
-                if _callable_accepts_kwarg(self._stream_generate_fn, kwarg_name):
-                    stream_kwargs[kwarg_name] = list(stop_contract.sequences)
-                    break
+        if stop_contract.sequences and self._stream_stop_kwarg:
+            stream_kwargs[self._stream_stop_kwarg] = list(stop_contract.sequences)
 
         for response in self._stream_generate_fn(
             loaded_model["model"],

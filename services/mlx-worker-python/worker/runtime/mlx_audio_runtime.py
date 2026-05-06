@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from inspect import signature
 from io import BytesIO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -19,6 +18,7 @@ from worker.runtime.audio_runtime_protocols import (
     SpeechResult,
     TranscriptionResult,
 )
+from worker.runtime.runtime_utils import callable_kwarg_signature
 
 
 _AUDIO_PROCESSOR_CONFIG_FILES = (
@@ -250,17 +250,19 @@ class MLXAudioSpeechRuntime:
         except TypeError:
             model = load_model(model_spec.model_path)
 
-        generate_parameter_names = tuple(signature(model.generate).parameters)
-        speech_generate_parameters = frozenset(generate_parameter_names)
-        params = speech_generate_parameters
-        supports_voice = "voice" in params
-        supports_instructions = "instruct" in params
+        generate_signature = callable_kwarg_signature(model.generate)
+        generate_parameter_names = generate_signature.parameter_names
+        speech_generate_parameters = generate_signature.keyword_accessible_params
+        supports_voice = generate_signature.declares("voice")
+        supports_instructions = generate_signature.declares("instruct")
         if supports_voice and supports_instructions:
             voice_mode = "hybrid"
         elif supports_instructions:
             voice_mode = "instructional"
-        else:
+        elif supports_voice:
             voice_mode = "named"
+        else:
+            voice_mode = "plain"
 
         return AudioRuntimeLoadedModel(
             backend_id=backend_id,
@@ -286,10 +288,14 @@ class MLXAudioSpeechRuntime:
 
         supports_voice = loaded_model.voice_mode in {"hybrid", "named"}
         supports_instructions = loaded_model.supports_instructions
-        if not loaded_model.speech_generate_parameters and not loaded_model.generate_parameter_names:
-            params = frozenset(signature(loaded_model.model.generate).parameters)
-            supports_voice = "voice" in params
-            supports_instructions = "instruct" in params
+        if (
+            not loaded_model.voice_mode
+            and not loaded_model.speech_generate_parameters
+            and not loaded_model.generate_parameter_names
+        ):
+            generate_signature = callable_kwarg_signature(loaded_model.model.generate)
+            supports_voice = generate_signature.declares("voice")
+            supports_instructions = generate_signature.declares("instruct")
         kwargs = {
             "text": request.input,
             "verbose": False,

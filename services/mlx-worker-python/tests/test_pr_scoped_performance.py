@@ -1147,7 +1147,7 @@ def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 5.0
     assert metrics["iterations_per_sample"] == 40000.0
-    assert metrics["inspect_signature_calls_mean"] == 2.0
+    assert metrics["inspect_signature_calls_mean"] == 1.0
     assert metrics["elapsed_ms_mean"] >= 0
 
 
@@ -1169,7 +1169,7 @@ def test_mlx_text_stop_kwarg_signature_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["iterations_per_sample"] == 12.0
     assert metrics["stream_signature_calls_mean"] == 1.0
-    assert metrics["inspect_signature_calls_mean"] == 3.0
+    assert metrics["inspect_signature_calls_mean"] == 2.0
     assert metrics["elapsed_ms_mean"] >= 0
 
 

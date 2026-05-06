@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import hashlib
-import inspect
 import importlib.util
 import logging
 import os
@@ -18,7 +17,7 @@ from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.runtime_utils import (
-    callable_accepts_kwarg as _callable_accepts_kwarg,
+    callable_declares_kwarg as _callable_declares_kwarg,
     installed_package_version as _installed_package_version,
 )
 from worker.runtime.temp_media_lifecycle import TempMediaSession
@@ -85,20 +84,6 @@ def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[boo
         if has_vision and has_audio:
             break
     return has_vision, has_audio
-
-
-def _callable_has_named_kwarg(callable_obj: Any, keyword: str) -> bool:
-    try:
-        signature = inspect.signature(callable_obj)
-    except (TypeError, ValueError):
-        return False
-    parameter = signature.parameters.get(keyword)
-    if parameter is None:
-        return False
-    return parameter.kind in (
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        inspect.Parameter.KEYWORD_ONLY,
-    )
 
 
 def _mlx_peak_memory_gb(mx_module: Any) -> float:
@@ -227,17 +212,17 @@ class AutoMLXVLMBackend:
         if self.load_drafter_fn is None:
             return False
         if self.generate_step_fn is not None and (
-            _callable_has_named_kwarg(self.generate_step_fn, "draft_model")
-            and _callable_has_named_kwarg(self.generate_step_fn, "draft_kind")
-            and _callable_has_named_kwarg(self.generate_step_fn, "draft_block_size")
+            _callable_declares_kwarg(self.generate_step_fn, "draft_model")
+            and _callable_declares_kwarg(self.generate_step_fn, "draft_kind")
+            and _callable_declares_kwarg(self.generate_step_fn, "draft_block_size")
         ):
             return True
         if self.batch_generate_fn is None:
             return False
         return (
-            _callable_has_named_kwarg(self.batch_generate_fn, "draft_model")
-            and _callable_has_named_kwarg(self.batch_generate_fn, "draft_kind")
-            and _callable_has_named_kwarg(self.batch_generate_fn, "draft_block_size")
+            _callable_declares_kwarg(self.batch_generate_fn, "draft_model")
+            and _callable_declares_kwarg(self.batch_generate_fn, "draft_kind")
+            and _callable_declares_kwarg(self.batch_generate_fn, "draft_block_size")
         )
 
     def load_drafter(self, model_id: str, *, kind: str = "mtp") -> Any:
@@ -248,7 +233,7 @@ class AutoMLXVLMBackend:
         cached = self._drafter_cache.get(cache_key)
         if cached is not None:
             return cached
-        if _callable_accepts_kwarg(self.load_drafter_fn, "kind"):
+        if _callable_declares_kwarg(self.load_drafter_fn, "kind"):
             drafter = self.load_drafter_fn(model_id, kind=kind)
         else:
             drafter = self.load_drafter_fn(model_id)
@@ -625,7 +610,7 @@ class MLXVLMRuntime:
                     "verbose": False,
                 }
                 if media_paths.video_paths:
-                    if _callable_accepts_kwarg(self._backend.stream_generate_fn, "video"):
+                    if _callable_declares_kwarg(self._backend.stream_generate_fn, "video"):
                         stream_kwargs["video"] = list(media_paths.video_paths)
                     else:
                         logger.warning(

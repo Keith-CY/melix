@@ -67,13 +67,7 @@ def main() -> int:
 
     try:
         for _ in range(sample_count):
-            runtime_utils.clear_callable_accepts_kwarg_cache()
-            backend = AutoMLXBackend(
-                load_fn=_fake_load,
-                stream_generate_fn=_fake_stream_generate,
-                sampler_factory=_fake_sampler_factory,
-            )
-            loaded_model = backend.load_model(model_spec)
+            runtime_utils.clear_callable_kwarg_signature_cache()
             signature_calls = 0
             stream_signature_calls = 0
 
@@ -87,6 +81,12 @@ def main() -> int:
             runtime_utils.inspect.signature = tracked_signature
             if hasattr(mlx_text_runtime, "inspect"):
                 mlx_text_runtime.inspect.signature = tracked_signature
+            backend = AutoMLXBackend(
+                load_fn=_fake_load,
+                stream_generate_fn=_fake_stream_generate,
+                sampler_factory=_fake_sampler_factory,
+            )
+            loaded_model = backend.load_model(model_spec)
             started = time.perf_counter()
             for _iteration in range(iterations):
                 chunks = list(backend.generate_tokens(loaded_model, "prompt", sampling, cancel_event=_NeverCancelled()))
@@ -100,7 +100,7 @@ def main() -> int:
         if hasattr(mlx_text_runtime, "inspect"):
             mlx_text_runtime.inspect.signature = original_text_signature
         inspect.signature = original_signature
-        runtime_utils.clear_callable_accepts_kwarg_cache()
+        runtime_utils.clear_callable_kwarg_signature_cache()
 
     metrics = {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),

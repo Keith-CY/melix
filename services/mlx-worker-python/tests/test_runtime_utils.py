@@ -11,10 +11,11 @@ from worker.runtime import runtime_utils
 
 def test_callable_accepts_kwarg_returns_false_for_non_introspectable_object() -> None:
     assert runtime_utils.callable_accepts_kwarg(object(), "temperature") is False
+    assert runtime_utils.callable_declares_kwarg(object(), "temperature") is False
 
 
-def test_callable_accepts_kwarg_caches_signature_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+def test_callable_kwarg_signature_caches_structured_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_utils.clear_callable_kwarg_signature_cache()
     original_signature = inspect.signature
     signature_calls = 0
 
@@ -31,16 +32,22 @@ def test_callable_accepts_kwarg_caches_signature_lookup(monkeypatch: pytest.Monk
     assert runtime_utils.callable_accepts_kwarg(sample, "temperature") is True
     assert runtime_utils.callable_accepts_kwarg(sample, "temperature") is True
     assert signature_calls == 1
+    assert runtime_utils.callable_declares_kwarg(sample, "temperature") is True
     assert runtime_utils.callable_accepts_kwarg(sample, "top_p") is False
-    assert signature_calls == 2
+    assert runtime_utils.callable_declares_kwarg(sample, "top_p") is False
+    capabilities = runtime_utils.callable_kwarg_signature(sample)
+    assert capabilities.parameter_names == ("temperature",)
+    assert capabilities.keyword_accessible_params == frozenset({"temperature"})
+    assert capabilities.accepts_var_keyword is False
+    assert signature_calls == 1
 
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
 
 def test_callable_accepts_kwarg_caches_bound_methods_by_underlying_function(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
     original_signature = inspect.signature
     signature_calls = 0
     inspected_objects: list[Any] = []
@@ -62,14 +69,15 @@ def test_callable_accepts_kwarg_caches_bound_methods_by_underlying_function(
     assert runtime_utils.callable_accepts_kwarg(first.generate, "temperature") is True
     assert runtime_utils.callable_accepts_kwarg(second.generate, "temperature") is True
     assert runtime_utils.callable_accepts_kwarg(second.generate, "self") is False
-    assert signature_calls == 2
-    assert inspected_objects == [SampleRuntime.generate, SampleRuntime.generate]
+    assert runtime_utils.callable_declares_kwarg(second.generate, "self") is False
+    assert signature_calls == 1
+    assert inspected_objects == [SampleRuntime.generate]
 
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
 
 def test_callable_accepts_kwarg_bound_methods_preserve_parameter_scan_behavior() -> None:
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
     class SampleRuntime:
         def generate(
@@ -90,12 +98,26 @@ def test_callable_accepts_kwarg_bound_methods_preserve_parameter_scan_behavior()
     assert runtime_utils.callable_accepts_kwarg(method, "temperature") is True
     assert runtime_utils.callable_accepts_kwarg(method, "top_p") is True
     assert runtime_utils.callable_accepts_kwarg(method, "missing") is False
+    assert runtime_utils.callable_declares_kwarg(method, "prompt") is True
+    assert runtime_utils.callable_declares_kwarg(method, "max_tokens") is True
+    assert runtime_utils.callable_declares_kwarg(method, "temperature") is True
+    assert runtime_utils.callable_declares_kwarg(method, "top_p") is True
+    capabilities = runtime_utils.callable_kwarg_signature(method)
+    assert capabilities.parameter_names == (
+        "prompt",
+        "max_tokens",
+        "temperature",
+        "top_p",
+    )
+    assert capabilities.keyword_accessible_params == frozenset(
+        {"prompt", "max_tokens", "temperature", "top_p"}
+    )
 
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
 
 def test_callable_accepts_kwarg_bound_methods_preserve_var_keyword_behavior() -> None:
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
     class SampleRuntime:
         def generate(self, **kwargs: object) -> object:
@@ -103,12 +125,32 @@ def test_callable_accepts_kwarg_bound_methods_preserve_var_keyword_behavior() ->
 
     assert runtime_utils.callable_accepts_kwarg(SampleRuntime().generate, "temperature") is True
     assert runtime_utils.callable_accepts_kwarg(SampleRuntime().generate, "self") is True
+    assert runtime_utils.callable_declares_kwarg(SampleRuntime().generate, "temperature") is False
+    assert runtime_utils.callable_declares_kwarg(SampleRuntime().generate, "self") is False
+    assert runtime_utils.callable_kwarg_signature(SampleRuntime().generate).accepts_var_keyword is True
 
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
+
+
+def test_first_declared_kwarg_ignores_variadic_kwargs() -> None:
+    runtime_utils.clear_callable_kwarg_signature_cache()
+
+    def explicit(*, stop_words: list[str] | None = None, **kwargs: object) -> None:
+        _ = (stop_words, kwargs)
+
+    def variadic(**kwargs: object) -> None:
+        _ = kwargs
+
+    assert runtime_utils.first_declared_kwarg(explicit, ("stop", "stop_words", "stop_sequences")) == "stop_words"
+    assert runtime_utils.first_declared_kwarg(variadic, ("stop", "stop_words", "stop_sequences")) == ""
+    assert runtime_utils.callable_accepts_kwarg(variadic, "stop") is True
+    assert runtime_utils.callable_declares_kwarg(variadic, "stop") is False
+
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
 
 def test_callable_accepts_kwarg_falls_back_for_unhashable_callable(monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
     original_signature = inspect.signature
     signature_calls = 0
 

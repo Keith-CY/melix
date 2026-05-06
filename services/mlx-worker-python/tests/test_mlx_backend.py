@@ -236,7 +236,7 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
 
 
 def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
     signature_calls: dict[str, int] = {}
     original_signature = runtime_utils.inspect.signature
 
@@ -278,7 +278,7 @@ def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.Mon
 
     assert seen_stop_values == [["</turn>", "</s>"], ["</turn>", "</s>"]]
     assert signature_calls.get("fake_stream_generate") == 1
-    runtime_utils.clear_callable_accepts_kwarg_cache()
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
 
 def test_auto_backend_scores_reward_responses_with_mlx_generation() -> None:
@@ -490,7 +490,7 @@ def test_auto_backend_does_not_pass_stop_to_variadic_stream_generate() -> None:
     assert "stop" not in seen["kwargs"]
     assert "stop_words" not in seen["kwargs"]
     assert "stop_sequences" not in seen["kwargs"]
-    assert mlx_text_runtime_module._callable_declares_kwarg(42, "stop") is False
+    assert runtime_utils.callable_declares_kwarg(42, "stop") is False
     assert [chunk.text for chunk in chunks] == ["done"]
 
 
