@@ -45,8 +45,9 @@ readiness.
   mean/percentiles, candidate group margin/variance, update count, selected
   candidate count, KL penalty, and reward-model lineage where applicable.
 - Preserve source LoRA adapter weights/config when a GRPO/RLHF alignment run is
-  resumed from an upstream base LoRA adapter so adapter-backed publish/activate
-  and local inference smoke tests load the expected artifacts.
+  supplied an upstream base LoRA adapter through `source_adapter_path`, which is
+  lineage propagation rather than checkpoint resumption, so adapter-backed
+  publish/activate and local inference smoke tests load the expected artifacts.
 - Keep final acceptance honest by marking scored-trace execution as
   deterministic and runtime generation as runtime-generated scored-trace
   execution, and reward-model scoring as reward-runtime scored-trace execution,
@@ -84,8 +85,8 @@ Success metrics:
 - GRPO/RLHF acceptance bundles can pass real local runtime evidence through
   LoRA training, alignment, publish, adapter-backed activation, chat, and
   evaluation when provided a local reward-model manifest and local text model.
-- Resumed alignment adapters preserve the source adapter artifacts required by
-  adapter-backed runtime loading.
+- Alignment runs supplied with `source_adapter_path` preserve the source adapter
+  artifacts required by adapter-backed runtime loading.
 - The production MaintenanceCore default path passes a reward runtime into the
   default LoRA training runner.
 - The MLX-LM reward scorer must use a deterministic scalar-score sampling shape
