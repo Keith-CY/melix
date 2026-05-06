@@ -123,6 +123,37 @@ def test_bootstrap_interval_reuses_one_sorted_replicate_vector(monkeypatch: pyte
     }
 
 
+def test_bootstrap_interval_sums_replicates_without_materializing_samples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mean_lengths: list[int] = []
+    original_mean = statistical_evidence_module._mean
+
+    def tracking_mean(values: list[float] | tuple[float, ...]) -> float:
+        mean_lengths.append(len(values))
+        return original_mean(values)
+
+    monkeypatch.setattr(statistical_evidence_module, "_mean", tracking_mean)
+
+    evidence = build_paired_statistical_evidence(
+        paired_outcomes=(1, 0, 1, 1, -1, 0, 1, 1),
+        confidence_level=0.9,
+        bootstrap_iterations=64,
+        bootstrap_seed=13,
+    )
+
+    assert mean_lengths == [8, 8]
+    assert evidence["bootstrap"] == {
+        "method": "paired_bootstrap_percentile",
+        "confidence_level": 0.9,
+        "lower_bound": 0.125,
+        "upper_bound": 1.0,
+        "crosses_zero": False,
+        "iterations": 64,
+        "seed": 13,
+    }
+
+
 def test_classify_release_verdict_returns_inconclusive_when_any_interval_crosses_zero() -> None:
     verdict = classify_release_verdict(
         delta_accuracy=0.2,
