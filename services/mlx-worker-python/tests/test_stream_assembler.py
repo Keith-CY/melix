@@ -85,6 +85,31 @@ def test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call(
     assert buffer.calls == [assembler._structural_tag_prefixes]
 
 
+def test_partial_structural_tag_suffix_returns_match_without_tuple_prescan() -> None:
+    class RecordingBuffer(str):
+        def __new__(cls) -> "RecordingBuffer":
+            instance = str.__new__(cls, "chunk-ending-with-partial-<tool")
+            instance.calls = []
+            return instance
+
+        def endswith(self, suffix: str | tuple[str, ...], *args: object) -> bool:  # type: ignore[override]
+            self.calls.append(suffix)
+            return super().endswith(suffix, *args)
+
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-suffix-single-pass",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    buffer = RecordingBuffer()
+    assembler._buffer = buffer
+
+    assert assembler._partial_structural_tag_suffix() == "<tool"
+    assert all(isinstance(call, str) for call in buffer.calls)
+    assert buffer.calls[-1] == "<tool"
+
+
 def test_stream_assembler_instances_do_not_share_request_state() -> None:
     assemblers = [
         RequestStreamAssembler(

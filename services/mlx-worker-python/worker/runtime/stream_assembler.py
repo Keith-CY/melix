@@ -266,8 +266,6 @@ class RequestStreamAssembler:
         return self._buffer.endswith(self._structural_tag_prefixes)
 
     def _partial_structural_tag_suffix(self) -> str:
-        if not self._has_partial_structural_tag_suffix():
-            return ""
         for prefix in reversed(self._structural_tag_prefixes):
             if self._buffer.endswith(prefix):
                 return prefix

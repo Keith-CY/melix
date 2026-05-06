@@ -42,7 +42,7 @@ def main() -> None:
         tracemalloc.start()
         started = time.perf_counter()
         for _index in range(iterations):
-            if assembler._has_partial_structural_tag_suffix():
+            if assembler._partial_structural_tag_suffix():
                 held_suffix_hits += 1
             if assembler._structural_tag_prefixes is expected_prefixes:
                 prefix_identity_hits += 1
