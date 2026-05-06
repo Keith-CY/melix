@@ -133,6 +133,16 @@ def test_scope_report_selects_dataset_registry_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "dataset-registry-limited-read-streaming"
 
 
+def test_scope_report_selects_mlx_audio_wav_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/mlx_audio_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "mlx-audio-wav-streaming-pcm"
+
+
 def test_scope_report_selects_only_matching_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -914,6 +924,23 @@ def test_dataset_registry_limit_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_mlx_audio_wav_streaming_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/mlx_audio_wav_streaming_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 240000.0
+    assert metrics["wav_bytes"] == 480044.0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "dataset-registry-limited-read-streaming",
@@ -935,6 +962,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
         "runtime-utils-kwarg-signature-cache",
+        "mlx-audio-wav-streaming-pcm",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-job-id-high-water-mark",
         "evaluation-dialogue-diagnostics-top-k",

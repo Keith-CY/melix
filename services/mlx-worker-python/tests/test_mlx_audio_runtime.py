@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from io import BytesIO
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+import wave
 
 import pytest
 
@@ -268,6 +270,69 @@ def test_mlx_audio_processor_validation_accepts_local_processor_config(
 
     assert loaded.backend_id == "mlx_audio.stt"
     assert captured_paths == [str(model_dir)]
+
+
+def test_audio_to_wav_bytes_streams_nested_samples_and_clamps_values() -> None:
+    from worker.runtime.mlx_audio_runtime import _audio_to_wav_bytes
+
+    class ArrayLike:
+        def tolist(self):
+            return [0.5, (2.0, -2.0)]
+
+    wav_bytes = _audio_to_wav_bytes([[0.0, ArrayLike()], (-0.5,)], sample_rate=16_000)
+
+    with wave.open(BytesIO(wav_bytes), "rb") as handle:
+        assert handle.getnchannels() == 1
+        assert handle.getsampwidth() == 2
+        assert handle.getframerate() == 16_000
+        assert handle.getnframes() == 5
+        frames = handle.readframes(5)
+
+    decoded = [
+        int.from_bytes(frames[index : index + 2], byteorder="little", signed=True)
+        for index in range(0, len(frames), 2)
+    ]
+    assert decoded == [0, 16383, 32767, -32767, -16383]
+
+    scalar_wav_bytes = _audio_to_wav_bytes(0.25, sample_rate=8_000)
+    with wave.open(BytesIO(scalar_wav_bytes), "rb") as handle:
+        assert handle.getframerate() == 8_000
+        assert handle.getnframes() == 1
+        assert int.from_bytes(handle.readframes(1), byteorder="little", signed=True) == 8191
+
+
+def test_audio_to_wav_bytes_does_not_materialize_flat_sample_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    import worker.runtime.mlx_audio_runtime as mlx_audio_runtime
+
+    calls: list[int] = []
+    original_writeframesraw = wave.Wave_write.writeframesraw
+
+    def tracked_writeframesraw(self, data):
+        calls.append(len(data))
+        return original_writeframesraw(self, data)
+
+    monkeypatch.setattr(wave.Wave_write, "writeframesraw", tracked_writeframesraw)
+
+    wav_bytes = mlx_audio_runtime._audio_to_wav_bytes((0.1 for _ in range(9000)), sample_rate=24_000)
+
+    assert calls == [18000]
+    with wave.open(BytesIO(wav_bytes), "rb") as handle:
+        assert handle.getnframes() == 9000
+        assert handle.getframerate() == 24_000
+
+
+def test_audio_to_wav_bytes_writes_little_endian_chunks_on_big_endian_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import worker.runtime.mlx_audio_runtime as mlx_audio_runtime
+
+    monkeypatch.setattr(mlx_audio_runtime.sys, "byteorder", "big")
+
+    wav_bytes = mlx_audio_runtime._audio_to_wav_bytes((0.1 for _ in range(66000)), sample_rate=24_000)
+
+    assert wav_bytes.startswith(b"RIFF")
+    with wave.open(BytesIO(wav_bytes), "rb") as handle:
+        assert handle.getnframes() == 66000
 
 
 def test_worker_load_model_returns_actionable_audio_processor_validation_error(tmp_path: Path) -> None:

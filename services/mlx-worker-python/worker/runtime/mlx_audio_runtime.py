@@ -7,6 +7,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Lock
 from time import perf_counter
+import array
+import sys
 import wave
 
 from worker.runtime.audio_preprocessing import prepare_audio_input
@@ -35,36 +37,40 @@ def _normalize_language(value) -> str:
     return "" if normalized.lower() == "none" else normalized
 
 
-def _flatten_samples(value) -> list[float]:
+def _iter_samples(value):
     if hasattr(value, "tolist"):
         value = value.tolist()
     if isinstance(value, (float, int)):
-        return [float(value)]
-    flattened: list[float] = []
+        yield float(value)
+        return
     for item in value:
-        if isinstance(item, (list, tuple)):
-            flattened.extend(_flatten_samples(item))
-        elif hasattr(item, "tolist"):
-            flattened.extend(_flatten_samples(item.tolist()))
+        if isinstance(item, (list, tuple)) or hasattr(item, "tolist"):
+            yield from _iter_samples(item)
         else:
-            flattened.append(float(item))
-    return flattened
+            yield float(item)
 
 
 def _audio_to_wav_bytes(audio, sample_rate: int) -> bytes:
-    samples = _flatten_samples(audio)
-    pcm = bytearray()
-    for sample in samples:
-        clamped = max(-1.0, min(1.0, float(sample)))
-        scaled = int(clamped * 32767.0)
-        pcm.extend(int(scaled).to_bytes(2, byteorder="little", signed=True))
+    chunk = array.array("h")
+    chunk_sample_limit = 65536
 
     with BytesIO() as buffer:
         with wave.open(buffer, "wb") as handle:
             handle.setnchannels(1)
             handle.setsampwidth(2)
             handle.setframerate(int(sample_rate))
-            handle.writeframes(bytes(pcm))
+            for sample in _iter_samples(audio):
+                clamped = max(-1.0, min(1.0, float(sample)))
+                chunk.append(int(clamped * 32767.0))
+                if len(chunk) >= chunk_sample_limit:
+                    if sys.byteorder != "little":
+                        chunk.byteswap()
+                    handle.writeframesraw(chunk.tobytes())
+                    chunk = array.array("h")
+            if chunk:
+                if sys.byteorder != "little":
+                    chunk.byteswap()
+                handle.writeframesraw(chunk.tobytes())
         return buffer.getvalue()
 
 
