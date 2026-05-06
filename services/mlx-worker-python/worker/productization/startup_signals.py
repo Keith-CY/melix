@@ -158,10 +158,10 @@ def classify_startup_failure(
 ) -> StartupFailureReport:
     ready_probe_url = str(manifest.get("ready_probe_url", ""))
     http_port = int(manifest.get("http_port", 0) or 0)
+    error_lower = error_text.lower()
     primary_log_path = str(manifest.get("control_plane_stderr_path", ""))
-    lowered_error_text = error_text.lower()
 
-    if any(pattern in lowered_error_text for pattern in PORT_CONFLICT_PATTERNS):
+    if any(pattern in error_lower for pattern in PORT_CONFLICT_PATTERNS):
         summary = f"Configured HTTP port {http_port} is already in use."
         detail = (
             f"The control plane could not bind to {ready_probe_url}. "
@@ -174,7 +174,7 @@ def classify_startup_failure(
             manifest.get("control_plane_stderr_path"),
             manifest.get("control_plane_stdout_path"),
         )
-        combined_control_plane = f"{error_text}\n{control_plane_excerpt}".lower()
+        combined_control_plane = f"{error_lower}\n{control_plane_excerpt.lower()}"
 
         if any(pattern in combined_control_plane for pattern in PORT_CONFLICT_PATTERNS):
             summary = f"Configured HTTP port {http_port} is already in use."
@@ -208,7 +208,6 @@ def classify_startup_failure(
                 excerpt = worker_excerpt_value
                 classification = "worker_crash"
             else:
-                primary_log_path = str(manifest.get("control_plane_stderr_path", ""))
                 summary = f"Melix startup timed out before {ready_probe_url} became ready."
                 detail = "Inspect the startup logs and ready probe path to determine whether the services hung or never launched."
                 excerpt = control_plane_excerpt or worker_excerpt_value or error_text
