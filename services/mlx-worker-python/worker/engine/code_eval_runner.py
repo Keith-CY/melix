@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 from functools import lru_cache
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -235,13 +236,26 @@ def _load_payload_file(payload_path: Path) -> dict[str, object] | None:
 
 def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
     try:
-        size = path.stat().st_size
-        with path.open("rb") as file:
-            if size > byte_limit:
-                file.seek(-byte_limit, 2)
-            return file.read().decode("utf-8", errors="replace").strip(), size
+        fd = os.open(path, os.O_RDONLY)
     except OSError:
         return "", 0
+
+    try:
+        size = os.fstat(fd).st_size
+        read_limit = max(int(byte_limit), 0)
+        if size > read_limit:
+            os.lseek(fd, -read_limit, os.SEEK_END)
+            read_size = read_limit
+        else:
+            read_size = size
+        return os.read(fd, read_size).decode("utf-8", errors="replace").strip(), size
+    except OSError:
+        return "", 0
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def _read_limited_text(path: Path, byte_limit: int) -> str:
