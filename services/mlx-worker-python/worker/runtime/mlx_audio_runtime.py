@@ -38,13 +38,22 @@ def _normalize_language(value) -> str:
 
 
 def _iter_samples(value):
-    if hasattr(value, "tolist"):
-        value = value.tolist()
     if isinstance(value, (float, int)):
         yield float(value)
         return
+    flat_values = getattr(value, "flat", None)
+    if flat_values is not None and not isinstance(value, (list, tuple)):
+        for item in flat_values:
+            yield float(item)
+        return
+    if hasattr(value, "tolist"):
+        value = value.tolist()
     for item in value:
-        if isinstance(item, (list, tuple)) or hasattr(item, "tolist"):
+        if (
+            isinstance(item, (list, tuple))
+            or hasattr(item, "flat")
+            or hasattr(item, "tolist")
+        ):
             yield from _iter_samples(item)
         else:
             yield float(item)

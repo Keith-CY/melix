@@ -603,6 +603,25 @@ def test_audio_to_wav_bytes_does_not_materialize_flat_sample_list(monkeypatch: p
         assert handle.getnframes() == 9000
         assert handle.getframerate() == 24_000
 
+    class FlatArrayLike:
+        def __init__(self) -> None:
+            self.tolist_calls = 0
+            self.flat = (0.1 for _ in range(4))
+
+        def tolist(self):
+            self.tolist_calls += 1
+            raise AssertionError("flat audio arrays should stream without tolist materialization")
+
+    flat_audio = FlatArrayLike()
+    flat_wav_bytes = mlx_audio_runtime._audio_to_wav_bytes(flat_audio, sample_rate=12_000)
+
+    assert flat_audio.tolist_calls == 0
+    with pytest.raises(AssertionError, match="flat audio arrays"):
+        flat_audio.tolist()
+    with wave.open(BytesIO(flat_wav_bytes), "rb") as handle:
+        assert handle.getnframes() == 4
+        assert handle.getframerate() == 12_000
+
 
 def test_audio_to_wav_bytes_writes_little_endian_chunks_on_big_endian_hosts(
     monkeypatch: pytest.MonkeyPatch,
