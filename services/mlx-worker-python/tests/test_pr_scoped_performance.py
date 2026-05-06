@@ -1079,6 +1079,8 @@ def test_multimodal_preprocessing_uri_probe_script_emits_metrics(
     assert metrics["iteration_count"] == 3.0
     assert metrics["sample_count"] == 1.0
     assert metrics["urlparse_calls_mean"] == 3.0
+    assert metrics["read_bytes_calls_mean"] == 3.0
+    assert metrics["image_parts_per_iteration"] == 2.0
     assert metrics["elapsed_ms_mean"] >= 0
 
 
