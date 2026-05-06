@@ -534,6 +534,8 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
 
 
 def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
+    if not text:
+        return 0
     pattern = _BARE_SIZE_HINT_RE if allow_bare else _EXPLICIT_SIZE_HINT_RE
     match = pattern.search(text)
     if not match:

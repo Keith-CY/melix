@@ -7,7 +7,13 @@ from urllib.request import Request
 import pytest
 
 import worker.model_ops.hub_catalog as hub_catalog_module
-from worker.model_ops.hub_catalog import HubCatalog, HubCatalogError, _is_mlx_compatible, _local_fit_evidence
+from worker.model_ops.hub_catalog import (
+    HubCatalog,
+    HubCatalogError,
+    _is_mlx_compatible,
+    _local_fit_evidence,
+    _size_hint_from_text,
+)
 
 
 KB = 1024
@@ -333,6 +339,14 @@ def test_search_models_marks_large_mlx_model_as_heavy_not_blocked() -> None:
     assert model.recommended_action == "review_risk"
     assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
     assert any("memory comfort budget" in reason for reason in model.local_fit_reasons)
+
+
+def test_size_hint_from_empty_text_skips_regex_search(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hub_catalog_module, "_BARE_SIZE_HINT_RE", object())
+    monkeypatch.setattr(hub_catalog_module, "_EXPLICIT_SIZE_HINT_RE", object())
+
+    assert _size_hint_from_text("", allow_bare=True) == 0
+    assert _size_hint_from_text("", allow_bare=False) == 0
 
 
 def test_search_models_ignores_sibling_sizes_without_weight_or_config_filenames() -> None:
