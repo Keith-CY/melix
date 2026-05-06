@@ -267,8 +267,9 @@ def _next_cursor_from_link(link_header: str) -> str:
         if url_end < 0:
             return ""
         next_url_start = link_header.find("<", url_end + 1)
+        relation_start = url_end + 1
         relation_end = next_url_start if next_url_start >= 0 else len(link_header)
-        if 'rel="next"' in link_header[url_end + 1 : relation_end]:
+        if link_header.find('rel="next"', relation_start, relation_end) >= 0:
             return _cursor_query_value(link_header[url_start + 1 : url_end])
         search_start = relation_end
 
