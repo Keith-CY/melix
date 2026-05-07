@@ -1023,7 +1023,7 @@ public struct OpenAIHandler: Sendable {
         } else {
             speechStreamIntervalMs = 0
         }
-        workerRequest.stream = speechStreamingEnabled
+        workerRequest.streamingEnabled = speechStreamingEnabled
         workerRequest.streamIntervalMs = speechStreamIntervalMs
 
         let startedAt = Date()
@@ -1096,6 +1096,7 @@ public struct OpenAIHandler: Sendable {
                 var streamedOutputBytes = 0
                 var streamedAudioChunkCount = 0
                 var firstAudioLatencyMs = 0.0
+                var firstAudioChunkSeen = false
                 var finishSeen = false
 
                 do {
@@ -1105,8 +1106,9 @@ public struct OpenAIHandler: Sendable {
                             streamedOutputBytes += event.audioBytes.count
                             continuation.yield(event.audioBytes)
                         case .audioChunk:
-                            if firstAudioLatencyMs == 0.0 {
+                            if !firstAudioChunkSeen {
                                 firstAudioLatencyMs = max(Date().timeIntervalSince(startedAt) * 1000, 0.001)
+                                firstAudioChunkSeen = true
                                 await metricsStore.set(
                                     firstAudioLatencyMs,
                                     forKey: "audio.speech_first_audio_latency_ms"

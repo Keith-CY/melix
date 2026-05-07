@@ -280,7 +280,7 @@ message SpeakRequest {
   string instructions = 6;
   SamplingConfig sampling = 7;
   map<string, string> ext = 8;
-  bool stream = 9;
+  bool streaming_enabled = 9;
   uint32 stream_interval_ms = 10;
 }
 

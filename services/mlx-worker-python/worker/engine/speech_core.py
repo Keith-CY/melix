@@ -62,6 +62,7 @@ class SpeechCore:
             return
 
         self._registry.start_request(request.id.request_id, runtime_kind="speech")
+        stream_committed = False
         try:
             runtime = self._registry.runtime_for_loaded_model(loaded_model)
             if not hasattr(runtime, "stream_speak"):
@@ -77,8 +78,18 @@ class SpeechCore:
             ):
                 if frame.kind == "finish" and hasattr(runtime, "last_probe_snapshot"):
                     self._registry.record_speech_probe(runtime.last_probe_snapshot())
-                yield self._stream_event(frame)
+                event = self._stream_event(frame)
+                if event.kind in (
+                    inference_pb2.SPEAK_STREAM_EVENT_KIND_ENVELOPE,
+                    inference_pb2.SPEAK_STREAM_EVENT_KIND_AUDIO_CHUNK,
+                ):
+                    stream_committed = True
+                yield event
         except Exception as exc:  # pragma: no cover - defensive branch
+            if stream_committed:
+                # Once audio bytes may have reached the client, rely on gRPC
+                # trailing status instead of emitting an in-band error frame.
+                raise
             yield self._stream_error("runtime_error", str(exc))
         finally:
             self._registry.finish_request(request.id.request_id)

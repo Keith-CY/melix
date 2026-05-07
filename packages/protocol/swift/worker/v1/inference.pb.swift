@@ -1235,9 +1235,9 @@ public struct Melix_Worker_V1_SpeakRequest: @unchecked Sendable {
     set {_uniqueStorage()._ext = newValue}
   }
 
-  public var stream: Bool {
-    get {_storage._stream}
-    set {_uniqueStorage()._stream = newValue}
+  public var streamingEnabled: Bool {
+    get {_storage._streamingEnabled}
+    set {_uniqueStorage()._streamingEnabled = newValue}
   }
 
   public var streamIntervalMs: UInt32 {
@@ -3759,7 +3759,7 @@ extension Melix_Worker_V1_TranscribeResponse: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SpeakRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{1}input\0\u{1}voice\0\u{1}format\0\u{1}instructions\0\u{1}sampling\0\u{1}ext\0\u{1}stream\0\u{3}stream_interval_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{1}input\0\u{1}voice\0\u{1}format\0\u{1}instructions\0\u{1}sampling\0\u{1}ext\0\u{3}streaming_enabled\0\u{3}stream_interval_ms\0")
 
   fileprivate class _StorageClass {
     var _id: Melix_Worker_V1_RequestIdentity? = nil
@@ -3770,7 +3770,7 @@ extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
     var _instructions: String = String()
     var _sampling: Melix_Worker_V1_SamplingConfig? = nil
     var _ext: Dictionary<String,String> = [:]
-    var _stream: Bool = false
+    var _streamingEnabled: Bool = false
     var _streamIntervalMs: UInt32 = 0
 
       // This property is used as the initial default value for new instances of the type.
@@ -3790,7 +3790,7 @@ extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
       _instructions = source._instructions
       _sampling = source._sampling
       _ext = source._ext
-      _stream = source._stream
+      _streamingEnabled = source._streamingEnabled
       _streamIntervalMs = source._streamIntervalMs
     }
   }
@@ -3818,7 +3818,7 @@ extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
         case 6: try { try decoder.decodeSingularStringField(value: &_storage._instructions) }()
         case 7: try { try decoder.decodeSingularMessageField(value: &_storage._sampling) }()
         case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &_storage._ext) }()
-        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._stream) }()
+        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._streamingEnabled) }()
         case 10: try { try decoder.decodeSingularUInt32Field(value: &_storage._streamIntervalMs) }()
         default: break
         }
@@ -3856,8 +3856,8 @@ extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
       if !_storage._ext.isEmpty {
         try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: _storage._ext, fieldNumber: 8)
       }
-      if _storage._stream != false {
-        try visitor.visitSingularBoolField(value: _storage._stream, fieldNumber: 9)
+      if _storage._streamingEnabled != false {
+        try visitor.visitSingularBoolField(value: _storage._streamingEnabled, fieldNumber: 9)
       }
       if _storage._streamIntervalMs != 0 {
         try visitor.visitSingularUInt32Field(value: _storage._streamIntervalMs, fieldNumber: 10)
@@ -3879,7 +3879,7 @@ extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
         if _storage._instructions != rhs_storage._instructions {return false}
         if _storage._sampling != rhs_storage._sampling {return false}
         if _storage._ext != rhs_storage._ext {return false}
-        if _storage._stream != rhs_storage._stream {return false}
+        if _storage._streamingEnabled != rhs_storage._streamingEnabled {return false}
         if _storage._streamIntervalMs != rhs_storage._streamIntervalMs {return false}
         return true
       }

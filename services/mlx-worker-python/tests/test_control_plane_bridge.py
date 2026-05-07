@@ -381,7 +381,7 @@ def test_bridge_helper_forwards_speak_stream(monkeypatch, capsys) -> None:
         model_handle="melix-dev-speech::bridge",
         input="hello",
         format="wav",
-        stream=True,
+        streaming_enabled=True,
         stream_interval_ms=25,
     )
     monkeypatch.setattr(

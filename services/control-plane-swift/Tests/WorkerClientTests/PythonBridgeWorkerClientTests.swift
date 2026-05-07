@@ -330,7 +330,7 @@ struct PythonBridgeWorkerClientTests {
         speakRequest.input = "hello streamed speech"
         speakRequest.voice = "alloy"
         speakRequest.format = "wav"
-        speakRequest.stream = true
+        speakRequest.streamingEnabled = true
         speakRequest.streamIntervalMs = 20
 
         var envelope = Melix_Worker_V1_SpeakStreamEvent()

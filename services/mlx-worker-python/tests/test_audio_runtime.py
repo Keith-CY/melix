@@ -51,6 +51,12 @@ class FailingSpeechStreamRuntime(LegacySpeechRuntime):
         raise RuntimeError("stream failed")
 
 
+class FailingAfterEnvelopeSpeechStreamRuntime(LegacySpeechRuntime):
+    def stream_speak(self, loaded_model, request):
+        yield SpeechStreamFrame(kind="envelope", audio_bytes=b"RIFF")
+        raise RuntimeError("stream interrupted")
+
+
 def build_services(**registry_kwargs):
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=PassiveTextBackend()),
@@ -175,7 +181,7 @@ def test_speak_stream_returns_progressive_wav_and_runtime_streaming_metrics() ->
                 input="hello streamed audio",
                 voice="alloy",
                 format="wav",
-                stream=True,
+                streaming_enabled=True,
                 stream_interval_ms=25,
             ),
             context=None,
@@ -304,7 +310,7 @@ def test_speak_stream_maps_unimplemented_runtime_errors_and_unknown_frames() -> 
             context=None,
         )
     )
-    unknown_frame = SpeechCore._stream_event(SpeechStreamFrame(kind="unexpected"))
+    unknown_frame = SpeechCore._stream_event(SpeechStreamFrame(kind="unexpected"))  # type: ignore[arg-type]
 
     assert events[0].error.code == "unimplemented"
     assert unknown_frame.error.code == "runtime_error"
@@ -328,6 +334,28 @@ def test_speak_stream_maps_runtime_exceptions() -> None:
 
     assert events[0].error.code == "runtime_error"
     assert events[0].error.message == "stream failed"
+
+
+def test_speak_stream_propagates_exceptions_after_audio_is_committed() -> None:
+    runtime_service, inference_service, _ = build_services(
+        speech_runtime=FailingAfterEnvelopeSpeechStreamRuntime()
+    )
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_speech_model())
+
+    stream = inference_service.SpeakStream(
+        inference_pb2.SpeakRequest(
+            id=common_pb2.RequestIdentity(request_id="failing-mid-stream"),
+            model_handle=model_handle,
+            input="hello",
+        ),
+        context=None,
+    )
+
+    first_event = next(stream)
+    assert first_event.kind == inference_pb2.SPEAK_STREAM_EVENT_KIND_ENVELOPE
+    assert first_event.audio_bytes == b"RIFF"
+    with pytest.raises(RuntimeError, match="stream interrupted"):
+        next(stream)
 
 
 def test_deterministic_audio_runtimes_expose_probe_snapshots() -> None:

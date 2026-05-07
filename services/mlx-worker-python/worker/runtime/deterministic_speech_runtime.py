@@ -8,10 +8,10 @@ from worker.runtime.audio_runtime_protocols import (
     SpeechStreamFrame,
 )
 from worker.runtime.deterministic_delay import sleep_if_configured
-from worker.runtime.mlx_audio_runtime import (
-    _audio_to_pcm_chunks,
-    _progressive_wav_header,
-    _stream_chunk_sample_limit,
+from worker.runtime.wav_helpers import (
+    audio_to_pcm_chunks,
+    progressive_wav_header,
+    stream_chunk_sample_limit,
 )
 
 
@@ -69,7 +69,7 @@ class DeterministicSpeechRuntime:
         sample_rate = 24_000
         samples = [((byte % 64) - 32) / 32.0 for byte in payload] or [0.0]
         started_at = perf_counter()
-        header = _progressive_wav_header(sample_rate)
+        header = progressive_wav_header(sample_rate)
         output_bytes = len(header)
         chunk_count = 0
         first_audio_latency_ms = 0.0
@@ -89,9 +89,9 @@ class DeterministicSpeechRuntime:
             ),
         )
         sleep_if_configured("speech")
-        for pcm_chunk in _audio_to_pcm_chunks(
+        for pcm_chunk in audio_to_pcm_chunks(
             samples,
-            chunk_sample_limit=_stream_chunk_sample_limit(sample_rate, stream_interval_ms),
+            chunk_sample_limit=stream_chunk_sample_limit(sample_rate, stream_interval_ms),
         ):
             if first_audio_latency_ms == 0.0:
                 first_audio_latency_ms = max((perf_counter() - started_at) * 1000.0, 0.001)

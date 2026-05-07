@@ -9,7 +9,7 @@ bytes after synthesis finishes.
 
 ## Proposed Change
 
-- Extend `SpeakRequest` with an explicit `stream` flag and bounded
+- Extend `SpeakRequest` with an explicit `streaming_enabled` flag and bounded
   `stream_interval_ms` cadence.
 - Add a worker `SpeakStream` RPC that emits a self-describing progressive WAV
   envelope before PCM chunks, then a finish diagnostic event.
@@ -55,8 +55,8 @@ bytes after synthesis finishes.
 
 - Streaming `/v1/audio/speech` returns a streamed `audio/wav` body whose first
   bytes are the progressive WAV envelope.
-- Streaming requests forward `stream=true` and `stream_interval_ms` to the
-  worker and expose first-audio metrics.
+- Streaming requests forward `streaming_enabled=true` and `stream_interval_ms`
+  to the worker and expose first-audio metrics.
 - Buffered speech requests continue to use the unary worker path.
 - The speech smoke reports at least a 50 percent first-audio latency reduction
   for the progressive Qwen3-TTS fixture versus the same prompt/voice buffered
@@ -83,3 +83,11 @@ bytes after synthesis finishes.
 - Swift text-worker focused RPC fallback test: passed.
 - Swift text-worker changed-line coverage for the touched handwritten scope:
   `100.00%` (`26/26`).
+- Review follow-up Python focused tests for speech core, MLX audio runtime, and
+  control-plane bridge: `37 passed`.
+- Review follow-up Python changed-line coverage for the touched handwritten
+  worker and test scope: `100.00%` (`78/78`).
+- Review follow-up Swift focused control-plane suite with coverage enabled:
+  `195 tests passed`.
+- Review follow-up Swift changed-line coverage for the touched handwritten
+  control-plane scope: `100.00%` (`7/7`).

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 
 class AudioBackendUnavailableError(RuntimeError):
@@ -99,7 +99,7 @@ class SpeechStreamFinish:
 
 @dataclass(frozen=True)
 class SpeechStreamFrame:
-    kind: str
+    kind: Literal["envelope", "audio_chunk", "finish"]
     audio_bytes: bytes = b""
     envelope: SpeechStreamEnvelope | None = None
     finish: SpeechStreamFinish | None = None

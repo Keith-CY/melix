@@ -8,7 +8,7 @@ import wave
 
 import pytest
 
-from packages.protocol.python.worker.v1 import inference_pb2, runtime_pb2
+from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 from worker.grpc_server import WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
@@ -238,7 +238,7 @@ def test_mlx_audio_speech_runtime_streams_progressive_wav_chunks_with_bounded_ca
                 voice="alloy",
                 instructions="Speak calmly.",
                 format="wav",
-                stream=True,
+                streaming_enabled=True,
                 stream_interval_ms=2,
             ),
         )
@@ -274,6 +274,84 @@ def test_mlx_audio_speech_runtime_streams_progressive_wav_chunks_with_bounded_ca
             "verbose": False,
         }
     ]
+
+
+def test_mlx_audio_speech_runtime_reports_context_when_unary_generation_has_no_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.mlx_audio_runtime import MLXAudioSpeechRuntime
+
+    class EmptyTTSModel:
+        def generate(self, text, verbose=False):
+            _ = text
+            _ = verbose
+            return []
+
+    def fake_load_model(model_path: str, strict: bool = True):
+        _ = model_path
+        _ = strict
+        return EmptyTTSModel()
+
+    _install_fake_mlx_audio(monkeypatch, tts_loader=fake_load_model)
+
+    runtime = MLXAudioSpeechRuntime()
+    loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
+
+    with pytest.raises(ValueError) as error:
+        runtime.speak(
+            loaded,
+            inference_pb2.SpeakRequest(
+                id=common_pb2.RequestIdentity(request_id="speak-empty"),
+                input="empty audio",
+                format="wav",
+            ),
+        )
+
+    message = str(error.value)
+    assert "request_id=speak-empty" in message
+    assert "backend_id=mlx_audio.tts" in message
+    assert "family_id=qwen3-tts" in message
+
+
+def test_mlx_audio_speech_runtime_reports_context_when_stream_generation_has_no_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.mlx_audio_runtime import MLXAudioSpeechRuntime
+
+    class EmptyTTSModel:
+        def generate(self, text, verbose=False):
+            _ = text
+            _ = verbose
+            return [SimpleNamespace(audio=[], sample_rate=24_000)]
+
+    def fake_load_model(model_path: str, strict: bool = True):
+        _ = model_path
+        _ = strict
+        return EmptyTTSModel()
+
+    _install_fake_mlx_audio(monkeypatch, tts_loader=fake_load_model)
+
+    runtime = MLXAudioSpeechRuntime()
+    loaded = runtime.load_model(WorkerModelCatalog.mlx_qwen3_tts_model())
+    frames = []
+
+    with pytest.raises(ValueError) as error:
+        for frame in runtime.stream_speak(
+            loaded,
+            inference_pb2.SpeakRequest(
+                id=common_pb2.RequestIdentity(request_id="speak-stream-empty"),
+                input="empty streamed audio",
+                format="wav",
+                streaming_enabled=True,
+            ),
+        ):
+            frames.append(frame)
+
+    assert [frame.kind for frame in frames] == ["envelope"]
+    message = str(error.value)
+    assert "request_id=speak-stream-empty" in message
+    assert "backend_id=mlx_audio.tts" in message
+    assert "family_id=qwen3-tts" in message
 
 
 def test_mlx_audio_speech_runtime_reuses_generate_signature_from_load(
