@@ -339,9 +339,10 @@ def test_scope_report_selects_code_eval_stdio_probe() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert probe_ids == {
         "code-eval-code-block-last-match-streaming",
+        "code-eval-payload-json-bytes",
         "code-eval-stdio-tail-single-stat",
     }
 
@@ -1538,6 +1539,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
         "code-eval-code-block-last-match-streaming",
+        "code-eval-payload-json-bytes",
         "code-eval-stdio-tail-single-stat",
         "deterministic-embedding-duplicate-input-cache",
         "deterministic-embedding-project-digest-allocation",
@@ -1996,6 +1998,21 @@ def test_code_eval_code_block_extract_probe_script_emits_metrics(
     assert metrics["block_count"] == 2500.0
     assert metrics["sample_count"] == 7.0
     assert metrics["extracted_chars_mean"] > 0
+
+
+def test_code_eval_payload_json_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/code_eval_payload_json_probe.py"))
+
+    probe_script["main"]()
+    metrics = json.loads(capsys.readouterr().out)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["payload_bytes"] > 0
+    assert metrics["sample_count"] == 7.0
+    assert metrics["iteration_count"] == 1200.0
 
 
 def test_probe_smokes_return_metrics_against_current_repo() -> None:
