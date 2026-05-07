@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import textwrap
 
+import pytest
+
 from worker.engine import code_eval_runner
 from worker.engine.code_eval_runner import run_python_code_evaluation
 
@@ -599,6 +601,36 @@ def test_load_payload_file_rejects_invalid_and_non_mapping_json(tmp_path: Path) 
     payload_path = tmp_path / "payload.json"
     payload_path.write_text(json.dumps({"runtime_status": "ok"}), encoding="utf-8")
     assert code_eval_runner._load_payload_file(payload_path) == {"runtime_status": "ok"}
+
+
+class _BytesOnlyPayloadPath:
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+        self.read_bytes_calls = 0
+
+    def exists(self) -> bool:
+        return True
+
+    def read_bytes(self) -> bytes:
+        self.read_bytes_calls += 1
+        return self.payload
+
+    def read_text(self, *args: object, **kwargs: object) -> str:
+        raise AssertionError("payload loading should not decode through read_text")
+
+
+def test_load_payload_file_reads_payload_bytes_without_text_decode() -> None:
+    payload_path = _BytesOnlyPayloadPath(
+        json.dumps({"runtime_status": "ok", "tests_total": 3}).encode("utf-8")
+    )
+
+    assert code_eval_runner._load_payload_file(payload_path) == {
+        "runtime_status": "ok",
+        "tests_total": 3,
+    }
+    assert payload_path.read_bytes_calls == 1
+    with pytest.raises(AssertionError):
+        payload_path.read_text()
 
 
 def test_code_exec_policy_support_and_output_summary_helpers() -> None:

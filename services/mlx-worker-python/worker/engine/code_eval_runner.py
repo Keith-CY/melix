@@ -238,7 +238,7 @@ def _load_payload_file(payload_path: Path) -> dict[str, object] | None:
     if not payload_path.exists():
         return None
     try:
-        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        payload = json.loads(payload_path.read_bytes())
     except json.JSONDecodeError:
         return None
     if not isinstance(payload, dict):
