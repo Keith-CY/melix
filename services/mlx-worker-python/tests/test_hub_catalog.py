@@ -800,3 +800,9 @@ def test_size_hint_parser_uses_precompiled_patterns(monkeypatch: pytest.MonkeyPa
     assert hub_catalog_module._size_hint_from_text("Model size: 768 MB", allow_bare=False) == 768 * MB
     assert hub_catalog_module._size_hint_from_text("Readme says 768 MB", allow_bare=False) == 0
     assert hub_catalog_module._size_hint_from_text("MODEL SIZE | 512 kb", allow_bare=False) == 512 * KB
+
+
+def test_size_hint_parser_preserves_all_unit_multipliers() -> None:
+    assert hub_catalog_module._size_hint_from_text("Model size: 1 KB", allow_bare=False) == KB
+    assert hub_catalog_module._size_hint_from_text("Model size: 1.5 MB", allow_bare=False) == int(1.5 * MB)
+    assert hub_catalog_module._size_hint_from_text("Model size: 2 GB", allow_bare=False) == 2 * GB

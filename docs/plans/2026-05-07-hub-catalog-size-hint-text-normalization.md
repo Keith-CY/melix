@@ -32,5 +32,13 @@ The registered probe remains unchanged for apples-to-apples CI comparison and ve
 
 - Focused pytest passes.
 - Changed-scope coverage is at least 95% for touched executable lines.
-- Local base-vs-head payload microprobe shows lower `elapsed_ms_mean` with unchanged guard-rail metrics (`checksum`, `matched_hint_count`, `sample_count`).
-- `git diff --check` passes.
+## 2026-05-07 follow-up: unit multiplier branch
+
+A follow-up micro-slice keeps the same registered probe and narrows `_size_hint_from_text(...)` by replacing the per-match unit multiplier dictionary literal with direct `kb`/`mb`/`gb` branches. This preserves the precompiled regex behavior and accepted units while avoiding repeated short-lived dictionary allocation on every successful size-hint match.
+
+Success criteria for this follow-up:
+
+- Focused Hub catalog and PR-scoped performance tests pass.
+- Changed-scope coverage remains at least 95%.
+- The local registered probe reports lower `elapsed_ms_mean` versus the pre-change branch baseline with unchanged `checksum`, `matched_hint_count`, `sample_count`, and `size_hint_calls_mean` guard rails.
+- Hosted PR-scoped performance CI runs `hub-catalog-size-hint-regex-precompile` before merge.
