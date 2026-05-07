@@ -45,7 +45,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     current_changed_lines: set[int] | None = None
     new_line: int | None = None
     for line in diff_text.splitlines():
-        first_char = line[:1]
+        first_char = line[0] if line else ""
         if first_char == "d" and line.startswith(_DIFF_HEADER_PREFIX):
             current_path = _parse_diff_header_new_path(line)
             current_changed_lines = (
