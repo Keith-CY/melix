@@ -1406,6 +1406,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
         "evaluation-store-compare-summary-csv-streaming",
+        "evaluation-compare-target-lookup-early-stop",
         "evaluation-store-samples-csv-streaming",
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
