@@ -991,6 +991,28 @@ def test_evaluate_event_extraction_semantic_matches_bidirectional_action_split_m
         assert action["semantic_matches"][0]["score"] == 0.96
 
 
+def test_semantic_value_groups_are_cached_and_ordered() -> None:
+    event_extraction_module._semantic_value_groups.cache_clear()
+
+    first = event_extraction_module._semantic_value_groups(4)
+    second = event_extraction_module._semantic_value_groups(4)
+
+    assert first is second
+    assert first == (
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (1, 2),
+        (1, 3),
+        (2, 3),
+        (0, 1, 2),
+        (0, 1, 3),
+        (0, 2, 3),
+        (1, 2, 3),
+    )
+    assert event_extraction_module._semantic_value_groups(1) == ()
+
+
 def test_evaluate_event_extraction_semantic_matches_specific_check_action(tmp_path: Path) -> None:
     gold = tmp_path / "gold.jsonl"
     pred = tmp_path / "pred.jsonl"

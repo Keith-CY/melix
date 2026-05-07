@@ -4,6 +4,7 @@ import json
 import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 from hashlib import sha256
 from itertools import combinations
 from pathlib import Path
@@ -1614,12 +1615,13 @@ def _semantic_action_group_score(
     return _semantic_decision_score(decision), str(decision.get("reason_code") or "")
 
 
-def _semantic_value_groups(value_count: int) -> list[tuple[int, ...]]:
+@lru_cache(maxsize=32)
+def _semantic_value_groups(value_count: int) -> tuple[tuple[int, ...], ...]:
     groups: list[tuple[int, ...]] = []
     max_size = min(SEMANTIC_ACTION_GROUP_MAX_SIZE, value_count)
     for group_size in range(2, max_size + 1):
         groups.extend(tuple(group) for group in combinations(range(value_count), group_size))
-    return groups
+    return tuple(groups)
 
 
 def _maximum_weight_semantic_value_group_matching(
