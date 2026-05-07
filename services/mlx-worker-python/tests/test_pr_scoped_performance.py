@@ -155,6 +155,16 @@ def test_scope_report_selects_runtime_utils_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "runtime-utils-kwarg-signature-cache"
 
 
+def test_scope_report_selects_engine_generate_usage_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/engine_core.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert _selected_probe_ids(scope) == ["engine-generate-usage-token-elision"]
+
+
 def test_scope_report_selects_mlx_text_stop_kwarg_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1563,6 +1573,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-compare-target-lookup-early-stop",
         "evaluation-store-samples-csv-streaming",
+        "engine-generate-usage-token-elision",
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
         "lora-reward-summary-candidate-minmax",
@@ -3606,3 +3617,23 @@ def test_cli_scripts_smoke(tmp_path: Path, benchmark_scope: dict[str, object], m
     output = capsys.readouterr().out
     assert output.startswith("<!-- melix-pr-scoped-performance-report -->\n")
     assert (report_dir / "report.json").is_file()
+
+
+def test_engine_generate_usage_token_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("MELIX_ENGINE_GENERATE_USAGE_PROBE_REQUESTS", "3")
+    monkeypatch.setenv("MELIX_ENGINE_GENERATE_USAGE_PROBE_SAMPLES", "2")
+    monkeypatch.setenv("MELIX_ENGINE_GENERATE_USAGE_PROBE_PROMPT_WORDS", "32")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/engine_generate_usage_token_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["request_count"] == 3
+    assert metrics["samples"] == 2
+    assert metrics["prompt_words"] == 32
+    assert metrics["prompt_token_count_calls_mean"] == 0
+    assert metrics["prompt_token_count_calls_per_request"] == 0
+    assert metrics["token_events_mean"] == 3
