@@ -2895,6 +2895,20 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        let speakStreamWriter = RecordingRPCWriter<Melix_Worker_V1_SpeakStreamEvent>()
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.speakStream(
+                request: Melix_Worker_V1_SpeakRequest(),
+                response: RPCWriter(wrapping: speakStreamWriter),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.SpeakStream.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
         let imageGenerateResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.imageGenerate(
                 request: Melix_Worker_V1_ImageGenerateRequest(),
@@ -2919,10 +2933,14 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        let speakStreamEvents = await speakStreamWriter.snapshot()
+
         XCTAssertEqual(embedResponse.error.code, "unimplemented")
         XCTAssertEqual(rerankResponse.error.code, "unimplemented")
         XCTAssertEqual(transcribeResponse.error.code, "unimplemented")
         XCTAssertEqual(speakResponse.error.code, "unimplemented")
+        XCTAssertEqual(speakStreamEvents.map(\.kind), [.error])
+        XCTAssertEqual(speakStreamEvents.first?.error.code, "unimplemented")
         XCTAssertEqual(imageGenerateResponse.error.code, "unimplemented")
         XCTAssertEqual(imageEditResponse.error.code, "unimplemented")
         XCTAssertEqual(imageGenerateResponse.job.state, .imageJobFailed)

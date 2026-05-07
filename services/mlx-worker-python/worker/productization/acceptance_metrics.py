@@ -240,7 +240,9 @@ def build_phase17_speech_metrics_report(
     parakeet: dict[str, Any],
     kokoro: dict[str, Any],
     qwen3_tts: dict[str, Any],
+    qwen3_tts_streaming: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    qwen3_tts_streaming = qwen3_tts_streaming or {}
     checks = {
         "speech.transcription.whisper_success": bool(whisper.get("success")),
         "speech.transcription.parakeet_success": bool(parakeet.get("success")),
@@ -251,6 +253,21 @@ def build_phase17_speech_metrics_report(
         ),
         "speech.synthesis.qwen3_tts_instruction_path_success": bool(
             qwen3_tts.get("instruction_path_success")
+        ),
+        "speech.synthesis.qwen3_tts_streaming_success": bool(
+            qwen3_tts_streaming.get("success")
+        ),
+        "speech.synthesis.qwen3_tts_streaming_playable_wav_success": bool(
+            qwen3_tts_streaming.get("playable_wav_success")
+        ),
+        "speech.synthesis.qwen3_tts_streaming_parity_success": bool(
+            qwen3_tts_streaming.get("parity_success")
+        ),
+        "speech.synthesis.qwen3_tts_streaming_buffered_fallback_success": bool(
+            qwen3_tts_streaming.get("buffered_fallback_success")
+        ),
+        "speech.synthesis.qwen3_tts_streaming_ttfa_reduction_success": bool(
+            qwen3_tts_streaming.get("ttfa_reduction_success")
         ),
     }
     passed_checks = sum(1 for value in checks.values() if value)
@@ -301,6 +318,33 @@ def build_phase17_speech_metrics_report(
             int(bool(qwen3_tts.get("locale_resolution_success"))),
             1,
         ),
+        "speech.synthesis.qwen3_tts.streaming_first_audio_latency_ms": _rounded_float(
+            qwen3_tts_streaming.get("first_audio_latency_ms")
+        ),
+        "speech.synthesis.qwen3_tts.streaming_runtime_first_audio_latency_ms": _rounded_float(
+            qwen3_tts_streaming.get("runtime_first_audio_latency_ms")
+        ),
+        "speech.synthesis.qwen3_tts.streaming_buffered_latency_ms": _rounded_float(
+            qwen3_tts_streaming.get("buffered_request_latency_ms")
+        ),
+        "speech.synthesis.qwen3_tts.streaming_total_latency_ms": _rounded_float(
+            qwen3_tts_streaming.get("total_stream_latency_ms")
+        ),
+        "speech.synthesis.qwen3_tts.streaming_ttfa_reduction_pct": _rounded_float(
+            qwen3_tts_streaming.get("ttfa_reduction_pct")
+        ),
+        "speech.synthesis.qwen3_tts.streaming_output_bytes": _rounded_float(
+            qwen3_tts_streaming.get("streaming_output_bytes")
+        ),
+        "speech.synthesis.qwen3_tts.streaming_chunk_count": _rounded_float(
+            qwen3_tts_streaming.get("stream_chunk_count")
+        ),
+        "speech.synthesis.qwen3_tts.streaming_interval_ms": _rounded_float(
+            qwen3_tts_streaming.get("speech_streaming_interval_ms")
+        ),
+        "speech.synthesis.qwen3_tts.streaming_malformed_wav_count": _rounded_float(
+            qwen3_tts_streaming.get("malformed_progressive_wav_count")
+        ),
     }
 
     return {
@@ -310,6 +354,7 @@ def build_phase17_speech_metrics_report(
         "parakeet": parakeet,
         "kokoro": kokoro,
         "qwen3_tts": qwen3_tts,
+        "qwen3_tts_streaming": qwen3_tts_streaming,
     }
 
 
