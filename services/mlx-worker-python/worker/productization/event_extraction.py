@@ -1720,7 +1720,7 @@ def _semantic_field_values(field_name: str, event: dict[str, object]) -> list[st
         return values
     expanded: list[str] = []
     for value in values:
-        if _normalize_similarity_text(value) in {_normalize_similarity_text(alias) for alias in _GROUP_ACTOR_ALIASES}:
+        if _normalize_similarity_text(value) in _NORMALIZED_GROUP_ACTOR_ALIASES:
             expanded.extend(("speaker_1", "speaker_2"))
         else:
             expanded.append(value)
@@ -2105,6 +2105,11 @@ def _string_similarity(left: str, right: str) -> float:
 
 def _normalize_similarity_text(value: str) -> str:
     return "".join(char for char in value.strip().lower() if char not in _SIMILARITY_IGNORED_CHARS)
+
+
+_NORMALIZED_GROUP_ACTOR_ALIASES = frozenset(
+    _normalize_similarity_text(alias) for alias in _GROUP_ACTOR_ALIASES
+)
 
 
 def _bigram_dice(left: str, right: str) -> float:

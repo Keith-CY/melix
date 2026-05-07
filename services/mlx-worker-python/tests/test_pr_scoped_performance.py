@@ -108,10 +108,11 @@ def test_scope_report_selects_event_extraction_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/productization/event_extraction.py"],
     )
 
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert {probe["id"] for probe in scope["selected_probes"]} == {
         "event-extraction-alignment-accepted-edge-cache",
         "event-extraction-semantic-value-group-cache",
+        "event-extraction-group-actor-alias-cache",
     }
 
 
@@ -1026,6 +1027,27 @@ def test_event_extraction_semantic_value_group_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
 
 
+def test_event_extraction_actor_alias_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_EVENT_ACTOR_ALIAS_PROBE_VALUE_COUNT", "6")
+    monkeypatch.setenv("MELIX_EVENT_ACTOR_ALIAS_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_EVENT_ACTOR_ALIAS_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/event_extraction_actor_alias_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["value_count"] == 6.0
+    assert metrics["iterations_per_sample"] == 3.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["normalize_calls_mean"] == 18.0
+    assert metrics["output_length_per_sample"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
 def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1479,6 +1501,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "dataset-registry-snapshot-inference-single-pass",
         "event-extraction-alignment-accepted-edge-cache",
         "event-extraction-semantic-value-group-cache",
+        "event-extraction-group-actor-alias-cache",
         "hub-catalog-tag-normalization-single-pass",
         "hub-catalog-next-cursor-fast-parse",
         "hub-catalog-size-hint-regex-precompile",
