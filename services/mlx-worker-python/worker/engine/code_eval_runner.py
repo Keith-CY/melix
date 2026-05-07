@@ -235,10 +235,10 @@ def _count_tests(test_code: str) -> int:
 
 
 def _load_payload_file(payload_path: Path) -> dict[str, object] | None:
-    if not payload_path.exists():
-        return None
     try:
         payload = json.loads(payload_path.read_bytes())
+    except OSError:
+        return None
     except json.JSONDecodeError:
         return None
     if not isinstance(payload, dict):
