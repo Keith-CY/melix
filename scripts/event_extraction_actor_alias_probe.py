@@ -26,9 +26,15 @@ def _env_int(name: str, default: int) -> int:
 
 def _actor_values(value_count: int) -> list[str]:
     aliases = ["我们", "双方", "咱们", "咱俩", "我俩"]
+    normalized_aliases = ["我 们", "双 方", "咱 们", "咱 俩", "我 俩", "两 人", "二 人"]
+    if value_count <= len(normalized_aliases):
+        return [normalized_aliases[index % len(normalized_aliases)] for index in range(value_count)]
+
     values: list[str] = []
     for index in range(value_count):
-        if index % 3 == 0:
+        if index % 90 == 0:
+            values.append(normalized_aliases[(index // 90) % len(normalized_aliases)])
+        elif index % 3 == 0:
             values.append(aliases[index % len(aliases)])
         elif index % 3 == 1:
             values.append(f"speaker_{1 + (index % 2)}")

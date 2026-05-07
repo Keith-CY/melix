@@ -33,6 +33,7 @@ SEMANTIC_LOW_QUALITY_ALIGNMENT_WEIGHTED_F1_THRESHOLD = 0.30
 SEMANTIC_ACTION_GROUP_MAX_SIZE = 3
 SEMANTIC_JUDGE_PROMPT_VERSION = "semantic-judge.v4"
 _GROUP_ACTOR_ALIASES = {"我们", "双方", "咱们", "咱俩", "咱两", "我俩", "两人", "二人"}
+_GROUP_ACTOR_ALIAS_CHARS = frozenset("".join(_GROUP_ACTOR_ALIASES))
 _SIMILARITY_IGNORED_CHARS = set(
     " \t\r\n"
     "，。！？、；：,.!?;:"
@@ -1724,12 +1725,18 @@ def _semantic_field_values(field_name: str, event: dict[str, object]) -> list[st
 @lru_cache(maxsize=512)
 def _expanded_semantic_actor_values(values: tuple[str, ...]) -> tuple[str, ...]:
     expanded: list[str] = []
+    seen_expanded: set[str] = set()
     for value in values:
-        if _normalize_similarity_text(value) in _NORMALIZED_GROUP_ACTOR_ALIASES:
-            expanded.extend(("speaker_1", "speaker_2"))
+        if _is_group_actor_alias(value):
+            expansion = ("speaker_1", "speaker_2")
         else:
-            expanded.append(value)
-    return tuple(_unique_preserving_order(expanded))
+            expansion = (value,)
+        for expanded_value in expansion:
+            if expanded_value in seen_expanded:
+                continue
+            seen_expanded.add(expanded_value)
+            expanded.append(expanded_value)
+    return tuple(expanded)
 
 
 def _obvious_time_conflict(left: str, right: str) -> bool:
@@ -2115,6 +2122,15 @@ def _normalize_similarity_text(value: str) -> str:
 _NORMALIZED_GROUP_ACTOR_ALIASES = frozenset(
     _normalize_similarity_text(alias) for alias in _GROUP_ACTOR_ALIASES
 )
+
+
+def _is_group_actor_alias(value: str) -> bool:
+    if value in _GROUP_ACTOR_ALIASES:
+        return True
+    for char in value:
+        if char not in _SIMILARITY_IGNORED_CHARS and char not in _GROUP_ACTOR_ALIAS_CHARS:
+            return False
+    return _normalize_similarity_text(value) in _NORMALIZED_GROUP_ACTOR_ALIASES
 
 
 def _bigram_dice(left: str, right: str) -> float:
