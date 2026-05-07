@@ -365,7 +365,46 @@ def test_dataset_catalog_first_preview_file_preserves_sorted_depth_first_edges(
     assert catalog._next_supported_scan_entry(snapshot_dir, after="") is None
 
 
-def test_dataset_catalog_row_reader_keeps_split_filtering_eager_for_missing_split(
+def test_dataset_catalog_row_reader_stops_selected_split_scan_after_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    train_path = data_dir / "train.jsonl"
+    first_validation_path = data_dir / "validation-00000.jsonl"
+    later_validation_path = data_dir / "validation-00001.jsonl"
+    train_path.write_text('{"prompt":"train"}\n', encoding="utf-8")
+    first_validation_path.write_text('{"prompt":"first-validation"}\n', encoding="utf-8")
+    later_validation_path.write_text('{"prompt":"later-validation"}\n', encoding="utf-8")
+    considered_paths: list[Path] = []
+    read_paths: list[Path] = []
+    original_iter_supported = catalog._iter_supported_dataset_files
+    original_read_rows = catalog._read_rows_from_file
+
+    def tracking_iter_supported(path: Path):
+        for candidate in original_iter_supported(path):
+            considered_paths.append(candidate)
+            yield candidate
+
+    def tracking_read_rows(path: Path, *, limit: int | None = None) -> list[dict[str, object]]:
+        read_paths.append(path)
+        return original_read_rows(path, limit=limit)
+
+    monkeypatch.setattr(catalog, "_iter_supported_dataset_files", tracking_iter_supported)
+    monkeypatch.setattr(catalog, "_read_rows_from_file", tracking_read_rows)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, split="validation", limit=1)
+
+    assert rows == [{"prompt": "first-validation"}]
+    assert train_path in considered_paths
+    assert first_validation_path in considered_paths
+    assert later_validation_path not in considered_paths
+    assert read_paths == [first_validation_path]
+
+
+def test_dataset_catalog_row_reader_scans_all_files_for_missing_split(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:

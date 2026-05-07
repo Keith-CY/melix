@@ -73,6 +73,7 @@ DATASET_REGISTRY_SELECTED_PROBE_IDS = [
     "dataset-registry-limited-read-streaming",
     "dataset-registry-snapshot-inference-single-pass",
     "dataset-registry-preview-limit-short-circuit",
+    "dataset-registry-selected-split-limit-streaming",
 ]
 MLX_AUDIO_RUNTIME_SELECTED_PROBE_IDS = [
     "mlx-audio-speech-signature-cache",
@@ -438,11 +439,12 @@ def test_scope_report_selects_dataset_registry_preview_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/dataset_registry/catalog.py"],
     )
 
-    assert scope["selected_count"] == 3
+    assert scope["selected_count"] == 4
     assert {probe["id"] for probe in scope["selected_probes"]} == {
         "dataset-registry-limited-read-streaming",
         "dataset-registry-snapshot-inference-single-pass",
         "dataset-registry-preview-limit-short-circuit",
+        "dataset-registry-selected-split-limit-streaming",
     }
 
 
@@ -1598,6 +1600,29 @@ def test_release_gates_m9_failure_count_probe_script_emits_metrics(
     assert metrics["failures_per_section"] == 4.0
 
 
+def test_dataset_registry_selected_split_limit_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_SELECTED_SPLIT_PROBE_FILES", "6")
+    monkeypatch.setenv("MELIX_DATASET_SELECTED_SPLIT_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_DATASET_SELECTED_SPLIT_REPO_ROOT", str(REPO_ROOT))
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_selected_split_limit_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["file_count"] == 6.0
+    assert metrics["rows_returned"] == 1.0
+    assert metrics["file_read_calls_mean"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "dataset-registry-limited-read-streaming",
@@ -1667,6 +1692,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-validation-sample-limit",
         "training-dataset-chunker-top-level-base-copy",
         "dataset-registry-preview-limit-short-circuit",
+        "dataset-registry-selected-split-limit-streaming",
         "maintenance-bench-report-readback",
         "maintenance-percentile-vector-reuse",
         "maintenance-prompt-shape-vector-repeat",

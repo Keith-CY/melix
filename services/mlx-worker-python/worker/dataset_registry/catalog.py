@@ -439,12 +439,18 @@ def read_hf_dataset_snapshot_rows(
         if remaining == 0:
             return rows
         rows.extend(_read_rows_from_file(path, limit=remaining))
+        if limit is not None and len(rows) >= limit:
+            return rows
     return rows
 
 
 def _iter_selected_dataset_files(snapshot_path: Path, *, split: str) -> Iterator[Path]:
     if split:
-        yield from _selected_dataset_files(snapshot_path, split=split)
+        for path in _iter_supported_dataset_files(snapshot_path):
+            if path.name in _README_NAMES:
+                continue
+            if _path_matches_split(path.relative_to(snapshot_path), split):
+                yield path
         return
     for path in _iter_supported_dataset_files(snapshot_path):
         if path.name not in _README_NAMES:
