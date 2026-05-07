@@ -1716,10 +1716,28 @@ def _semantic_action_match_payload(
 
 
 def _semantic_field_values(field_name: str, event: dict[str, object]) -> list[str]:
-    values = _unique_preserving_order(_normalize_event_field(event.get(field_name)))
+    values = _normalize_unique_event_field(event.get(field_name))
     if field_name != "actor":
         return values
     return list(_expanded_semantic_actor_values(tuple(values)))
+
+
+def _normalize_unique_event_field(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("event field values must be null or a list of strings")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("event field values must be null or a list of strings")
+        stripped = item.strip()
+        if not stripped or stripped in seen:
+            continue
+        seen.add(stripped)
+        normalized.append(stripped)
+    return normalized
 
 
 @lru_cache(maxsize=512)
