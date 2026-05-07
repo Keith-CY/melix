@@ -42,3 +42,14 @@ Success criteria for this follow-up:
 - Changed-scope coverage remains at least 95%.
 - The local registered probe reports lower `elapsed_ms_mean` versus the pre-change branch baseline with unchanged `checksum`, `matched_hint_count`, `sample_count`, and `size_hint_calls_mean` guard rails.
 - Hosted PR-scoped performance CI runs `hub-catalog-size-hint-regex-precompile` before merge.
+
+## 2026-05-07 follow-up: single text fast path
+
+This micro-slice keeps the same registered probe and narrows `_size_hint_bytes(...)` for payloads with exactly one fallback text field (`description`, `readme`, or `cardData.description`). Those payloads no longer allocate a one-element joined string before the explicit size-hint regex scan. Payloads with multiple fallback text fields still use the prior newline-joined semantics, preserving cross-field behavior for defensive compatibility.
+
+Success criteria for this follow-up:
+
+- Focused Hub catalog and PR-scoped performance tests pass.
+- Changed-scope coverage remains at least 95%.
+- The local registered probe reports lower `elapsed_ms_mean` versus the pre-change branch baseline with unchanged `checksum`, `matched_hint_count`, `sample_count`, and `size_hint_calls_mean` guard rails.
+- Hosted PR-scoped performance CI runs `hub-catalog-size-hint-regex-precompile` before merge.

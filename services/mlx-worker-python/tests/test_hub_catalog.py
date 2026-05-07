@@ -531,6 +531,30 @@ def test_size_hint_bytes_skips_direct_hint_parser_when_card_model_size_missing(
     assert calls == [("Model size: 7 MB", False)]
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected_text"),
+    [
+        ({"description": "Model size: 6 MB", "cardData": {}}, "Model size: 6 MB"),
+        ({"cardData": {"description": "Model size: 8 MB"}}, "Model size: 8 MB"),
+    ],
+)
+def test_size_hint_bytes_uses_single_payload_text_without_join(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, object],
+    expected_text: str,
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    def tracked(text: str, *, allow_bare: bool) -> int:
+        calls.append((text, allow_bare))
+        return 1
+
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", tracked)
+
+    assert hub_catalog_module._size_hint_bytes(payload) == 1
+    assert calls == [(expected_text, False)]
+
+
 def test_search_models_ignores_sibling_sizes_without_weight_or_config_filenames() -> None:
     payload = [
         {
