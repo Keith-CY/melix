@@ -26,6 +26,10 @@ def _env_int(name: str, default: int) -> int:
 
 def _actor_values(value_count: int) -> list[str]:
     aliases = ["我们", "双方", "咱们", "咱俩", "我俩"]
+    normalized_aliases = ["我 们", "双 方", "咱 们", "咱 俩", "我 俩", "两 人", "二 人"]
+    if value_count <= len(normalized_aliases):
+        return [normalized_aliases[index % len(normalized_aliases)] for index in range(value_count)]
+
     values: list[str] = []
     for index in range(value_count):
         if index % 3 == 0:
