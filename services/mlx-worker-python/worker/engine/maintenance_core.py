@@ -2671,6 +2671,21 @@ class MaintenanceCore:
         )
         warmup_ms = 0.0
         cache_hit = False
+        if cache_profile not in {"cold", "warm", "partial_prefix"}:
+            raise ModelOperationError(
+                code="invalid_argument",
+                message=f"Unsupported cache profile: {cache_profile}",
+                details={"cache_profile": cache_profile, "error_stage": "validation"},
+            )
+        request_id = self._benchmark_request_id(
+            loaded_model=loaded_model,
+            suite_id=suite.suite_id,
+            prompt=shaped_prompt,
+            context_length=context_length,
+            repeat_index=repeat_index,
+            batch_size=batch_size,
+            cache_profile=cache_profile,
+        )
         if cache_profile == "warm":
             warmup_started_at = time.perf_counter()
             try:
@@ -2678,7 +2693,7 @@ class MaintenanceCore:
                     loaded_model=loaded_model,
                     prompt=shaped_prompt,
                     execution_ext=execution_ext,
-                    request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::warmup",
+                    request_id=f"{request_id}::warmup",
                 )
             except Exception as exc:
                 self._raise_benchmark_error_with_stage(exc, "warmup")
@@ -2692,18 +2707,12 @@ class MaintenanceCore:
                     loaded_model=loaded_model,
                     prompt=partial_prefix,
                     execution_ext=execution_ext,
-                    request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::partial_prefix",
+                    request_id=f"{request_id}::partial_prefix",
                 )
             except Exception as exc:
                 self._raise_benchmark_error_with_stage(exc, "warmup")
             warmup_ms = round((time.perf_counter() - warmup_started_at) * 1_000.0, 2)
             cache_hit = True
-        elif cache_profile != "cold":
-            raise ModelOperationError(
-                code="invalid_argument",
-                message=f"Unsupported cache profile: {cache_profile}",
-                details={"cache_profile": cache_profile, "error_stage": "validation"},
-            )
 
         messages = [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=shaped_prompt)])]
         prompt_render_ms = 0.0
@@ -2721,15 +2730,6 @@ class MaintenanceCore:
             rendered_prompt,
             context_length=context_length,
             batch_size=batch_size,
-        )
-        request_id = self._benchmark_request_id(
-            loaded_model=loaded_model,
-            suite_id=suite.suite_id,
-            prompt=shaped_prompt,
-            context_length=context_length,
-            repeat_index=repeat_index,
-            batch_size=batch_size,
-            cache_profile=cache_profile,
         )
         cancel_event = self._registry.start_request(
             request_id=request_id,
