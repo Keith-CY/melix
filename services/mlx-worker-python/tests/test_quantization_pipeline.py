@@ -17,6 +17,7 @@ from worker.model_ops.quantization_pipeline import (
     OQQuantizationPipeline,
     _local_source_path_for_mlx_lm_convert,
     _smoke_required_files_for_backend,
+    _source_artifact_files_for_qat,
     _sum_bundle_file_bytes,
 )
 from worker.model_ops.quantization_profiles import (
@@ -1195,6 +1196,67 @@ def test_mlx_lm_bundle_byte_sum_handles_nested_and_unreadable_entries(
 
     monkeypatch.setattr(quantization_pipeline_module.os, "scandir", failed_scandir)
     assert _sum_bundle_file_bytes(bundle_path) == 0
+
+
+def test_qat_source_artifact_files_uses_scandir_stack_without_path_rglob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "merged-adapter"
+    nested_path = source_path / "nested"
+    nested_path.mkdir(parents=True)
+    root_file = source_path / "adapter_config.json"
+    nested_file = nested_path / "adapters.safetensors"
+    root_file.write_text(json.dumps({"fine_tune_type": "lora"}) + "\n", encoding="utf-8")
+    nested_file.write_bytes(b"melix-qatsource-weights")
+
+    def fail_rglob(self: Path, pattern: str):
+        raise AssertionError("QAT source scan should avoid Path.rglob allocation")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+    with pytest.raises(AssertionError):
+        list(source_path.rglob("*"))
+
+    assert _source_artifact_files_for_qat(source_path) == sorted([root_file, nested_file])
+
+
+def test_qat_source_artifact_files_skips_bad_scandir_entries_and_empty_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "bad-source"
+    source_path.mkdir()
+
+    class BadEntry:
+        path = os.fspath(source_path / "bad")
+
+        def is_file(self) -> bool:
+            raise OSError("entry stat failed")
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            raise AssertionError("is_dir should not run after is_file fails")
+
+    class BadScandir:
+        def __enter__(self) -> list[BadEntry]:
+            return [BadEntry()]
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+    monkeypatch.setattr(quantization_pipeline_module.os, "scandir", lambda _: BadScandir())
+
+    with pytest.raises(ModelOperationError) as error:
+        _source_artifact_files_for_qat(source_path)
+    assert error.value.code == "invalid_qat_source_artifact"
+
+    def failed_scandir(_: object) -> object:
+        raise OSError("root failed")
+
+    monkeypatch.setattr(quantization_pipeline_module.os, "scandir", failed_scandir)
+
+    with pytest.raises(ModelOperationError) as root_error:
+        _source_artifact_files_for_qat(source_path)
+    assert root_error.value.code == "invalid_qat_source_artifact"
 
 
 def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp_path: Path) -> None:
