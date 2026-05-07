@@ -249,19 +249,22 @@ def materialize_hf_evaluation_dataset(
 
 
 def _extract_json_heuristic(raw_response: str) -> ExtractionOutcome:
-    json_blocks = [candidate.strip() for candidate in _JSON_FENCE_PATTERN.findall(raw_response) if candidate.strip()]
-    if json_blocks:
-        candidate = json_blocks[-1]
-        if _parses_json(candidate):
-            return ExtractionOutcome(candidate, "extracted")
-
-    generic_blocks = [candidate.strip() for candidate in _GENERIC_FENCE_PATTERN.findall(raw_response) if candidate.strip()]
-    valid_generic = [candidate for candidate in generic_blocks if _parses_json(candidate)]
-    if valid_generic:
-        candidate = valid_generic[-1]
-        if len(valid_generic) > 1:
-            return ExtractionOutcome("", "ambiguous_extraction", "multiple_generic_json_candidates")
+    candidate = _last_stripped_pattern_match(_JSON_FENCE_PATTERN, raw_response)
+    if candidate and _parses_json(candidate):
         return ExtractionOutcome(candidate, "extracted")
+
+    valid_generic_count = 0
+    valid_generic_candidate = ""
+    for match in _GENERIC_FENCE_PATTERN.finditer(raw_response):
+        candidate = match.group(1).strip()
+        if not candidate or not _parses_json(candidate):
+            continue
+        valid_generic_count += 1
+        if valid_generic_count > 1:
+            return ExtractionOutcome("", "ambiguous_extraction", "multiple_generic_json_candidates")
+        valid_generic_candidate = candidate
+    if valid_generic_candidate:
+        return ExtractionOutcome(valid_generic_candidate, "extracted")
 
     suffix = _last_balanced_json_suffix(raw_response)
     if suffix:
@@ -270,15 +273,22 @@ def _extract_json_heuristic(raw_response: str) -> ExtractionOutcome:
 
 
 def _extract_text_heuristic(raw_response: str) -> ExtractionOutcome:
-    answer_prefix_matches = [match.group(1).strip() for match in _TEXT_ANSWER_PATTERN.finditer(raw_response) if match.group(1).strip()]
-    if answer_prefix_matches:
-        if len(answer_prefix_matches) > 1:
+    answer_prefix_count = 0
+    answer_prefix_candidate = ""
+    for match in _TEXT_ANSWER_PATTERN.finditer(raw_response):
+        candidate = match.group(1).strip()
+        if not candidate:
+            continue
+        answer_prefix_count += 1
+        if answer_prefix_count > 1:
             return ExtractionOutcome("", "ambiguous_extraction", "multiple_answer_prefix_candidates")
-        return ExtractionOutcome(answer_prefix_matches[0], "extracted")
+        answer_prefix_candidate = candidate
+    if answer_prefix_candidate:
+        return ExtractionOutcome(answer_prefix_candidate, "extracted")
 
-    fenced_blocks = [candidate.strip() for candidate in _GENERIC_FENCE_PATTERN.findall(raw_response) if candidate.strip()]
-    if fenced_blocks:
-        return ExtractionOutcome(fenced_blocks[-1], "extracted")
+    candidate = _last_stripped_pattern_match(_GENERIC_FENCE_PATTERN, raw_response)
+    if candidate:
+        return ExtractionOutcome(candidate, "extracted")
 
     paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n", raw_response) if paragraph.strip()]
     if paragraphs:
@@ -831,9 +841,18 @@ def _parses_json(payload: str) -> bool:
     return True
 
 
+def _last_stripped_pattern_match(pattern: re.Pattern[str], raw_response: str) -> str:
+    candidate = ""
+    for match in pattern.finditer(raw_response):
+        stripped = match.group(1).strip()
+        if stripped:
+            candidate = stripped
+    return candidate
+
+
 def _last_balanced_json_suffix(raw_response: str) -> str:
-    for index, character in enumerate(raw_response):
-        if character not in "[{":
+    for index in range(len(raw_response) - 1, -1, -1):
+        if raw_response[index] not in "[{":
             continue
         candidate = raw_response[index:].strip()
         if _parses_json(candidate):
