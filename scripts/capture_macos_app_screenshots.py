@@ -134,6 +134,7 @@ def capture_screenshots(
     width: int,
     height: int,
 ) -> dict[str, Any]:
+    # Capture runs the packaged app, so its environment is intentionally separate from build_environment().
     environment = os.environ.copy()
     environment.update(
         {

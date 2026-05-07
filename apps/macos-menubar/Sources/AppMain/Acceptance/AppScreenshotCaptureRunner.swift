@@ -129,7 +129,7 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
             if allowed.contains(scalar) {
                 result.unicodeScalars.append(scalar)
                 previousWasSeparator = false
-            } else if previousWasSeparator == false {
+            } else if !previousWasSeparator {
                 result.append("-")
                 previousWasSeparator = true
             }
@@ -182,7 +182,7 @@ public final class AppScreenshotCaptureRunner {
 
     public func run() async throws -> AppScreenshotCaptureManifest {
         let outputDirectoryPath = config.outputDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard outputDirectoryPath.isEmpty == false else {
+        guard !outputDirectoryPath.isEmpty else {
             throw AppScreenshotCaptureError.invalidOutputDirectory(config.outputDirectoryPath)
         }
         let outputRoot = URL(fileURLWithPath: outputDirectoryPath, isDirectory: true)
@@ -224,7 +224,7 @@ public final class AppScreenshotCaptureRunner {
                     surface: captureCase.surface?.rawValue ?? "",
                     toolSection: captureCase.toolSection?.rawValue ?? "",
                     path: screenshotURL.path,
-                    renderMs: round(Date().timeIntervalSince(startedAt) * 1_000_000) / 1_000
+                    renderMs: (Date().timeIntervalSince(startedAt) * 1_000_000).rounded() / 1_000
                 )
             )
         }
@@ -306,6 +306,7 @@ actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
     }
 
     func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
+        // Fixture: treat unload as a no-op and return the model's current state.
         try await loadModel(modelID: modelID)
     }
 

@@ -896,7 +896,7 @@ enum MelixMenuBarApp {
             encoder.keyEncodingStrategy = .convertToSnakeCase
             let data = try encoder.encode(result)
             writeStandardOutput(data)
-            writeStandardOutput(Data([0x0A]))
+            writeStandardOutput(Data("\n".utf8))
             return 0
         } catch {
             let message = error.localizedDescription + "\n"
@@ -919,7 +919,7 @@ enum MelixMenuBarApp {
             encoder.keyEncodingStrategy = .convertToSnakeCase
             let data = try encoder.encode(result)
             writeStandardOutput(data)
-            writeStandardOutput(Data([0x0A]))
+            writeStandardOutput(Data("\n".utf8))
             return 0
         } catch {
             let message = error.localizedDescription + "\n"

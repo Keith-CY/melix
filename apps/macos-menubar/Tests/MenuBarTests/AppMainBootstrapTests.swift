@@ -378,7 +378,7 @@ struct AppMainBootstrapTests {
         )
 
         try await waitForBootstrapCondition("expected app screenshot capture entrypoint to exit") {
-            recorder.exitCodes.isEmpty == false
+            !recorder.exitCodes.isEmpty
         }
 
         let standardOutput = String(decoding: recorder.standardOutput, as: UTF8.self)
@@ -472,6 +472,7 @@ struct AppMainBootstrapTests {
     @MainActor
     func appScreenshotCaptureEntrySupportsDefaultOutputFlushAndScheduling() async throws {
         let application = RecordingApplicationLifecycle()
+        var standardOutput = Data()
         var exitCodes: [Int32] = []
         var runLoopInvocationCount = 0
 
@@ -494,6 +495,10 @@ struct AppMainBootstrapTests {
                     )
                 )
             },
+            writeStandardOutput: { data in
+                standardOutput.append(data)
+            },
+            writeStandardError: { _ in },
             exitHandler: { exitCode in
                 exitCodes.append(exitCode)
             },
@@ -503,10 +508,11 @@ struct AppMainBootstrapTests {
         )
 
         try await waitForBootstrapCondition("expected default app screenshot capture scheduling to exit") {
-            exitCodes.isEmpty == false
+            !exitCodes.isEmpty
         }
 
         #expect(application.recordedPolicies == [.accessory])
+        #expect(!standardOutput.isEmpty)
         #expect(runLoopInvocationCount == 1)
         #expect(exitCodes == [0])
     }
