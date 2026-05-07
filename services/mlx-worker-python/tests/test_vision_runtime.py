@@ -17,6 +17,7 @@ from worker.runtime import multimodal_preprocessing
 from worker.runtime.multimodal_fast_paths import fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import (
     MultimodalPreprocessError,
+    PreparedVisionRequest,
     _bytes_from_image_uri,
     _path_from_uri,
     _prepare_image_part,
@@ -596,6 +597,26 @@ def test_resolve_vision_family_config_handles_invalid_family_overrides() -> None
 
     assert family_config.max_images_per_prompt == 1
     assert family_config.supports_tool_calls is False
+
+
+def test_vision_family_prompt_token_count_matches_split_without_materializing_tokens() -> None:
+    class NoSplitPrompt(str):
+        def split(self, *args: object, **kwargs: object) -> list[str]:
+            raise AssertionError("prompt token counting should not materialize split tokens")
+
+    prompt_text = NoSplitPrompt("  alpha beta\tgamma\n\nΔelta  ")
+    family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
+    request = PreparedVisionRequest(
+        prompt_text=prompt_text,
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+    )
+
+    assert family_config.prompt_token_count(request) == len(str(prompt_text).split()) + 2
 
 
 def test_resolve_vision_family_config_rejects_multi_video_requests_for_single_video_families() -> None:

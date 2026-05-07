@@ -1744,6 +1744,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "mlx-audio-generate-signature-cache",
         "mlx-audio-speech-signature-cache",
         "video-preprocessing-uri-byte-length-reuse",
+        "vision-family-prompt-token-count-scan",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-answer-normalization-fast-path",
         "evaluation-dialogue-diagnostics-top-k",
@@ -4057,3 +4058,15 @@ def test_force_all_context_regressions_do_not_fail_direct_probe_gate() -> None:
     assert report["rows"][0]["gate"] == "direct"
     assert report["rows"][1]["gate"] == "context"
     assert report["rows"][1]["status"] == "regression"
+
+
+def test_vision_family_prompt_token_count_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(str(REPO_ROOT / "scripts/vision_family_prompt_token_count_probe.py"), run_name="__main__")
+
+    metrics = json.loads(capsys.readouterr().out)
+
+    assert metrics["token_count"] > 0
+    assert metrics["split_calls_mean"] == 0.0
+    assert metrics["peak_bytes_mean"] > 0
