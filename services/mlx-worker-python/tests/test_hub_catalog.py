@@ -253,6 +253,15 @@ def test_next_cursor_from_link_returns_empty_for_missing_or_malformed_next_curso
     assert hub_catalog_module._next_cursor_from_link('https://huggingface.co/api/models?cursor=broken; rel="next"') == ""
 
 
+def test_next_cursor_from_link_requires_cursor_parameter_boundary() -> None:
+    link_header = (
+        '<https://huggingface.co/api/models?cursor=prev>; rel="prev", '
+        '<https://huggingface.co/api/models?limit=10&notcursor=wrong&mycursor=bad>; rel="next"'
+    )
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == ""
+
+
 def test_search_models_uses_next_cursor_from_link_header() -> None:
     response = FakeHTTPResponse([{"id": "mlx-community/example", "tags": ["mlx"], "siblings": [], "cardData": {}}])
     response.headers["Link"] = '<https://huggingface.co/api/models?limit=1&cursor=page%2B2>; rel="next"'
