@@ -76,12 +76,11 @@ def build_category_breakdown(
 ) -> dict[str, dict[str, object]]:
     category_totals: dict[str, list[int]] = {}
     for row in rows:
-        row_get = row.get
-        category_label = str(row_get("category_label", "")).strip()
+        category_label = str(row.get("category_label", "")).strip()
         if not category_label:
             continue
-        base_correct = 1 if row_get("base_correct", False) else 0
-        target_correct = 1 if row_get("target_correct", False) else 0
+        base_correct = 1 if row.get("base_correct", False) else 0
+        target_correct = 1 if row.get("target_correct", False) else 0
         totals = category_totals.get(category_label)
         if totals is None:
             category_totals[category_label] = [1, base_correct, target_correct]
