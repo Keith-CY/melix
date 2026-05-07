@@ -205,7 +205,7 @@ public actor GatewayServingDefaultsStore {
     ) {
         self.fileManager = fileManager
         self.nowUnixMS = nowUnixMS
-        self.storeURL = Self.resolveStoreURL(environment: environment, fileManager: fileManager)
+        self.storeURL = Self.resolveStoreURL(environment: environment)
         self.defaults = Self.resolveDefaults(environment: environment)
         self.recordsByServerSessionID = Self.loadRecords(from: storeURL, fileManager: fileManager)
     }
@@ -406,21 +406,12 @@ public actor GatewayServingDefaultsStore {
     }
 
     private static func resolveStoreURL(
-        environment: [String: String],
-        fileManager: FileManager
+        environment: [String: String]
     ) -> URL {
         if let override = environment["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"]?.nilIfEmpty {
             return URL(fileURLWithPath: override)
         }
-        let appSupportDirectory = (try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return appSupportDirectory
-            .appendingPathComponent("Melix", isDirectory: true)
-            .appendingPathComponent("gateway-serving-defaults.json")
+        return MelixPathLayout(environment: environment).gatewayServingDefaultsStoreURL
     }
 
     private static func resolveDefaults(

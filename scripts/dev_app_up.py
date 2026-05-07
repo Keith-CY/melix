@@ -79,6 +79,7 @@ def start_full_app() -> None:
         log_path=menubar_log_path,
         env_overrides={
             "MELIX_REPO_ROOT": os.fspath(repo_root),
+            "MELIX_HOME": os.fspath(layout.melix_home_dir),
             "MELIX_RUNTIME_DIR": os.fspath(layout.runtime_dir),
             "MELIX_WORKER_SOCKET_PATH": os.fspath(layout.python_socket_path),
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": os.fspath(layout.swift_text_worker_socket_path),
@@ -86,6 +87,9 @@ def start_full_app() -> None:
             "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),
             "MELIX_MODEL_OPS_JOBS_ROOT": os.fspath(layout.model_ops_jobs_root),
             "MELIX_EVALUATION_JOBS_ROOT": os.fspath(layout.evaluation_jobs_root),
+            "MELIX_GATEWAY_CONFIG_STORE_PATH": os.fspath(layout.gateway_config_store_path),
+            "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH": os.fspath(layout.gateway_serving_defaults_store_path),
+            "MELIX_IMAGE_DEFAULTS_STORE_PATH": os.fspath(layout.image_defaults_store_path),
             "MELIX_HTTP_PORT": layout.http_port,
             "MELIX_MENU_BAR_STARTUP_SURFACE": "console",
             "MELIX_MENU_BAR_PRESENTATION_MODE": "dock-and-tray",

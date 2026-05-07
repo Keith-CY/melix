@@ -688,10 +688,38 @@ struct MenuBarBootstrapEnvironment {
         if let runtimeDirectory, runtimeDirectory.isEmpty == false {
             merged["MELIX_RUNTIME_DIR"] = runtimeDirectory
         }
-        if merged["MELIX_MANAGED_MODEL_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
-            let melixHome = MelixHome(environment: merged)
-            merged["MELIX_MANAGED_MODEL_ROOT"] = melixHome.rootURL
-                .appendingPathComponent("models/default-managed", isDirectory: true)
+        let melixHome = MelixHome(environment: merged)
+        func isMissingOrEmpty(_ key: String) -> Bool {
+            merged[key]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+        }
+        if isMissingOrEmpty("MELIX_HOME") {
+            merged["MELIX_HOME"] = melixHome.rootURL.path
+        }
+        if isMissingOrEmpty("MELIX_MANAGED_MODEL_ROOT") {
+            merged["MELIX_MANAGED_MODEL_ROOT"] = melixHome.managedModelRootURL.path
+        }
+        if isMissingOrEmpty("MELIX_AUDIO_RUNTIME_PACK_ROOT") {
+            merged["MELIX_AUDIO_RUNTIME_PACK_ROOT"] = melixHome.audioRuntimePackRootURL.path
+        }
+        if isMissingOrEmpty("MELIX_MODEL_OPS_JOBS_ROOT") {
+            merged["MELIX_MODEL_OPS_JOBS_ROOT"] = melixHome.modelOpsJobsRootURL.path
+        }
+        if isMissingOrEmpty("MELIX_EVALUATION_JOBS_ROOT") {
+            merged["MELIX_EVALUATION_JOBS_ROOT"] = melixHome.evaluationJobsRootURL.path
+        }
+        if isMissingOrEmpty("MELIX_GATEWAY_CONFIG_STORE_PATH") {
+            merged["MELIX_GATEWAY_CONFIG_STORE_PATH"] = melixHome.configDirectoryURL
+                .appendingPathComponent("gateway-config.json")
+                .path
+        }
+        if isMissingOrEmpty("MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH") {
+            merged["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"] = melixHome.configDirectoryURL
+                .appendingPathComponent("gateway-serving-defaults.json")
+                .path
+        }
+        if isMissingOrEmpty("MELIX_IMAGE_DEFAULTS_STORE_PATH") {
+            merged["MELIX_IMAGE_DEFAULTS_STORE_PATH"] = melixHome.configDirectoryURL
+                .appendingPathComponent("image-defaults.json")
                 .path
         }
         return merged

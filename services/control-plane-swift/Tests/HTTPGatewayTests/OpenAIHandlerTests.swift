@@ -3299,12 +3299,12 @@ struct OpenAIHandlerTests {
             return response
         }())
 
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-http-audio-lazy-transcribe-\(UUID().uuidString)", isDirectory: true)
-        let managedModelPath = appSupportDirectory
+        let managedModelPath = melixHomeDirectory
             .appendingPathComponent("managed/whisper", isDirectory: true)
             .path
-        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let assetManager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
         try assetManager.recordRuntimePackInstall(
             packID: "melix-audio-runtime-pack",
             version: "0.3.0",
@@ -3614,7 +3614,7 @@ struct OpenAIHandlerTests {
         let textClient = ScriptedWorkerClient(events: [])
         let audioClient = ScriptedPhaseFiveWorkerClient()
         let assetManager = AudioAssetManager(
-            appSupportDirectory: FileManager.default.temporaryDirectory
+            melixHomeDirectory: FileManager.default.temporaryDirectory
                 .appendingPathComponent("melix-http-audio-preflight-\(UUID().uuidString)", isDirectory: true)
         )
         let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxWhisperModel()])
@@ -3727,9 +3727,9 @@ struct OpenAIHandlerTests {
             return response
         }())
 
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-http-audio-locale-\(UUID().uuidString)", isDirectory: true)
-        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let assetManager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
         try assetManager.recordRuntimePackInstall(
             packID: "melix-audio-runtime-pack",
             version: "0.3.0",
@@ -3739,7 +3739,7 @@ struct OpenAIHandlerTests {
             modelID: "melix-qwen3-tts-mlx",
             revision: "mlx-audio",
             sourceModelPath: "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit",
-            localModelPath: appSupportDirectory
+            localModelPath: melixHomeDirectory
                 .appendingPathComponent("managed/qwen3-tts", isDirectory: true)
                 .path
         )
@@ -4066,12 +4066,12 @@ struct OpenAIHandlerTests {
             return response
         }())
 
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-http-audio-lazy-speech-\(UUID().uuidString)", isDirectory: true)
-        let managedModelPath = appSupportDirectory
+        let managedModelPath = melixHomeDirectory
             .appendingPathComponent("managed/kokoro", isDirectory: true)
             .path
-        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let assetManager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
         try assetManager.recordRuntimePackInstall(
             packID: "melix-audio-runtime-pack",
             version: "0.3.0",
@@ -4170,9 +4170,9 @@ struct OpenAIHandlerTests {
     func postAudioSpeechRejectsUnsupportedExplicitLocales() async throws {
         let textClient = ScriptedWorkerClient(events: [])
         let audioClient = ScriptedPhaseFiveWorkerClient()
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-http-audio-unsupported-locale-\(UUID().uuidString)", isDirectory: true)
-        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let assetManager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
         try assetManager.recordRuntimePackInstall(
             packID: "melix-audio-runtime-pack",
             version: "0.3.0",
@@ -4182,7 +4182,7 @@ struct OpenAIHandlerTests {
             modelID: "melix-kokoro-mlx",
             revision: "mlx-audio",
             sourceModelPath: "mlx-community/Kokoro-82M-bf16",
-            localModelPath: appSupportDirectory
+            localModelPath: melixHomeDirectory
                 .appendingPathComponent("managed/kokoro", isDirectory: true)
                 .path
         )
@@ -4336,9 +4336,9 @@ struct OpenAIHandlerTests {
     func postAudioSpeechPreflightsMissingManagedAudioModelsAfterRuntimeInstall() async throws {
         let textClient = ScriptedWorkerClient(events: [])
         let audioClient = ScriptedPhaseFiveWorkerClient()
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-http-audio-model-\(UUID().uuidString)", isDirectory: true)
-        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let assetManager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
         try assetManager.recordRuntimePackInstall(
             packID: "melix-audio-runtime-pack",
             version: "0.3.0",
@@ -4396,12 +4396,12 @@ struct OpenAIHandlerTests {
         ]
         await audioClient.setLoadModelResponse(loadFailure)
 
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-http-audio-processor-\(UUID().uuidString)", isDirectory: true)
-        let managedModelPath = appSupportDirectory
+        let managedModelPath = melixHomeDirectory
             .appendingPathComponent("managed/kokoro", isDirectory: true)
             .path
-        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let assetManager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
         try assetManager.recordRuntimePackInstall(
             packID: "melix-audio-runtime-pack",
             version: "0.3.0",

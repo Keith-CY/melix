@@ -25,8 +25,8 @@ Melix identity used by the launch-agent install and app-bundle flows.
 The repository-owned Homebrew service uses the `homebrew` Melix sidecar instance and writes state
 under:
 
-- `~/Library/Application Support/Melix/sidecars/homebrew`
-- `~/Library/Logs/Melix/sidecars/homebrew`
+- `~/.melix/sidecars/homebrew`
+- `~/.melix/sidecars/homebrew/logs`
 
 Start the service bundle through Homebrew:
 

@@ -11,7 +11,7 @@ draft revision so completed evaluation runs remain reproducible.
 
 ## Scope
 
-- Store evaluation prompts under `$MELIX_HOME/state/evaluation-prompts.json`.
+- Store evaluation prompts under `$MELIX_HOME/config/evaluation-prompts.json`.
 - Ship a read-only built-in baseline prompt. `baseline.v1` preserves the
   original direct `events` JSON prompt; `baseline.v2` preserves the stage-1
   `Segment Metadata Candidates` prompt; the default `baseline.v3` uses a

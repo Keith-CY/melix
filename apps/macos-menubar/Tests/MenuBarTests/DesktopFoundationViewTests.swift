@@ -3758,7 +3758,7 @@ struct DesktopFoundationViewTests {
 
         var managedLocal = runtimeInstalled
         managedLocal.settings.ext["melix.audio.model_state"] = "managed_local"
-        managedLocal.settings.ext["melix.model_path"] = "/Users/test/Library/Application Support/Melix/models/default-managed/hf/mlx-community/whisper-large-v3-turbo-asr-fp16/mlx-audio"
+        managedLocal.settings.ext["melix.model_path"] = "/Users/test/.melix/models/default-managed/hf/mlx-community/whisper-large-v3-turbo-asr-fp16/mlx-audio"
 
         await client.configureSnapshot(
             makeAudioSetupSnapshot(models: [ModelCatalog.devTextModel(), missingRuntime])
@@ -3766,7 +3766,7 @@ struct DesktopFoundationViewTests {
         await client.configureModelOperation(
             makeNamedModelOperationResult(
                 operation: "install_audio_runtime",
-                outputPath: "/Users/test/Library/Application Support/Melix/runtime-packs/audio/melix-audio-runtime-pack/0.3.0",
+                outputPath: "/Users/test/.melix/runtime-packs/audio/melix-audio-runtime-pack/0.3.0",
                 manifestJSON: "{}"
             ),
             forNamedOperation: "install_audio_runtime"

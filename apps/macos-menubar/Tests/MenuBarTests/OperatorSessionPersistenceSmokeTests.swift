@@ -115,6 +115,15 @@ struct OperatorSessionPersistenceSmokeTests {
         )
 
         let sharedState = try #require(try sharedStore.load())
+        let uiPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.operatorSessionFileURL)) as? [String: Any]
+        )
+        let serverSessionsPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.serverSessionsFileURL)) as? [String: Any]
+        )
+        let modelRootsPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.modelRootsFileURL)) as? [String: Any]
+        )
 
         #expect(sharedState.selectedSurfaceID == "server")
         #expect(sharedState.selectedToolSectionID == "diagnostics")
@@ -126,6 +135,93 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(sharedState.registryRoots == ["/tmp/models-a", "/tmp/models-b"])
         #expect(sharedState.paneVisibility.first(where: { $0.surfaceID == "server" })?.showsInspector == true)
         #expect(sharedState.paneVisibility.first(where: { $0.surfaceID == "api" })?.showsSidebar == false)
+        #expect(uiPayload["server_sessions"] == nil)
+        #expect(uiPayload["registry_roots"] == nil)
+        #expect((serverSessionsPayload["server_sessions"] as? [[String: Any]])?.first?["id"] as? String == "server-session-shared")
+        #expect(modelRootsPayload["registry_roots"] as? [String] == ["/tmp/models-a", "/tmp/models-b"])
+    }
+
+    @Test("shared operator session store migrates legacy monolithic state")
+    func sharedOperatorSessionStoreMigratesLegacyMonolithicState() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-legacy-store-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let sharedStore = MelixOperatorSessionStore(melixHome: melixHome)
+        let legacyState = MelixOperatorSessionState(
+            selectedSurfaceID: "server",
+            selectedToolSectionID: "downloads",
+            selectedServerSessionID: "legacy-server",
+            serverSessions: [
+                MelixOperatorServerSessionState(
+                    id: "legacy-server",
+                    title: "Legacy Server",
+                    modelID: "melix-dev-text",
+                    lifecycle: .running
+                )
+            ],
+            dismissedBannerIDs: ["legacy-banner"],
+            downloadQueue: [
+                MelixOperatorDownloadQueueEntryState(
+                    jobID: "job-legacy-download",
+                    sourceModel: "mlx-community/Legacy",
+                    status: "running",
+                    stage: "download",
+                    pct: 42,
+                    outputDir: "/tmp/legacy-output",
+                    outputPath: "/tmp/legacy-output/model",
+                    partialPath: "/tmp/legacy-output/model.partial",
+                    statePath: "/tmp/legacy-output/download.state.json",
+                    selectedMirror: "hf",
+                    downloadedBytes: 42,
+                    totalBytes: 100,
+                    resumeUsed: false,
+                    resumeFromBytes: 0,
+                    retryCount: 1,
+                    stallDetectionCount: 0,
+                    stallReason: "",
+                    resumeReady: true
+                )
+            ],
+            registryRoots: ["/tmp/legacy-models-a", "/tmp/legacy-models-b"]
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        try melixHome.writeAtomically(try encoder.encode(legacyState), to: melixHome.operatorSessionFileURL)
+
+        #expect(FileManager.default.fileExists(atPath: melixHome.serverSessionsFileURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: melixHome.modelRootsFileURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: melixHome.downloadQueueFileURL.path) == false)
+
+        let restoredState = try #require(try sharedStore.load())
+        let uiPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.operatorSessionFileURL)) as? [String: Any]
+        )
+        let serverSessionsPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.serverSessionsFileURL)) as? [String: Any]
+        )
+        let modelRootsPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.modelRootsFileURL)) as? [String: Any]
+        )
+        let downloadQueuePayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.downloadQueueFileURL)) as? [String: Any]
+        )
+
+        #expect(restoredState.selectedSurfaceID == "server")
+        #expect(restoredState.selectedToolSectionID == "downloads")
+        #expect(restoredState.selectedServerSessionID == "legacy-server")
+        #expect(restoredState.serverSessions.first?.title == "Legacy Server")
+        #expect(restoredState.registryRoots == ["/tmp/legacy-models-a", "/tmp/legacy-models-b"])
+        #expect(restoredState.downloadQueue.first?.jobID == "job-legacy-download")
+        #expect(uiPayload["server_sessions"] == nil)
+        #expect(uiPayload["registry_roots"] == nil)
+        #expect(uiPayload["download_queue"] == nil)
+        #expect((serverSessionsPayload["server_sessions"] as? [[String: Any]])?.first?["id"] as? String == "legacy-server")
+        #expect(modelRootsPayload["registry_roots"] as? [String] == ["/tmp/legacy-models-a", "/tmp/legacy-models-b"])
+        #expect((downloadQueuePayload["download_queue"] as? [[String: Any]])?.first?["job_id"] as? String == "job-legacy-download")
     }
 }
 

@@ -33,8 +33,18 @@ python3 scripts/install_local_product.py \
 This writes:
 
 - user launch agents under `~/Library/LaunchAgents`
-- an install manifest under `~/Library/Application Support/Melix/install-manifest.json`
-- an environment export file under `~/Library/Application Support/Melix/melix-product-env.sh`
+- an install manifest under `~/.melix/install/install-manifest.json`
+- an environment export file under `~/.melix/install/melix-product-env.sh`
+- product state, configuration, models, jobs, runtime packs, and logs under `~/.melix`
+
+Upgrade note: sidecar installs now write instance state under
+`~/.melix/sidecars/<instance-name>`. Older local installs may still have launch agents,
+environment scripts, logs, and runtime state under
+`~/Library/Application Support/Melix/sidecars/<instance-name>`. After upgrading, rerun
+`python3 scripts/install_local_product.py --service-instance-name <instance-name> --json`
+for each sidecar instance so the generated LaunchAgent environment points at the new
+Melix home layout. Unload or prune old LaunchAgents with `scripts/uninstall_local_product.py`
+before deleting the old App Support sidecar directory.
 
 This install flow maps to the `launch_agents_checkout` packaging target. The generated manifest and
 environment export now carry the shared Melix logical identity plus:

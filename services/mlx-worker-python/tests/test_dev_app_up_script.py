@@ -41,16 +41,20 @@ def make_layout(tmp_path: Path):
     dev_up = load_dev_up_module()
     return dev_up.RuntimeLayout(
         service_instance_name="",
+        melix_home_dir=tmp_path / "home",
         runtime_dir=tmp_path / "runtime",
         python_socket_path=tmp_path / "runtime/python.sock",
         swift_text_worker_socket_path=tmp_path / "runtime/swift.sock",
-        managed_models_dir=tmp_path / "runtime/models/default-managed",
-        audio_runtime_packs_dir=tmp_path / "runtime/runtime-packs/audio",
-        model_ops_jobs_root=tmp_path / "runtime/jobs/model-ops",
-        evaluation_jobs_root=tmp_path / "runtime/jobs/model-ops/evaluation",
+        managed_models_dir=tmp_path / "home/models/default-managed",
+        audio_runtime_packs_dir=tmp_path / "home/runtime-packs/audio",
+        model_ops_jobs_root=tmp_path / "home/jobs/model-ops",
+        evaluation_jobs_root=tmp_path / "home/jobs/evaluation",
         control_plane_metrics_path=tmp_path / "runtime/control-plane.json",
         swift_text_worker_metrics_path=tmp_path / "runtime/swift-metrics.json",
         python_worker_metrics_path=tmp_path / "runtime/python-metrics.json",
+        gateway_config_store_path=tmp_path / "home/config/gateway-config.json",
+        gateway_serving_defaults_store_path=tmp_path / "home/config/gateway-serving-defaults.json",
+        image_defaults_store_path=tmp_path / "home/config/image-defaults.json",
         http_port="11434",
         python_backend_mode="deterministic",
         swift_text_worker_backend_mode="deterministic",
@@ -151,10 +155,17 @@ def test_start_full_app_launches_menubar_with_console_startup_surface(
     assert spawn["env_overrides"]["MELIX_MENU_BAR_STARTUP_SURFACE"] == "console"
     assert spawn["env_overrides"]["MELIX_MENU_BAR_PRESENTATION_MODE"] == "dock-and-tray"
     assert spawn["env_overrides"]["MELIX_MENU_BAR_TERMINATION_MODE"] == "dev-down-script"
+    assert spawn["env_overrides"]["MELIX_HOME"] == str(layout.melix_home_dir)
     assert spawn["env_overrides"]["MELIX_RUNTIME_DIR"] == str(layout.runtime_dir)
     assert spawn["env_overrides"]["MELIX_REPO_ROOT"] == str(tmp_path)
     assert spawn["env_overrides"]["MELIX_WORKER_SOCKET_PATH"] == str(layout.python_socket_path)
     assert spawn["env_overrides"]["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] == str(layout.swift_text_worker_socket_path)
+    assert spawn["env_overrides"]["MELIX_GATEWAY_CONFIG_STORE_PATH"] == str(layout.gateway_config_store_path)
+    assert (
+        spawn["env_overrides"]["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"]
+        == str(layout.gateway_serving_defaults_store_path)
+    )
+    assert spawn["env_overrides"]["MELIX_IMAGE_DEFAULTS_STORE_PATH"] == str(layout.image_defaults_store_path)
     output = capsys.readouterr().out
     assert "Melix full app is ready." in output
     assert "Menu bar pid file:" in output

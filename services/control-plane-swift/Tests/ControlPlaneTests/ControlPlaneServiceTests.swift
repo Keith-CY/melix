@@ -2256,10 +2256,10 @@ struct ControlPlaneServiceTests {
 
     @Test("execute worker-backed audio model load prefers managed local model path")
     func executeWorkerBackedAudioModelLoadPrefersManagedLocalModelPath() async throws {
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-audio-load-\(UUID().uuidString)", isDirectory: true)
-        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
-        let localModelDirectory = appSupportDirectory
+        let assetManager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
+        let localModelDirectory = melixHomeDirectory
             .appendingPathComponent(
                 "models/default-managed/hf/mlx-community/whisper-large-v3-turbo-asr-fp16/main",
                 isDirectory: true
@@ -3652,9 +3652,9 @@ struct ControlPlaneServiceTests {
 
     @Test("execute install_audio_runtime records shared audio runtime pack metadata")
     func executeInstallAudioRuntimeRecordsSharedAudioRuntimePackMetadata() async throws {
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-audio-runtime-install-\(UUID().uuidString)", isDirectory: true)
-        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let assetManager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
         await modelOpsClient.setConvertEvents([
             {
@@ -3704,9 +3704,9 @@ struct ControlPlaneServiceTests {
 
     @Test("execute download records managed local audio model metadata")
     func executeDownloadRecordsManagedLocalAudioModelMetadata() async throws {
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-audio-model-download-\(UUID().uuidString)", isDirectory: true)
-        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let assetManager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
         await modelOpsClient.setConvertEvents([
             {

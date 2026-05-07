@@ -6,6 +6,24 @@ import MelixControlPlaneProtocol
 
 @Suite("Gateway Serving Defaults Store")
 struct GatewayServingDefaultsStoreTests {
+    @Test("environment initializer defaults store under MelixHome config")
+    func environmentInitializerDefaultsStoreUnderMelixHomeConfig() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(environment: [
+            "HOME": temporaryRoot.path,
+            "MELIX_APP_SUPPORT_DIR": temporaryRoot.appendingPathComponent("ignored-app-support").path,
+        ])
+
+        #expect(
+            await store.storePath()
+                == temporaryRoot.appendingPathComponent(".melix/config/gateway-serving-defaults.json").path
+        )
+    }
+
     @Test("summary projects built-in defaults when no operator override exists")
     func summaryProjectsBuiltInDefaultsWhenNoOperatorOverrideExists() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
