@@ -225,13 +225,17 @@ def run_python_code_evaluation(
         )
 
 
+def _count_nonempty_lines(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
 def _count_tests(test_code: str) -> int:
     try:
         module = ast.parse(test_code, filename="<tests>", mode="exec")
     except SyntaxError:
-        return len([line for line in test_code.splitlines() if line.strip()])
+        return _count_nonempty_lines(test_code)
     assert_count = sum(1 for node in ast.walk(module) if isinstance(node, ast.Assert))
-    return assert_count or len([line for line in test_code.splitlines() if line.strip()])
+    return assert_count or _count_nonempty_lines(test_code)
 
 
 def _load_payload_file(payload_path: Path) -> dict[str, object] | None:

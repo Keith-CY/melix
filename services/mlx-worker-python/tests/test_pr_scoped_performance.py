@@ -2031,6 +2031,10 @@ def test_code_eval_stdio_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert metrics["sandbox_profile_elapsed_ms_mean"] > 0
     assert metrics["sandbox_profile_static_builds_mean"] == 1.0
     assert metrics["sandbox_profile_iteration_count"] == 1500.0
+    assert metrics["count_tests_elapsed_ms_mean"] > 0
+    assert metrics["count_tests_peak_bytes_mean"] > 0
+    assert metrics["count_tests_line_count"] == 20_000.0
+    assert metrics["count_tests_result_mean"] == 20_000.0
 
 
 def test_code_eval_code_block_extract_probe_script_emits_metrics(

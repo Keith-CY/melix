@@ -345,6 +345,26 @@ def test_count_tests_falls_back_for_syntax_error_input() -> None:
     assert code_eval_runner._count_tests("assert True\n  assert False") == 2
 
 
+def test_count_tests_fallback_reuses_nonempty_line_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def counted_lines(text: str) -> int:
+        calls.append(text)
+        return 7
+
+    monkeypatch.setattr(code_eval_runner, "_count_nonempty_lines", counted_lines)
+
+    assert code_eval_runner._count_tests("assert True\n  assert False") == 7
+    assert calls == ["assert True\n  assert False"]
+
+
+def test_count_nonempty_lines_preserves_splitlines_semantics() -> None:
+    test_code = "assert True\n\nassert False\r\n\t\n  value\r"
+    assert code_eval_runner._count_nonempty_lines(test_code) == 3
+
+
 def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -> None:
     missing_path = tmp_path / "missing.txt"
     assert code_eval_runner._read_limited_text(missing_path, 8) == ""

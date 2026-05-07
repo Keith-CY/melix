@@ -5,6 +5,7 @@ import statistics
 import sys
 import tempfile
 import time
+import tracemalloc
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +65,30 @@ def _measure_sandbox_profiles(temp_root: Path, *, iterations: int) -> dict[str, 
     }
 
 
+def _measure_count_tests(*, line_count: int) -> dict[str, float]:
+    syntax_error_input = "\n".join(f"assert value_{index}" for index in range(line_count))
+    parseable_no_assert_input = "\n".join(f"value_{index} = {index}" for index in range(line_count))
+    elapsed_samples: list[float] = []
+    peak_samples: list[float] = []
+    result_samples: list[float] = []
+    for test_code in (syntax_error_input, parseable_no_assert_input):
+        for _ in range(5):
+            tracemalloc.start()
+            start = time.perf_counter()
+            result = code_eval_runner._count_tests(test_code)
+            elapsed_samples.append((time.perf_counter() - start) * 1000)
+            _current, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            result_samples.append(float(result))
+            peak_samples.append(float(peak))
+    return {
+        "count_tests_elapsed_ms_mean": statistics.mean(elapsed_samples),
+        "count_tests_peak_bytes_mean": statistics.mean(peak_samples),
+        "count_tests_line_count": float(line_count),
+        "count_tests_result_mean": statistics.mean(result_samples),
+    }
+
+
 def main() -> None:
     byte_limit = 4096
     iterations = 3000
@@ -75,6 +100,7 @@ def main() -> None:
         stderr_path.write_text("warning\n" * 128, encoding="utf-8")
         metrics = _measure_new(stdout_path, stderr_path, byte_limit=byte_limit, iterations=iterations)
         metrics.update(_measure_sandbox_profiles(temp_root, iterations=1500))
+        metrics.update(_measure_count_tests(line_count=20_000))
         print(json.dumps(metrics, sort_keys=True))
 
 
