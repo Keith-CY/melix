@@ -507,6 +507,24 @@ def test_size_hint_from_empty_text_skips_regex_search(monkeypatch: pytest.Monkey
     assert _size_hint_from_text("", allow_bare=False) == 0
 
 
+def test_size_hint_bytes_skips_direct_hint_parser_when_card_model_size_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    def tracked(text: str, *, allow_bare: bool) -> int:
+        calls.append((text, allow_bare))
+        return 0
+
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", tracked)
+
+    assert hub_catalog_module._size_hint_bytes({"cardData": {}}) == 0
+    assert calls == []
+
+    assert hub_catalog_module._size_hint_bytes({"cardData": {}, "readme": "Model size: 7 MB"}) == 0
+    assert calls == [("Model size: 7 MB", False)]
+
+
 def test_search_models_ignores_sibling_sizes_without_weight_or_config_filenames() -> None:
     payload = [
         {

@@ -7,39 +7,52 @@ import sys
 import time
 import tracemalloc
 from pathlib import Path
+from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(os.environ.get("MELIX_HUB_CATALOG_SIZE_HINT_REPO_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
-from worker.model_ops.hub_catalog import _size_hint_from_text
+import worker.model_ops.hub_catalog as hub_catalog
 
 
-def _text(index: int) -> tuple[str, bool, int]:
+def _payload(index: int) -> tuple[dict[str, Any], int]:
     value = 128 + (index % 2048)
     mode = index % 4
     if mode == 0:
-        return f"{value} MB", True, value * 1024 * 1024
+        return {"cardData": {}}, 0
     if mode == 1:
-        return f"Model size: {value} MB", False, value * 1024 * 1024
+        return {"cardData": {"model_size": f"{value} MB"}}, value * 1024 * 1024
     if mode == 2:
-        return f"README\nMODEL SIZE | {value} kb\nother metadata", False, value * 1024
-    return f"description only {value} MB", False, 0
+        return {"cardData": {}, "readme": f"README\nMODEL SIZE | {value} kb\nother metadata"}, value * 1024
+    return {"cardData": {}, "description": f"description only {value} MB"}, 0
 
 
-def _run_sample(iterations: int) -> tuple[float, int, int]:
-    started = time.perf_counter()
-    checksum = 0
-    matched = 0
-    for index in range(iterations):
-        text, allow_bare, expected = _text(index)
-        parsed = _size_hint_from_text(text, allow_bare=allow_bare)
-        if parsed != expected:
-            raise SystemExit(f"unexpected size hint at {index}: {parsed} != {expected}")
-        checksum ^= parsed
-        if parsed:
-            matched += 1
-    return (time.perf_counter() - started) * 1000.0, checksum, matched
+def _run_sample(iterations: int) -> tuple[float, int, int, int]:
+    calls = 0
+    original = hub_catalog._size_hint_from_text
+
+    def tracked_size_hint(text: str, *, allow_bare: bool) -> int:
+        nonlocal calls
+        calls += 1
+        return original(text, allow_bare=allow_bare)
+
+    hub_catalog._size_hint_from_text = tracked_size_hint
+    try:
+        started = time.perf_counter()
+        checksum = 0
+        matched = 0
+        for index in range(iterations):
+            payload, expected = _payload(index)
+            parsed = hub_catalog._size_hint_bytes(payload)
+            if parsed != expected:
+                raise SystemExit(f"unexpected size hint at {index}: {parsed} != {expected}")
+            checksum ^= parsed
+            if parsed:
+                matched += 1
+        return (time.perf_counter() - started) * 1000.0, checksum, matched, calls
+    finally:
+        hub_catalog._size_hint_from_text = original
 
 
 def main() -> int:
@@ -47,21 +60,23 @@ def main() -> int:
     sample_count = int(os.environ.get("MELIX_HUB_CATALOG_SIZE_HINT_SAMPLES", "5"))
     elapsed_samples: list[float] = []
     peak_samples: list[int] = []
+    call_samples: list[int] = []
     checksum = 0
     matched = 0
 
     for _ in range(sample_count):
         tracemalloc.start()
-        elapsed_ms, checksum, matched = _run_sample(iterations)
+        elapsed_ms, checksum, matched, calls = _run_sample(iterations)
         _, peak_bytes = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         elapsed_samples.append(elapsed_ms)
         peak_samples.append(peak_bytes)
+        call_samples.append(calls)
 
     metrics = {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
         "peak_bytes_mean": statistics.fmean(peak_samples),
-        "size_hint_calls_mean": float(iterations),
+        "size_hint_calls_mean": statistics.fmean(call_samples),
         "matched_hint_count": float(matched),
         "checksum": float(checksum),
         "sample_count": float(sample_count),
