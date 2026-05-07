@@ -262,6 +262,9 @@ public final class AppScreenshotCaptureRunner {
     }
 }
 
+// Capture-only fixture client. The screenshot runner drives it from the main actor,
+// but the actor still owns ControlPlaneXPCClient serialization; revisit this boundary
+// before reusing the fixture outside deterministic off-screen capture.
 actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
     private let snapshot: Melix_Controlplane_V1_ServerSnapshot
 

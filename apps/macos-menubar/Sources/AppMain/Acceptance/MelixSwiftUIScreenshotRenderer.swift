@@ -24,6 +24,8 @@ public struct MelixSwiftUIScreenshotRenderer {
         to outputURL: URL,
         size: CGSize
     ) throws {
+        // Render off-window for deterministic CI captures; views that require a live
+        // window, safe-area insets, or dynamic geometry need a dedicated renderer path.
         let hostingView = NSHostingView(
             rootView: rootView
                 .frame(width: size.width, height: size.height)
