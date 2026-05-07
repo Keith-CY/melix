@@ -2528,6 +2528,12 @@ def test_training_config_helper_resolution_paths_and_limits() -> None:
         profile=training_config_module._FAMILY_PROFILES["qwen"],
     )
     assert qwen_targets == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    mixtral_defaults = training_config_module._resolve_target_modules(
+        "",
+        profile=training_config_module._FAMILY_PROFILES["mixtral"],
+    )
+    assert mixtral_defaults == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    mixtral_defaults.append("mutated")
     assert training_config_module._resolve_target_modules(
         "",
         profile=training_config_module._FAMILY_PROFILES["mixtral"],
@@ -2536,6 +2542,18 @@ def test_training_config_helper_resolution_paths_and_limits() -> None:
         "attention_experts",
         profile=training_config_module._FAMILY_PROFILES["qwen3moe"],
     ) == ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    assert training_config_module._FAMILY_PROFILES["qwen3moe"][
+        training_config_module._NORMALIZED_TARGET_MODULE_PRESETS_KEY
+    ]["attention_experts"] == ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+    custom_profile = {
+        "default_target_modules": [" Custom_Default "],
+        "target_module_presets": {"Preset": [" Custom_Default ", " Second "]},
+    }
+    assert training_config_module._resolve_target_modules("", profile=custom_profile) == ["custom_default"]
+    assert training_config_module._resolve_target_modules("@Preset", profile=custom_profile) == [
+        "custom_default",
+        "second",
+    ]
     assert training_config_module._backend_target_modules(["standalone.module"]) == ["standalone.module"]
 
     bounded = training_config_module.normalize_training_config(
