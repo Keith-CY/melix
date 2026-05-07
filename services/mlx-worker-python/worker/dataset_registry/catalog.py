@@ -536,6 +536,9 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
                         break
         return rows
     if suffix == ".json":
+        limited_rows = _read_limited_json_array_rows(path, limit=limit)
+        if limited_rows is not None:
+            return limited_rows
         payload = json.loads(path.read_text(encoding="utf-8"))
         return _limit_rows(_rows_from_json_payload(payload), limit)
     if suffix == ".csv":
@@ -572,6 +575,74 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
                 table = table.slice(0, limit)
             return [row for row in table.to_pylist() if isinstance(row, dict)]
     return []
+
+
+def _read_limited_json_array_rows(path: Path, *, limit: int | None) -> list[dict[str, Any]] | None:
+    if limit is None:
+        return None
+    if limit <= 0:
+        return []
+
+    decoder = json.JSONDecoder()
+    rows: list[dict[str, Any]] = []
+    buffer = ""
+    position = 0
+    saw_array = False
+
+    def refill(handle: Any) -> bool:
+        nonlocal buffer, position
+        chunk = handle.read(8192)
+        if not chunk:
+            return False
+        if position:
+            buffer = buffer[position:]
+            position = 0
+        buffer += chunk
+        return True
+
+    def ensure_buffer(handle: Any) -> bool:
+        return position < len(buffer) or refill(handle)
+
+    def skip_whitespace(handle: Any) -> bool:
+        nonlocal position
+        while True:
+            while position < len(buffer) and buffer[position].isspace():
+                position += 1
+            if position < len(buffer):
+                return True
+            if not refill(handle):
+                return False
+
+    with path.open("r", encoding="utf-8") as handle:
+        while not ensure_buffer(handle):
+            return []
+        if not skip_whitespace(handle):
+            return []
+        if buffer[position] != "[":
+            return None
+        saw_array = True
+        position += 1
+
+        while len(rows) < limit:
+            if not skip_whitespace(handle):
+                break
+            if buffer[position] == "]":
+                break
+            if buffer[position] == ",":
+                position += 1
+                continue
+            while True:
+                try:
+                    payload, end_position = decoder.raw_decode(buffer, position)
+                    break
+                except json.JSONDecodeError:
+                    if not refill(handle):
+                        raise
+            position = end_position
+            if isinstance(payload, dict):
+                rows.append(payload)
+
+    return rows if saw_array else None
 
 
 def _limit_rows(rows: list[dict[str, Any]], limit: int | None) -> list[dict[str, Any]]:

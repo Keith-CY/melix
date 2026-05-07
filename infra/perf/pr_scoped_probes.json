@@ -36,6 +36,43 @@
     ]
   },
   {
+    "id": "dataset-registry-json-array-limit-streaming",
+    "name": "Dataset registry JSON array limited read streaming",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/dataset_registry/catalog.py",
+      "services/mlx-worker-python/tests/test_dataset_registry.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/dataset_registry_json_limit_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_dataset_registry.py::test_dataset_catalog_reads_json_and_csv_snapshots services/mlx-worker-python/tests/test_dataset_registry.py::test_dataset_catalog_limited_json_array_read_avoids_full_file_parse services/mlx-worker-python/tests/test_dataset_registry.py::test_dataset_catalog_json_mapping_still_uses_full_parse_fallback services/mlx-worker-python/tests/test_dataset_registry.py::test_dataset_catalog_limited_json_array_helper_edges services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_dataset_registry_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dataset_registry_json_limit_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_dataset_registry.py::test_dataset_catalog_reads_json_and_csv_snapshots services/mlx-worker-python/tests/test_dataset_registry.py::test_dataset_catalog_limited_json_array_read_avoids_full_file_parse services/mlx-worker-python/tests/test_dataset_registry.py::test_dataset_catalog_json_mapping_still_uses_full_parse_fallback services/mlx-worker-python/tests/test_dataset_registry.py::test_dataset_catalog_limited_json_array_helper_edges services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_dataset_registry_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_dataset_registry_json_limit_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/dataset_registry/catalog.py services/mlx-worker-python/tests/test_dataset_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/dataset_registry_json_limit_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/dataset_registry_json_limit_probe.py ]; then python3 scripts/dataset_registry_json_limit_probe.py; else python3 - <<\"PYPROBE\"\nimport json, os, statistics, sys, tempfile, time, tracemalloc\nfrom pathlib import Path\nrepo_root = Path.cwd(); sys.path.insert(0, str(repo_root)); sys.path.insert(0, str(repo_root / \"services/mlx-worker-python\"))\nimport worker.dataset_registry.catalog as catalog\nrow_count = int(os.environ.get(\"MELIX_DATASET_JSON_LIMIT_PROBE_ROW_COUNT\", \"50000\")); samples = int(os.environ.get(\"MELIX_DATASET_JSON_LIMIT_PROBE_SAMPLES\", \"5\"))\nelapsed=[]; peaks=[]; read_text_counts=[]; row_counts=[]\nwith tempfile.TemporaryDirectory(prefix=\"melix-dataset-json-limit-probe-\") as temp_dir:\n    snapshot_dir = Path(temp_dir) / \"snapshot\"; data_dir = snapshot_dir / \"data\"; data_dir.mkdir(parents=True); rows_path = data_dir / \"train.json\"\n    with rows_path.open(\"w\", encoding=\"utf-8\") as handle:\n        handle.write(\"[\\n\")\n        for index in range(row_count):\n            if index: handle.write(\",\\n\")\n            handle.write(json.dumps({\"prompt\": f\"prompt-{index}\", \"answer\": f\"answer-{index}\"}))\n        handle.write(\"\\n]\")\n    file_bytes = float(rows_path.stat().st_size); original_read_text = Path.read_text\n    def counting_read_text(self, *args, **kwargs):\n        global read_text_calls\n        if self == rows_path: read_text_calls += 1\n        return original_read_text(self, *args, **kwargs)\n    for _ in range(samples):\n        read_text_calls = 0; Path.read_text = counting_read_text\n        try:\n            tracemalloc.start(); started = time.perf_counter(); rows = catalog.read_hf_dataset_snapshot_rows(snapshot_dir, split=\"train\", limit=1); elapsed_ms = (time.perf_counter() - started) * 1000.0; _, peak = tracemalloc.get_traced_memory(); tracemalloc.stop()\n        finally:\n            Path.read_text = original_read_text\n            if tracemalloc.is_tracing(): tracemalloc.stop()\n        if rows != [{\"prompt\": \"prompt-0\", \"answer\": \"answer-0\"}]: raise SystemExit(f\"unexpected limited rows: {rows!r}\")\n        elapsed.append(elapsed_ms); peaks.append(float(peak)); read_text_counts.append(float(read_text_calls)); row_counts.append(float(len(rows)))\nprint(json.dumps({\"json_limit_elapsed_ms_mean\": statistics.fmean(elapsed), \"json_limit_peak_bytes_mean\": statistics.fmean(peaks), \"json_limit_read_text_calls_mean\": statistics.fmean(read_text_counts), \"json_limit_rows_mean\": statistics.fmean(row_counts), \"json_file_bytes\": file_bytes, \"json_row_count\": float(row_count), \"json_limit\": 1.0, \"sample_count\": float(samples)}, sort_keys=True))\nPYPROBE\nfi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "json_limit_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "json_limit_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 20.0
+      },
+      {
+        "key": "json_limit_read_text_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "hub-catalog-tag-normalization-single-pass",
     "name": "Hub catalog tag normalization single pass",
     "runner": "ubuntu-latest",

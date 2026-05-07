@@ -71,6 +71,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 REGISTRY_PATH = REPO_ROOT / "infra/perf/pr_scoped_probes.json"
 DATASET_REGISTRY_SELECTED_PROBE_IDS = [
     "dataset-registry-limited-read-streaming",
+    "dataset-registry-json-array-limit-streaming",
     "dataset-registry-snapshot-inference-single-pass",
     "dataset-registry-preview-limit-short-circuit",
 ]
@@ -1401,6 +1402,29 @@ def test_dataset_registry_split_match_probe_script_emits_metrics(
     assert metrics["path_constructor_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
+
+
+def test_dataset_registry_json_limit_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_JSON_LIMIT_PROBE_ROW_COUNT", "12")
+    monkeypatch.setenv("MELIX_DATASET_JSON_LIMIT_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_json_limit_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["json_row_count"] == 12.0
+    assert metrics["json_limit_rows_mean"] == 1.0
+    assert metrics["json_limit_read_text_calls_mean"] == 0.0
+    assert metrics["json_limit_elapsed_ms_mean"] >= 0
+    assert metrics["json_limit_peak_bytes_mean"] > 0
 
 
 def test_maintenance_parameter_normalization_probe_script_emits_metrics(

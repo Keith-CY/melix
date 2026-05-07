@@ -408,6 +408,60 @@ def test_dataset_catalog_reads_json_and_csv_snapshots(tmp_path: Path) -> None:
     assert read_hf_dataset_snapshot_rows(snapshot_dir, limit=1) == [{"prompt": "csv-row", "answer": "ok"}]
 
 
+def test_dataset_catalog_limited_json_array_read_avoids_full_file_parse(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    rows_path = data_dir / "train.json"
+    rows_path.write_text(
+        '[{"prompt":"first"}, {"prompt":"second"}, {"prompt": ',
+        encoding="utf-8",
+    )
+
+    assert read_hf_dataset_snapshot_rows(snapshot_dir, split="train", limit=1) == [
+        {"prompt": "first"}
+    ]
+
+
+def test_dataset_catalog_json_mapping_still_uses_full_parse_fallback(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    (data_dir / "validation.json").write_text(
+        json.dumps({"rows": [{"prompt": "json-row"}]}),
+        encoding="utf-8",
+    )
+
+    assert read_hf_dataset_snapshot_rows(snapshot_dir, split="validation", limit=1) == [
+        {"prompt": "json-row"}
+    ]
+
+
+def test_dataset_catalog_limited_json_array_helper_edges(tmp_path: Path) -> None:
+    rows_path = tmp_path / "rows.json"
+
+    rows_path.write_text("[]", encoding="utf-8")
+    assert catalog._read_limited_json_array_rows(rows_path, limit=0) == []
+    assert catalog._read_limited_json_array_rows(rows_path, limit=1) == []
+
+    rows_path.write_text("[   ", encoding="utf-8")
+    assert catalog._read_limited_json_array_rows(rows_path, limit=1) == []
+
+    rows_path.write_text('[1, {"prompt": "after-scalar"}]', encoding="utf-8")
+    assert catalog._read_limited_json_array_rows(rows_path, limit=1) == [
+        {"prompt": "after-scalar"}
+    ]
+
+    large_value = "x" * 9000
+    rows_path.write_text(json.dumps([{"prompt": large_value}]), encoding="utf-8")
+    assert catalog._read_limited_json_array_rows(rows_path, limit=1) == [
+        {"prompt": large_value}
+    ]
+
+    rows_path.write_text("", encoding="utf-8")
+    assert catalog._read_limited_json_array_rows(rows_path, limit=1) == []
+
+
 def test_dataset_catalog_path_split_matching_avoids_temporary_path_construction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
