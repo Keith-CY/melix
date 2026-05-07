@@ -588,7 +588,12 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
         return 0
     value = float(match.group(1))
     unit = match.group(2).lower()
-    multiplier = {"kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3}[unit]
+    if unit == "kb":
+        multiplier = 1024
+    elif unit == "mb":
+        multiplier = 1024 ** 2
+    else:
+        multiplier = 1024 ** 3
     return int(value * multiplier)
 
 
