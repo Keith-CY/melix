@@ -2154,6 +2154,9 @@ def test_startup_signals_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["worker_crash_elapsed_ms_mean"] > 0
     assert payload["worker_crash_log_path_exists_checks_mean"] == 0.0
     assert payload["worker_crash_log_reads_mean"] == 1.0
+    assert payload["tail_scan_elapsed_ms_mean"] > 0
+    assert payload["tail_scan_peak_bytes_mean"] > 0
+    assert payload["trailing_whitespace_bytes"] == 80000.0
     assert payload["sample_count"] == 5.0
 
 

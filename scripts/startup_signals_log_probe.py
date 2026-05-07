@@ -8,6 +8,7 @@ import statistics
 import sys
 import tempfile
 import time
+import tracemalloc
 from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,7 +18,7 @@ sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 import worker.productization.startup_signals as startup_signals  # noqa: E402
 
 
-def _write_logs(root: Path) -> dict[str, str]:
+def _write_logs(root: Path) -> dict[str, str | int]:
     control_plane_stderr = root / "control-plane.stderr.log"
     worker_stderr = root / "python-worker.stderr.log"
     noise = "boot line with enough content to make reads realistic\n" * 2500
@@ -70,6 +71,23 @@ def _measure_case(
     return elapsed_ms, float(read_count), float(exists_count)
 
 
+def _measure_tail_scan(log_path: Path, *, iterations: int) -> tuple[float, float]:
+    elapsed_samples: list[float] = []
+    peak_samples: list[float] = []
+    for _ in range(5):
+        tracemalloc.start()
+        started = time.perf_counter()
+        for _ in range(iterations):
+            line = startup_signals._read_last_nonempty_line(log_path, chunk_size=8192)
+            if line != "final startup line":
+                raise AssertionError(f"unexpected tail line: {line!r}")
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_samples.append(float(peak))
+    return statistics.fmean(elapsed_samples), statistics.fmean(peak_samples)
+
+
 def main() -> int:
     iterations = 400
     samples = 5
@@ -84,7 +102,10 @@ def main() -> int:
     worker_exists: list[float] = []
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        manifest = _write_logs(Path(tmp_dir))
+        root = Path(tmp_dir)
+        manifest = _write_logs(root)
+        tail_log = root / "trailing-whitespace.log"
+        tail_log.write_bytes(b"startup booted\nfinal startup line" + (b" \t\r\n" * 20000))
         for _ in range(samples):
             elapsed, reads, exists = _measure_case(
                 manifest,
@@ -118,6 +139,8 @@ def main() -> int:
             worker_reads.append(reads / iterations)
             worker_exists.append(exists / iterations)
 
+        tail_elapsed_mean, tail_peak_mean = _measure_tail_scan(tail_log, iterations=iterations)
+
     print(
         json.dumps(
             {
@@ -129,6 +152,9 @@ def main() -> int:
                 "control_crash_log_reads_mean": round(statistics.fmean(control_reads), 6),
                 "iterations": float(iterations),
                 "sample_count": float(samples),
+                "tail_scan_elapsed_ms_mean": round(tail_elapsed_mean, 6),
+                "tail_scan_peak_bytes_mean": round(tail_peak_mean, 6),
+                "trailing_whitespace_bytes": float(80000),
                 "worker_crash_elapsed_ms_mean": round(statistics.fmean(worker_elapsed), 6),
                 "worker_crash_log_path_exists_checks_mean": round(statistics.fmean(worker_exists), 6),
                 "worker_crash_log_reads_mean": round(statistics.fmean(worker_reads), 6),
