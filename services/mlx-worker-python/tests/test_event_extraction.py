@@ -530,6 +530,26 @@ def test_semantic_field_values_caches_repeated_group_actor_expansion(
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
 
 
+def test_semantic_field_values_normalizes_and_deduplicates_in_one_pass(monkeypatch) -> None:
+    monkeypatch.setattr(
+        event_extraction_module,
+        "_normalize_event_field",
+        lambda value: (_ for _ in ()).throw(
+            AssertionError("_semantic_field_values should not allocate an intermediate normalized list")
+        ),
+    )
+
+    assert event_extraction_module._semantic_field_values(
+        "action",
+        {"action": [" 见面 ", "", "见面", "吃饭"]},
+    ) == ["见面", "吃饭"]
+    assert event_extraction_module._semantic_field_values("time", {"time": None}) == []
+    with pytest.raises(ValueError):
+        event_extraction_module._semantic_field_values("time", {"time": "明天"})
+    with pytest.raises(ValueError):
+        event_extraction_module._semantic_field_values("time", {"time": ["明天", 1]})
+
+
 def test_actor_alias_probe_default_mix_keeps_normalization_fallback_covered(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
