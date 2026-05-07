@@ -41,22 +41,16 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     if not normalized:
         return "", "empty_prediction"
 
-    last_code_block_bounds: tuple[int, int] | None = None
-    search_start = 0
-    while True:
-        opening = normalized.find("```", search_start)
+    closing = normalized.rfind("```")
+    while closing >= 0:
+        opening = normalized.rfind("```", 0, closing)
         if opening < 0:
             break
-        content_start = _code_block_content_start(normalized, opening + 3)
-        closing = normalized.find("```", content_start)
-        if closing < 0:
-            break
-        last_code_block_bounds = (content_start, closing)
-        search_start = closing + 3
+        if normalized.count("```", 0, opening) % 2 == 0:
+            content_start = _code_block_content_start(normalized, opening + 3)
+            return normalized[content_start:closing].strip(), "parsed_code_block"
+        closing = opening
 
-    if last_code_block_bounds is not None:
-        start, end = last_code_block_bounds
-        return normalized[start:end].strip(), "parsed_code_block"
     return normalized, "parsed_code"
 
 
