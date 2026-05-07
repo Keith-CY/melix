@@ -540,6 +540,29 @@ def test_search_models_treats_gated_auto_as_soft_access_not_blocked() -> None:
     assert model.recommended_action == "download"
 
 
+def test_size_hint_bytes_normalizes_each_payload_text_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+    original = hub_catalog_module._string
+
+    def tracked(value: object) -> str:
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog_module, "_string", tracked)
+
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "description": "Model",
+                "readme": "size: 512 MB",
+                "cardData": {"description": "extra notes"},
+            }
+        )
+        == 512 * MB
+    )
+    assert calls == [None, "Model", "size: 512 MB", "extra notes"]
+
+
 def test_search_models_ignores_non_model_size_hints_in_readme_text() -> None:
     payload = [
         {

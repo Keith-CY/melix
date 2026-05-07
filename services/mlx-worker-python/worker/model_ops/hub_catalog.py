@@ -538,19 +538,20 @@ def _is_weight_or_config_file(filename: str) -> bool:
 
 
 def _size_hint_bytes(payload: dict[str, Any]) -> int:
-    card_data = payload.get("cardData") if isinstance(payload.get("cardData"), dict) else {}
+    raw_card_data = payload.get("cardData")
+    card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
     direct_card_hint = _size_hint_from_text(_string(card_data.get("model_size")), allow_bare=True)
     if direct_card_hint > 0:
         return direct_card_hint
 
     text = "\n".join(
-        _string(value)
+        text
         for value in (
             payload.get("description"),
             payload.get("readme"),
             card_data.get("description"),
         )
-        if _string(value)
+        if (text := _string(value))
     )
     if not text:
         return 0
