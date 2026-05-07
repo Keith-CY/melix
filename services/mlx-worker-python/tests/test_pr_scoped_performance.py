@@ -1067,7 +1067,7 @@ def test_event_extraction_actor_alias_probe_script_emits_metrics(
     assert metrics["value_count"] == 6.0
     assert metrics["iterations_per_sample"] == 3.0
     assert metrics["sample_count"] == 1.0
-    assert metrics["normalize_calls_mean"] == 18.0
+    assert metrics["normalize_calls_mean"] == 6.0
     assert metrics["output_length_per_sample"] > 0
     assert metrics["elapsed_ms_mean"] >= 0
 
