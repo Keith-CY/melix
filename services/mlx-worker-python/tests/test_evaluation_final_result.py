@@ -105,6 +105,105 @@ def test_extract_final_result_marks_ambiguous_text_answer_prefixes_as_failure() 
     assert outcome.failure_reason == "multiple_answer_prefix_candidates"
 
 
+def test_extract_final_result_marks_multiple_generic_json_fences_as_ambiguous() -> None:
+    outcome = extract_final_result(
+        raw_response=(
+            "Draft:\n"
+            "```\n"
+            "{\"answer\": \"wrong\"}\n"
+            "```\n"
+            "Final:\n"
+            "```\n"
+            "{\"answer\": \"Paris\"}\n"
+            "```"
+        ),
+        result_kind="json",
+        extraction_mode="heuristic_final",
+    )
+
+    assert outcome.extraction_status == "ambiguous_extraction"
+    assert outcome.extracted_result == ""
+    assert outcome.failure_reason == "multiple_generic_json_candidates"
+
+
+def test_extract_final_result_accepts_one_generic_json_fence_after_invalid_fence() -> None:
+    outcome = extract_final_result(
+        raw_response=(
+            "Draft:\n"
+            "```\n"
+            "not json yet\n"
+            "```\n"
+            "Final:\n"
+            "```\n"
+            "{\"answer\": \"Paris\"}\n"
+            "```"
+        ),
+        result_kind="json",
+        extraction_mode="heuristic_final",
+    )
+
+    assert outcome.extraction_status == "extracted"
+    assert json.loads(outcome.extracted_result) == {"answer": "Paris"}
+
+
+def test_extract_final_result_uses_last_text_fence_without_materializing_all_fences() -> None:
+    outcome = extract_final_result(
+        raw_response=(
+            "Earlier note:\n"
+            "```\n"
+            "draft answer\n"
+            "```\n"
+            "Final note:\n"
+            "```\n"
+            "Paris\n"
+            "```"
+        ),
+        result_kind="text",
+        extraction_mode="heuristic_final",
+    )
+
+    assert outcome.extraction_status == "extracted"
+    assert outcome.extracted_result == "Paris"
+
+
+def test_extract_final_result_accepts_one_answer_prefix() -> None:
+    outcome = extract_final_result(
+        raw_response="Final answer: Paris",
+        result_kind="text",
+        extraction_mode="heuristic_final",
+    )
+
+    assert outcome.extraction_status == "extracted"
+    assert outcome.extracted_result == "Paris"
+
+
+def test_extract_final_result_scans_json_suffix_candidates_from_the_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parse_attempts: list[str] = []
+    original_parses_json = evaluation_final_result_module._parses_json
+
+    def tracking_parses_json(payload: str) -> bool:
+        parse_attempts.append(payload)
+        return original_parses_json(payload)
+
+    monkeypatch.setattr(evaluation_final_result_module, "_parses_json", tracking_parses_json)
+
+    outcome = extract_final_result(
+        raw_response=(
+            "Reasoning with many stale objects: "
+            + " ".join(f"{{not-json-{index}}}" for index in range(50))
+            + "\nFinal payload: {\"answer\": \"Paris\", \"score\": 1}"
+        ),
+        result_kind="json",
+        extraction_mode="heuristic_final",
+    )
+
+    assert outcome.extraction_status == "extracted"
+    assert json.loads(outcome.extracted_result) == {"answer": "Paris", "score": 1}
+    assert len(parse_attempts) == 1
+
+
 def test_score_final_result_validates_json_schema_and_ignores_default_paths() -> None:
     score = score_final_result(
         extracted_result=json.dumps(
