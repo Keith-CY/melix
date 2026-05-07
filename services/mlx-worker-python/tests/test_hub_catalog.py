@@ -318,6 +318,12 @@ def test_next_cursor_from_link_scans_segments_without_splitting_on_url_commas() 
     assert hub_catalog_module._next_cursor_from_link(link_header) == "page,2"
 
 
+def test_next_cursor_from_link_accepts_cursor_at_query_start() -> None:
+    link_header = '<https://huggingface.co/api/models?cursor=page%2Fstart&limit=10>; rel="next"'
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "page/start"
+
+
 def test_next_cursor_from_link_returns_empty_for_missing_or_malformed_next_cursor() -> None:
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor=prev>; rel="prev"') == ""
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models>; rel="next"') == ""

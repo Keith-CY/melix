@@ -270,29 +270,31 @@ def _next_cursor_from_link(link_header: str) -> str:
         relation_start = url_end + 1
         relation_end = next_url_start if next_url_start >= 0 else len(link_header)
         if link_header.find('rel="next"', relation_start, relation_end) >= 0:
-            return _cursor_query_value(link_header[url_start + 1 : url_end])
+            return _cursor_query_value(link_header, url_start + 1, url_end)
         search_start = relation_end
 
 
-def _cursor_query_value(url: str) -> str:
-    query_start = url.find("?")
+def _cursor_query_value(url: str, start: int, end: int) -> str:
+    query_start = url.find("?", start, end)
     if query_start < 0:
         return ""
-    query_end = url.find("#", query_start + 1)
+    query_end = url.find("#", query_start + 1, end)
     if query_end < 0:
-        query_end = len(url)
-    cursor_start = query_start + 1
-    while True:
-        cursor_start = url.find("cursor=", cursor_start, query_end)
+        query_end = end
+
+    value_start = query_start + 1
+    if url.startswith("cursor=", value_start, query_end):
+        value_start += len("cursor=")
+    else:
+        cursor_start = url.find("&cursor=", value_start, query_end)
         if cursor_start < 0:
             return ""
-        if cursor_start == query_start + 1 or url[cursor_start - 1] == "&":
-            value_start = cursor_start + len("cursor=")
-            value_end = url.find("&", value_start, query_end)
-            if value_end < 0:
-                value_end = query_end
-            return unquote_plus(url[value_start:value_end])
-        cursor_start += len("cursor=")
+        value_start = cursor_start + len("&cursor=")
+
+    value_end = url.find("&", value_start, query_end)
+    if value_end < 0:
+        value_end = query_end
+    return unquote_plus(url[value_start:value_end])
 
 
 def _string(value: Any) -> str:

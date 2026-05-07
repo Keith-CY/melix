@@ -20,7 +20,7 @@ Use the existing registered probe `hub-catalog-next-cursor-fast-parse` in `infra
 
 ## Optimization hypothesis
 
-`_cursor_query_value(...)` currently advances parameter by parameter and checks every parameter start with `startswith("cursor=")`. The cursor parser can instead use a bounded `str.find("cursor=", ..., query_end)` loop and validate the match is at the query start or immediately after `&`. For typical Hub pagination links where `cursor` appears after a few known parameters, this avoids repeated delimiter searches and prefix checks on non-cursor parameters.
+`_next_cursor_from_link(...)` can avoid allocating a sliced URL string for the `rel="next"` segment by passing the segment bounds into `_cursor_query_value(...)`. The cursor helper keeps the same exact-parameter semantics but searches only within the bounded URL range and looks for the two legal cursor parameter prefixes: `cursor=` at the beginning of the query string or `&cursor=` later in the query. This preserves boundary behavior for parameters such as `notcursor` and `mycursor` while reducing transient cursor-parse work.
 
 ## Success metrics
 
