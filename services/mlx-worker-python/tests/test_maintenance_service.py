@@ -5226,6 +5226,36 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Pa
     assert core._benchmark_batch_sizes({"batch_sizes": "2, 1, 2, 1"}) == (1, 2)
     assert core._benchmark_batch_sizes({"batch_sizes": "1, , 2"}) == (1, 2)
     assert core._benchmark_batch_sizes({"batch_size": "oops"}) == (1,)
+
+    class CountedInt:
+        def __init__(self, value: int) -> None:
+            self.value = value
+            self.calls = 0
+
+        def __int__(self) -> int:
+            self.calls += 1
+            return self.value
+
+    counted_ints = [CountedInt(8), CountedInt(0), CountedInt(4), CountedInt(8)]
+    assert MaintenanceCore._positive_sorted_values(counted_ints, default=(32,)) == (4, 8)
+    assert [value.calls for value in counted_ints] == [1, 1, 1, 1]
+
+    class CountedString:
+        def __init__(self, value: str) -> None:
+            self.value = value
+            self.calls = 0
+
+        def __str__(self) -> str:
+            self.calls += 1
+            return self.value
+
+    counted_strings = [CountedString(" warm "), CountedString(""), CountedString("cold")]
+    assert MaintenanceCore._normalized_string_values(
+        counted_strings,
+        default=("default",),
+    ) == ("cold", "warm")
+    assert [value.calls for value in counted_strings] == [1, 1, 1]
+
     assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
     assert core._shape_benchmark_prompt("one two three", context_length=2) == "one two"
     assert core._shape_benchmark_prompt("one two three", context_length=8) == (

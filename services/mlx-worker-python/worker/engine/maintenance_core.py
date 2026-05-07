@@ -2349,25 +2349,21 @@ class MaintenanceCore:
 
     @staticmethod
     def _positive_sorted_values(values, *, default: tuple[int, ...]) -> tuple[int, ...]:
-        normalized = sorted(
-            {
-                int(value)
-                for value in values
-                if int(value) > 0
-            }
-        )
-        return tuple(normalized) or default
+        normalized_values: set[int] = set()
+        for value in values:
+            parsed = int(value)
+            if parsed > 0:
+                normalized_values.add(parsed)
+        return tuple(sorted(normalized_values)) or default
 
     @staticmethod
     def _normalized_string_values(values, *, default: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = sorted(
-            {
-                str(value).strip()
-                for value in values
-                if str(value).strip()
-            }
-        )
-        return tuple(normalized) or default
+        normalized_values: set[str] = set()
+        for value in values:
+            normalized = str(value).strip()
+            if normalized:
+                normalized_values.add(normalized)
+        return tuple(sorted(normalized_values)) or default
 
     @staticmethod
     def _benchmark_matrix_request_count(
