@@ -144,6 +144,58 @@ def test_image_generate_rejects_edit_only_image_families(tmp_path: Path) -> None
     assert response.job.state == common_pb2.IMAGE_JOB_FAILED
 
 
+def test_image_generation_and_edit_probe_bytes_do_not_rescan_images(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DeterministicImageGenerationRuntime()
+    loaded_model = {"model_id": "melix-dev-image"}
+
+    def fail_sum(*_args, **_kwargs):
+        raise AssertionError("output byte accounting must not rescan generated images")  # pragma: no cover
+
+    monkeypatch.setattr("builtins.sum", fail_sum)
+
+    generate_request = inference_pb2.ImageGenerateRequest(
+        prompt="red fox in snow",
+        size="128x128",
+        response_format="png",
+        artifact_namespace="tests",
+        n=3,
+    )
+    generated = runtime.generate_images(
+        loaded_model,
+        generate_request,
+        job_id="image-generate-no-rescan",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+    expected_generated_bytes = 0
+    for payload in generated.images:
+        expected_generated_bytes += len(payload)
+    assert runtime.last_probe_snapshot().output_bytes == expected_generated_bytes
+
+    edit_request = inference_pb2.ImageEditRequest(
+        prompt="add stars",
+        image=b"SOURCE_IMAGE",
+        mask=b"MASK_IMAGE",
+        size="128x128",
+        response_format="png",
+        n=3,
+    )
+    edited = runtime.edit_image(
+        loaded_model,
+        edit_request,
+        job_id="image-edit-no-rescan",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+    expected_edited_bytes = 0
+    for payload in edited.images:
+        expected_edited_bytes += len(payload)
+    assert runtime.last_probe_snapshot().output_bytes == expected_edited_bytes
+
+
 def test_image_edit_persists_lineage_and_generated_artifact(tmp_path: Path) -> None:
     runtime_service, inference_service, _ = build_services(tmp_path)
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
