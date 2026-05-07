@@ -32,7 +32,7 @@ class EngineCore:
             request.execution.ext,
         )
         effective_sampling = self._sampling_with_resolved_stop(request.sampling, stop_contract.sequences)
-        prompt_tokens_default = 0
+        prompt_tokens_default: int | None = None
         last_token_event: RuntimeTokenEvent | None = None
         turn_boundary_stop_reason = ""
 
@@ -44,11 +44,17 @@ class EngineCore:
                 template_kwargs=template_kwargs,
                 execution_ext=request.execution.ext,
             )
-            prompt_tokens_default = (
-                runtime.prompt_token_count(prompt)
-                if hasattr(runtime, "prompt_token_count")
-                else len(prompt.split())
-            )
+
+            def prompt_token_default() -> int:
+                nonlocal prompt_tokens_default
+                if prompt_tokens_default is None:
+                    prompt_tokens_default = (
+                        runtime.prompt_token_count(prompt)
+                        if hasattr(runtime, "prompt_token_count")
+                        else len(prompt.split())
+                    )
+                return prompt_tokens_default
+
             generate_kwargs: dict[str, object] = {"execution_ext": request.execution.ext}
             if _callable_accepts_kwarg(runtime.generate_tokens, "acceleration_policy"):
                 generate_kwargs["acceleration_policy"] = request.execution.acceleration
@@ -118,10 +124,12 @@ class EngineCore:
                         )
 
             if request.return_usage and not state.cancel_event.is_set():
-                prompt_tokens = prompt_tokens_default
                 completion_tokens = len(state.emitted_tokens)
+                if last_token_event is not None and last_token_event.prompt_tokens:
+                    prompt_tokens = int(last_token_event.prompt_tokens)
+                else:
+                    prompt_tokens = prompt_token_default()
                 if last_token_event is not None:
-                    prompt_tokens = int(last_token_event.prompt_tokens or prompt_tokens)
                     completion_tokens = int(last_token_event.completion_tokens or completion_tokens)
                 yield inference_pb2.ExecuteEvent(
                     request_id=request_id,

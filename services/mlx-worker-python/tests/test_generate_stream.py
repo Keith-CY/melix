@@ -162,6 +162,46 @@ class AccelerationCapturingRuntime:
         yield RuntimeTokenEvent(text="accelerated", prompt_tokens=2, completion_tokens=1, finish_reason="stop")
 
 
+class UsageCountingRuntime:
+    runtime_name = "fake-usage-counting-runtime"
+
+    def __init__(self, *, prompt_tokens: int = 0) -> None:
+        self.prompt_tokens = prompt_tokens
+        self.prompt_token_count_calls = 0
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        _ = model_spec
+        return 0
+
+    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+        _ = messages
+        _ = loaded_model
+        _ = template_kwargs
+        _ = execution_ext
+        return "count " * 1024
+
+    def prompt_token_count(self, prompt):
+        _ = prompt
+        self.prompt_token_count_calls += 1
+        return 1024
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        _ = cancel_event
+        _ = execution_ext
+        yield RuntimeTokenEvent(
+            text="counted",
+            prompt_tokens=self.prompt_tokens,
+            completion_tokens=1,
+            finish_reason="stop",
+        )
+
+
 def build_services():
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StreamingFakeBackend()),
@@ -174,6 +214,73 @@ def build_services():
         context=None,
     )
     return runtime_service, inference_service, load_response.model_handle
+
+
+def build_usage_counting_services(runtime: UsageCountingRuntime):
+    registry = WorkerRegistry(
+        runtime=runtime,  # type: ignore[arg-type]
+        model_catalog=WorkerModelCatalog(environment={}),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    return inference_service, load_response.model_handle
+
+
+def generate_usage_request(model_handle: str, *, return_usage: bool) -> inference_pb2.GenerateRequest:
+    return inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-usage-count"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="count tokens")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+        stream=True,
+        return_usage=return_usage,
+    )
+
+
+def test_generate_without_usage_skips_prompt_token_count_fallback() -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+
+    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=False), context=None))
+
+    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
+    assert not any(event.HasField("usage_delta") for event in events)
+    assert runtime.prompt_token_count_calls == 0
+
+
+def test_generate_usage_reuses_runtime_event_prompt_tokens_without_fallback_count() -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=7)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+
+    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
+
+    usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
+    assert usage.prompt_tokens == 7
+    assert usage.completion_tokens == 1
+    assert runtime.prompt_token_count_calls == 0
+
+
+def test_generate_usage_counts_prompt_tokens_only_for_missing_event_total() -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+
+    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
+
+    usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
+    assert usage.prompt_tokens == 1024
+    assert usage.completion_tokens == 1
+    assert runtime.prompt_token_count_calls == 1
 
 
 def test_generate_streams_token_and_terminal_completion() -> None:
