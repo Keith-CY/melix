@@ -16,6 +16,7 @@ The original reports included broad regressions because the earlier PRs changed 
 - `services/mlx-worker-python/worker/productization/event_extraction.py`
 - `services/mlx-worker-python/worker/model_ops/training_dataset.py`
 - Focused tests for the two behavior contracts
+- `services/mlx-worker-python/tests/test_pr_scoped_performance.py` only for the actor-alias probe smoke expectation
 
 ## Optimization Plan
 
@@ -23,6 +24,8 @@ The original reports included broad regressions because the earlier PRs changed 
 2. Keep the cached normalized group-actor alias set from PR 493, then combine actor-field deduplication, alias expansion, and expanded-value deduplication into one actor-specific scan.
 3. Preserve output ordering, digest inputs, and existing semantic scoring behavior.
 4. Verify with focused pytest, changed-scope coverage, and local command-json probes for the two optimized paths.
+
+The smoke-test expectation update is intentionally separate from the performance registry definition, but it still changes the PR-scoped performance test file. The hosted scope job therefore force-selects the full probe set for this follow-up.
 
 ## Success Metrics
 
