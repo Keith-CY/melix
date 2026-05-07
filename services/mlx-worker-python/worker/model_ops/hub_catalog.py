@@ -281,16 +281,18 @@ def _cursor_query_value(url: str) -> str:
     query_end = url.find("#", query_start + 1)
     if query_end < 0:
         query_end = len(url)
-    parameter_start = query_start + 1
-    while parameter_start < query_end:
-        parameter_end = url.find("&", parameter_start, query_end)
-        if parameter_end < 0:
-            parameter_end = query_end
-        value_start = parameter_start + len("cursor=")
-        if url.startswith("cursor=", parameter_start):
-            return unquote_plus(url[value_start:parameter_end])
-        parameter_start = parameter_end + 1
-    return ""
+    cursor_start = query_start + 1
+    while True:
+        cursor_start = url.find("cursor=", cursor_start, query_end)
+        if cursor_start < 0:
+            return ""
+        if cursor_start == query_start + 1 or url[cursor_start - 1] == "&":
+            value_start = cursor_start + len("cursor=")
+            value_end = url.find("&", value_start, query_end)
+            if value_end < 0:
+                value_end = query_end
+            return unquote_plus(url[value_start:value_end])
+        cursor_start += len("cursor=")
 
 
 def _string(value: Any) -> str:
