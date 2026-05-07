@@ -18,6 +18,9 @@ public enum MelixLocalRuntimeFactory {
         let metricsStore = MetricsStore(exportPath: environment["MELIX_CONTROL_PLANE_METRICS_PATH"])
         let mcpToolCatalog = MCPToolCatalog.load(environment: environment)
         let gatewayAccessPolicyStore = GatewayAccessPolicyStore(GatewayAccessPolicy.load(environment: environment))
+        let gatewayConfigStore = GatewayConfigStore(environment: environment)
+        let gatewayServingDefaultsStore = GatewayServingDefaultsStore(environment: environment)
+        let imageDefaultsStore = ImageDefaultsStore(environment: environment)
 
         let swiftTextWorkerClient = SwiftTextWorkerClient(
             socketPath: environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
@@ -38,6 +41,9 @@ public enum MelixLocalRuntimeFactory {
             metricsStore: metricsStore,
             workerRegistry: workerRegistry,
             mcpToolCatalog: mcpToolCatalog,
+            gatewayConfigStore: gatewayConfigStore,
+            gatewayServingDefaultsStore: gatewayServingDefaultsStore,
+            imageDefaultsStore: imageDefaultsStore,
             gatewayAccessPolicyStore: gatewayAccessPolicyStore
         )
         return MelixLocalRuntimeContext(service: service, metricsStore: metricsStore)

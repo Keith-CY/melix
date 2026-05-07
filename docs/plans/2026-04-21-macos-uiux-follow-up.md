@@ -73,10 +73,9 @@ repository design system while preserving the existing control-plane and worker 
   - accept `python_text_compatibility` as a WorkerRegistry metadata alias for the Python
     compatibility route, so canonical registry metadata cannot fall back to the Swift text worker
     when enum route fields are absent.
-  - make the packaged macOS app treat `MELIX_APP_SUPPORT_DIR` as `MELIX_HOME` when no explicit
-    home override is present, keeping operator-session state, managed model roots, and runtime
-    review state on the same Application Support source of truth instead of falling back to
-    `~/.melix`.
+  - superseded by `docs/plans/2026-05-07-cli-first-melix-home-layout.md`: make the packaged
+    macOS app and CLI share `MELIX_HOME` directly, with `$HOME/.melix` as the default product
+    source of truth and no `MELIX_APP_SUPPORT_DIR` home fallback.
   - keep persisted server-session `modelID` authoritative when applying gateway listener
     projections; gateway config still hydrates requested/effective endpoint fields, but stale
     `served_model_id` values no longer overwrite Chat's selected server model.
@@ -130,8 +129,8 @@ Manual evidence:
 - Confirm the same stale-list Chat path does not issue a premature `model.load` call before
   `startChat`.
 - Confirm the stale-list Chat path requests a fresh server snapshot before dispatch.
-- Confirm the packaged app restores the Application Support operator-session state and does not
-  seed Chat from stale `~/.melix` state.
+- Confirm the packaged app restores the `MELIX_HOME/state/operator-session.json` state and does
+  not read product state from App Support.
 - Confirm stale gateway listener `served_model_id` values cannot override a restored server
   session's model when Chat dispatches.
 

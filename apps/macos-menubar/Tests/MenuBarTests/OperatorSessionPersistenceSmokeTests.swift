@@ -115,6 +115,15 @@ struct OperatorSessionPersistenceSmokeTests {
         )
 
         let sharedState = try #require(try sharedStore.load())
+        let uiPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.operatorSessionFileURL)) as? [String: Any]
+        )
+        let serverSessionsPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.serverSessionsFileURL)) as? [String: Any]
+        )
+        let modelRootsPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.modelRootsFileURL)) as? [String: Any]
+        )
 
         #expect(sharedState.selectedSurfaceID == "server")
         #expect(sharedState.selectedToolSectionID == "diagnostics")
@@ -126,6 +135,10 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(sharedState.registryRoots == ["/tmp/models-a", "/tmp/models-b"])
         #expect(sharedState.paneVisibility.first(where: { $0.surfaceID == "server" })?.showsInspector == true)
         #expect(sharedState.paneVisibility.first(where: { $0.surfaceID == "api" })?.showsSidebar == false)
+        #expect(uiPayload["server_sessions"] == nil)
+        #expect(uiPayload["registry_roots"] == nil)
+        #expect((serverSessionsPayload["server_sessions"] as? [[String: Any]])?.first?["id"] as? String == "server-session-shared")
+        #expect(modelRootsPayload["registry_roots"] as? [String] == ["/tmp/models-a", "/tmp/models-b"])
     }
 }
 

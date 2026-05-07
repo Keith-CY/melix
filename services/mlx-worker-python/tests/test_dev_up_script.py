@@ -68,16 +68,20 @@ def write_mlx_metal_fixture(root: Path, version: str) -> Path:
 def make_layout(dev_up, tmp_path: Path):
     return dev_up.RuntimeLayout(
         service_instance_name="",
+        melix_home_dir=tmp_path / "home",
         runtime_dir=tmp_path / "runtime",
         python_socket_path=tmp_path / "runtime/python.sock",
         swift_text_worker_socket_path=tmp_path / "runtime/swift.sock",
-        managed_models_dir=tmp_path / "runtime/models/default-managed",
-        audio_runtime_packs_dir=tmp_path / "runtime/runtime-packs/audio",
-        model_ops_jobs_root=tmp_path / "runtime/jobs/model-ops",
-        evaluation_jobs_root=tmp_path / "runtime/jobs/model-ops/evaluation",
+        managed_models_dir=tmp_path / "home/models/default-managed",
+        audio_runtime_packs_dir=tmp_path / "home/runtime-packs/audio",
+        model_ops_jobs_root=tmp_path / "home/jobs/model-ops",
+        evaluation_jobs_root=tmp_path / "home/jobs/evaluation",
         control_plane_metrics_path=tmp_path / "runtime/control-plane.json",
         swift_text_worker_metrics_path=tmp_path / "runtime/swift-metrics.json",
         python_worker_metrics_path=tmp_path / "runtime/python-metrics.json",
+        gateway_config_store_path=tmp_path / "home/config/gateway-config.json",
+        gateway_serving_defaults_store_path=tmp_path / "home/config/gateway-serving-defaults.json",
+        image_defaults_store_path=tmp_path / "home/config/image-defaults.json",
         http_port="11434",
         python_backend_mode="deterministic",
         swift_text_worker_backend_mode="swift",
@@ -281,10 +285,30 @@ def test_compute_runtime_layout_uses_service_instance_name_for_sidecar_defaults(
     layout = dev_up.compute_runtime_layout(tmp_path)
 
     assert layout.runtime_dir == (tmp_path / ".runtime" / "sidecars" / "team-a").resolve()
-    assert layout.managed_models_dir == layout.runtime_dir / "models/default-managed"
-    assert layout.audio_runtime_packs_dir == layout.runtime_dir / "runtime-packs/audio"
-    assert layout.model_ops_jobs_root == layout.runtime_dir / "jobs/model-ops"
-    assert layout.evaluation_jobs_root == layout.model_ops_jobs_root / "evaluation"
+    assert layout.melix_home_dir == layout.runtime_dir / "home"
+    assert layout.managed_models_dir == layout.melix_home_dir / "models/default-managed"
+    assert layout.audio_runtime_packs_dir == layout.melix_home_dir / "runtime-packs/audio"
+    assert layout.model_ops_jobs_root == layout.melix_home_dir / "jobs/model-ops"
+    assert layout.evaluation_jobs_root == layout.melix_home_dir / "jobs/evaluation"
+    assert layout.gateway_config_store_path == layout.melix_home_dir / "config/gateway-config.json"
+    assert (
+        layout.gateway_serving_defaults_store_path
+        == layout.melix_home_dir / "config/gateway-serving-defaults.json"
+    )
+    assert layout.image_defaults_store_path == layout.melix_home_dir / "config/image-defaults.json"
+
+
+def test_compute_runtime_layout_ignores_blank_melix_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    monkeypatch.setenv("MELIX_HOME", " ")
+
+    layout = dev_up.compute_runtime_layout(tmp_path)
+
+    assert layout.melix_home_dir == (tmp_path / ".runtime/phase1/home").resolve()
+    assert layout.managed_models_dir == layout.melix_home_dir / "models/default-managed"
 
 
 def test_runtime_layout_helpers_manage_directories_and_artifacts(
@@ -295,6 +319,10 @@ def test_runtime_layout_helpers_manage_directories_and_artifacts(
     layout = make_layout(dev_up, tmp_path)
 
     dev_up.ensure_runtime_directories(layout)
+    assert layout.melix_home_dir.is_dir()
+    assert (layout.melix_home_dir / "config").is_dir()
+    assert (layout.melix_home_dir / "state").is_dir()
+    assert (layout.melix_home_dir / "secrets").is_dir()
     assert layout.runtime_dir.is_dir()
     assert layout.uv_cache_dir.is_dir()
     assert layout.swift_home.is_dir()
@@ -313,7 +341,7 @@ def test_runtime_layout_helpers_manage_directories_and_artifacts(
     ):
         artifact.parent.mkdir(parents=True, exist_ok=True)
         artifact.write_text("stale", encoding="utf-8")
-    gateway_config = layout.runtime_dir / "gateway-config.json"
+    gateway_config = layout.gateway_config_store_path
     gateway_config.parent.mkdir(parents=True, exist_ok=True)
     gateway_config.write_text("persist", encoding="utf-8")
 
@@ -811,12 +839,15 @@ def test_write_runtime_environment_emits_export_file(tmp_path: Path) -> None:
 
     content = env_path.read_text(encoding="utf-8")
     assert f'export MELIX_REPO_ROOT="{REPO_ROOT}"' in content
+    assert f'export MELIX_HOME="{layout.melix_home_dir}"' in content
     assert 'export MELIX_RUNTIME_DIR="' in content
     assert 'export MELIX_PYTHON_WORKER_METRICS_PATH="' in content
+    assert f'export MELIX_GATEWAY_CONFIG_STORE_PATH="{layout.gateway_config_store_path}"' in content
     assert (
-        f'export MELIX_GATEWAY_CONFIG_STORE_PATH="{layout.runtime_dir / "gateway-config.json"}"'
+        f'export MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH="{layout.gateway_serving_defaults_store_path}"'
         in content
     )
+    assert f'export MELIX_IMAGE_DEFAULTS_STORE_PATH="{layout.image_defaults_store_path}"' in content
 
 
 def test_start_stack_orchestrates_processes_and_emits_runtime_env(
@@ -877,12 +908,22 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     assert swift_spawn["cwd"] == layout.runtime_dir / "swift-text-worker-cwd"
     assert swift_spawn["env_overrides"]["MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE"] == "1"
     assert swift_spawn["env_overrides"]["MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE"] == "1"
+    python_spawn = next(
+        payload for kind, payload in calls if kind == "spawn" and "worker.bootstrap" in payload["command"]
+    )
+    assert python_spawn["env_overrides"]["MELIX_HOME"] == str(layout.melix_home_dir)
     control_plane_spawn = next(
         payload for kind, payload in calls if kind == "spawn" and payload["command"] == ["melix-control-plane"]
     )
-    assert (
-        control_plane_spawn["env_overrides"]["MELIX_GATEWAY_CONFIG_STORE_PATH"]
-        == f"{layout.runtime_dir / 'gateway-config.json'}"
+    assert control_plane_spawn["env_overrides"]["MELIX_HOME"] == str(layout.melix_home_dir)
+    assert control_plane_spawn["env_overrides"]["MELIX_GATEWAY_CONFIG_STORE_PATH"] == str(
+        layout.gateway_config_store_path
+    )
+    assert control_plane_spawn["env_overrides"]["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"] == str(
+        layout.gateway_serving_defaults_store_path
+    )
+    assert control_plane_spawn["env_overrides"]["MELIX_IMAGE_DEFAULTS_STORE_PATH"] == str(
+        layout.image_defaults_store_path
     )
 
 
@@ -959,10 +1000,8 @@ def test_start_stack_control_plane_gateway_config_store_overrides_parent_environ
     dev_up.start_stack(dev_up.DevUpOptions(prefer_built=True))
 
     control_plane_env = captured_env[("melix-control-plane",)]
-    assert (
-        control_plane_env["MELIX_GATEWAY_CONFIG_STORE_PATH"]
-        == f"{layout.runtime_dir / 'gateway-config.json'}"
-    )
+    assert control_plane_env["MELIX_HOME"] == str(layout.melix_home_dir)
+    assert control_plane_env["MELIX_GATEWAY_CONFIG_STORE_PATH"] == str(layout.gateway_config_store_path)
 
 
 def test_main_returns_zero_on_success(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -30,7 +30,11 @@ class ManagedServiceProcess:
 
 def ensure_runtime_directories(layout: LocalProductLayout) -> None:
     directories = [
-        layout.app_support_dir,
+        layout.melix_home_dir,
+        layout.melix_home_dir / "config",
+        layout.melix_home_dir / "state",
+        layout.melix_home_dir / "secrets",
+        layout.install_dir,
         layout.runtime_dir,
         layout.managed_models_dir,
         layout.audio_runtime_packs_dir,
@@ -107,7 +111,8 @@ def build_homebrew_service_manifest(
         **target_metadata,
         "repo_root": str(layout.repo_root),
         "bin_dir": str(Path(specs[0].program_arguments[0]).resolve().parent) if specs else "",
-        "app_support_dir": str(layout.app_support_dir),
+        "melix_home_dir": str(layout.melix_home_dir),
+        "install_dir": str(layout.install_dir),
         "runtime_dir": str(layout.runtime_dir),
         "logs_dir": str(layout.logs_dir),
         "requested_http_port": layout.requested_http_port,

@@ -35,8 +35,8 @@ python3 scripts/install_local_product.py \
 
 This writes instance-specific assets under:
 
-- `~/Library/Application Support/Melix/sidecars/team-a`
-- `~/Library/Logs/Melix/sidecars/team-a`
+- `~/.melix/sidecars/team-a`
+- `~/.melix/sidecars/team-a/logs`
 - `~/Library/LaunchAgents/io.melix.team-a.*.plist`
 
 The generated environment script exports isolated roots for runtime, models, runtime packs,

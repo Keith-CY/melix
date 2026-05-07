@@ -44,20 +44,18 @@ public final class AudioAssetManager: @unchecked Sendable {
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default,
-        appSupportDirectory: URL? = nil
+        melixHomeDirectory: URL? = nil
     ) {
         self.fileManager = fileManager
-        let resolvedAppSupportDirectory = appSupportDirectory ?? Self.resolveAppSupportDirectory(
-            environment: environment,
-            fileManager: fileManager
-        )
+        let layout = MelixPathLayout(environment: environment)
+        let resolvedMelixHomeDirectory = melixHomeDirectory ?? layout.rootURL
         self.managedModelRootURL = Self.resolveDirectoryURL(
             rawPath: environment["MELIX_MANAGED_MODEL_ROOT"],
-            fallback: resolvedAppSupportDirectory.appendingPathComponent("models/default-managed", isDirectory: true)
+            fallback: resolvedMelixHomeDirectory.appendingPathComponent("models/default-managed", isDirectory: true)
         )
         self.audioRuntimePackRootURL = Self.resolveDirectoryURL(
             rawPath: environment["MELIX_AUDIO_RUNTIME_PACK_ROOT"],
-            fallback: resolvedAppSupportDirectory.appendingPathComponent("runtime-packs/audio", isDirectory: true)
+            fallback: resolvedMelixHomeDirectory.appendingPathComponent("runtime-packs/audio", isDirectory: true)
         )
         self.runtimePackStateURL = audioRuntimePackRootURL.appendingPathComponent(
             ".melix-runtime-pack-state.json",
@@ -237,28 +235,6 @@ public final class AudioAssetManager: @unchecked Sendable {
 
     private func ensureDirectoryExists(at url: URL) throws {
         try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
-    }
-
-    private static func resolveAppSupportDirectory(
-        environment: [String: String],
-        fileManager: FileManager
-    ) -> URL {
-        if let rawPath = environment["MELIX_APP_SUPPORT_DIR"],
-           !rawPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            return resolveDirectoryURL(
-                rawPath: rawPath,
-                fallback: fileManager.homeDirectoryForCurrentUser
-                    .appendingPathComponent("Library/Application Support/Melix", isDirectory: true)
-            )
-        }
-
-        if let applicationSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            return applicationSupportURL.appendingPathComponent("Melix", isDirectory: true)
-        }
-
-        return fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Melix", isDirectory: true)
     }
 
     private static func resolveDirectoryURL(rawPath: String?, fallback: URL) -> URL {

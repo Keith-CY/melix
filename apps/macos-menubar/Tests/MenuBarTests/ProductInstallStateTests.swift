@@ -35,7 +35,7 @@ struct ProductInstallStateTests {
     func resolvesDefaultPathsAndNormalizesVersions() throws {
         let temporaryRoot = try makeTemporaryRoot(prefix: "melix-default-manifest")
         let defaultManifestDirectory = temporaryRoot
-            .appendingPathComponent("Library/Application Support/Melix", isDirectory: true)
+            .appendingPathComponent(".melix/install", isDirectory: true)
         let manifestURL = defaultManifestDirectory.appendingPathComponent("install-manifest.json")
         let updateChannelURL = temporaryRoot.appendingPathComponent("stable.json")
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
@@ -60,6 +60,37 @@ struct ProductInstallStateTests {
         #expect(status.isAvailable == false)
         #expect(status.summary == "Update: up to date")
         #expect(status.detail == "Current v1.0.1+build.7 on stable")
+    }
+
+    @Test("filesystem provider resolves default manifest from MELIX_HOME")
+    func resolvesDefaultManifestFromMelixHome() throws {
+        let temporaryRoot = try makeTemporaryRoot(prefix: "melix-default-manifest-home")
+        let melixHome = temporaryRoot.appendingPathComponent("custom-melix-home", isDirectory: true)
+        let manifestDirectory = melixHome.appendingPathComponent("install", isDirectory: true)
+        let manifestURL = manifestDirectory.appendingPathComponent("install-manifest.json")
+        let updateChannelURL = temporaryRoot.appendingPathComponent("stable.json")
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        try FileManager.default.createDirectory(at: manifestDirectory, withIntermediateDirectories: true)
+        try writeUpdateChannel(latestVersion: "0.4.0", to: updateChannelURL)
+        try writeManifest(
+            to: manifestURL,
+            productVersion: "0.3.0",
+            logsDirectoryPath: temporaryRoot.path
+        )
+
+        let provider = FilesystemProductInstallStateProvider(
+            environment: [
+                "HOME": temporaryRoot.path,
+                "MELIX_HOME": melixHome.path,
+                "MELIX_UPDATE_CHANNEL_PATH": updateChannelURL.path,
+            ]
+        )
+        let status = try #require(provider.updateStatus())
+
+        #expect(status.checkSucceeded)
+        #expect(status.isAvailable)
+        #expect(status.summary == "Update available: 0.4.0")
     }
 
     @Test("filesystem provider honors explicit manifest environment overrides")

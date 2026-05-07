@@ -204,12 +204,9 @@ public struct FilesystemProductInstallStateProvider: ProductInstallStateProvidin
         if let configuredPath = environment["MELIX_PRODUCT_MANIFEST_PATH"], configuredPath.isEmpty == false {
             return URL(fileURLWithPath: configuredPath)
         }
-        let homePath = environment["HOME"] ?? NSHomeDirectory()
-        guard homePath.isEmpty == false else {
-            return nil
-        }
-        return URL(fileURLWithPath: homePath, isDirectory: true)
-            .appendingPathComponent("Library/Application Support/Melix/install-manifest.json")
+        return MelixHome(environment: environment)
+            .installDirectoryURL
+            .appendingPathComponent("install-manifest.json")
     }
 }
 

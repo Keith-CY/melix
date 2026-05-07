@@ -8,20 +8,43 @@ import MelixControlPlaneProtocol
 struct AudioAssetManagerTests {
     @Test("audio asset manager uses managed Melix roots by default")
     func audioAssetManagerUsesManagedMelixRootsByDefault() throws {
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-audio-assets-\(UUID().uuidString)", isDirectory: true)
-        let manager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        let manager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
 
-        #expect(manager.managedModelRootURL == appSupportDirectory.appendingPathComponent("models/default-managed", isDirectory: true))
-        #expect(manager.audioRuntimePackRootURL == appSupportDirectory.appendingPathComponent("runtime-packs/audio", isDirectory: true))
+        #expect(manager.managedModelRootURL == melixHomeDirectory.appendingPathComponent("models/default-managed", isDirectory: true))
+        #expect(manager.audioRuntimePackRootURL == melixHomeDirectory.appendingPathComponent("runtime-packs/audio", isDirectory: true))
+    }
+
+    @Test("audio asset manager defaults to HOME MelixHome and ignores app support")
+    func audioAssetManagerDefaultsToHomeMelixHomeAndIgnoresAppSupport() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-audio-assets-home-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let manager = AudioAssetManager(environment: [
+            "HOME": temporaryRoot.path,
+            "MELIX_APP_SUPPORT_DIR": temporaryRoot.appendingPathComponent("ignored-app-support").path,
+        ])
+        let expectedHome = temporaryRoot.appendingPathComponent(".melix", isDirectory: true)
+
+        #expect(
+            manager.managedModelRootURL
+                == expectedHome.appendingPathComponent("models/default-managed", isDirectory: true)
+        )
+        #expect(
+            manager.audioRuntimePackRootURL
+                == expectedHome.appendingPathComponent("runtime-packs/audio", isDirectory: true)
+        )
     }
 
     @Test("audio asset manager records runtime pack and local model metadata")
     func audioAssetManagerRecordsRuntimePackAndLocalModelMetadata() throws {
-        let appSupportDirectory = FileManager.default.temporaryDirectory
+        let melixHomeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-audio-assets-\(UUID().uuidString)", isDirectory: true)
-        let manager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
-        let localModelDirectory = appSupportDirectory
+        let manager = AudioAssetManager(melixHomeDirectory: melixHomeDirectory)
+        let localModelDirectory = melixHomeDirectory
             .appendingPathComponent("models/default-managed/hf/mlx-community/whisper-large-v3/main", isDirectory: true)
         try FileManager.default.createDirectory(at: localModelDirectory, withIntermediateDirectories: true)
 

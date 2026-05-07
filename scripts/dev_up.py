@@ -46,6 +46,7 @@ class DevUpOptions:
 @dataclass(frozen=True)
 class RuntimeLayout:
     service_instance_name: str
+    melix_home_dir: Path
     runtime_dir: Path
     python_socket_path: Path
     swift_text_worker_socket_path: Path
@@ -56,6 +57,9 @@ class RuntimeLayout:
     control_plane_metrics_path: Path
     swift_text_worker_metrics_path: Path
     python_worker_metrics_path: Path
+    gateway_config_store_path: Path
+    gateway_serving_defaults_store_path: Path
+    image_defaults_store_path: Path
     http_port: str
     python_backend_mode: str
     swift_text_worker_backend_mode: str
@@ -148,25 +152,29 @@ def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
     if service_instance_name:
         default_runtime_dir = repo_root / ".runtime" / "sidecars" / service_instance_name
     runtime_dir = resolve_path(os.environ.get("MELIX_RUNTIME_DIR", default_runtime_dir))
+    default_melix_home = runtime_dir / "home"
+    melix_home_value = os.environ.get("MELIX_HOME", "").strip()
+    melix_home_dir = resolve_path(melix_home_value if melix_home_value else default_melix_home)
     model_ops_jobs_root = Path(
-        os.environ.get("MELIX_MODEL_OPS_JOBS_ROOT", runtime_dir / "jobs" / "model-ops")
+        os.environ.get("MELIX_MODEL_OPS_JOBS_ROOT", melix_home_dir / "jobs" / "model-ops")
     ).expanduser()
     return RuntimeLayout(
         service_instance_name=service_instance_name,
+        melix_home_dir=melix_home_dir,
         runtime_dir=runtime_dir,
         python_socket_path=Path(os.environ.get("MELIX_WORKER_SOCKET_PATH", runtime_dir / "python-worker.sock")).expanduser(),
         swift_text_worker_socket_path=Path(
             os.environ.get("MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH", runtime_dir / "swift-text-worker.sock")
         ).expanduser(),
         managed_models_dir=Path(
-            os.environ.get("MELIX_MANAGED_MODEL_ROOT", runtime_dir / "models" / "default-managed")
+            os.environ.get("MELIX_MANAGED_MODEL_ROOT", melix_home_dir / "models" / "default-managed")
         ).expanduser(),
         audio_runtime_packs_dir=Path(
-            os.environ.get("MELIX_AUDIO_RUNTIME_PACK_ROOT", runtime_dir / "runtime-packs" / "audio")
+            os.environ.get("MELIX_AUDIO_RUNTIME_PACK_ROOT", melix_home_dir / "runtime-packs" / "audio")
         ).expanduser(),
         model_ops_jobs_root=model_ops_jobs_root,
         evaluation_jobs_root=Path(
-            os.environ.get("MELIX_EVALUATION_JOBS_ROOT", model_ops_jobs_root / "evaluation")
+            os.environ.get("MELIX_EVALUATION_JOBS_ROOT", melix_home_dir / "jobs" / "evaluation")
         ).expanduser(),
         control_plane_metrics_path=Path(
             os.environ.get("MELIX_CONTROL_PLANE_METRICS_PATH", runtime_dir / "control-plane-metrics.json")
@@ -176,6 +184,18 @@ def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
         ).expanduser(),
         python_worker_metrics_path=Path(
             os.environ.get("MELIX_PYTHON_WORKER_METRICS_PATH", runtime_dir / "python-worker-metrics.json")
+        ).expanduser(),
+        gateway_config_store_path=Path(
+            os.environ.get("MELIX_GATEWAY_CONFIG_STORE_PATH", melix_home_dir / "config" / "gateway-config.json")
+        ).expanduser(),
+        gateway_serving_defaults_store_path=Path(
+            os.environ.get(
+                "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH",
+                melix_home_dir / "config" / "gateway-serving-defaults.json",
+            )
+        ).expanduser(),
+        image_defaults_store_path=Path(
+            os.environ.get("MELIX_IMAGE_DEFAULTS_STORE_PATH", melix_home_dir / "config" / "image-defaults.json")
         ).expanduser(),
         http_port=os.environ.get("MELIX_HTTP_PORT", "11434"),
         python_backend_mode=os.environ.get("MELIX_BACKEND_MODE", "auto"),
@@ -190,6 +210,10 @@ def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
 
 def ensure_runtime_directories(layout: RuntimeLayout) -> None:
     for directory in (
+        layout.melix_home_dir,
+        layout.melix_home_dir / "config",
+        layout.melix_home_dir / "state",
+        layout.melix_home_dir / "secrets",
         layout.runtime_dir,
         layout.uv_cache_dir,
         layout.swift_home,
@@ -521,9 +545,9 @@ def wait_for_http_ready(http_port: str, *, timeout_seconds: float = 120.0) -> No
 def write_runtime_environment(layout: RuntimeLayout) -> Path:
     env_path = layout.runtime_dir / "env.sh"
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    gateway_config_store_path = layout.runtime_dir / "gateway-config.json"
     exports = {
         "MELIX_REPO_ROOT": os.fspath(ROOT),
+        "MELIX_HOME": os.fspath(layout.melix_home_dir),
         "MELIX_RUNTIME_DIR": os.fspath(layout.runtime_dir),
         "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
         "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),
@@ -537,7 +561,9 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
         "MELIX_CONTROL_PLANE_METRICS_PATH": os.fspath(layout.control_plane_metrics_path),
         "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": os.fspath(layout.swift_text_worker_metrics_path),
         "MELIX_PYTHON_WORKER_METRICS_PATH": os.fspath(layout.python_worker_metrics_path),
-        "MELIX_GATEWAY_CONFIG_STORE_PATH": os.fspath(gateway_config_store_path),
+        "MELIX_GATEWAY_CONFIG_STORE_PATH": os.fspath(layout.gateway_config_store_path),
+        "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH": os.fspath(layout.gateway_serving_defaults_store_path),
+        "MELIX_IMAGE_DEFAULTS_STORE_PATH": os.fspath(layout.image_defaults_store_path),
     }
     if layout.service_instance_name:
         exports["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
@@ -554,7 +580,6 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
 def start_stack(options: DevUpOptions) -> None:
     repo_root = ROOT
     layout = compute_runtime_layout(repo_root)
-    gateway_config_store_path = layout.runtime_dir / "gateway-config.json"
     ensure_runtime_directories(layout)
     ensure_runtime_is_stopped(layout)
     cleanup_runtime_artifacts(layout)
@@ -597,6 +622,7 @@ def start_stack(options: DevUpOptions) -> None:
             "UV_CACHE_DIR": os.fspath(layout.uv_cache_dir),
             "MELIX_PYTHON_WORKER_METRICS_PATH": os.fspath(layout.python_worker_metrics_path),
             "MELIX_PYTHON_WORKER_STARTUP_T0_NS": str(time.perf_counter_ns()),
+            "MELIX_HOME": os.fspath(layout.melix_home_dir),
             "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
             "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),
             "MELIX_MODEL_OPS_JOBS_ROOT": os.fspath(layout.model_ops_jobs_root),
@@ -637,13 +663,16 @@ def start_stack(options: DevUpOptions) -> None:
         log_path=layout.runtime_dir / "control-plane.log",
         env_overrides={
             "MELIX_HTTP_PORT": layout.http_port,
+            "MELIX_HOME": os.fspath(layout.melix_home_dir),
             "MELIX_WORKER_SOCKET_PATH": os.fspath(layout.python_socket_path),
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": os.fspath(layout.swift_text_worker_socket_path),
             "MELIX_REPO_ROOT": os.fspath(repo_root),
             "MELIX_CONTROL_PLANE_METRICS_PATH": os.fspath(layout.control_plane_metrics_path),
             "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
             "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),
-            "MELIX_GATEWAY_CONFIG_STORE_PATH": os.fspath(gateway_config_store_path),
+            "MELIX_GATEWAY_CONFIG_STORE_PATH": os.fspath(layout.gateway_config_store_path),
+            "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH": os.fspath(layout.gateway_serving_defaults_store_path),
+            "MELIX_IMAGE_DEFAULTS_STORE_PATH": os.fspath(layout.image_defaults_store_path),
             "HOME": os.fspath(layout.swift_home),
             "CLANG_MODULE_CACHE_PATH": os.fspath(layout.clang_module_cache_path),
         },

@@ -56,13 +56,32 @@ def test_render_portable_environment_script_uses_home_relative_paths() -> None:
     assert 'export MELIX_PACKAGING_TARGET_ID="macos_app_bundle_preview"' in script
     assert 'export MELIX_PACKAGING_KIND="app_bundle"' in script
     assert 'export MELIX_PRODUCT_VERSION="0.8.11"' in script
-    assert 'export MELIX_APP_SUPPORT_DIR="$HOME/Library/Application Support/Melix"' in script
-    assert 'export MELIX_HOME="$MELIX_APP_SUPPORT_DIR"' in script
-    assert 'export MELIX_RUNTIME_DIR="$MELIX_APP_SUPPORT_DIR/runtime"' in script
-    assert 'export MELIX_MANAGED_MODEL_ROOT="$MELIX_APP_SUPPORT_DIR/models/default-managed"' in script
-    assert 'export MELIX_AUDIO_RUNTIME_PACK_ROOT="$MELIX_APP_SUPPORT_DIR/runtime-packs/audio"' in script
-    assert 'export MELIX_MODEL_OPS_JOBS_ROOT="$MELIX_APP_SUPPORT_DIR/jobs/model-ops"' in script
-    assert 'export MELIX_EVALUATION_JOBS_ROOT="$MELIX_APP_SUPPORT_DIR/jobs/evaluation"' in script
+    assert "MELIX_APP_SUPPORT_DIR" not in script
+    assert 'export MELIX_HOME="${MELIX_HOME:-$HOME/.melix}"' in script
+    assert 'export MELIX_RUNTIME_DIR="${MELIX_RUNTIME_DIR:-$MELIX_HOME/run}"' in script
+    assert 'export MELIX_MANAGED_MODEL_ROOT="${MELIX_MANAGED_MODEL_ROOT:-$MELIX_HOME/models/default-managed}"' in script
+    assert (
+        'export MELIX_AUDIO_RUNTIME_PACK_ROOT="${MELIX_AUDIO_RUNTIME_PACK_ROOT:-$MELIX_HOME/runtime-packs/audio}"'
+        in script
+    )
+    assert 'export MELIX_MODEL_OPS_JOBS_ROOT="${MELIX_MODEL_OPS_JOBS_ROOT:-$MELIX_HOME/jobs/model-ops}"' in script
+    assert 'export MELIX_EVALUATION_JOBS_ROOT="${MELIX_EVALUATION_JOBS_ROOT:-$MELIX_HOME/jobs/evaluation}"' in script
+    assert (
+        'export MELIX_GATEWAY_CONFIG_STORE_PATH="${MELIX_GATEWAY_CONFIG_STORE_PATH:-$MELIX_HOME/config/gateway-config.json}"'
+        in script
+    )
+    assert (
+        'export MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH="${MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH:-$MELIX_HOME/config/gateway-serving-defaults.json}"'
+        in script
+    )
+    assert (
+        'export MELIX_IMAGE_DEFAULTS_STORE_PATH="${MELIX_IMAGE_DEFAULTS_STORE_PATH:-$MELIX_HOME/config/image-defaults.json}"'
+        in script
+    )
+    assert (
+        'export MELIX_PRODUCT_MANIFEST_PATH="${MELIX_PRODUCT_MANIFEST_PATH:-$MELIX_HOME/install/install-manifest.json}"'
+        in script
+    )
     assert 'export MELIX_BACKEND_MODE="auto"' in script
     assert 'export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="swift"' in script
 
@@ -258,8 +277,9 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     env_script = Path(manifest["embedded_env_script_path"]).read_text(encoding="utf-8")
     assert 'export MELIX_PACKAGING_TARGET_ID="macos_app_bundle_preview"' in env_script
     assert 'export MELIX_PRODUCT_VERSION="0.1.0"' in env_script
-    assert 'export MELIX_MODEL_OPS_JOBS_ROOT="$MELIX_APP_SUPPORT_DIR/jobs/model-ops"' in env_script
-    assert 'export MELIX_EVALUATION_JOBS_ROOT="$MELIX_APP_SUPPORT_DIR/jobs/evaluation"' in env_script
+    assert "MELIX_APP_SUPPORT_DIR" not in env_script
+    assert 'export MELIX_MODEL_OPS_JOBS_ROOT="${MELIX_MODEL_OPS_JOBS_ROOT:-$MELIX_HOME/jobs/model-ops}"' in env_script
+    assert 'export MELIX_EVALUATION_JOBS_ROOT="${MELIX_EVALUATION_JOBS_ROOT:-$MELIX_HOME/jobs/evaluation}"' in env_script
     target_payload = json.loads(Path(manifest["packaging_target_manifest_path"]).read_text(encoding="utf-8"))
     assert target_payload["packaging_target_id"] == "macos_app_bundle_preview"
     assert target_payload["logical_product_identity"] == "io.melix"

@@ -33,8 +33,9 @@ python3 scripts/install_local_product.py \
 This writes:
 
 - user launch agents under `~/Library/LaunchAgents`
-- an install manifest under `~/Library/Application Support/Melix/install-manifest.json`
-- an environment export file under `~/Library/Application Support/Melix/melix-product-env.sh`
+- an install manifest under `~/.melix/install/install-manifest.json`
+- an environment export file under `~/.melix/install/melix-product-env.sh`
+- product state, configuration, models, jobs, runtime packs, and logs under `~/.melix`
 
 This install flow maps to the `launch_agents_checkout` packaging target. The generated manifest and
 environment export now carry the shared Melix logical identity plus:

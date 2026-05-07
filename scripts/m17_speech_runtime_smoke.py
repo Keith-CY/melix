@@ -131,8 +131,8 @@ def load_model(model_path: str, strict: bool = True):
     )
 
 
-def _install_audio_assets(app_support_dir: Path) -> None:
-    runtime_pack_root = app_support_dir / "runtime-packs" / "audio"
+def _install_audio_assets(melix_home_dir: Path) -> None:
+    runtime_pack_root = melix_home_dir / "runtime-packs" / "audio"
     runtime_pack_manifest = runtime_pack_root / "melix-audio-runtime-pack" / "0.3.0" / "runtime-pack.json"
     _write_json(runtime_pack_manifest, _AUDIO_RUNTIME_PACK_RECORD)
     _write_json(
@@ -144,9 +144,9 @@ def _install_audio_assets(app_support_dir: Path) -> None:
     )
 
     managed_model_records: dict[str, dict[str, object]] = {}
-    managed_model_root = app_support_dir / "models" / "default-managed"
+    managed_model_root = melix_home_dir / "models" / "default-managed"
     for model_id, metadata in _MANAGED_AUDIO_MODELS.items():
-        local_model_path = app_support_dir / metadata["local_relative_path"]
+        local_model_path = melix_home_dir / metadata["local_relative_path"]
         record = {
             "modelID": model_id,
             "revision": "mlx-audio",
@@ -340,15 +340,15 @@ def _capture_speech_scenario(
 
 def run_smoke(repo_root: Path) -> dict[str, Any]:
     scratch_root = Path(tempfile.mkdtemp(prefix="melix-m17-speech-smoke-"))
-    app_support_dir = scratch_root / "app-support"
+    melix_home_dir = scratch_root / "melix-home"
     fake_python_root = scratch_root / "fake-python"
     _install_fake_mlx_audio_package(fake_python_root)
-    _install_audio_assets(app_support_dir)
+    _install_audio_assets(melix_home_dir)
 
     stack = LiveMelixStack(
         repo_root,
         environment_overrides={
-            "MELIX_APP_SUPPORT_DIR": str(app_support_dir),
+            "MELIX_HOME": str(melix_home_dir),
             "MELIX_PYTHONPATH_PREFIX": str(fake_python_root),
         },
     )

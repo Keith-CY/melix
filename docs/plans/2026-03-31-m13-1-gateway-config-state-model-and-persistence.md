@@ -80,7 +80,7 @@ plane truth directly for the selected server session in this slice.
 
 - add the proto messages and generated artifacts
 - add a control-plane-owned `GatewayConfigStore`
-- persist operator overrides to Application Support with a schema-versioned JSON document
+- persist operator overrides to `MELIX_HOME/config/gateway-config.json` with a schema-versioned JSON document
 - project `gateway_config` through `ServerSnapshot`
 - add a typed `applyGatewayConfig` client path and desktop `Apply Gateway Config` action
 - automatically persist selected server-session config before `Start`

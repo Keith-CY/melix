@@ -296,7 +296,7 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         benchmark_suite_catalog: BenchmarkSuiteCatalog | None = None,
         evaluation_hf_dataset_fetcher: HFEvaluationDatasetFetcher | None = None,
     ) -> None:
-        root = Path(jobs_root or ".runtime/model-ops")
+        root = Path(jobs_root or _default_melix_home() / "jobs" / "model-ops")
         self._core = MaintenanceCore(
             registry,
             jobs_root=root,
@@ -305,7 +305,7 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             adapter_activation_pipeline=adapter_activation_pipeline,
             benchmark_suite_catalog=benchmark_suite_catalog,
         )
-        self._evaluation_jobs_root = Path(evaluation_jobs_root or root / "evaluation").resolve()
+        self._evaluation_jobs_root = Path(evaluation_jobs_root or _default_melix_home() / "jobs" / "evaluation").resolve()
         # Stage the evaluation runner at service construction time so the later RPC path
         # can reuse the same file-backed jobs root without additional wiring changes.
         self._evaluation_core = evaluation_core or EvaluationCore(
@@ -785,6 +785,11 @@ def _resolved_env_path(key: str) -> Path | None:
     if not raw_value:
         return None
     return Path(raw_value).expanduser().resolve()
+
+
+def _default_melix_home() -> Path:
+    raw_home = os.environ.get("MELIX_HOME", "").strip()
+    return Path(raw_home or Path.home() / ".melix").expanduser().resolve()
 
 
 def main() -> None:

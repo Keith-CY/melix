@@ -34,6 +34,7 @@ let package = Package(
                 "Metrics",
                 "ModelCatalog",
                 "Requests",
+                "Support",
                 "Snapshots",
                 "WorkerClient",
                 "XPCService",

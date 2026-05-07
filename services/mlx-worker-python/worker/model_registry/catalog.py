@@ -1179,6 +1179,8 @@ class WorkerModelCatalog:
         managed_root = self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY, "").strip()
         if managed_root:
             configured.append(managed_root)
+        else:
+            configured.append(os.fspath(self._default_managed_model_root()))
         default_hf_cache = self._default_huggingface_cache_root()
         if default_hf_cache is not None:
             configured.append(os.fspath(default_hf_cache))
@@ -1193,6 +1195,8 @@ class WorkerModelCatalog:
         managed_root = self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY, "").strip()
         if managed_root:
             requested_roots.append(managed_root)
+        else:
+            requested_roots.append(os.fspath(self._default_managed_model_root()))
         default_hf_cache = self._default_huggingface_cache_root()
         if default_hf_cache is not None:
             requested_roots.append(os.fspath(default_hf_cache))
@@ -1205,6 +1209,15 @@ class WorkerModelCatalog:
         root = (Path(home).expanduser() if home else Path.home()) / ".cache" / "huggingface" / "hub"
         resolved = root.resolve()
         return resolved if resolved.is_dir() else None
+
+    def _default_managed_model_root(self) -> Path:
+        home = self._environment.get("MELIX_HOME", "").strip()
+        if not home:
+            home = self._environment.get("HOME", "").strip()
+            root = (Path(home).expanduser() if home else Path.home()) / ".melix"
+        else:
+            root = Path(home).expanduser()
+        return (root / "models" / "default-managed").resolve()
 
     def _normalized_registry_roots(self, raw_roots: Iterable[str]) -> list[str]:
         roots: list[str] = []

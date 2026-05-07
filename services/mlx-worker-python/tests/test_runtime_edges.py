@@ -18,6 +18,7 @@ from worker.grpc_server import (
     WorkerMaintenanceService,
     WorkerRuntimeService,
     _deterministic_benchmark_fetch_json,
+    _default_melix_home,
     _elapsed_milliseconds_from_origin,
     _elapsed_milliseconds_since,
     build_maintenance_service,
@@ -1271,6 +1272,23 @@ def test_build_server_routes_tooling_roots_from_environment(monkeypatch, tmp_pat
 
     assert seen["jobs_root"] == (tmp_path / "ops").resolve()
     assert seen["evaluation_jobs_root"] == (tmp_path / "ops/evals").resolve()
+
+
+def test_default_melix_home_ignores_blank_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", os.fspath(tmp_path / "user-home"))
+    monkeypatch.setenv("MELIX_HOME", " ")
+
+    assert _default_melix_home() == (tmp_path / "user-home/.melix").resolve()
+
+
+def test_maintenance_service_defaults_jobs_under_melix_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    melix_home = tmp_path / "melix-home"
+    monkeypatch.setenv("MELIX_HOME", os.fspath(melix_home))
+
+    service = WorkerMaintenanceService(build_registry())
+
+    assert service._core._jobs_root == (melix_home / "jobs/model-ops").resolve()
+    assert service._evaluation_jobs_root == (melix_home / "jobs/evaluation").resolve()
 
 
 def test_elapsed_helpers_guard_invalid_origins() -> None:

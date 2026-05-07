@@ -462,17 +462,67 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
 
     public func load() throws -> MelixOperatorSessionState? {
         let fileManager = FileManager.default
-        let fileURL = melixHome.operatorSessionFileURL
-        guard fileManager.fileExists(atPath: fileURL.path) else {
+        guard [
+            melixHome.operatorSessionFileURL,
+            melixHome.serverSessionsFileURL,
+            melixHome.modelRootsFileURL,
+            melixHome.downloadQueueFileURL,
+        ].contains(where: { fileManager.fileExists(atPath: $0.path) }) else {
             return nil
         }
-        let data = try Data(contentsOf: fileURL)
-        return try Self.decoder.decode(MelixOperatorSessionState.self, from: data)
+
+        let ui = try loadDocument(OperatorSessionUIDocument.self, from: melixHome.operatorSessionFileURL)
+            ?? OperatorSessionUIDocument()
+        let serverSessions = try loadDocument(ServerSessionsDocument.self, from: melixHome.serverSessionsFileURL)?
+            .serverSessions ?? []
+        let modelRoots = try loadDocument(ModelRootsDocument.self, from: melixHome.modelRootsFileURL)?
+            .registryRoots ?? []
+        let downloadQueue = try loadDocument(DownloadQueueDocument.self, from: melixHome.downloadQueueFileURL)?
+            .downloadQueue ?? []
+
+        return MelixOperatorSessionState(
+            schemaVersion: ui.schemaVersion,
+            selectedSurfaceID: ui.selectedSurfaceID,
+            selectedToolSectionID: ui.selectedToolSectionID,
+            selectedServerSessionID: ui.selectedServerSessionID,
+            serverSessions: serverSessions,
+            dismissedBannerIDs: ui.dismissedBannerIDs,
+            downloadQueue: downloadQueue,
+            registryRoots: modelRoots,
+            paneVisibility: ui.paneVisibility
+        )
     }
 
     public func save(_ state: MelixOperatorSessionState) throws {
-        let data = try Self.encoder.encode(state)
-        try melixHome.writeAtomically(data, to: melixHome.operatorSessionFileURL)
+        try saveDocument(
+            OperatorSessionUIDocument(state: state),
+            to: melixHome.operatorSessionFileURL
+        )
+        try saveDocument(
+            ServerSessionsDocument(serverSessions: state.serverSessions),
+            to: melixHome.serverSessionsFileURL
+        )
+        try saveDocument(
+            ModelRootsDocument(registryRoots: state.registryRoots),
+            to: melixHome.modelRootsFileURL
+        )
+        try saveDocument(
+            DownloadQueueDocument(downloadQueue: state.downloadQueue),
+            to: melixHome.downloadQueueFileURL
+        )
+    }
+
+    private func loadDocument<T: Decodable>(_ type: T.Type, from fileURL: URL) throws -> T? {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return nil
+        }
+        let data = try Data(contentsOf: fileURL)
+        return try Self.decoder.decode(type, from: data)
+    }
+
+    private func saveDocument<T: Encodable>(_ document: T, to fileURL: URL) throws {
+        let data = try Self.encoder.encode(document)
+        try melixHome.writeAtomically(data, to: fileURL)
     }
 
     private static let encoder: JSONEncoder = {
@@ -487,4 +537,94 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
+}
+
+private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
+    var schemaVersion: Int
+    var selectedSurfaceID: String
+    var selectedToolSectionID: String
+    var selectedServerSessionID: String
+    var dismissedBannerIDs: [String]
+    var paneVisibility: [MelixOperatorPaneVisibilityState]
+
+    init(
+        schemaVersion: Int = 6,
+        selectedSurfaceID: String = "chat",
+        selectedToolSectionID: String = "modelsLibrary",
+        selectedServerSessionID: String = "",
+        dismissedBannerIDs: [String] = [],
+        paneVisibility: [MelixOperatorPaneVisibilityState] = MelixOperatorPaneVisibilityState.defaultStates
+    ) {
+        self.schemaVersion = max(schemaVersion, 6)
+        self.selectedSurfaceID = selectedSurfaceID
+        self.selectedToolSectionID = selectedToolSectionID
+        self.selectedServerSessionID = selectedServerSessionID
+        self.dismissedBannerIDs = dismissedBannerIDs
+        self.paneVisibility = MelixOperatorPaneVisibilityState.mergedWithDefaults(paneVisibility)
+    }
+
+    init(state: MelixOperatorSessionState) {
+        self.init(
+            schemaVersion: state.schemaVersion,
+            selectedSurfaceID: state.selectedSurfaceID,
+            selectedToolSectionID: state.selectedToolSectionID,
+            selectedServerSessionID: state.selectedServerSessionID,
+            dismissedBannerIDs: state.dismissedBannerIDs,
+            paneVisibility: state.paneVisibility
+        )
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case selectedSurfaceID = "selected_surface"
+        case selectedToolSectionID = "selected_tool_section"
+        case selectedServerSessionID = "selected_server_session_id"
+        case dismissedBannerIDs = "dismissed_banner_ids"
+        case paneVisibility = "pane_visibility"
+    }
+}
+
+private struct ServerSessionsDocument: Codable, Equatable, Sendable {
+    var schemaVersion: Int
+    var serverSessions: [MelixOperatorServerSessionState]
+
+    init(schemaVersion: Int = 1, serverSessions: [MelixOperatorServerSessionState]) {
+        self.schemaVersion = max(schemaVersion, 1)
+        self.serverSessions = serverSessions
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case serverSessions = "server_sessions"
+    }
+}
+
+private struct ModelRootsDocument: Codable, Equatable, Sendable {
+    var schemaVersion: Int
+    var registryRoots: [String]
+
+    init(schemaVersion: Int = 1, registryRoots: [String]) {
+        self.schemaVersion = max(schemaVersion, 1)
+        self.registryRoots = registryRoots
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case registryRoots = "registry_roots"
+    }
+}
+
+private struct DownloadQueueDocument: Codable, Equatable, Sendable {
+    var schemaVersion: Int
+    var downloadQueue: [MelixOperatorDownloadQueueEntryState]
+
+    init(schemaVersion: Int = 1, downloadQueue: [MelixOperatorDownloadQueueEntryState]) {
+        self.schemaVersion = max(schemaVersion, 1)
+        self.downloadQueue = downloadQueue
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case downloadQueue = "download_queue"
+    }
 }

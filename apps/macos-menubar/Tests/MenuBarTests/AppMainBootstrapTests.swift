@@ -705,9 +705,9 @@ struct AppMainBootstrapTests {
         #expect(inferredRepoRoot == repoRoot.path)
     }
 
-    @Test("bootstrap cli environment injects a default managed model root under MelixHome")
+    @Test("bootstrap cli environment injects MelixHome-derived product paths")
     @MainActor
-    func bootstrapCLIEnvironmentInjectsDefaultManagedModelRoot() {
+    func bootstrapCLIEnvironmentInjectsMelixHomeDerivedProductPaths() {
         let environment = MenuBarBootstrapEnvironment(
             environment: [
                 "MELIX_REPO_ROOT": "/tmp/melix-root",
@@ -721,7 +721,17 @@ struct AppMainBootstrapTests {
             ]
         )
 
+        #expect(cliEnvironment["MELIX_HOME"] == "/tmp/melix-home")
         #expect(cliEnvironment["MELIX_MANAGED_MODEL_ROOT"] == "/tmp/melix-home/models/default-managed")
+        #expect(cliEnvironment["MELIX_AUDIO_RUNTIME_PACK_ROOT"] == "/tmp/melix-home/runtime-packs/audio")
+        #expect(cliEnvironment["MELIX_MODEL_OPS_JOBS_ROOT"] == "/tmp/melix-home/jobs/model-ops")
+        #expect(cliEnvironment["MELIX_EVALUATION_JOBS_ROOT"] == "/tmp/melix-home/jobs/evaluation")
+        #expect(cliEnvironment["MELIX_GATEWAY_CONFIG_STORE_PATH"] == "/tmp/melix-home/config/gateway-config.json")
+        #expect(
+            cliEnvironment["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"]
+                == "/tmp/melix-home/config/gateway-serving-defaults.json"
+        )
+        #expect(cliEnvironment["MELIX_IMAGE_DEFAULTS_STORE_PATH"] == "/tmp/melix-home/config/image-defaults.json")
     }
 
     @Test("bootstrap cli environment preserves an explicit managed model root override")
@@ -877,9 +887,9 @@ struct AppMainBootstrapTests {
         }
     }
 
-    @Test("MelixHome uses app support as packaged app home when MELIX_HOME is unset")
+    @Test("MelixHome ignores app support when MELIX_HOME is unset")
     @MainActor
-    func melixHomeUsesAppSupportWhenMelixHomeUnset() async throws {
+    func melixHomeIgnoresAppSupportWhenMelixHomeUnset() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-menubar-tests-app-support-\(UUID().uuidString)")
         let appSupportHome = temporaryRoot.appendingPathComponent("Application Support/Melix", isDirectory: true)
@@ -890,10 +900,11 @@ struct AppMainBootstrapTests {
             await withEnvironmentValue("MELIX_APP_SUPPORT_DIR", appSupportHome.path) {
                 await withEnvironmentValue("HOME", temporaryRoot.path) {
                     let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
-                    #expect(melixHome.rootURL.path == appSupportHome.path)
+                    let expectedHome = temporaryRoot.appendingPathComponent(".melix", isDirectory: true)
+                    #expect(melixHome.rootURL.path == expectedHome.path)
                     #expect(
                         melixHome.operatorSessionFileURL.path
-                            == appSupportHome.appendingPathComponent("state/operator-session.json").path
+                            == expectedHome.appendingPathComponent("state/operator-session.json").path
                     )
                 }
             }
@@ -953,9 +964,11 @@ struct AppMainBootstrapTests {
             try hfTokenStore.saveToken("hf_secret_token")
 
             #expect(try posixPermissions(at: melixHome.rootURL) == 0o700)
+            #expect(try posixPermissions(at: melixHome.configDirectoryURL) == 0o700)
             #expect(try posixPermissions(at: melixHome.stateDirectoryURL) == 0o700)
             #expect(try posixPermissions(at: melixHome.secretsDirectoryURL) == 0o700)
             #expect(try posixPermissions(at: melixHome.operatorSessionFileURL) == 0o600)
+            #expect(try posixPermissions(at: melixHome.serverSessionsFileURL) == 0o600)
             #expect(try posixPermissions(at: melixHome.serverSessionAPIKeysFileURL) == 0o600)
             #expect(try posixPermissions(at: melixHome.huggingFaceTokenFileURL) == 0o600)
         }

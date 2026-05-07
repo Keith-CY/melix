@@ -57,7 +57,7 @@ melix eval run --remote-server-id sub2api --remote-model gemini-2.5-flash --sour
 Visible Remote Server metadata is stored in:
 
 ```text
-$MELIX_HOME/state/remote-servers.json
+$MELIX_HOME/config/remote-servers.json
 ```
 
 Remote Server API keys are stored in:

@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneCore
 
 public enum MelixHomeError: Error, Equatable {
     case invalidPath(String)
@@ -9,9 +10,20 @@ public struct MelixHome: Equatable, Sendable {
     public static let filePermissions = 0o600
 
     public let rootURL: URL
+    public let configDirectoryURL: URL
     public let stateDirectoryURL: URL
     public let secretsDirectoryURL: URL
+    public let managedModelRootURL: URL
+    public let modelOpsJobsRootURL: URL
+    public let evaluationJobsRootURL: URL
+    public let audioRuntimePackRootURL: URL
+    public let runtimeDirectoryURL: URL
+    public let logsDirectoryURL: URL
+    public let installDirectoryURL: URL
     public let operatorSessionFileURL: URL
+    public let serverSessionsFileURL: URL
+    public let modelRootsFileURL: URL
+    public let downloadQueueFileURL: URL
     public let remoteServersFileURL: URL
     public let evaluationPromptsFileURL: URL
     public let loraTrainingJobsFileURL: URL
@@ -20,13 +32,24 @@ public struct MelixHome: Equatable, Sendable {
     public let huggingFaceTokenFileURL: URL
 
     public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
-        let homePath = Self.resolveHomePath(environment: environment)
-        self.rootURL = URL(fileURLWithPath: homePath, isDirectory: true)
-        self.stateDirectoryURL = rootURL.appendingPathComponent("state", isDirectory: true)
-        self.secretsDirectoryURL = rootURL.appendingPathComponent("secrets", isDirectory: true)
+        let layout = MelixPathLayout(environment: environment)
+        self.rootURL = layout.rootURL
+        self.configDirectoryURL = layout.configDirectoryURL
+        self.stateDirectoryURL = layout.stateDirectoryURL
+        self.secretsDirectoryURL = layout.secretsDirectoryURL
+        self.managedModelRootURL = layout.managedModelRootURL
+        self.modelOpsJobsRootURL = layout.modelOpsJobsRootURL
+        self.evaluationJobsRootURL = layout.evaluationJobsRootURL
+        self.audioRuntimePackRootURL = layout.audioRuntimePackRootURL
+        self.runtimeDirectoryURL = layout.runtimeDirectoryURL
+        self.logsDirectoryURL = layout.logsDirectoryURL
+        self.installDirectoryURL = layout.installDirectoryURL
         self.operatorSessionFileURL = stateDirectoryURL.appendingPathComponent("operator-session.json")
-        self.remoteServersFileURL = stateDirectoryURL.appendingPathComponent("remote-servers.json")
-        self.evaluationPromptsFileURL = stateDirectoryURL.appendingPathComponent("evaluation-prompts.json")
+        self.serverSessionsFileURL = configDirectoryURL.appendingPathComponent("server-sessions.json")
+        self.modelRootsFileURL = configDirectoryURL.appendingPathComponent("model-roots.json")
+        self.downloadQueueFileURL = stateDirectoryURL.appendingPathComponent("download-queue.json")
+        self.remoteServersFileURL = configDirectoryURL.appendingPathComponent("remote-servers.json")
+        self.evaluationPromptsFileURL = configDirectoryURL.appendingPathComponent("evaluation-prompts.json")
         self.loraTrainingJobsFileURL = stateDirectoryURL.appendingPathComponent("lora-training-jobs.json")
         self.serverSessionAPIKeysFileURL = secretsDirectoryURL.appendingPathComponent("server-session-api-keys.json")
         self.remoteServerAPIKeysFileURL = secretsDirectoryURL.appendingPathComponent("remote-server-api-keys.json")
@@ -72,30 +95,5 @@ public struct MelixHome: Equatable, Sendable {
         }
 
         try fileManager.setAttributes([.posixPermissions: Self.filePermissions], ofItemAtPath: fileURL.path)
-    }
-
-    private static func resolveHomePath(environment: [String: String]) -> String {
-        if let overriddenPath = environment["MELIX_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           overriddenPath.isEmpty == false
-        {
-            return overriddenPath
-        }
-
-        if let appSupportPath = environment["MELIX_APP_SUPPORT_DIR"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           appSupportPath.isEmpty == false
-        {
-            return appSupportPath
-        }
-
-        let homePath = environment["HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let homePath, homePath.isEmpty == false {
-            return URL(fileURLWithPath: homePath, isDirectory: true)
-                .appendingPathComponent(".melix", isDirectory: true)
-                .path
-        }
-
-        return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-            .appendingPathComponent(".melix", isDirectory: true)
-            .path
     }
 }

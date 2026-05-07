@@ -445,20 +445,12 @@ public actor ImageDefaultsStore {
         environment: [String: String],
         fileManager: FileManager
     ) -> URL {
+        _ = fileManager
         if let explicit = environment["MELIX_IMAGE_DEFAULTS_STORE_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            explicit.isEmpty == false {
             return URL(fileURLWithPath: explicit)
         }
-        let melixHomePath = environment["MELIX_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let melixHomeURL: URL
-        if let melixHomePath, melixHomePath.isEmpty == false {
-            melixHomeURL = URL(fileURLWithPath: melixHomePath, isDirectory: true)
-        } else {
-            let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-                ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-            melixHomeURL = applicationSupport.appendingPathComponent("Melix", isDirectory: true)
-        }
-        return melixHomeURL.appendingPathComponent("state/image-defaults.json")
+        return MelixPathLayout(environment: environment).imageDefaultsStoreURL
     }
 
     private static func resolveDefaults(

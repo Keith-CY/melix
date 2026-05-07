@@ -120,7 +120,6 @@ def render_portable_environment_script(
     logical_product_identity: str,
     packaging_target_id: str,
     packaging_kind: str,
-    app_support_name: str = "Melix",
 ) -> str:
     return "\n".join(
         [
@@ -132,16 +131,19 @@ def render_portable_environment_script(
             f'export MELIX_PACKAGING_KIND="{packaging_kind}"',
             f'export MELIX_PRODUCT_VERSION="{product_version}"',
             f'export MELIX_UPDATE_CHANNEL_PATH="{Path(update_channel_path).expanduser().resolve()}"',
-            f'export MELIX_APP_SUPPORT_DIR="$HOME/Library/Application Support/{app_support_name}"',
-            'export MELIX_HOME="$MELIX_APP_SUPPORT_DIR"',
-            'export MELIX_RUNTIME_DIR="$MELIX_APP_SUPPORT_DIR/runtime"',
-            'export MELIX_MANAGED_MODEL_ROOT="$MELIX_APP_SUPPORT_DIR/models/default-managed"',
-            'export MELIX_AUDIO_RUNTIME_PACK_ROOT="$MELIX_APP_SUPPORT_DIR/runtime-packs/audio"',
-            'export MELIX_MODEL_OPS_JOBS_ROOT="$MELIX_APP_SUPPORT_DIR/jobs/model-ops"',
-            'export MELIX_EVALUATION_JOBS_ROOT="$MELIX_APP_SUPPORT_DIR/jobs/evaluation"',
+            'export MELIX_HOME="${MELIX_HOME:-$HOME/.melix}"',
+            'export MELIX_RUNTIME_DIR="${MELIX_RUNTIME_DIR:-$MELIX_HOME/run}"',
+            'export MELIX_MANAGED_MODEL_ROOT="${MELIX_MANAGED_MODEL_ROOT:-$MELIX_HOME/models/default-managed}"',
+            'export MELIX_AUDIO_RUNTIME_PACK_ROOT="${MELIX_AUDIO_RUNTIME_PACK_ROOT:-$MELIX_HOME/runtime-packs/audio}"',
+            'export MELIX_MODEL_OPS_JOBS_ROOT="${MELIX_MODEL_OPS_JOBS_ROOT:-$MELIX_HOME/jobs/model-ops}"',
+            'export MELIX_EVALUATION_JOBS_ROOT="${MELIX_EVALUATION_JOBS_ROOT:-$MELIX_HOME/jobs/evaluation}"',
+            'export MELIX_GATEWAY_CONFIG_STORE_PATH="${MELIX_GATEWAY_CONFIG_STORE_PATH:-$MELIX_HOME/config/gateway-config.json}"',
+            'export MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH="${MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH:-$MELIX_HOME/config/gateway-serving-defaults.json}"',
+            'export MELIX_IMAGE_DEFAULTS_STORE_PATH="${MELIX_IMAGE_DEFAULTS_STORE_PATH:-$MELIX_HOME/config/image-defaults.json}"',
+            'export MELIX_PRODUCT_MANIFEST_PATH="${MELIX_PRODUCT_MANIFEST_PATH:-$MELIX_HOME/install/install-manifest.json}"',
             'export MELIX_BACKEND_MODE="auto"',
             'export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="swift"',
-            'export MELIX_LOGS_DIR="$HOME/Library/Logs/Melix"',
+            'export MELIX_LOGS_DIR="${MELIX_LOGS_DIR:-$MELIX_HOME/logs}"',
             "",
         ]
     )
@@ -158,7 +160,6 @@ def render_launcher_script(
     bundled_site_packages_relative_path: str,
     wait_script_relative_path: str,
     menu_bar_presentation_mode: str = "dock-and-tray",
-    app_support_name: str = "Melix",
 ) -> str:
     repo_root = Path(bundle_repo_root)
     return "\n".join(
@@ -171,7 +172,7 @@ def render_launcher_script(
             f'export MELIX_REPO_ROOT="$RESOURCES_DIR/{repo_root.as_posix()}"',
             'source "$RESOURCES_DIR/melix-product-env.sh"',
             f'export MELIX_CLI="$RESOURCES_DIR/{bundled_cli_binary_name}"',
-            'mkdir -p "$MELIX_RUNTIME_DIR" "$MELIX_LOGS_DIR" "$MELIX_RUNTIME_DIR/swift-text-worker-cache" "$MELIX_MANAGED_MODEL_ROOT" "$MELIX_AUDIO_RUNTIME_PACK_ROOT" "$MELIX_MODEL_OPS_JOBS_ROOT" "$MELIX_EVALUATION_JOBS_ROOT"',
+            'mkdir -p "$MELIX_HOME/config" "$MELIX_HOME/state" "$MELIX_HOME/secrets" "$MELIX_HOME/install" "$MELIX_RUNTIME_DIR" "$MELIX_LOGS_DIR" "$MELIX_RUNTIME_DIR/swift-text-worker-cache" "$MELIX_MANAGED_MODEL_ROOT" "$MELIX_AUDIO_RUNTIME_PACK_ROOT" "$MELIX_MODEL_OPS_JOBS_ROOT" "$MELIX_EVALUATION_JOBS_ROOT"',
             'RUN_TOKEN="${MELIX_RUN_TOKEN:-$$}"',
             'export MELIX_WORKER_SOCKET_PATH="$MELIX_RUNTIME_DIR/python-worker-${RUN_TOKEN}.sock"',
             'export MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="$MELIX_RUNTIME_DIR/swift-text-worker-${RUN_TOKEN}.sock"',

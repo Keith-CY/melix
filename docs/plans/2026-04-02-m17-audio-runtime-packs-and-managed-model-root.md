@@ -31,7 +31,7 @@ Turn the existing `mlx-audio` library integration into a product-shaped Melix au
 ## Execution Slices
 
 - `M17.5` Verify and commit the current `mlx-audio` adapter baseline as the prerequisite integration layer.
-- `M17.6` Add a default managed model root under Melix application support and define product-owned audio runtime-pack metadata and state.
+- `M17.6` Add a default managed model root under `MELIX_HOME` and define product-owned audio runtime-pack metadata and state.
 - `M17.7` Add control-plane audio readiness checks plus desktop download prompts so first-use audio requests surface clear runtime-pack and model requirements.
 - `M17.8` Add recovery, release-gate, and metrics coverage for slim and full product builds.
 
@@ -62,8 +62,8 @@ Turn the existing `mlx-audio` library integration into a product-shaped Melix au
 
 ## Managed Paths
 
-- default managed model root: `~/Library/Application Support/Melix/models/default-managed`
-- audio runtime-pack root: `~/Library/Application Support/Melix/runtime-packs/audio`
+- default managed model root: `$MELIX_HOME/models/default-managed`, with `$HOME/.melix/models/default-managed` as the default
+- audio runtime-pack root: `$MELIX_HOME/runtime-packs/audio`, with `$HOME/.melix/runtime-packs/audio` as the default
 
 Both paths are product defaults, not hardcoded audio-only discovery exceptions. The managed model root must remain compatible with future ordered multi-root scanning.
 

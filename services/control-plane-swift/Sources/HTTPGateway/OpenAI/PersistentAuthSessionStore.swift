@@ -325,26 +325,7 @@ public actor PersistentAuthSessionStore {
     }
 
     private static func resolveStoreURL(environment: [String: String]) -> URL {
-        let melixHomePath: String
-        if let overridden = environment["MELIX_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           overridden.isEmpty == false
-        {
-            melixHomePath = overridden
-        } else if let home = environment["HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  home.isEmpty == false
-        {
-            melixHomePath = URL(fileURLWithPath: home, isDirectory: true)
-                .appendingPathComponent(".melix", isDirectory: true)
-                .path
-        } else {
-            melixHomePath = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-                .appendingPathComponent(".melix", isDirectory: true)
-                .path
-        }
-
-        return URL(fileURLWithPath: melixHomePath, isDirectory: true)
-            .appendingPathComponent("state", isDirectory: true)
-            .appendingPathComponent("persistent-auth-sessions.json", isDirectory: false)
+        MelixPathLayout(environment: environment).persistentAuthSessionsURL
     }
 
     private static func resolveRetentionTTLSeconds(environment: [String: String]) -> Int {

@@ -22,7 +22,8 @@ class LocalProductLayout:
     service_instance_name: str
     repo_root: Path
     home_dir: Path
-    app_support_dir: Path
+    melix_home_dir: Path
+    install_dir: Path
     runtime_dir: Path
     managed_models_dir: Path
     audio_runtime_packs_dir: Path
@@ -95,29 +96,29 @@ def build_local_product_layout(
         if update_channel_path is not None
         else default_update_channel_path(resolved_repo_root)
     )
+    melix_home_dir = resolved_home_dir / ".melix"
     if normalized_instance_name:
-        app_support_dir = (
-            resolved_home_dir
-            / "Library/Application Support/Melix/sidecars"
-            / normalized_instance_name
-        )
-        logs_dir = resolved_home_dir / "Library/Logs/Melix/sidecars" / normalized_instance_name
-        environment_script_path = app_support_dir / f"melix-sidecar-{normalized_instance_name}-env.sh"
-    else:
-        app_support_dir = resolved_home_dir / "Library/Application Support/Melix"
-        logs_dir = resolved_home_dir / "Library/Logs/Melix"
-        environment_script_path = app_support_dir / "melix-product-env.sh"
-    runtime_dir = app_support_dir / "runtime"
-    managed_models_dir = app_support_dir / "models/default-managed"
-    audio_runtime_packs_dir = app_support_dir / "runtime-packs/audio"
-    model_ops_jobs_root = app_support_dir / "jobs/model-ops"
-    evaluation_jobs_root = model_ops_jobs_root / "evaluation"
+        melix_home_dir = melix_home_dir / "sidecars" / normalized_instance_name
+    install_dir = melix_home_dir / "install"
+    logs_dir = melix_home_dir / "logs"
+    environment_script_name = (
+        f"melix-sidecar-{normalized_instance_name}-env.sh"
+        if normalized_instance_name
+        else "melix-product-env.sh"
+    )
+    environment_script_path = install_dir / environment_script_name
+    runtime_dir = melix_home_dir / "run"
+    managed_models_dir = melix_home_dir / "models/default-managed"
+    audio_runtime_packs_dir = melix_home_dir / "runtime-packs/audio"
+    model_ops_jobs_root = melix_home_dir / "jobs/model-ops"
+    evaluation_jobs_root = melix_home_dir / "jobs/evaluation"
 
     return LocalProductLayout(
         service_instance_name=normalized_instance_name,
         repo_root=resolved_repo_root,
         home_dir=resolved_home_dir,
-        app_support_dir=app_support_dir,
+        melix_home_dir=melix_home_dir,
+        install_dir=install_dir,
         runtime_dir=runtime_dir,
         managed_models_dir=managed_models_dir,
         audio_runtime_packs_dir=audio_runtime_packs_dir,
@@ -140,7 +141,7 @@ def build_local_product_layout(
         control_plane_stdout_path=logs_dir / "control-plane.stdout.log",
         control_plane_stderr_path=logs_dir / "control-plane.stderr.log",
         environment_script_path=environment_script_path,
-        install_manifest_path=app_support_dir / "install-manifest.json",
+        install_manifest_path=install_dir / "install-manifest.json",
         update_channel_path=resolved_update_channel_path,
         product_version=resolved_product_version,
         requested_http_port=http_port,
@@ -188,6 +189,7 @@ def build_launch_agent_specs(
     )
 
     common_swift_environment = {
+        "MELIX_HOME": str(layout.melix_home_dir),
         "HOME": str(layout.swift_home_dir),
         "CLANG_MODULE_CACHE_PATH": str(layout.module_cache_dir),
     }
@@ -204,6 +206,7 @@ def build_launch_agent_specs(
 
     python_environment = {
         "PYTHONPATH": f"{layout.repo_root}:{layout.repo_root / 'services/mlx-worker-python'}",
+        "MELIX_HOME": str(layout.melix_home_dir),
         "UV_CACHE_DIR": str(layout.uv_cache_dir),
         "MELIX_PYTHON_WORKER_METRICS_PATH": str(layout.python_worker_metrics_path),
         "MELIX_MANAGED_MODEL_ROOT": str(layout.managed_models_dir),
@@ -223,6 +226,11 @@ def build_launch_agent_specs(
         "MELIX_CONTROL_PLANE_METRICS_PATH": str(layout.control_plane_metrics_path),
         "MELIX_MANAGED_MODEL_ROOT": str(layout.managed_models_dir),
         "MELIX_AUDIO_RUNTIME_PACK_ROOT": str(layout.audio_runtime_packs_dir),
+        "MELIX_GATEWAY_CONFIG_STORE_PATH": str(layout.melix_home_dir / "config/gateway-config.json"),
+        "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH": str(
+            layout.melix_home_dir / "config/gateway-serving-defaults.json"
+        ),
+        "MELIX_IMAGE_DEFAULTS_STORE_PATH": str(layout.melix_home_dir / "config/image-defaults.json"),
     }
     if layout.service_instance_name:
         control_plane_environment["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
@@ -307,7 +315,11 @@ def write_local_product_artifacts(
     )
 
     directories = [
-        layout.app_support_dir,
+        layout.melix_home_dir,
+        layout.melix_home_dir / "config",
+        layout.melix_home_dir / "state",
+        layout.melix_home_dir / "secrets",
+        layout.install_dir,
         layout.runtime_dir,
         layout.managed_models_dir,
         layout.audio_runtime_packs_dir,
@@ -338,7 +350,8 @@ def write_local_product_artifacts(
     manifest = {
         **target_metadata,
         "repo_root": str(layout.repo_root),
-        "app_support_dir": str(layout.app_support_dir),
+        "melix_home_dir": str(layout.melix_home_dir),
+        "install_dir": str(layout.install_dir),
         "runtime_dir": str(layout.runtime_dir),
         "managed_models_dir": str(layout.managed_models_dir),
         "audio_runtime_packs_dir": str(layout.audio_runtime_packs_dir),
@@ -385,8 +398,9 @@ def render_environment_script(layout: LocalProductLayout) -> str:
         "MELIX_PACKAGING_KIND": str(target_metadata["packaging_kind"]),
         "MELIX_PRODUCT_VERSION": str(layout.product_version),
         "MELIX_UPDATE_CHANNEL_PATH": str(layout.update_channel_path),
-        "MELIX_APP_SUPPORT_DIR": str(layout.app_support_dir),
+        "MELIX_HOME": str(layout.melix_home_dir),
         "MELIX_RUNTIME_DIR": str(layout.runtime_dir),
+        "MELIX_LOGS_DIR": str(layout.logs_dir),
         "MELIX_MANAGED_MODEL_ROOT": str(layout.managed_models_dir),
         "MELIX_AUDIO_RUNTIME_PACK_ROOT": str(layout.audio_runtime_packs_dir),
         "MELIX_MODEL_OPS_JOBS_ROOT": str(layout.model_ops_jobs_root),
@@ -397,6 +411,12 @@ def render_environment_script(layout: LocalProductLayout) -> str:
         "MELIX_CONTROL_PLANE_METRICS_PATH": str(layout.control_plane_metrics_path),
         "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": str(layout.swift_text_worker_metrics_path),
         "MELIX_PYTHON_WORKER_METRICS_PATH": str(layout.python_worker_metrics_path),
+        "MELIX_GATEWAY_CONFIG_STORE_PATH": str(layout.melix_home_dir / "config/gateway-config.json"),
+        "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH": str(
+            layout.melix_home_dir / "config/gateway-serving-defaults.json"
+        ),
+        "MELIX_IMAGE_DEFAULTS_STORE_PATH": str(layout.melix_home_dir / "config/image-defaults.json"),
+        "MELIX_PRODUCT_MANIFEST_PATH": str(layout.install_manifest_path),
     }
     if layout.service_instance_name:
         exports["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name

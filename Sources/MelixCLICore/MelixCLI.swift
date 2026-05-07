@@ -3770,9 +3770,7 @@ public actor MelixCLIRunner {
         if effectiveToken.isEmpty == false {
             ext["melix.hf_token"] = effectiveToken
         }
-        if let managedRoot = environment["MELIX_MANAGED_MODEL_ROOT"], managedRoot.isEmpty == false {
-            ext["melix.managed_root"] = managedRoot
-        }
+        ext["melix.managed_root"] = MelixHome(environment: environment).managedModelRootURL.path
         return try await performModelOperation(
             modelID: repoID,
             operation: "download",
@@ -3868,9 +3866,7 @@ public actor MelixCLIRunner {
             "melix.model_kind": modelKind.isEmpty ? "text" : modelKind,
             "melix.revision": revision.isEmpty ? "main" : revision,
         ]
-        if let managedRoot = environment["MELIX_MANAGED_MODEL_ROOT"], managedRoot.isEmpty == false {
-            ext["melix.managed_root"] = managedRoot
-        }
+        ext["melix.managed_root"] = MelixHome(environment: environment).managedModelRootURL.path
         return try await performModelOperation(
             modelID: modelID,
             operation: "local_import",
@@ -5751,10 +5747,9 @@ public actor MelixCLIRunner {
             return canonicalRootPath(trimmedOutputDir)
         }
 
-        let sanitizedNamespace = sanitizedDownloadPathComponent("melix-downloads", fallback: "melix-downloads")
         let sanitizedModelID = sanitizedDownloadPathComponent(modelID, fallback: "model")
-        return URL(fileURLWithPath: "/tmp", isDirectory: true)
-            .appendingPathComponent(sanitizedNamespace, isDirectory: true)
+        return MelixHome(environment: environment).modelOpsJobsRootURL
+            .appendingPathComponent("downloads", isDirectory: true)
             .appendingPathComponent(sanitizedModelID, isDirectory: true)
             .path
     }
