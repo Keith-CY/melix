@@ -1205,7 +1205,7 @@ def test_multimodal_image_uri_parse_probe_script_emits_metrics(capsys: pytest.Ca
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 5.0
     assert metrics["prepared_image_count"] == 640.0
-    assert metrics["urlparse_calls_mean"] == 640.0
+    assert metrics["urlparse_calls_mean"] == 320.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 

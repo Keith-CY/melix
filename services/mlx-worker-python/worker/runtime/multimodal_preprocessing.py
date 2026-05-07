@@ -197,6 +197,19 @@ def _cached_image_uri_payload(
 
 
 def _parse_image_reference(uri: str) -> ParsedImageReference:
+    colon_index = uri.find(":")
+    slash_index = uri.find("/")
+    if colon_index == -1 or (slash_index != -1 and slash_index < colon_index):
+        path = Path(uri)
+        return ParsedImageReference(
+            raw=uri,
+            parsed=ParseResult("", "", uri, "", "", ""),
+            decoded_path=uri,
+            path=path,
+            filename=path.name,
+            format=path.suffix.lstrip("."),
+        )
+
     parsed = urlparse(uri)
     if parsed.scheme in {"http", "https", "file"}:
         decoded_path = unquote(parsed.path)
