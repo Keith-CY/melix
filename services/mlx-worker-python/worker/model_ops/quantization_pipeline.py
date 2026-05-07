@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from threading import Event
 import time
@@ -1224,12 +1225,8 @@ def _qat_q_bits_for_request(
     return q_bits
 
 
-def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> dict[str, Any]:
-    digest = hashlib.sha256()
-    source_file_count = 0
-    source_byte_count = 0
-    error_sum = 0.0
-    error_max = 0.0
+@lru_cache(maxsize=16)
+def _qat_fake_quant_error_table(q_bits: int) -> tuple[float, ...]:
     levels = (1 << q_bits) - 1
     if levels <= 0:
         raise ModelOperationError(
@@ -1237,6 +1234,19 @@ def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> di
             message="qat_q_bits must produce at least one fake-quant level.",
             details={"field": "qat_q_bits", "value": str(q_bits)},
         )
+    return tuple(
+        abs(value - round((round((value / 255.0) * levels) / levels) * 255.0)) / 255.0
+        for value in range(256)
+    )
+
+
+def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    source_file_count = 0
+    source_byte_count = 0
+    error_sum = 0.0
+    error_max = 0.0
+    error_table = _qat_fake_quant_error_table(q_bits)
     for source_file in source_files:
         source_file_count += 1
         with source_file.open("rb") as handle:
@@ -1247,9 +1257,7 @@ def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> di
                 digest.update(chunk)
                 source_byte_count += len(chunk)
                 for value in chunk:
-                    quantized = round((value / 255.0) * levels) / levels
-                    reconstructed = round(quantized * 255.0)
-                    error = abs(value - reconstructed) / 255.0
+                    error = error_table[value]
                     error_sum += error
                     if error > error_max:
                         error_max = error

@@ -1598,8 +1598,453 @@ def test_release_gates_m9_failure_count_probe_script_emits_metrics(
     assert metrics["failures_per_section"] == 4.0
 
 
+def test_qat_fake_quant_source_stats_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_QAT_STATS_PROBE_BYTES", "4096")
+    monkeypatch.setenv("MELIX_QAT_STATS_PROBE_SAMPLES", "2")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/qat_fake_quant_source_stats_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["source_byte_count"] == 4096.0
+    assert metrics["sample_count"] == 2.0
+    assert metrics["q_bits"] == 4.0
+    assert metrics["error_table_builds"] == 1.0
+    assert metrics["quant_error_proxy_max"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_HUB_CATALOG_TAG_PROBE_RECORDS", "3")
+    monkeypatch.setenv("MELIX_HUB_CATALOG_TAG_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/hub_catalog_tag_normalization_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["record_count"] == 3.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["tag_normalization_calls_mean"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_hub_catalog_size_hint_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_HUB_CATALOG_SIZE_HINT_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_HUB_CATALOG_SIZE_HINT_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/hub_catalog_size_hint_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["size_hint_calls_mean"] == 8.0
+    assert metrics["matched_hint_count"] == 6.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_hub_catalog_next_cursor_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_HUB_CATALOG_CURSOR_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_HUB_CATALOG_CURSOR_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/hub_catalog_next_cursor_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["cursor_parse_calls_mean"] == 8.0
+    assert metrics["checksum"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_statistical_evidence_bootstrap_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STAT_EVIDENCE_SAMPLE_SIZE", "16")
+    monkeypatch.setenv("MELIX_STAT_EVIDENCE_BOOTSTRAP_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_STAT_EVIDENCE_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/statistical_evidence_bootstrap_probe.py"),
+            run_name="__main__",
+        )
+
+    assert excinfo.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["sample_size"] == 16.0
+    assert metrics["bootstrap_iterations"] == 8.0
+    assert metrics["sorted_calls_mean"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["lower_bound_mean"] <= metrics["upper_bound_mean"]
+
+
+def test_training_dataset_chunker_top_level_copy_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_TOP_KEYS", "4")
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_WORDS", "240")
+    monkeypatch.setenv("MELIX_CHUNKER_PROBE_CHUNK_SIZE", "60")
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/training_dataset_chunker_top_level_copy_probe.py"),
+            run_name="__main__",
+        )
+
+    assert excinfo.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["top_level_key_count"] == 7.0
+    assert metrics["chunk_count"] > 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_multimodal_fast_path_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MULTIMODAL_SIGNATURE_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_MULTIMODAL_SIGNATURE_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/multimodal_fast_path_signature_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations_per_sample"] == 3.0
+    assert metrics["signature_count"] == 3.0
+    assert metrics["top_level_item_count"] == 4.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_multimodal_preprocessing_uri_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/multimodal_preprocessing_uri_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["iteration_count"] == 3.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["urlparse_calls_mean"] == 3.0
+    assert metrics["read_bytes_calls_mean"] == 3.0
+    assert metrics["image_parts_per_iteration"] == 2.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_multimodal_image_uri_parse_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/multimodal_image_uri_parse_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["prepared_image_count"] == 640.0
+    assert metrics["urlparse_calls_mean"] == 640.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/deterministic_embedding_duplicate_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["input_count"] == 8192.0
+    assert 0 < metrics["unique_input_count"] < metrics["input_count"]
+    assert metrics["embed_text_calls_mean"] == metrics["unique_input_count"]
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["checksum"] > 0
+
+
+def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STREAM_PREFIX_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_STREAM_PREFIX_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/stream_assembler_structural_prefix_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iteration_count"] == 3.0
+    assert metrics["held_suffix_hits"] == 3.0
+    assert metrics["partial_suffix_hits"] == 3.0
+    assert metrics["prefix_identity_hits"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["partial_suffix_elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_utils_kwarg_cache_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["iterations_per_sample"] == 40000.0
+    assert metrics["inspect_signature_calls_mean"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_mlx_text_stop_kwarg_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MLX_TEXT_STOP_KWARG_PROBE_ITERATIONS", "12")
+    monkeypatch.setenv("MELIX_MLX_TEXT_STOP_KWARG_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/mlx_text_stop_kwarg_signature_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations_per_sample"] == 12.0
+    assert metrics["stream_signature_calls_mean"] == 1.0
+    assert metrics["inspect_signature_calls_mean"] == 2.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_dataset_registry_limit_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_LIMIT_PROBE_GROUPS", "2")
+    monkeypatch.setenv("MELIX_DATASET_LIMIT_PROBE_FILES_PER_GROUP", "3")
+    monkeypatch.setenv("MELIX_DATASET_LIMIT_PROBE_LIMIT", "2")
+    monkeypatch.setenv("MELIX_DATASET_LIMIT_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_limit_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["synthetic_file_count"] == 6.0
+    assert metrics["limit"] == 2.0
+    assert metrics["dataset_files_yielded_mean"] == 4.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_dataset_registry_split_match_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_SPLIT_MATCH_PROBE_FILE_COUNT", "12")
+    monkeypatch.setenv("MELIX_DATASET_SPLIT_MATCH_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_split_match_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["file_count"] == 12.0
+    assert metrics["matched_files_mean"] == 3.0
+    assert metrics["path_constructor_calls_mean"] == 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
+def test_mlx_audio_wav_streaming_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/mlx_audio_wav_streaming_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 240000.0
+    assert metrics["wav_bytes"] == 480044.0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_mlx_audio_generate_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MLX_AUDIO_SIGNATURE_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_MLX_AUDIO_SIGNATURE_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/mlx_audio_generate_signature_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations_per_sample"] == 3.0
+    assert metrics["signature_calls_mean"] == 0.0
+    assert metrics["audio_bytes_total"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_dataset_registry_snapshot_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_REGISTRY_PROBE_FILE_COUNT", "3")
+    monkeypatch.setenv("MELIX_DATASET_REGISTRY_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/dataset_registry_snapshot_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["legacy_inference_helper_calls_mean"] == 0.0
+    assert metrics["file_count_mean"] == 4.0
+
+
+def test_video_preprocessing_uri_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/video_preprocessing_uri_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["iterations_per_sample"] == 50000.0
+    assert metrics["byte_length_getattrs_per_call"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_quantization_qat_source_scan_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_QAT_SOURCE_SCAN_PROBE_FILES", "4")
+    monkeypatch.setenv("MELIX_QAT_SOURCE_SCAN_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/quantization_qat_source_scan_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["file_count"] == 4.0
+    assert metrics["rglob_calls_mean"] == 0.0
+    assert metrics["scandir_calls_mean"] >= 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_mlx_audio_speech_signature_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_AUDIO_SPEECH_SIGNATURE_PROBE_CALLS", "3")
+    monkeypatch.setenv("MELIX_AUDIO_SPEECH_SIGNATURE_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/mlx_audio_speech_signature_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["speak_call_count"] == 3.0
+    assert metrics["inspect_signature_calls_mean"] == 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["output_bytes_total"] > 0
+
+
+def test_dataset_registry_preview_limit_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_PREVIEW_PROBE_FILES", "4")
+    monkeypatch.setenv("MELIX_DATASET_PREVIEW_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/dataset_registry_preview_limit_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["file_count"] == 4.0
+    assert metrics["rows_returned"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
+        "qat-fake-quant-source-stats-table-cache",
         "dataset-registry-limited-read-streaming",
         "dataset-registry-snapshot-inference-single-pass",
         "event-extraction-alignment-accepted-edge-cache",

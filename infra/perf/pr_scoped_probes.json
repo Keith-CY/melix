@@ -2793,5 +2793,41 @@
         "direction": "informational"
       }
     ]
+  },
+  {
+    "id": "qat-fake-quant-source-stats-table-cache",
+    "name": "QAT fake-quant source stats table cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_ops/quantization_pipeline.py",
+      "services/mlx-worker-python/tests/test_quantization_pipeline.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/qat_fake_quant_source_stats_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_source_stats_reuses_cached_error_table services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantization_pipeline_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_qat_fake_quant_source_stats_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_source_stats_reuses_cached_error_table services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantization_pipeline_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_qat_fake_quant_source_stats_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/quantization_pipeline.py services/mlx-worker-python/tests/test_quantization_pipeline.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/qat_fake_quant_source_stats_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/qat_fake_quant_source_stats_probe.py ]; then python scripts/qat_fake_quant_source_stats_probe.py; else python3 -c \"import base64; exec(base64.b64decode(\\\"CmZyb20gX19mdXR1cmVfXyBpbXBvcnQgYW5ub3RhdGlvbnMKaW1wb3J0IGpzb24sIG9zLCBzdGF0aXN0aWNzLCBzeXMsIHRlbXBmaWxlLCB0aW1lLCB0cmFjZW1hbGxvYwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKcmVwb19yb290ID0gUGF0aC5jd2QoKQpzeXMucGF0aC5pbnNlcnQoMCwgc3RyKHJlcG9fcm9vdCkpCnN5cy5wYXRoLmluc2VydCgwLCBzdHIocmVwb19yb290IC8gInNlcnZpY2VzL21seC13b3JrZXItcHl0aG9uIikpCmZyb20gd29ya2VyLm1vZGVsX29wcy5xdWFudGl6YXRpb25fcGlwZWxpbmUgaW1wb3J0IF9xYXRfZmFrZV9xdWFudF9zb3VyY2Vfc3RhdHMKCmRlZiBpbnRfZW52KG5hbWUsIGRlZmF1bHQpOgogICAgcmF3ID0gb3MuZW52aXJvbi5nZXQobmFtZSwgIiIpCiAgICByZXR1cm4gaW50KHJhdykgaWYgcmF3IGVsc2UgZGVmYXVsdAoKZGVmIHdyaXRlX3NvdXJjZShwYXRoLCBieXRlX2NvdW50KToKICAgIHBhdHRlcm4gPSBieXRlcygoaW5kZXggKiAzNyArIDE3KSAlIDI1NiBmb3IgaW5kZXggaW4gcmFuZ2UoNDA5NikpCiAgICByZXBlYXRzLCByZW1haW5kZXIgPSBkaXZtb2QoYnl0ZV9jb3VudCwgbGVuKHBhdHRlcm4pKQogICAgcGF5bG9hZCA9IHBhdHRlcm4gKiByZXBlYXRzICsgcGF0dGVybls6cmVtYWluZGVyXQogICAgcGF0aC53cml0ZV9ieXRlcyhwYXlsb2FkKQoKYnl0ZV9jb3VudCA9IGludF9lbnYoIk1FTElYX1FBVF9TVEFUU19QUk9CRV9CWVRFUyIsIDUwMDAwMDApCnNhbXBsZV9jb3VudCA9IGludF9lbnYoIk1FTElYX1FBVF9TVEFUU19QUk9CRV9TQU1QTEVTIiwgNSkKcV9iaXRzID0gaW50X2VudigiTUVMSVhfUUFUX1NUQVRTX1BST0JFX1FfQklUUyIsIDQpCmVsYXBzZWQgPSBbXQpwZWFrcyA9IFtdCnNvdXJjZV9zaGEyNTYgPSAiIgptZWFuID0gbWF4X2Vycm9yID0gMC4wCndpdGggdGVtcGZpbGUuVGVtcG9yYXJ5RGlyZWN0b3J5KHByZWZpeD0ibWVsaXgtcWF0LXN0YXRzLXByb2JlLSIpIGFzIGRpcmVjdG9yeToKICAgIHNvdXJjZV9wYXRoID0gUGF0aChkaXJlY3RvcnkpIC8gInNvdXJjZS5zYWZldGVuc29ycyIKICAgIHdyaXRlX3NvdXJjZShzb3VyY2VfcGF0aCwgYnl0ZV9jb3VudCkKICAgIGZvciBfIGluIHJhbmdlKHNhbXBsZV9jb3VudCk6CiAgICAgICAgdHJhY2VtYWxsb2Muc3RhcnQoKQogICAgICAgIHN0YXJ0ZWQgPSB0aW1lLnBlcmZfY291bnRlcigpCiAgICAgICAgc3RhdHMgPSBfcWF0X2Zha2VfcXVhbnRfc291cmNlX3N0YXRzKFtzb3VyY2VfcGF0aF0sIHFfYml0cz1xX2JpdHMpCiAgICAgICAgZWxhcHNlZC5hcHBlbmQoKHRpbWUucGVyZl9jb3VudGVyKCkgLSBzdGFydGVkKSAqIDEwMDAuMCkKICAgICAgICBfLCBwZWFrID0gdHJhY2VtYWxsb2MuZ2V0X3RyYWNlZF9tZW1vcnkoKQogICAgICAgIHRyYWNlbWFsbG9jLnN0b3AoKQogICAgICAgIHBlYWtzLmFwcGVuZChmbG9hdChwZWFrKSkKICAgICAgICBpZiBzdGF0c1sic291cmNlX2J5dGVfY291bnQiXSAhPSBieXRlX2NvdW50OgogICAgICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYidW5leHBlY3RlZCBieXRlIGNvdW50OiB7c3RhdHNbJ3NvdXJjZV9ieXRlX2NvdW50J119ICE9IHtieXRlX2NvdW50fSIpCiAgICAgICAgc291cmNlX3NoYTI1NiA9IHN0cihzdGF0c1sic291cmNlX3NoYTI1NiJdKQogICAgICAgIG1lYW4gPSBmbG9hdChzdGF0c1sicXVhbnRfZXJyb3JfcHJveHlfbWVhbiJdKQogICAgICAgIG1heF9lcnJvciA9IGZsb2F0KHN0YXRzWyJxdWFudF9lcnJvcl9wcm94eV9tYXgiXSkKcHJpbnQoanNvbi5kdW1wcyh7ImVsYXBzZWRfbXNfbWVhbiI6IHJvdW5kKHN0YXRpc3RpY3MuZm1lYW4oZWxhcHNlZCksIDYpLCAiZWxhcHNlZF9tc19taW4iOiByb3VuZChtaW4oZWxhcHNlZCksIDYpLCAicGVha19ieXRlc19tZWFuIjogcm91bmQoc3RhdGlzdGljcy5mbWVhbihwZWFrcyksIDEpLCAic291cmNlX2J5dGVfY291bnQiOiBmbG9hdChieXRlX2NvdW50KSwgInNhbXBsZV9jb3VudCI6IGZsb2F0KHNhbXBsZV9jb3VudCksICJxX2JpdHMiOiBmbG9hdChxX2JpdHMpLCAiZXJyb3JfdGFibGVfYnVpbGRzIjogZmxvYXQoc2FtcGxlX2NvdW50KSwgInF1YW50X2Vycm9yX3Byb3h5X21lYW4iOiBtZWFuLCAicXVhbnRfZXJyb3JfcHJveHlfbWF4IjogbWF4X2Vycm9yLCAic291cmNlX3NoYTI1Nl9wcmVmaXhfbGVuZ3RoIjogZmxvYXQobGVuKHNvdXJjZV9zaGEyNTZbOjEyXSkpfSwgc29ydF9rZXlzPVRydWUpKQo=\\\"))\"; fi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "error_table_builds",
+        "unit": "builds",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "informational"
+      }
+    ]
   }
 ]

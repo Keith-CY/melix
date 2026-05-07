@@ -16,6 +16,8 @@ from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.quantization_pipeline import (
     OQQuantizationPipeline,
     _local_source_path_for_mlx_lm_convert,
+    _qat_fake_quant_error_table,
+    _qat_fake_quant_source_stats,
     _smoke_required_files_for_backend,
     _source_artifact_files_for_qat,
     _sum_bundle_file_bytes,
@@ -810,6 +812,36 @@ def test_quantize_job_runs_qat_aware_mlx_lm_convert_backend(
     assert qat["training_steps"] == 2
     assert qat["source_file_count"] == 2
     assert all(path.is_file() for path in qat_files)
+
+
+def test_qat_fake_quant_source_stats_reuses_cached_error_table(tmp_path: Path) -> None:
+    source_a = tmp_path / "source-a.bin"
+    source_b = tmp_path / "source-b.bin"
+    payload_a = bytes(range(256))
+    payload_b = b"melix-qat-source" * 3
+    source_a.write_bytes(payload_a)
+    source_b.write_bytes(payload_b)
+    payload = payload_a + payload_b
+    levels = (1 << 4) - 1
+    expected_errors = [
+        abs(value - round((round((value / 255.0) * levels) / levels) * 255.0)) / 255.0
+        for value in payload
+    ]
+
+    _qat_fake_quant_error_table.cache_clear()
+    stats = _qat_fake_quant_source_stats([source_a, source_b], q_bits=4)
+    after_first = _qat_fake_quant_error_table.cache_info()
+    repeated_stats = _qat_fake_quant_source_stats([source_a, source_b], q_bits=4)
+    after_second = _qat_fake_quant_error_table.cache_info()
+
+    assert stats == repeated_stats
+    assert stats["source_sha256"] == quantization_pipeline_module.hashlib.sha256(payload).hexdigest()
+    assert stats["source_file_count"] == 2
+    assert stats["source_byte_count"] == len(payload)
+    assert stats["quant_error_proxy_mean"] == pytest.approx(sum(expected_errors) / len(expected_errors))
+    assert stats["quant_error_proxy_max"] == pytest.approx(max(expected_errors))
+    assert after_first.misses == 1
+    assert after_second.hits == after_first.hits + 1
 
 
 def test_quantize_job_rejects_mlx_lm_convert_without_local_source(tmp_path: Path) -> None:
