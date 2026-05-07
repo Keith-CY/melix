@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
+import wave
 
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2, runtime_pb2
 
 from worker.engine.maintenance_core import MaintenanceCore
+from worker.engine.speech_core import SpeechCore
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.audio_preprocessing import AudioPreprocessError, prepare_audio_input
+from worker.runtime.audio_runtime_protocols import SpeechResult, SpeechStreamFrame
 from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRuntime
 from worker.runtime.deterministic_transcription_runtime import DeterministicTranscriptionRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
@@ -26,10 +30,32 @@ class PassiveTextBackend:
         return 1024
 
 
-def build_services():
+class LegacySpeechRuntime:
+    runtime_name = "legacy-speech"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 1024
+
+    def speak(self, loaded_model, request):
+        return SpeechResult(audio_bytes=b"legacy", format=request.format or "wav")
+
+    def last_probe_snapshot(self):
+        return object()
+
+
+class FailingSpeechStreamRuntime(LegacySpeechRuntime):
+    def stream_speak(self, loaded_model, request):
+        raise RuntimeError("stream failed")
+
+
+def build_services(**registry_kwargs):
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=PassiveTextBackend()),
         model_catalog=WorkerModelCatalog(),
+        **registry_kwargs,
     )
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
@@ -137,6 +163,52 @@ def test_speak_returns_audio_bytes_and_format() -> None:
     assert model_info.supported_tasks == ["speak"]
 
 
+def test_speak_stream_returns_progressive_wav_and_runtime_streaming_metrics() -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_speech_model())
+
+    events = list(
+        inference_service.SpeakStream(
+            inference_pb2.SpeakRequest(
+                id=common_pb2.RequestIdentity(request_id="speak-stream-1"),
+                model_handle=model_handle,
+                input="hello streamed audio",
+                voice="alloy",
+                format="wav",
+                stream=True,
+                stream_interval_ms=25,
+            ),
+            context=None,
+        )
+    )
+    payload = b"".join(event.audio_bytes for event in events if event.audio_bytes)
+    stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+
+    assert [event.kind for event in events] == [
+        inference_pb2.SPEAK_STREAM_EVENT_KIND_ENVELOPE,
+        inference_pb2.SPEAK_STREAM_EVENT_KIND_AUDIO_CHUNK,
+        inference_pb2.SPEAK_STREAM_EVENT_KIND_FINISH,
+    ]
+    assert events[0].envelope.format == "wav"
+    assert events[0].envelope.codec == "pcm_s16le"
+    assert events[0].envelope.stream_interval_ms == 25
+    assert payload.startswith(b"RIFF")
+    with wave.open(BytesIO(payload), "rb") as handle:
+        assert handle.getnchannels() == 1
+        assert handle.getsampwidth() == 2
+        assert handle.getframerate() == 24_000
+        assert handle.readframes(1)
+    assert events[-1].finish.speech_streaming_enabled is True
+    assert events[-1].finish.speech_streaming_interval_ms == 25
+    assert events[-1].finish.speech_first_audio_latency_ms > 0.0
+    assert events[-1].finish.audio_chunk_count == 1
+    assert stats.last_speech_streaming_enabled is True
+    assert stats.last_speech_streaming_interval_ms == 25
+    assert stats.last_speech_first_audio_latency_ms > 0.0
+    assert stats.last_audio_chunk_count == 1
+    assert stats.last_audio_output_bytes == len(payload)
+
+
 def test_audio_preprocessing_accepts_plain_local_paths_and_fills_metadata(tmp_path: Path) -> None:
     audio_path = tmp_path / "sample.raw"
     audio_path.write_bytes(b"path based audio")
@@ -191,9 +263,71 @@ def test_transcribe_and_speak_reject_wrong_loaded_model_kinds() -> None:
         ),
         context=None,
     )
+    speak_stream = list(
+        inference_service.SpeakStream(
+            inference_pb2.SpeakRequest(
+                id=common_pb2.RequestIdentity(request_id="wrong-speak-stream"),
+                model_handle=text_model_handle,
+                input="hello",
+            ),
+            context=None,
+        )
+    )
+    missing_stream = list(
+        inference_service.SpeakStream(
+            inference_pb2.SpeakRequest(
+                id=common_pb2.RequestIdentity(request_id="missing-speak-stream"),
+                model_handle="missing",
+                input="hello",
+            ),
+            context=None,
+        )
+    )
 
     assert transcribe.error.code == "invalid_argument"
     assert speak.error.code == "invalid_argument"
+    assert speak_stream[0].error.code == "invalid_argument"
+    assert missing_stream[0].error.code == "not_found"
+
+
+def test_speak_stream_maps_unimplemented_runtime_errors_and_unknown_frames() -> None:
+    runtime_service, inference_service, _ = build_services(speech_runtime=LegacySpeechRuntime())
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_speech_model())
+
+    events = list(
+        inference_service.SpeakStream(
+            inference_pb2.SpeakRequest(
+                id=common_pb2.RequestIdentity(request_id="legacy-speak-stream"),
+                model_handle=model_handle,
+                input="hello",
+            ),
+            context=None,
+        )
+    )
+    unknown_frame = SpeechCore._stream_event(SpeechStreamFrame(kind="unexpected"))
+
+    assert events[0].error.code == "unimplemented"
+    assert unknown_frame.error.code == "runtime_error"
+    assert "unexpected" in unknown_frame.error.message
+
+
+def test_speak_stream_maps_runtime_exceptions() -> None:
+    runtime_service, inference_service, _ = build_services(speech_runtime=FailingSpeechStreamRuntime())
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_speech_model())
+
+    events = list(
+        inference_service.SpeakStream(
+            inference_pb2.SpeakRequest(
+                id=common_pb2.RequestIdentity(request_id="failing-speak-stream"),
+                model_handle=model_handle,
+                input="hello",
+            ),
+            context=None,
+        )
+    )
+
+    assert events[0].error.code == "runtime_error"
+    assert events[0].error.message == "stream failed"
 
 
 def test_deterministic_audio_runtimes_expose_probe_snapshots() -> None:

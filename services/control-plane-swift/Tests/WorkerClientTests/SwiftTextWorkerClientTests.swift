@@ -871,6 +871,14 @@ private final class TestInferenceService: Melix_Worker_V1_InferenceService.Simpl
         Melix_Worker_V1_SpeakResponse()
     }
 
+    func speakStream(
+        request: Melix_Worker_V1_SpeakRequest,
+        response: RPCWriter<Melix_Worker_V1_SpeakStreamEvent>,
+        context: ServerContext
+    ) async throws {
+        _ = (request, response, context)
+    }
+
     func imageGenerate(
         request: Melix_Worker_V1_ImageGenerateRequest,
         context: ServerContext

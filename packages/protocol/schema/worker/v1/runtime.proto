@@ -109,6 +109,9 @@ message RuntimeStats {
   string generation_stream_owner_mode = 41;
   double worker_thread_init_latency_ms = 42;
   uint64 stream_sync_fallback_count = 43;
+  bool last_speech_streaming_enabled = 44;
+  uint32 last_speech_streaming_interval_ms = 45;
+  double last_speech_first_audio_latency_ms = 46;
 }
 
 message GetRuntimeStatsRequest {}

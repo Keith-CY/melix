@@ -252,6 +252,9 @@ private enum GatewayAuthorizationResolution {
 }
 
 public struct OpenAIHandler: Sendable {
+    private static let defaultSpeechStreamIntervalMs: UInt32 = 20
+    private static let maxSpeechStreamIntervalMs: UInt32 = 1_000
+
     private let modelCatalog: ModelCatalog
     private let requestCoordinator: RequestCoordinator
     private let workerRegistry: WorkerRegistry?
@@ -1007,10 +1010,39 @@ public struct OpenAIHandler: Sendable {
         workerRequest.voice = speechRequest.voice ?? ""
         workerRequest.format = requestedFormat
         workerRequest.instructions = speechRequest.instructions ?? ""
+        let speechStreamingEnabled = speechRequest.stream ?? false
+        let speechStreamIntervalMs: UInt32
+        if speechStreamingEnabled {
+            let requestedInterval = speechRequest.streamIntervalMs ?? Self.defaultSpeechStreamIntervalMs
+            guard requestedInterval > 0, requestedInterval <= Self.maxSpeechStreamIntervalMs else {
+                return invalidArgumentResponse(
+                    message: "stream_interval_ms must be between 1 and \(Self.maxSpeechStreamIntervalMs)."
+                )
+            }
+            speechStreamIntervalMs = requestedInterval
+        } else {
+            speechStreamIntervalMs = 0
+        }
+        workerRequest.stream = speechStreamingEnabled
+        workerRequest.streamIntervalMs = speechStreamIntervalMs
 
         let startedAt = Date()
         await beginMultimodalRequest(requestID: workerRequest.id.requestID, routeKind: routeKind)
         do {
+            if speechStreamingEnabled {
+                let stream = try await inferenceClient.speakStream(request: workerRequest)
+                return streamAudioSpeechResponse(
+                    stream,
+                    requestID: workerRequest.id.requestID,
+                    routeKind: routeKind,
+                    workerClient: workerClient,
+                    speechContext: speechContext,
+                    requestedFormat: requestedFormat,
+                    streamIntervalMs: speechStreamIntervalMs,
+                    startedAt: startedAt
+                )
+            }
+
             let response = try await inferenceClient.speak(request: workerRequest)
             if !response.error.code.isEmpty {
                 await finishMultimodalRequest(
@@ -1025,6 +1057,9 @@ public struct OpenAIHandler: Sendable {
             let elapsedMs = max(Date().timeIntervalSince(startedAt) * 1000, 0.001)
             await metricsStore.set(elapsedMs, forKey: "audio.speech_request_latency_ms")
             await metricsStore.set(Double(response.audioBytes.count), forKey: "audio.speech_output_bytes")
+            await metricsStore.set(0, forKey: "audio.speech_streaming_enabled")
+            await metricsStore.set(0, forKey: "audio.speech_streaming_interval_ms")
+            await metricsStore.set(0, forKey: "audio.speech_first_audio_latency_ms")
             await refreshMultimodalRuntimeObservability(using: workerClient, routeKind: routeKind)
             await finishMultimodalRequest(
                 requestID: workerRequest.id.requestID,
@@ -1044,6 +1079,141 @@ public struct OpenAIHandler: Sendable {
             )
             return workerUnavailableResponse()
         }
+    }
+
+    private func streamAudioSpeechResponse(
+        _ workerStream: AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error>,
+        requestID: String,
+        routeKind: WorkerRouteKind,
+        workerClient: any WorkerRoutingClient,
+        speechContext: ResolvedAudioSpeechContext,
+        requestedFormat: String,
+        streamIntervalMs: UInt32,
+        startedAt: Date
+    ) -> HTTPResponse {
+        let responseStream = AsyncThrowingStream<Data, Error> { continuation in
+            let task = Task {
+                var streamedOutputBytes = 0
+                var streamedAudioChunkCount = 0
+                var firstAudioLatencyMs = 0.0
+                var finishSeen = false
+
+                do {
+                    for try await event in workerStream {
+                        switch event.kind {
+                        case .envelope:
+                            streamedOutputBytes += event.audioBytes.count
+                            continuation.yield(event.audioBytes)
+                        case .audioChunk:
+                            if firstAudioLatencyMs == 0.0 {
+                                firstAudioLatencyMs = max(Date().timeIntervalSince(startedAt) * 1000, 0.001)
+                                await metricsStore.set(
+                                    firstAudioLatencyMs,
+                                    forKey: "audio.speech_first_audio_latency_ms"
+                                )
+                            }
+                            streamedAudioChunkCount += 1
+                            streamedOutputBytes += event.audioBytes.count
+                            continuation.yield(event.audioBytes)
+                        case .finish:
+                            finishSeen = true
+                            let finish = event.finish
+                            let elapsedMs = max(Date().timeIntervalSince(startedAt) * 1000, 0.001)
+                            let outputBytes = finish.audioBytes > 0
+                                ? Double(finish.audioBytes)
+                                : Double(streamedOutputBytes)
+                            let audioChunkCount = finish.audioChunkCount > 0
+                                ? Double(finish.audioChunkCount)
+                                : Double(streamedAudioChunkCount)
+                            let runtimeFirstAudioLatencyMs = finish.speechFirstAudioLatencyMs > 0
+                                ? finish.speechFirstAudioLatencyMs
+                                : firstAudioLatencyMs
+                            let runtimeSpeechLatencyMs = finish.speechLatencyMs > 0
+                                ? finish.speechLatencyMs
+                                : elapsedMs
+                            let runtimeStreamIntervalMs = finish.speechStreamingIntervalMs > 0
+                                ? finish.speechStreamingIntervalMs
+                                : streamIntervalMs
+
+                            await metricsStore.set(elapsedMs, forKey: "audio.speech_request_latency_ms")
+                            await metricsStore.set(outputBytes, forKey: "audio.speech_output_bytes")
+                            await metricsStore.set(audioChunkCount, forKey: "audio.speech_stream_chunk_count")
+                            await metricsStore.set(1, forKey: "audio.speech_streaming_enabled")
+                            await metricsStore.set(
+                                Double(runtimeStreamIntervalMs),
+                                forKey: "audio.speech_streaming_interval_ms"
+                            )
+                            await metricsStore.set(
+                                runtimeFirstAudioLatencyMs,
+                                forKey: "audio.speech_first_audio_latency_ms"
+                            )
+                            await metricsStore.set(runtimeSpeechLatencyMs, forKey: "audio.speech_latency_ms")
+                        case .error:
+                            await finishMultimodalRequest(
+                                requestID: requestID,
+                                routeKind: routeKind,
+                                phase: .requestFailed
+                            )
+                            continuation.finish(
+                                throwing: WorkerClientError.requestFailed(
+                                    code: event.error.code,
+                                    message: event.error.message
+                                )
+                            )
+                            return
+                        case .unspecified, .UNRECOGNIZED:
+                            continue
+                        }
+                    }
+
+                    if !finishSeen {
+                        let elapsedMs = max(Date().timeIntervalSince(startedAt) * 1000, 0.001)
+                        await metricsStore.set(elapsedMs, forKey: "audio.speech_request_latency_ms")
+                        await metricsStore.set(Double(streamedOutputBytes), forKey: "audio.speech_output_bytes")
+                        await metricsStore.set(
+                            Double(streamedAudioChunkCount),
+                            forKey: "audio.speech_stream_chunk_count"
+                        )
+                        await metricsStore.set(1, forKey: "audio.speech_streaming_enabled")
+                        await metricsStore.set(
+                            Double(streamIntervalMs),
+                            forKey: "audio.speech_streaming_interval_ms"
+                        )
+                        await metricsStore.set(firstAudioLatencyMs, forKey: "audio.speech_first_audio_latency_ms")
+                    }
+
+                    await refreshMultimodalRuntimeObservability(using: workerClient, routeKind: routeKind)
+                    await finishMultimodalRequest(
+                        requestID: requestID,
+                        routeKind: routeKind,
+                        phase: .requestCompleted
+                    )
+                    continuation.finish()
+                } catch {
+                    await finishMultimodalRequest(
+                        requestID: requestID,
+                        routeKind: routeKind,
+                        phase: .requestFailed
+                    )
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+
+        return HTTPResponse(
+            statusCode: 200,
+            headers: speechResponseHeaders(
+                for: speechContext,
+                resolvedFormat: requestedFormat,
+                streaming: true,
+                streamIntervalMs: streamIntervalMs
+            ),
+            body: .stream(responseStream)
+        )
     }
 
     private func ensureAudioModelReady(
@@ -2535,8 +2705,28 @@ public struct OpenAIHandler: Sendable {
                 Double(stats.lastVoiceFallbackCount),
                 forKey: "audio.voice_fallback_count"
             )
+            if stats.lastProbeKind == "speech" {
+                await metricsStore.set(
+                    stats.lastSpeechStreamingEnabled ? 1 : 0,
+                    forKey: "audio.speech_streaming_enabled"
+                )
+                await metricsStore.set(
+                    Double(stats.lastSpeechStreamingIntervalMs),
+                    forKey: "audio.speech_streaming_interval_ms"
+                )
+                await metricsStore.set(
+                    stats.lastSpeechFirstAudioLatencyMs,
+                    forKey: "audio.speech_first_audio_latency_ms"
+                )
+            }
             if stats.lastAudioOutputBytes > 0 {
                 await metricsStore.set(Double(stats.lastAudioOutputBytes), forKey: "audio.speech_output_bytes")
+            }
+            if stats.lastAudioChunkCount > 0 {
+                await metricsStore.set(
+                    Double(stats.lastAudioChunkCount),
+                    forKey: "audio.speech_stream_chunk_count"
+                )
             }
         case .pythonImage:
             await metricsStore.set(stats.lastImageJobLatencyMs, forKey: "images.job_latency_ms")
@@ -2676,9 +2866,15 @@ public struct OpenAIHandler: Sendable {
 
     private func speechResponseHeaders(
         for context: ResolvedAudioSpeechContext,
-        resolvedFormat: String
+        resolvedFormat: String,
+        streaming: Bool = false,
+        streamIntervalMs: UInt32 = 0
     ) -> [String: String] {
         var headers = ["content-type": audioContentType(for: resolvedFormat)]
+        if streaming {
+            headers["x-melix-audio-streaming"] = "true"
+            headers["x-melix-audio-stream-interval-ms"] = String(streamIntervalMs)
+        }
         if !context.requestedLocale.isEmpty {
             headers["x-melix-audio-requested-locale"] = context.requestedLocale
         }
@@ -3111,6 +3307,19 @@ private struct OpenAIAudioSpeechRequest: Codable {
     let format: String?
     let instructions: String?
     let locale: String?
+    let stream: Bool?
+    let streamIntervalMs: UInt32?
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case input
+        case voice
+        case format
+        case instructions
+        case locale
+        case stream
+        case streamIntervalMs = "stream_interval_ms"
+    }
 }
 
 private struct ResolvedAudioSpeechContext {

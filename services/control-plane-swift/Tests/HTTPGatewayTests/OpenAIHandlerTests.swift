@@ -3705,6 +3705,8 @@ struct OpenAIHandlerTests {
         #expect(request.voice == "alloy")
         #expect(request.format == "wav")
         #expect(request.instructions == "Use a calm voice.")
+        #expect(request.stream == false)
+        #expect(request.streamIntervalMs == 0)
         #expect(response.headers["x-melix-audio-resolved-locale"] == "und")
         #expect(response.headers["x-melix-audio-locale-source"] == "model_default")
         #expect(response.headers["x-melix-audio-locale-policy"] == "request>model_default>packaged_default")
@@ -3714,6 +3716,302 @@ struct OpenAIHandlerTests {
         #expect(payload == Data("VOICE=alloy\nFORMAT=wav\nTEXT=hello speech".utf8))
         #expect(metrics.values["audio.speech_request_latency_ms", default: -1] >= 0)
         #expect(metrics.values["audio.speech_output_bytes", default: 0] == 40)
+    }
+
+    @Test("POST /v1/audio/speech streams progressive WAV chunks and records streaming metrics")
+    func postAudioSpeechStreamsProgressiveWAVAndRecordsStreamingMetrics() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let envelopeBytes = progressiveWAVHeader(sampleRate: 24_000)
+        let pcmChunk = Data([0x00, 0x00, 0x01, 0x00])
+        await audioClient.setSpeakStreamEvents([
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .envelope
+                event.audioBytes = envelopeBytes
+                event.envelope.format = "wav"
+                event.envelope.container = "wav"
+                event.envelope.codec = "pcm_s16le"
+                event.envelope.sampleRateHz = 24_000
+                event.envelope.channelCount = 1
+                event.envelope.bitsPerSample = 16
+                event.envelope.streamIntervalMs = 30
+                event.envelope.wavSizesUnknown = true
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .audioChunk
+                event.audioBytes = pcmChunk
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .finish
+                event.finish.speechStreamingEnabled = true
+                event.finish.speechStreamingIntervalMs = 30
+                event.finish.speechFirstAudioLatencyMs = 4.5
+                event.finish.speechLatencyMs = 12
+                event.finish.audioBytes = UInt64(envelopeBytes.count + pcmChunk.count)
+                event.finish.audioChunkCount = 1
+                return event
+            }(),
+        ])
+        await audioClient.setRuntimeStatsResponse({
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.lastProbeKind = "speech"
+            response.stats.lastSpeechLatencyMs = 12
+            response.stats.lastAudioOutputBytes = UInt64(envelopeBytes.count + pcmChunk.count)
+            response.stats.lastAudioChunkCount = 1
+            response.stats.lastSpeechStreamingEnabled = true
+            response.stats.lastSpeechStreamingIntervalMs = 30
+            response.stats.lastSpeechFirstAudioLatencyMs = 4.5
+            return response
+        }())
+
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            metricsStore: metricsStore
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "hello streamed speech",
+              "voice": "alloy",
+              "format": "wav",
+              "stream": true,
+              "stream_interval_ms": 30
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        if case .data = response.body {
+            Issue.record("Expected streaming speech response body.")
+        }
+        let payload = try await collectBodyData(response.body)
+        let request = try #require(await audioClient.lastSpeakRequest)
+        let metrics = await metricsStore.snapshot()
+        var expectedPayload = envelopeBytes
+        expectedPayload.append(pcmChunk)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "audio/wav")
+        #expect(response.headers["x-melix-audio-streaming"] == "true")
+        #expect(response.headers["x-melix-audio-stream-interval-ms"] == "30")
+        #expect(request.stream == true)
+        #expect(request.streamIntervalMs == 30)
+        #expect(payload == expectedPayload)
+        #expect(payload.starts(with: Data("RIFF".utf8)))
+        #expect(metrics.values["audio.speech_streaming_enabled", default: -1] == 1)
+        #expect(metrics.values["audio.speech_streaming_interval_ms", default: -1] == 30)
+        #expect(metrics.values["audio.speech_first_audio_latency_ms", default: -1] == 4.5)
+        #expect(metrics.values["audio.speech_stream_chunk_count", default: -1] == 1)
+        #expect(metrics.values["audio.speech_output_bytes", default: -1] == Double(envelopeBytes.count + pcmChunk.count))
+    }
+
+    @Test("POST /v1/audio/speech propagates streaming worker error events")
+    func postAudioSpeechStreamingPropagatesWorkerErrorEvents() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakStreamEvents([
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .error
+                event.error.code = "runtime_error"
+                event.error.message = "stream failed"
+                return event
+            }(),
+        ])
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "error stream",
+              "stream": true
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+
+        #expect(response.statusCode == 200)
+        await #expect(throws: WorkerClientError.requestFailed(code: "runtime_error", message: "stream failed")) {
+            _ = try await collectBodyData(response.body)
+        }
+    }
+
+    @Test("POST /v1/audio/speech records fallback streaming metrics when finish is absent")
+    func postAudioSpeechStreamingRecordsFallbackMetricsWhenFinishIsAbsent() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let envelopeBytes = progressiveWAVHeader(sampleRate: 24_000)
+        let pcmChunk = Data([0x02, 0x00, 0x03, 0x00])
+        await audioClient.setSpeakStreamEvents([
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .envelope
+                event.audioBytes = envelopeBytes
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .audioChunk
+                event.audioBytes = pcmChunk
+                return event
+            }(),
+        ])
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            metricsStore: metricsStore
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "missing finish",
+              "stream": true,
+              "stream_interval_ms": 40
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+        let metrics = await metricsStore.snapshot()
+        var expectedPayload = envelopeBytes
+        expectedPayload.append(pcmChunk)
+
+        #expect(payload == expectedPayload)
+        #expect(metrics.values["audio.speech_streaming_enabled", default: -1] == 1)
+        #expect(metrics.values["audio.speech_streaming_interval_ms", default: -1] == 40)
+        #expect(metrics.values["audio.speech_stream_chunk_count", default: -1] == 1)
+        #expect(metrics.values["audio.speech_output_bytes", default: -1] == Double(envelopeBytes.count + pcmChunk.count))
+        #expect(metrics.values["audio.speech_first_audio_latency_ms", default: -1] > 0)
+    }
+
+    @Test("POST /v1/audio/speech propagates thrown streaming failures")
+    func postAudioSpeechStreamingPropagatesThrownFailures() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakStreamFailure(WorkerClientError.unavailable)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "thrown stream",
+              "stream": true
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+
+        await #expect(throws: WorkerClientError.unavailable) {
+            _ = try await collectBodyData(response.body)
+        }
+    }
+
+    @Test("POST /v1/audio/speech rejects out-of-range streaming cadence before dispatch")
+    func postAudioSpeechRejectsOutOfRangeStreamingCadence() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "bad cadence",
+              "stream": true,
+              "stream_interval_ms": 0
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("stream_interval_ms"))
+        #expect(await audioClient.lastSpeakRequest == nil)
     }
 
     @Test("POST /v1/audio/speech normalizes requested locales and exposes hydrated speech headers")
@@ -6881,6 +7179,8 @@ private actor ScriptedPhaseFiveWorkerClient:
     private var rerankResponse = Melix_Worker_V1_RerankResponse()
     private var transcribeResponse = Melix_Worker_V1_TranscribeResponse()
     private var speakResponse = Melix_Worker_V1_SpeakResponse()
+    private var speakStreamEvents: [Melix_Worker_V1_SpeakStreamEvent] = []
+    private var speakStreamFailure: Error?
     private var imageGenerateResponse = Melix_Worker_V1_ImageGenerateResponse()
     private var imageEditResponse = Melix_Worker_V1_ImageEditResponse()
     private var runtimeStatsResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
@@ -6901,6 +7201,14 @@ private actor ScriptedPhaseFiveWorkerClient:
 
     func setSpeakResponse(_ response: Melix_Worker_V1_SpeakResponse) {
         speakResponse = response
+    }
+
+    func setSpeakStreamEvents(_ events: [Melix_Worker_V1_SpeakStreamEvent]) {
+        speakStreamEvents = events
+    }
+
+    func setSpeakStreamFailure(_ failure: Error?) {
+        speakStreamFailure = failure
     }
 
     func setImageGenerateResponse(_ response: Melix_Worker_V1_ImageGenerateResponse) {
@@ -6990,6 +7298,27 @@ private actor ScriptedPhaseFiveWorkerClient:
         }
         lastSpeakRequest = request
         return speakResponse
+    }
+
+    func speakStream(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error> {
+        if let thrownFailure {
+            throw thrownFailure
+        }
+        lastSpeakRequest = request
+        let events = speakStreamEvents
+        let failure = speakStreamFailure
+        return AsyncThrowingStream { continuation in
+            for event in events {
+                continuation.yield(event)
+            }
+            if let failure {
+                continuation.finish(throwing: failure)
+            } else {
+                continuation.finish()
+            }
+        }
     }
 
     func imageGenerate(
@@ -7410,6 +7739,33 @@ private final class RequestIDSequence: @unchecked Sendable {
         defer { lock.unlock() }
         return remaining.removeFirst()
     }
+}
+
+private func progressiveWAVHeader(sampleRate: UInt32) -> Data {
+    var data = Data()
+    data.append(Data("RIFF".utf8))
+    data.append(littleEndianUInt32Data(UInt32.max))
+    data.append(Data("WAVEfmt ".utf8))
+    data.append(littleEndianUInt32Data(16))
+    data.append(littleEndianUInt16Data(1))
+    data.append(littleEndianUInt16Data(1))
+    data.append(littleEndianUInt32Data(sampleRate))
+    data.append(littleEndianUInt32Data(sampleRate * 2))
+    data.append(littleEndianUInt16Data(2))
+    data.append(littleEndianUInt16Data(16))
+    data.append(Data("data".utf8))
+    data.append(littleEndianUInt32Data(UInt32.max))
+    return data
+}
+
+private func littleEndianUInt16Data(_ value: UInt16) -> Data {
+    var littleEndianValue = value.littleEndian
+    return Data(bytes: &littleEndianValue, count: MemoryLayout<UInt16>.size)
+}
+
+private func littleEndianUInt32Data(_ value: UInt32) -> Data {
+    var littleEndianValue = value.littleEndian
+    return Data(bytes: &littleEndianValue, count: MemoryLayout<UInt32>.size)
 }
 
 private func collectBody(_ body: HTTPBody) async throws -> String {

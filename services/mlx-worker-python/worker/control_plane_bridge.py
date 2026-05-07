@@ -38,6 +38,7 @@ def main() -> None:
             "rerank",
             "transcribe",
             "speak",
+            "speak-stream",
             "image-generate",
             "image-edit",
             "get-model-info",
@@ -111,6 +112,11 @@ def main() -> None:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.SpeakRequest.FromString(request_bytes)
                 emit_message(stub.Speak(request).SerializeToString())
+            elif args.command == "speak-stream":
+                stub = inference_pb2_grpc.InferenceServiceStub(channel)
+                request = inference_pb2.SpeakRequest.FromString(request_bytes)
+                for event in stub.SpeakStream(request):
+                    emit_message(event.SerializeToString())
             elif args.command == "image-generate":
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.ImageGenerateRequest.FromString(request_bytes)

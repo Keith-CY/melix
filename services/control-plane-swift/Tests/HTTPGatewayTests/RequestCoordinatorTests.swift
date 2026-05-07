@@ -955,6 +955,63 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 2)
     }
 
+    @Test("python speech requests publish speech streaming metrics")
+    func pythonSpeechRequestsPublishSpeechStreamingMetrics() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        await workerClient.setRuntimeStatsResponse({
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.lastProbeKind = "speech"
+            response.stats.lastSpeechLatencyMs = 18
+            response.stats.lastAudioOutputBytes = 4096
+            response.stats.lastAudioChunkCount = 4
+            response.stats.lastAudioModelLoadLatencyMs = 7
+            response.stats.lastAudioBackendUnavailableCount = 1
+            response.stats.lastVoiceFallbackCount = 2
+            response.stats.lastSpeechStreamingEnabled = true
+            response.stats.lastSpeechStreamingIntervalMs = 25
+            response.stats.lastSpeechFirstAudioLatencyMs = 3
+            return response
+        }())
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devSpeechModel()])
+        _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-speech-metrics", modelID: "melix-dev-speech")
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {}
+        }
+        await workerClient.emitToken(requestID: "req-speech-metrics", text: "speech")
+        await workerClient.finish(requestID: "req-speech-metrics")
+        _ = try await consumer.value
+
+        let metrics = await metricsStore.snapshot()
+        let progress = await schedulerReadModel.progressSnapshot(for: "req-speech-metrics")
+
+        #expect(progress?.lane == "multimodal.audio.speech.background")
+        #expect(metrics.values["audio.speech_latency_ms", default: -1] == 18)
+        #expect(metrics.values["audio.model_load_latency_ms", default: -1] == 7)
+        #expect(metrics.values["audio.backend_unavailable_count", default: -1] == 1)
+        #expect(metrics.values["audio.voice_fallback_count", default: -1] == 2)
+        #expect(metrics.values["audio.speech_streaming_enabled", default: -1] == 1)
+        #expect(metrics.values["audio.speech_streaming_interval_ms", default: -1] == 25)
+        #expect(metrics.values["audio.speech_first_audio_latency_ms", default: -1] == 3)
+        #expect(metrics.values["audio.speech_output_bytes", default: -1] == 4096)
+        #expect(metrics.values["audio.speech_stream_chunk_count", default: -1] == 4)
+    }
+
     @Test("video-bearing vlm requests publish explicit frame-policy metrics on background lanes")
     func videoBearingVLMRequestsPublishFramePolicyMetrics() async throws {
         let workerClient = PhaseAwareWorkerClient()

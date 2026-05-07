@@ -322,6 +322,57 @@ struct PythonBridgeWorkerClientTests {
         #expect(spoken.format == "wav")
     }
 
+    @Test("speak stream decodes progressive speech events from the bridge")
+    func speakStreamDecodesProgressiveSpeechEventsFromTheBridge() async throws {
+        var speakRequest = Melix_Worker_V1_SpeakRequest()
+        speakRequest.id.requestID = "speak-stream-bridge"
+        speakRequest.modelHandle = "melix-dev-speech::bridge"
+        speakRequest.input = "hello streamed speech"
+        speakRequest.voice = "alloy"
+        speakRequest.format = "wav"
+        speakRequest.stream = true
+        speakRequest.streamIntervalMs = 20
+
+        var envelope = Melix_Worker_V1_SpeakStreamEvent()
+        envelope.kind = .envelope
+        envelope.audioBytes = Data("RIFF-envelope".utf8)
+        envelope.envelope.format = "wav"
+        envelope.envelope.codec = "pcm_s16le"
+        envelope.envelope.streamIntervalMs = 20
+
+        var chunk = Melix_Worker_V1_SpeakStreamEvent()
+        chunk.kind = .audioChunk
+        chunk.audioBytes = Data([0, 0, 1, 0])
+
+        var finish = Melix_Worker_V1_SpeakStreamEvent()
+        finish.kind = .finish
+        finish.finish.speechStreamingEnabled = true
+        finish.finish.speechStreamingIntervalMs = 20
+        finish.finish.speechFirstAudioLatencyMs = 3
+        finish.finish.audioChunkCount = 1
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setStreamResponse(
+            .speakStream,
+            lines: [
+                bridgeMessageLine(message: try envelope.serializedData()),
+                bridgeMessageLine(message: try chunk.serializedData()),
+                bridgeMessageLine(message: try finish.serializedData()),
+            ]
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let stream = try await client.speakStream(request: speakRequest)
+        let events = try await collect(stream)
+
+        #expect(events.map(\.kind) == [.envelope, .audioChunk, .finish])
+        #expect(events[0].audioBytes == Data("RIFF-envelope".utf8))
+        #expect(events[0].envelope.codec == "pcm_s16le")
+        #expect(events[1].audioBytes == Data([0, 0, 1, 0]))
+        #expect(events[2].finish.speechStreamingEnabled)
+        #expect(events[2].finish.speechFirstAudioLatencyMs == 3)
+    }
+
     @Test("image generate and image edit decode unary payloads from the bridge")
     func imageGenerateAndEditDecodeUnaryPayloadsFromTheBridge() async throws {
         var generateRequest = Melix_Worker_V1_ImageGenerateRequest()

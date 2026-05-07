@@ -14,8 +14,9 @@ service InferenceService {
   rpc Rerank(RerankRequest) returns (RerankResponse);
   rpc Transcribe(TranscribeRequest) returns (TranscribeResponse);
   rpc Speak(SpeakRequest) returns (SpeakResponse);
-rpc ImageGenerate(ImageGenerateRequest) returns (ImageGenerateResponse);
-rpc ImageEdit(ImageEditRequest) returns (ImageEditResponse);
+  rpc SpeakStream(SpeakRequest) returns (stream SpeakStreamEvent);
+  rpc ImageGenerate(ImageGenerateRequest) returns (ImageGenerateResponse);
+  rpc ImageEdit(ImageEditRequest) returns (ImageEditResponse);
 }
 
 message ExecutionMetadata {
@@ -279,12 +280,51 @@ message SpeakRequest {
   string instructions = 6;
   SamplingConfig sampling = 7;
   map<string, string> ext = 8;
+  bool stream = 9;
+  uint32 stream_interval_ms = 10;
 }
 
 message SpeakResponse {
   bytes audio_bytes = 1;
   string format = 2;
   ErrorStatus error = 3;
+}
+
+enum SpeakStreamEventKind {
+  SPEAK_STREAM_EVENT_KIND_UNSPECIFIED = 0;
+  SPEAK_STREAM_EVENT_KIND_ENVELOPE = 1;
+  SPEAK_STREAM_EVENT_KIND_AUDIO_CHUNK = 2;
+  SPEAK_STREAM_EVENT_KIND_FINISH = 3;
+  SPEAK_STREAM_EVENT_KIND_ERROR = 4;
+}
+
+message SpeakStreamEnvelope {
+  string format = 1;
+  string container = 2;
+  string codec = 3;
+  uint32 sample_rate_hz = 4;
+  uint32 channel_count = 5;
+  uint32 bits_per_sample = 6;
+  uint32 stream_interval_ms = 7;
+  bool wav_sizes_unknown = 8;
+  map<string, string> ext = 9;
+}
+
+message SpeakStreamFinish {
+  bool speech_streaming_enabled = 1;
+  uint32 speech_streaming_interval_ms = 2;
+  double speech_first_audio_latency_ms = 3;
+  double speech_latency_ms = 4;
+  uint64 audio_bytes = 5;
+  uint64 audio_chunk_count = 6;
+}
+
+message SpeakStreamEvent {
+  SpeakStreamEventKind kind = 1;
+  bytes audio_bytes = 2;
+  SpeakStreamEnvelope envelope = 3;
+  SpeakStreamFinish finish = 4;
+  ErrorStatus error = 5;
 }
 
 enum ImageEditMode {

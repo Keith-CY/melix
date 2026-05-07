@@ -74,6 +74,11 @@ class InferenceServiceStub(object):
                 request_serializer=worker_dot_v1_dot_inference__pb2.SpeakRequest.SerializeToString,
                 response_deserializer=worker_dot_v1_dot_inference__pb2.SpeakResponse.FromString,
                 _registered_method=True)
+        self.SpeakStream = channel.unary_stream(
+                '/melix.worker.v1.InferenceService/SpeakStream',
+                request_serializer=worker_dot_v1_dot_inference__pb2.SpeakRequest.SerializeToString,
+                response_deserializer=worker_dot_v1_dot_inference__pb2.SpeakStreamEvent.FromString,
+                _registered_method=True)
         self.ImageGenerate = channel.unary_unary(
                 '/melix.worker.v1.InferenceService/ImageGenerate',
                 request_serializer=worker_dot_v1_dot_inference__pb2.ImageGenerateRequest.SerializeToString,
@@ -137,6 +142,12 @@ class InferenceServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SpeakStream(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def ImageGenerate(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -191,6 +202,11 @@ def add_InferenceServiceServicer_to_server(servicer, server):
                     servicer.Speak,
                     request_deserializer=worker_dot_v1_dot_inference__pb2.SpeakRequest.FromString,
                     response_serializer=worker_dot_v1_dot_inference__pb2.SpeakResponse.SerializeToString,
+            ),
+            'SpeakStream': grpc.unary_stream_rpc_method_handler(
+                    servicer.SpeakStream,
+                    request_deserializer=worker_dot_v1_dot_inference__pb2.SpeakRequest.FromString,
+                    response_serializer=worker_dot_v1_dot_inference__pb2.SpeakStreamEvent.SerializeToString,
             ),
             'ImageGenerate': grpc.unary_unary_rpc_method_handler(
                     servicer.ImageGenerate,
@@ -419,6 +435,33 @@ class InferenceService(object):
             '/melix.worker.v1.InferenceService/Speak',
             worker_dot_v1_dot_inference__pb2.SpeakRequest.SerializeToString,
             worker_dot_v1_dot_inference__pb2.SpeakResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SpeakStream(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/melix.worker.v1.InferenceService/SpeakStream',
+            worker_dot_v1_dot_inference__pb2.SpeakRequest.SerializeToString,
+            worker_dot_v1_dot_inference__pb2.SpeakStreamEvent.FromString,
             options,
             channel_credentials,
             insecure,

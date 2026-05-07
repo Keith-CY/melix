@@ -276,6 +276,9 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
     def Speak(self, request, context):
         return self._speech.speak(request)
 
+    def SpeakStream(self, request, context):
+        yield from self._speech.speak_stream(request)
+
     def ImageGenerate(self, request, context):
         return self._image_generation.generate(request)
 

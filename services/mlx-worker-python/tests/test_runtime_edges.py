@@ -890,12 +890,12 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
     assert isinstance(inference_service, WorkerInferenceService)
     assert seen_build == {
         "handlers": 4,
-            "registered_services": [
-                ("melix.worker.v1.RuntimeService", 8),
-                ("melix.worker.v1.InferenceService", 10),
-                ("melix.worker.v1.MaintenanceService", maintenance_method_count),
-                ("melix.worker.v1.CacheService", 6),
-            ],
+                "registered_services": [
+                    ("melix.worker.v1.RuntimeService", 8),
+                    ("melix.worker.v1.InferenceService", 11),
+                    ("melix.worker.v1.MaintenanceService", maintenance_method_count),
+                    ("melix.worker.v1.CacheService", 6),
+                ],
         "address": f"unix://{Path('/tmp/melix-test.sock').resolve()}",
         "stopped": 0,
     }

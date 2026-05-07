@@ -25,6 +25,52 @@ fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAP
   typealias Version = _2
 }
 
+public enum Melix_Worker_V1_SpeakStreamEventKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case envelope // = 1
+  case audioChunk // = 2
+  case finish // = 3
+  case error // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .envelope
+    case 2: self = .audioChunk
+    case 3: self = .finish
+    case 4: self = .error
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .envelope: return 1
+    case .audioChunk: return 2
+    case .finish: return 3
+    case .error: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_SpeakStreamEventKind] = [
+    .unspecified,
+    .envelope,
+    .audioChunk,
+    .finish,
+    .error,
+  ]
+
+}
+
 public enum Melix_Worker_V1_ImageEditMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -1189,6 +1235,16 @@ public struct Melix_Worker_V1_SpeakRequest: @unchecked Sendable {
     set {_uniqueStorage()._ext = newValue}
   }
 
+  public var stream: Bool {
+    get {_storage._stream}
+    set {_uniqueStorage()._stream = newValue}
+  }
+
+  public var streamIntervalMs: UInt32 {
+    get {_storage._streamIntervalMs}
+    set {_uniqueStorage()._streamIntervalMs = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1219,6 +1275,105 @@ public struct Melix_Worker_V1_SpeakResponse: Sendable {
   public init() {}
 
   fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
+}
+
+public struct Melix_Worker_V1_SpeakStreamEnvelope: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var format: String = String()
+
+  public var container: String = String()
+
+  public var codec: String = String()
+
+  public var sampleRateHz: UInt32 = 0
+
+  public var channelCount: UInt32 = 0
+
+  public var bitsPerSample: UInt32 = 0
+
+  public var streamIntervalMs: UInt32 = 0
+
+  public var wavSizesUnknown: Bool = false
+
+  public var ext: Dictionary<String,String> = [:]
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_SpeakStreamFinish: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var speechStreamingEnabled: Bool = false
+
+  public var speechStreamingIntervalMs: UInt32 = 0
+
+  public var speechFirstAudioLatencyMs: Double = 0
+
+  public var speechLatencyMs: Double = 0
+
+  public var audioBytes: UInt64 = 0
+
+  public var audioChunkCount: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Worker_V1_SpeakStreamEvent: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var kind: Melix_Worker_V1_SpeakStreamEventKind {
+    get {_storage._kind}
+    set {_uniqueStorage()._kind = newValue}
+  }
+
+  public var audioBytes: Data {
+    get {_storage._audioBytes}
+    set {_uniqueStorage()._audioBytes = newValue}
+  }
+
+  public var envelope: Melix_Worker_V1_SpeakStreamEnvelope {
+    get {_storage._envelope ?? Melix_Worker_V1_SpeakStreamEnvelope()}
+    set {_uniqueStorage()._envelope = newValue}
+  }
+  /// Returns true if `envelope` has been explicitly set.
+  public var hasEnvelope: Bool {_storage._envelope != nil}
+  /// Clears the value of `envelope`. Subsequent reads from it will return its default value.
+  public mutating func clearEnvelope() {_uniqueStorage()._envelope = nil}
+
+  public var finish: Melix_Worker_V1_SpeakStreamFinish {
+    get {_storage._finish ?? Melix_Worker_V1_SpeakStreamFinish()}
+    set {_uniqueStorage()._finish = newValue}
+  }
+  /// Returns true if `finish` has been explicitly set.
+  public var hasFinish: Bool {_storage._finish != nil}
+  /// Clears the value of `finish`. Subsequent reads from it will return its default value.
+  public mutating func clearFinish() {_uniqueStorage()._finish = nil}
+
+  public var error: Melix_Worker_V1_ErrorStatus {
+    get {_storage._error ?? Melix_Worker_V1_ErrorStatus()}
+    set {_uniqueStorage()._error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {_storage._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {_uniqueStorage()._error = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_ImageGenerateRequest: Sendable {
@@ -1511,6 +1666,10 @@ public struct Melix_Worker_V1_ImageJobDescriptor: @unchecked Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "melix.worker.v1"
+
+extension Melix_Worker_V1_SpeakStreamEventKind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SPEAK_STREAM_EVENT_KIND_UNSPECIFIED\0\u{1}SPEAK_STREAM_EVENT_KIND_ENVELOPE\0\u{1}SPEAK_STREAM_EVENT_KIND_AUDIO_CHUNK\0\u{1}SPEAK_STREAM_EVENT_KIND_FINISH\0\u{1}SPEAK_STREAM_EVENT_KIND_ERROR\0")
+}
 
 extension Melix_Worker_V1_ImageEditMode: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_EDIT_MODE_UNSPECIFIED\0\u{1}IMAGE_EDIT_MODE_EDIT\0\u{1}IMAGE_EDIT_MODE_VARIATION\0\u{1}IMAGE_EDIT_MODE_ITERATE\0")
@@ -3600,7 +3759,7 @@ extension Melix_Worker_V1_TranscribeResponse: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SpeakRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{1}input\0\u{1}voice\0\u{1}format\0\u{1}instructions\0\u{1}sampling\0\u{1}ext\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}model_handle\0\u{1}input\0\u{1}voice\0\u{1}format\0\u{1}instructions\0\u{1}sampling\0\u{1}ext\0\u{1}stream\0\u{3}stream_interval_ms\0")
 
   fileprivate class _StorageClass {
     var _id: Melix_Worker_V1_RequestIdentity? = nil
@@ -3611,6 +3770,8 @@ extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
     var _instructions: String = String()
     var _sampling: Melix_Worker_V1_SamplingConfig? = nil
     var _ext: Dictionary<String,String> = [:]
+    var _stream: Bool = false
+    var _streamIntervalMs: UInt32 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -3629,6 +3790,8 @@ extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
       _instructions = source._instructions
       _sampling = source._sampling
       _ext = source._ext
+      _stream = source._stream
+      _streamIntervalMs = source._streamIntervalMs
     }
   }
 
@@ -3655,6 +3818,8 @@ extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
         case 6: try { try decoder.decodeSingularStringField(value: &_storage._instructions) }()
         case 7: try { try decoder.decodeSingularMessageField(value: &_storage._sampling) }()
         case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &_storage._ext) }()
+        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._stream) }()
+        case 10: try { try decoder.decodeSingularUInt32Field(value: &_storage._streamIntervalMs) }()
         default: break
         }
       }
@@ -3691,6 +3856,12 @@ extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
       if !_storage._ext.isEmpty {
         try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: _storage._ext, fieldNumber: 8)
       }
+      if _storage._stream != false {
+        try visitor.visitSingularBoolField(value: _storage._stream, fieldNumber: 9)
+      }
+      if _storage._streamIntervalMs != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._streamIntervalMs, fieldNumber: 10)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -3708,6 +3879,8 @@ extension Melix_Worker_V1_SpeakRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
         if _storage._instructions != rhs_storage._instructions {return false}
         if _storage._sampling != rhs_storage._sampling {return false}
         if _storage._ext != rhs_storage._ext {return false}
+        if _storage._stream != rhs_storage._stream {return false}
+        if _storage._streamIntervalMs != rhs_storage._streamIntervalMs {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -3756,6 +3929,229 @@ extension Melix_Worker_V1_SpeakResponse: SwiftProtobuf.Message, SwiftProtobuf._M
     if lhs.audioBytes != rhs.audioBytes {return false}
     if lhs.format != rhs.format {return false}
     if lhs._error != rhs._error {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_SpeakStreamEnvelope: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SpeakStreamEnvelope"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}format\0\u{1}container\0\u{1}codec\0\u{3}sample_rate_hz\0\u{3}channel_count\0\u{3}bits_per_sample\0\u{3}stream_interval_ms\0\u{3}wav_sizes_unknown\0\u{1}ext\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.format) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.container) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.codec) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.sampleRateHz) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.channelCount) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.bitsPerSample) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.streamIntervalMs) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.wavSizesUnknown) }()
+      case 9: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.ext) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.format.isEmpty {
+      try visitor.visitSingularStringField(value: self.format, fieldNumber: 1)
+    }
+    if !self.container.isEmpty {
+      try visitor.visitSingularStringField(value: self.container, fieldNumber: 2)
+    }
+    if !self.codec.isEmpty {
+      try visitor.visitSingularStringField(value: self.codec, fieldNumber: 3)
+    }
+    if self.sampleRateHz != 0 {
+      try visitor.visitSingularUInt32Field(value: self.sampleRateHz, fieldNumber: 4)
+    }
+    if self.channelCount != 0 {
+      try visitor.visitSingularUInt32Field(value: self.channelCount, fieldNumber: 5)
+    }
+    if self.bitsPerSample != 0 {
+      try visitor.visitSingularUInt32Field(value: self.bitsPerSample, fieldNumber: 6)
+    }
+    if self.streamIntervalMs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.streamIntervalMs, fieldNumber: 7)
+    }
+    if self.wavSizesUnknown != false {
+      try visitor.visitSingularBoolField(value: self.wavSizesUnknown, fieldNumber: 8)
+    }
+    if !self.ext.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.ext, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_SpeakStreamEnvelope, rhs: Melix_Worker_V1_SpeakStreamEnvelope) -> Bool {
+    if lhs.format != rhs.format {return false}
+    if lhs.container != rhs.container {return false}
+    if lhs.codec != rhs.codec {return false}
+    if lhs.sampleRateHz != rhs.sampleRateHz {return false}
+    if lhs.channelCount != rhs.channelCount {return false}
+    if lhs.bitsPerSample != rhs.bitsPerSample {return false}
+    if lhs.streamIntervalMs != rhs.streamIntervalMs {return false}
+    if lhs.wavSizesUnknown != rhs.wavSizesUnknown {return false}
+    if lhs.ext != rhs.ext {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_SpeakStreamFinish: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SpeakStreamFinish"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}speech_streaming_enabled\0\u{3}speech_streaming_interval_ms\0\u{3}speech_first_audio_latency_ms\0\u{3}speech_latency_ms\0\u{3}audio_bytes\0\u{3}audio_chunk_count\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.speechStreamingEnabled) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.speechStreamingIntervalMs) }()
+      case 3: try { try decoder.decodeSingularDoubleField(value: &self.speechFirstAudioLatencyMs) }()
+      case 4: try { try decoder.decodeSingularDoubleField(value: &self.speechLatencyMs) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.audioBytes) }()
+      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.audioChunkCount) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.speechStreamingEnabled != false {
+      try visitor.visitSingularBoolField(value: self.speechStreamingEnabled, fieldNumber: 1)
+    }
+    if self.speechStreamingIntervalMs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.speechStreamingIntervalMs, fieldNumber: 2)
+    }
+    if self.speechFirstAudioLatencyMs.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.speechFirstAudioLatencyMs, fieldNumber: 3)
+    }
+    if self.speechLatencyMs.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.speechLatencyMs, fieldNumber: 4)
+    }
+    if self.audioBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.audioBytes, fieldNumber: 5)
+    }
+    if self.audioChunkCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.audioChunkCount, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_SpeakStreamFinish, rhs: Melix_Worker_V1_SpeakStreamFinish) -> Bool {
+    if lhs.speechStreamingEnabled != rhs.speechStreamingEnabled {return false}
+    if lhs.speechStreamingIntervalMs != rhs.speechStreamingIntervalMs {return false}
+    if lhs.speechFirstAudioLatencyMs != rhs.speechFirstAudioLatencyMs {return false}
+    if lhs.speechLatencyMs != rhs.speechLatencyMs {return false}
+    if lhs.audioBytes != rhs.audioBytes {return false}
+    if lhs.audioChunkCount != rhs.audioChunkCount {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Worker_V1_SpeakStreamEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SpeakStreamEvent"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{3}audio_bytes\0\u{1}envelope\0\u{1}finish\0\u{1}error\0")
+
+  fileprivate class _StorageClass {
+    var _kind: Melix_Worker_V1_SpeakStreamEventKind = .unspecified
+    var _audioBytes: Data = Data()
+    var _envelope: Melix_Worker_V1_SpeakStreamEnvelope? = nil
+    var _finish: Melix_Worker_V1_SpeakStreamFinish? = nil
+    var _error: Melix_Worker_V1_ErrorStatus? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _kind = source._kind
+      _audioBytes = source._audioBytes
+      _envelope = source._envelope
+      _finish = source._finish
+      _error = source._error
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularEnumField(value: &_storage._kind) }()
+        case 2: try { try decoder.decodeSingularBytesField(value: &_storage._audioBytes) }()
+        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._envelope) }()
+        case 4: try { try decoder.decodeSingularMessageField(value: &_storage._finish) }()
+        case 5: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._kind != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._kind, fieldNumber: 1)
+      }
+      if !_storage._audioBytes.isEmpty {
+        try visitor.visitSingularBytesField(value: _storage._audioBytes, fieldNumber: 2)
+      }
+      try { if let v = _storage._envelope {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      } }()
+      try { if let v = _storage._finish {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+      } }()
+      try { if let v = _storage._error {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+      } }()
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_SpeakStreamEvent, rhs: Melix_Worker_V1_SpeakStreamEvent) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._kind != rhs_storage._kind {return false}
+        if _storage._audioBytes != rhs_storage._audioBytes {return false}
+        if _storage._envelope != rhs_storage._envelope {return false}
+        if _storage._finish != rhs_storage._finish {return false}
+        if _storage._error != rhs_storage._error {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

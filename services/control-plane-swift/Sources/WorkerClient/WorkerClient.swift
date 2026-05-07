@@ -71,6 +71,10 @@ public protocol NonTextInferenceWorkerClientProtocol: WorkerClient {
         request: Melix_Worker_V1_SpeakRequest
     ) async throws -> Melix_Worker_V1_SpeakResponse
 
+    func speakStream(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error>
+
     func imageGenerate(
         request: Melix_Worker_V1_ImageGenerateRequest
     ) async throws -> Melix_Worker_V1_ImageGenerateResponse
@@ -78,6 +82,15 @@ public protocol NonTextInferenceWorkerClientProtocol: WorkerClient {
     func imageEdit(
         request: Melix_Worker_V1_ImageEditRequest
     ) async throws -> Melix_Worker_V1_ImageEditResponse
+}
+
+public extension NonTextInferenceWorkerClientProtocol {
+    func speakStream(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error> {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
 }
 
 public protocol PhaseAwareWorkerClientProtocol: WorkerClient {

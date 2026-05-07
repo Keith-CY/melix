@@ -110,6 +110,33 @@ class FakeInferenceStub:
     def Abort(self, request):
         return inference_pb2.AbortResponse(ok=True, found=True)
 
+    def SpeakStream(self, request):
+        yield inference_pb2.SpeakStreamEvent(
+            kind=inference_pb2.SPEAK_STREAM_EVENT_KIND_ENVELOPE,
+            audio_bytes=b"RIFF",
+            envelope=inference_pb2.SpeakStreamEnvelope(
+                format=request.format or "wav",
+                container="wav",
+                codec="pcm_s16le",
+                sample_rate_hz=24_000,
+                channel_count=1,
+                bits_per_sample=16,
+                stream_interval_ms=request.stream_interval_ms,
+                wav_sizes_unknown=True,
+            ),
+        )
+        yield inference_pb2.SpeakStreamEvent(
+            kind=inference_pb2.SPEAK_STREAM_EVENT_KIND_FINISH,
+            finish=inference_pb2.SpeakStreamFinish(
+                speech_streaming_enabled=True,
+                speech_streaming_interval_ms=request.stream_interval_ms,
+                speech_first_audio_latency_ms=1.5,
+                speech_latency_ms=3.0,
+                audio_bytes=4,
+                audio_chunk_count=1,
+            ),
+        )
+
 
 class FakeRpcError(grpc.RpcError):
     def code(self):
@@ -343,6 +370,45 @@ def test_bridge_helper_forwards_prefill_and_decode(monkeypatch, capsys) -> None:
     last_payload = inference_pb2.ExecuteEvent.FromString(base64.b64decode(decode_lines[-1]["message_b64"]))
     assert first_payload.decode_started.decode_handle == "decode-req-prefill-bridge"
     assert last_payload.completed.assistant_text == "Vision answer"
+
+
+def test_bridge_helper_forwards_speak_stream(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
+
+    request = inference_pb2.SpeakRequest(
+        id=common_pb2.RequestIdentity(request_id="req-speak-stream-bridge"),
+        model_handle="melix-dev-speech::bridge",
+        input="hello",
+        format="wav",
+        stream=True,
+        stream_interval_ms=25,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "speak-stream",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    events = [
+        inference_pb2.SpeakStreamEvent.FromString(base64.b64decode(line["message_b64"]))
+        for line in lines
+    ]
+    assert [event.kind for event in events] == [
+        inference_pb2.SPEAK_STREAM_EVENT_KIND_ENVELOPE,
+        inference_pb2.SPEAK_STREAM_EVENT_KIND_FINISH,
+    ]
+    assert events[0].envelope.stream_interval_ms == 25
+    assert events[-1].finish.speech_streaming_interval_ms == 25
 
 
 def test_bridge_helper_emits_error_payloads_for_rpc_failures(monkeypatch, capsys) -> None:
