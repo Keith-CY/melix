@@ -1672,6 +1672,67 @@ def test_run_local_suite_compares_base_against_target_models_and_persists_compar
     assert "Category Breakdown" in report_markdown
 
 
+def test_resolve_compare_target_models_stops_after_requested_targets() -> None:
+    from worker.productization.evaluation_compare import resolve_compare_target_models
+
+    class TrackingRegistry:
+        def __init__(self) -> None:
+            self.get_calls: list[str] = []
+            self._models = {
+                "handle-00": SimpleNamespace(spec=SimpleNamespace(model_id="base-model")),
+                "handle-01": SimpleNamespace(spec=SimpleNamespace(model_id="target-a")),
+                "handle-02": SimpleNamespace(spec=SimpleNamespace(model_id="target-b")),
+                "handle-03": SimpleNamespace(spec=SimpleNamespace(model_id="unused-after-targets")),
+            }
+
+        def list_loaded_models(self) -> list[str]:
+            return list(self._models)
+
+        def get_loaded_model(self, handle: str):
+            self.get_calls.append(handle)
+            return self._models[handle]
+
+    registry = TrackingRegistry()
+
+    resolved = resolve_compare_target_models(
+        registry=registry,
+        target_model_ids=("target-a", "target-b", "target-a"),
+    )
+
+    assert tuple(resolved) == ("target-a", "target-b")
+    assert registry.get_calls == ["handle-00", "handle-01", "handle-02"]
+
+
+def test_resolve_compare_target_models_scans_all_handles_for_unknown_targets() -> None:
+    from worker.productization.evaluation_compare import resolve_compare_target_models
+
+    class TrackingRegistry:
+        def __init__(self) -> None:
+            self.get_calls: list[str] = []
+            self._models = {
+                "handle-00": SimpleNamespace(spec=SimpleNamespace(model_id="target-a")),
+                "handle-01": SimpleNamespace(spec=SimpleNamespace(model_id="unrelated")),
+                "handle-02": SimpleNamespace(spec=SimpleNamespace(model_id="target-b")),
+            }
+
+        def list_loaded_models(self) -> list[str]:
+            return list(self._models)
+
+        def get_loaded_model(self, handle: str):
+            self.get_calls.append(handle)
+            return self._models[handle]
+
+    registry = TrackingRegistry()
+
+    with pytest.raises(ValueError, match="Unknown comparison target model IDs: missing-target"):
+        resolve_compare_target_models(
+            registry=registry,
+            target_model_ids=("target-a", "missing-target"),
+        )
+
+    assert registry.get_calls == ["handle-00", "handle-01", "handle-02"]
+
+
 def test_run_local_suite_compare_requires_target_model_ids(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
