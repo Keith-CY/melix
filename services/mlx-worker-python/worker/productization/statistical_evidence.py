@@ -74,25 +74,28 @@ def build_category_breakdown(
     *,
     rows: tuple[dict[str, object], ...],
 ) -> dict[str, dict[str, object]]:
-    grouped: dict[str, list[dict[str, object]]] = {}
+    category_totals: dict[str, list[int]] = {}
     for row in rows:
         category_label = str(row.get("category_label", "")).strip()
         if not category_label:
             continue
-        grouped.setdefault(category_label, []).append(row)
+        totals = category_totals.get(category_label)
+        if totals is None:
+            category_totals[category_label] = [
+                1,
+                int(bool(row.get("base_correct", False))),
+                int(bool(row.get("target_correct", False))),
+            ]
+            continue
+        totals[0] += 1
+        totals[1] += int(bool(row.get("base_correct", False)))
+        totals[2] += int(bool(row.get("target_correct", False)))
 
     breakdown: dict[str, dict[str, object]] = {}
-    for category_label in sorted(grouped):
-        category_rows = grouped[category_label]
-        sample_size = len(category_rows)
-        base_accuracy = _rounded(
-            sum(1 for row in category_rows if bool(row.get("base_correct", False)))
-            / max(sample_size, 1)
-        )
-        target_accuracy = _rounded(
-            sum(1 for row in category_rows if bool(row.get("target_correct", False)))
-            / max(sample_size, 1)
-        )
+    for category_label in sorted(category_totals):
+        sample_size, base_correct, target_correct = category_totals[category_label]
+        base_accuracy = _rounded(base_correct / max(sample_size, 1))
+        target_accuracy = _rounded(target_correct / max(sample_size, 1))
         breakdown[category_label] = {
             "sample_size": sample_size,
             "base_accuracy": base_accuracy,
