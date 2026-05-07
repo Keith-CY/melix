@@ -25,10 +25,56 @@ jobs:
       - name: Shell syntax check
         run: bash -n scripts/ci_progress.sh
 
+      - name: Python syntax check
+        run: python3 -m py_compile scripts/ci_scope.py
+
       - name: Diff check
         run: git diff --check HEAD^1 HEAD
 
+  ci-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      proto_should_run: ${{ steps.scope.outputs.proto_should_run }}
+      swift_should_run: ${{ steps.scope.outputs.swift_should_run }}
+      python_should_run: ${{ steps.scope.outputs.python_should_run }}
+      integration_should_run: ${{ steps.scope.outputs.integration_should_run }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Determine changed paths
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/ci-scope
+
+          if git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
+            git diff --name-only HEAD^1 HEAD > artifacts/ci-scope/changed-files.txt
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            git diff --name-only \
+              "${{ github.event.merge_group.base_sha }}" \
+              "${{ github.event.merge_group.head_sha }}" \
+              > artifacts/ci-scope/changed-files.txt
+          else
+            git diff --name-only \
+              "${{ github.event.pull_request.base.sha }}" \
+              "${{ github.event.pull_request.head.sha }}" \
+              > artifacts/ci-scope/changed-files.txt
+          fi
+
+          echo "Changed files:"
+          cat artifacts/ci-scope/changed-files.txt
+          python3 scripts/ci_scope.py \
+            --changed-files-file artifacts/ci-scope/changed-files.txt \
+            --github-output "$GITHUB_OUTPUT"
+
   proto-drift:
+    if: needs.ci-scope.outputs.proto_should_run == 'true'
+    needs:
+      - ci-scope
     runs-on: macos-15
     timeout-minutes: 30
 
@@ -68,6 +114,9 @@ jobs:
         run: bash scripts/ci_progress.sh "Protocol drift check" make proto-check
 
   swift-tests:
+    if: needs.ci-scope.outputs.swift_should_run == 'true'
+    needs:
+      - ci-scope
     name: swift-tests (${{ matrix.shard }})
     runs-on: macos-15
     timeout-minutes: 45
@@ -141,12 +190,17 @@ jobs:
   swift-tests-report:
     if: always()
     needs:
+      - ci-scope
       - swift-tests
     runs-on: ubuntu-latest
 
     steps:
       - name: Check Swift test shards
         run: |
+          if [ "${{ needs.ci-scope.outputs.swift_should_run }}" != "true" ]; then
+            echo "Swift test shards skipped by CI scope."
+            exit 0
+          fi
           if [ "${{ needs.swift-tests.result }}" != "success" ]; then
             echo "Swift test shards completed with result: ${{ needs.swift-tests.result }}"
             exit 1
@@ -154,6 +208,9 @@ jobs:
           echo "Swift test shards completed successfully."
 
   python-tests:
+    if: needs.ci-scope.outputs.python_should_run == 'true'
+    needs:
+      - ci-scope
     runs-on: macos-15
     timeout-minutes: 30
 
@@ -180,40 +237,10 @@ jobs:
       - name: Python tests
         run: bash scripts/ci_progress.sh "Python tests" make py-test
 
-  integration-scope:
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.scope.outputs.should_run }}
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Determine whether integration tests are affected
-        id: scope
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          should_run=false
-          while IFS= read -r path; do
-            case "$path" in
-              .github/workflows/ci-pr.yml|Makefile|Package.swift|Package.resolved|pyproject.toml|uv.lock|buf.yaml|buf.gen.yaml|packages/protocol/*|scripts/*|services/control-plane-swift/*|services/mlx-text-worker-swift/*|services/mlx-worker-python/*|tests/integration/*)
-                should_run=true
-                break
-                ;;
-            esac
-          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")
-          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
-
   integration-tests:
-    if: github.event_name == 'merge_group' || needs.integration-scope.outputs.should_run == 'true'
+    if: needs.ci-scope.outputs.integration_should_run == 'true'
     needs:
-      - integration-scope
+      - ci-scope
     runs-on: macos-15
     timeout-minutes: 60
 
