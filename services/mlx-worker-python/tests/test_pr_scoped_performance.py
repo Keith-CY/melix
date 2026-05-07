@@ -630,7 +630,6 @@ def test_deterministic_image_output_bytes_probe_script_emits_metrics(
     assert metrics["edit_output_bytes"] > 0
     assert metrics["payload_checksum"] > 0
 
-
 def test_scope_report_selects_rerank_core_top_k_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -639,6 +638,30 @@ def test_scope_report_selects_rerank_core_top_k_probe() -> None:
 
     assert scope["selected_count"] == 1
     assert scope["selected_probes"][0]["id"] == "rerank-core-top-k-heap-selection"
+
+
+def test_rerank_top_k_probe_script_emits_top_k_one_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_RERANK_TOP_K_PROBE_DOCUMENTS", "64")
+    monkeypatch.setenv("MELIX_RERANK_TOP_K_PROBE_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_RERANK_TOP_K_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/rerank_top_k_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["document_count"] == 64.0
+    assert metrics["iteration_count"] == 2.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["top_k"] == 1.0
+    assert metrics["result_count"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
 
 
 def test_scope_report_selects_deterministic_embedding_probe() -> None:

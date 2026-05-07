@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import gc
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -38,10 +39,10 @@ def _build_scores(document_count: int) -> list[float]:
 
 
 def main() -> int:
-    document_count = 50000
-    top_k = 10
-    iteration_count = 12
-    sample_count = 7
+    document_count = int(os.environ.get("MELIX_RERANK_TOP_K_PROBE_DOCUMENTS", "50000"))
+    top_k = int(os.environ.get("MELIX_RERANK_TOP_K_PROBE_TOP_K", "1"))
+    iteration_count = int(os.environ.get("MELIX_RERANK_TOP_K_PROBE_ITERATIONS", "120"))
+    sample_count = int(os.environ.get("MELIX_RERANK_TOP_K_PROBE_SAMPLES", "7"))
     scores = _build_scores(document_count)
 
     expected = _legacy_rank_scores(scores, top_k=top_k)
