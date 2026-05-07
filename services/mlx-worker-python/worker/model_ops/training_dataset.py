@@ -1462,8 +1462,13 @@ def _deterministic_validation_split(
         ),
     )
     validation_indices = {index for _, index in ranked}
-    train_samples = [sample for index, sample in enumerate(samples) if index not in validation_indices]
-    validation_samples = [sample for index, sample in enumerate(samples) if index in validation_indices]
+    train_samples: list[dict[str, Any]] = []
+    validation_samples: list[dict[str, Any]] = []
+    for index, sample in enumerate(samples):
+        if index in validation_indices:
+            validation_samples.append(sample)
+        else:
+            train_samples.append(sample)
     return train_samples, validation_samples
 
 

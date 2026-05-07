@@ -503,9 +503,9 @@ def test_semantic_field_values_reuses_cached_group_actor_aliases(
 
     assert event_extraction_module._semantic_field_values(
         "actor",
-        {"actor": [" 我们 ", "speaker_1", "咱们", "speaker_2", "双方"]},
+        {"actor": [" 我们 ", "我们", "我 们", "speaker_1", "speaker_1", "咱们", "speaker_2", "双方"]},
     ) == ["speaker_1", "speaker_2"]
-    assert calls == ["我们", "speaker_1", "咱们", "speaker_2", "双方"]
+    assert calls == ["我 们"]
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
 
 
@@ -521,11 +521,11 @@ def test_semantic_field_values_caches_repeated_group_actor_expansion(
         return original_normalize(value)
 
     monkeypatch.setattr(event_extraction_module, "_normalize_similarity_text", counted_normalize)
-    event = {"actor": [" 我们 ", "speaker_1", "咱们", "speaker_2", "双方"]}
+    event = {"actor": [" 我们 ", "我 们", "speaker_1", "咱们", "speaker_2", "双方"]}
 
     assert event_extraction_module._semantic_field_values("actor", event) == ["speaker_1", "speaker_2"]
     assert event_extraction_module._semantic_field_values("actor", event) == ["speaker_1", "speaker_2"]
-    assert calls == ["我们", "speaker_1", "咱们", "speaker_2", "双方"]
+    assert calls == ["我 们"]
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
 
 
