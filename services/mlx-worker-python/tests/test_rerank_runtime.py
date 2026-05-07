@@ -60,6 +60,16 @@ def test_rerank_rank_scores_preserves_sort_contract_for_bounded_top_k() -> None:
     assert ranked == [(1, 0.9), (2, 0.9), (5, 0.9)]
 
 
+def test_rerank_rank_scores_uses_single_scan_for_top_k_one(monkeypatch) -> None:
+    nsmallest = Mock()
+    monkeypatch.setattr("worker.engine.rerank_core.heapq.nsmallest", nsmallest)
+
+    ranked = RerankCore._rank_scores([0.1, 0.8, 0.8, -0.2, 0.7], top_k=1)
+
+    assert ranked == [(1, 0.8)]
+    nsmallest.assert_not_called()
+
+
 def test_rerank_rank_scores_uses_heap_for_bounded_top_k(monkeypatch) -> None:
     nsmallest = Mock(return_value=[(-0.8, 2, 0.8), (-0.7, 4, 0.7)])
     monkeypatch.setattr("worker.engine.rerank_core.heapq.nsmallest", nsmallest)
