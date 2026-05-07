@@ -565,17 +565,33 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
         if direct_card_hint > 0:
             return direct_card_hint
 
+    description_text = _string(payload.get("description"))
+    readme_text = _string(payload.get("readme"))
+    card_description_text = _string(card_data.get("description"))
+    if not readme_text and not card_description_text:
+        return (
+            _size_hint_from_text(description_text, allow_bare=False)
+            if description_text
+            else 0
+        )
+    if not description_text and not card_description_text:
+        return (
+            _size_hint_from_text(readme_text, allow_bare=False)
+            if readme_text
+            else 0
+        )
+    if not description_text and not readme_text:
+        return (
+            _size_hint_from_text(card_description_text, allow_bare=False)
+            if card_description_text
+            else 0
+        )
+
     text = "\n".join(
         text
-        for value in (
-            payload.get("description"),
-            payload.get("readme"),
-            card_data.get("description"),
-        )
-        if (text := _string(value))
+        for text in (description_text, readme_text, card_description_text)
+        if text
     )
-    if not text:
-        return 0
     return _size_hint_from_text(text, allow_bare=False)
 
 
