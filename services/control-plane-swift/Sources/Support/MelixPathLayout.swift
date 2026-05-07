@@ -51,7 +51,9 @@ public struct MelixPathLayout: Equatable, Sendable {
         )
         self.audioRuntimePackRootURL = Self.resolveDirectoryURL(
             environment["MELIX_AUDIO_RUNTIME_PACK_ROOT"],
-            fallback: rootURL.appendingPathComponent("runtime-packs/audio", isDirectory: true)
+            fallback: rootURL
+                .appendingPathComponent("runtime-packs", isDirectory: true)
+                .appendingPathComponent("audio", isDirectory: true)
         )
 
         self.gatewayConfigStoreURL = Self.resolveFileURL(
@@ -107,6 +109,6 @@ public struct MelixPathLayout: Equatable, Sendable {
 
     private static func standardizedURL(_ path: String, isDirectory: Bool) -> URL {
         let expanded = (path as NSString).expandingTildeInPath
-        return URL(fileURLWithPath: expanded, isDirectory: isDirectory).standardizedFileURL
+        return URL(fileURLWithPath: expanded, isDirectory: isDirectory)
     }
 }

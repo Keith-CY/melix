@@ -16,7 +16,7 @@ import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
-from worker.grpc_server import WorkerMaintenanceService
+from worker.grpc_server import WorkerMaintenanceService, _default_melix_home
 from worker.model_ops.conversion_pipeline import ModelConversionPipeline
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.job_registry import (
@@ -673,6 +673,28 @@ def build_service(
     )
     service._fake_publish_backend = publish_backend
     return service
+
+
+def test_default_melix_home_accepts_environment_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    melix_home = tmp_path / "custom-home"
+    ignored_home = tmp_path / "ignored-home"
+    monkeypatch.setenv("MELIX_HOME", str(ignored_home))
+
+    assert _default_melix_home({"MELIX_HOME": f"  {melix_home}  "}) == melix_home.resolve()
+    assert _default_melix_home({}) == (Path.home() / ".melix").resolve()
+
+
+def test_maintenance_service_defaults_evaluation_jobs_root_next_to_model_ops_root(tmp_path: Path) -> None:
+    service = WorkerMaintenanceService(
+        WorkerRegistry(model_catalog=WorkerModelCatalog(environment={})),
+        jobs_root=tmp_path / "jobs" / "model-ops",
+        environment={},
+    )
+
+    assert service._evaluation_jobs_root == (tmp_path / "jobs" / "evaluation").resolve()
 
 
 def imported_gemma4_text_backed_model() -> common_pb2.ModelSpec:
@@ -4540,7 +4562,7 @@ def test_run_bench_matrix_reuses_single_sorted_latency_vectors(
 ) -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=RecordingBenchmarkBackend()),
-        model_catalog=WorkerModelCatalog(),
+        model_catalog=WorkerModelCatalog(environment={}),
     )
     service = build_service(tmp_path, registry=registry)
 
@@ -6239,7 +6261,7 @@ def test_run_bench_records_curated_hf_suite_cache_hits_across_runs(tmp_path: Pat
 def test_run_bench_matrix_returns_summary_rows_and_persists_matrix_artifacts(tmp_path: Path) -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=RecordingBenchmarkBackend()),
-        model_catalog=WorkerModelCatalog(),
+        model_catalog=WorkerModelCatalog(environment={}),
     )
     service = build_service(tmp_path, registry=registry)
 
@@ -7065,7 +7087,7 @@ def test_bench_events_forwards_parameters_to_queue_record(tmp_path: Path) -> Non
 def test_export_results_writes_bundle_and_collects_model_ops_artifacts(tmp_path: Path) -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=RecordingBenchmarkBackend()),
-        model_catalog=WorkerModelCatalog(),
+        model_catalog=WorkerModelCatalog(environment={}),
     )
     service = build_service(tmp_path, registry=registry)
     dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
@@ -7147,7 +7169,7 @@ def test_export_results_writes_bundle_and_collects_model_ops_artifacts(tmp_path:
 def test_submit_results_returns_typed_submission_payload(tmp_path: Path) -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=RecordingBenchmarkBackend()),
-        model_catalog=WorkerModelCatalog(),
+        model_catalog=WorkerModelCatalog(environment={}),
     )
     service = build_service(tmp_path, registry=registry)
     dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"

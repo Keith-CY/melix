@@ -41,22 +41,10 @@ public final class AudioAssetManager: @unchecked Sendable {
     private let runtimePackStateURL: URL
     private let managedModelStateURL: URL
 
-    public init(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        fileManager: FileManager = .default,
-        melixHomeDirectory: URL? = nil
-    ) {
+    public init(layout: MelixPathLayout, fileManager: FileManager = .default) {
         self.fileManager = fileManager
-        let layout = MelixPathLayout(environment: environment)
-        let resolvedMelixHomeDirectory = melixHomeDirectory ?? layout.rootURL
-        self.managedModelRootURL = Self.resolveDirectoryURL(
-            rawPath: environment["MELIX_MANAGED_MODEL_ROOT"],
-            fallback: resolvedMelixHomeDirectory.appendingPathComponent("models/default-managed", isDirectory: true)
-        )
-        self.audioRuntimePackRootURL = Self.resolveDirectoryURL(
-            rawPath: environment["MELIX_AUDIO_RUNTIME_PACK_ROOT"],
-            fallback: resolvedMelixHomeDirectory.appendingPathComponent("runtime-packs/audio", isDirectory: true)
-        )
+        self.managedModelRootURL = layout.managedModelRootURL
+        self.audioRuntimePackRootURL = layout.audioRuntimePackRootURL
         self.runtimePackStateURL = audioRuntimePackRootURL.appendingPathComponent(
             ".melix-runtime-pack-state.json",
             isDirectory: false
@@ -64,6 +52,34 @@ public final class AudioAssetManager: @unchecked Sendable {
         self.managedModelStateURL = managedModelRootURL.appendingPathComponent(
             ".melix-managed-audio-models.json",
             isDirectory: false
+        )
+    }
+
+    public convenience init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        layout: MelixPathLayout?
+    ) {
+        self.init(
+            layout: layout ?? MelixPathLayout(environment: environment),
+            fileManager: fileManager
+        )
+    }
+
+    public convenience init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        melixHomeDirectory: URL? = nil
+    ) {
+        var layoutEnvironment = environment
+        if let melixHomeDirectory {
+            layoutEnvironment["MELIX_HOME"] = melixHomeDirectory.path
+            layoutEnvironment.removeValue(forKey: "MELIX_MANAGED_MODEL_ROOT")
+            layoutEnvironment.removeValue(forKey: "MELIX_AUDIO_RUNTIME_PACK_ROOT")
+        }
+        self.init(
+            layout: MelixPathLayout(environment: layoutEnvironment),
+            fileManager: fileManager
         )
     }
 
@@ -235,17 +251,6 @@ public final class AudioAssetManager: @unchecked Sendable {
 
     private func ensureDirectoryExists(at url: URL) throws {
         try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
-    }
-
-    private static func resolveDirectoryURL(rawPath: String?, fallback: URL) -> URL {
-        guard let rawPath else {
-            return fallback
-        }
-        let normalizedPath = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedPath.isEmpty else {
-            return fallback
-        }
-        return URL(fileURLWithPath: normalizedPath, isDirectory: true)
     }
 
     private func normalize(_ value: String?) -> String {

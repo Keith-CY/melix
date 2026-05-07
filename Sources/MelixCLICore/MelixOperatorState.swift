@@ -471,6 +471,8 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
             return nil
         }
 
+        try migrateMonolithicSessionIfNeeded(fileManager: fileManager)
+
         let ui = try loadDocument(OperatorSessionUIDocument.self, from: melixHome.operatorSessionFileURL)
             ?? OperatorSessionUIDocument()
         let serverSessions = try loadDocument(ServerSessionsDocument.self, from: melixHome.serverSessionsFileURL)?
@@ -510,6 +512,24 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
             DownloadQueueDocument(downloadQueue: state.downloadQueue),
             to: melixHome.downloadQueueFileURL
         )
+    }
+
+    private func migrateMonolithicSessionIfNeeded(fileManager: FileManager) throws {
+        guard fileManager.fileExists(atPath: melixHome.operatorSessionFileURL.path) else {
+            return
+        }
+        let splitFileURLs = [
+            melixHome.serverSessionsFileURL,
+            melixHome.modelRootsFileURL,
+            melixHome.downloadQueueFileURL,
+        ]
+        guard splitFileURLs.allSatisfy({ fileManager.fileExists(atPath: $0.path) == false }) else {
+            return
+        }
+
+        let data = try Data(contentsOf: melixHome.operatorSessionFileURL)
+        let legacyState = try Self.decoder.decode(MelixOperatorSessionState.self, from: data)
+        try save(legacyState)
     }
 
     private func loadDocument<T: Decodable>(_ type: T.Type, from fileURL: URL) throws -> T? {

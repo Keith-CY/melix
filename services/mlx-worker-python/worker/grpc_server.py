@@ -7,7 +7,7 @@ import tempfile
 import time
 from concurrent import futures
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import grpc
 
@@ -295,8 +295,9 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         adapter_activation_pipeline: AdapterActivationPipeline | None = None,
         benchmark_suite_catalog: BenchmarkSuiteCatalog | None = None,
         evaluation_hf_dataset_fetcher: HFEvaluationDatasetFetcher | None = None,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
-        root = Path(jobs_root or _default_melix_home() / "jobs" / "model-ops")
+        root = Path(jobs_root or _default_melix_home(environment) / "jobs" / "model-ops").resolve()
         self._core = MaintenanceCore(
             registry,
             jobs_root=root,
@@ -305,7 +306,11 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             adapter_activation_pipeline=adapter_activation_pipeline,
             benchmark_suite_catalog=benchmark_suite_catalog,
         )
-        self._evaluation_jobs_root = Path(evaluation_jobs_root or _default_melix_home() / "jobs" / "evaluation").resolve()
+        self._evaluation_jobs_root = (
+            Path(evaluation_jobs_root).expanduser().resolve()
+            if evaluation_jobs_root is not None
+            else root.parent / "evaluation"
+        )
         # Stage the evaluation runner at service construction time so the later RPC path
         # can reuse the same file-backed jobs root without additional wiring changes.
         self._evaluation_core = evaluation_core or EvaluationCore(
@@ -716,6 +721,7 @@ def build_maintenance_service(
     backend_mode: str = "auto",
     evaluation_core: EvaluationCore | None = None,
     hub_catalog: HubCatalog | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> WorkerMaintenanceService:
     lora_training_pipeline = None
     adapter_activation_pipeline = None
@@ -736,6 +742,7 @@ def build_maintenance_service(
         lora_training_pipeline=lora_training_pipeline,
         adapter_activation_pipeline=adapter_activation_pipeline,
         benchmark_suite_catalog=benchmark_suite_catalog,
+        environment=environment,
     )
 
 
@@ -744,7 +751,9 @@ def build_server(
     registry: WorkerRegistry | None = None,
     backend_mode: str = "auto",
     metrics_exporter: BootstrapMetricsExporter | None = None,
+    environment: Mapping[str, str] | None = None,
 ):
+    environment = os.environ if environment is None else environment
     registry_started_at = time.perf_counter_ns()
     registry = registry or build_registry_for_backend(backend_mode)
     if metrics_exporter is not None:
@@ -762,9 +771,10 @@ def build_server(
     inference_service = WorkerInferenceService(registry)
     maintenance_service = build_maintenance_service(
         registry,
-        jobs_root=_resolved_env_path("MELIX_MODEL_OPS_JOBS_ROOT"),
-        evaluation_jobs_root=_resolved_env_path("MELIX_EVALUATION_JOBS_ROOT"),
+        jobs_root=_resolved_env_path("MELIX_MODEL_OPS_JOBS_ROOT", environment),
+        evaluation_jobs_root=_resolved_env_path("MELIX_EVALUATION_JOBS_ROOT", environment),
         backend_mode=backend_mode,
+        environment=environment,
     )
     cache_service = WorkerCacheService(registry)
     runtime_pb2_grpc.add_RuntimeServiceServicer_to_server(runtime_service, server)
@@ -780,15 +790,17 @@ def build_server(
     return server, runtime_service, inference_service
 
 
-def _resolved_env_path(key: str) -> Path | None:
-    raw_value = os.environ.get(key, "").strip()
+def _resolved_env_path(key: str, environment: Mapping[str, str] | None = None) -> Path | None:
+    environment = os.environ if environment is None else environment
+    raw_value = environment.get(key, "").strip()
     if not raw_value:
         return None
     return Path(raw_value).expanduser().resolve()
 
 
-def _default_melix_home() -> Path:
-    raw_home = os.environ.get("MELIX_HOME", "").strip()
+def _default_melix_home(environment: Mapping[str, str] | None = None) -> Path:
+    environment = os.environ if environment is None else environment
+    raw_home = environment.get("MELIX_HOME", "").strip()
     return Path(raw_home or Path.home() / ".melix").expanduser().resolve()
 
 

@@ -9,7 +9,11 @@ configuration, model receipts, managed models, jobs, runtime packs, and secrets
 must default under `MELIX_HOME`.
 
 Compatibility with previous `~/Library/Application Support/Melix` state is out
-of scope for this slice.
+of scope for this slice. The operator-session split still performs a one-shot
+fallback when an existing monolithic `state/operator-session.json` is present
+under the resolved `MELIX_HOME` and the new split files do not yet exist, so
+server sessions, registry roots, and download queue entries are not discarded
+when the split-file layout is first read.
 
 ## Target Layout
 
@@ -56,7 +60,10 @@ core fallback and should not be exported by productization as the primary home.
 4. Update App, app-bundle, local install, and dev-stack environment generation
    to export `MELIX_HOME` plus derived path overrides rather than App Support
    roots.
-5. Update tests and docs that currently assert Application Support defaults.
+5. Keep benchmark export/submission collection aware of the split jobs layout:
+   a `jobs/` parent must collect benchmark artifacts from `model-ops/bench` and
+   evaluation artifacts from `evaluation`.
+6. Update tests and docs that currently assert Application Support defaults.
 
 ## Verification
 

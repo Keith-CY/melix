@@ -154,7 +154,7 @@ public actor ImageDefaultsStore {
     ) {
         self.fileManager = fileManager
         self.nowUnixMS = nowUnixMS
-        self.storeURL = Self.resolveStoreURL(environment: environment, fileManager: fileManager)
+        self.storeURL = Self.resolveStoreURL(environment: environment)
         self.defaults = Self.resolveDefaults(environment: environment)
         self.requestTimeoutSeconds = Self.resolveRequestTimeoutSeconds(environment: environment)
         self.record = Self.loadRecord(from: self.storeURL, fileManager: fileManager)
@@ -442,10 +442,8 @@ public actor ImageDefaultsStore {
     }
 
     private static func resolveStoreURL(
-        environment: [String: String],
-        fileManager: FileManager
+        environment: [String: String]
     ) -> URL {
-        _ = fileManager
         if let explicit = environment["MELIX_IMAGE_DEFAULTS_STORE_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            explicit.isEmpty == false {
             return URL(fileURLWithPath: explicit)

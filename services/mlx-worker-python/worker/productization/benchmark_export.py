@@ -67,6 +67,7 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
     jobs_root = _resolve_artifact_root(
         Path(jobs_root),
         fallback_dir="bench",
+        alternate_fallback_dirs=["model-ops/bench"],
         job_filename="bench-job.json",
         summary_filename="bench-summary.json",
     )
@@ -182,6 +183,7 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
     benchmark_root = _resolve_artifact_root(
         jobs_root,
         fallback_dir="bench",
+        alternate_fallback_dirs=["model-ops/bench"],
         job_filename="bench-job.json",
         summary_filename="bench-summary.json",
         scanned_entries=root_scan,
@@ -598,12 +600,12 @@ def _resolve_artifact_root(
     jobs_root: Path,
     *,
     fallback_dir: str,
+    alternate_fallback_dirs: list[str] | None = None,
     job_filename: str,
     summary_filename: str | None = None,
     alternate_job_filenames: list[str] | None = None,
     scanned_entries: _ScannedDirectoryEntries | None = None,
 ) -> Path:
-    fallback_root = jobs_root / fallback_dir
     if _root_contains_artifact_markers(
         jobs_root,
         job_filename=job_filename,
@@ -612,13 +614,15 @@ def _resolve_artifact_root(
         scanned_entries=scanned_entries,
     ):
         return jobs_root
-    if _root_contains_artifact_markers(
-        fallback_root,
-        job_filename=job_filename,
-        summary_filename=summary_filename,
-        alternate_job_filenames=alternate_job_filenames,
-    ):
-        return fallback_root
+    for candidate_fallback_dir in (fallback_dir, *(alternate_fallback_dirs or [])):
+        fallback_root = jobs_root / candidate_fallback_dir
+        if _root_contains_artifact_markers(
+            fallback_root,
+            job_filename=job_filename,
+            summary_filename=summary_filename,
+            alternate_job_filenames=alternate_job_filenames,
+        ):
+            return fallback_root
     return jobs_root
 
 

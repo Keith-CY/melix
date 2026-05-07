@@ -118,7 +118,7 @@ public actor GatewayConfigStore {
     ) {
         self.fileManager = fileManager
         self.nowUnixMS = nowUnixMS
-        self.storeURL = Self.resolveStoreURL(environment: environment, fileManager: fileManager)
+        self.storeURL = Self.resolveStoreURL(environment: environment)
         self.defaults = Self.resolveDefaults(environment: environment)
         self.recordsByServerSessionID = Self.loadRecords(from: storeURL, fileManager: fileManager)
     }
@@ -292,8 +292,7 @@ public actor GatewayConfigStore {
         )
     }
 
-    private static func resolveStoreURL(environment: [String: String], fileManager: FileManager) -> URL {
-        _ = fileManager
+    private static func resolveStoreURL(environment: [String: String]) -> URL {
         let configuredPath = trimmed(environment["MELIX_GATEWAY_CONFIG_STORE_PATH"])
         if !configuredPath.isEmpty {
             return URL(fileURLWithPath: configuredPath)

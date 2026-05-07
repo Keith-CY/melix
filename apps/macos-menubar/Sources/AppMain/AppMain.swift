@@ -689,32 +689,35 @@ struct MenuBarBootstrapEnvironment {
             merged["MELIX_RUNTIME_DIR"] = runtimeDirectory
         }
         let melixHome = MelixHome(environment: merged)
-        if merged["MELIX_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+        func isMissingOrEmpty(_ key: String) -> Bool {
+            merged[key]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+        }
+        if isMissingOrEmpty("MELIX_HOME") {
             merged["MELIX_HOME"] = melixHome.rootURL.path
         }
-        if merged["MELIX_MANAGED_MODEL_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+        if isMissingOrEmpty("MELIX_MANAGED_MODEL_ROOT") {
             merged["MELIX_MANAGED_MODEL_ROOT"] = melixHome.managedModelRootURL.path
         }
-        if merged["MELIX_AUDIO_RUNTIME_PACK_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+        if isMissingOrEmpty("MELIX_AUDIO_RUNTIME_PACK_ROOT") {
             merged["MELIX_AUDIO_RUNTIME_PACK_ROOT"] = melixHome.audioRuntimePackRootURL.path
         }
-        if merged["MELIX_MODEL_OPS_JOBS_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+        if isMissingOrEmpty("MELIX_MODEL_OPS_JOBS_ROOT") {
             merged["MELIX_MODEL_OPS_JOBS_ROOT"] = melixHome.modelOpsJobsRootURL.path
         }
-        if merged["MELIX_EVALUATION_JOBS_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+        if isMissingOrEmpty("MELIX_EVALUATION_JOBS_ROOT") {
             merged["MELIX_EVALUATION_JOBS_ROOT"] = melixHome.evaluationJobsRootURL.path
         }
-        if merged["MELIX_GATEWAY_CONFIG_STORE_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+        if isMissingOrEmpty("MELIX_GATEWAY_CONFIG_STORE_PATH") {
             merged["MELIX_GATEWAY_CONFIG_STORE_PATH"] = melixHome.configDirectoryURL
                 .appendingPathComponent("gateway-config.json")
                 .path
         }
-        if merged["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+        if isMissingOrEmpty("MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH") {
             merged["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"] = melixHome.configDirectoryURL
                 .appendingPathComponent("gateway-serving-defaults.json")
                 .path
         }
-        if merged["MELIX_IMAGE_DEFAULTS_STORE_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+        if isMissingOrEmpty("MELIX_IMAGE_DEFAULTS_STORE_PATH") {
             merged["MELIX_IMAGE_DEFAULTS_STORE_PATH"] = melixHome.configDirectoryURL
                 .appendingPathComponent("image-defaults.json")
                 .path

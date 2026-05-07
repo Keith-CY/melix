@@ -1479,6 +1479,25 @@ def test_registry_snapshot_discovers_mlx_models_from_default_huggingface_cache(t
     assert "melix.registry_descriptor_path" not in model.ext
 
 
+def test_registry_snapshot_discovers_existing_default_managed_model_root(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    managed_root = home / ".melix" / "models" / "default-managed"
+    _write_registry_manifest(
+        managed_root / "huggingface" / "mlx-community" / "ManagedTiny" / "main",
+        model_id="mlx-community/ManagedTiny",
+        ext={"source_root": "default-managed"},
+    )
+
+    catalog = WorkerModelCatalog(environment={"HOME": str(home)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    assert [root.root_path for root in snapshot.roots] == [str(managed_root.resolve())]
+    assert discovered["mlx-community/ManagedTiny"].ext["source_root"] == "default-managed"
+    assert discovered["mlx-community/ManagedTiny"].ext["melix.registry_root_order"] == "1"
+
+
 def test_registry_snapshot_rescan_reuses_cached_text_prefixes_for_unchanged_mlx_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

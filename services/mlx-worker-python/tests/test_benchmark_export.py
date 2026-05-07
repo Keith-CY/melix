@@ -1335,6 +1335,21 @@ def test_build_export_bundle_collects_benchmark_and_evaluation_from_model_ops_ro
     assert len(bundle["evaluation_samples"]) == 1
 
 
+def test_build_export_bundle_collects_split_jobs_parent_layout(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "jobs"
+    _write_bench_fixtures(jobs_root / "model-ops" / "bench")
+    _write_bench_matrix_run_fixture(jobs_root / "model-ops" / "bench", job_id="bench-matrix-1")
+    _write_eval_fixtures(jobs_root / "evaluation")
+
+    bundle = build_export_bundle(jobs_root)
+
+    assert len(bundle["benchmark_jobs"]) == 1
+    assert len(bundle["benchmark_results"]) == 1
+    assert len(bundle["benchmark_matrix_jobs"]) == 1
+    assert len(bundle["evaluation_jobs"]) == 1
+    assert len(bundle["evaluation_results"]) == 1
+
+
 def test_build_export_bundle_reuses_shared_run_directory_scans_for_mixed_artifacts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
