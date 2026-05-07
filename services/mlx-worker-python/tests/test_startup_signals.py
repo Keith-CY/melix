@@ -385,6 +385,30 @@ def test_read_last_nonempty_line_decodes_invalid_utf8_with_replacement(tmp_path:
     assert _read_last_nonempty_line(log_path) == "last line �"
 
 
+def test_read_last_nonempty_line_trims_byte_whitespace_without_python_byte_loop(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "python-worker.stderr.log"
+    log_path.write_bytes(b"booting\nlast line\x85\xa0\n\t  \r\n")
+
+    assert _read_last_nonempty_line(log_path, chunk_size=4) == "last line"
+
+
+def test_log_excerpt_uses_read_fallback_without_exists_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log_path = tmp_path / "control-plane.stderr.log"
+    log_path.write_text("booting\nready\n", encoding="utf-8")
+
+    def fail_exists(self: Path) -> bool:
+        raise AssertionError(f"log excerpt should read directly instead of checking exists(): {self}")
+
+    monkeypatch.setattr(Path, "exists", fail_exists)
+
+    assert startup_signals_module._log_excerpt(tmp_path / "missing.log", log_path) == "ready"
+
+
 def test_classify_startup_failure_falls_back_to_hang_when_logs_are_empty() -> None:
     report = classify_startup_failure(
         {

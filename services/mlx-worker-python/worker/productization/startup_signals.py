@@ -22,6 +22,7 @@ CRASH_PATTERNS = [
     "terminated",
     "abort trap",
 ]
+_BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
 
 
 @dataclass(frozen=True)
@@ -258,11 +259,9 @@ def _seek_non_whitespace_end(handle: Any, *, chunk_size: int) -> int:
         start = position - read_size
         handle.seek(start)
         chunk = handle.read(read_size)
-        index = read_size - 1
-        while index >= 0 and chr(chunk[index]).isspace():
-            index -= 1
-        if index >= 0:
-            return start + index + 1
+        trimmed = chunk.rstrip(_BYTE_WHITESPACE)
+        if trimmed:
+            return start + len(trimmed)
         position = start
     return 0
 

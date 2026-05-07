@@ -2024,6 +2024,23 @@
         "unit": "reads",
         "direction": "lower_is_better",
         "warn_pct": 0.0
+      },
+      {
+        "key": "tail_scan_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "tail_scan_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0
+      },
+      {
+        "key": "trailing_whitespace_bytes",
+        "unit": "bytes",
+        "direction": "informational"
       }
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_startup_signals.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_startup_signals_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_startup_signals_probe_script_emits_metrics",
