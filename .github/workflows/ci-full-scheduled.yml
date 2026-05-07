@@ -1,0 +1,67 @@
+name: ci-full-scheduled
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */4 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-full-scheduled-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  full-regression:
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Restore Python dependency cache
+        uses: actions/cache@v4
+        with:
+          path: .uv-cache
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock', 'pyproject.toml', 'services/mlx-worker-python/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Restore Swift dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .swift-home
+            .build/ModuleCache.noindex
+            .build
+            packages/protocol/swift/.build
+            services/control-plane-swift/.build
+            services/mlx-text-worker-swift/.build
+            apps/macos-menubar/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swift-full-${{ hashFiles('Package.swift', 'Package.resolved', 'packages/protocol/swift/Package.swift', 'packages/protocol/swift/Package.resolved', 'services/control-plane-swift/Package.swift', 'services/control-plane-swift/Package.resolved', 'services/mlx-text-worker-swift/Package.swift', 'services/mlx-text-worker-swift/Package.resolved', 'apps/macos-menubar/Package.swift', 'apps/macos-menubar/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-full-
+            ${{ runner.os }}-swift-
+
+      - name: Bootstrap
+        run: bash scripts/ci_progress.sh "Bootstrap" make bootstrap
+
+      - name: Protocol drift check
+        run: bash scripts/ci_progress.sh "Protocol drift check" make proto-check
+
+      - name: Swift tests
+        run: bash scripts/ci_progress.sh "Swift tests" make swift-test
+
+      - name: Python tests
+        run: bash scripts/ci_progress.sh "Python tests" make py-test
+
+      - name: Integration tests
+        run: bash scripts/ci_progress.sh "Integration tests" make integration-test
