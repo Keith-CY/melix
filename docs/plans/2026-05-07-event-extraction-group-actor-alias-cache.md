@@ -18,11 +18,11 @@ This slice is Python-only under `services/mlx-worker-python`, so it is verifiabl
 
 ## Performance probe
 
-Register `event-extraction-group-actor-alias-cache` in PR-scoped performance CI. The probe repeatedly expands semantic actor values containing group aliases and non-aliases, reports elapsed time and structural normalize-call counts, and compares `origin/main` to the PR branch.
+Register `event-extraction-group-actor-alias-cache` in PR-scoped performance CI. The probe repeatedly expands semantic actor values containing group aliases and non-aliases, reports elapsed time and structural normalize-call counts, and compares `origin/main` to the PR branch. The May 7 follow-up slice keeps the same registered probe and extends the cache boundary from the static alias set to repeated actor-value expansion for identical normalized actor tuples.
 
 ## Success metrics
 
 - Focused tests pass.
 - Changed-scope automated coverage is at least 95%.
-- Local probe emits concrete metrics and shows fewer repeated alias-normalization calls on the branch.
+- Local probe emits concrete metrics and shows fewer repeated alias-normalization calls on the branch for repeated actor-value expansion.
 - Hosted `pr-scoped-performance` validates the registered probe before merge.

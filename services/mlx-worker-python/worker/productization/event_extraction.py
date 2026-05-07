@@ -1718,13 +1718,18 @@ def _semantic_field_values(field_name: str, event: dict[str, object]) -> list[st
     values = _unique_preserving_order(_normalize_event_field(event.get(field_name)))
     if field_name != "actor":
         return values
+    return list(_expanded_semantic_actor_values(tuple(values)))
+
+
+@lru_cache(maxsize=512)
+def _expanded_semantic_actor_values(values: tuple[str, ...]) -> tuple[str, ...]:
     expanded: list[str] = []
     for value in values:
         if _normalize_similarity_text(value) in _NORMALIZED_GROUP_ACTOR_ALIASES:
             expanded.extend(("speaker_1", "speaker_2"))
         else:
             expanded.append(value)
-    return _unique_preserving_order(expanded)
+    return tuple(_unique_preserving_order(expanded))
 
 
 def _obvious_time_conflict(left: str, right: str) -> bool:
