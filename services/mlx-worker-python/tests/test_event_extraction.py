@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import runpy
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
@@ -527,6 +528,22 @@ def test_semantic_field_values_caches_repeated_group_actor_expansion(
     assert event_extraction_module._semantic_field_values("actor", event) == ["speaker_1", "speaker_2"]
     assert calls == ["我 们"]
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
+
+
+def test_actor_alias_probe_default_mix_keeps_normalization_fallback_covered(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_EVENT_ACTOR_ALIAS_PROBE_VALUE_COUNT", "30")
+    monkeypatch.setenv("MELIX_EVENT_ACTOR_ALIAS_PROBE_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_EVENT_ACTOR_ALIAS_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(Path.cwd() / "scripts/event_extraction_actor_alias_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert 0.0 < metrics["normalize_calls_mean"] < 90.0
 
 
 def test_evaluate_event_extraction_semantic_expands_group_actor_aliases(tmp_path: Path) -> None:

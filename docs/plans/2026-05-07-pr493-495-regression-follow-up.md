@@ -22,7 +22,7 @@ The original reports included broad regressions because the earlier PRs changed 
 
 1. Keep the `heapq.nsmallest(...)` validation-index selection from PR 495, then build train and validation outputs in one pass over the source samples.
 2. Keep the cached normalized group-actor alias set from PR 493, then combine actor-field deduplication, alias expansion, and expanded-value deduplication into one actor-specific scan.
-3. Keep the actor-alias probe's small smoke workload on punctuation-normalized aliases so the existing smoke assertion still covers the normalization path without changing the PR-scoped performance test file.
+3. Keep the actor-alias probe's small smoke workload on punctuation-normalized aliases, and keep the default workload mixed with sparse punctuation-normalized aliases so hosted metrics show reduced normalization without reporting a fully elided fallback path.
 4. Preserve output ordering, digest inputs, and existing semantic scoring behavior.
 5. Verify with focused pytest, changed-scope coverage, and local command-json probes for the two optimized paths.
 

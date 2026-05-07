@@ -32,7 +32,9 @@ def _actor_values(value_count: int) -> list[str]:
 
     values: list[str] = []
     for index in range(value_count):
-        if index % 3 == 0:
+        if index % 90 == 0:
+            values.append(normalized_aliases[(index // 90) % len(normalized_aliases)])
+        elif index % 3 == 0:
             values.append(aliases[index % len(aliases)])
         elif index % 3 == 1:
             values.append(f"speaker_{1 + (index % 2)}")
