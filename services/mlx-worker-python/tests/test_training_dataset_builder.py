@@ -988,6 +988,7 @@ def test_hf_preference_pair_schema_inference_and_mapping() -> None:
 
 def test_build_training_dataset_artifact_loads_existing_package_and_helper_branches(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_package = tmp_path / "existing-package"
     _write_jsonl(
@@ -1117,6 +1118,40 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
     with pytest.raises(ModelOperationError) as split_exc:
         training_dataset_module._deterministic_validation_split([{"text": "solo"}], 0.5)
     assert split_exc.value.code == "invalid_dataset_source"
+
+    split_samples = [
+        {"prompt": f"prompt-{index}", "completion": f"completion-{index % 7}"}
+        for index in range(40)
+    ]
+    full_sort_indices = {
+        index
+        for _, index in sorted(
+            (
+                training_dataset_module._canonical_sample_digest(sample),
+                index,
+            )
+            for index, sample in enumerate(split_samples)
+        )[:4]
+    }
+    nsmallest_calls = []
+    real_nsmallest = training_dataset_module.heapq.nsmallest
+
+    def counting_nsmallest(count, iterable):
+        nsmallest_calls.append(count)
+        return real_nsmallest(count, iterable)
+
+    monkeypatch.setattr(training_dataset_module.heapq, "nsmallest", counting_nsmallest)
+    train_split, validation_split = training_dataset_module._deterministic_validation_split(
+        split_samples,
+        0.1,
+    )
+    assert nsmallest_calls == [4]
+    assert train_split == [
+        sample for index, sample in enumerate(split_samples) if index not in full_sort_indices
+    ]
+    assert validation_split == [
+        sample for index, sample in enumerate(split_samples) if index in full_sort_indices
+    ]
 
     assert training_dataset_module._sample_token_counts({}, "chat_messages") == (0, 0)
     assert training_dataset_module._sample_token_counts(

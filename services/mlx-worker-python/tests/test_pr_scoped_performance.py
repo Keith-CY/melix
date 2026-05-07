@@ -266,9 +266,10 @@ def test_scope_report_selects_training_dataset_probe() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert probe_ids == {
         "training-dataset-token-percentiles-single-sort",
+        "training-dataset-validation-split-nsmallest",
         "training-dataset-validation-sample-limit",
     }
 
@@ -1556,6 +1557,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "quantization-qat-source-scan-scandir",
         "training-config-target-module-cache",
         "training-dataset-token-percentiles-single-sort",
+        "training-dataset-validation-split-nsmallest",
         "training-dataset-validation-sample-limit",
         "training-dataset-chunker-top-level-base-copy",
         "dataset-registry-preview-limit-short-circuit",

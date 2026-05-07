@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 from itertools import chain
 from contextlib import ExitStack
@@ -1450,14 +1451,17 @@ def _deterministic_validation_split(
 
     validation_count = int(round(len(samples) * validation_ratio))
     validation_count = max(1, min(len(samples) - 1, validation_count))
-    ranked = sorted(
+    ranked = heapq.nsmallest(
+        validation_count,
         (
-            _canonical_sample_digest(sample),
-            index,
-        )
-        for index, sample in enumerate(samples)
+            (
+                _canonical_sample_digest(sample),
+                index,
+            )
+            for index, sample in enumerate(samples)
+        ),
     )
-    validation_indices = {index for _, index in ranked[:validation_count]}
+    validation_indices = {index for _, index in ranked}
     train_samples = [sample for index, sample in enumerate(samples) if index not in validation_indices]
     validation_samples = [sample for index, sample in enumerate(samples) if index in validation_indices]
     return train_samples, validation_samples
