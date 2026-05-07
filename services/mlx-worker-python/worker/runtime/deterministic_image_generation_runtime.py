@@ -63,6 +63,7 @@ class DeterministicImageGenerationRuntime:
         images: list[bytes] = []
         artifacts: list[common_pb2.ImageArtifactMetadata] = []
         artifact_publish_ms = 0.0
+        total_output_bytes = 0
 
         for index in range(image_count):
             if cancel_event.is_set():
@@ -96,9 +97,9 @@ class DeterministicImageGenerationRuntime:
                 variant_index=index,
             )
             images.append(payload)
+            total_output_bytes += len(payload)
             artifacts.append(artifact)
 
-        total_output_bytes = sum(len(item) for item in images)
         peak_memory_bytes = max(total_output_bytes, width * height)
         self._last_probe = ImageGenerationProbeSnapshot(
             job_latency_ms=(time.monotonic() - started) * 1000.0,
@@ -206,6 +207,7 @@ class DeterministicImageGenerationRuntime:
             )
 
         images: list[bytes] = []
+        total_output_bytes = 0
         for index in range(image_count):
             if cancel_event.is_set():
                 raise ImageGenerationCancelled("Image edit was canceled.")
@@ -224,6 +226,7 @@ class DeterministicImageGenerationRuntime:
             artifact_path = output_dir / f"output-{index}.{image_format}"
             artifact_publish_ms += self._write_bytes(artifact_path, payload)
             images.append(payload)
+            total_output_bytes += len(payload)
             artifacts.append(
                 self._artifact_metadata(
                     job_id=job_id,
@@ -241,7 +244,6 @@ class DeterministicImageGenerationRuntime:
                 )
             )
 
-        total_output_bytes = sum(len(item) for item in images)
         peak_memory_bytes = max(total_output_bytes + len(source_bytes), width * height)
         self._last_probe = ImageGenerationProbeSnapshot(
             job_latency_ms=(time.monotonic() - started) * 1000.0,

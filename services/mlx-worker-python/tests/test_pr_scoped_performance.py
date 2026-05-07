@@ -552,8 +552,11 @@ def test_scope_report_selects_deterministic_image_edit_digest_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/deterministic_image_generation_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "deterministic-image-edit-digest-reuse"
+    assert scope["selected_count"] == 2
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "deterministic-image-edit-digest-reuse",
+        "deterministic-image-output-byte-accounting",
+    ]
 
 
 def test_deterministic_image_edit_digest_probe_script_emits_metrics(
@@ -569,6 +572,25 @@ def test_deterministic_image_edit_digest_probe_script_emits_metrics(
     assert metrics["image_count"] == 8.0
     assert metrics["digest_calls_mean"] == 2.0
     assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["payload_checksum"] > 0
+
+
+def test_deterministic_image_output_bytes_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/deterministic_image_output_bytes_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["generated_image_count"] == 96.0
+    assert metrics["edit_image_count"] == 96.0
+    assert metrics["output_byte_scan_calls_mean"] == 0.0
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["generated_output_bytes"] > 0
+    assert metrics["edit_output_bytes"] > 0
     assert metrics["payload_checksum"] > 0
 
 
@@ -1390,6 +1412,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-embedding-duplicate-input-cache",
         "deterministic-embedding-project-digest-allocation",
         "deterministic-image-edit-digest-reuse",
+        "deterministic-image-output-byte-accounting",
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
         "runtime-utils-kwarg-signature-cache",
