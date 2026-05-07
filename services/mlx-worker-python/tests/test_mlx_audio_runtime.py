@@ -171,7 +171,10 @@ def test_mlx_audio_transcription_runtime_uses_local_uri_path_without_reading_byt
     with pytest.raises(audio_preprocessing.AudioPreprocessError, match="Unsupported audio URI scheme"):
         audio_preprocessing._path_from_uri("https://example.com/audio.wav")
     with pytest.raises(audio_preprocessing.AudioPreprocessError, match="Missing local audio input"):
-        audio_preprocessing._path_from_uri(str(tmp_path / "missing.wav"))
+        audio_preprocessing.prepare_audio_input(
+            inference_pb2.TranscribeRequest(audio_uri=str(tmp_path / "missing.wav"), format="wav"),
+            read_uri_bytes=False,
+        )
 
     monkeypatch.setattr(Path, "read_bytes", original_read_bytes)
     prepared = audio_preprocessing.prepare_audio_input(
