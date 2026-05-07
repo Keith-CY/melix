@@ -198,6 +198,12 @@ class RequestStreamAssembler:
     def _drain_buffer(self, final: bool) -> list[AssemblyDelta]:
         deltas: list[AssemblyDelta] = []
         while self._buffer:
+            if "<" not in self._buffer:
+                content = self._buffer
+                self._buffer = ""
+                deltas.append(self._content_delta(content))
+                continue
+
             next_tag = self._next_structural_tag()
             if next_tag is None:
                 if not final:
