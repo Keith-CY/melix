@@ -7,6 +7,8 @@ from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
+import pytest
+
 from worker.engine.evaluation_core import EvaluationCore
 from worker.engine import evaluation_core
 from worker.productization import event_extraction as event_extraction_module
@@ -484,6 +486,25 @@ def test_evaluate_event_extraction_semantic_judge_matches_event_and_values(tmp_p
     assert [row["kind"] for row in judge_audit] == ["event", "field", "field"]
     assert all("api_key" not in json.dumps(row) for row in judge_audit)
     assert len(judge.requests) == 3
+
+
+def test_semantic_field_values_reuses_cached_group_actor_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    original_normalize = event_extraction_module._normalize_similarity_text
+
+    def counted_normalize(value: str) -> str:
+        calls.append(value)
+        return original_normalize(value)
+
+    monkeypatch.setattr(event_extraction_module, "_normalize_similarity_text", counted_normalize)
+
+    assert event_extraction_module._semantic_field_values(
+        "actor",
+        {"actor": [" 我们 ", "speaker_1", "咱们", "speaker_2", "双方"]},
+    ) == ["speaker_1", "speaker_2"]
+    assert calls == ["我们", "speaker_1", "咱们", "speaker_2", "双方"]
 
 
 def test_evaluate_event_extraction_semantic_expands_group_actor_aliases(tmp_path: Path) -> None:
