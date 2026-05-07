@@ -557,9 +557,11 @@ def _is_weight_or_config_file(filename: str) -> bool:
 def _size_hint_bytes(payload: dict[str, Any]) -> int:
     raw_card_data = payload.get("cardData")
     card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
-    direct_card_hint = _size_hint_from_text(_string(card_data.get("model_size")), allow_bare=True)
-    if direct_card_hint > 0:
-        return direct_card_hint
+    direct_card_text = _string(card_data.get("model_size"))
+    if direct_card_text:
+        direct_card_hint = _size_hint_from_text(direct_card_text, allow_bare=True)
+        if direct_card_hint > 0:
+            return direct_card_hint
 
     text = "\n".join(
         text
