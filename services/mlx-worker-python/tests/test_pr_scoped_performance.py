@@ -172,8 +172,31 @@ def test_scope_report_selects_mlx_text_stop_kwarg_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_text_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "mlx-text-stop-kwarg-signature-cache"
+    assert scope["selected_count"] == 2
+    assert _selected_probe_ids(scope) == [
+        "mlx-text-stop-kwarg-signature-cache",
+        "mlx-text-stop-filter-prefix-cache",
+    ]
+
+
+def test_mlx_text_stop_filter_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MLX_TEXT_STOP_FILTER_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_MLX_TEXT_STOP_FILTER_EVENTS", "8")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/mlx_text_stop_filter_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["prefix_length_computations_mean"] == 1.0
+    assert metrics["token_event_count"] == 8.0
+    assert metrics["stop_sequence_count"] == 5.0
 
 
 def test_scope_report_selects_dataset_registry_probe() -> None:
@@ -1740,6 +1763,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "rerank-core-top-k-heap-selection",
         "runtime-utils-kwarg-signature-cache",
         "mlx-text-stop-kwarg-signature-cache",
+        "mlx-text-stop-filter-prefix-cache",
         "mlx-audio-wav-streaming-pcm",
         "mlx-audio-generate-signature-cache",
         "mlx-audio-speech-signature-cache",
