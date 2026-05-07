@@ -117,7 +117,12 @@ class FakeQwen3TTSModel:
     available_voices = ["alloy", "verse"]
 
     def generate(self, text, voice=None, instruct=None, verbose=False):
-        chunks = [[0.00, 0.20, -0.20, 0.10]]
+        chunks = [
+            [0.00, 0.20, -0.20, 0.10],
+            [0.08, -0.08, 0.04, -0.04],
+            [0.06, 0.00, -0.06, 0.03],
+            [-0.03, 0.09, -0.09, 0.00],
+        ]
         if voice:
             chunks.append([0.05, 0.05])
         if instruct:

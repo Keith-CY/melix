@@ -67,12 +67,16 @@ bytes after synthesis finishes.
 
 - `make proto-check`: passed.
 - `git diff --check`: passed.
-- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --frozen --project services/mlx-worker-python --extra mlx python scripts/m17_speech_runtime_smoke.py --json`: passed with `ok=true`, `speech.synthesis.qwen3_tts.streaming_ttfa_reduction_pct=55.04`, `speech.synthesis.qwen3_tts.streaming_malformed_wav_count=0.0`, and `speech.synthesis.qwen3_tts.streaming_chunk_count=3.0`.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --frozen --project services/mlx-worker-python --extra mlx python scripts/m17_speech_runtime_smoke.py --json`: passed with `ok=true`, `speech.synthesis.qwen3_tts.streaming_ttfa_reduction_pct=65.99`, `speech.synthesis.qwen3_tts.streaming_malformed_wav_count=0.0`, and `speech.synthesis.qwen3_tts.streaming_chunk_count=6.0`.
 - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --frozen --project services/mlx-worker-python --extra mlx pytest -q tests/integration/test_m17_speech_runtime_smoke.py services/mlx-worker-python/tests/test_acceptance_metrics.py::test_build_phase17_speech_metrics_report_tracks_backend_and_locale_evidence`: `2 passed`.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --frozen --project services/mlx-worker-python --extra mlx pytest -q tests/integration/test_m17_speech_runtime_smoke.py::test_m17_speech_runtime_smoke_records_live_audio_operator_evidence`: `1 passed`.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --frozen --project services/mlx-worker-python pytest -q tests/integration/test_recovery_flows.py::test_warm_followup_prefers_hot_route_and_records_ttft_delta`: `1 passed`.
 - Python focused tests for the worker streaming, runtime, bridge, acceptance,
-  and smoke scope: `95 passed`.
+  recovery jitter guard, and smoke scope: `96 passed`.
 - Python changed-line coverage for the touched worker/smoke scope: `96.62%`
   (`372/385`).
+- Python changed-line coverage after CI-failure hardening: `96.63%`
+  (`373/386`).
 - Swift control-plane focused streaming/worker-client suite: `257 passed`.
 - Swift control-plane changed-line coverage for the touched handwritten scope:
   `98.31%` (`641/652`).
