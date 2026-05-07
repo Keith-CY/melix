@@ -2137,6 +2137,21 @@ class MaintenanceCore:
             ("adapter_manifest_path", "melix.adapter_manifest_path"),
             ("adapter_weights_path", "melix.adapter_weights_path"),
             ("adapter_set_hash", "melix.adapter_set_hash"),
+            ("adapter_scope", "melix.adapter_scope"),
+            ("training_surface", "melix.training_surface"),
+            ("component_model_type", "melix.component_model_type"),
+            ("component_family", "melix.component_family"),
+            ("component_model_path", "melix.component_model_path"),
+        ):
+            value = str(manifest.get(manifest_key, "")).strip()
+            if value:
+                model_spec.ext[ext_key] = value
+        for manifest_key, ext_key in (
+            ("adapter_scope", "melix.lora.adapter_scope"),
+            ("training_surface", "melix.lora.training_surface"),
+            ("component_model_type", "melix.lora.component_model_type"),
+            ("component_family", "melix.lora.family_id"),
+            ("component_model_path", "melix.lora.base_model_path"),
         ):
             value = str(manifest.get(manifest_key, "")).strip()
             if value:

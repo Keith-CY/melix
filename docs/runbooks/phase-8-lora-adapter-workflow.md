@@ -7,7 +7,8 @@ Prepare a local dataset package, train a Melix LoRA adapter, activate it into a 
 ## Preconditions
 
 - the local Melix stack is available
-- the source model is a text-capable Melix model summary
+- the source model is a text model or a model summary with an explicit
+  training-ready component LoRA surface
 - the dataset exists either as a local `melix.training_dataset_package.v1` or as a supported Hugging Face dataset configuration
 - the target model family is supported by the current LoRA config mapper
 - operators understand whether the chosen family is stable, experimental, or currently blocked for LoRA training
@@ -187,6 +188,10 @@ Expected training behavior:
 - this slice defines worker-owned mode and dataset contracts; DPO, ORPO, and CPT optimizer-loop breadth remains bounded by the active local runner implementation
 - if `hf_valid_split` is provided, the normalized dataset snapshot persists the explicit validation source
 - Melix expands compact target modules or preset groups into family-specific module paths
+- Gemma 4 VLM snapshots that expose `text_config.model_type == "gemma4_text"` are accepted through the
+  component-scoped `text_backbone` LoRA surface; the source model remains a VLM entry, and adapter
+  artifacts record `adapter_scope=text_backbone`, `training_surface=text_backbone`,
+  `component_model_type=gemma4_text`, and `component_family=gemma`
 - supported preset groups currently include `attention`, `mlp`, `attention_mlp`, and `full`; `qwen` plus `kimi` also accept `qkv`, `gemma` also accepts `gated_mlp`, experimental `mixtral` accepts `experts`, and experimental `qwen3moe` accepts `qkv`, `experts`, and `attention_experts` (`full` is an alias for `attention_experts`)
 - dense-family defaults stay on the family-owned `attention_mlp` baseline, while experimental MoE families default to `attention` unless the operator explicitly opts into expert modules
 - quantized LoRA and QLoRA reject embedding, LM head, and output-projection target modules; keep quantized runs on attention or expert projection targets
@@ -203,6 +208,12 @@ Stable LoRA training families:
 - `gemma`
 - `kimi`
 
+Stable component-scoped LoRA surfaces:
+
+- Gemma 4 VLM `text_backbone` when local model discovery records
+  `melix.lora.adapter_scope=text_backbone`, `melix.lora.training_surface=text_backbone`,
+  `melix.lora.component_model_type=gemma4_text`, and `melix.lora.training_ready=true`
+
 Experimental LoRA training families:
 
 - `mixtral` is exposed through separate MoE hooks and currently defaults to `attention` targets only; expert-module presets are available but should be treated as an operator-tuned path
@@ -214,6 +225,8 @@ Explicitly unsupported or not-yet-productized LoRA families:
 - `mistral4`
 - `nemotron-h`
 - embedding-family models and other non-text capability classes
+- Gemma 4 `vision_encoder`, `multimodal_projector`, and audio components; these require separate
+  adapter contracts and are intentionally not marked training-ready by the registry
 
 Operator guidance:
 
@@ -221,6 +234,8 @@ Operator guidance:
 - use `attention` or `qkv` first when validating a new dense family rollout
 - treat MoE expert targeting as experimental and record compare evidence before promoting an adapter for wider use
 - if the registry marks `melix.lora.training_ready = false`, do not expect `train_lora` to accept that family yet
+- for component-scoped models, inspect `melix.lora.adapter_scope` and `melix.model.components` before
+  training; do not infer vision or projector support from the presence of a multimodal model card
 
 ## Activate Adapter
 
@@ -250,9 +265,13 @@ Expected activation behavior:
 - Melix validates adapter compatibility against the base model
 - `fused_derived_model` remains the default when `--activation-mode` is omitted
 - `adapter_backed_runtime` is a supported first-class activation mode for keeping adapter artifacts attached to the runtime instead of materializing a fused local model
+- component-scoped non-text adapters, including Gemma 4 `text_backbone` adapters, must use
+  `adapter_backed_runtime`; fused activation is rejected until Melix has a fused multimodal component
+  adapter contract
 - the completed artifact is `activate_adapter.derived_model.json` with schema `melix.derived_text_model.v1` under `<jobs_root>/activate_adapter/<job_id>/`
-- the result includes `derived_model_id`, `derived_model_path`, `activation_duration_ms`, and `adapter_set_hash`
-- the activated model is registered into the control-plane catalog as a text model
+- the result includes `derived_model_id`, `derived_model_path`, `activation_duration_ms`,
+  `adapter_set_hash`, and adapter scope metadata when present
+- the activated model is registered into the control-plane catalog with the source model kind preserved
 
 ## Verify Serving Behavior
 
@@ -261,8 +280,9 @@ Confirm the activation result before using the model for traffic:
 1. inspect the activation manifest and confirm `schema_version == "melix.derived_text_model.v1"`
 2. confirm `activation_mode` matches the requested mode, either `fused_derived_model` or `adapter_backed_runtime`
 3. confirm `melix.adapter_set_hash` is present and differs from incompatible adapters
-4. load the derived model through the existing text runtime path
-5. compare one controlled prompt against the base model and verify the derived model behavior changes in the expected direction
+4. for component-scoped adapters, confirm `adapter_scope` and `training_surface` match the source model metadata
+5. load the derived model through the expected runtime path
+6. compare one controlled prompt against the base model and verify the derived model behavior changes in the expected direction
 
 For operator state inspection, request a `registry_snapshot` and confirm:
 

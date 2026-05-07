@@ -64,6 +64,11 @@ class AdapterActivationPipeline:
                 code="activation_failure",
                 message=f"Unsupported activation mode: {activation_mode}",
             )
+        adapter_scope = _validate_adapter_scope(
+            adapter_manifest=adapter_manifest,
+            source_model=source_model,
+            activation_mode=activation_mode,
+        )
 
         emit("read_adapter", 0.2)
         emit("validate_base", 0.4)
@@ -125,6 +130,11 @@ class AdapterActivationPipeline:
             "source_model_revision": source_model.revision,
             "source_model_path": source_model.model_path,
             "source_model_kind": source_model.model_kind,
+            "adapter_scope": adapter_scope["adapter_scope"],
+            "training_surface": adapter_scope["training_surface"],
+            "component_model_type": adapter_scope["component_model_type"],
+            "component_family": adapter_scope["component_family"],
+            "component_model_path": adapter_scope["component_model_path"],
             "source_model_tokenizer_hash": source_model.tokenizer_hash,
             "source_model_quant_profile_id": source_model.quant_profile_id,
             "source_model_parser_mode": source_model.parser_mode,
@@ -147,3 +157,109 @@ class AdapterActivationPipeline:
             manifest["derived_model_alias"] = derived_model_alias
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         return AdapterActivationPipelineResult(manifest=manifest, manifest_path=manifest_path)
+
+
+def _validate_adapter_scope(
+    *,
+    adapter_manifest: dict[str, Any],
+    source_model: common_pb2.ModelSpec,
+    activation_mode: str,
+) -> dict[str, str]:
+    adapter_scope = _manifest_str(adapter_manifest, "adapter_scope")
+    if not adapter_scope and source_model.model_kind == "text":
+        adapter_scope = "model"
+    training_surface = _manifest_str(adapter_manifest, "training_surface") or adapter_scope
+    source_model_kind = _manifest_str(adapter_manifest, "source_model_kind")
+    if source_model_kind and source_model_kind != source_model.model_kind:
+        raise ModelOperationError(
+            code="activation_failure",
+            message="Adapter package source model kind does not match the requested activation model.",
+            details={
+                "adapter_source_model_kind": source_model_kind,
+                "source_model_kind": source_model.model_kind,
+            },
+        )
+
+    component_model_type = _manifest_str(adapter_manifest, "component_model_type")
+    component_family = _manifest_str(adapter_manifest, "component_family")
+    component_model_path = _manifest_str(adapter_manifest, "component_model_path") or source_model.model_path
+
+    if source_model.model_kind == "text":
+        if adapter_scope != "model":
+            raise ModelOperationError(
+                code="activation_failure",
+                message="Adapter package scope does not match the requested text activation model.",
+                details={"adapter_scope": adapter_scope, "source_model_kind": source_model.model_kind},
+            )
+        return {
+            "adapter_scope": adapter_scope,
+            "training_surface": training_surface,
+            "component_model_type": component_model_type,
+            "component_family": component_family,
+            "component_model_path": component_model_path,
+        }
+
+    ext = source_model.ext
+    expected_scope = ext.get("melix.lora.adapter_scope", "").strip()
+    expected_surface = ext.get("melix.lora.training_surface", "").strip()
+    if adapter_scope != expected_scope or training_surface != expected_surface:
+        raise ModelOperationError(
+            code="activation_failure",
+            message="Adapter package scope does not match the requested activation model.",
+            details={
+                "adapter_scope": adapter_scope,
+                "expected_scope": expected_scope,
+                "training_surface": training_surface,
+                "expected_training_surface": expected_surface,
+            },
+        )
+
+    expected_component_model_type = (
+        ext.get("melix.lora.component_model_type", "").strip()
+        or ext.get(f"melix.component.{expected_scope}.model_type", "").strip()
+    )
+    if component_model_type and expected_component_model_type and component_model_type != expected_component_model_type:
+        raise ModelOperationError(
+            code="activation_failure",
+            message="Adapter package component type does not match the requested activation model.",
+            details={
+                "component_model_type": component_model_type,
+                "expected_component_model_type": expected_component_model_type,
+            },
+        )
+
+    expected_component_family = (
+        ext.get("melix.lora.family_id", "").strip()
+        or ext.get(f"melix.component.{expected_scope}.family_id", "").strip()
+    )
+    if component_family and expected_component_family and component_family != expected_component_family:
+        raise ModelOperationError(
+            code="activation_failure",
+            message="Adapter package component family does not match the requested activation model.",
+            details={
+                "component_family": component_family,
+                "expected_component_family": expected_component_family,
+            },
+        )
+
+    if activation_mode == "fused_derived_model":
+        raise ModelOperationError(
+            code="activation_failure",
+            message=(
+                "Fused activation is not supported for component-scoped non-text adapters; "
+                "use activation_mode=adapter_backed_runtime."
+            ),
+            details={"adapter_scope": adapter_scope, "source_model_kind": source_model.model_kind},
+        )
+
+    return {
+        "adapter_scope": adapter_scope,
+        "training_surface": training_surface,
+        "component_model_type": component_model_type or expected_component_model_type,
+        "component_family": component_family or expected_component_family,
+        "component_model_path": component_model_path,
+    }
+
+
+def _manifest_str(manifest: dict[str, Any], key: str) -> str:
+    return str(manifest.get(key, "") or "").strip()

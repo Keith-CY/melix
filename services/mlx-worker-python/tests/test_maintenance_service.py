@@ -3345,6 +3345,57 @@ def test_job_registry_helper_paths_cover_restore_and_runtime_edges(tmp_path: Pat
     assert common_pb2.RuntimeMode.Name(_runtime_mode_from_activation(" adapter_backed_runtime ")) == "RUNTIME_MODE_ADAPTER_BACKED"
 
 
+def test_derived_model_registration_preserves_component_scoped_adapter_metadata(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_model = common_pb2.ModelSpec(
+        model_id="melix-gemma4-vlm",
+        model_path=str(tmp_path / "gemma4-vlm"),
+        model_kind="vlm",
+        revision="main",
+        max_context=8192,
+    )
+    source_model.ext["melix.lora.adapter_scope"] = "text_backbone"
+    source_model.ext["melix.lora.training_surface"] = "text_backbone"
+    source_model.ext["melix.lora.family_id"] = "gemma"
+    source_model.ext["melix.lora.component_model_type"] = "gemma4_text"
+    source_model.ext["melix.lora.base_model_path"] = source_model.model_path
+    service._core._registry.model_catalog.register_model(source_model)
+
+    model_spec = service._core._derived_model_spec_from_manifest(
+        {
+            "derived_model_id": "melix-gemma4-vlm-lora-abcd",
+            "derived_model_path": source_model.model_path,
+            "source_model": source_model.model_id,
+            "source_model_revision": "main",
+            "source_model_kind": "vlm",
+            "source_model_ext": dict(source_model.ext),
+            "activation_mode": "adapter_backed_runtime",
+            "adapter_manifest_path": str(tmp_path / "train_lora.adapter.json"),
+            "adapter_weights_path": str(tmp_path / "adapters.safetensors"),
+            "adapter_set_hash": "abcd1234",
+            "adapter_scope": "text_backbone",
+            "training_surface": "text_backbone",
+            "component_model_type": "gemma4_text",
+            "component_family": "gemma",
+            "component_model_path": source_model.model_path,
+        }
+    )
+
+    assert model_spec is not None
+    assert model_spec.model_kind == "vlm"
+    assert model_spec.runtime_mode == common_pb2.RUNTIME_MODE_ADAPTER_BACKED
+    assert model_spec.ext["melix.adapter_scope"] == "text_backbone"
+    assert model_spec.ext["melix.training_surface"] == "text_backbone"
+    assert model_spec.ext["melix.component_model_type"] == "gemma4_text"
+    assert model_spec.ext["melix.component_family"] == "gemma"
+    assert model_spec.ext["melix.component_model_path"] == source_model.model_path
+    assert model_spec.ext["melix.lora.adapter_scope"] == "text_backbone"
+    assert model_spec.ext["melix.lora.training_surface"] == "text_backbone"
+    assert model_spec.ext["melix.lora.component_model_type"] == "gemma4_text"
+    assert model_spec.ext["melix.lora.family_id"] == "gemma"
+    assert model_spec.ext["melix.lora.base_model_path"] == source_model.model_path
+
+
 def test_job_registry_snapshot_exposes_download_rows_with_machine_readable_status(tmp_path: Path) -> None:
     service = build_service(tmp_path)
     source_path, source_bytes = _write_download_source_file(tmp_path, size=1024)
