@@ -428,8 +428,13 @@ def read_hf_dataset_snapshot_rows(
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     resolved_snapshot_path = Path(snapshot_path).expanduser().resolve()
+    normalized_split = _normalized(split)
     rows: list[dict[str, Any]] = []
-    for path in _iter_selected_dataset_files(resolved_snapshot_path, split=split):
+    if limit == 1 and not normalized_split:
+        selected_files = _iter_first_preview_dataset_file(resolved_snapshot_path)
+    else:
+        selected_files = _iter_selected_dataset_files(resolved_snapshot_path, split=normalized_split)
+    for path in selected_files:
         remaining = None if limit is None else max(limit - len(rows), 0)
         if remaining == 0:
             return rows
@@ -438,13 +443,64 @@ def read_hf_dataset_snapshot_rows(
 
 
 def _iter_selected_dataset_files(snapshot_path: Path, *, split: str) -> Iterator[Path]:
-    normalized_split = _normalized(split)
-    if normalized_split:
-        yield from _selected_dataset_files(snapshot_path, split=normalized_split)
+    if split:
+        yield from _selected_dataset_files(snapshot_path, split=split)
         return
     for path in _iter_supported_dataset_files(snapshot_path):
         if path.name not in _README_NAMES:
             yield path
+
+
+def _iter_first_preview_dataset_file(snapshot_path: Path) -> Iterator[Path]:
+    first_path = _first_supported_dataset_file(snapshot_path)
+    if first_path is not None:
+        yield first_path
+
+
+def _first_supported_dataset_file(directory: Path) -> Path | None:
+    previous_name = ""
+    while True:
+        next_entry = _next_supported_scan_entry(directory, after=previous_name)
+        if next_entry is None:
+            return None
+        name, path, is_directory, is_file = next_entry
+        previous_name = name
+        if is_directory:
+            nested = _first_supported_dataset_file(path)
+            if nested is not None:
+                return nested
+            continue
+        if is_file and name not in _README_NAMES and _dataset_file_format(path):
+            return path
+
+
+def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Path, bool, bool] | None:
+    best_name = ""
+    best_path: Path | None = None
+    best_is_dir = False
+    best_is_file = False
+    try:
+        with os.scandir(os.fspath(directory)) as entries:
+            for entry in entries:
+                name = entry.name
+                if name <= after or (best_name and name >= best_name):
+                    continue
+                try:
+                    is_dir = entry.is_dir()
+                    is_file = False if is_dir else entry.is_file()
+                except OSError:
+                    continue
+                if not is_dir and not is_file:
+                    continue
+                best_name = name
+                best_path = Path(entry.path)
+                best_is_dir = is_dir
+                best_is_file = is_file
+    except OSError:
+        return None
+    if best_path is None:
+        return None
+    return best_name, best_path, best_is_dir, best_is_file
 
 
 def _selected_dataset_files(snapshot_path: Path, *, split: str) -> tuple[Path, ...]:

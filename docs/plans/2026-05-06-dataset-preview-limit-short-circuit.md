@@ -18,9 +18,9 @@ This is a Python-only worker/catalog slice and can be verified on Linux with foc
 
 ## Proposed change
 
-`read_hf_dataset_snapshot_rows(..., limit=N)` currently calls `_selected_dataset_files(...)`, which fully walks and materializes every supported dataset file before row reading begins. For no-split previews with a tiny limit, this makes preview latency and peak allocation scale with total file count even though only the first readable file is needed.
+`read_hf_dataset_snapshot_rows(..., limit=N)` now avoids the eager split-selection tuple for no-split previews, but `limit=1` previews still enter the generic supported-file iterator. That iterator sorts every entry in the first data directory before yielding the first readable file, so preview latency and peak allocation still scale with total file count.
 
-Add a lazy selected-file iterator for the no-split path so the reader can return as soon as the requested row limit is satisfied. Keep explicit split behavior unchanged because split filtering needs to know whether any matching split file exists.
+Add a `limit=1` no-split preview helper that finds the first readable dataset file in the same sorted depth-first order by scanning for the next minimum entry instead of sorting and materializing the full directory. Keep explicit split behavior unchanged because split filtering must know whether any matching split file exists before returning no rows.
 
 ## Performance probe
 

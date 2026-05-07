@@ -270,6 +270,70 @@ def test_dataset_catalog_row_reader_stops_file_scan_after_unsplit_limit(
     assert read_paths == [first_file]
 
 
+def test_dataset_catalog_limit_one_preview_avoids_full_supported_file_iterator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    first_file = data_dir / "part-00000.jsonl"
+    first_file.write_text('{"prompt":"first"}\n', encoding="utf-8")
+    (data_dir / "part-00001.jsonl").write_text('{"prompt":"second"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(catalog, "_iter_supported_dataset_files", None)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=1)
+
+    assert rows == [{"prompt": "first"}]
+
+
+def test_dataset_catalog_first_preview_file_preserves_sorted_depth_first_edges(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    empty_dir = snapshot_dir / "a-empty"
+    data_dir = snapshot_dir / "data"
+    empty_dir.mkdir(parents=True)
+    data_dir.mkdir()
+    (data_dir / "notes.txt").write_text("ignore", encoding="utf-8")
+    first_file = data_dir / "part-00000.jsonl"
+    first_file.write_text('{"prompt":"first"}\n', encoding="utf-8")
+
+    assert catalog._first_supported_dataset_file(snapshot_dir) == first_file
+    assert catalog._first_supported_dataset_file(tmp_path / "missing") is None
+
+    original_scandir = catalog.os.scandir
+
+    def failing_scandir(_path: object):
+        raise OSError("scan failed")
+
+    monkeypatch.setattr(catalog.os, "scandir", failing_scandir)
+    assert catalog._first_supported_dataset_file(snapshot_dir) is None
+    monkeypatch.setattr(catalog.os, "scandir", original_scandir)
+
+    class BrokenEntry:
+        name = "broken.jsonl"
+        path = str(data_dir / "broken.jsonl")
+
+        def is_dir(self) -> bool:
+            raise OSError("broken entry")
+
+        def is_file(self) -> bool:
+            return True
+
+    class FakeScandir:
+        def __enter__(self):
+            return iter([BrokenEntry()])
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+            return False
+
+    monkeypatch.setattr(catalog.os, "scandir", lambda _path: FakeScandir())
+    assert catalog._next_supported_scan_entry(snapshot_dir, after="") is None
+
+
 def test_dataset_catalog_row_reader_keeps_split_filtering_eager_for_missing_split(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
