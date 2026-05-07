@@ -1279,11 +1279,12 @@ class EvaluationCore:
         if not values:
             return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "max": 0.0}
         sorted_values = sorted(values)
+        value_count = len(sorted_values)
         return {
-            "mean": cls._round_ms(sum(values) / len(values)),
+            "mean": cls._round_ms(sum(sorted_values) / value_count),
             "p50": cls._round_ms(cls._ordered_percentile(sorted_values, 50.0)),
             "p95": cls._round_ms(cls._ordered_percentile(sorted_values, 95.0)),
-            "max": cls._round_ms(max(values)),
+            "max": cls._round_ms(sorted_values[-1]),
         }
 
     @staticmethod
