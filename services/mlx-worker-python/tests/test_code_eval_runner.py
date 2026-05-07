@@ -590,6 +590,9 @@ def test_count_tests_falls_back_when_no_asserts_are_present() -> None:
 
 
 def test_load_payload_file_rejects_invalid_and_non_mapping_json(tmp_path: Path) -> None:
+    missing_path = tmp_path / "missing.json"
+    assert code_eval_runner._load_payload_file(missing_path) is None
+
     invalid_path = tmp_path / "invalid.json"
     invalid_path.write_text("{", encoding="utf-8")
     assert code_eval_runner._load_payload_file(invalid_path) is None
@@ -607,9 +610,6 @@ class _BytesOnlyPayloadPath:
     def __init__(self, payload: bytes) -> None:
         self.payload = payload
         self.read_bytes_calls = 0
-
-    def exists(self) -> bool:
-        return True
 
     def read_bytes(self) -> bytes:
         self.read_bytes_calls += 1
