@@ -59,6 +59,16 @@ _PROCESSOR_CONFIG_FILENAMES = frozenset({
 })
 
 
+def _last_nonblank_line(value: str) -> str:
+    end = len(value)
+    while end > 0:
+        line_start = value.rfind("\n", 0, end) + 1
+        stripped = value[line_start:end].strip()
+        if stripped:
+            return stripped
+        end = line_start - 1
+    return ""
+
 
 class HuggingFacePublishBackend:
     def publish(
@@ -106,12 +116,7 @@ class HuggingFacePublishBackend:
                 message=message,
             )
 
-        remote_ref = ""
-        for line in reversed((process.stdout or "").splitlines()):
-            stripped = line.strip()
-            if stripped:
-                remote_ref = stripped
-                break
+        remote_ref = _last_nonblank_line(process.stdout or "")
 
         if published_files is None:
             if resolved_source_path.is_dir():

@@ -48,6 +48,7 @@ from worker.model_ops.upload_receipt_pipeline import (
     PublishResult,
     SourceArtifactDescriptor,
     UploadReceiptPipeline,
+    _last_nonblank_line,
     _resolve_hf_cli_command,
 )
 from worker.productization.benchmark_schemas import (
@@ -1689,6 +1690,38 @@ def test_hugging_face_publish_backend_adds_private_token_and_commit_message(
     ]
     assert result.remote_ref == "https://huggingface.co/melix/demo-adapter/commit/abc123"
     assert result.published_files == ["adapter.safetensors", "config.json"]
+
+
+def test_hugging_face_publish_backend_extracts_large_stdout_tail_without_splitlines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_root = tmp_path / "publish"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "adapter.safetensors").write_text("weights", encoding="utf-8")
+    stdout = "".join(f"progress {index}\n" for index in range(10_000))
+    stdout += "   https://huggingface.co/melix/demo-adapter/commit/tail-ref   \n\n"
+
+    def fake_subprocess_run(command, **kwargs):
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.subprocess.run", fake_subprocess_run)
+
+    result = HuggingFacePublishBackend().publish(
+        source_path=artifact_root,
+        target_repo="melix/demo-adapter",
+        artifact_kind="adapter",
+        published_files=["adapter.safetensors"],
+    )
+
+    assert result.remote_ref == "https://huggingface.co/melix/demo-adapter/commit/tail-ref"
+
+
+def test_upload_receipt_pipeline_last_nonblank_line_preserves_edge_cases() -> None:
+    assert _last_nonblank_line("") == ""
+    assert _last_nonblank_line("\n \t \n") == ""
+    assert _last_nonblank_line("first\r\n second \r\n\r\n") == "second"
+    assert _last_nonblank_line("prefix\n  final-without-newline  ") == "final-without-newline"
 
 
 def test_hugging_face_publish_backend_uses_precomputed_published_files_without_rescanning(
