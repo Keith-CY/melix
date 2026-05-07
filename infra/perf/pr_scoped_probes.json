@@ -2064,6 +2064,47 @@
     ]
   },
   {
+    "id": "event-extraction-semantic-value-group-cache",
+    "name": "Event extraction semantic value-group cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/event_extraction.py",
+      "services/mlx-worker-python/tests/test_event_extraction.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/event_extraction_semantic_value_group_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_event_extraction.py::test_semantic_value_groups_are_cached_and_ordered services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_semantic_matches_bidirectional_action_split_merge services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_event_extraction_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_event_extraction_semantic_value_group_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_event_extraction.py::test_semantic_value_groups_are_cached_and_ordered services/mlx-worker-python/tests/test_event_extraction.py::test_evaluate_event_extraction_semantic_matches_bidirectional_action_split_merge services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_event_extraction_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_event_extraction_semantic_value_group_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/event_extraction.py services/mlx-worker-python/tests/test_event_extraction.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/event_extraction_semantic_value_group_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/event_extraction_semantic_value_group_probe.py ]; then python scripts/event_extraction_semantic_value_group_probe.py; else python3 -c \"import base64; exec(base64.b64decode(\\\"IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiJNZWFzdXJlIGV2ZW50LWV4dHJhY3Rpb24gc2VtYW50aWMgYWN0aW9uIHZhbHVlLWdyb3VwIHJldXNlLiIiIgpmcm9tIF9fZnV0dXJlX18gaW1wb3J0IGFubm90YXRpb25zCgppbXBvcnQganNvbgppbXBvcnQgb3MKaW1wb3J0IHN0YXRpc3RpY3MKaW1wb3J0IHN5cwppbXBvcnQgdGltZQppbXBvcnQgdHJhY2VtYWxsb2MKZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmZyb20gdHlwaW5nIGltcG9ydCBJdGVyYWJsZQoKUkVQT19ST09UID0gUGF0aC5jd2QoKQpzeXMucGF0aC5pbnNlcnQoMCwgc3RyKFJFUE9fUk9PVCkpCnN5cy5wYXRoLmluc2VydCgwLCBzdHIoUkVQT19ST09UIC8gInNlcnZpY2VzL21seC13b3JrZXItcHl0aG9uIikpCgpmcm9tIHdvcmtlci5wcm9kdWN0aXphdGlvbiBpbXBvcnQgZXZlbnRfZXh0cmFjdGlvbiBhcyBldmVudF9leHRyYWN0aW9uX21vZHVsZSAgIyBub3FhOiBFNDAyCgoKZGVmIF9lbnZfaW50KG5hbWU6IHN0ciwgZGVmYXVsdDogaW50KSAtPiBpbnQ6CiAgICB2YWx1ZSA9IG9zLmdldGVudihuYW1lKQogICAgaWYgdmFsdWUgaXMgTm9uZToKICAgICAgICByZXR1cm4gZGVmYXVsdAogICAgcmV0dXJuIG1heCgxLCBpbnQodmFsdWUpKQoKCmRlZiBfcnVuX3Byb2JlKCosIGNvdW50czogSXRlcmFibGVbaW50XSwgaXRlcmF0aW9uczogaW50LCBzYW1wbGVzOiBpbnQpIC0+IGRpY3Rbc3RyLCBmbG9hdF06CiAgICBvcmlnaW5hbF9jb21iaW5hdGlvbnMgPSBldmVudF9leHRyYWN0aW9uX21vZHVsZS5jb21iaW5hdGlvbnMKICAgIGVsYXBzZWRfbXM6IGxpc3RbZmxvYXRdID0gW10KICAgIHBlYWtfYnl0ZXM6IGxpc3RbZmxvYXRdID0gW10KICAgIGNvbWJpbmF0aW9uX2NhbGxzOiBsaXN0W2Zsb2F0XSA9IFtdCiAgICBncm91cF9jb3VudCA9IDAKICAgIGNoZWNrc3VtID0gMAoKICAgIGRlZiBjb3VudGVkX2NvbWJpbmF0aW9ucygqYXJnczogb2JqZWN0LCAqKmt3YXJnczogb2JqZWN0KSAtPiBvYmplY3Q6CiAgICAgICAgbm9ubG9jYWwgY3VycmVudF9jb21iaW5hdGlvbl9jYWxscwogICAgICAgIGN1cnJlbnRfY29tYmluYXRpb25fY2FsbHMgKz0gMQogICAgICAgIHJldHVybiBvcmlnaW5hbF9jb21iaW5hdGlvbnMoKmFyZ3MsICoqa3dhcmdzKQoKICAgIGV2ZW50X2V4dHJhY3Rpb25fbW9kdWxlLmNvbWJpbmF0aW9ucyA9IGNvdW50ZWRfY29tYmluYXRpb25zCiAgICB0cnk6CiAgICAgICAgZm9yIF9zYW1wbGVfaW5kZXggaW4gcmFuZ2Uoc2FtcGxlcyk6CiAgICAgICAgICAgIGN1cnJlbnRfY29tYmluYXRpb25fY2FsbHMgPSAwCiAgICAgICAgICAgIGNhY2hlX2NsZWFyID0gZ2V0YXR0cihldmVudF9leHRyYWN0aW9uX21vZHVsZS5fc2VtYW50aWNfdmFsdWVfZ3JvdXBzLCAiY2FjaGVfY2xlYXIiLCBOb25lKQogICAgICAgICAgICBpZiBjYWNoZV9jbGVhciBpcyBub3QgTm9uZToKICAgICAgICAgICAgICAgIGNhY2hlX2NsZWFyKCkKICAgICAgICAgICAgdHJhY2VtYWxsb2Muc3RhcnQoKQogICAgICAgICAgICBzdGFydGVkID0gdGltZS5wZXJmX2NvdW50ZXIoKQogICAgICAgICAgICBzYW1wbGVfZ3JvdXBfY291bnQgPSAwCiAgICAgICAgICAgIHNhbXBsZV9jaGVja3N1bSA9IDAKICAgICAgICAgICAgZm9yIF8gaW4gcmFuZ2UoaXRlcmF0aW9ucyk6CiAgICAgICAgICAgICAgICBmb3IgdmFsdWVfY291bnQgaW4gY291bnRzOgogICAgICAgICAgICAgICAgICAgIGdyb3VwcyA9IGV2ZW50X2V4dHJhY3Rpb25fbW9kdWxlLl9zZW1hbnRpY192YWx1ZV9ncm91cHModmFsdWVfY291bnQpCiAgICAgICAgICAgICAgICAgICAgc2FtcGxlX2dyb3VwX2NvdW50ICs9IGxlbihncm91cHMpCiAgICAgICAgICAgICAgICAgICAgc2FtcGxlX2NoZWNrc3VtICs9IHN1bShzdW0oZ3JvdXApICsgbGVuKGdyb3VwKSAqIDE3IGZvciBncm91cCBpbiBncm91cHMpCiAgICAgICAgICAgIGVsYXBzZWRfbXMuYXBwZW5kKCh0aW1lLnBlcmZfY291bnRlcigpIC0gc3RhcnRlZCkgKiAxMDAwLjApCiAgICAgICAgICAgIF9jdXJyZW50LCBwZWFrID0gdHJhY2VtYWxsb2MuZ2V0X3RyYWNlZF9tZW1vcnkoKQogICAgICAgICAgICB0cmFjZW1hbGxvYy5zdG9wKCkKICAgICAgICAgICAgcGVha19ieXRlcy5hcHBlbmQoZmxvYXQocGVhaykpCiAgICAgICAgICAgIGNvbWJpbmF0aW9uX2NhbGxzLmFwcGVuZChmbG9hdChjdXJyZW50X2NvbWJpbmF0aW9uX2NhbGxzKSkKICAgICAgICAgICAgZ3JvdXBfY291bnQgPSBzYW1wbGVfZ3JvdXBfY291bnQKICAgICAgICAgICAgY2hlY2tzdW0gKz0gc2FtcGxlX2NoZWNrc3VtCiAgICBmaW5hbGx5OgogICAgICAgIGV2ZW50X2V4dHJhY3Rpb25fbW9kdWxlLmNvbWJpbmF0aW9ucyA9IG9yaWdpbmFsX2NvbWJpbmF0aW9ucwoKICAgIHJldHVybiB7CiAgICAgICAgImVsYXBzZWRfbXNfbWVhbiI6IHN0YXRpc3RpY3MuZm1lYW4oZWxhcHNlZF9tcyksCiAgICAgICAgImVsYXBzZWRfbXNfbWluIjogbWluKGVsYXBzZWRfbXMpLAogICAgICAgICJwZWFrX2J5dGVzX21lYW4iOiBzdGF0aXN0aWNzLmZtZWFuKHBlYWtfYnl0ZXMpLAogICAgICAgICJjb21iaW5hdGlvbl9idWlsZF9jYWxsc19tZWFuIjogc3RhdGlzdGljcy5mbWVhbihjb21iaW5hdGlvbl9jYWxscyksCiAgICAgICAgIml0ZXJhdGlvbnNfcGVyX3NhbXBsZSI6IGZsb2F0KGl0ZXJhdGlvbnMpLAogICAgICAgICJzYW1wbGVfY291bnQiOiBmbG9hdChzYW1wbGVzKSwKICAgICAgICAidmFsdWVfY291bnRfbWF4IjogZmxvYXQobWF4KGNvdW50cykpLAogICAgICAgICJncm91cF9jb3VudF9wZXJfc2FtcGxlIjogZmxvYXQoZ3JvdXBfY291bnQpLAogICAgICAgICJjaGVja3N1bSI6IGZsb2F0KGNoZWNrc3VtKSwKICAgIH0KCgpkZWYgbWFpbigpIC0+IGludDoKICAgIGNvdW50cyA9IHR1cGxlKAogICAgICAgIGludChwYXJ0KQogICAgICAgIGZvciBwYXJ0IGluIG9zLmdldGVudigiTUVMSVhfRVZFTlRfU0VNQU5USUNfR1JPVVBfUFJPQkVfQ09VTlRTIiwgIjQsOCwxMiwxNiIpLnNwbGl0KCIsIikKICAgICAgICBpZiBwYXJ0LnN0cmlwKCkKICAgICkKICAgIG1ldHJpY3MgPSBfcnVuX3Byb2JlKAogICAgICAgIGNvdW50cz1jb3VudHMsCiAgICAgICAgaXRlcmF0aW9ucz1fZW52X2ludCgiTUVMSVhfRVZFTlRfU0VNQU5USUNfR1JPVVBfUFJPQkVfSVRFUkFUSU9OUyIsIDIwMDAwKSwKICAgICAgICBzYW1wbGVzPV9lbnZfaW50KCJNRUxJWF9FVkVOVF9TRU1BTlRJQ19HUk9VUF9QUk9CRV9TQU1QTEVTIiwgNSksCiAgICApCiAgICBwcmludChqc29uLmR1bXBzKG1ldHJpY3MsIHNvcnRfa2V5cz1UcnVlKSkKICAgIHJldHVybiAwCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIHJhaXNlIFN5c3RlbUV4aXQobWFpbigpKQo=\\\"))\"; fi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "informational"
+      },
+      {
+        "key": "combination_build_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better"
+      },
+      {
+        "key": "group_count_per_sample",
+        "unit": "groups",
+        "direction": "informational"
+      }
+    ],
+    "notes": "Compares cached semantic action value-group combination reuse against rebuilding identical index groups during event-extraction semantic split/merge scoring."
+  },
+  {
     "id": "mlx-audio-wav-streaming-pcm",
     "name": "MLX audio WAV PCM streaming",
     "runner": "ubuntu-latest",
