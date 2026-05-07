@@ -178,6 +178,37 @@ def test_dataset_catalog_reads_rows_from_selected_split(tmp_path: Path) -> None:
     assert rows == [{"prompt": "test", "answer": "c"}]
 
 
+def test_dataset_catalog_selected_split_filters_during_iteration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    custom_dir = snapshot_dir / "custom"
+    validation_a = data_dir / "validation-00000.jsonl"
+    readme = snapshot_dir / "README.md"
+    train = data_dir / "train-00000.jsonl"
+    validation_b = custom_dir / "validation-00001.jsonl"
+    supported_paths = (readme, validation_a, train, validation_b)
+    iterated_paths: list[Path] = []
+
+    def fake_supported_files(path: Path):
+        assert path == snapshot_dir
+        for candidate in supported_paths:
+            iterated_paths.append(candidate)
+            yield candidate
+
+    monkeypatch.setattr(catalog, "_iter_supported_dataset_files", fake_supported_files)
+
+    assert catalog._selected_dataset_files(snapshot_dir, split="validation") == (
+        validation_a,
+        validation_b,
+    )
+    assert iterated_paths == list(supported_paths)
+    assert catalog._selected_dataset_files(snapshot_dir, split="missing") == ()
+    assert catalog._selected_dataset_files(snapshot_dir, split="") == supported_paths[1:]
+
+
 def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     home = tmp_path / "home"
     snapshot_dir = _write_hf_dataset_snapshot(

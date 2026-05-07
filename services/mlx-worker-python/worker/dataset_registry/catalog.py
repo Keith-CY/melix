@@ -504,22 +504,20 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
 
 
 def _selected_dataset_files(snapshot_path: Path, *, split: str) -> tuple[Path, ...]:
-    data_files = [
+    normalized_split = _normalized(split)
+    if normalized_split:
+        split_matches: list[Path] = []
+        for path in _iter_supported_dataset_files(snapshot_path):
+            if path.name in _README_NAMES:
+                continue
+            if _path_matches_split(path.relative_to(snapshot_path), normalized_split):
+                split_matches.append(path)
+        return tuple(split_matches)
+    return tuple(
         path
         for path in _iter_supported_dataset_files(snapshot_path)
         if path.name not in _README_NAMES
-    ]
-    normalized_split = _normalized(split)
-    if normalized_split:
-        split_matches = [
-            path
-            for path in data_files
-            if _path_matches_split(path.relative_to(snapshot_path), normalized_split)
-        ]
-        if split_matches:
-            return tuple(split_matches)
-        return ()
-    return tuple(data_files)
+    )
 
 
 def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
