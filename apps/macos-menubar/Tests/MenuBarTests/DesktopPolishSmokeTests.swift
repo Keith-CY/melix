@@ -68,9 +68,8 @@ struct DesktopPolishSmokeTests {
             )),
         ])
 
-        let operatorSessionStore = OperatorSessionStore(
-            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
-        )
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
         let metrics = MenuBarMetricsStore()
         let updateProvider = StubProductInstallStateProvider(
             updateStatusResponse: ProductUpdateStatus(
@@ -108,21 +107,27 @@ struct DesktopPolishSmokeTests {
         #expect(viewModel.desktopSignalStates.contains(where: { $0.title == "Update available: 0.2.0" && $0.isDismissible }))
 
         try await waitForDesktopPolishCondition("operator session should persist queue state") {
-            guard let data = try? Data(contentsOf: temporaryRoot.appendingPathComponent("state/operator-session.json")),
-                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let downloadQueue = payload["download_queue"] as? [[String: Any]]
+            guard let uiData = try? Data(contentsOf: melixHome.operatorSessionFileURL),
+                  let uiPayload = try? JSONSerialization.jsonObject(with: uiData) as? [String: Any],
+                  let queueData = try? Data(contentsOf: melixHome.downloadQueueFileURL),
+                  let queuePayload = try? JSONSerialization.jsonObject(with: queueData) as? [String: Any],
+                  let downloadQueue = queuePayload["download_queue"] as? [[String: Any]]
             else {
                 return false
             }
-            return downloadQueue.isEmpty == false && payload["selected_tool_section"] as? String == "downloads"
+            return downloadQueue.isEmpty == false && uiPayload["selected_tool_section"] as? String == "downloads"
         }
 
-        let persistedData = try Data(contentsOf: temporaryRoot.appendingPathComponent("state/operator-session.json"))
-        let persistedPayload = try #require(
-            JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
+        let persistedUIData = try Data(contentsOf: melixHome.operatorSessionFileURL)
+        let persistedUIPayload = try #require(
+            JSONSerialization.jsonObject(with: persistedUIData) as? [String: Any]
         )
-        let persistedQueue = try #require(persistedPayload["download_queue"] as? [[String: Any]])
-        #expect(persistedPayload["selected_tool_section"] as? String == "downloads")
+        let persistedQueueData = try Data(contentsOf: melixHome.downloadQueueFileURL)
+        let persistedQueuePayload = try #require(
+            JSONSerialization.jsonObject(with: persistedQueueData) as? [String: Any]
+        )
+        let persistedQueue = try #require(persistedQueuePayload["download_queue"] as? [[String: Any]])
+        #expect(persistedUIPayload["selected_tool_section"] as? String == "downloads")
 
         let restoredMetrics = MenuBarMetricsStore()
         let restoredViewModel = RuntimeViewModel(

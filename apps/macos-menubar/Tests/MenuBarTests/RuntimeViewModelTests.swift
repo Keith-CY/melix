@@ -1272,7 +1272,7 @@ struct RuntimeViewModelTests {
         firstViewModel.selectToolSection(.downloads)
         await firstViewModel.refreshDownloadQueueState()
 
-        let persistedData = try Data(contentsOf: melixHome.operatorSessionFileURL)
+        let persistedData = try Data(contentsOf: melixHome.downloadQueueFileURL)
         let persistedPayload = try #require(
             JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )

@@ -594,6 +594,21 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
         )
     }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            schemaVersion: try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 6,
+            selectedSurfaceID: try container.decodeIfPresent(String.self, forKey: .selectedSurfaceID) ?? "chat",
+            selectedToolSectionID: try container.decodeIfPresent(String.self, forKey: .selectedToolSectionID) ?? "modelsLibrary",
+            selectedServerSessionID: try container.decodeIfPresent(String.self, forKey: .selectedServerSessionID) ?? "",
+            dismissedBannerIDs: try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? [],
+            paneVisibility: try container.decodeIfPresent(
+                [MelixOperatorPaneVisibilityState].self,
+                forKey: .paneVisibility
+            ) ?? MelixOperatorPaneVisibilityState.defaultStates
+        )
+    }
+
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case selectedSurfaceID = "selected_surface"

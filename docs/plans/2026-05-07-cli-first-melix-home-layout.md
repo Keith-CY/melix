@@ -13,7 +13,10 @@ of scope for this slice. The operator-session split still performs a one-shot
 fallback when an existing monolithic `state/operator-session.json` is present
 under the resolved `MELIX_HOME` and the new split files do not yet exist, so
 server sessions, registry roots, and download queue entries are not discarded
-when the split-file layout is first read.
+when the split-file layout is first read. Split UI-session reads also keep the
+old default-field behavior for pre-tool-section documents, so missing
+`selected_tool_section` and related UI keys restore to defaults instead of
+dropping the whole session.
 
 ## Target Layout
 
