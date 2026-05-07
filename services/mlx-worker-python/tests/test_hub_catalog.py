@@ -95,6 +95,79 @@ def test_search_models_with_mlx_only_keeps_repo_ids_with_mlx_suffix() -> None:
     assert [item.repo_id for item in page.items] == ["unsloth/gemma-4-E4B-it-MLX-8bit"]
 
 
+def test_search_models_with_mlx_only_prefilters_payloads_before_local_fit(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = [
+        {
+            "id": "plain/standard-model",
+            "author": "plain",
+            "pipeline_tag": "text-generation",
+            "tags": ["transformers"],
+            "siblings": [{"rfilename": "model.safetensors"}],
+            "cardData": {},
+        },
+        {
+            "id": "tagged/model",
+            "author": "tagged",
+            "pipeline_tag": "text-generation",
+            "tags": ["MLX", "text-generation"],
+            "siblings": [{"rfilename": "model.safetensors"}],
+            "cardData": {},
+        },
+        {
+            "id": "library/model",
+            "author": "library",
+            "pipeline_tag": "text-generation",
+            "tags": ["transformers"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "model.safetensors"}],
+            "cardData": {},
+        },
+        {
+            "id": "card/model",
+            "author": "card",
+            "pipeline_tag": "text-generation",
+            "tags": ["transformers"],
+            "siblings": [{"rfilename": "model.safetensors"}],
+            "cardData": {"tags": ["mlx"]},
+        },
+        {
+            "id": "owner/repo-mlx-suffix",
+            "author": "owner",
+            "pipeline_tag": "text-generation",
+            "tags": ["transformers"],
+            "siblings": [{"rfilename": "model.safetensors"}],
+            "cardData": {},
+        },
+    ]
+    local_fit_repo_ids: list[str] = []
+    original_local_fit = hub_catalog_module._local_fit_evidence
+
+    def counting_local_fit(**kwargs):
+        local_fit_repo_ids.append(kwargs["repo_id"])
+        return original_local_fit(**kwargs)
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    monkeypatch.setattr(hub_catalog_module, "_local_fit_evidence", counting_local_fit)
+
+    catalog = HubCatalog(opener=opener)
+    page = catalog.search_models(query="model", page_size=10, cursor="", mlx_only=True)
+
+    assert [item.repo_id for item in page.items] == [
+        "tagged/model",
+        "library/model",
+        "card/model",
+        "owner/repo-mlx-suffix",
+    ]
+    assert local_fit_repo_ids == [
+        "tagged/model",
+        "library/model",
+        "card/model",
+        "owner/repo-mlx-suffix",
+    ]
+
+
 def test_get_model_card_raises_invalid_argument_for_blank_repo_id() -> None:
     catalog = HubCatalog()
 
