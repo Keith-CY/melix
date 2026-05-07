@@ -430,7 +430,14 @@ def test_read_mlx_metal_dist_info_version_uses_scandir_without_path_glob(
     def fail_glob(self: Path, pattern: str):  # pragma: no cover - exercised only on regression
         raise AssertionError("read_mlx_metal_dist_info_version() should not allocate Path.glob() results")
 
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        if self.name == "METADATA":
+            raise AssertionError("METADATA should be streamed line-by-line, not materialized")
+        return original_read_text(self, *args, **kwargs)
+
+    original_read_text = dev_up.Path.read_text
     monkeypatch.setattr(dev_up.Path, "glob", fail_glob)
+    monkeypatch.setattr(dev_up.Path, "read_text", fail_read_text)
 
     assert dev_up.read_mlx_metal_dist_info_version(metallib_path) == "0.29.1"
 
@@ -442,6 +449,7 @@ def test_read_mlx_metal_dist_info_version_falls_back_to_dist_info_directory_name
     metallib_path.write_text("mlx", encoding="utf-8")
     dist_info_path = tmp_path / "site-packages/mlx_metal-0.31.1.dist-info"
     dist_info_path.mkdir()
+    (dist_info_path / "METADATA").write_text("Name: mlx-metal\nSummary: missing version\n", encoding="utf-8")
 
     assert dev_up.read_mlx_metal_dist_info_version(metallib_path) == "0.31.1"
 
