@@ -117,14 +117,16 @@ def test_plain_buffer_with_marker_still_holds_partial_structural_prefix() -> Non
     assert completed.metrics["stream_prefix_hold_chars"] == len("<tool_ca")
 
 
-def test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call() -> None:
-    class RecordingBuffer:
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, ...]] = []
+def test_partial_structural_tag_suffix_checks_only_last_marker_candidate() -> None:
+    class RecordingBuffer(str):
+        def __new__(cls) -> "RecordingBuffer":
+            instance = str.__new__(cls, "older<think>done</think>chunk-ending-with-partial-<tool")
+            instance.rfind_calls = []
+            return instance
 
-        def endswith(self, suffix: tuple[str, ...]) -> bool:
-            self.calls.append(suffix)
-            return "<thi" in suffix
+        def rfind(self, sub: str, *args: object) -> int:  # type: ignore[override]
+            self.rfind_calls.append(sub)
+            return super().rfind(sub, *args)
 
     assembler = RequestStreamAssembler(
         request_id="req-partial-suffix-fast-path",
@@ -133,35 +135,51 @@ def test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call(
         tool_parser_mode="qwen",
     )
     buffer = RecordingBuffer()
-    assembler._buffer = buffer  # type: ignore[assignment]
+    assembler._buffer = buffer
 
     assert assembler._has_partial_structural_tag_suffix() is True
-    assert buffer.calls == [assembler._structural_tag_prefixes]
+    assert buffer.rfind_calls == ["<"]
 
 
-def test_partial_structural_tag_suffix_returns_match_without_tuple_prescan() -> None:
-    class RecordingBuffer(str):
-        def __new__(cls) -> "RecordingBuffer":
-            instance = str.__new__(cls, "chunk-ending-with-partial-<tool")
-            instance.calls = []
-            return instance
-
-        def endswith(self, suffix: str | tuple[str, ...], *args: object) -> bool:  # type: ignore[override]
-            self.calls.append(suffix)
-            return super().endswith(suffix, *args)
-
+def test_partial_structural_tag_suffix_returns_last_marker_match() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-partial-suffix-single-pass",
         reasoning_enabled=True,
         structured_output_mode="",
         tool_parser_mode="qwen",
     )
-    buffer = RecordingBuffer()
-    assembler._buffer = buffer
+    assembler._buffer = "finished <think>trace</think> answer <tool"
 
     assert assembler._partial_structural_tag_suffix() == "<tool"
-    assert all(isinstance(call, str) for call in buffer.calls)
-    assert buffer.calls[-1] == "<tool"
+
+
+def test_partial_structural_tag_suffix_ignores_complete_or_unknown_markers() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-suffix-no-false-positives",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assembler._buffer = "answer <tool_call>"
+    assert assembler._partial_structural_tag_suffix() == ""
+
+    assembler._buffer = "answer without marker"
+    assert assembler._partial_structural_tag_suffix() == ""
+
+    assembler._buffer = "answer <thi"
+    assert assembler._partial_structural_tag_suffix() == "<thi"
+
+    assembler._buffer = "answer <xml"
+    assert assembler._partial_structural_tag_suffix() == ""
+
+
+def test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call() -> None:
+    test_partial_structural_tag_suffix_checks_only_last_marker_candidate()
+
+
+def test_partial_structural_tag_suffix_returns_match_without_tuple_prescan() -> None:
+    test_partial_structural_tag_suffix_returns_last_marker_match()
 
 
 def test_stream_assembler_instances_do_not_share_request_state() -> None:
