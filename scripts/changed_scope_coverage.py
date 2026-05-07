@@ -95,11 +95,13 @@ def _measurable_changed_lines(
     executed = set(entry["executed_lines"])
     missing = set(entry["missing_lines"])
     measured = executed | missing
+    measured_changed = changed & measured
+    if not measured_changed:
+        return [], [], []
+
     source_lines = (repo_root / rel_path).read_text(encoding="utf-8").splitlines()
     measurable: list[int] = []
-    for line_no in sorted(changed):
-        if line_no not in measured:
-            continue
+    for line_no in sorted(measured_changed):
         stripped = source_lines[line_no - 1].strip()
         if stripped and not stripped.startswith("#"):
             measurable.append(line_no)

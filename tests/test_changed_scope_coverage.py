@@ -275,20 +275,21 @@ def test_measurable_changed_lines_skips_source_read_when_no_changed_lines(monkey
 
     def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
         read_calls.append(self)
-        raise AssertionError("source file should not be read when the changed set is empty")
+        raise AssertionError("source file should not be read when no changed line is measurable")
 
     monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
 
-    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
-        tmp_path,
-        coverage_payload,
-        "foo.py",
-        set(),
-    )
+    for changed in (set(), {3, 4}):
+        measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+            tmp_path,
+            coverage_payload,
+            "foo.py",
+            changed,
+        )
 
-    assert measurable == []
-    assert covered == []
-    assert missed == []
+        assert measurable == []
+        assert covered == []
+        assert missed == []
     assert read_calls == []
 
 

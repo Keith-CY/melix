@@ -56,7 +56,7 @@ def run_probe(repo_root: Path, *, path_count: int = 300, samples: int = 7) -> di
                         root,
                         coverage_payload,
                         rel_path,
-                        set(),
+                        {3, 4},
                     )
                     if measurable or covered or missed:
                         raise RuntimeError("empty changed sets must not produce measurable lines")
