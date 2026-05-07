@@ -4527,6 +4527,65 @@ def test_run_bench_persists_report_without_reading_report_file(tmp_path: Path, m
     assert "runtime_name: fast-benchmark" in report
 
 
+def test_text_bench_cache_warmups_reuse_base_request_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path, registry=registry)
+    core = service._core
+    suite = SimpleNamespace(suite_id="smoke")
+    request_id_calls: list[dict[str, object]] = []
+    warmup_request_ids: list[str] = []
+    measured_request_ids: list[str] = []
+    original_start_request = registry.start_request
+
+    def tracked_request_id(**kwargs: object) -> str:
+        request_id_calls.append(dict(kwargs))
+        return f"bench-request-{len(request_id_calls)}"
+
+    def capture_warmup_request(*, request_id: str, **kwargs: object) -> None:
+        _ = kwargs
+        warmup_request_ids.append(request_id)
+
+    def capture_measured_request(*, request_id: str, runtime_kind: str):
+        measured_request_ids.append(request_id)
+        return original_start_request(request_id=request_id, runtime_kind=runtime_kind)
+
+    monkeypatch.setattr(MaintenanceCore, "_benchmark_request_id", staticmethod(tracked_request_id))
+    monkeypatch.setattr(core, "_benchmark_warmup_text_request", capture_warmup_request)
+    monkeypatch.setattr(registry, "start_request", capture_measured_request)
+
+    for cache_profile, expected_warmup_suffix in (
+        ("warm", "::warmup"),
+        ("partial_prefix", "::partial_prefix"),
+    ):
+        sample = core._measure_text_bench_sample(
+            loaded_model=loaded,
+            suite=suite,
+            prompt="alpha beta gamma delta",
+            parameters={},
+            context_length=16,
+            repeat_index=len(request_id_calls),
+            batch_size=1,
+            cache_profile=cache_profile,
+            reasoning_mode="default",
+            structured_output_mode="plain_text",
+        )
+
+        assert sample.cache_hit is True
+        assert warmup_request_ids[-1] == f"bench-request-{len(request_id_calls)}{expected_warmup_suffix}"
+        assert request_id_calls[-1]["cache_profile"] == cache_profile
+
+    assert len(request_id_calls) == 2
+    assert warmup_request_ids == ["bench-request-1::warmup", "bench-request-2::partial_prefix"]
+    assert measured_request_ids == ["bench-request-1", "bench-request-2"]
+
+
 def test_percentiles_reuse_one_sorted_vector_and_preserve_interpolation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
