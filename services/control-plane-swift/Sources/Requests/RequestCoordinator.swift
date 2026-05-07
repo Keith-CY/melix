@@ -2479,8 +2479,28 @@ public actor RequestCoordinator {
                 Double(stats.lastVoiceFallbackCount),
                 forKey: "audio.voice_fallback_count"
             )
+            if stats.lastProbeKind == "speech" {
+                await metricsStore.set(
+                    stats.lastSpeechStreamingEnabled ? 1 : 0,
+                    forKey: "audio.speech_streaming_enabled"
+                )
+                await metricsStore.set(
+                    Double(stats.lastSpeechStreamingIntervalMs),
+                    forKey: "audio.speech_streaming_interval_ms"
+                )
+                await metricsStore.set(
+                    stats.lastSpeechFirstAudioLatencyMs,
+                    forKey: "audio.speech_first_audio_latency_ms"
+                )
+            }
             if stats.lastAudioOutputBytes > 0 {
                 await metricsStore.set(Double(stats.lastAudioOutputBytes), forKey: "audio.speech_output_bytes")
+            }
+            if stats.lastAudioChunkCount > 0 {
+                await metricsStore.set(
+                    Double(stats.lastAudioChunkCount),
+                    forKey: "audio.speech_stream_chunk_count"
+                )
             }
         default:
             break

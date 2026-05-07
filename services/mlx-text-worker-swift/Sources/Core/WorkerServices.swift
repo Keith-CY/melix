@@ -323,6 +323,19 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         return response
     }
 
+    func speakStream(
+        request: Melix_Worker_V1_SpeakRequest,
+        response: GRPCCore.RPCWriter<Melix_Worker_V1_SpeakStreamEvent>,
+        context: GRPCCore.ServerContext
+    ) async throws {
+        metrics.increment("swift_text.unimplemented_rpc_count")
+
+        var event = Melix_Worker_V1_SpeakStreamEvent()
+        event.kind = .error
+        event.error = makeUnimplementedStatus("SpeakStream is handled by the Python worker family.")
+        try await response.write(event)
+    }
+
     func imageGenerate(
         request: Melix_Worker_V1_ImageGenerateRequest,
         context: GRPCCore.ServerContext

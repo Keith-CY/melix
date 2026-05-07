@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 
 class AudioBackendUnavailableError(RuntimeError):
@@ -74,6 +74,37 @@ class SpeechResult:
     format: str
 
 
+@dataclass(frozen=True)
+class SpeechStreamEnvelope:
+    format: str
+    container: str
+    codec: str
+    sample_rate_hz: int
+    channel_count: int
+    bits_per_sample: int
+    stream_interval_ms: int
+    wav_sizes_unknown: bool
+    ext: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SpeechStreamFinish:
+    streaming_enabled: bool
+    stream_interval_ms: int
+    first_audio_latency_ms: float
+    speech_latency_ms: float
+    audio_bytes: int
+    audio_chunk_count: int
+
+
+@dataclass(frozen=True)
+class SpeechStreamFrame:
+    kind: Literal["envelope", "audio_chunk", "finish"]
+    audio_bytes: bytes = b""
+    envelope: SpeechStreamEnvelope | None = None
+    finish: SpeechStreamFinish | None = None
+
+
 class TranscriptionRuntimeProtocol(Protocol):
     runtime_name: str
 
@@ -94,5 +125,7 @@ class SpeechRuntimeProtocol(Protocol):
     def estimate_resident_bytes(self, model_spec) -> int: ...
 
     def speak(self, loaded_model: AudioRuntimeLoadedModel, request) -> SpeechResult: ...
+
+    def stream_speak(self, loaded_model: AudioRuntimeLoadedModel, request): ...
 
     def last_probe_snapshot(self): ...

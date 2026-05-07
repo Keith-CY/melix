@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from io import BytesIO
 import json
 import shutil
 import sys
@@ -11,6 +12,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +94,9 @@ def load_model(model_path: str):
 
     (root / "mlx_audio" / "tts" / "utils.py").write_text(
         """
+import time
+
+
 class FakeChunk:
     def __init__(self, audio, sample_rate=24000):
         self.audio = audio
@@ -112,12 +117,19 @@ class FakeQwen3TTSModel:
     available_voices = ["alloy", "verse"]
 
     def generate(self, text, voice=None, instruct=None, verbose=False):
-        base = [0.00, 0.20, -0.20, 0.10]
+        chunks = [
+            [0.00, 0.20, -0.20, 0.10],
+            [0.08, -0.08, 0.04, -0.04],
+            [0.06, 0.00, -0.06, 0.03],
+            [-0.03, 0.09, -0.09, 0.00],
+        ]
         if voice:
-            base.extend([0.05, 0.05])
+            chunks.append([0.05, 0.05])
         if instruct:
-            base.extend([-0.05, -0.05, 0.02])
-        yield FakeChunk(base)
+            chunks.append([-0.05, -0.05, 0.02])
+        for chunk in chunks:
+            time.sleep(0.02)
+            yield FakeChunk(chunk)
 
 
 def load_model(model_path: str, strict: bool = True):
@@ -217,6 +229,33 @@ def _timed_post_json(
     return last_status, last_body, last_headers, timeout * 1_000.0
 
 
+def _timed_streaming_audio_post(
+    url: str,
+    payload: dict[str, object],
+    *,
+    timeout: float = 30.0,
+) -> tuple[int, bytes, dict[str, str], float, float]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    started_at = time.perf_counter()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            first_byte = response.read(1)
+            first_audio_latency_ms = (time.perf_counter() - started_at) * 1_000.0
+            body = first_byte + response.read()
+            total_latency_ms = (time.perf_counter() - started_at) * 1_000.0
+            return response.status, body, dict(response.headers.items()), first_audio_latency_ms, total_latency_ms
+    except urllib.error.HTTPError as exc:
+        first_audio_latency_ms = (time.perf_counter() - started_at) * 1_000.0
+        body = exc.read()
+        total_latency_ms = (time.perf_counter() - started_at) * 1_000.0
+        return exc.code, body, dict(exc.headers.items()), first_audio_latency_ms, total_latency_ms
+
+
 def _metric_value(snapshot: dict[str, object], key: str) -> float:
     values = snapshot.get("values", {})
     if not isinstance(values, dict):
@@ -233,6 +272,16 @@ def _transcriptions_url(stack: LiveMelixStack) -> str:
 
 def _speech_url(stack: LiveMelixStack) -> str:
     return f"http://127.0.0.1:{stack.http_port}/v1/audio/speech"
+
+
+def _is_playable_wav(payload: bytes) -> bool:
+    if not payload.startswith(b"RIFF"):
+        return False
+    try:
+        with wave.open(BytesIO(payload), "rb") as handle:
+            return handle.getnchannels() == 1 and handle.getsampwidth() == 2 and bool(handle.readframes(1))
+    except (EOFError, wave.Error):
+        return False
 
 
 def _capture_transcription_scenario(
@@ -314,6 +363,7 @@ def _capture_speech_scenario(
         "request_latency_ms": round(elapsed_ms, 2),
         "content_type": content_type,
         "output_bytes": len(body_bytes),
+        "playable_wav_success": _is_playable_wav(body_bytes),
         "requested_locale": requested_locale,
         "resolved_locale": resolved_locale,
         "locale_source": locale_source,
@@ -334,6 +384,106 @@ def _capture_speech_scenario(
         ),
         "speech_latency_ms": _metric_value(metrics_snapshot, "audio.speech_latency_ms"),
         "voice_fallback_count": _metric_value(metrics_snapshot, "audio.voice_fallback_count"),
+        "response_excerpt": body_bytes[:24].hex(),
+    }
+
+
+def _capture_speech_streaming_scenario(
+    stack: LiveMelixStack,
+    *,
+    model_id: str,
+    input_text: str,
+    voice: str | None = None,
+    locale: str | None = None,
+    instructions: str | None = None,
+    stream_interval_ms: int = 20,
+) -> dict[str, Any]:
+    buffered = _capture_speech_scenario(
+        stack,
+        model_id=model_id,
+        input_text=input_text,
+        voice=voice,
+        locale=locale,
+        instructions=instructions,
+    )
+    payload: dict[str, object] = {
+        "model": model_id,
+        "input": input_text,
+        "format": "wav",
+        "stream": True,
+        "stream_interval_ms": stream_interval_ms,
+    }
+    if voice is not None:
+        payload["voice"] = voice
+    if locale is not None:
+        payload["locale"] = locale
+    if instructions is not None:
+        payload["instructions"] = instructions
+
+    status, body_bytes, headers, first_audio_latency_ms, total_latency_ms = _timed_streaming_audio_post(
+        _speech_url(stack),
+        payload,
+    )
+    metrics_snapshot = read_metrics_export(stack.control_plane_metrics_path)
+    content_type = headers.get("content-type", "")
+    streaming_header_success = headers.get("x-melix-audio-streaming", "") == "true"
+    stream_interval_header_success = headers.get("x-melix-audio-stream-interval-ms", "") == str(
+        stream_interval_ms
+    )
+    playable_wav_success = _is_playable_wav(body_bytes)
+    buffered_latency_ms = float(buffered.get("request_latency_ms", 0.0) or 0.0)
+    ttfa_reduction_pct = (
+        max(0.0, ((buffered_latency_ms - first_audio_latency_ms) / buffered_latency_ms) * 100.0)
+        if buffered_latency_ms > 0.0
+        else 0.0
+    )
+    stream_chunk_count = _metric_value(metrics_snapshot, "audio.speech_stream_chunk_count")
+    speech_streaming_enabled = _metric_value(metrics_snapshot, "audio.speech_streaming_enabled")
+    speech_streaming_interval_ms = _metric_value(
+        metrics_snapshot,
+        "audio.speech_streaming_interval_ms",
+    )
+    runtime_first_audio_latency_ms = _metric_value(
+        metrics_snapshot,
+        "audio.speech_first_audio_latency_ms",
+    )
+
+    return {
+        "model_id": model_id,
+        "success": bool(
+            status == 200
+            and content_type == "audio/wav"
+            and streaming_header_success
+            and stream_interval_header_success
+            and playable_wav_success
+            and len(body_bytes) > 0
+            and stream_chunk_count >= 1.0
+            and speech_streaming_enabled == 1.0
+        ),
+        "buffered_fallback_success": bool(
+            buffered.get("success")
+            and buffered.get("content_type") == "audio/wav"
+            and buffered.get("playable_wav_success")
+        ),
+        "parity_success": bool(
+            buffered.get("success")
+            and playable_wav_success
+            and content_type == buffered.get("content_type")
+            and len(body_bytes) > 0
+            and buffered.get("output_bytes", 0) > 0
+        ),
+        "ttfa_reduction_success": ttfa_reduction_pct >= 50.0,
+        "playable_wav_success": playable_wav_success,
+        "malformed_progressive_wav_count": 0.0 if playable_wav_success else 1.0,
+        "buffered_request_latency_ms": round(buffered_latency_ms, 2),
+        "first_audio_latency_ms": round(first_audio_latency_ms, 2),
+        "runtime_first_audio_latency_ms": runtime_first_audio_latency_ms,
+        "total_stream_latency_ms": round(total_latency_ms, 2),
+        "ttfa_reduction_pct": round(ttfa_reduction_pct, 2),
+        "streaming_output_bytes": len(body_bytes),
+        "stream_chunk_count": stream_chunk_count,
+        "speech_streaming_enabled": speech_streaming_enabled,
+        "speech_streaming_interval_ms": speech_streaming_interval_ms,
         "response_excerpt": body_bytes[:24].hex(),
     }
 
@@ -382,12 +532,22 @@ def run_smoke(repo_root: Path) -> dict[str, Any]:
             locale="en-US",
             instructions="Speak calmly.",
         )
+        qwen3_tts_streaming = _capture_speech_streaming_scenario(
+            stack,
+            model_id="melix-qwen3-tts-mlx",
+            input_text="Switch to English and speak calmly.",
+            voice="alloy",
+            locale="en-US",
+            instructions="Speak calmly.",
+            stream_interval_ms=20,
+        )
 
         report = build_phase17_speech_metrics_report(
             whisper=whisper,
             parakeet=parakeet,
             kokoro=kokoro,
             qwen3_tts=qwen3_tts,
+            qwen3_tts_streaming=qwen3_tts_streaming,
         )
         return {
             "ok": all(report["checks"].values()),
@@ -398,6 +558,7 @@ def run_smoke(repo_root: Path) -> dict[str, Any]:
                 "parakeet": parakeet,
                 "kokoro": kokoro,
                 "qwen3_tts": qwen3_tts,
+                "qwen3_tts_streaming": qwen3_tts_streaming,
             },
         }
     finally:

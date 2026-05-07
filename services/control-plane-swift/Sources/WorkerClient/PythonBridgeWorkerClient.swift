@@ -18,6 +18,7 @@ public enum BridgeCommandKind: String, Sendable {
     case rerank = "rerank"
     case transcribe = "transcribe"
     case speak = "speak"
+    case speakStream = "speak-stream"
     case imageGenerate = "image-generate"
     case imageEdit = "image-edit"
     case getModelInfo = "get-model-info"
@@ -178,6 +179,12 @@ public struct PythonBridgeWorkerClient:
         request: Melix_Worker_V1_SpeakRequest
     ) async throws -> Melix_Worker_V1_SpeakResponse {
         try await sendUnary(kind: .speak, request: request, as: Melix_Worker_V1_SpeakResponse.self)
+    }
+
+    public func speakStream(
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error> {
+        try await sendStream(kind: .speakStream, request: request, as: Melix_Worker_V1_SpeakStreamEvent.self)
     }
 
     public func imageGenerate(

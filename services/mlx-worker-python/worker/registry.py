@@ -141,6 +141,9 @@ class WorkerRegistry:
         self._last_audio_duration_seconds = 0.0
         self._last_audio_chunk_count = 0
         self._last_audio_output_bytes = 0
+        self._last_speech_streaming_enabled = False
+        self._last_speech_streaming_interval_ms = 0
+        self._last_speech_first_audio_latency_ms = 0.0
         self._last_audio_model_load_latency_ms = 0.0
         self._last_audio_backend_unavailable_count = 0
         self._last_voice_fallback_count = 0
@@ -419,6 +422,9 @@ class WorkerRegistry:
             last_audio_duration_seconds = self._last_audio_duration_seconds
             last_audio_chunk_count = self._last_audio_chunk_count
             last_audio_output_bytes = self._last_audio_output_bytes
+            last_speech_streaming_enabled = self._last_speech_streaming_enabled
+            last_speech_streaming_interval_ms = self._last_speech_streaming_interval_ms
+            last_speech_first_audio_latency_ms = self._last_speech_first_audio_latency_ms
             last_audio_model_load_latency_ms = self._last_audio_model_load_latency_ms
             last_audio_backend_unavailable_count = self._last_audio_backend_unavailable_count
             last_voice_fallback_count = self._last_voice_fallback_count
@@ -456,6 +462,9 @@ class WorkerRegistry:
             last_audio_duration_seconds=last_audio_duration_seconds,
             last_audio_chunk_count=last_audio_chunk_count,
             last_audio_output_bytes=last_audio_output_bytes,
+            last_speech_streaming_enabled=last_speech_streaming_enabled,
+            last_speech_streaming_interval_ms=last_speech_streaming_interval_ms,
+            last_speech_first_audio_latency_ms=last_speech_first_audio_latency_ms,
             last_audio_model_load_latency_ms=last_audio_model_load_latency_ms,
             last_audio_backend_unavailable_count=last_audio_backend_unavailable_count,
             last_voice_fallback_count=last_voice_fallback_count,
@@ -532,6 +541,9 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = 0.0
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = 0
+            self._last_speech_streaming_enabled = False
+            self._last_speech_streaming_interval_ms = 0
+            self._last_speech_first_audio_latency_ms = 0.0
             self._last_video_effective_frame_count = int(getattr(probe, "video_effective_frame_count", 0))
             self._last_video_requested_frame_budget = int(getattr(probe, "video_requested_frame_budget", 0))
             self._last_video_window_ms = int(getattr(probe, "video_window_ms", 0))
@@ -556,6 +568,9 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = float(getattr(probe, "estimated_duration_seconds", 0.0))
             self._last_audio_chunk_count = int(getattr(probe, "chunk_count", 0))
             self._last_audio_output_bytes = 0
+            self._last_speech_streaming_enabled = False
+            self._last_speech_streaming_interval_ms = 0
+            self._last_speech_first_audio_latency_ms = 0.0
             self._last_language_fallback_count = int(getattr(probe, "language_fallback_count", 0))
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
@@ -579,8 +594,13 @@ class WorkerRegistry:
             self._last_transcription_latency_ms = 0.0
             self._last_speech_latency_ms = float(getattr(probe, "speech_latency_ms", 0.0))
             self._last_audio_duration_seconds = 0.0
-            self._last_audio_chunk_count = 0
+            self._last_audio_chunk_count = int(getattr(probe, "chunk_count", 0))
             self._last_audio_output_bytes = int(getattr(probe, "output_bytes", 0))
+            self._last_speech_streaming_enabled = bool(getattr(probe, "streaming_enabled", False))
+            self._last_speech_streaming_interval_ms = int(getattr(probe, "stream_interval_ms", 0))
+            self._last_speech_first_audio_latency_ms = float(
+                getattr(probe, "first_audio_latency_ms", 0.0)
+            )
             self._last_voice_fallback_count = int(getattr(probe, "voice_fallback_count", 0))
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
@@ -614,6 +634,9 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = 0.0
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = 0
+            self._last_speech_streaming_enabled = False
+            self._last_speech_streaming_interval_ms = 0
+            self._last_speech_first_audio_latency_ms = 0.0
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
             self._last_video_window_ms = 0

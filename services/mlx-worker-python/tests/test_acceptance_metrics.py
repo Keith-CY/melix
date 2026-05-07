@@ -407,16 +407,37 @@ def test_build_phase17_speech_metrics_report_tracks_backend_and_locale_evidence(
             "locale_resolution_success": True,
             "instruction_path_success": True,
         },
+        qwen3_tts_streaming={
+            "success": True,
+            "playable_wav_success": True,
+            "parity_success": True,
+            "buffered_fallback_success": True,
+            "ttfa_reduction_success": True,
+            "first_audio_latency_ms": 24.0,
+            "runtime_first_audio_latency_ms": 18.0,
+            "buffered_request_latency_ms": 72.0,
+            "total_stream_latency_ms": 82.0,
+            "ttfa_reduction_pct": 66.67,
+            "streaming_output_bytes": 6200,
+            "stream_chunk_count": 3.0,
+            "speech_streaming_interval_ms": 20.0,
+            "malformed_progressive_wav_count": 0.0,
+        },
     )
 
     assert report["checks"]["speech.transcription.whisper_success"] is True
     assert report["checks"]["speech.synthesis.qwen3_tts_locale_resolution_success"] is True
+    assert report["checks"]["speech.synthesis.qwen3_tts_streaming_success"] is True
+    assert report["checks"]["speech.synthesis.qwen3_tts_streaming_ttfa_reduction_success"] is True
     assert report["metrics"]["speech.integration_success_rate"] == 100.0
     assert report["metrics"]["speech.transcription.whisper.preprocess_latency_ms"] == 12.0
     assert report["metrics"]["speech.transcription.parakeet.chunk_count"] == 3.0
     assert report["metrics"]["speech.synthesis.kokoro.output_bytes"] == 4096.0
     assert report["metrics"]["speech.synthesis.qwen3_tts.output_bytes"] == 6144.0
     assert report["metrics"]["speech.synthesis.qwen3_tts.locale_header_success_rate"] == 100.0
+    assert report["metrics"]["speech.synthesis.qwen3_tts.streaming_first_audio_latency_ms"] == 24.0
+    assert report["metrics"]["speech.synthesis.qwen3_tts.streaming_ttfa_reduction_pct"] == 66.67
+    assert report["metrics"]["speech.synthesis.qwen3_tts.streaming_malformed_wav_count"] == 0.0
 
 
 def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidence() -> None:

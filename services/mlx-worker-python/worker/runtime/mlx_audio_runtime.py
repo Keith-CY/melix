@@ -6,7 +6,6 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Lock
 from time import perf_counter
-import array
 import sys
 import wave
 
@@ -15,10 +14,18 @@ from worker.runtime.audio_runtime_protocols import (
     AudioBackendUnavailableError,
     AudioProcessorValidationError,
     AudioRuntimeLoadedModel,
+    SpeechStreamEnvelope,
+    SpeechStreamFinish,
+    SpeechStreamFrame,
     SpeechResult,
     TranscriptionResult,
 )
 from worker.runtime.runtime_utils import callable_kwarg_signature
+from worker.runtime.wav_helpers import (
+    audio_to_pcm_chunks,
+    progressive_wav_header,
+    stream_chunk_sample_limit,
+)
 
 
 _AUDIO_PROCESSOR_CONFIG_FILES = (
@@ -37,30 +44,7 @@ def _normalize_language(value) -> str:
     return "" if normalized.lower() == "none" else normalized
 
 
-def _iter_samples(value):
-    if isinstance(value, (float, int)):
-        yield float(value)
-        return
-    flat_values = getattr(value, "flat", None)
-    if flat_values is not None and not isinstance(value, (list, tuple)):
-        for item in flat_values:
-            yield float(item)
-        return
-    if hasattr(value, "tolist"):
-        value = value.tolist()
-    for item in value:
-        if (
-            isinstance(item, (list, tuple))
-            or hasattr(item, "flat")
-            or hasattr(item, "tolist")
-        ):
-            yield from _iter_samples(item)
-        else:
-            yield float(item)
-
-
 def _audio_to_wav_bytes(audio, sample_rate: int) -> bytes:
-    chunk = array.array("h")
     chunk_sample_limit = 65536
 
     with BytesIO() as buffer:
@@ -68,19 +52,17 @@ def _audio_to_wav_bytes(audio, sample_rate: int) -> bytes:
             handle.setnchannels(1)
             handle.setsampwidth(2)
             handle.setframerate(int(sample_rate))
-            for sample in _iter_samples(audio):
-                clamped = max(-1.0, min(1.0, float(sample)))
-                chunk.append(int(clamped * 32767.0))
-                if len(chunk) >= chunk_sample_limit:
-                    if sys.byteorder != "little":
-                        chunk.byteswap()
-                    handle.writeframesraw(chunk.tobytes())
-                    chunk = array.array("h")
-            if chunk:
-                if sys.byteorder != "little":
-                    chunk.byteswap()
-                handle.writeframesraw(chunk.tobytes())
+            for pcm_chunk in audio_to_pcm_chunks(audio, chunk_sample_limit=chunk_sample_limit):
+                handle.writeframesraw(pcm_chunk)
         return buffer.getvalue()
+
+
+def _speech_request_context(loaded_model: AudioRuntimeLoadedModel, request) -> str:
+    request_id = getattr(getattr(request, "id", None), "request_id", "") or "<unknown>"
+    return (
+        f"request_id={request_id}, backend_id={loaded_model.backend_id}, "
+        f"family_id={loaded_model.family_id}"
+    )
 
 
 def _voice_metadata_for_model(model) -> dict[str, object]:
@@ -129,6 +111,10 @@ class MLXAudioSpeechProbeSnapshot:
     speech_latency_ms: float
     output_bytes: int
     voice_fallback_count: int
+    streaming_enabled: bool = False
+    stream_interval_ms: int = 0
+    first_audio_latency_ms: float = 0.0
+    chunk_count: int = 0
 
 
 class MLXAudioTranscriptionRuntime:
@@ -281,7 +267,11 @@ class MLXAudioSpeechRuntime:
     def estimate_resident_bytes(self, model_spec) -> int:
         return 0
 
-    def speak(self, loaded_model: AudioRuntimeLoadedModel, request) -> SpeechResult:
+    def _speech_generation_kwargs(
+        self,
+        loaded_model: AudioRuntimeLoadedModel,
+        request,
+    ) -> tuple[dict[str, object], int]:
         requested_format = (request.format or "wav").lower()
         if requested_format != "wav":
             raise ValueError("mlx-audio speech backend only supports wav output.")
@@ -312,6 +302,11 @@ class MLXAudioSpeechRuntime:
                 kwargs["instruct"] = request.voice
                 voice_fallback_count = 1
 
+        return kwargs, voice_fallback_count
+
+    def speak(self, loaded_model: AudioRuntimeLoadedModel, request) -> SpeechResult:
+        kwargs, voice_fallback_count = self._speech_generation_kwargs(loaded_model, request)
+
         started_at = perf_counter()
         with self._execution_gate:
             results = loaded_model.model.generate(**kwargs)
@@ -322,7 +317,10 @@ class MLXAudioSpeechRuntime:
                 sample_rate = int(getattr(result, "sample_rate", sample_rate) or sample_rate)
 
         if not audio_chunks:
-            raise ValueError("mlx-audio speech backend produced no audio.")
+            raise ValueError(
+                "mlx-audio speech backend produced no audio "
+                f"({_speech_request_context(loaded_model, request)})."
+            )
 
         wav_bytes = _audio_to_wav_bytes(audio_chunks, sample_rate)
         self._last_probe = MLXAudioSpeechProbeSnapshot(
@@ -331,6 +329,89 @@ class MLXAudioSpeechRuntime:
             voice_fallback_count=voice_fallback_count,
         )
         return SpeechResult(audio_bytes=wav_bytes, format="wav")
+
+    def stream_speak(self, loaded_model: AudioRuntimeLoadedModel, request):
+        kwargs, voice_fallback_count = self._speech_generation_kwargs(loaded_model, request)
+        stream_interval_ms = max(1, int(request.stream_interval_ms or 20))
+
+        started_at = perf_counter()
+        output_bytes = 0
+        chunk_count = 0
+        first_audio_latency_ms = 0.0
+        sent_envelope = False
+        emitted_audio = False
+        sample_rate = 24_000
+
+        # Qwen3-TTS can lazily produce GPU-backed chunks from the generate iterator.
+        # Keep the gate across iterator consumption to avoid interleaving non-reentrant
+        # model state between concurrent speech requests.
+        with self._execution_gate:
+            results = loaded_model.model.generate(**kwargs)
+            iterable_results = results if hasattr(results, "__iter__") else [results]
+            for result in iterable_results:
+                audio = getattr(result, "audio", [])
+                sample_rate = int(getattr(result, "sample_rate", sample_rate) or sample_rate)
+                if not sent_envelope:
+                    header = progressive_wav_header(sample_rate)
+                    output_bytes += len(header)
+                    sent_envelope = True
+                    yield SpeechStreamFrame(
+                        kind="envelope",
+                        audio_bytes=header,
+                        envelope=SpeechStreamEnvelope(
+                            format="wav",
+                            container="wav",
+                            codec="pcm_s16le",
+                            sample_rate_hz=sample_rate,
+                            channel_count=1,
+                            bits_per_sample=16,
+                            stream_interval_ms=stream_interval_ms,
+                            wav_sizes_unknown=True,
+                        ),
+                    )
+
+                for pcm_chunk in audio_to_pcm_chunks(
+                    audio,
+                    chunk_sample_limit=stream_chunk_sample_limit(sample_rate, stream_interval_ms),
+                ):
+                    if not pcm_chunk:
+                        continue
+                    if not emitted_audio:
+                        first_audio_latency_ms = max((perf_counter() - started_at) * 1000.0, 0.001)
+                    emitted_audio = True
+                    chunk_count += 1
+                    output_bytes += len(pcm_chunk)
+                    yield SpeechStreamFrame(kind="audio_chunk", audio_bytes=pcm_chunk)
+
+        if not emitted_audio:
+            raise ValueError(
+                "mlx-audio speech backend produced no audio "
+                f"({_speech_request_context(loaded_model, request)})."
+            )
+
+        speech_latency_ms = max((perf_counter() - started_at) * 1000.0, 0.001)
+        # SpeechCore records the runtime probe when it observes the finish frame,
+        # so populate the snapshot before yielding that frame.
+        self._last_probe = MLXAudioSpeechProbeSnapshot(
+            speech_latency_ms=speech_latency_ms,
+            output_bytes=output_bytes,
+            voice_fallback_count=voice_fallback_count,
+            streaming_enabled=True,
+            stream_interval_ms=stream_interval_ms,
+            first_audio_latency_ms=first_audio_latency_ms,
+            chunk_count=chunk_count,
+        )
+        yield SpeechStreamFrame(
+            kind="finish",
+            finish=SpeechStreamFinish(
+                streaming_enabled=True,
+                stream_interval_ms=stream_interval_ms,
+                first_audio_latency_ms=first_audio_latency_ms,
+                speech_latency_ms=speech_latency_ms,
+                audio_bytes=output_bytes,
+                audio_chunk_count=chunk_count,
+            ),
+        )
 
     def last_probe_snapshot(self) -> MLXAudioSpeechProbeSnapshot:
         return self._last_probe
