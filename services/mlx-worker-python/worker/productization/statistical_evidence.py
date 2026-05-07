@@ -76,26 +76,26 @@ def build_category_breakdown(
 ) -> dict[str, dict[str, object]]:
     category_totals: dict[str, list[int]] = {}
     for row in rows:
-        category_label = str(row.get("category_label", "")).strip()
+        row_get = row.get
+        category_label = str(row_get("category_label", "")).strip()
         if not category_label:
             continue
+        base_correct = 1 if row_get("base_correct", False) else 0
+        target_correct = 1 if row_get("target_correct", False) else 0
         totals = category_totals.get(category_label)
         if totals is None:
-            category_totals[category_label] = [
-                1,
-                int(bool(row.get("base_correct", False))),
-                int(bool(row.get("target_correct", False))),
-            ]
+            category_totals[category_label] = [1, base_correct, target_correct]
             continue
         totals[0] += 1
-        totals[1] += int(bool(row.get("base_correct", False)))
-        totals[2] += int(bool(row.get("target_correct", False)))
+        totals[1] += base_correct
+        totals[2] += target_correct
 
     breakdown: dict[str, dict[str, object]] = {}
-    for category_label in sorted(category_totals):
-        sample_size, base_correct, target_correct = category_totals[category_label]
-        base_accuracy = _rounded(base_correct / max(sample_size, 1))
-        target_accuracy = _rounded(target_correct / max(sample_size, 1))
+    for category_label, totals in sorted(category_totals.items()):
+        sample_size, base_correct, target_correct = totals
+        inverse_sample_size = 1.0 / sample_size
+        base_accuracy = _rounded(base_correct * inverse_sample_size)
+        target_accuracy = _rounded(target_correct * inverse_sample_size)
         breakdown[category_label] = {
             "sample_size": sample_size,
             "base_accuracy": base_accuracy,
