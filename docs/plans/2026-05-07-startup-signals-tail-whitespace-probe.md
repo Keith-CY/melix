@@ -26,6 +26,13 @@ Use the existing registered probe ID `startup-signals-lazy-worker-log-excerpts`,
 
 The probe writes a synthetic log ending in `80,000` whitespace bytes, repeatedly calls `_read_last_nonempty_line(...)`, and verifies that the final non-empty line remains unchanged.
 
+## Implementation note
+
+This slice keeps the reverse chunk scan semantics but combines trailing-whitespace
+skipping and last-line-bound discovery into a single helper. `_read_last_nonempty_line(...)`
+now avoids a second reverse scan after finding the last non-whitespace byte and
+returns the already-trimmed payload without a second decoded-string `rstrip()`.
+
 ## Success metrics
 
 - Focused startup signal tests pass.

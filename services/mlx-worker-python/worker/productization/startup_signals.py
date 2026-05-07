@@ -243,38 +243,31 @@ def _log_excerpt(*paths: object) -> str:
 def _read_last_nonempty_line(path: Path, *, chunk_size: int = 8192) -> str:
     with path.open("rb") as handle:
         handle.seek(0, 2)
-        payload_end = _seek_non_whitespace_end(handle, chunk_size=chunk_size)
+        line_start, payload_end = _seek_last_nonempty_line_bounds(handle, chunk_size=chunk_size)
         if payload_end == 0:
             return ""
-        line_start = _seek_last_line_start(handle, payload_end=payload_end, chunk_size=chunk_size)
         handle.seek(line_start)
         payload = handle.read(payload_end - line_start)
-    return payload.decode("utf-8", errors="replace").rstrip()
+    return payload.decode("utf-8", errors="replace")
 
 
-def _seek_non_whitespace_end(handle: Any, *, chunk_size: int) -> int:
+def _seek_last_nonempty_line_bounds(handle: Any, *, chunk_size: int) -> tuple[int, int]:
     position = handle.tell()
+    payload_end = 0
     while position > 0:
         read_size = min(chunk_size, position)
         start = position - read_size
         handle.seek(start)
         chunk = handle.read(read_size)
-        trimmed = chunk.rstrip(_BYTE_WHITESPACE)
-        if trimmed:
-            return start + len(trimmed)
-        position = start
-    return 0
-
-
-def _seek_last_line_start(handle: Any, *, payload_end: int, chunk_size: int) -> int:
-    position = payload_end
-    while position > 0:
-        read_size = min(chunk_size, position)
-        start = position - read_size
-        handle.seek(start)
-        chunk = handle.read(read_size)
-        newline_index = max(chunk.rfind(b"\n"), chunk.rfind(b"\r"))
+        search_end = len(chunk)
+        if payload_end == 0:
+            search_end = len(chunk.rstrip(_BYTE_WHITESPACE))
+            if search_end == 0:
+                position = start
+                continue
+            payload_end = start + search_end
+        newline_index = max(chunk.rfind(b"\n", 0, search_end), chunk.rfind(b"\r", 0, search_end))
         if newline_index >= 0:
-            return start + newline_index + 1
+            return start + newline_index + 1, payload_end
         position = start
-    return 0
+    return 0, payload_end
