@@ -33,6 +33,7 @@ class EngineCore:
         )
         effective_sampling = self._sampling_with_resolved_stop(request.sampling, stop_contract.sequences)
         prompt_tokens_default: int | None = None
+        completion_token_count = 0
         last_token_event: RuntimeTokenEvent | None = None
         turn_boundary_stop_reason = ""
 
@@ -102,7 +103,7 @@ class EngineCore:
                             ),
                         )
                     if delta.content_text:
-                        state.append_token(delta.content_text)
+                        completion_token_count += 1
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
                             execution_kind="generate",
@@ -114,7 +115,7 @@ class EngineCore:
                         )
 
             if request.return_usage and not state.cancel_event.is_set():
-                completion_tokens = len(state.emitted_tokens)
+                completion_tokens = completion_token_count
                 if last_token_event is not None and last_token_event.prompt_tokens:
                     prompt_tokens = int(last_token_event.prompt_tokens)
                 else:

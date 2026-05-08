@@ -16,6 +16,7 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtim
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.engine.request_state import RequestState
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 
 
@@ -78,6 +79,7 @@ def run_probe() -> dict[str, float | int | str]:
     prompt_words = int(os.environ.get("MELIX_ENGINE_GENERATE_USAGE_PROBE_PROMPT_WORDS", "4096"))
     elapsed_ms: list[float] = []
     call_counts: list[int] = []
+    append_counts: list[int] = []
     token_events: list[int] = []
 
     for sample in range(samples):
@@ -94,13 +96,26 @@ def run_probe() -> dict[str, float | int | str]:
         )
 
         token_count = 0
+        append_count = 0
+        original_append_token = RequestState.append_token
+
+        def counting_append_token(self: RequestState, token: str) -> None:
+            nonlocal append_count
+            append_count += 1  # pragma: no cover - exercised by base-version probe comparison
+            original_append_token(self, token)  # pragma: no cover - exercised by base-version probe comparison
+
+        RequestState.append_token = counting_append_token
         start = time.perf_counter()
-        for request_index in range(request_count):
-            request = _build_request(load_response.model_handle, request_index=sample * request_count + request_index)
-            events = list(inference_service.Generate(request, context=None))
-            token_count += sum(1 for event in events if event.HasField("token_delta"))
+        try:
+            for request_index in range(request_count):
+                request = _build_request(load_response.model_handle, request_index=sample * request_count + request_index)
+                events = list(inference_service.Generate(request, context=None))
+                token_count += sum(1 for event in events if event.HasField("token_delta"))
+        finally:
+            RequestState.append_token = original_append_token
         elapsed_ms.append((time.perf_counter() - start) * 1000.0)
         call_counts.append(runtime.prompt_token_count_calls)
+        append_counts.append(append_count)
         token_events.append(token_count)
 
     return {
@@ -108,6 +123,8 @@ def run_probe() -> dict[str, float | int | str]:
         "elapsed_ms_min": min(elapsed_ms),
         "prompt_token_count_calls_mean": statistics.fmean(call_counts),
         "prompt_token_count_calls_per_request": statistics.fmean(call_counts) / request_count,
+        "request_state_append_calls_mean": statistics.fmean(append_counts),
+        "request_state_append_calls_per_request": statistics.fmean(append_counts) / request_count,
         "token_events_mean": statistics.fmean(token_events),
         "request_count": request_count,
         "samples": samples,
