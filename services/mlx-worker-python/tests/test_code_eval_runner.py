@@ -345,6 +345,38 @@ def test_count_tests_falls_back_for_syntax_error_input() -> None:
     assert code_eval_runner._count_tests("assert True\n  assert False") == 2
 
 
+def test_count_nonblank_test_lines_matches_splitlines_semantics() -> None:
+    test_code = "\n assert one\r\n\t\rassert two\n   \nassert three"
+
+    assert code_eval_runner._count_nonblank_test_lines(test_code) == len(
+        [line for line in test_code.splitlines() if line.strip()]
+    )
+
+
+class _SplitlinesGuard(str):
+    def splitlines(self, *args, **kwargs):
+        raise AssertionError("fallback test counting should not materialize splitlines")
+
+
+def test_count_tests_fallback_avoids_splitlines_materialization() -> None:
+    assert code_eval_runner._count_tests(_SplitlinesGuard("def broken(:\nassert one\nassert two")) == 3
+
+
+def test_count_tests_no_assert_fallback_avoids_splitlines_materialization() -> None:
+    test_code = _SplitlinesGuard(
+        textwrap.dedent(
+            """
+            def check(candidate):
+                return candidate(1)
+
+            check(identity)
+            """
+        ).strip()
+    )
+
+    assert code_eval_runner._count_tests(test_code) == 3
+
+
 def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -> None:
     missing_path = tmp_path / "missing.txt"
     assert code_eval_runner._read_limited_text(missing_path, 8) == ""
