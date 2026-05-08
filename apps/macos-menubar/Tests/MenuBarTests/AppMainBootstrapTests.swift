@@ -290,6 +290,233 @@ struct AppMainBootstrapTests {
         #expect(capturedAcceptanceEnvironment?["MELIX_PHASE8_WINDOW_UI_ACCEPTANCE"] == "1")
     }
 
+    @Test("main routes the app screenshot capture flag through the screenshot entrypoint")
+    @MainActor
+    func mainRoutesAppScreenshotCaptureFlag() {
+        var launchLiveCallCount = 0
+        var phase8CallCount = 0
+        var capturedScreenshotEnvironment: [String: String]?
+
+        MelixMenuBarApp.main(
+            environment: [
+                "MELIX_HOME": "/tmp/melix-home",
+                "MELIX_APP_SCREENSHOT_CAPTURE": "1",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE": "1",
+            ],
+            launchLiveHandler: {
+                launchLiveCallCount += 1
+            },
+            phase8WindowUIAcceptanceHandler: { _ in
+                phase8CallCount += 1
+            },
+            appScreenshotCaptureHandler: { environment in
+                capturedScreenshotEnvironment = environment
+            }
+        )
+
+        #expect(launchLiveCallCount == 0)
+        #expect(phase8CallCount == 0)
+        #expect(capturedScreenshotEnvironment?["MELIX_HOME"] == "/tmp/melix-home")
+        #expect(capturedScreenshotEnvironment?["MELIX_APP_SCREENSHOT_CAPTURE"] == "1")
+    }
+
+    @Test("app screenshot capture entry writes snake_case json and exits zero")
+    @MainActor
+    func appScreenshotCaptureEntryWritesSnakeCaseJSONAndExitsZero() async throws {
+        let application = RecordingApplicationLifecycle()
+        let recorder = AppScreenshotCaptureMainRecorder()
+
+        MelixMenuBarApp.runAppScreenshotCapture(
+            environment: [
+                "MELIX_APP_SCREENSHOT_OUTPUT_DIR": "/tmp/melix-screenshots",
+            ],
+            application: application,
+            runnerFactory: { environment in
+                #expect(environment["MELIX_APP_SCREENSHOT_OUTPUT_DIR"] == "/tmp/melix-screenshots")
+                return SucceedingAppScreenshotCaptureMainRunner(
+                    result: AppScreenshotCaptureManifest(
+                        schemaVersion: "melix.app_screenshots.v1",
+                        manifestPath: "/tmp/melix-screenshots/screenshot_manifest.json",
+                        appPath: "/tmp/Melix.app",
+                        outputDirectoryPath: "/tmp/melix-screenshots",
+                        screenshotRoot: "/tmp/melix-screenshots/screenshots",
+                        width: 1440,
+                        height: 960,
+                        screenshots: [
+                            AppScreenshotCaptureEntry(
+                                id: "command-center",
+                                kind: "command_center",
+                                surface: "",
+                                toolSection: "",
+                                path: "/tmp/melix-screenshots/screenshots/command-center.png",
+                                renderMs: 12.5
+                            ),
+                        ]
+                    )
+                )
+            },
+            writeStandardOutput: { data in
+                recorder.standardOutput.append(data)
+            },
+            writeStandardError: { data in
+                recorder.standardError.append(data)
+            },
+            flushHandler: {
+                recorder.flushCount += 1
+            },
+            exitHandler: { exitCode in
+                recorder.exitCodes.append(exitCode)
+            },
+            operationScheduler: { operation in
+                Task { @MainActor in
+                    await operation()
+                }
+            },
+            runLoopRunner: {
+                recorder.runLoopInvocationCount += 1
+            }
+        )
+
+        try await waitForBootstrapCondition("expected app screenshot capture entrypoint to exit") {
+            !recorder.exitCodes.isEmpty
+        }
+
+        let standardOutput = String(decoding: recorder.standardOutput, as: UTF8.self)
+        let outputJSON = try #require(
+            JSONSerialization.jsonObject(with: recorder.standardOutput) as? [String: Any]
+        )
+        let screenshots = try #require(outputJSON["screenshots"] as? [[String: Any]])
+
+        #expect(application.recordedPolicies == [.accessory])
+        #expect(recorder.runLoopInvocationCount == 1)
+        #expect(recorder.flushCount == 1)
+        #expect(recorder.exitCodes == [0])
+        #expect(recorder.standardError.isEmpty)
+        #expect(standardOutput.hasSuffix("\n"))
+        #expect(outputJSON["schema_version"] as? String == "melix.app_screenshots.v1")
+        #expect(outputJSON["screenshot_root"] as? String == "/tmp/melix-screenshots/screenshots")
+        #expect(screenshots.first?["id"] as? String == "command-center")
+    }
+
+    @Test("app screenshot capture execution writes localized stderr on runner failures")
+    @MainActor
+    func appScreenshotCaptureExecutionWritesLocalizedStderrOnRunnerFailures() async {
+        var standardOutput = Data()
+        var standardError = Data()
+
+        let exitCode = await MelixMenuBarApp.executeAppScreenshotCapture(
+            environment: [
+                "MELIX_APP_SCREENSHOT_OUTPUT_DIR": "",
+            ],
+            runnerFactory: { _ in
+                FailingAppScreenshotCaptureMainRunner(
+                    error: AppScreenshotCaptureError.invalidOutputDirectory("")
+                )
+            },
+            writeStandardOutput: { data in
+                standardOutput.append(data)
+            },
+            writeStandardError: { data in
+                standardError.append(data)
+            }
+        )
+
+        #expect(exitCode == 1)
+        #expect(standardOutput.isEmpty)
+        #expect(String(decoding: standardError, as: UTF8.self) == "Invalid app screenshot output directory: \n")
+    }
+
+    @Test("app screenshot capture execution supports the default runner factory path")
+    @MainActor
+    func appScreenshotCaptureExecutionSupportsDefaultRunnerFactoryPath() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("app-screenshot-main-runner-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        var standardOutput = Data()
+        var standardError = Data()
+
+        let exitCode = await MelixMenuBarApp.executeAppScreenshotCapture(
+            environment: [
+                "MELIX_APP_SCREENSHOT_OUTPUT_DIR": tempRoot.path,
+                "MELIX_APP_SCREENSHOT_APP_PATH": "/tmp/Melix.app",
+                "MELIX_APP_SCREENSHOT_WIDTH": "360",
+                "MELIX_APP_SCREENSHOT_HEIGHT": "240",
+            ],
+            writeStandardOutput: { data in
+                standardOutput.append(data)
+            },
+            writeStandardError: { data in
+                standardError.append(data)
+            }
+        )
+
+        let outputJSON = try #require(
+            JSONSerialization.jsonObject(with: standardOutput) as? [String: Any]
+        )
+        let screenshots = try #require(outputJSON["screenshots"] as? [[String: Any]])
+
+        #expect(exitCode == 0)
+        #expect(standardError.isEmpty)
+        #expect(outputJSON["app_path"] as? String == "/tmp/Melix.app")
+        #expect(outputJSON["width"] as? Int == 360)
+        #expect(outputJSON["height"] as? Int == 240)
+        #expect(screenshots.count == 12)
+        #expect(fileManager.fileExists(atPath: tempRoot.appendingPathComponent("screenshot_manifest.json").path))
+        #expect(fileManager.fileExists(atPath: tempRoot.appendingPathComponent("screenshots/command-center.png").path))
+    }
+
+    @Test("app screenshot capture entry supports default output flushing and scheduling")
+    @MainActor
+    func appScreenshotCaptureEntrySupportsDefaultOutputFlushAndScheduling() async throws {
+        let application = RecordingApplicationLifecycle()
+        var standardOutput = Data()
+        var exitCodes: [Int32] = []
+        var runLoopInvocationCount = 0
+
+        MelixMenuBarApp.runAppScreenshotCapture(
+            environment: [
+                "MELIX_APP_SCREENSHOT_OUTPUT_DIR": "/tmp/melix-screenshots",
+            ],
+            application: application,
+            runnerFactory: { _ in
+                SucceedingAppScreenshotCaptureMainRunner(
+                    result: AppScreenshotCaptureManifest(
+                        schemaVersion: "melix.app_screenshots.v1",
+                        manifestPath: "/tmp/melix-screenshots/screenshot_manifest.json",
+                        appPath: "/tmp/Melix.app",
+                        outputDirectoryPath: "/tmp/melix-screenshots",
+                        screenshotRoot: "/tmp/melix-screenshots/screenshots",
+                        width: 320,
+                        height: 200,
+                        screenshots: []
+                    )
+                )
+            },
+            writeStandardOutput: { data in
+                standardOutput.append(data)
+            },
+            writeStandardError: { _ in },
+            exitHandler: { exitCode in
+                exitCodes.append(exitCode)
+            },
+            runLoopRunner: {
+                runLoopInvocationCount += 1
+            }
+        )
+
+        try await waitForBootstrapCondition("expected default app screenshot capture scheduling to exit") {
+            !exitCodes.isEmpty
+        }
+
+        #expect(application.recordedPolicies == [.accessory])
+        #expect(!standardOutput.isEmpty)
+        #expect(runLoopInvocationCount == 1)
+        #expect(exitCodes == [0])
+    }
+
     @Test("main routes non-acceptance launches through the live path")
     @MainActor
     func mainRoutesDefaultLaunchPath() {
@@ -1207,6 +1434,33 @@ private struct SucceedingPhase8WindowUIAcceptanceMainRunner: Phase8WindowUIAccep
 
     func run() async throws -> Phase8WindowUIAcceptanceResult {
         result
+    }
+}
+
+@MainActor
+private final class AppScreenshotCaptureMainRecorder {
+    var standardOutput = Data()
+    var standardError = Data()
+    var flushCount = 0
+    var exitCodes: [Int32] = []
+    var runLoopInvocationCount = 0
+}
+
+@MainActor
+private struct SucceedingAppScreenshotCaptureMainRunner: AppScreenshotCaptureRunning {
+    let result: AppScreenshotCaptureManifest
+
+    func run() async throws -> AppScreenshotCaptureManifest {
+        result
+    }
+}
+
+@MainActor
+private struct FailingAppScreenshotCaptureMainRunner: AppScreenshotCaptureRunning {
+    let error: Error
+
+    func run() async throws -> AppScreenshotCaptureManifest {
+        throw error
     }
 }
 

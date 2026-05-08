@@ -475,32 +475,16 @@ public protocol Phase8WindowUIRendering: Sendable {
 
 @MainActor
 public struct LivePhase8WindowUIRenderer: Phase8WindowUIRendering {
+    private let renderer = MelixSwiftUIScreenshotRenderer()
+
     public init() {}
 
     public func render(viewModel: RuntimeViewModel, to outputURL: URL, size: CGSize) throws {
-        let hostingView = NSHostingView(
-            rootView: DesktopFoundationRootView(viewModel: viewModel)
-                .frame(width: size.width, height: size.height)
-        )
-        hostingView.frame = CGRect(origin: .zero, size: size)
-        hostingView.layoutSubtreeIfNeeded()
-
-        guard let bitmap = hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds) else {
-            throw Phase8WindowUIAcceptanceError.screenshotRenderFailed(
-                "NSHostingView could not allocate a bitmap snapshot."
-            )
+        do {
+            try renderer.render(DesktopFoundationRootView(viewModel: viewModel), to: outputURL, size: size)
+        } catch {
+            throw Phase8WindowUIAcceptanceError.screenshotRenderFailed(String(describing: error))
         }
-        bitmap.size = size
-        hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
-
-        guard let data = bitmap.representation(using: .png, properties: [:]) else {
-            throw Phase8WindowUIAcceptanceError.screenshotRenderFailed("Bitmap snapshot could not be encoded as PNG.")
-        }
-        try FileManager.default.createDirectory(
-            at: outputURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try data.write(to: outputURL)
     }
 }
 

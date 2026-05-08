@@ -108,6 +108,13 @@ protocol Phase8WindowUIAcceptanceRunning {
 extension Phase8WindowUIAcceptanceRunner: Phase8WindowUIAcceptanceRunning {}
 
 @MainActor
+protocol AppScreenshotCaptureRunning {
+    func run() async throws -> AppScreenshotCaptureManifest
+}
+
+extension AppScreenshotCaptureRunner: AppScreenshotCaptureRunning {}
+
+@MainActor
 public final class MenuBarTerminationCoordinator: NSObject {
     private let mode: MenuBarTerminationMode
     private let repoRoot: String
@@ -799,8 +806,13 @@ enum MelixMenuBarApp {
     static func main(
         environment: [String: String],
         launchLiveHandler: @escaping @MainActor () -> Void = defaultMainLaunchLiveHandler,
-        phase8WindowUIAcceptanceHandler: @escaping @MainActor ([String: String]) -> Void = defaultMainPhase8WindowUIAcceptanceHandler
+        phase8WindowUIAcceptanceHandler: @escaping @MainActor ([String: String]) -> Void = defaultMainPhase8WindowUIAcceptanceHandler,
+        appScreenshotCaptureHandler: @escaping @MainActor ([String: String]) -> Void = defaultMainAppScreenshotCaptureHandler
     ) {
+        if environment["MELIX_APP_SCREENSHOT_CAPTURE"] == "1" {
+            appScreenshotCaptureHandler(environment)
+            return
+        }
         if environment["MELIX_PHASE8_WINDOW_UI_ACCEPTANCE"] == "1" {
             phase8WindowUIAcceptanceHandler(environment)
             return
@@ -839,6 +851,32 @@ enum MelixMenuBarApp {
         runLoopRunner()
     }
 
+    static func runAppScreenshotCapture(
+        environment: [String: String],
+        application: any MenuBarApplicationLifecycle = LiveMenuBarApplication(),
+        runnerFactory: @escaping @MainActor ([String: String]) throws -> any AppScreenshotCaptureRunning = makeAppScreenshotCaptureRunner,
+        writeStandardOutput: @escaping @MainActor (Data) -> Void = writeAppScreenshotCaptureStandardOutput,
+        writeStandardError: @escaping @MainActor (Data) -> Void = writeAppScreenshotCaptureStandardError,
+        flushHandler: @escaping @MainActor () -> Void = flushAppScreenshotCaptureIO,
+        exitHandler: @escaping @MainActor (Int32) -> Void = exitAppScreenshotCapture,
+        operationScheduler: @escaping @MainActor (@escaping @MainActor @Sendable () async -> Void) -> Void = scheduleAppScreenshotCaptureOperation,
+        runLoopRunner: @escaping @MainActor () -> Void = runAppScreenshotCaptureLoop
+    ) {
+        application.setActivationPolicy(.accessory)
+        operationScheduler {
+            let exitCode = await executeAppScreenshotCapture(
+                environment: environment,
+                runnerFactory: runnerFactory,
+                writeStandardOutput: writeStandardOutput,
+                writeStandardError: writeStandardError
+            )
+            flushHandler()
+            exitHandler(exitCode)
+        }
+
+        runLoopRunner()
+    }
+
     static func executePhase8WindowUIAcceptance(
         environment: [String: String],
         bootstrapFactory: @escaping @MainActor ([String: String]) -> MelixMenuBarBootstrap = makePhase8WindowUIAcceptanceBootstrap,
@@ -858,7 +896,30 @@ enum MelixMenuBarApp {
             encoder.keyEncodingStrategy = .convertToSnakeCase
             let data = try encoder.encode(result)
             writeStandardOutput(data)
-            writeStandardOutput(Data([0x0A]))
+            writeStandardOutput(Data("\n".utf8))
+            return 0
+        } catch {
+            let message = error.localizedDescription + "\n"
+            writeStandardError(Data(message.utf8))
+            return 1
+        }
+    }
+
+    static func executeAppScreenshotCapture(
+        environment: [String: String],
+        runnerFactory: @escaping @MainActor ([String: String]) throws -> any AppScreenshotCaptureRunning = makeAppScreenshotCaptureRunner,
+        writeStandardOutput: @escaping @MainActor (Data) -> Void = writeAppScreenshotCaptureStandardOutput,
+        writeStandardError: @escaping @MainActor (Data) -> Void = writeAppScreenshotCaptureStandardError
+    ) async -> Int32 {
+        do {
+            let runner = try runnerFactory(environment)
+            let result = try await runner.run()
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            let data = try encoder.encode(result)
+            writeStandardOutput(data)
+            writeStandardOutput(Data("\n".utf8))
             return 0
         } catch {
             let message = error.localizedDescription + "\n"
@@ -871,6 +932,10 @@ enum MelixMenuBarApp {
 
     private static func defaultMainPhase8WindowUIAcceptanceHandler(environment: [String: String]) {
         runPhase8WindowUIAcceptance(environment: environment)
+    }
+
+    private static func defaultMainAppScreenshotCaptureHandler(environment: [String: String]) {
+        runAppScreenshotCapture(environment: environment)
     }
 
     private static func makePhase8WindowUIAcceptanceBootstrap(
@@ -918,4 +983,34 @@ enum MelixMenuBarApp {
             config: .init(environment: environment)
         )
     }
+
+    private static func makeAppScreenshotCaptureRunner(
+        environment: [String: String]
+    ) throws -> any AppScreenshotCaptureRunning {
+        AppScreenshotCaptureRunner(config: .init(environment: environment))
+    }
+
+    private static func writeAppScreenshotCaptureStandardOutput(_ data: Data) {
+        FileHandle.standardOutput.write(data)
+    }
+
+    private static func writeAppScreenshotCaptureStandardError(_ data: Data) {
+        FileHandle.standardError.write(data)
+    }
+
+    private static func flushAppScreenshotCaptureIO() {
+        fflush(nil)
+    }
+
+    private static func exitAppScreenshotCapture(_ exitCode: Int32) { Darwin.exit(exitCode) }
+
+    private static func scheduleAppScreenshotCaptureOperation(
+        _ operation: @escaping @MainActor @Sendable () async -> Void
+    ) {
+        Task { @MainActor in
+            await operation()
+        }
+    }
+
+    private static func runAppScreenshotCaptureLoop() { RunLoop.main.run() }
 }
