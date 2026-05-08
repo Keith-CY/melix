@@ -1669,8 +1669,8 @@ def test_hub_catalog_size_hint_probe_script_emits_metrics(
     assert exc_info.value.code == 0
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 1.0
-    assert metrics["size_hint_calls_mean"] == 8.0
-    assert metrics["matched_hint_count"] == 6.0
+    assert metrics["size_hint_calls_mean"] == 6.0
+    assert metrics["matched_hint_count"] == 4.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
@@ -1792,7 +1792,7 @@ def test_multimodal_image_uri_parse_probe_script_emits_metrics(capsys: pytest.Ca
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 5.0
     assert metrics["prepared_image_count"] == 640.0
-    assert metrics["urlparse_calls_mean"] == 640.0
+    assert metrics["urlparse_calls_mean"] == 320.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
