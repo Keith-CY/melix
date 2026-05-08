@@ -933,6 +933,56 @@
     ]
   },
   {
+    "id": "evaluation-final-result-json-typed-score-aggregate",
+    "name": "Evaluation final-result JSON typed-score running aggregate",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/evaluation_final_result.py",
+      "services/mlx-worker-python/tests/test_evaluation_final_result.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/evaluation_json_typed_score_probe.py",
+      "infra/perf/pr_scoped_probes.json",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_evaluation_final_result.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_final_result_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_evaluation_json_typed_score_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_evaluation_final_result.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_final_result_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_evaluation_json_typed_score_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/evaluation_final_result.py services/mlx-worker-python/tests/test_evaluation_final_result.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/evaluation_json_typed_score_probe.py",
+    "probe_command": "if [ -f scripts/evaluation_json_typed_score_probe.py ]; then\n  PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python scripts/evaluation_json_typed_score_probe.py\nelse\n  PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python - <<'PYFALLBACK'\nimport json, statistics, time, tracemalloc\nfrom worker.productization.evaluation_final_result import EvaluationProfileDefinition, score_final_result\nKEYS=2000; ITERATIONS=40; SAMPLES=5\ndef payload():\n    expected={}; actual={}; ignored=[]\n    for index in range(KEYS):\n        key=f\"field_{index}\"\n        expected[key]={\"label\":f\"value-{index}\",\"scores\":[index,index+1,index+2],\"metadata\":{\"confidence\":index/max(KEYS,1),\"evidence\":[f\"source-{index}\",f\"source-{index+1}\"]}}\n        actual[key]={\"label\":expected[key][\"label\"] if index % 4 else \"mismatch\",\"scores\":expected[key][\"scores\"],\"metadata\":{\"confidence\":0.0,\"evidence\":[\"different-source\"]}}\n        ignored.append(f\"{key}.metadata\")\n    return json.dumps(expected), json.dumps(actual), tuple(ignored)\ndef run_once():\n    target, extracted, ignored_paths = payload()\n    profile=EvaluationProfileDefinition(profile_type=\"final_result\",result_kind=\"json\",extraction_mode=\"strict_full_response\",scoring_mode=\"json_field_match\",threshold=1.0,ignored_paths=ignored_paths)\n    checksum=0.0; tracemalloc.start(); started=time.perf_counter()\n    for _ in range(ITERATIONS):\n        outcome=score_final_result(extracted_result=extracted,target=target,profile=profile)\n        if outcome.validation_status != \"validated\": raise AssertionError(outcome)\n        checksum += outcome.typed_score\n    elapsed=(time.perf_counter()-started)*1000.0; _, peak=tracemalloc.get_traced_memory(); tracemalloc.stop(); return elapsed,float(peak),checksum\nsamples=[run_once() for _ in range(SAMPLES)]\nprint(json.dumps({\"elapsed_ms_mean\":statistics.fmean(s[0] for s in samples),\"peak_bytes_mean\":statistics.fmean(s[1] for s in samples),\"score_checksum\":samples[-1][2],\"key_count\":float(KEYS),\"iteration_count\":float(ITERATIONS)}, sort_keys=True))\nPYFALLBACK\nfi",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "score_checksum",
+        "unit": "score",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "key_count",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "iteration_count",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "training-config-target-module-cache",
     "name": "Training config target-module cache",
     "runner": "ubuntu-latest",

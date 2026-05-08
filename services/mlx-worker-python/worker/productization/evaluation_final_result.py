@@ -375,29 +375,37 @@ def _validate_json_schema(schema: dict[str, Any], payload: Any) -> str:
 
 def _json_typed_score(*, expected: Any, actual: Any, ignored_paths: set[str], path: str = "") -> float:
     if isinstance(expected, dict):
-        expected_keys = [key for key in expected if _joined_path(path, key) not in ignored_paths]
-        if not expected_keys:
-            return 1.0
-        scores = [
-            _json_typed_score(
-                expected=expected[key],
-                actual=actual.get(key) if isinstance(actual, dict) else None,
+        total = 0.0
+        count = 0
+        actual_dict = actual if isinstance(actual, dict) else None
+        for key, expected_value in expected.items():
+            child_path = _joined_path(path, key)
+            if child_path in ignored_paths:
+                continue
+            total += _json_typed_score(
+                expected=expected_value,
+                actual=actual_dict.get(key) if actual_dict is not None else None,
                 ignored_paths=ignored_paths,
-                path=_joined_path(path, key),
+                path=child_path,
             )
-            for key in expected_keys
-        ]
-        return sum(scores) / len(scores)
+            count += 1
+        if count == 0:
+            return 1.0
+        return total / count
     if isinstance(expected, list):
         if not isinstance(actual, list) or len(expected) != len(actual):
             return 0.0
         if not expected:
             return 1.0
-        scores = [
-            _json_typed_score(expected=item, actual=actual[index], ignored_paths=ignored_paths, path=f"{path}[{index}]")
-            for index, item in enumerate(expected)
-        ]
-        return sum(scores) / len(scores)
+        total = 0.0
+        for index, item in enumerate(expected):
+            total += _json_typed_score(
+                expected=item,
+                actual=actual[index],
+                ignored_paths=ignored_paths,
+                path=f"{path}[{index}]",
+            )
+        return total / len(expected)
     return 1.0 if expected == actual else 0.0
 
 
