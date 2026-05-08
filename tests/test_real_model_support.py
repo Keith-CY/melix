@@ -4,6 +4,7 @@ import builtins
 import json
 from pathlib import Path
 
+import scripts.real_model_support as real_model_support_module
 from scripts.real_model_support import (
     PHASE2_DEFAULT_DRAFT_TEXT_MODEL_ID,
     REAL_SMALL_TEXT_MODEL_ID,
@@ -273,6 +274,55 @@ def test_real_small_model_source_fallback_tracks_latest_snapshot_without_sorting
     assert source.local_model_path == str((snapshots_root / "zzz").resolve())
     assert source.source_resolution_mode == "hf_cache_snapshot"
     assert "using lexicographically last snapshot directory" in source.warnings[0]
+
+
+def test_hf_cache_snapshot_fallback_does_not_follow_symlinked_directories(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+    real_snapshot = snapshots_root / "real-snapshot"
+    real_snapshot.mkdir()
+
+    class _FakeEntry:
+        name = "real-snapshot"
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            if follow_symlinks:
+                raise AssertionError("HF cache snapshot scan should not follow symlinks")
+            return True
+
+    class _FakeScandir:
+        def __enter__(self):
+            return iter((_FakeEntry(),))
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_scandir(path: Path):
+        assert path == snapshots_root
+        return _FakeScandir()
+
+    monkeypatch.setattr(real_model_support_module.os, "scandir", fake_scandir)
+
+    source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert source.live is False
+    assert source.local_model_path == str(real_snapshot.resolve())
+    assert source.source_resolution_mode == "hf_cache_snapshot"
 
 
 def test_runtime_model_preflight_marks_real_local_weights(tmp_path: Path) -> None:
