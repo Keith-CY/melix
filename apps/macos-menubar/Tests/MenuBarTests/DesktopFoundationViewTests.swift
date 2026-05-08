@@ -6107,6 +6107,29 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         #expect(failedCaseGate.cliCaseStatus == "failed")
     }
 
+    @Test("phase 8 fixture export response surfaces write failures")
+    func phase8FixtureExportResponseSurfacesWriteFailures() {
+        let command = MelixCLICommand.benchExportCSV(
+            .init(jobID: "bench-newer", outputPath: "/dev/null/bench.csv", json: true)
+        )
+
+        let result = makePhase8FixtureExportResponse(
+            command: command,
+            jobID: "bench-newer",
+            outputPath: "/dev/null/bench.csv",
+            rowCount: 1,
+            contents: "metric,value\nbench,1\n"
+        )
+
+        switch result {
+        case .success(let output):
+            Issue.record("expected fixture export write failure, got \(output)")
+        case .failure(let error):
+            #expect(error.failureKind == .processFailed)
+            #expect(error.errorDescription?.contains("Failed to write fixture export") == true)
+        }
+    }
+
     @Test("phase 8 window ui acceptance runner writes a screenshot and evidence bundle")
     @MainActor
     func phase8WindowUIAcceptanceRunnerWritesEvidenceBundle() async throws {
@@ -6217,58 +6240,52 @@ struct Phase8WindowUIAcceptanceRunnerTests {
             case .evalRun:
                 return .success(makeCLIEvaluationRunJSON(jobID: "eval-newer"))
             case .benchExportCSV(let options):
-                try? Data("metric,value\nbench,1\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "metric,value\nbench,1\n"
                 )
             case .benchMatrixExportSummaryCSV(let options):
-                try? Data("suite,ttft_ms\nsmoke,21.1\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "suite,ttft_ms\nsmoke,21.1\n"
                 )
             case .benchMatrixExportRequestsCSV(let options):
-                try? Data("request,latency_ms\n0,28.7\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "request,latency_ms\n0,28.7\n"
                 )
             case .evalExportSummaryCSV(let options):
-                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "{\"ok\":true}\n"
                 )
             case .evalExportSamplesCSV(let options):
-                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "{\"ok\":true}\n"
                 )
             case .evalExportSamplesJSONL(let options):
-                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "{\"ok\":true}\n"
                 )
             default:
                 return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
@@ -6568,58 +6585,52 @@ struct Phase8WindowUIAcceptanceRunnerTests {
             case .evalRun:
                 return .success(makeCLIEvaluationRunJSON(jobID: "eval-newer"))
             case .benchExportCSV(let options):
-                try? Data("metric,value\nbench,1\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "metric,value\nbench,1\n"
                 )
             case .benchMatrixExportSummaryCSV(let options):
-                try? Data("suite,ttft_ms\nsmoke,21.1\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "suite,ttft_ms\nsmoke,21.1\n"
                 )
             case .benchMatrixExportRequestsCSV(let options):
-                try? Data("request,latency_ms\n0,28.7\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "request,latency_ms\n0,28.7\n"
                 )
             case .evalExportSummaryCSV(let options):
-                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "{\"ok\":true}\n"
                 )
             case .evalExportSamplesCSV(let options):
-                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "{\"ok\":true}\n"
                 )
             case .evalExportSamplesJSONL(let options):
-                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "{\"ok\":true}\n"
                 )
             default:
                 return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
@@ -6901,58 +6912,52 @@ struct Phase8WindowUIAcceptanceRunnerTests {
             case .evalRun:
                 return .success(makeCLIEvaluationRunJSON(jobID: "eval-newer"))
             case .benchExportCSV(let options):
-                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "ok\n"
                 )
             case .benchMatrixExportSummaryCSV(let options):
-                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "ok\n"
                 )
             case .benchMatrixExportRequestsCSV(let options):
-                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "ok\n"
                 )
             case .evalExportSummaryCSV(let options):
-                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "ok\n"
                 )
             case .evalExportSamplesCSV(let options):
-                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "ok\n"
                 )
             case .evalExportSamplesJSONL(let options):
-                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
-                return .success(
-                    makeCLIExportResponseJSON(
-                        jobID: options.jobID,
-                        outputPath: options.outputPath,
-                        rowCount: 1
-                    )
+                return makePhase8FixtureExportResponse(
+                    command: command,
+                    jobID: options.jobID,
+                    outputPath: options.outputPath,
+                    rowCount: 1,
+                    contents: "ok\n"
                 )
             default:
                 return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
@@ -7005,6 +7010,39 @@ private final class RecordingPhase8WindowUIRenderer: Phase8WindowUIRendering {
             withIntermediateDirectories: true
         )
         try Data("png".utf8).write(to: outputURL)
+    }
+}
+
+private func makePhase8FixtureExportResponse(
+    command: MelixCLICommand,
+    jobID: String,
+    outputPath: String,
+    rowCount: Int,
+    contents: String
+) -> Result<String, MelixCLIWorkflowError> {
+    let outputURL = URL(fileURLWithPath: outputPath)
+    do {
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(contents.utf8).write(to: outputURL)
+        return .success(
+            makeCLIExportResponseJSON(
+                jobID: jobID,
+                outputPath: outputPath,
+                rowCount: rowCount
+            )
+        )
+    } catch {
+        return .failure(
+            .processFailed(
+                commandID: command.workflowCommandID,
+                surface: .subprocess,
+                exitCode: 1,
+                stderr: "Failed to write fixture export at \(outputPath): \(error)"
+            )
+        )
     }
 }
 
