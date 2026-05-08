@@ -184,7 +184,12 @@ def test_main_returns_non_zero_when_body_is_invalid(monkeypatch, capsys) -> None
     monkeypatch.setattr(
         validate_pr_evidence,
         "parse_args",
-        lambda: argparse.Namespace(body_file=None, event_path="/tmp/event.json"),
+        lambda: argparse.Namespace(
+            body_file=None,
+            event_path="/tmp/event.json",
+            report_json=[],
+            require_report_json=False,
+        ),
     )
     monkeypatch.setattr(validate_pr_evidence, "load_body_text", lambda args: "## Summary\n- hi\n")
 
@@ -199,7 +204,12 @@ def test_main_returns_zero_when_body_is_valid(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         validate_pr_evidence,
         "parse_args",
-        lambda: argparse.Namespace(body_file="/tmp/body.md", event_path=None),
+        lambda: argparse.Namespace(
+            body_file="/tmp/body.md",
+            event_path=None,
+            report_json=[],
+            require_report_json=False,
+        ),
     )
     monkeypatch.setattr(
         validate_pr_evidence,
@@ -225,6 +235,77 @@ make proto-check
 
     output = capsys.readouterr().out
     assert "PR evidence looks valid." in output
+
+
+def test_validate_report_json_paths_reports_missing_and_payload_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps({"schema_version": "melix.benchmark_evaluation_report.v1"}), encoding="utf-8")
+    monkeypatch.setattr(
+        validate_pr_evidence,
+        "validate_report_payload",
+        lambda payload: ["missing required report identity field: report_id"],
+    )
+
+    errors = validate_pr_evidence.validate_report_json_paths(
+        [str(tmp_path / "missing.json"), str(report_path)]
+    )
+
+    assert f"Report JSON is missing: {tmp_path / 'missing.json'}" in errors
+    assert (
+        f"{report_path}: missing required report identity field: report_id"
+        in errors
+    )
+
+
+def test_validate_report_json_paths_reports_decode_and_shape_errors(tmp_path: Path) -> None:
+    bad_json = tmp_path / "bad.json"
+    bad_json.write_text("{", encoding="utf-8")
+    array_json = tmp_path / "array.json"
+    array_json.write_text("[]", encoding="utf-8")
+
+    errors = validate_pr_evidence.validate_report_json_paths([str(bad_json), str(array_json)])
+
+    assert f"Report JSON could not be decoded: {bad_json}: " in errors[0]
+    assert f"Report JSON must be an object: {array_json}" in errors
+
+
+def test_main_can_require_report_json(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(
+        validate_pr_evidence,
+        "parse_args",
+        lambda: argparse.Namespace(
+            body_file="/tmp/body.md",
+            event_path=None,
+            report_json=[],
+            require_report_json=True,
+        ),
+    )
+    monkeypatch.setattr(
+        validate_pr_evidence,
+        "load_body_text",
+        lambda args: """
+## Plan or Spec
+- docs/plans/2026-05-08-evidence-plan-5-pr-release-evidence-gate.md
+
+## Commands Run
+```text
+python3 scripts/report_evidence_gate.py --report-json report.json
+```
+
+## Coverage and Metrics
+- N/A: validator-only test.
+
+## Known Gaps
+- None.
+""",
+    )
+
+    assert validate_pr_evidence.main() == 1
+
+    assert "At least one --report-json path is required." in capsys.readouterr().out
 
 
 def test_script_entrypoint_exits_zero_for_valid_body_file(tmp_path: Path, monkeypatch, capsys) -> None:
