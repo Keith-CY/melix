@@ -43,15 +43,24 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     if not normalized:
         return "", "empty_prediction"
 
-    fence_count = normalized.count("```")
-    if fence_count >= 2:
-        closing = normalized.rfind("```")
-        if fence_count % 2:
-            closing = normalized.rfind("```", 0, closing)
+    closing = normalized.rfind("```")
+    if closing >= 0:
         opening = normalized.rfind("```", 0, closing)
         if opening >= 0:
-            content_start = _code_block_content_start(normalized, opening + 3)
-            return normalized[content_start:closing].strip(), "parsed_code_block"
+            trailing = normalized[closing + 3 :]
+            if trailing.strip() and normalized.count("```") % 2:
+                closing = opening
+                opening = normalized.rfind("```", 0, closing)
+            if opening >= 0:
+                content_start = _code_block_content_start(normalized, opening + 3)
+                candidate = normalized[content_start:closing].strip()
+                if candidate or normalized.count("```") % 2 == 0:
+                    return candidate, "parsed_code_block"
+                closing = opening
+                opening = normalized.rfind("```", 0, closing)
+                if opening >= 0:
+                    content_start = _code_block_content_start(normalized, opening + 3)
+                    return normalized[content_start:closing].strip(), "parsed_code_block"
 
     return normalized, "parsed_code"
 

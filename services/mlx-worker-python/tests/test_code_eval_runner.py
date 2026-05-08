@@ -29,6 +29,9 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
     assert code_eval_runner.extract_candidate_code(
         "```python\nprint('complete')\n```\n```python\nprint('unterminated')"
     ) == ("print('complete')", "parsed_code_block")
+    assert code_eval_runner.extract_candidate_code(
+        "```python\nprint('complete')\n```\n```"
+    ) == ("print('complete')", "parsed_code_block")
     blocks = [
         f"draft {index}\n```python\ndef candidate():\n    return {index}\n```"
         for index in range(32)
