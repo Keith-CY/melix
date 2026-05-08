@@ -3845,4 +3845,6 @@ def test_engine_generate_usage_token_probe_script_emits_metrics(
     assert metrics["prompt_words"] == 32
     assert metrics["prompt_token_count_calls_mean"] == 0
     assert metrics["prompt_token_count_calls_per_request"] == 0
+    assert metrics["request_state_append_calls_mean"] == 0
+    assert metrics["request_state_append_calls_per_request"] == 0
     assert metrics["token_events_mean"] == 3

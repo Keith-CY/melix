@@ -1,5 +1,6 @@
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
+from worker.engine.request_state import RequestState
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
@@ -281,6 +282,33 @@ def test_generate_usage_counts_prompt_tokens_only_for_missing_event_total() -> N
     assert usage.prompt_tokens == 1024
     assert usage.completion_tokens == 1
     assert runtime.prompt_token_count_calls == 1
+
+
+def test_generate_streams_token_and_terminal_completion_without_request_token_accumulation() -> None:
+    _, inference_service, model_handle = build_services()
+    original_append_token = RequestState.append_token
+
+    def fail_append_token(self: RequestState, token: str) -> None:
+        _ = self  # pragma: no cover - regression-only failure path
+        _ = token  # pragma: no cover - regression-only failure path
+        raise AssertionError(  # pragma: no cover - regression-only failure path
+            "generate should use the stream assembler instead of RequestState token accumulation"
+        )
+
+    RequestState.append_token = fail_append_token
+    try:
+        events = list(
+            inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None)
+        )
+    finally:
+        RequestState.append_token = original_append_token
+
+    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    completed = next(event.completed for event in events if event.HasField("completed"))
+    usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
+    assert token_text == ["Hello", " world"]
+    assert completed.assistant_text == "Hello world"
+    assert usage.completion_tokens == 2
 
 
 def test_generate_streams_token_and_terminal_completion() -> None:
