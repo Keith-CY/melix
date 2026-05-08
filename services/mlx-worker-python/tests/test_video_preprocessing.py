@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2
+from worker.runtime import video_preprocessing
 from worker.runtime.video_preprocessing import (
     MAX_VIDEO_FRAME_BUDGET,
     PreparedVideoInput,
@@ -125,6 +126,33 @@ def test_prepare_video_input_reuses_uri_byte_length_for_metadata_and_identity_ha
     assert prepared.byte_length == 123
     assert media.byte_length_reads == 1
     assert len(prepared.sha256_hex) == 64
+
+
+def test_prepare_video_input_reuses_parsed_uri_when_filename_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parse_calls = 0
+    original_parse = video_preprocessing._parse_video_reference
+
+    def counting_parse(reference: str):
+        nonlocal parse_calls
+        parse_calls += 1
+        return original_parse(reference)
+
+    monkeypatch.setattr(video_preprocessing, "_parse_video_reference", counting_parse)
+    part = common_pb2.MessagePart(
+        video_uri="https://example.com/media/demo.mov",
+        media=common_pb2.MediaMetadata(
+            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+            source_kind=common_pb2.MEDIA_SOURCE_URI,
+        ),
+    )
+
+    prepared = prepare_video_input(part)
+
+    assert prepared.format == "mov"
+    assert prepared.filename == "demo.mov"
+    assert parse_calls == 1
 
 
 def test_prepare_video_input_infers_format_from_plain_local_path() -> None:

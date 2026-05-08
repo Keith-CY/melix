@@ -2436,6 +2436,12 @@
         "unit": "calls",
         "direction": "lower_is_better",
         "warn_pct": 0.0
+      },
+      {
+        "key": "parse_calls_per_call",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
       }
     ]
   },

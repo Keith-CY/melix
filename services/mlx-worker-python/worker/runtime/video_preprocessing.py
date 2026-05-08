@@ -80,7 +80,10 @@ def prepare_video_input(part) -> PreparedVideoInput:
         raise VideoPreprocessError("No video input provided.")
     parsed_reference = _parse_video_reference(uri)
     _validate_video_uri(parsed_reference)
-    resolved_format = _resolve_video_format(format_name, mime_type, filename, parsed_reference)
+    format_candidates: tuple[str | ParsedVideoReference, ...] = (
+        (filename, parsed_reference) if filename else (parsed_reference,)
+    )
+    resolved_format = _resolve_video_format(format_name, mime_type, *format_candidates)
     resolved_filename = (
         filename or _filename_from_reference(parsed_reference) or f"remote-video.{resolved_format}"
     )
