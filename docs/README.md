@@ -56,6 +56,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 | [Control Plane Protocol](control-plane-protocol.md) | The typed protocol between the control plane and worker surfaces |
 | [Worker RPC Schema](worker-rpc-schema.md) | RPC message shapes and worker communication contracts |
 | [Benchmark & Evaluation Contract](benchmark-evaluation-contract.md) | Benchmark and evaluation data formats, output contracts, and artifact shapes |
+| [Evidence, Telemetry & Report Contract](evidence-telemetry-report-contract.md) | Run evidence, probe timeline, Apple Silicon telemetry, report, and release-gate source-of-truth rules |
 | [Repository Skeleton](repo-skeleton.md) | Directory layout and conventions for the Melix repository |
 
 ---
@@ -86,6 +87,7 @@ The plan archive is intentionally large and serves as an engineering record. Use
 |---|---|
 | [Full Capability Execution Index](plans/2026-03-30-full-capability-roadmap-execution-index.md) | Milestone-level closure detail for the full capability roadmap |
 | [Full Capability Roadmap](plans/2026-03-30-full-capability-roadmap.md) | The original full capability plan |
+| [Evidence, Telemetry & Report Roadmap](plans/2026-05-08-evidence-telemetry-roadmap.md) | Best-path plan for structured run evidence, probes, Apple Silicon telemetry, reports, PR/release gates, and desktop operator surfaces |
 | [README & Docs Realignment](plans/2026-04-12-readme-and-docs-realignment.md) | Documentation restructure and alignment plan |
 | [LoRA Capability Modules](plans/2026-04-16-lora-capability-modules-and-commit-plan.md) | LoRA expansion breakdown and commit plan |
 
