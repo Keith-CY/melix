@@ -2526,6 +2526,7 @@ class MaintenanceCore:
                         loaded_model=loaded_model,
                         suite=suite,
                         prompt=shaped_prompt,
+                        prompt_is_shaped=True,
                         parameters=parameters,
                         context_length=context_length,
                         repeat_index=repeat_index,
@@ -2671,9 +2672,10 @@ class MaintenanceCore:
         reasoning_mode: str,
         structured_output_mode: str,
         dataset_materialize_ms: float = 0.0,
+        prompt_is_shaped: bool = False,
     ) -> BenchSample:
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
-        shaped_prompt = self._shape_benchmark_prompt(prompt, context_length=context_length)
+        shaped_prompt = prompt if prompt_is_shaped else self._shape_benchmark_prompt(prompt, context_length=context_length)
         execution_ext = self._benchmark_execution_ext(
             cache_profile=cache_profile,
             context_length=context_length,

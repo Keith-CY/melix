@@ -5303,7 +5303,10 @@ def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp
     assert partial_backend.prompts[0] != warm_backend.prompts[0]
 
 
-def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Path) -> None:
+def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher())
     suite = catalog.resolve_suite(
         "smoke",
@@ -5379,6 +5382,27 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Pa
         "one two three one two three one two"
     )
     assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
+
+    shape_calls: list[tuple[str, int]] = []
+    original_shape_prompt = MaintenanceCore._shape_benchmark_prompt
+
+    def tracked_shape_prompt(prompt: str, *, context_length: int) -> str:
+        shape_calls.append((prompt, context_length))
+        return original_shape_prompt(prompt, context_length=context_length)
+
+    monkeypatch.setattr(MaintenanceCore, "_shape_benchmark_prompt", staticmethod(tracked_shape_prompt))
+    loaded = core._registry.load_model(WorkerModelCatalog.dev_text_model())
+    _, context_rows, _, _ = core._measure_text_bench_metrics(
+        loaded_model=loaded,
+        suite=suite,
+        parameters={"context_lengths": "8", "repeats": "3", "max_output_tokens": "1"},
+        job_id="shape-reuse",
+        source_repo="local",
+        task_kind="text-generation",
+    )
+    assert len(context_rows) == 3
+    assert shape_calls == [(suite.cases[0].prompt, 8)]
+
     with pytest.raises(ModelOperationError):
         core._measure_text_bench_sample(
             loaded_model=core._registry.load_model(WorkerModelCatalog.dev_text_model()),
