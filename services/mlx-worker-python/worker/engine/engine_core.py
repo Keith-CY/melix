@@ -45,16 +45,6 @@ class EngineCore:
                 execution_ext=request.execution.ext,
             )
 
-            def prompt_token_default() -> int:
-                nonlocal prompt_tokens_default
-                if prompt_tokens_default is None:
-                    prompt_tokens_default = (
-                        runtime.prompt_token_count(prompt)
-                        if hasattr(runtime, "prompt_token_count")
-                        else len(prompt.split())
-                    )
-                return prompt_tokens_default
-
             generate_kwargs: dict[str, object] = {"execution_ext": request.execution.ext}
             if _callable_accepts_kwarg(runtime.generate_tokens, "acceleration_policy"):
                 generate_kwargs["acceleration_policy"] = request.execution.acceleration
@@ -128,7 +118,13 @@ class EngineCore:
                 if last_token_event is not None and last_token_event.prompt_tokens:
                     prompt_tokens = int(last_token_event.prompt_tokens)
                 else:
-                    prompt_tokens = prompt_token_default()
+                    if prompt_tokens_default is None:
+                        prompt_tokens_default = (
+                            runtime.prompt_token_count(prompt)
+                            if hasattr(runtime, "prompt_token_count")
+                            else len(prompt.split())
+                        )
+                    prompt_tokens = prompt_tokens_default
                 if last_token_event is not None:
                     completion_tokens = int(last_token_event.completion_tokens or completion_tokens)
                 yield inference_pb2.ExecuteEvent(

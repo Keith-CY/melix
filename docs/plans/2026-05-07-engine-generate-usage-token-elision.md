@@ -2,7 +2,11 @@
 
 ## Goal
 
-Avoid redundant prompt token counting for `EngineCore.generate(...)` requests that do not ask for usage accounting, while preserving existing usage totals when callers do request usage.
+Avoid redundant prompt-token accounting work for `EngineCore.generate(...)` requests that do not ask for usage accounting, while preserving existing usage totals when callers do request usage.
+
+## Current Slice
+
+The original prompt-token-count elision is already present on current `origin/main` (`prompt_token_count_calls_per_request=0.0`). This scheduled follow-up keeps that behavior and moves the lazy fallback calculation inline so `return_usage=false` requests do not allocate the unused fallback closure.
 
 ## Linux-only constraint
 
@@ -22,12 +26,12 @@ Registered probe: `engine-generate-usage-token-elision`.
 
 The probe runs many `return_usage=false` generate requests through a counting runtime and reports:
 
-- `prompt_token_count_calls_per_request` — should drop from one fallback count per request on `origin/main` to zero on the branch.
-- `elapsed_ms_mean` — informational wall-clock timing for the same synthetic workload.
+- `prompt_token_count_calls_per_request` — should remain zero for no-usage requests.
+- `elapsed_ms_mean` — lower is better for the same synthetic no-usage workload.
 
 ## Success metrics
 
 - Focused generate tests pass.
 - Changed executable line coverage for touched Python scope is at least 95%.
 - Local probe reports `prompt_token_count_calls_per_request=0` on the optimized branch.
-- Detached `origin/main` vs head PR-scoped probe comparison shows the structural prompt-count call metric improves from `1.0` to `0.0` calls/request.
+- Detached `origin/main` vs head PR-scoped probe comparison shows lower `elapsed_ms_mean` with identical structural guard rails.
