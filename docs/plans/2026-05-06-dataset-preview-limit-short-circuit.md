@@ -22,6 +22,8 @@ This is a Python-only worker/catalog slice and can be verified on Linux with foc
 
 Add a `limit=1` no-split preview helper that finds the first readable dataset file in the same sorted depth-first order by scanning for the next minimum entry instead of sorting and materializing the full directory. Keep explicit split behavior unchanged because split filtering must know whether any matching split file exists before returning no rows.
 
+Follow-up slice: keep the registered probe and traversal behavior unchanged, but narrow the JSONL `limit=1` reader path after the first preview file is selected. The reader can return as soon as it sees the first dictionary payload, avoiding the generic row-list append/length-check loop for the common preview case while preserving blank-line and non-dict payload skipping. The first-file scanner also skips known README metadata names before `DirEntry` type checks so metadata files do not force another root scan before descending into the data directory.
+
 ## Performance probe
 
 Register `dataset-registry-preview-limit-short-circuit` in the PR-scoped performance registry. The probe creates a synthetic snapshot with many JSONL files, reads `limit=1`, and reports:

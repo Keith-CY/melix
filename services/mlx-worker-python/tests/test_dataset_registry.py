@@ -225,6 +225,27 @@ def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     assert rows == [{"prompt": "first", "answer": "a"}]
 
 
+def test_dataset_catalog_jsonl_limit_one_skips_non_dict_payloads(tmp_path: Path) -> None:
+    jsonl_path = tmp_path / "rows.jsonl"
+    jsonl_path.write_text(
+        "\n[\"ignored\"]\n{\"prompt\": \"first\"}\n{\"prompt\": \"second\"}\n",
+        encoding="utf-8",
+    )
+
+    rows = catalog._read_rows_from_file(jsonl_path, limit=1)
+
+    assert rows == [{"prompt": "first"}]
+
+
+def test_dataset_catalog_jsonl_limit_one_returns_empty_for_no_dict_payloads(tmp_path: Path) -> None:
+    jsonl_path = tmp_path / "rows.jsonl"
+    jsonl_path.write_text("\n[\"ignored\"]\n", encoding="utf-8")
+
+    rows = catalog._read_rows_from_file(jsonl_path, limit=1)
+
+    assert rows == []
+
+
 def test_dataset_catalog_limited_unfiltered_read_stops_before_later_files(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

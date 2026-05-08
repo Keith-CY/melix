@@ -485,7 +485,7 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
         with os.scandir(os.fspath(directory)) as entries:
             for entry in entries:
                 name = entry.name
-                if name <= after or (best_name and name >= best_name):
+                if name <= after or (best_name and name >= best_name) or name in _README_NAMES:
                     continue
                 try:
                     is_dir = entry.is_dir()
@@ -532,6 +532,15 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
     if suffix == ".jsonl":
         rows: list[dict[str, Any]] = []
         with path.open("r", encoding="utf-8") as handle:
+            if limit == 1:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    payload = json.loads(line)
+                    if isinstance(payload, dict):
+                        return [payload]
+                return rows
             for raw_line in handle:
                 line = raw_line.strip()
                 if not line:
