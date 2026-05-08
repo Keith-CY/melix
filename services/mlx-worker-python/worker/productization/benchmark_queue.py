@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from operator import attrgetter
 from pathlib import Path
 import stat
+
+
+_RECORD_SORT_KEY = attrgetter("created_at_unix_ms", "queue_item_id")
 
 
 @dataclass(frozen=True)
@@ -101,7 +105,7 @@ class BenchmarkQueueStore:
                     )
         except OSError:
             return []
-        records.sort(key=lambda record: (record.created_at_unix_ms, record.queue_item_id))
+        records.sort(key=_RECORD_SORT_KEY)
         return [self._clone_record(record) for record in records]
 
     def transition(
