@@ -430,6 +430,7 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             result.dataset_id = run_result.dataset_id
             result.sample_size = run_result.sample_size
             result.report_path = run_result.report_path
+            result.evidence_path = str(run.persisted_paths.get("evidence", ""))
             for metric in run_result.metrics:
                 metric_message = result.metrics.add()
                 metric_message.name = metric.name

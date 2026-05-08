@@ -13,6 +13,11 @@ from worker.productization.evaluation_schemas import (
     EvaluationResult,
     EvaluationSample,
 )
+from worker.productization.run_evidence import (
+    assert_valid_run_evidence_payload,
+    build_evaluation_run_evidence,
+    monotonic_ms,
+)
 
 
 class EvaluationStore:
@@ -24,6 +29,7 @@ class EvaluationStore:
         result: EvaluationResult,
         samples: tuple[EvaluationSample, ...] = (),
     ) -> dict[str, Path]:
+        artifact_write_started_at_monotonic_ms = monotonic_ms()
         run_root = Path(job.output_dir) if job.output_dir else jobs_root
         run_root.mkdir(parents=True, exist_ok=True)
 
@@ -64,6 +70,23 @@ class EvaluationStore:
             self._write_samples_csv(csv_path, samples)
             persisted["samples_jsonl"] = jsonl_path
             persisted["samples_csv"] = csv_path
+        evidence_path = run_root / "run-evidence.json"
+        evidence = build_evaluation_run_evidence(
+            job=job,
+            result=result,
+            sample_count=len(samples) if samples else result.sample_size,
+            artifact_root=run_root,
+            artifact_paths=persisted,
+            artifact_write_started_at_monotonic_ms=artifact_write_started_at_monotonic_ms,
+            artifact_write_duration_ms=monotonic_ms() - artifact_write_started_at_monotonic_ms,
+        )
+        evidence_payload = evidence.to_dict()
+        assert_valid_run_evidence_payload(evidence_payload)
+        evidence_path.write_text(
+            json.dumps(evidence_payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        persisted["evidence"] = evidence_path
         return persisted
 
     def persist_compare_result(

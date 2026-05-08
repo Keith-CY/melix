@@ -466,6 +466,7 @@ struct ControlPlaneXPCClientTests {
     @Test("local client runs doctor and bench through control-plane execute")
     func localClientRunsDoctorAndBench() async throws {
         let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-xpc-bench.md").path
+        let evidencePath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-xpc-run-evidence.json").path
         try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
 
         let modelOpsClient = XPCScriptedModelOperationsWorkerClient()
@@ -495,6 +496,7 @@ struct ControlPlaneXPCClientTests {
                 var event = Melix_Worker_V1_RunBenchEvent()
                 event.completed = Melix_Worker_V1_BenchCompleted()
                 event.completed.reportPath = reportPath
+                event.completed.evidencePath = evidencePath
                 return event
             }(),
         ])
@@ -519,6 +521,7 @@ struct ControlPlaneXPCClientTests {
         #expect(doctor.markdown.contains("Melix Doctor"))
         #expect(doctor.healthStatus == .healthy)
         #expect(bench.reportPath == reportPath)
+        #expect(bench.evidencePath == evidencePath)
         #expect(bench.reportMarkdown.contains("Melix Bench"))
         #expect(bench.metrics["bench.smoke.ttft_ms"] == 24.45)
     }

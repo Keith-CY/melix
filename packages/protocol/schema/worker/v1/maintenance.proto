@@ -176,6 +176,7 @@ message BenchMetric {
 
 message BenchCompleted {
   string report_path = 1;
+  string evidence_path = 2;
 }
 
 message BenchFailed {
@@ -346,6 +347,7 @@ message WorkerEvaluationResult {
   uint32 sample_size = 5;
   repeated EvaluationMetricValue metrics = 6;
   string report_path = 7;
+  string evidence_path = 8;
 }
 
 message RunEvaluationResponse {

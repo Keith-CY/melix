@@ -1039,6 +1039,7 @@ public actor ControlPlaneService {
                     await metricsStore.set(metric.value, forKey: metric.name)
                 case .completed(let completed):
                     reply.reportPath = completed.reportPath
+                    reply.evidencePath = completed.evidencePath
                     if let markdown = try? String(contentsOfFile: completed.reportPath, encoding: .utf8) {
                         reply.reportMarkdown = markdown
                     }
@@ -1058,7 +1059,8 @@ public actor ControlPlaneService {
                         metrics: reply.metrics.values,
                         metricUnits: metricUnits,
                         reportPath: reply.reportPath,
-                        reportMarkdown: reply.reportMarkdown
+                        reportMarkdown: reply.reportMarkdown,
+                        evidencePath: reply.evidencePath
                     )
                 case .failed(let failed):
                     failedError = makeErrorStatus(from: failed.error)
@@ -3351,7 +3353,8 @@ public actor ControlPlaneService {
         metrics: [String: Double],
         metricUnits: [String: String],
         reportPath: String,
-        reportMarkdown: String
+        reportMarkdown: String,
+        evidencePath: String = ""
     ) -> [Melix_Controlplane_V1_BenchmarkResultSummary] {
         var grouped: [String: [Melix_Controlplane_V1_BenchmarkMetricValue]] = [:]
 
@@ -3371,6 +3374,7 @@ public actor ControlPlaneService {
             result.metrics = grouped[suite] ?? []
             result.reportPath = reportPath
             result.reportMarkdown = reportMarkdown
+            result.evidencePath = evidencePath
             return result
         }
     }
@@ -3406,6 +3410,7 @@ public actor ControlPlaneService {
         summary.datasetID = result.datasetID
         summary.sampleSize = result.sampleSize
         summary.reportPath = result.reportPath
+        summary.evidencePath = result.evidencePath
         summary.metrics = result.metrics.map { metric in
             var value = Melix_Controlplane_V1_BenchmarkMetricValue()
             value.name = metric.name

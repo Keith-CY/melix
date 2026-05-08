@@ -24,6 +24,24 @@ event extraction, adapter/runtime checks, reports, and release gates.
 - Ensure artifact paths are relative to the run artifact root or repository
   root.
 
+## Implementation Status
+
+- Serving benchmark and evaluation persistence now write `run-evidence.json`
+  beside the existing run artifacts.
+- Worker and control-plane protobuf APIs now carry `evidence_path` for serving
+  benchmark and evaluation results so downstream clients can locate the
+  structured evidence envelope without parsing report Markdown.
+- Export bundles now include a top-level `run_evidence` array collected from
+  benchmark and evaluation runs, with Swift decoding support for the envelope,
+  metrics, probes, telemetry summary, artifacts, fallback, failure, and domain
+  result payloads.
+- The initial envelope records an `artifact_write` probe and an explicit
+  `not_collected` Apple Silicon telemetry summary until Plan 2 and Plan 3 add
+  full stage probes and hardware sampling.
+- Full report JSON generation and release-gate enforcement remain in Plan 4
+  and Plan 5; this plan provides the required source evidence artifact and
+  transport path for those consumers.
+
 ## Verification
 
 - Schema roundtrip tests for completed, failed, cancelled, and fallback runs.

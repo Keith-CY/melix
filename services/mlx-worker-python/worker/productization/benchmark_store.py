@@ -17,6 +17,11 @@ from worker.productization.benchmark_schemas import (
     ServingBenchmarkJob,
     ServingBenchmarkResult,
 )
+from worker.productization.run_evidence import (
+    assert_valid_run_evidence_payload,
+    build_serving_benchmark_run_evidence,
+    monotonic_ms,
+)
 
 
 class BenchmarkStore:
@@ -27,6 +32,7 @@ class BenchmarkStore:
         job: ServingBenchmarkJob,
         results: tuple[ServingBenchmarkResult, ...],
     ) -> dict[str, Path]:
+        artifact_write_started_at_monotonic_ms = monotonic_ms()
         jobs_root.mkdir(parents=True, exist_ok=True)
 
         job_path = jobs_root / "bench-job.json"
@@ -43,6 +49,23 @@ class BenchmarkStore:
                 encoding="utf-8",
             )
             persisted[result.suite] = result_path
+
+        evidence_path = jobs_root / "run-evidence.json"
+        evidence = build_serving_benchmark_run_evidence(
+            job=job,
+            results=results,
+            artifact_root=jobs_root,
+            artifact_paths=persisted,
+            artifact_write_started_at_monotonic_ms=artifact_write_started_at_monotonic_ms,
+            artifact_write_duration_ms=monotonic_ms() - artifact_write_started_at_monotonic_ms,
+        )
+        evidence_payload = evidence.to_dict()
+        assert_valid_run_evidence_payload(evidence_payload)
+        evidence_path.write_text(
+            json.dumps(evidence_payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        persisted["evidence"] = evidence_path
 
         return persisted
 
