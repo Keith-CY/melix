@@ -33,7 +33,10 @@ def test_run_evidence_roundtrips_completed_failed_cancelled_and_fallback_runs() 
         assert roundtripped.to_dict() == payload
         assert payload["schema_version"] == RUN_EVIDENCE_SCHEMA_VERSION
         assert payload["probe_timeline"][0]["phase"] == "artifact_write"
-        assert payload["telemetry_summary"]["collector_status"] == "not_collected"
+        assert payload["telemetry_summary"]["collector_status"] == "failed"
+        assert payload["telemetry_summary"]["telemetry_failures"] == [
+            "apple_silicon_telemetry_collection_missing"
+        ]
         if status == "fallback":
             assert payload["fallback_summary"]["fallback_count"] == 1
 

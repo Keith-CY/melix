@@ -55,6 +55,7 @@ from worker.productization.benchmark_schemas import (
     build_serving_benchmark_job,
     build_serving_benchmark_results,
 )
+from worker.productization.benchmark_store import BenchmarkStore
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
@@ -63,6 +64,7 @@ from worker.engine import maintenance_core as maintenance_core_module
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
+from telemetry_fixtures import fixture_telemetry_collector
 
 
 class DeterministicLoRARunner(MLXLMRunner):
@@ -672,6 +674,7 @@ def build_service(
         ),
         dataset_catalog=dataset_catalog,
     )
+    service._core._benchmark_store = BenchmarkStore(telemetry_collector=fixture_telemetry_collector())
     service._fake_publish_backend = publish_backend
     return service
 
@@ -4610,7 +4613,8 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
     assert "prefill" in phases
     assert "decode" in phases
     assert phases[-1] == "artifact_write"
-    assert evidence["telemetry_summary"]["collector_status"] == "not_collected"
+    assert evidence["telemetry_summary"]["collector_status"] == "collected"
+    assert evidence["telemetry_summary"]["time_series_path"] == "telemetry-samples.jsonl"
     assert summary["parameters"]["runtime_live_model"] == "true"
     assert summary["parameters"]["runtime_name"] == "fast-benchmark"
     assert summary["parameters"]["runtime_model_handle"] == loaded.handle

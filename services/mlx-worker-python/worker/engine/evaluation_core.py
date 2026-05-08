@@ -452,23 +452,28 @@ class EvaluationCore:
                 resolved_seed=resolved_seed,
             )
 
-        started_at = time.perf_counter()
-        sample_records = self._sample_records_for_model(
-            job_id=job_id,
-            suite_id=suite_id,
-            dataset_id=manifest["dataset_id"],
-            task_kind=resolved_task_kind,
-            manifest_input_modalities=manifest_input_modalities,
-            dataset_root=dataset_root,
-            few_shot_examples=few_shot_examples,
-            selected=selected,
-            loaded_model=loaded_model,
-            scoring_mode=resolved_scoring_mode,
-            code_exec_policy=resolved_code_exec_policy,
-            seed=resolved_seed,
-            job_parameters=job_parameters,
-            profile=profile,
-        )
+        telemetry_session = self._store.start_telemetry_session(run_id=job_id)
+        try:
+            started_at = time.perf_counter()
+            sample_records = self._sample_records_for_model(
+                job_id=job_id,
+                suite_id=suite_id,
+                dataset_id=manifest["dataset_id"],
+                task_kind=resolved_task_kind,
+                manifest_input_modalities=manifest_input_modalities,
+                dataset_root=dataset_root,
+                few_shot_examples=few_shot_examples,
+                selected=selected,
+                loaded_model=loaded_model,
+                scoring_mode=resolved_scoring_mode,
+                code_exec_policy=resolved_code_exec_policy,
+                seed=resolved_seed,
+                job_parameters=job_parameters,
+                profile=profile,
+            )
+        except BaseException:
+            telemetry_session.cancel()
+            raise
         duration_seconds = round(time.perf_counter() - started_at, 6)
         typed_score_mean = round(
             sum(sample.typed_score for sample in sample_records) / max(len(sample_records), 1),
@@ -581,6 +586,7 @@ class EvaluationCore:
         )
         persisted_paths: dict[str, Path] = {}
         if self._jobs_root is not None:
+            telemetry_collection = telemetry_session.finish(artifact_root=run_root)
             queue_root = self._jobs_root / "queue"
             queued_at = created_at_unix_ms
             self._queue_store.enqueue(
@@ -607,6 +613,7 @@ class EvaluationCore:
                 job=job,
                 result=result,
                 samples=sample_records,
+                telemetry_collection=telemetry_collection,
             )
             self._queue_store.transition(
                 queue_root=queue_root,
@@ -614,6 +621,8 @@ class EvaluationCore:
                 status="completed",
                 updated_at_unix_ms=int(time.time() * 1000),
             )
+        else:
+            telemetry_session.cancel()
         return EvaluationRun(job=job, results=(result,), samples=sample_records, persisted_paths=persisted_paths)
 
     def _run_event_extraction_suite(
