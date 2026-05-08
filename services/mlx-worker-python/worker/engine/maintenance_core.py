@@ -1351,21 +1351,13 @@ class MaintenanceCore:
                 jobs_root=output_dir,
                 job=job_record,
                 results=result_records,
+                context_rows=text_context_rows,
+                batch_rows=text_batch_rows,
             )
             (output_dir / "bench-summary.json").write_text(
                 json.dumps(job_record.to_dict(), indent=2) + "\n",
                 encoding="utf-8",
             )
-            if text_context_rows:
-                _write_jsonl_rows(
-                    output_dir / "bench-context-rows.jsonl",
-                    text_context_rows,
-                )
-            if text_batch_rows:
-                _write_jsonl_rows(
-                    output_dir / "bench-batch-rows.jsonl",
-                    text_batch_rows,
-                )
             self._job_registry.complete(job.job_id, str(report_path))
             self._benchmark_queue_store.transition(
                 queue_root=bench_root / "queue",

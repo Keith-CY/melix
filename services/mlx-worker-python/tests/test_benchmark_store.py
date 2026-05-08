@@ -54,11 +54,27 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
         jobs_root=jobs_root,
         job=job,
         results=results,
+        context_rows=(
+            {
+                "job_id": "bench-123",
+                "suite": "smoke",
+                "context_length": 16,
+                "generation_length": 8,
+                "batch_size": 1,
+                "dataset_materialize_ms": 1.0,
+                "prompt_render_ms": 2.0,
+                "warmup_ms": 3.0,
+                "prefill_ms": 4.0,
+                "decode_ms": 5.0,
+                "cache_hit": True,
+            },
+        ),
     )
 
     assert persisted["job"] == jobs_root / "bench-job.json"
     assert persisted["smoke"] == jobs_root / "bench-result-smoke.json"
     assert persisted["latency"] == jobs_root / "bench-result-latency.json"
+    assert persisted["context_rows_jsonl"] == jobs_root / "bench-context-rows.jsonl"
     assert persisted["evidence"] == jobs_root / "run-evidence.json"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == job.to_dict()
     expected_results = {result.suite: result.to_dict() for result in results}
@@ -70,7 +86,11 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
     assert evidence["run_id"] == "bench-123"
     assert evidence["run_kind"] == "serving_benchmark"
     assert evidence["target_model_id"] == "melix-dev-text"
-    assert evidence["probe_timeline"][0]["phase"] == "artifact_write"
+    phases = [probe["phase"] for probe in evidence["probe_timeline"]]
+    assert phases[:4] == ["worker_dispatch", "runtime_prepare", "adapter_load", "cache_lookup"]
+    assert "prefill" in phases
+    assert "decode" in phases
+    assert phases[-1] == "artifact_write"
     assert evidence["telemetry_summary"]["collector_status"] == "not_collected"
 
 

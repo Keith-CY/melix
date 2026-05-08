@@ -4604,7 +4604,12 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
 
     assert evidence_path == run_dir / "run-evidence.json"
     assert evidence["run_id"] == events[0].started.job_id
-    assert evidence["probe_timeline"][0]["phase"] == "artifact_write"
+    phases = [probe["phase"] for probe in evidence["probe_timeline"]]
+    assert phases[0] == "worker_dispatch"
+    assert "runtime_prepare" in phases
+    assert "prefill" in phases
+    assert "decode" in phases
+    assert phases[-1] == "artifact_write"
     assert evidence["telemetry_summary"]["collector_status"] == "not_collected"
     assert summary["parameters"]["runtime_live_model"] == "true"
     assert summary["parameters"]["runtime_name"] == "fast-benchmark"

@@ -1143,6 +1143,7 @@ def _probe_evaluation_store_samples_csv_streaming(repo_root: Path) -> dict[str, 
     probe_script = f"""
 import gc
 import json
+import os
 import sys
 import tempfile
 import time
@@ -1158,6 +1159,11 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_sample_record,
 )
 from worker.productization.evaluation_store import EvaluationStore
+
+probe_sample_limit = 1
+os.environ['MELIX_EVALUATION_PROBE_SAMPLE_LIMIT'] = str(probe_sample_limit)
+os.environ['MELIX_EVALUATION_PROBE_TOP_N'] = '1'
+os.environ['MELIX_EVALUATION_PROBE_ANOMALY_LIMIT'] = '1'
 
 sample_count = {sample_count}
 samples = tuple(
@@ -1244,6 +1250,7 @@ for _ in range(3):
 print(json.dumps({{
     'elapsed_ms_mean': round(sum(elapsed_samples) / len(elapsed_samples), 6),
     'peak_bytes_mean': round(sum(peak_samples) / len(peak_samples), 1),
+    'probe_sample_limit': float(probe_sample_limit),
     'sample_count': float(sample_count),
     'csv_line_count': float(csv_line_count),
 }}, sort_keys=True))

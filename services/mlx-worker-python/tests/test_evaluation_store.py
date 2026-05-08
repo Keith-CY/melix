@@ -163,6 +163,11 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         task_kind="image-text-to-text",
         input_modalities=("text", "image"),
         media_references=("/tmp/cat.png",),
+        sample_render_ms=1.0,
+        inference_ms=8.0,
+        extraction_ms=2.0,
+        validation_ms=3.0,
+        scoring_ms=4.0,
     )
 
     persisted = store.persist_result(
@@ -188,7 +193,11 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     assert evidence["run_id"] == "eval-local"
     assert evidence["run_kind"] == "evaluation"
     assert evidence["target_model_id"] == "melix-dev-text"
-    assert evidence["probe_timeline"][0]["phase"] == "artifact_write"
+    phases = [probe["phase"] for probe in evidence["probe_timeline"]]
+    assert phases[:4] == ["worker_dispatch", "runtime_prepare", "adapter_load", "sample_select"]
+    assert "decode" in phases
+    assert "score_compute" in phases
+    assert phases[-1] == "artifact_write"
     assert evidence["telemetry_summary"]["collector_status"] == "not_collected"
     assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,duration_seconds,created_at_unix_ms\n"

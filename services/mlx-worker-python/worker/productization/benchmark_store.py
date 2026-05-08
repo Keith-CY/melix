@@ -31,6 +31,8 @@ class BenchmarkStore:
         jobs_root: Path,
         job: ServingBenchmarkJob,
         results: tuple[ServingBenchmarkResult, ...],
+        context_rows: Iterable[dict[str, object]] = (),
+        batch_rows: Iterable[dict[str, object]] = (),
     ) -> dict[str, Path]:
         artifact_write_started_at_monotonic_ms = monotonic_ms()
         jobs_root.mkdir(parents=True, exist_ok=True)
@@ -50,6 +52,18 @@ class BenchmarkStore:
             )
             persisted[result.suite] = result_path
 
+        context_rows_tuple = tuple(context_rows)
+        if context_rows_tuple:
+            context_rows_path = jobs_root / "bench-context-rows.jsonl"
+            self._write_jsonl(context_rows_path, context_rows_tuple)
+            persisted["context_rows_jsonl"] = context_rows_path
+
+        batch_rows_tuple = tuple(batch_rows)
+        if batch_rows_tuple:
+            batch_rows_path = jobs_root / "bench-batch-rows.jsonl"
+            self._write_jsonl(batch_rows_path, batch_rows_tuple)
+            persisted["batch_rows_jsonl"] = batch_rows_path
+
         evidence_path = jobs_root / "run-evidence.json"
         evidence = build_serving_benchmark_run_evidence(
             job=job,
@@ -58,6 +72,8 @@ class BenchmarkStore:
             artifact_paths=persisted,
             artifact_write_started_at_monotonic_ms=artifact_write_started_at_monotonic_ms,
             artifact_write_duration_ms=monotonic_ms() - artifact_write_started_at_monotonic_ms,
+            context_rows=context_rows_tuple,
+            batch_rows=batch_rows_tuple,
         )
         evidence_payload = evidence.to_dict()
         assert_valid_run_evidence_payload(evidence_payload)
@@ -68,6 +84,14 @@ class BenchmarkStore:
         persisted["evidence"] = evidence_path
 
         return persisted
+
+    @staticmethod
+    def _write_jsonl(path: Path, rows: Iterable[dict[str, object]]) -> None:
+        with path.open("w", encoding="utf-8") as handle:
+            write = handle.write
+            dump_json = json.dumps
+            for row in rows:
+                write(dump_json(row) + "\n")
 
     def persist_benchmark_matrix(
         self,

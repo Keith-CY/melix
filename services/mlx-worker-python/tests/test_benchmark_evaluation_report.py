@@ -103,6 +103,172 @@ def _bundle(*, ttft_ms: float, tokens_per_second: float, accuracy: float) -> dic
     }
 
 
+def _run_evidence(
+    *,
+    run_id: str,
+    run_kind: str,
+    decode_ms: float,
+    status: str,
+    fallback_count: int = 0,
+) -> dict[str, object]:
+    probes: list[dict[str, object]] = [
+        {
+            "run_id": run_id,
+            "trace_id": f"{run_id}:trace",
+            "span_id": f"{run_id}:decode",
+            "parent_span_id": f"{run_id}:worker_dispatch",
+            "component": "runtime",
+            "phase": "decode",
+            "started_at_monotonic_ms": 10,
+            "duration_ms": decode_ms,
+            "status": status,
+            "error_stage": "decode" if status == "failed" else "",
+            "error_code": "runtime_error" if status == "failed" else "",
+            "attributes": {"suite_id": "smoke"},
+        }
+    ]
+    if fallback_count:
+        probes.append(
+            {
+                "run_id": run_id,
+                "trace_id": f"{run_id}:trace",
+                "span_id": f"{run_id}:fallback_enter",
+                "parent_span_id": f"{run_id}:worker_dispatch",
+                "component": "runtime",
+                "phase": "fallback_enter",
+                "started_at_monotonic_ms": 30,
+                "duration_ms": 0.001,
+                "status": "completed",
+                "error_stage": "",
+                "error_code": "",
+                "attributes": {"fallback_count": fallback_count},
+            }
+        )
+    return {
+        "schema_version": "melix.run_evidence.v1",
+        "run_id": run_id,
+        "run_kind": run_kind,
+        "probe_timeline": probes,
+    }
+
+
+def _evaluation_run_evidence_with_sample_probes(
+    *,
+    run_id: str,
+    aggregate_decode_ms: float,
+    detail_decode_ms: float,
+    failed_count: int,
+) -> dict[str, object]:
+    return {
+        "schema_version": "melix.run_evidence.v1",
+        "run_id": run_id,
+        "run_kind": "evaluation",
+        "probe_timeline": [
+            {
+                "run_id": run_id,
+                "trace_id": f"{run_id}:trace",
+                "span_id": f"{run_id}:sample_select:aggregate",
+                "parent_span_id": f"{run_id}:worker_dispatch",
+                "component": "worker",
+                "phase": "sample_select",
+                "started_at_monotonic_ms": 5,
+                "duration_ms": 0.001,
+                "status": "completed",
+                "error_stage": "",
+                "error_code": "",
+                "attributes": [],
+            },
+            {
+                "run_id": run_id,
+                "trace_id": f"{run_id}:trace",
+                "span_id": f"{run_id}:decode:aggregate",
+                "parent_span_id": f"{run_id}:worker_dispatch",
+                "component": "runtime",
+                "phase": "decode",
+                "started_at_monotonic_ms": 10,
+                "duration_ms": aggregate_decode_ms,
+                "status": "completed",
+                "error_stage": "",
+                "error_code": "",
+                "attributes": {
+                    "probe_kind": "aggregate_summary",
+                    "sample_count": 10,
+                },
+            },
+            {
+                "run_id": run_id,
+                "trace_id": f"{run_id}:trace",
+                "span_id": f"{run_id}:decode:detail",
+                "parent_span_id": f"{run_id}:worker_dispatch",
+                "component": "runtime",
+                "phase": "decode",
+                "started_at_monotonic_ms": 20,
+                "duration_ms": detail_decode_ms,
+                "status": "completed",
+                "error_stage": "",
+                "error_code": "",
+                "attributes": {
+                    "probe_kind": "sample_detail",
+                    "sample_id": "sample-slow",
+                },
+            },
+            {
+                "run_id": run_id,
+                "trace_id": f"{run_id}:trace",
+                "span_id": f"{run_id}:aggregate_result:aggregate",
+                "parent_span_id": f"{run_id}:worker_dispatch",
+                "component": "worker",
+                "phase": "aggregate_result",
+                "started_at_monotonic_ms": 30,
+                "duration_ms": 1.0,
+                "status": "completed",
+                "error_stage": "",
+                "error_code": "",
+                "attributes": {
+                    "probe_kind": "aggregate_summary",
+                    "sample_count": 10,
+                    "failed_count": failed_count,
+                },
+            },
+            {
+                "run_id": run_id,
+                "trace_id": f"{run_id}:trace",
+                "span_id": f"{run_id}:fallback_enter:aggregate",
+                "parent_span_id": f"{run_id}:worker_dispatch",
+                "component": "runtime",
+                "phase": "fallback_enter",
+                "started_at_monotonic_ms": 35,
+                "duration_ms": 0.001,
+                "status": "completed",
+                "error_stage": "",
+                "error_code": "",
+                "attributes": {
+                    "probe_kind": "aggregate_summary",
+                    "sample_count": 10,
+                    "fallback_sample_count": 1,
+                },
+            },
+            {
+                "run_id": run_id,
+                "trace_id": f"{run_id}:trace",
+                "span_id": f"{run_id}:aggregate_result:detail",
+                "parent_span_id": f"{run_id}:worker_dispatch",
+                "component": "worker",
+                "phase": "aggregate_result",
+                "started_at_monotonic_ms": 40,
+                "duration_ms": 2.0,
+                "status": "failed",
+                "error_stage": "aggregate_result",
+                "error_code": "parse_error",
+                "attributes": {
+                    "probe_kind": "sample_detail",
+                    "sample_id": "sample-failed",
+                },
+            },
+        ],
+    }
+
+
 def test_report_builder_computes_direction_aware_deltas() -> None:
     report = build_benchmark_evaluation_report(
         baseline=_bundle(ttft_ms=100.0, tokens_per_second=50.0, accuracy=0.8),
@@ -885,6 +1051,76 @@ def test_report_builder_aggregates_evaluation_sample_probes() -> None:
     assert rows_by_metric["eval.sample.mmlu.failure_stage.scoring.failure_count"]["status"] == (
         "warning"
     )
+
+
+def test_report_builder_summarizes_run_evidence_probes_and_exports_probe_metrics() -> None:
+    baseline = {
+        "run_evidence": [
+            _run_evidence(
+                run_id="base-run",
+                run_kind="serving_benchmark",
+                decode_ms=10.0,
+                status="completed",
+            )
+        ]
+    }
+    candidate = {
+        "run_evidence": [
+            _run_evidence(
+                run_id="head-run",
+                run_kind="serving_benchmark",
+                decode_ms=20.0,
+                status="failed",
+                fallback_count=1,
+            )
+        ]
+    }
+
+    report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+
+    assert rows_by_metric["probe.serving_benchmark.runtime.decode.duration_ms_mean"]["baseline"] == 10.0
+    assert rows_by_metric["probe.serving_benchmark.runtime.decode.duration_ms_mean"]["candidate"] == 20.0
+    assert rows_by_metric["probe.serving_benchmark.runtime.decode.failed_count"]["candidate"] == 1.0
+    assert rows_by_metric["probe.serving_benchmark.runtime.fallback_enter.completed_count"]["candidate"] == 1.0
+    assert report["probe_summary"]["candidate"]["failed_phases"][0]["phase"] == "decode"
+    report["probe_summary"]["baseline"] = []
+    report["probe_summary"]["candidate"]["slowest_phases"].insert(0, "not-a-row")
+    markdown = render_markdown_report(report)
+    assert "## Probe Summary" in markdown
+    assert "| runtime | decode | 20.0000 | failed |" in markdown
+
+
+def test_report_builder_uses_aggregate_probe_metrics_not_sample_details() -> None:
+    baseline = {
+        "run_evidence": [
+            _evaluation_run_evidence_with_sample_probes(
+                run_id="base-eval",
+                aggregate_decode_ms=100.0,
+                detail_decode_ms=90.0,
+                failed_count=2,
+            )
+        ]
+    }
+    candidate = {
+        "run_evidence": [
+            _evaluation_run_evidence_with_sample_probes(
+                run_id="head-eval",
+                aggregate_decode_ms=120.0,
+                detail_decode_ms=110.0,
+                failed_count=3,
+            )
+        ]
+    }
+
+    report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+
+    assert rows_by_metric["probe.evaluation.runtime.decode.duration_ms_mean"]["baseline"] == 100.0
+    assert rows_by_metric["probe.evaluation.runtime.decode.duration_ms_mean"]["candidate"] == 120.0
+    assert rows_by_metric["probe.evaluation.worker.aggregate_result.failed_count"]["baseline"] == 2.0
+    assert rows_by_metric["probe.evaluation.worker.aggregate_result.failed_count"]["candidate"] == 3.0
+    assert rows_by_metric["probe.evaluation.runtime.fallback_enter.completed_count"]["candidate"] == 1.0
 
 
 def test_metric_direction_fast_path_covers_report_probe_keys() -> None:

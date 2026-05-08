@@ -79,6 +79,7 @@ class EvaluationStore:
             artifact_paths=persisted,
             artifact_write_started_at_monotonic_ms=artifact_write_started_at_monotonic_ms,
             artifact_write_duration_ms=monotonic_ms() - artifact_write_started_at_monotonic_ms,
+            samples=samples,
         )
         evidence_payload = evidence.to_dict()
         assert_valid_run_evidence_payload(evidence_payload)

@@ -881,7 +881,10 @@ typed score, and failure reason for operator-visible debugging.
 
 Evaluation probe fields localize failures by evaluation phase: sample rendering, inference,
 extraction, validation, scoring, and final failure classification. Character-count fields are
-debugging aids for response truncation and extraction behavior.
+debugging aids for response truncation and extraction behavior. Run-evidence probe timelines must
+represent large evaluation sample sets with aggregate phase summaries plus a bounded representative
+sample set for slowest top-N, failed, skipped, and fallback samples; they must not expand every
+persisted sample into full per-sample probes.
 
 For executable-code suites, these additional fields are required evidence rather than optional
 metadata. Melix v1 must preserve compile, runtime, timeout, and test outcomes through persistence,
@@ -968,8 +971,9 @@ The report accepts either a bundle file or a directory containing `benchmark-eva
 or `export-bundle.json`.
 
 The report aggregates summary metrics plus additive benchmark request probes, matrix request probes,
-evaluation sample timing probes, failure-stage counts, and runtime metadata rows from persisted job
-parameters.
+evaluation sample timing probes, failure-stage counts, run-evidence aggregate probes, and runtime
+metadata rows from persisted job parameters. Representative sample-detail probes are diagnostic
+context and must not be counted as additional aggregate duration or failure metrics.
 
 Report semantics:
 
