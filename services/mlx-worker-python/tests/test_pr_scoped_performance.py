@@ -388,8 +388,39 @@ def test_scope_report_selects_evaluation_final_result_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/productization/evaluation_final_result.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "evaluation-final-result-materialization-streaming"
+    assert scope["selected_count"] == 2
+    assert {probe["id"] for probe in scope["selected_probes"]} == {
+        "evaluation-final-result-materialization-streaming",
+        "evaluation-final-result-json-typed-score-aggregate",
+    }
+
+
+def test_evaluation_json_typed_score_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluation_json_typed_score_probe.py",
+            "--keys",
+            "40",
+            "--iterations",
+            "3",
+            "--samples",
+            "2",
+        ],
+    )
+
+    runpy.run_path(str(REPO_ROOT / "scripts/evaluation_json_typed_score_probe.py"), run_name="__main__")
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["score_checksum"] == pytest.approx(2.625)
+    assert metrics["key_count"] == 40.0
+    assert metrics["iteration_count"] == 3.0
 
 
 def test_dispatch_probe_impl_supports_evaluation_final_result_probe() -> None:
@@ -1637,6 +1668,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-job-id-high-water-mark",
         "evaluation-dialogue-diagnostics-top-k",
         "evaluation-final-result-materialization-streaming",
+        "evaluation-final-result-json-typed-score-aggregate",
         "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
         "evaluation-store-compare-summary-csv-streaming",

@@ -266,6 +266,59 @@ def test_score_final_result_rejects_invalid_json_shape_before_scoring() -> None:
     assert score.typed_score == 0.0
 
 
+def test_score_final_result_aggregates_wide_json_without_losing_ignored_paths() -> None:
+    expected = {
+        f"field_{index}": {
+            "label": f"value-{index}",
+            "metadata": {"confidence": index / 1000, "evidence": [f"source-{index}"]},
+        }
+        for index in range(200)
+    }
+    actual = {
+        key: {
+            "label": value["label"] if index % 4 else "mismatch",
+            "metadata": {"confidence": 0.0, "evidence": ["different-source"]},
+        }
+        for index, (key, value) in enumerate(expected.items())
+    }
+
+    score = score_final_result(
+        extracted_result=json.dumps(actual),
+        target=json.dumps(expected),
+        profile=EvaluationProfileDefinition(
+            profile_type="final_result",
+            result_kind="json",
+            extraction_mode="strict_full_response",
+            scoring_mode="json_field_match",
+            threshold=1.0,
+            ignored_paths=tuple(f"field_{index}.metadata" for index in range(200)),
+        ),
+    )
+
+    assert score.validation_status == "validated"
+    assert score.failure_reason == ""
+    assert score.typed_score == pytest.approx(0.75)
+
+
+def test_score_final_result_treats_fully_ignored_json_object_as_match() -> None:
+    score = score_final_result(
+        extracted_result=json.dumps({"metadata": {"confidence": 0.0}}),
+        target=json.dumps({"metadata": {"confidence": 1.0}}),
+        profile=EvaluationProfileDefinition(
+            profile_type="final_result",
+            result_kind="json",
+            extraction_mode="strict_full_response",
+            scoring_mode="json_field_match",
+            threshold=1.0,
+            ignored_paths=("metadata",),
+        ),
+    )
+
+    assert score.validation_status == "validated"
+    assert score.failure_reason == ""
+    assert score.typed_score == 1.0
+
+
 def test_materialize_local_evaluation_dataset_requires_explicit_mapping_for_jsonl(
     tmp_path: Path,
 ) -> None:
