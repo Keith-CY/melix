@@ -280,9 +280,10 @@ def _vision_request_hash(
     video_frame_policies: list[PreparedVideoFramePolicy],
 ) -> str:
     digest = hashlib.sha256()
-    digest.update(prompt_hash_hex.encode("ascii"))
+    update = digest.update
+    update(prompt_hash_hex.encode("ascii"))
     for image in images:
-        digest.update(image.sha256_hex.encode("ascii"))
+        update(image.sha256_hex.encode("ascii"))
     for video, policy in zip(videos, video_frame_policies, strict=False):
         digest.update(video.sha256_hex.encode("ascii"))
         for value in (
