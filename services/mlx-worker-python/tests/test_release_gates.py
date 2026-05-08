@@ -821,6 +821,43 @@ def test_evaluate_m9_release_evidence_ignores_non_dict_policy_entries() -> None:
     assert summary["failed_threshold_count"] == 0.0
 
 
+def test_evaluate_m9_release_evidence_counts_failure_types_in_one_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endswith_calls = 0
+
+    class CountingFailure(str):
+        def endswith(self, suffix: str | tuple[str, ...], *args: object) -> bool:  # type: ignore[override]
+            nonlocal endswith_calls
+            endswith_calls += 1
+            return super().endswith(suffix, *args)  # type: ignore[arg-type]
+
+    section_failures = [
+        CountingFailure("m9.mcp.tool_count is missing"),
+        CountingFailure("m9.mcp.latency=12.00 exceeded maximum 10.00"),
+        CountingFailure("m9.mcp.error_rate is missing"),
+    ]
+
+    monkeypatch.setattr(
+        release_gates_module,
+        "_evaluate_section_metrics",
+        lambda metrics, rules, *, prefix: list(section_failures),
+    )
+
+    failures, summary = release_gates_module.evaluate_m9_release_evidence(
+        {"mcp": {"metrics": {}}},
+        {"mcp": {"tool_count": {"min": 1.0}, "latency": {"max": 10.0}}},
+    )
+
+    assert failures == section_failures
+    assert summary == {
+        "required_probe_count": 2.0,
+        "missing_probe_count": 2.0,
+        "failed_threshold_count": 1.0,
+    }
+    assert endswith_calls == len(section_failures)
+
+
 def test_run_python_json_script_sets_repo_pythonpath_entries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
