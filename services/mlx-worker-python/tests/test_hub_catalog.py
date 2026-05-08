@@ -13,6 +13,7 @@ from worker.model_ops.hub_catalog import (
     HubCatalogError,
     _is_mlx_compatible,
     _local_fit_evidence,
+    _quantization_summary,
     _size_hint_from_text,
 )
 
@@ -20,6 +21,25 @@ from worker.model_ops.hub_catalog import (
 KB = 1024
 MB = 1024 ** 2
 GB = 1024 ** 3
+
+
+def test_quantization_summary_preserves_alias_order_from_lowered_tags() -> None:
+    lowered_tags = {
+        "family-test",
+        "4bit",
+        "mixed_precision",
+        "optiq",
+        "float16",
+    }
+
+    assert (
+        _quantization_summary([], lowered_tags=lowered_tags)
+        == "4-bit, mixed-precision, optiq, fp16"
+    )
+    assert (
+        _quantization_summary(["2-bit", "3bit", "8-bit", "float32", "bf16"])
+        == "2-bit, 3-bit, 8-bit, fp32, bf16"
+    )
 
 
 class FakeHTTPResponse:
