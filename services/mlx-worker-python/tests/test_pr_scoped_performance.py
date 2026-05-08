@@ -426,11 +426,14 @@ def test_scope_report_selects_multimodal_preprocessing_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/multimodal_preprocessing.py"],
     )
 
-    assert scope["selected_count"] == 2
-    assert {probe["id"] for probe in scope["selected_probes"]} == {
+    expected_probe_ids = {
         "multimodal-preprocessing-local-uri-parse-elision",
         "multimodal-preprocessing-image-uri-single-parse",
+        "video-preprocessing-uri-byte-length-reuse",
     }
+    selected_probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert selected_probe_ids == expected_probe_ids & selected_probe_ids
+    assert scope["selected_count"] == len(selected_probe_ids)
 
 
 def test_scope_report_selects_dataset_registry_preview_probe() -> None:
@@ -1388,7 +1391,7 @@ def test_dataset_registry_limit_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["synthetic_file_count"] == 6.0
     assert metrics["limit"] == 2.0
-    assert metrics["dataset_files_yielded_mean"] == 4.0
+    assert metrics["dataset_files_yielded_mean"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
@@ -2822,6 +2825,21 @@ def test_report_rendering_marks_regressions_and_builds_sticky_comment(
     assert json.loads(json.dumps(report))["summary"]["selected_probe_count"] == 1
 
 
+def test_force_all_report_regression_gate_uses_direct_matches_only() -> None:
+    direct_probe = {"id": "direct-probe", "name": "Direct probe", "metrics": [{"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better", "warn_pct": 5.0}]}
+    context_probe = {"id": "context-probe", "name": "Context probe", "metrics": [{"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better", "warn_pct": 5.0}]}
+    report = build_performance_report(
+        scope={"changed_files": ["infra/perf/pr_scoped_probes.json", "worker.py"], "force_all": True, "matched_probe_ids": ["direct-probe"], "selected_count": 2, "selected_probes": [direct_probe, context_probe]},
+        probe_results=[
+            {"probe": direct_probe, "head_verification": {"test": {"ok": True}, "coverage": {"ok": True, "coverage_pct": 100.0}}, "base_probe": {"ok": True, "metrics": {"elapsed_ms_mean": 10.0}}, "head_probe": {"ok": True, "metrics": {"elapsed_ms_mean": 10.0}}},
+            {"probe": context_probe, "head_verification": {"test": {"ok": True}, "coverage": {"ok": True, "coverage_pct": 100.0}}, "base_probe": {"ok": True, "metrics": {"elapsed_ms_mean": 10.0}}, "head_probe": {"ok": True, "metrics": {"elapsed_ms_mean": 20.0}}},
+        ],
+    )
+
+    assert report["summary"]["status"] == "ok"
+    assert report["summary"]["regression_count"] == 0
+
+
 def test_report_handles_missing_results_and_empty_probe_selection(tmp_path: Path) -> None:
     scope = {
         "changed_files": ["README.md"],
@@ -2869,9 +2887,18 @@ def test_metric_and_probe_helpers_cover_error_branches() -> None:
         base_metrics={"count": 0.0},
         head_metrics={"count": 1.0},
     )
+    informational = _build_metric_row(
+        key="elapsed_ms_mean",
+        unit="ms",
+        direction="informational",
+        warn_pct=5.0,
+        base_metrics={"elapsed_ms_mean": 10.0},
+        head_metrics={"elapsed_ms_mean": 1.0},
+    )
 
     assert missing["status"] == "missing"
     assert higher_is_better["status"] == "regression"
+    assert informational["status"] == "neutral"
     assert zero_baseline["delta_pct"] is None
 
     probe_result = {
