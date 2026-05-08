@@ -196,6 +196,49 @@ def test_image_generation_and_edit_probe_bytes_do_not_rescan_images(
     assert runtime.last_probe_snapshot().output_bytes == expected_edited_bytes
 
 
+def test_image_artifact_metadata_reuses_supplied_payload_byte_length(tmp_path: Path) -> None:
+    class CountingBytes(bytes):
+        len_calls = 0
+
+        def __len__(self) -> int:
+            type(self).len_calls += 1
+            return super().__len__()
+
+    payload = CountingBytes(b"generated-image-payload")
+    fallback_artifact = DeterministicImageGenerationRuntime._artifact_metadata(
+        job_id="image-byte-length-reuse",
+        artifact_id="image-byte-length-reuse::fallback",
+        role=common_pb2.IMAGE_ARTIFACT_GENERATED,
+        mime_type="image/png",
+        image_format="png",
+        width=128,
+        height=128,
+        payload=payload,
+        storage_path=tmp_path / "fallback-output-0.png",
+        variant_index=0,
+    )
+    assert fallback_artifact.byte_length == 23
+    assert CountingBytes.len_calls == 1
+
+    CountingBytes.len_calls = 0
+    artifact = DeterministicImageGenerationRuntime._artifact_metadata(
+        job_id="image-byte-length-reuse",
+        artifact_id="image-byte-length-reuse::artifact-0",
+        role=common_pb2.IMAGE_ARTIFACT_GENERATED,
+        mime_type="image/png",
+        image_format="png",
+        width=128,
+        height=128,
+        payload=payload,
+        payload_byte_length=23,
+        storage_path=tmp_path / "output-0.png",
+        variant_index=0,
+    )
+
+    assert artifact.byte_length == 23
+    assert CountingBytes.len_calls == 0
+
+
 def test_image_edit_persists_lineage_and_generated_artifact(tmp_path: Path) -> None:
     runtime_service, inference_service, _ = build_services(tmp_path)
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
