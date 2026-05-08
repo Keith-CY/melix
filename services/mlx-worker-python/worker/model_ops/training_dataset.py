@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from dataclasses import replace
 import os
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -523,6 +523,7 @@ def write_normalized_dataset_snapshot(
     dataset: TrainingDatasetPackage,
     *,
     output_dir: Path,
+    manifest_overrides: Mapping[str, Any] | None = None,
 ) -> NormalizedDatasetSnapshot:
     dataset_dir = output_dir / "normalized_dataset"
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -543,6 +544,8 @@ def write_normalized_dataset_snapshot(
         "source_samples_path": str(dataset.samples_path),
         "response_only_supported": dataset.response_only_supported,
     }
+    if manifest_overrides:
+        manifest_payload.update(manifest_overrides)
     manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
 
     _write_duplicate_jsonl_rows((samples_path, train_path), dataset.normalized_samples)

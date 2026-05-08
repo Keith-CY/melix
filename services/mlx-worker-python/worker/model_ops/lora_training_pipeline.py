@@ -83,17 +83,16 @@ class LoRATrainingPipeline:
         )
 
         emit("prepare_training_data", 0.5)
-        normalized_snapshot = write_normalized_dataset_snapshot(dataset.package, output_dir=output_dir)
-        normalized_dataset_manifest = json.loads(
-            normalized_snapshot.manifest_path.read_text(encoding="utf-8")
-        )
-        normalized_dataset_manifest["validation_strategy"] = config.validation_strategy
-        normalized_dataset_manifest["validation_sample_count"] = config.validation_sample_count
+        normalized_manifest_overrides: dict[str, Any] = {
+            "validation_strategy": config.validation_strategy,
+            "validation_sample_count": config.validation_sample_count,
+        }
         if config.validation_split:
-            normalized_dataset_manifest["hf_valid_split"] = config.validation_split
-        normalized_snapshot.manifest_path.write_text(
-            json.dumps(normalized_dataset_manifest, indent=2) + "\n",
-            encoding="utf-8",
+            normalized_manifest_overrides["hf_valid_split"] = config.validation_split
+        normalized_snapshot = write_normalized_dataset_snapshot(
+            dataset.package,
+            output_dir=output_dir,
+            manifest_overrides=normalized_manifest_overrides,
         )
 
         emit("apply_lora", 0.65)
