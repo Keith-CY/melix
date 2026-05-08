@@ -1998,6 +1998,8 @@ def _build_metric_row(
     base_metrics: object,
     head_metrics: object,
 ) -> dict[str, object]:
+    if direction not in {"informational", "lower_is_better", "higher_is_better"}:
+        raise ValueError(f"Unknown metric direction: {direction!r}")
     base_value = _float_or_none(base_metrics.get(key) if isinstance(base_metrics, dict) else None)
     head_value = _float_or_none(head_metrics.get(key) if isinstance(head_metrics, dict) else None)
     if base_value is None or head_value is None:
@@ -2016,12 +2018,14 @@ def _build_metric_row(
     delta_pct = None if base_value == 0 else (delta / base_value) * 100.0
     status = "neutral"
     threshold = abs(base_value) * (warn_pct / 100.0)
-    if direction == "lower_is_better":
+    if direction == "informational":
+        status = "neutral"
+    elif direction == "lower_is_better":
         if head_value > base_value + threshold:
             status = "regression"
         elif head_value < base_value - threshold:
             status = "improvement"
-    else:
+    elif direction == "higher_is_better":
         if head_value < base_value - threshold:
             status = "regression"
         elif head_value > base_value + threshold:

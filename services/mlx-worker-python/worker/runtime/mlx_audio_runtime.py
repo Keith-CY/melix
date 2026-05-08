@@ -6,7 +6,6 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Lock
 from time import perf_counter
-import sys
 import wave
 
 from worker.runtime.audio_preprocessing import prepare_audio_input
@@ -25,6 +24,7 @@ from worker.runtime.wav_helpers import (
     audio_to_pcm_chunks,
     progressive_wav_header,
     stream_chunk_sample_limit,
+    write_pcm_chunks,
 )
 
 
@@ -52,8 +52,11 @@ def _audio_to_wav_bytes(audio, sample_rate: int) -> bytes:
             handle.setnchannels(1)
             handle.setsampwidth(2)
             handle.setframerate(int(sample_rate))
-            for pcm_chunk in audio_to_pcm_chunks(audio, chunk_sample_limit=chunk_sample_limit):
-                handle.writeframesraw(pcm_chunk)
+            write_pcm_chunks(
+                audio,
+                chunk_sample_limit=chunk_sample_limit,
+                write_chunk=handle.writeframesraw,
+            )
         return buffer.getvalue()
 
 

@@ -856,8 +856,9 @@ def test_audio_to_wav_bytes_writes_little_endian_chunks_on_big_endian_hosts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import worker.runtime.mlx_audio_runtime as mlx_audio_runtime
+    import worker.runtime.wav_helpers as wav_helpers
 
-    monkeypatch.setattr(mlx_audio_runtime.sys, "byteorder", "big")
+    monkeypatch.setattr(wav_helpers.sys, "byteorder", "big")
 
     wav_bytes = mlx_audio_runtime._audio_to_wav_bytes((0.1 for _ in range(66000)), sample_rate=24_000)
 
