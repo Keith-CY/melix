@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops import training_dataset_chunker as chunker
 from worker.model_ops.training_dataset_chunker import (
     ChunkStats,
     _split_messages_into_turns,
@@ -493,6 +494,35 @@ def test_split_words_into_k_matches_string_helper_output() -> None:
     content = "alpha beta gamma delta epsilon zeta"
 
     assert _split_words_into_k(content.split(), 3) == _split_user_content_into_k(content, 3)
+    assert _split_words_into_k(["alpha", "beta"], 1) == ["alpha beta"]
+
+
+def test_single_turn_chunking_streams_candidate_segments_without_list_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokenizer = _FakeTokenizer()
+    sample = {
+        "id": "streamed-candidate-segments",
+        "messages": [
+            {"role": "user", "content": _words(240)},
+            {"role": "assistant", "content": "ack"},
+        ],
+    }
+
+    monkeypatch.setattr(chunker, "_split_words_into_k", pytest.fail)
+
+    chunked, stats = chunk_long_samples([sample], chunk_size=80, tokenizer=tokenizer)
+
+    assert stats.chunk_count == len(chunked) >= 3
+    assert all(
+        len(
+            tokenizer.apply_chat_template(
+                emitted["messages"], add_generation_prompt=False, return_dict=False
+            )
+        )
+        <= 80
+        for emitted in chunked
+    )
 
 
 def test_chunking_reuses_presplit_user_words_across_k_attempts() -> None:
