@@ -206,7 +206,10 @@ def _collect_published_file_list(source_dir: Path) -> list[str]:
                     pending.append((entry.path, relative_path))
                 elif entry.is_file(follow_symlinks=False):
                     published_files.append(relative_path)
-                elif not entry.is_dir(follow_symlinks=True):
+                elif entry.is_symlink():
+                    if not entry.is_dir(follow_symlinks=True):
+                        published_files.append(relative_path)
+                else:
                     published_files.append(relative_path)
     return sorted(published_files)
 

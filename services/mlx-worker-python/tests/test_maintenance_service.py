@@ -2093,6 +2093,72 @@ def test_upload_receipt_pipeline_collect_published_file_list_preserves_symlink_r
     ]
 
 
+def test_upload_receipt_pipeline_collect_published_file_list_limits_follow_dir_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "model"
+    source_root.mkdir()
+    followed_dir_checks: list[str] = []
+
+    class FakeDirEntry:
+        def __init__(
+            self,
+            name: str,
+            *,
+            is_dir: bool = False,
+            is_file: bool = False,
+            is_symlink: bool = False,
+            follows_to_dir: bool = False,
+        ) -> None:
+            self.name = name
+            self.path = os.fspath(source_root / name)
+            self._is_dir = is_dir
+            self._is_file = is_file
+            self._is_symlink = is_symlink
+            self._follows_to_dir = follows_to_dir
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            if follow_symlinks:
+                followed_dir_checks.append(self.name)
+                return self._follows_to_dir
+            return self._is_dir
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            return self._is_file if not follow_symlinks else self._is_file
+
+        def is_symlink(self) -> bool:
+            return self._is_symlink
+
+    class FakeScandir:
+        def __init__(self, path: str) -> None:
+            self._path = path
+
+        def __enter__(self):
+            if self._path == os.fspath(source_root):
+                return iter(
+                    [
+                        FakeDirEntry("regular.bin", is_file=True),
+                        FakeDirEntry("special-device"),
+                        FakeDirEntry("file-link", is_symlink=True),
+                        FakeDirEntry("dir-link", is_symlink=True, follows_to_dir=True),
+                    ]
+                )
+            return iter(())  # pragma: no cover - only used for unexpected nested scans
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.os.scandir", FakeScandir)
+
+    assert UploadReceiptPipeline._collect_published_file_list(source_root) == [
+        "file-link",
+        "regular.bin",
+        "special-device",
+    ]
+    assert followed_dir_checks == ["file-link", "dir-link"]
+
+
 def test_prepare_publish_source_uses_collected_file_list_for_directory(tmp_path: Path) -> None:
     pipeline = UploadReceiptPipeline(publisher=FakePublishBackend())
     source_root = tmp_path / "source"

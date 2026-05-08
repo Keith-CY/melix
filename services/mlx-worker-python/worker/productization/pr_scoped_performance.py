@@ -1477,6 +1477,10 @@ def _probe_upload_receipt_published_files(repo_root: Path) -> dict[str, float]:
                 raise ValueError(
                     f"expected {expected_file_count} published files, got {len(published_files)}"
                 )
+        special_entry_follow_dir_checks_mean = _probe_upload_receipt_special_entry_follow_checks(
+            module,
+            sample_count=sample_count,
+        )
     return {
         "directory_count": float(directory_count),
         "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
@@ -1484,7 +1488,74 @@ def _probe_upload_receipt_published_files(repo_root: Path) -> dict[str, float]:
         "files_per_directory": float(files_per_directory),
         "published_file_count": published_file_count,
         "sample_count": float(sample_count),
+        "special_entry_follow_dir_checks_mean": round(special_entry_follow_dir_checks_mean, 6),
     }
+
+
+def _probe_upload_receipt_special_entry_follow_checks(module: Any, *, sample_count: int) -> float:
+    source_root = Path("/tmp/melix-upload-receipt-special-entries")
+    followed_dir_checks = 0
+
+    class FakeDirEntry:
+        def __init__(
+            self,
+            name: str,
+            *,
+            is_file: bool = False,
+            is_symlink: bool = False,
+            follows_to_dir: bool = False,
+        ) -> None:
+            self.name = name
+            self.path = os.fspath(source_root / name)
+            self._is_file = is_file
+            self._is_symlink = is_symlink
+            self._follows_to_dir = follows_to_dir
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            nonlocal followed_dir_checks
+            if follow_symlinks:
+                if not self._is_symlink:
+                    followed_dir_checks += 1  # pragma: no cover - legacy/base compatibility path
+                return self._follows_to_dir
+            return False
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            return self._is_file
+
+        def is_symlink(self) -> bool:
+            return self._is_symlink
+
+    class FakeScandir:
+        def __init__(self, path: str) -> None:
+            self._path = path
+
+        def __enter__(self):
+            if self._path == os.fspath(source_root):
+                return iter(
+                    [
+                        FakeDirEntry("regular.bin", is_file=True),
+                        FakeDirEntry("special-device"),
+                        FakeDirEntry("file-link", is_symlink=True),
+                        FakeDirEntry("dir-link", is_symlink=True, follows_to_dir=True),
+                    ]
+                )
+            return iter(())  # pragma: no cover - only used for unexpected nested scans
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    original_scandir = module.os.scandir
+    module.os.scandir = FakeScandir
+    try:
+        for _ in range(sample_count):
+            published_files = module.UploadReceiptPipeline._collect_published_file_list(source_root)
+            if published_files != ["file-link", "regular.bin", "special-device"]:
+                raise ValueError(  # pragma: no cover - defensive probe guard
+                    f"unexpected special-entry payload: {published_files!r}"
+                )
+    finally:
+        module.os.scandir = original_scandir
+    return followed_dir_checks / sample_count
 
 
 def _probe_pr_scoped_scope_matcher(repo_root: Path) -> dict[str, float]:
