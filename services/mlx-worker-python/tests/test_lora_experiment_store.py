@@ -79,6 +79,51 @@ def _write_manifest(
     return manifest_path
 
 
+def test_iter_lora_run_dirs_sorts_names_without_reading_entry_paths(tmp_path: Path, monkeypatch) -> None:
+    train_root = tmp_path / "train_lora"
+    path_reads = 0
+
+    class FakeEntry:
+        def __init__(self, name: str, *, is_dir: bool = True, raises: bool = False) -> None:
+            self.name = name
+            self._is_dir = is_dir
+            self._raises = raises
+
+        @property
+        def path(self) -> str:  # pragma: no cover - executed only if the regression returns
+            nonlocal path_reads
+            path_reads += 1
+            raise AssertionError("_iter_lora_run_dirs should rebuild paths from entry names")
+
+        def is_dir(self) -> bool:
+            if self._raises:
+                raise OSError("unreadable")
+            return self._is_dir
+
+    class FakeScandir:
+        def __enter__(self):
+            return iter(
+                [
+                    FakeEntry("model-ops-0002"),
+                    FakeEntry("ignored-prefix"),
+                    FakeEntry("model-ops-file", is_dir=False),
+                    FakeEntry("model-ops-unreadable", raises=True),
+                    FakeEntry("model-ops-0001"),
+                ]
+            )
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    monkeypatch.setattr(lora_experiment_store_module.os, "scandir", lambda path: FakeScandir())
+
+    assert lora_experiment_store_module._iter_lora_run_dirs(train_root) == (
+        train_root / "model-ops-0001",
+        train_root / "model-ops-0002",
+    )
+    assert path_reads == 0
+
+
 def test_rebuild_index_prefers_runs_with_reported_loss_for_best_run(tmp_path: Path) -> None:
     jobs_root = tmp_path / "model-ops"
     _write_run_record(

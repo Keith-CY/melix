@@ -1100,6 +1100,43 @@
     ]
   },
   {
+    "id": "lora-experiment-run-dir-name-scan",
+    "name": "LoRA experiment run-dir name scan",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/lora_experiment_store.py",
+      "services/mlx-worker-python/tests/test_lora_experiment_store.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/lora_experiment_run_dir_scan_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_lora_experiment_store.py::test_iter_lora_run_dirs_sorts_names_without_reading_entry_paths services/mlx-worker-python/tests/test_lora_experiment_store.py::test_rebuild_index_prefers_run_record_over_manifest_when_both_exist services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_lora_experiment_run_dir_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_lora_experiment_run_dir_scan_probe_script_smoke services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_lora_experiment_store.py::test_iter_lora_run_dirs_sorts_names_without_reading_entry_paths services/mlx-worker-python/tests/test_lora_experiment_store.py::test_rebuild_index_prefers_run_record_over_manifest_when_both_exist services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_lora_experiment_run_dir_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_lora_experiment_run_dir_scan_probe_script_smoke services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/lora_experiment_store.py services/mlx-worker-python/tests/test_lora_experiment_store.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/lora_experiment_run_dir_scan_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python - <<'PY'\nimport json, statistics, sys, time, tracemalloc\nfrom pathlib import Path\nsys.path[:0] = [str(Path.cwd()), str(Path.cwd() / \"services/mlx-worker-python\")]\nfrom worker.productization import lora_experiment_store as store_module\nRUN_COUNT=8000; NOISE_COUNT=1000; ITERATIONS=24; SAMPLES=5; TRAIN_ROOT=Path(\"/tmp/melix-lora-scan-probe/train_lora\")\npath_attr_reads=0\nclass FakeEntry:\n    __slots__=(\"name\",\"_path\",\"_is_dir\")\n    def __init__(self,name,is_dir=True): self.name=name; self._path=str(TRAIN_ROOT/name); self._is_dir=is_dir\n    @property\n    def path(self):\n        global path_attr_reads\n        path_attr_reads += 1\n        return self._path\n    def is_dir(self): return self._is_dir\nclass FakeScandir:\n    def __init__(self,path): self.path=path\n    def __enter__(self): return iter(fake_entries)\n    def __exit__(self, exc_type, exc, tb): return False\nfake_entries=tuple([FakeEntry(f\"model-ops-{idx:05d}\") for idx in range(RUN_COUNT,0,-1)] + [FakeEntry(f\"noise-{idx:05d}\") for idx in range(NOISE_COUNT)] + [FakeEntry(f\"model-ops-file-{idx:05d}\", False) for idx in range(NOISE_COUNT)])\ndef run_sample():\n    global path_attr_reads\n    path_attr_reads=0\n    original_scandir=store_module.os.scandir\n    store_module.os.scandir=FakeScandir\n    tracemalloc.start(); started=time.perf_counter()\n    try:\n        for _ in range(ITERATIONS):\n            result=store_module._iter_lora_run_dirs(TRAIN_ROOT)\n            if len(result) != RUN_COUNT: raise AssertionError(len(result))\n            if result[0].name != \"model-ops-00001\" or result[-1].name != f\"model-ops-{RUN_COUNT:05d}\": raise AssertionError(\"unsorted\")\n    finally:\n        elapsed=(time.perf_counter()-started)*1000.0\n        _, peak=tracemalloc.get_traced_memory(); tracemalloc.stop(); store_module.os.scandir=original_scandir\n    return elapsed, float(peak), float(path_attr_reads)\nsamples=[run_sample() for _ in range(SAMPLES)]\nprint(json.dumps({\"run_dir_count\":RUN_COUNT,\"iteration_count\":ITERATIONS,\"sample_count\":SAMPLES,\"elapsed_ms_mean\":statistics.fmean(s[0] for s in samples),\"peak_bytes_mean\":statistics.fmean(s[1] for s in samples),\"path_attr_reads_mean\":statistics.fmean(s[2] for s in samples)}, sort_keys=True))\nPY",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "path_attr_reads_mean",
+        "unit": "count",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "run_dir_count",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "training-dataset-token-percentiles-single-sort",
     "name": "Training dataset quality/token summary",
     "runner": "ubuntu-latest",

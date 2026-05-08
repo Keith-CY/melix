@@ -14,7 +14,7 @@ _INDEX_SCHEMA_VERSION = "melix.lora_experiment_index.v1"
 def _iter_lora_run_dirs(train_root: Path) -> tuple[Path, ...]:
     try:
         with os.scandir(train_root) as entries:
-            run_dir_entries = []
+            run_dir_names = []
             for entry in entries:
                 if not entry.name.startswith("model-ops-"):
                     continue
@@ -23,11 +23,11 @@ def _iter_lora_run_dirs(train_root: Path) -> tuple[Path, ...]:
                         continue
                 except OSError:
                     continue
-                run_dir_entries.append(entry)
+                run_dir_names.append(entry.name)
     except OSError:
         return ()
 
-    return tuple(Path(entry.path) for entry in sorted(run_dir_entries, key=lambda entry: entry.name))
+    return tuple(train_root / name for name in sorted(run_dir_names))
 
 
 class LoraExperimentStore:

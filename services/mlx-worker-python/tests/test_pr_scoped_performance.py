@@ -248,6 +248,31 @@ def test_training_config_target_modules_probe_script_smoke(
     assert metrics["case_count"] == 4.0
 
 
+def test_scope_report_selects_lora_experiment_run_dir_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/lora_experiment_store.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "lora-experiment-run-dir-name-scan"
+
+
+def test_lora_experiment_run_dir_scan_probe_script_smoke(capsys: pytest.CaptureFixture[str]) -> None:
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/lora_experiment_run_dir_scan_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["run_dir_count"] == 8000
+    assert metrics["iteration_count"] == 24
+    assert metrics["sample_count"] == 5
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["path_attr_reads_mean"] == 0.0
+
+
 def test_scope_report_selects_mlx_audio_speech_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1760,6 +1785,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "engine-generate-usage-token-elision",
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
+        "lora-experiment-run-dir-name-scan",
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
         "mlx-audio-local-uri-zero-copy-preprocess",
