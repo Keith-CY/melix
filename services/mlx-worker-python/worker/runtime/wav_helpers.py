@@ -27,9 +27,10 @@ def iter_samples(value):
             yield float(item)
 
 
-def pcm_sample_bytes(sample: float) -> int:
-    clamped = max(-1.0, min(1.0, float(sample)))
-    return int(clamped * 32767.0)
+def _chunk_bytes(chunk: array.array) -> bytes:
+    if sys.byteorder != "little":
+        chunk.byteswap()
+    return chunk.tobytes()
 
 
 def audio_to_pcm_chunks(audio, *, chunk_sample_limit: int):
@@ -37,16 +38,30 @@ def audio_to_pcm_chunks(audio, *, chunk_sample_limit: int):
     limit = max(1, int(chunk_sample_limit))
 
     for sample in iter_samples(audio):
-        chunk.append(pcm_sample_bytes(sample))
+        clamped = max(-1.0, min(1.0, float(sample)))
+        chunk.append(int(clamped * 32767.0))
         if len(chunk) >= limit:
-            if sys.byteorder != "little":
-                chunk.byteswap()
-            yield chunk.tobytes()
+            pcm_bytes = _chunk_bytes(chunk)
+            chunk = array.array("h")
+            yield pcm_bytes
+    if chunk:
+        pcm_bytes = _chunk_bytes(chunk)
+        chunk = array.array("h")
+        yield pcm_bytes
+
+
+def write_pcm_chunks(audio, *, chunk_sample_limit: int, write_chunk):
+    chunk = array.array("h")
+    limit = max(1, int(chunk_sample_limit))
+
+    for sample in iter_samples(audio):
+        clamped = max(-1.0, min(1.0, float(sample)))
+        chunk.append(int(clamped * 32767.0))
+        if len(chunk) >= limit:
+            write_chunk(_chunk_bytes(chunk))
             chunk = array.array("h")
     if chunk:
-        if sys.byteorder != "little":
-            chunk.byteswap()
-        yield chunk.tobytes()
+        write_chunk(_chunk_bytes(chunk))
 
 
 def progressive_wav_header(
