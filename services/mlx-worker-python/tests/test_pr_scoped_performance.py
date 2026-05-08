@@ -1592,7 +1592,7 @@ def test_release_gates_m9_failure_count_probe_script_emits_metrics(
 
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] >= 0
-    assert metrics["endswith_checks_mean"] == 12.0
+    assert metrics["endswith_checks_mean"] == 0.0
     assert metrics["failure_count_mean"] == 12.0
     assert metrics["section_count"] == 3.0
     assert metrics["failures_per_section"] == 4.0

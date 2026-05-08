@@ -821,27 +821,19 @@ def test_evaluate_m9_release_evidence_ignores_non_dict_policy_entries() -> None:
     assert summary["failed_threshold_count"] == 0.0
 
 
-def test_evaluate_m9_release_evidence_counts_failure_types_in_one_pass(
+def test_evaluate_m9_release_evidence_reuses_section_failure_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    endswith_calls = 0
-
-    class CountingFailure(str):
-        def endswith(self, suffix: str | tuple[str, ...], *args: object) -> bool:  # type: ignore[override]
-            nonlocal endswith_calls
-            endswith_calls += 1
-            return super().endswith(suffix, *args)  # type: ignore[arg-type]
-
     section_failures = [
-        CountingFailure("m9.mcp.tool_count is missing"),
-        CountingFailure("m9.mcp.latency=12.00 exceeded maximum 10.00"),
-        CountingFailure("m9.mcp.error_rate is missing"),
+        "m9.mcp.tool_count is missing",
+        "m9.mcp.latency=12.00 exceeded maximum 10.00",
+        "m9.mcp.error_rate is missing",
     ]
 
     monkeypatch.setattr(
         release_gates_module,
-        "_evaluate_section_metrics",
-        lambda metrics, rules, *, prefix: list(section_failures),
+        "_evaluate_section_metrics_with_counts",
+        lambda metrics, rules, *, prefix: (list(section_failures), 2, 1),
     )
 
     failures, summary = release_gates_module.evaluate_m9_release_evidence(
@@ -855,7 +847,41 @@ def test_evaluate_m9_release_evidence_counts_failure_types_in_one_pass(
         "missing_probe_count": 2.0,
         "failed_threshold_count": 1.0,
     }
-    assert endswith_calls == len(section_failures)
+
+
+def test_evaluate_section_metrics_counts_failure_types_without_suffix_scan() -> None:
+    failures, missing_count, failed_threshold_count = (
+        release_gates_module._evaluate_section_metrics_with_counts(
+            {
+                "bad_type": "slow",
+                "below_min": 0.0,
+                "above_max": 2.0,
+                "ok": 1.0,
+            },
+            {
+                "missing": {"min": 1.0},
+                "bad_type": {"max": 1.0},
+                "below_min": {"min": 1.0},
+                "above_max": {"max": 1.0},
+                "ok": {"min": 1.0, "max": 1.0},
+            },
+            prefix="m9.mcp.",
+        )
+    )
+
+    assert failures == [
+        "m9.mcp.missing is missing",
+        "m9.mcp.bad_type must be numeric",
+        "m9.mcp.below_min=0.00 fell below minimum 1.00",
+        "m9.mcp.above_max=2.00 exceeded maximum 1.00",
+    ]
+    assert missing_count == 1
+    assert failed_threshold_count == 3
+    assert release_gates_module._evaluate_section_metrics(
+        {"above_max": 2.0},
+        {"above_max": {"max": 1.0}},
+        prefix="m9.mcp.",
+    ) == ["m9.mcp.above_max=2.00 exceeded maximum 1.00"]
 
 
 def test_run_python_json_script_sets_repo_pythonpath_entries(

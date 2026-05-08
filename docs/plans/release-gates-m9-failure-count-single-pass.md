@@ -19,15 +19,15 @@ This slice is Python-only and can be verified on Linux with focused pytest, chan
 
 ## Implementation
 
-- Replace the two generator scans over `section_failures` with one loop that increments missing vs threshold-failure counters while extending the existing failure output.
-- Preserve failure ordering, metric names, and summary values exactly.
+- Replace the suffix-based post-processing loop over `section_failures` with a counted section evaluator that returns missing and threshold-failure counts alongside the ordered failure strings.
+- Preserve failure ordering, metric names, and summary values exactly while avoiding failure-string suffix scans in `evaluate_m9_release_evidence(...)`.
 
 ## Probe definition
 
 Register `release-gates-m9-failure-count-single-pass` in the PR-scoped performance registry. The probe builds a synthetic M9 report/policy workload with many missing and below-threshold failures, calls `evaluate_m9_release_evidence(...)`, and reports:
 
 - `elapsed_ms_mean` (lower is better)
-- `endswith_checks_mean` (lower is better; structural signal, expected one check per failure on head)
+- `endswith_checks_mean` (lower is better; structural signal, expected zero checks on head because the counted evaluator avoids post-processing failure strings)
 - `failure_count_mean` (informational correctness guard)
 
 ## Verification commands
