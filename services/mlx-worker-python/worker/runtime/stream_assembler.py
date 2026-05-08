@@ -279,12 +279,21 @@ class RequestStreamAssembler:
         return (self._TOOL_OPEN, tool_index)
 
     def _has_partial_structural_tag_suffix(self) -> bool:
-        return self._buffer.endswith(self._structural_tag_prefixes)
+        return bool(self._partial_structural_tag_suffix())
 
     def _partial_structural_tag_suffix(self) -> str:
-        for prefix in self._structural_tag_prefixes_reversed:
-            if self._buffer.endswith(prefix):
-                return prefix
+        marker_index = self._buffer.rfind("<")
+        if marker_index < 0:
+            return ""
+
+        suffix = self._buffer[marker_index:]
+        if self._tool_parsing_enabled and 0 < len(suffix) < len(self._TOOL_OPEN):
+            if self._TOOL_OPEN.startswith(suffix):
+                return suffix
+        if 0 < len(suffix) < len(self._THINK_OPEN) and self._THINK_OPEN.startswith(
+            suffix
+        ):
+            return suffix
         return ""
 
     def _record_prefix_hold(self, suffix: str) -> None:
