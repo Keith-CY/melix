@@ -83,6 +83,7 @@ class DeterministicImageGenerationRuntime:
             artifact_publish_ms += (time.monotonic() - artifact_started) * 1000.0
 
             digest = hashlib.sha256(payload).hexdigest()
+            payload_byte_length = len(payload)
             artifact = common_pb2.ImageArtifactMetadata(
                 artifact_id=f"{job_id}::artifact-{index}",
                 job_id=job_id,
@@ -91,13 +92,13 @@ class DeterministicImageGenerationRuntime:
                 format=image_format,
                 width=width,
                 height=height,
-                byte_length=len(payload),
+                byte_length=payload_byte_length,
                 storage_uri=str(artifact_path),
                 sha256=digest,
                 variant_index=index,
             )
             images.append(payload)
-            total_output_bytes += len(payload)
+            total_output_bytes += payload_byte_length
             artifacts.append(artifact)
 
         peak_memory_bytes = max(total_output_bytes, width * height)
