@@ -3,6 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "services/mlx-worker-python"))
+
+from worker.productization.benchmark_evaluation_report import validate_report_payload  # noqa: E402
 
 
 REQUIRED_SECTIONS = (
@@ -25,6 +33,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--event-path",
         help="Path to a GitHub event JSON file containing pull_request.body.",
+    )
+    parser.add_argument(
+        "--report-json",
+        action="append",
+        default=[],
+        help="Optional structured report JSON path to validate with the PR evidence body.",
+    )
+    parser.add_argument(
+        "--require-report-json",
+        action="store_true",
+        help="Require at least one --report-json path.",
     )
     return parser.parse_args()
 
@@ -108,10 +127,34 @@ def validate_body_text(body_text: str) -> list[str]:
     return errors
 
 
+def validate_report_json_paths(paths: list[str]) -> list[str]:
+    errors: list[str] = []
+    for path in paths:
+        report_path = Path(path)
+        if not report_path.is_file():
+            errors.append(f"Report JSON is missing: {report_path}")
+            continue
+        try:
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            errors.append(f"Report JSON could not be decoded: {report_path}: {exc.msg}")
+            continue
+        if not isinstance(payload, dict):
+            errors.append(f"Report JSON must be an object: {report_path}")
+            continue
+        for error in validate_report_payload(payload):
+            errors.append(f"{report_path}: {error}")
+    return errors
+
+
 def main() -> int:
     args = parse_args()
     body_text = load_body_text(args)
     errors = validate_body_text(body_text)
+    report_json_paths = list(args.report_json or [])
+    if args.require_report_json and not report_json_paths:
+        errors.append("At least one --report-json path is required.")
+    errors.extend(validate_report_json_paths(report_json_paths))
     if errors:
         for error in errors:
             print(error)
