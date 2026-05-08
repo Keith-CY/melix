@@ -37,8 +37,7 @@ def audio_to_pcm_chunks(audio, *, chunk_sample_limit: int):
     chunk = array.array("h")
     limit = max(1, int(chunk_sample_limit))
 
-    for sample in iter_samples(audio):
-        value = float(sample)
+    for value in iter_samples(audio):
         if value > 1.0:
             value = 1.0
         elif value < -1.0:

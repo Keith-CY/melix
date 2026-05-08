@@ -888,6 +888,26 @@ def test_audio_to_wav_bytes_does_not_materialize_flat_sample_list(monkeypatch: p
         assert handle.getnframes() == 4
         assert handle.getframerate() == 12_000
 
+    import worker.runtime.wav_helpers as wav_helpers
+
+    class NormalizedFloat(float):
+        def __float__(self):  # pragma: no cover - covered only by regression failure
+            raise AssertionError("audio_to_pcm_chunks should not re-cast normalized samples")
+
+    monkeypatch.setattr(
+        wav_helpers,
+        "iter_samples",
+        lambda audio: iter((NormalizedFloat(0.5), NormalizedFloat(2.0), NormalizedFloat(-2.0))),
+    )
+
+    chunks = list(wav_helpers.audio_to_pcm_chunks(object(), chunk_sample_limit=2))
+    decoded = [
+        int.from_bytes(chunk[index : index + 2], byteorder="little", signed=True)
+        for chunk in chunks
+        for index in range(0, len(chunk), 2)
+    ]
+    assert decoded == [16383, 32767, -32767]
+
 
 def test_audio_to_wav_bytes_writes_little_endian_chunks_on_big_endian_hosts(
     monkeypatch: pytest.MonkeyPatch,
