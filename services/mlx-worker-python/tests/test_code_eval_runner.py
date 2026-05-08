@@ -549,6 +549,26 @@ def test_runner_script_reuses_dedented_static_payload(monkeypatch) -> None:
     code_eval_runner._runner_script.cache_clear()
 
 
+def test_runner_script_loads_config_from_bytes(tmp_path: Path) -> None:
+    code_eval_runner._runner_script.cache_clear()
+    script = code_eval_runner._runner_script()
+    namespace: dict[str, object] = {"__name__": "melix_runner_probe"}
+    exec(compile(script, "<melix-runner>", "exec"), namespace)
+    load_config = namespace["_load_config"]
+
+    config_path = tmp_path / "config.json"
+    config_path.write_bytes(b'{"payload_path": "/tmp/payload.json", "memory_limit_mb": 64}')
+
+    assert load_config(config_path) == {
+        "payload_path": "/tmp/payload.json",
+        "memory_limit_mb": 64,
+    }
+    assert "json.loads(config_path.read_bytes())" in script
+    assert "json.load(file)" not in script
+
+    code_eval_runner._runner_script.cache_clear()
+
+
 def test_sandbox_profile_cache_key_tracks_python_environment(
     tmp_path: Path,
     monkeypatch,
