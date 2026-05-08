@@ -128,6 +128,33 @@ def _split_messages_into_turns(
     return system_prefix, pairs
 
 
+def _iter_word_segments(words: list[str], k: int) -> Iterable[str]:
+    """Yield ``words`` split into ``k`` roughly equal non-empty segments.
+
+    The single-turn chunk-search loop can reject a candidate ``k`` as soon as
+    the first rendered segment exceeds the chunk budget, so it should not build
+    the full segment list up front. This iterator preserves the exact bucket
+    boundaries used by ``_split_words_into_k`` while letting callers consume
+    only as many joined strings as they need.
+    """
+
+    if k <= 1:
+        yield " ".join(words)
+        return
+    if len(words) < k:
+        yield from words
+        return
+    bucket_size = len(words) // k
+    extras = len(words) % k
+    start = 0
+    for bucket_idx in range(k):
+        length = bucket_size + (1 if bucket_idx < extras else 0)
+        segment = " ".join(words[start : start + length])
+        start += length
+        if segment:
+            yield segment
+
+
 def _split_words_into_k(words: list[str], k: int) -> list[str]:
     """Split pre-tokenized ``words`` into ``k`` roughly equal segments.
 
@@ -135,20 +162,7 @@ def _split_words_into_k(words: list[str], k: int) -> list[str]:
     chunk-search loop does not repeatedly re-split the same user content for
     every candidate ``k``.
     """
-
-    if k <= 1:
-        return [" ".join(words)]
-    if len(words) < k:
-        return words[:]  # caller detects len(segments) < k and retries
-    bucket_size = len(words) // k
-    extras = len(words) % k
-    segments: list[str] = []
-    start = 0
-    for bucket_idx in range(k):
-        length = bucket_size + (1 if bucket_idx < extras else 0)
-        segments.append(" ".join(words[start : start + length]))
-        start += length
-    return [s for s in segments if s]
+    return list(_iter_word_segments(words, k))
 
 
 def _split_user_content_into_k(content: str, k: int) -> list[str]:
@@ -243,19 +257,20 @@ def _chunk_single_turn(
             ),
         )
     for k in range(k_floor, word_count + 1):
-        segments = _split_words_into_k(words, k)
-        if len(segments) < k:
-            # User content has fewer words than buckets — caller must try a
-            # smaller K. In practice this only fires when k > word_count,
-            # which the guard above already rejects.
-            continue
         chunks: list[list[dict[str, str]]] = []
-        for segment in segments:
+        segment_count = 0
+        for segment in _iter_word_segments(words, k):
+            segment_count += 1
             chunk = system_prefix + [{"role": "user", "content": segment}, assistant]
             if _render_len(chunk, tokenizer, tools=tools) > chunk_size:
                 break
             chunks.append(chunk)
-        else:
+        if segment_count < k:
+            # User content has fewer words than buckets — caller must try a
+            # smaller K. In practice this only fires when k > word_count,
+            # which the guard above already rejects.
+            continue
+        if len(chunks) == k:
             return chunks
 
     raise ModelOperationError(
