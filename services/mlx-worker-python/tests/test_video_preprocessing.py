@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2
+from worker.runtime import video_preprocessing
 from worker.runtime.video_preprocessing import (
     MAX_VIDEO_FRAME_BUDGET,
     PreparedVideoInput,
@@ -125,6 +126,68 @@ def test_prepare_video_input_reuses_uri_byte_length_for_metadata_and_identity_ha
     assert prepared.byte_length == 123
     assert media.byte_length_reads == 1
     assert len(prepared.sha256_hex) == 64
+
+
+def test_prepare_video_input_reuses_cached_uri_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    parse_calls = 0
+    original_parse = video_preprocessing._parse_video_reference
+
+    def counting_parse(reference: str):
+        nonlocal parse_calls
+        parse_calls += 1
+        return original_parse(reference)
+
+    monkeypatch.setattr(video_preprocessing, "_parse_video_reference", counting_parse)
+    cache = {}
+    media = _CountingMedia()
+    part = _CountingVideoPart(media)
+
+    first = prepare_video_input(part, uri_cache=cache)
+    second = prepare_video_input(part, uri_cache=cache)
+    third = prepare_video_input(part, uri_cache=cache)
+
+    assert first == second == third
+    assert first.source_kind == "uri"
+    assert parse_calls == 1
+    assert media.byte_length_reads == 3
+
+
+def test_prepare_video_input_uri_cache_key_includes_byte_length() -> None:
+    cache = {}
+    first_media = _CountingMedia()
+    second_media = _CountingMedia()
+    first_part = _CountingVideoPart(first_media)
+    second_part = _CountingVideoPart(second_media)
+
+    first = prepare_video_input(first_part, uri_cache=cache)
+    second = prepare_video_input(second_part, uri_cache=cache)
+
+    assert first == second
+    assert len(cache) == 1
+
+
+class _FixedByteLengthMedia(_CountingMedia):
+    def __init__(self, byte_length: int) -> None:
+        super().__init__()
+        self._byte_length = byte_length
+
+    def __getattribute__(self, name: str):
+        if name == "byte_length":
+            byte_length_reads = object.__getattribute__(self, "byte_length_reads")
+            object.__setattr__(self, "byte_length_reads", byte_length_reads + 1)
+            return object.__getattribute__(self, "_byte_length")
+        return super().__getattribute__(name)
+
+
+def test_prepare_video_input_uri_cache_keeps_distinct_byte_lengths() -> None:
+    cache = {}
+    first = prepare_video_input(_CountingVideoPart(_FixedByteLengthMedia(123)), uri_cache=cache)
+    second = prepare_video_input(_CountingVideoPart(_FixedByteLengthMedia(456)), uri_cache=cache)
+
+    assert first.byte_length == 123
+    assert second.byte_length == 456
+    assert first.sha256_hex != second.sha256_hex
+    assert len(cache) == 2
 
 
 def test_prepare_video_input_infers_format_from_plain_local_path() -> None:

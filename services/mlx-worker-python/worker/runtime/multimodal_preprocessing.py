@@ -92,6 +92,7 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
     videos: list[PreparedVideoInput] = []
     input_bytes = 0
     image_uri_cache: dict[str, tuple[bytes, str, str, str, str, str]] = {}
+    video_uri_cache = {}
 
     for message in messages:
         for part in message.parts:
@@ -104,7 +105,7 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
                 images.append(image)
                 input_bytes += image.byte_length
             if part.video_bytes or part.video_uri:
-                video = prepare_video_input(part)
+                video = prepare_video_input(part, uri_cache=video_uri_cache)
                 videos.append(video)
                 input_bytes += video.byte_length
 

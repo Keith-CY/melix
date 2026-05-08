@@ -45,7 +45,13 @@ class ParsedVideoReference:
     path_suffix: str
 
 
-def prepare_video_input(part) -> PreparedVideoInput:
+VideoUriCacheKey = tuple[str, str, str, str, int, int, int, int, int]
+
+
+def prepare_video_input(
+    part,
+    uri_cache: dict[VideoUriCacheKey, PreparedVideoInput] | None = None,
+) -> PreparedVideoInput:
     media = getattr(part, "media", None)
     mime_type = str(getattr(media, "mime_type", "") or "").strip().lower()
     format_name = str(getattr(media, "format", "") or "").strip().lower()
@@ -78,14 +84,30 @@ def prepare_video_input(part) -> PreparedVideoInput:
     uri = str(getattr(part, "video_uri", "") or "").strip()
     if not uri:
         raise VideoPreprocessError("No video input provided.")
+    byte_length = int(getattr(media, "byte_length", 0) or 0)
+    cache_key = (
+        uri,
+        mime_type,
+        format_name,
+        filename,
+        byte_length,
+        duration_ms,
+        frame_budget,
+        start_ms,
+        end_ms,
+    )
+    if uri_cache is not None:
+        cached = uri_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     parsed_reference = _parse_video_reference(uri)
     _validate_video_uri(parsed_reference)
     resolved_format = _resolve_video_format(format_name, mime_type, filename, parsed_reference)
     resolved_filename = (
         filename or _filename_from_reference(parsed_reference) or f"remote-video.{resolved_format}"
     )
-    byte_length = int(getattr(media, "byte_length", 0) or 0)
-    return PreparedVideoInput(
+    prepared = PreparedVideoInput(
         source_kind="uri",
         reference=uri,
         bytes_data=b"",
@@ -109,6 +131,9 @@ def prepare_video_input(part) -> PreparedVideoInput:
             end_ms=end_ms,
         ),
     )
+    if uri_cache is not None:
+        uri_cache[cache_key] = prepared
+    return prepared
 
 
 def _validate_bounds(duration_ms: int, frame_budget: int, start_ms: int, end_ms: int) -> None:
@@ -171,6 +196,8 @@ def _resolve_video_format(
             return resolved
         raise VideoPreprocessError(f"Unsupported video format: {mime_type}.")
     for candidate in candidates:
+        if isinstance(candidate, str) and not candidate.strip():
+            continue
         inferred = _infer_format(candidate)
         if inferred:
             return inferred

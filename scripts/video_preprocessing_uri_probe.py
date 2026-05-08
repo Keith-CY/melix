@@ -42,9 +42,10 @@ def run_probe(iterations: int = 50_000, sample_count: int = 5) -> dict[str, floa
     for _ in range(sample_count):
         media = CountingMedia()
         part = CountingVideoPart(media)
+        uri_cache = {}
         started = time.perf_counter()
         for _index in range(iterations):
-            prepared = prepare_video_input(part)
+            prepared = prepare_video_input(part, uri_cache=uri_cache)
             checksum += prepared.byte_length + len(prepared.sha256_hex)
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
         byte_length_reads.append(float(media.byte_length_reads) / float(iterations))

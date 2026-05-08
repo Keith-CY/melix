@@ -286,6 +286,48 @@ def test_prepare_vision_request_uses_duration_when_video_end_is_missing() -> Non
     assert request.effective_video_window_ms == 12_000
 
 
+def test_prepare_vision_request_reuses_one_video_uri_cache_per_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache_ids: list[int] = []
+
+    def fake_prepare_video_input(part, uri_cache=None):
+        cache_ids.append(id(uri_cache))
+        assert uri_cache is not None
+        return multimodal_preprocessing.PreparedVideoInput(
+            source_kind="uri",
+            reference=part.video_uri,
+            bytes_data=b"",
+            mime_type="video/mp4",
+            format="mp4",
+            filename="clip.mp4",
+            byte_length=7,
+            duration_ms=0,
+            frame_budget=0,
+            start_ms=0,
+            end_ms=0,
+            sha256_hex="a" * 64,
+        )
+
+    monkeypatch.setattr(multimodal_preprocessing, "prepare_video_input", fake_prepare_video_input)
+
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(video_uri="https://example.com/clip.mp4"),
+                    common_pb2.MessagePart(video_uri="https://example.com/clip.mp4"),
+                ],
+            )
+        ]
+    )
+
+    assert len(request.videos) == 2
+    assert request.preprocess_input_bytes == 14
+    assert len(set(cache_ids)) == 1
+
+
 def test_prepare_vision_request_defaults_video_frame_budget_when_window_is_unknown() -> None:
     request = prepare_vision_request(
         [
