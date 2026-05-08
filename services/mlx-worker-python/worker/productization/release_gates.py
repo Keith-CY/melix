@@ -1572,18 +1572,14 @@ def evaluate_m9_release_evidence(
         required_probe_count += float(len(section_rules))
         section = report.get(section_name, {})
         metrics = section.get("metrics", {}) if isinstance(section, dict) else {}
-        section_failures = _evaluate_section_metrics(
+        section_failures, missing_for_section, failed_for_section = _evaluate_section_metrics_with_counts(
             metrics,
             section_rules,
             prefix=f"m9.{section_name}.",
         )
         failures.extend(section_failures)
-        missing_for_section = 0
-        for failure in section_failures:
-            if failure.endswith(" is missing"):
-                missing_for_section += 1
         missing_probe_count += float(missing_for_section)
-        failed_threshold_count += float(len(section_failures) - missing_for_section)
+        failed_threshold_count += float(failed_for_section)
 
     return failures, {
         "required_probe_count": required_probe_count,
@@ -1626,21 +1622,25 @@ def _run_python_json_script(
     return json.loads(stdout)
 
 
-def _evaluate_section_metrics(
+def _evaluate_section_metrics_with_counts(
     values: dict[str, Any],
     rules: dict[str, Any],
     *,
     prefix: str = "",
-) -> list[str]:
+) -> tuple[list[str], int, int]:
     failures: list[str] = []
+    missing_count = 0
+    failed_threshold_count = 0
     for name, rule in rules.items():
         value = values.get(name)
         display_name = f"{prefix}{name}"
         if value is None:
             failures.append(f"{display_name} is missing")
+            missing_count += 1
             continue
         if not isinstance(value, (int, float)):
             failures.append(f"{display_name} must be numeric")
+            failed_threshold_count += 1
             continue
         numeric = float(value)
         minimum = rule.get("min")
@@ -1649,10 +1649,22 @@ def _evaluate_section_metrics(
             failures.append(
                 f"{display_name}={numeric:.2f} fell below minimum {float(minimum):.2f}"
             )
+            failed_threshold_count += 1
         if maximum is not None and numeric > float(maximum):
             failures.append(
                 f"{display_name}={numeric:.2f} exceeded maximum {float(maximum):.2f}"
             )
+            failed_threshold_count += 1
+    return failures, missing_count, failed_threshold_count
+
+
+def _evaluate_section_metrics(
+    values: dict[str, Any],
+    rules: dict[str, Any],
+    *,
+    prefix: str = "",
+) -> list[str]:
+    failures, _, _ = _evaluate_section_metrics_with_counts(values, rules, prefix=prefix)
     return failures
 
 
