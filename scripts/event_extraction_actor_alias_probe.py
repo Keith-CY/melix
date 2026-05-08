@@ -44,6 +44,8 @@ def _actor_values(value_count: int) -> list[str]:
 
 
 def _run_probe(*, value_count: int, iterations: int, samples: int) -> dict[str, float]:
+    event_extraction_module._expanded_semantic_actor_values.cache_clear()
+    event_extraction_module._is_group_actor_alias.cache_clear()
     original_normalize = event_extraction_module._normalize_similarity_text
     normalize_calls = 0
 
