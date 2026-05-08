@@ -481,6 +481,7 @@ def _sandbox_allow_path_variants(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     return tuple(deduped)
 
 
+@lru_cache(maxsize=1)
 def _runner_script() -> str:
     script = """
         from __future__ import annotations

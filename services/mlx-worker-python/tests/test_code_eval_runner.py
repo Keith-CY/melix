@@ -526,6 +526,29 @@ def test_sandbox_profile_reuses_static_runtime_fragments(
     code_eval_runner._sandbox_static_profile_key_cache_clear()
 
 
+def test_runner_script_reuses_dedented_static_payload(monkeypatch) -> None:
+    code_eval_runner._runner_script.cache_clear()
+    calls = 0
+    original_dedent = code_eval_runner.textwrap.dedent
+
+    def tracked_dedent(text: str) -> str:
+        nonlocal calls
+        calls += 1
+        return original_dedent(text)
+
+    monkeypatch.setattr(code_eval_runner.textwrap, "dedent", tracked_dedent)
+
+    first_script = code_eval_runner._runner_script()
+    second_script = code_eval_runner._runner_script()
+
+    assert calls == 1
+    assert first_script is second_script
+    assert "def main() -> int:" in first_script
+    assert first_script.endswith("\n")
+
+    code_eval_runner._runner_script.cache_clear()
+
+
 def test_sandbox_profile_cache_key_tracks_python_environment(
     tmp_path: Path,
     monkeypatch,
