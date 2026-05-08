@@ -405,6 +405,28 @@ def test_count_tests_no_assert_fast_path_skips_ast_parse(monkeypatch: pytest.Mon
     assert code_eval_runner._count_tests("setup()\nrun_case(identity)\n") == 2
 
 
+def test_count_tests_syntax_error_fallback_uses_nonblank_line_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def tracked_count(test_code: str) -> int:
+        calls.append(test_code)
+        return 5
+
+    monkeypatch.setattr(code_eval_runner, "_count_nonblank_test_lines", tracked_count)
+    code_eval_runner._count_tests.cache_clear()
+
+    assert code_eval_runner._count_tests("def check(candidate):\n    return candidate(1)") == 5
+    assert calls == ["def check(candidate):\n    return candidate(1)"]
+
+
+def test_count_nonblank_lines_streams_without_filtered_list() -> None:
+    test_code = "\n".join("assert value" if index % 3 else "   " for index in range(10_000))
+
+    assert code_eval_runner._count_nonblank_test_lines(test_code) == 6_666
+
+
 def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -> None:
     missing_path = tmp_path / "missing.txt"
     assert code_eval_runner._read_limited_text(missing_path, 8) == ""
@@ -690,6 +712,22 @@ def test_count_tests_falls_back_when_no_asserts_are_present() -> None:
     ).strip()
 
     assert code_eval_runner._count_tests(test_code) == 3
+
+
+def test_count_tests_no_assert_fallback_uses_nonblank_line_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def tracked_count(test_code: str) -> int:
+        calls.append(test_code)
+        return 5
+
+    monkeypatch.setattr(code_eval_runner, "_count_nonblank_test_lines", tracked_count)
+    code_eval_runner._count_tests.cache_clear()
+
+    assert code_eval_runner._count_tests("def check(candidate):\n    return candidate(1)") == 5
+    assert calls == ["def check(candidate):\n    return candidate(1)"]
 
 
 def test_load_payload_file_rejects_invalid_and_non_mapping_json(tmp_path: Path) -> None:
