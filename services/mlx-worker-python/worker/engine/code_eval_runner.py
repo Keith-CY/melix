@@ -551,9 +551,15 @@ def _runner_script() -> str:
                 pass
 
 
+        def _load_config(config_path: Path) -> dict[str, object]:
+            payload = json.loads(config_path.read_bytes())
+            if not isinstance(payload, dict):
+                raise TypeError("runner config must be a JSON object")
+            return payload
+
+
         def main() -> int:
-            with open(sys.argv[1], "r", encoding="utf-8") as file:
-                config = json.load(file)
+            config = _load_config(Path(sys.argv[1]))
             memory_limit_mb = int(config.get("memory_limit_mb", 256) or 256)
             stdio_limit_bytes = int(config.get("stdio_limit_bytes", 32768) or 32768)
             payload_path = Path(config["payload_path"])
