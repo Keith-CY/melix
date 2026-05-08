@@ -6444,6 +6444,8 @@ def test_run_bench_matrix_returns_summary_rows_and_persists_matrix_artifacts(tmp
     assert job_payload["parameters"]["runtime_kind"] == "text"
     assert job_payload["parameters"]["runtime_model_id"] == "melix-dev-text"
     assert [row["context_length"] for row in summary_rows] == [256, 1024]
+    assert [row["completed_count"] for row in summary_rows] == [4, 4]
+    assert [row["failed_count"] for row in summary_rows] == [0, 0]
     assert len(request_rows) == 8
     assert {row["cell_id"] for row in request_rows} == {"cell-1", "cell-2"}
     assert all(row["status"] == "completed" for row in request_rows)

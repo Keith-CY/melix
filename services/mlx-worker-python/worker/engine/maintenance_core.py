@@ -1499,7 +1499,13 @@ class MaintenanceCore:
                                                 repeats=repeats,
                                                 concurrency_level=concurrency_level,
                                             )
-                                            cell_rows = []
+                                            completed_count = 0
+                                            request_latencies = []
+                                            ttft_values = []
+                                            prefill_values = []
+                                            decode_values = []
+                                            queue_wait_values = []
+                                            peak_memory_values = []
                                             for request_index in range(row_count):
                                                 repeat_index = request_index % repeats
                                                 created_at_unix_ms = int(time.time() * 1000)
@@ -1598,26 +1604,20 @@ class MaintenanceCore:
                                                         runtime_kind=getattr(loaded_model, "runtime_kind", ""),
                                                         error_stage=self._benchmark_error_stage(exc),
                                                     )
-                                                cell_rows.append(row)
+                                                if row.status == "completed":
+                                                    completed_count += 1
+                                                    request_latencies.append(row.request_latency_ms)
+                                                    ttft_values.append(row.ttft_ms)
+                                                    prefill_values.append(row.prefill_tokens_per_second)
+                                                    decode_values.append(row.decode_tokens_per_second)
+                                                    queue_wait_values.append(row.queue_wait_ms)
+                                                    peak_memory_values.append(float(row.peak_memory_bytes))
                                                 request_rows.append(row)
 
-                                            completed_rows = [row for row in cell_rows if row.status == "completed"]
-                                            request_latencies = [row.request_latency_ms for row in completed_rows]
-                                            ttft_values = [row.ttft_ms for row in completed_rows]
-                                            prefill_values = [
-                                                row.prefill_tokens_per_second for row in completed_rows
-                                            ]
-                                            decode_values = [
-                                                row.decode_tokens_per_second for row in completed_rows
-                                            ]
-                                            queue_wait_values = [row.queue_wait_ms for row in completed_rows]
-                                            peak_memory_values = [
-                                                float(row.peak_memory_bytes) for row in completed_rows
-                                            ]
                                             total_latency_seconds = sum(request_latencies) / 1_000.0
                                             throughput_requests_per_second = (
-                                                len(completed_rows) / max(total_latency_seconds, 0.001)
-                                                if completed_rows
+                                                completed_count / max(total_latency_seconds, 0.001)
+                                                if completed_count
                                                 else 0.0
                                             )
                                             decode_mean = self._mean(decode_values)
@@ -1660,15 +1660,15 @@ class MaintenanceCore:
                                                         2,
                                                     ),
                                                     success_rate=round(
-                                                        len(completed_rows) / max(len(cell_rows), 1),
+                                                        completed_count / max(row_count, 1),
                                                         4,
                                                     ),
                                                     peak_memory_bytes_max=int(max(peak_memory_values, default=0.0)),
                                                     queue_wait_mean_ms=self._mean(queue_wait_values),
                                                     queue_wait_p95_ms=self._percentile(queue_wait_values, 95.0),
                                                     cell_wall_ms=round((time.perf_counter() - cell_started_at) * 1_000.0, 2),
-                                                    completed_count=len(completed_rows),
-                                                    failed_count=len(cell_rows) - len(completed_rows),
+                                                    completed_count=completed_count,
+                                                    failed_count=row_count - completed_count,
                                                     ttft_p50_ms=ttft_p50_ms,
                                                     ttft_p95_ms=ttft_p95_ms,
                                                     request_latency_p50_ms=request_latency_p50_ms,
