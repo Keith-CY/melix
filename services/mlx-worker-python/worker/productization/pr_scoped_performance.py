@@ -212,16 +212,18 @@ def build_scope_report(
     force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
         changed_path_set
     )
+    matched_probe_indexes = _match_probe_indexes(changed_paths=changed_path_set, probes=probes)
     if force_all:
         selected = probes
     else:
-        matched_probe_indexes = _match_probe_indexes(changed_paths=changed_path_set, probes=probes)
         selected = tuple(probe for index, probe in enumerate(probes) if index in matched_probe_indexes)
     changed_paths = tuple(sorted(changed_path_set))
+    matched_probe_ids = [probe.probe_id for index, probe in enumerate(probes) if index in matched_probe_indexes]
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
         "force_all": force_all,
+        "matched_probe_ids": matched_probe_ids,
         "selected_probes": [probe.to_scope_dict() for probe in selected],
         "selected_count": len(selected),
     }
@@ -275,6 +277,8 @@ def build_performance_report(
     probe_results: list[dict[str, object]],
 ) -> dict[str, object]:
     selected_probes = _dict_list(scope.get("selected_probes"))
+    force_all = bool(scope.get("force_all", False))
+    matched_probe_ids = {probe_id for probe_id in _string_list(scope.get("matched_probe_ids")) if probe_id}
     probe_result_map = {
         str(result.get("probe", {}).get("id", "")): result
         for result in probe_results
@@ -306,7 +310,9 @@ def build_performance_report(
         row = _build_probe_report_row(result)
         rows.append(row)
         if row["status"] == "regression":
-            regression_count += 1
+            counts_for_regression_gate = not force_all or not matched_probe_ids or probe_id in matched_probe_ids
+            if counts_for_regression_gate:
+                regression_count += 1
         if row["status"] in {"verification_failed", "probe_failed", "missing_result"}:
             verification_failure_count += 1
     status = "ok"
@@ -2016,7 +2022,9 @@ def _build_metric_row(
     delta_pct = None if base_value == 0 else (delta / base_value) * 100.0
     status = "neutral"
     threshold = abs(base_value) * (warn_pct / 100.0)
-    if direction == "lower_is_better":
+    if direction == "informational":
+        status = "neutral"
+    elif direction == "lower_is_better":
         if head_value > base_value + threshold:
             status = "regression"
         elif head_value < base_value - threshold:
