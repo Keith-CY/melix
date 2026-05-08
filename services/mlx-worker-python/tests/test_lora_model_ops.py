@@ -87,6 +87,12 @@ def test_reward_summary_reuses_candidate_group_minmax(
         counting_sorted,
         raising=False,
     )
+    monkeypatch.setattr(
+        lora_training_pipeline_module,
+        "sum",
+        None,
+        raising=False,
+    )
 
     samples = [
         {
@@ -109,9 +115,13 @@ def test_reward_summary_reuses_candidate_group_minmax(
 
     summary = lora_training_pipeline_module._reward_summary(samples)
 
+    assert summary["reward_mean"] == pytest.approx(0.35625)
     assert summary["candidate_group_count"] == 2
     assert summary["candidate_group_reward_margin_mean"] == pytest.approx(1.05)
     assert summary["candidate_group_reward_margin_p50"] == pytest.approx(1.05)
+    assert summary["candidate_group_reward_variance_mean"] == pytest.approx(
+        0.19777777777777786
+    )
     assert sorted_calls == [8, 2]
 
 
