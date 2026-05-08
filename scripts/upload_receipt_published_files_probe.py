@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import statistics
 import sys
 import tempfile
 import time
+from typing import Any
 
 
 def _seed_tree(root: Path, *, directory_count: int, files_per_directory: int) -> int:
@@ -21,11 +23,78 @@ def _seed_tree(root: Path, *, directory_count: int, files_per_directory: int) ->
     return total + 1
 
 
+def _measure_special_entry_follow_dir_checks(module: Any, *, sample_count: int) -> float:
+    source_root = Path("/tmp/melix-upload-receipt-special-entries")
+    followed_dir_checks = 0
+
+    class FakeDirEntry:
+        def __init__(
+            self,
+            name: str,
+            *,
+            is_file: bool = False,
+            is_symlink: bool = False,
+            follows_to_dir: bool = False,
+        ) -> None:
+            self.name = name
+            self.path = os.fspath(source_root / name)
+            self._is_file = is_file
+            self._is_symlink = is_symlink
+            self._follows_to_dir = follows_to_dir
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            nonlocal followed_dir_checks
+            if follow_symlinks:
+                if not self._is_symlink:
+                    followed_dir_checks += 1  # pragma: no cover - legacy/base compatibility path
+                return self._follows_to_dir
+            return False
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            return self._is_file
+
+        def is_symlink(self) -> bool:
+            return self._is_symlink
+
+    class FakeScandir:
+        def __init__(self, path: str) -> None:
+            self._path = path
+
+        def __enter__(self):
+            if self._path == os.fspath(source_root):
+                return iter(
+                    [
+                        FakeDirEntry("regular.bin", is_file=True),
+                        FakeDirEntry("special-device"),
+                        FakeDirEntry("file-link", is_symlink=True),
+                        FakeDirEntry("dir-link", is_symlink=True, follows_to_dir=True),
+                    ]
+                )
+            return iter(())  # pragma: no cover - only used for unexpected nested scans
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    original_scandir = module.os.scandir
+    module.os.scandir = FakeScandir
+    try:
+        for _ in range(sample_count):
+            published_files = module.UploadReceiptPipeline._collect_published_file_list(source_root)
+            if published_files != ["file-link", "regular.bin", "special-device"]:
+                raise RuntimeError(  # pragma: no cover - defensive probe guard
+                    f"unexpected special-entry payload: {published_files!r}"
+                )
+    finally:
+        module.os.scandir = original_scandir
+    return followed_dir_checks / sample_count
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo_root))
     sys.path.insert(0, str(repo_root / "services/mlx-worker-python"))
 
+    from worker.model_ops import upload_receipt_pipeline
     from worker.model_ops.upload_receipt_pipeline import UploadReceiptPipeline
 
     elapsed_samples: list[float] = []
@@ -51,6 +120,11 @@ def main() -> int:
                     f"expected {expected_file_count} published files, got {len(published_files)}"
                 )
 
+        special_entry_follow_dir_checks_mean = _measure_special_entry_follow_dir_checks(
+            upload_receipt_pipeline,
+            sample_count=sample_count,
+        )
+
     print(
         json.dumps(
             {
@@ -60,6 +134,10 @@ def main() -> int:
                 "files_per_directory": float(files_per_directory),
                 "published_file_count": float(file_counts[-1]),
                 "sample_count": float(sample_count),
+                "special_entry_follow_dir_checks_mean": round(
+                    special_entry_follow_dir_checks_mean,
+                    6,
+                ),
             },
             sort_keys=True,
         )

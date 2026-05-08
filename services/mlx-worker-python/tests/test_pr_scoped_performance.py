@@ -2509,6 +2509,7 @@ def test_upload_receipt_probe_script_emits_metrics(capsys: pytest.CaptureFixture
     assert payload["files_per_directory"] == 40.0
     assert payload["published_file_count"] == 7201.0
     assert payload["sample_count"] == 5.0
+    assert payload["special_entry_follow_dir_checks_mean"] == 0.0
 
 
 def test_dispatch_probe_impl_supports_upload_receipt_published_files_probe() -> None:
@@ -2531,6 +2532,7 @@ def test_dispatch_probe_impl_supports_upload_receipt_published_files_probe() -> 
     assert metrics["files_per_directory"] == 40.0
     assert metrics["published_file_count"] == 7201.0
     assert metrics["sample_count"] == 5.0
+    assert metrics["special_entry_follow_dir_checks_mean"] == 0.0
 
 
 def test_dispatch_probe_impl_supports_pr_scoped_scope_matcher_probe() -> None:
