@@ -502,52 +502,65 @@ def _alignment_manifest_payload(
 
 def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
     scores: list[float] = []
+    score_total = 0.0
     candidate_group_margins: list[float] = []
     candidate_group_variances: list[float] = []
+    candidate_group_margin_total = 0.0
+    candidate_group_variance_total = 0.0
     for sample in samples:
         if "reward_score" in sample:
-            scores.append(float(sample["reward_score"]))
+            reward_score = float(sample["reward_score"])
+            scores.append(reward_score)
+            score_total += reward_score
         candidates = sample.get("candidates")
         candidate_scores: list[float] = []
         candidate_score_min: float | None = None
         candidate_score_max: float | None = None
+        candidate_score_total = 0.0
+        candidate_score_square_total = 0.0
         if isinstance(candidates, list):
             for candidate in candidates:
                 if isinstance(candidate, dict) and "score" in candidate:
                     candidate_score = float(candidate["score"])
                     candidate_scores.append(candidate_score)
+                    candidate_score_total += candidate_score
+                    candidate_score_square_total += candidate_score * candidate_score
                     if candidate_score_min is None or candidate_score < candidate_score_min:
                         candidate_score_min = candidate_score
                     if candidate_score_max is None or candidate_score > candidate_score_max:
                         candidate_score_max = candidate_score
         if candidate_scores:
             scores.extend(candidate_scores)
-        if len(candidate_scores) >= 2:
+            score_total += candidate_score_total
+        candidate_score_count = len(candidate_scores)
+        if candidate_score_count >= 2:
             assert candidate_score_min is not None
             assert candidate_score_max is not None
-            group_mean = sum(candidate_scores) / len(candidate_scores)
-            candidate_group_margins.append(
-                candidate_score_max - candidate_score_min
-            )
-            candidate_group_variances.append(
-                sum((score - group_mean) ** 2 for score in candidate_scores)
-                / len(candidate_scores)
-            )
+            group_mean = candidate_score_total / candidate_score_count
+            candidate_group_margin = candidate_score_max - candidate_score_min
+            candidate_group_variance = (
+                candidate_score_square_total / candidate_score_count
+            ) - (group_mean * group_mean)
+            candidate_group_margins.append(candidate_group_margin)
+            candidate_group_variances.append(candidate_group_variance)
+            candidate_group_margin_total += candidate_group_margin
+            candidate_group_variance_total += candidate_group_variance
     if not scores:
         return {}
     ordered = sorted(scores)
     summary: dict[str, float | int] = {
-        "reward_mean": sum(ordered) / len(ordered),
+        "reward_mean": score_total / len(ordered),
         "reward_p50": _percentile_value(ordered, 0.5),
         "reward_p95": _percentile_value(ordered, 0.95),
     }
     if candidate_group_margins:
         ordered_margins = sorted(candidate_group_margins)
+        candidate_group_count = len(candidate_group_margins)
         summary.update(
             {
-                "candidate_group_count": len(candidate_group_margins),
-                "candidate_group_reward_margin_mean": sum(candidate_group_margins)
-                / len(candidate_group_margins),
+                "candidate_group_count": candidate_group_count,
+                "candidate_group_reward_margin_mean": candidate_group_margin_total
+                / candidate_group_count,
                 "candidate_group_reward_margin_p50": _percentile_value(
                     ordered_margins,
                     0.5,
@@ -556,8 +569,8 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
                     ordered_margins,
                     0.95,
                 ),
-                "candidate_group_reward_variance_mean": sum(candidate_group_variances)
-                / len(candidate_group_variances),
+                "candidate_group_reward_variance_mean": candidate_group_variance_total
+                / candidate_group_count,
             }
         )
     return summary
