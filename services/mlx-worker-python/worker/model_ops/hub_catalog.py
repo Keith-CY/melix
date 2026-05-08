@@ -582,19 +582,19 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
     if not readme_text and not card_description_text:
         return (
             _size_hint_from_text(description_text, allow_bare=False)
-            if description_text
+            if description_text and _may_contain_model_marker(description_text)
             else 0
         )
     if not description_text and not card_description_text:
         return (
             _size_hint_from_text(readme_text, allow_bare=False)
-            if readme_text
+            if readme_text and _may_contain_model_marker(readme_text)
             else 0
         )
     if not description_text and not readme_text:
         return (
             _size_hint_from_text(card_description_text, allow_bare=False)
-            if card_description_text
+            if card_description_text and _may_contain_model_marker(card_description_text)
             else 0
         )
 
@@ -622,6 +622,10 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
     else:
         multiplier = 1024 ** 3
     return int(value * multiplier)
+
+
+def _may_contain_model_marker(text: str) -> bool:
+    return "mo" in text or "mO" in text or "Mo" in text or "MO" in text
 
 
 def _parameter_count(value: Any) -> int:
