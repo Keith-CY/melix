@@ -790,6 +790,16 @@ def test_scope_report_selects_bench_report_probe() -> None:
     assert "maintenance-bench-report-readback" in probe_ids
 
 
+def test_scope_report_selects_bench_report_probe_for_telemetry_fixture() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/tests/telemetry_fixtures.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "maintenance-bench-report-readback" in probe_ids
+
+
 def test_scope_report_selects_maintenance_percentile_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,

@@ -11,6 +11,7 @@ from worker.productization.benchmark_schemas import (
     build_serving_benchmark_results,
 )
 from worker.productization.benchmark_store import BenchmarkStore
+from telemetry_fixtures import fixture_telemetry_collector
 
 
 class _CountingRow:
@@ -26,7 +27,7 @@ class _CountingRow:
 def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
     tmp_path: Path,
 ) -> None:
-    store = BenchmarkStore()
+    store = BenchmarkStore(telemetry_collector=fixture_telemetry_collector())
     jobs_root = tmp_path / "bench"
     job = build_serving_benchmark_job(
         job_id="bench-123",
@@ -75,6 +76,7 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
     assert persisted["smoke"] == jobs_root / "bench-result-smoke.json"
     assert persisted["latency"] == jobs_root / "bench-result-latency.json"
     assert persisted["context_rows_jsonl"] == jobs_root / "bench-context-rows.jsonl"
+    assert persisted["telemetry_jsonl"] == jobs_root / "telemetry-samples.jsonl"
     assert persisted["evidence"] == jobs_root / "run-evidence.json"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == job.to_dict()
     expected_results = {result.suite: result.to_dict() for result in results}
@@ -90,8 +92,13 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
     assert phases[:4] == ["worker_dispatch", "runtime_prepare", "adapter_load", "cache_lookup"]
     assert "prefill" in phases
     assert "decode" in phases
+    assert "hardware_sample" in phases
+    assert "power_sample" in phases
     assert phases[-1] == "artifact_write"
-    assert evidence["telemetry_summary"]["collector_status"] == "not_collected"
+    assert evidence["telemetry_summary"]["collector_status"] == "collected"
+    assert evidence["telemetry_summary"]["time_series_path"] == "telemetry-samples.jsonl"
+    assert evidence["telemetry_summary"]["average_system_power_w"] == 15.0
+    assert evidence["telemetry_summary"]["process_attribution"]["primary_runtime_process"]["pid"] == 102
 
 
 def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(

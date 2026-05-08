@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 import json
 from pathlib import Path
+from typing import Any
 
+from worker.productization.apple_silicon_telemetry import AppleSiliconTelemetryCollector
 from worker.productization.evaluation_reports import build_evaluation_compare_report_markdown
 from worker.productization.evaluation_schemas import (
     EvaluationCompareJob,
@@ -21,6 +23,12 @@ from worker.productization.run_evidence import (
 
 
 class EvaluationStore:
+    def __init__(self, *, telemetry_collector: Any | None = None) -> None:
+        self._telemetry_collector = telemetry_collector or AppleSiliconTelemetryCollector()
+
+    def start_telemetry_session(self, *, run_id: str):
+        return self._telemetry_collector.start_session(run_id=run_id)
+
     def persist_result(
         self,
         *,
@@ -28,6 +36,7 @@ class EvaluationStore:
         job: EvaluationJob,
         result: EvaluationResult,
         samples: tuple[EvaluationSample, ...] = (),
+        telemetry_collection: Any | None = None,
     ) -> dict[str, Path]:
         artifact_write_started_at_monotonic_ms = monotonic_ms()
         run_root = Path(job.output_dir) if job.output_dir else jobs_root
@@ -70,6 +79,12 @@ class EvaluationStore:
             self._write_samples_csv(csv_path, samples)
             persisted["samples_jsonl"] = jsonl_path
             persisted["samples_csv"] = csv_path
+        if telemetry_collection is None:
+            telemetry_collection = self._telemetry_collector.collect_completed_run(
+                artifact_root=run_root,
+                run_id=job.job_id,
+            )
+        persisted["telemetry_jsonl"] = Path(telemetry_collection.artifact_path)
         evidence_path = run_root / "run-evidence.json"
         evidence = build_evaluation_run_evidence(
             job=job,
@@ -80,6 +95,8 @@ class EvaluationStore:
             artifact_write_started_at_monotonic_ms=artifact_write_started_at_monotonic_ms,
             artifact_write_duration_ms=monotonic_ms() - artifact_write_started_at_monotonic_ms,
             samples=samples,
+            telemetry_summary=telemetry_collection.summary,
+            telemetry_probes=telemetry_collection.probes,
         )
         evidence_payload = evidence.to_dict()
         assert_valid_run_evidence_payload(evidence_payload)

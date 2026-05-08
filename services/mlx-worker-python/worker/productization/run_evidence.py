@@ -63,6 +63,36 @@ _RUNTIME_ATTRIBUTE_KEYS = (
     "adapter_snapshot",
     "model_snapshot",
 )
+_TELEMETRY_FLOAT_FIELDS = (
+    "average_cpu_utilization_percent",
+    "peak_cpu_utilization_percent",
+    "average_p_core_utilization_percent",
+    "peak_p_core_utilization_percent",
+    "average_e_core_utilization_percent",
+    "peak_e_core_utilization_percent",
+    "average_gpu_utilization_percent",
+    "peak_gpu_utilization_percent",
+    "average_gpu_frequency_mhz",
+    "peak_gpu_frequency_mhz",
+    "average_cpu_power_w",
+    "peak_cpu_power_w",
+    "average_gpu_power_w",
+    "peak_gpu_power_w",
+    "average_ane_power_w",
+    "peak_ane_power_w",
+    "average_dram_power_w",
+    "peak_dram_power_w",
+    "average_system_power_w",
+    "peak_system_power_w",
+    "watts_per_output_token",
+    "average_process_cpu_percent",
+)
+_TELEMETRY_INT_FIELDS = (
+    "memory_used_bytes",
+    "memory_total_bytes",
+    "peak_process_memory_bytes",
+)
+_TELEMETRY_NUMERIC_FIELDS = (*_TELEMETRY_FLOAT_FIELDS, *_TELEMETRY_INT_FIELDS)
 
 
 class RunEvidenceValidationError(ValueError):
@@ -206,22 +236,71 @@ class RunEvidenceTelemetrySummary:
     collector_status: str
     telemetry_failures: tuple[str, ...] = ()
     time_series_path: str = ""
+    sample_count: int = 0
+    average_cpu_utilization_percent: float | None = None
+    peak_cpu_utilization_percent: float | None = None
+    average_p_core_utilization_percent: float | None = None
+    peak_p_core_utilization_percent: float | None = None
+    average_e_core_utilization_percent: float | None = None
+    peak_e_core_utilization_percent: float | None = None
+    average_gpu_utilization_percent: float | None = None
+    peak_gpu_utilization_percent: float | None = None
+    average_gpu_frequency_mhz: float | None = None
+    peak_gpu_frequency_mhz: float | None = None
+    average_cpu_power_w: float | None = None
+    peak_cpu_power_w: float | None = None
+    average_gpu_power_w: float | None = None
+    peak_gpu_power_w: float | None = None
+    average_ane_power_w: float | None = None
+    peak_ane_power_w: float | None = None
+    average_dram_power_w: float | None = None
+    peak_dram_power_w: float | None = None
+    average_system_power_w: float | None = None
+    peak_system_power_w: float | None = None
+    watts_per_output_token: float | None = None
+    memory_used_bytes: int | None = None
+    memory_total_bytes: int | None = None
+    peak_process_memory_bytes: int | None = None
+    average_process_cpu_percent: float | None = None
+    thermal_events: tuple[str, ...] = ()
+    process_attribution: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": TELEMETRY_SUMMARY_SCHEMA_VERSION,
             "collector_status": self.collector_status,
             "time_series_path": self.time_series_path,
             "telemetry_failures": list(self.telemetry_failures),
+            "sample_count": self.sample_count,
+            "thermal_events": list(self.thermal_events),
+            "process_attribution": dict(self.process_attribution),
         }
+        for field_name in _TELEMETRY_NUMERIC_FIELDS:
+            value = getattr(self, field_name)
+            if value is not None:
+                payload[field_name] = value
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, object]) -> RunEvidenceTelemetrySummary:
         failures = payload.get("telemetry_failures")
+        thermal_events = payload.get("thermal_events")
+        kwargs: dict[str, object] = {
+            field_name: _float_value(payload.get(field_name))
+            for field_name in _TELEMETRY_FLOAT_FIELDS
+            if payload.get(field_name) is not None
+        }
+        for field_name in _TELEMETRY_INT_FIELDS:
+            if payload.get(field_name) is not None:
+                kwargs[field_name] = _int_value(payload.get(field_name))
         return cls(
             collector_status=str(payload.get("collector_status") or ""),
             time_series_path=str(payload.get("time_series_path") or ""),
             telemetry_failures=tuple(str(item) for item in failures) if isinstance(failures, list) else (),
+            sample_count=_int_value(payload.get("sample_count")),
+            thermal_events=tuple(str(item) for item in thermal_events) if isinstance(thermal_events, list) else (),
+            process_attribution=_dict_payload(payload.get("process_attribution")),
+            **kwargs,
         )
 
 
@@ -361,9 +440,9 @@ class RunEvidenceEnvelope:
 
 def default_telemetry_summary() -> RunEvidenceTelemetrySummary:
     return RunEvidenceTelemetrySummary(
-        collector_status="not_collected",
+        collector_status="failed",
         telemetry_failures=(
-            "apple_silicon_telemetry_collector_not_connected_until_milestone_3",
+            "apple_silicon_telemetry_collection_missing",
         ),
     )
 
@@ -378,6 +457,8 @@ def build_serving_benchmark_run_evidence(
     artifact_write_duration_ms: float,
     context_rows: Iterable[dict[str, object]] = (),
     batch_rows: Iterable[dict[str, object]] = (),
+    telemetry_summary: RunEvidenceTelemetrySummary | None = None,
+    telemetry_probes: Iterable[RunEvidenceProbe] = (),
     command: str = "melix bench run",
     repo_root: Path | None = None,
 ) -> RunEvidenceEnvelope:
@@ -427,6 +508,7 @@ def build_serving_benchmark_run_evidence(
             started_at_monotonic_ms=run_started_at_monotonic_ms + 1,
             rows=(*tuple(context_rows), *tuple(batch_rows)),
         ),
+        *tuple(telemetry_probes),
         artifact_write_probe(
             run_id=job.job_id,
             trace_id=trace_id,
@@ -474,7 +556,7 @@ def build_serving_benchmark_run_evidence(
         },
         metrics=metrics,
         probe_timeline=probe_timeline,
-        telemetry_summary=default_telemetry_summary(),
+        telemetry_summary=telemetry_summary or default_telemetry_summary(),
         artifacts=artifacts,
         failure_summary=_failure_summary(job.status),
         fallback_summary=_fallback_summary(job.parameters),
@@ -497,6 +579,8 @@ def build_evaluation_run_evidence(
     artifact_write_started_at_monotonic_ms: int,
     artifact_write_duration_ms: float,
     samples: Iterable[Any] = (),
+    telemetry_summary: RunEvidenceTelemetrySummary | None = None,
+    telemetry_probes: Iterable[RunEvidenceProbe] = (),
     command: str = "melix eval run",
     repo_root: Path | None = None,
 ) -> RunEvidenceEnvelope:
@@ -545,6 +629,7 @@ def build_evaluation_run_evidence(
             started_at_monotonic_ms=run_started_at_monotonic_ms + 1,
             samples=samples,
         ),
+        *tuple(telemetry_probes),
         artifact_write_probe(
             run_id=job.job_id,
             trace_id=trace_id,
@@ -587,7 +672,7 @@ def build_evaluation_run_evidence(
         },
         metrics=metrics,
         probe_timeline=probe_timeline,
-        telemetry_summary=default_telemetry_summary(),
+        telemetry_summary=telemetry_summary or default_telemetry_summary(),
         artifacts=artifacts,
         failure_summary=_failure_summary(job.status, failure_count=result.failure_count),
         fallback_summary=_fallback_summary(job.parameters),

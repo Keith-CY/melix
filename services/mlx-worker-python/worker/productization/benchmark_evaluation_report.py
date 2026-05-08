@@ -82,6 +82,8 @@ _LOWER_IS_BETTER_METRIC_FRAGMENTS = (
     "duration_seconds",
     "memory",
     "bytes",
+    "power_w",
+    "watts_per_output_token",
     "failure_count",
     "failed_count",
     "queue_wait",
@@ -353,6 +355,7 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
                 metrics[f"eval.{suite_id}.{key}"] = value
     _collect_evaluation_sample_probe_metrics(metrics, bundle.get("evaluation_samples", []))
     _collect_run_evidence_probe_metrics(metrics, bundle.get("run_evidence", []))
+    _collect_run_evidence_telemetry_metrics(metrics, bundle.get("run_evidence", []))
     return metrics
 
 
@@ -584,6 +587,35 @@ def _collect_run_evidence_probe_metrics(metrics: dict[str, object], rows: object
         metrics[f"probe.{run_kind}.{component}.{phase}.duration_ms_mean"] = total / count
     for (run_kind, component, phase, status), count in counts_by_key.items():
         metrics[f"probe.{run_kind}.{component}.{phase}.{status}_count"] = float(count)
+
+
+def _collect_run_evidence_telemetry_metrics(metrics: dict[str, object], rows: object) -> None:
+    aggregates_by_key: dict[tuple[str, str], _NumericAggregate] = {}
+    failure_counts: dict[str, int] = {}
+    for evidence in _dict_rows(rows):
+        run_kind = str(evidence.get("run_kind", "")).strip() or "run"
+        telemetry = evidence.get("telemetry_summary")
+        if not isinstance(telemetry, dict):
+            continue
+        failures = telemetry.get("telemetry_failures")
+        if isinstance(failures, list) and failures:
+            failure_counts[run_kind] = failure_counts.get(run_kind, 0) + len(failures)
+        for key, raw_value in telemetry.items():
+            if key in {"schema_version", "collector_status", "time_series_path", "telemetry_failures", "thermal_events", "process_attribution"}:
+                continue
+            value = _float_or_none(raw_value)
+            if value is None:
+                continue
+            aggregate_key = (run_kind, key)
+            aggregates_by_key[aggregate_key] = _update_numeric_aggregate(
+                aggregates_by_key.get(aggregate_key),
+                value,
+            )
+    for (run_kind, key), aggregate in aggregates_by_key.items():
+        total, count = aggregate
+        metrics[f"telemetry.{run_kind}.{key}_mean"] = total / count
+    for run_kind, count in failure_counts.items():
+        metrics[f"telemetry.{run_kind}.telemetry_failure_count"] = float(count)
 
 
 def _update_numeric_aggregate(

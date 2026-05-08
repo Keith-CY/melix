@@ -20,6 +20,7 @@ from worker.productization.benchmark_export import (
     collect_evaluation_artifacts,
 )
 from worker.productization.evaluation_store import EvaluationStore
+from telemetry_fixtures import fixture_telemetry_collector
 
 
 def test_write_jsonl_streams_rows_without_building_one_giant_payload(monkeypatch) -> None:
@@ -108,7 +109,7 @@ def test_write_samples_csv_streams_rows_without_building_one_giant_payload(monke
 
 
 def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Path) -> None:
-    store = EvaluationStore()
+    store = EvaluationStore(telemetry_collector=fixture_telemetry_collector())
     jobs_root = tmp_path / "evaluation"
     run_root = jobs_root / "runs" / "eval-local"
     job = build_evaluation_job_record(
@@ -183,6 +184,7 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     assert persisted["summary_csv"] == run_root / "evaluation-summary.csv"
     assert persisted["samples_jsonl"] == run_root / "evaluation-samples.jsonl"
     assert persisted["samples_csv"] == run_root / "evaluation-samples.csv"
+    assert persisted["telemetry_jsonl"] == run_root / "telemetry-samples.jsonl"
     assert persisted["evidence"] == run_root / "run-evidence.json"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == job.to_dict()
     assert json.loads(persisted["result"].read_text(encoding="utf-8")) == result.to_dict()
@@ -197,8 +199,11 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     assert phases[:4] == ["worker_dispatch", "runtime_prepare", "adapter_load", "sample_select"]
     assert "decode" in phases
     assert "score_compute" in phases
+    assert "hardware_sample" in phases
+    assert "process_sample" in phases
     assert phases[-1] == "artifact_write"
-    assert evidence["telemetry_summary"]["collector_status"] == "not_collected"
+    assert evidence["telemetry_summary"]["collector_status"] == "collected"
+    assert evidence["telemetry_summary"]["average_cpu_power_w"] == 7.5
     assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,duration_seconds,created_at_unix_ms\n"
     )

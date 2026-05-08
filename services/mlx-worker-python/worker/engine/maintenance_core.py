@@ -1209,6 +1209,9 @@ class MaintenanceCore:
         text_request_latencies: list[float] = []
         lazy_model_handle = ""
         loaded_model = None
+        if self._benchmark_store is None:
+            self._benchmark_store = BenchmarkStore()
+        telemetry_session = self._benchmark_store.start_telemetry_session(run_id=job.job_id)
         try:
             lazy_model_handle, loaded_model = self._resolve_benchmark_loaded_model(request.model_handle)
             runtime_evidence = self._runtime_evidence_for_loaded_model(loaded_model)
@@ -1345,14 +1348,20 @@ class MaintenanceCore:
                 report_path=str(report_path),
                 report_markdown=report_markdown,
             )
-            if self._benchmark_store is None:
-                self._benchmark_store = BenchmarkStore()
+            telemetry_collection = telemetry_session.finish(
+                artifact_root=output_dir,
+                output_token_count=BenchmarkStore._output_token_count(
+                    tuple(text_context_rows),
+                    tuple(text_batch_rows),
+                ),
+            )
             persisted_paths = self._benchmark_store.persist_serving_benchmark(
                 jobs_root=output_dir,
                 job=job_record,
                 results=result_records,
                 context_rows=text_context_rows,
                 batch_rows=text_batch_rows,
+                telemetry_collection=telemetry_collection,
             )
             (output_dir / "bench-summary.json").write_text(
                 json.dumps(job_record.to_dict(), indent=2) + "\n",
@@ -1372,6 +1381,7 @@ class MaintenanceCore:
                 )
             )
         finally:
+            telemetry_session.cancel()
             if lazy_model_handle and loaded_model is not None and lazy_model_handle == loaded_model.handle:
                 self._registry.unload_model(lazy_model_handle)
 

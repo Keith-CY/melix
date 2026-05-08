@@ -110,6 +110,8 @@ def _run_evidence(
     decode_ms: float,
     status: str,
     fallback_count: int = 0,
+    system_power_w: float = 15.0,
+    telemetry_failure_count: int = 0,
 ) -> dict[str, object]:
     probes: list[dict[str, object]] = [
         {
@@ -149,6 +151,15 @@ def _run_evidence(
         "run_id": run_id,
         "run_kind": run_kind,
         "probe_timeline": probes,
+        "telemetry_summary": {
+            "schema_version": "melix.telemetry_summary.v1",
+            "collector_status": "partial" if telemetry_failure_count else "collected",
+            "time_series_path": "telemetry-samples.jsonl",
+            "telemetry_failures": ["powermetrics_failed:fixture"] * telemetry_failure_count,
+            "average_system_power_w": system_power_w,
+            "peak_system_power_w": system_power_w + 1.0,
+            "watts_per_output_token": system_power_w / 10.0,
+        },
     }
 
 
@@ -1072,6 +1083,8 @@ def test_report_builder_summarizes_run_evidence_probes_and_exports_probe_metrics
                 decode_ms=20.0,
                 status="failed",
                 fallback_count=1,
+                system_power_w=25.0,
+                telemetry_failure_count=1,
             )
         ]
     }
@@ -1083,6 +1096,8 @@ def test_report_builder_summarizes_run_evidence_probes_and_exports_probe_metrics
     assert rows_by_metric["probe.serving_benchmark.runtime.decode.duration_ms_mean"]["candidate"] == 20.0
     assert rows_by_metric["probe.serving_benchmark.runtime.decode.failed_count"]["candidate"] == 1.0
     assert rows_by_metric["probe.serving_benchmark.runtime.fallback_enter.completed_count"]["candidate"] == 1.0
+    assert rows_by_metric["telemetry.serving_benchmark.average_system_power_w_mean"]["candidate"] == 25.0
+    assert rows_by_metric["telemetry.serving_benchmark.telemetry_failure_count"]["candidate"] == 1.0
     assert report["probe_summary"]["candidate"]["failed_phases"][0]["phase"] == "decode"
     report["probe_summary"]["baseline"] = []
     report["probe_summary"]["candidate"]["slowest_phases"].insert(0, "not-a-row")

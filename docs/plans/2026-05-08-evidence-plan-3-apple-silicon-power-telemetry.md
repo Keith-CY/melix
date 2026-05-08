@@ -26,6 +26,28 @@ power, frequency, thermal, utilization, memory, and process attribution.
 - Record telemetry failures explicitly with probes and report fields. Do not
   synthesize zero values for missing samples.
 
+## Implementation Status
+
+- Added a single macOS Apple Silicon telemetry collector path under the Python
+  worker productization layer.
+- The collector samples power, utilization, memory, thermal, and process data
+  through Apple system telemetry commands and records failures explicitly when a
+  hardware channel is unavailable.
+- Benchmark and evaluation execution start a background telemetry session before
+  run work and pass the completed telemetry collection into the evidence store.
+- Benchmark and evaluation stores persist `telemetry-samples.jsonl`, attach the
+  artifact to `run-evidence.json`, and include telemetry `hardware_sample`,
+  `process_sample`, and `power_sample` probes.
+- The telemetry summary now carries average and peak CPU/GPU/ANE/DRAM/system
+  power, GPU frequency, CPU/GPU utilization, memory, process attribution,
+  thermal events, watts per output token when output tokens are known, and
+  explicit telemetry failures.
+- Benchmark/evaluation comparison reports export telemetry-derived metrics from
+  run evidence so power and process regressions can be compared alongside
+  runtime probe metrics.
+- The implementation does not add alternate platform collectors or public
+  leaderboard/submission paths.
+
 ## Verification
 
 - Collector smoke test on Apple Silicon macOS producing telemetry summary and

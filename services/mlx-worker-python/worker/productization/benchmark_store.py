@@ -4,7 +4,9 @@ import csv
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
+from worker.productization.apple_silicon_telemetry import AppleSiliconTelemetryCollector
 from worker.productization.benchmark_export import (
     _canonical_benchmark_matrix_request_columns,
     _canonical_benchmark_matrix_summary_columns,
@@ -25,6 +27,12 @@ from worker.productization.run_evidence import (
 
 
 class BenchmarkStore:
+    def __init__(self, *, telemetry_collector: Any | None = None) -> None:
+        self._telemetry_collector = telemetry_collector or AppleSiliconTelemetryCollector()
+
+    def start_telemetry_session(self, *, run_id: str):
+        return self._telemetry_collector.start_session(run_id=run_id)
+
     def persist_serving_benchmark(
         self,
         *,
@@ -33,6 +41,7 @@ class BenchmarkStore:
         results: tuple[ServingBenchmarkResult, ...],
         context_rows: Iterable[dict[str, object]] = (),
         batch_rows: Iterable[dict[str, object]] = (),
+        telemetry_collection: Any | None = None,
     ) -> dict[str, Path]:
         artifact_write_started_at_monotonic_ms = monotonic_ms()
         jobs_root.mkdir(parents=True, exist_ok=True)
@@ -64,6 +73,14 @@ class BenchmarkStore:
             self._write_jsonl(batch_rows_path, batch_rows_tuple)
             persisted["batch_rows_jsonl"] = batch_rows_path
 
+        if telemetry_collection is None:
+            telemetry_collection = self._telemetry_collector.collect_completed_run(
+                artifact_root=jobs_root,
+                run_id=job.job_id,
+                output_token_count=self._output_token_count(context_rows_tuple, batch_rows_tuple),
+            )
+        persisted["telemetry_jsonl"] = Path(telemetry_collection.artifact_path)
+
         evidence_path = jobs_root / "run-evidence.json"
         evidence = build_serving_benchmark_run_evidence(
             job=job,
@@ -74,6 +91,8 @@ class BenchmarkStore:
             artifact_write_duration_ms=monotonic_ms() - artifact_write_started_at_monotonic_ms,
             context_rows=context_rows_tuple,
             batch_rows=batch_rows_tuple,
+            telemetry_summary=telemetry_collection.summary,
+            telemetry_probes=telemetry_collection.probes,
         )
         evidence_payload = evidence.to_dict()
         assert_valid_run_evidence_payload(evidence_payload)
@@ -92,6 +111,19 @@ class BenchmarkStore:
             dump_json = json.dumps
             for row in rows:
                 write(dump_json(row) + "\n")
+
+    @staticmethod
+    def _output_token_count(
+        context_rows: tuple[dict[str, object], ...],
+        batch_rows: tuple[dict[str, object], ...],
+    ) -> int:
+        total = 0
+        for row in (*context_rows, *batch_rows):
+            try:
+                total += int(row.get("generation_length", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+        return total
 
     def persist_benchmark_matrix(
         self,
