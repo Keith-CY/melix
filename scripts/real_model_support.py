@@ -77,7 +77,7 @@ def resolve_real_small_text_model_source(
     allow_managed_root: bool = True,
     allow_hf_cache: bool = False,
 ) -> RealSmallTextModelSource:
-    env = dict(os.environ if environment is None else environment)
+    env = os.environ if environment is None else environment
     resolved_model_id = model_id.strip() or REAL_SMALL_TEXT_MODEL_ID
     warnings: list[str] = []
 
