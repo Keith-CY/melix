@@ -533,6 +533,17 @@ def test_size_hint_from_empty_text_skips_regex_search(monkeypatch: pytest.Monkey
     assert _size_hint_from_text("", allow_bare=False) == 0
 
 
+def test_size_hint_bytes_skips_explicit_parser_when_model_marker_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser = Mock(return_value=0)
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", parser)
+
+    assert hub_catalog_module._size_hint_bytes({"description": "description only 512 MB"}) == 0
+    assert hub_catalog_module._size_hint_bytes({"readme": "tokenizer size 12 MB"}) == 0
+    parser.assert_not_called()
+
+
 def test_size_hint_bytes_skips_direct_hint_parser_when_card_model_size_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -844,6 +855,7 @@ def test_size_hint_parser_uses_precompiled_patterns(monkeypatch: pytest.MonkeyPa
     assert hub_catalog_module._size_hint_from_text("Model size: 768 MB", allow_bare=False) == 768 * MB
     assert hub_catalog_module._size_hint_from_text("Readme says 768 MB", allow_bare=False) == 0
     assert hub_catalog_module._size_hint_from_text("MODEL SIZE | 512 kb", allow_bare=False) == 512 * KB
+    assert hub_catalog_module._size_hint_from_text("mOdEl SiZe: 256 MB", allow_bare=False) == 256 * MB
 
 
 def test_size_hint_parser_preserves_all_unit_multipliers() -> None:
