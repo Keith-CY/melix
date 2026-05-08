@@ -1,5 +1,6 @@
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
+from worker.engine.engine_core import EngineCore
 from worker.engine.request_state import RequestState
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
@@ -258,6 +259,24 @@ def test_generate_without_usage_skips_prompt_token_count_fallback() -> None:
     assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
     assert not any(event.HasField("usage_delta") for event in events)
     assert runtime.prompt_token_count_calls == 0
+
+
+def test_sampling_with_resolved_stop_reuses_sampling_when_stop_sequences_match() -> None:
+    sampling = common_pb2.SamplingConfig(max_output_tokens=4)
+
+    resolved = EngineCore._sampling_with_resolved_stop(sampling, ())
+
+    assert resolved is sampling
+
+
+def test_sampling_with_resolved_stop_clones_when_stop_sequences_change() -> None:
+    sampling = common_pb2.SamplingConfig(max_output_tokens=4, stop=["old"])
+
+    resolved = EngineCore._sampling_with_resolved_stop(sampling, ("new",))
+
+    assert resolved is not sampling
+    assert list(resolved.stop) == ["new"]
+    assert list(sampling.stop) == ["old"]
 
 
 def test_generate_usage_reuses_runtime_event_prompt_tokens_without_fallback_count() -> None:
