@@ -103,6 +103,7 @@ _SUPPORTED_TRAINING_MODES = (
     | _RL_TRAINING_MODES
     | _CPT_TRAINING_MODES
 )
+_SUPPORTED_COMPONENT_SCOPES: frozenset[str] = frozenset({"text_backbone"})
 
 _NORMALIZED_TARGET_MODULE_PRESETS_KEY = "_normalized_target_module_presets"
 _NORMALIZED_DEFAULT_TARGET_MODULES_KEY = "_normalized_default_target_modules"
@@ -894,23 +895,27 @@ def _validate_lora_training_surface(source_model: common_pb2.ModelSpec) -> None:
 
     ext = source_model.ext
     adapter_scope = ext.get("melix.lora.adapter_scope", "").strip().lower()
-    training_surface = ext.get("melix.lora.training_surface", "").strip().lower()
+    training_surface = ext.get("melix.lora.training_surface", "").strip().lower() or adapter_scope
     training_ready = ext.get("melix.lora.training_ready", "").strip().lower()
+    component_lora_supported = ext.get(f"melix.component.{adapter_scope}.lora_supported", "").strip().lower()
+    component_training_ready = ext.get(f"melix.component.{adapter_scope}.training_ready", "").strip().lower()
     component_model_type = (
         ext.get("melix.lora.component_model_type", "").strip().lower()
-        or ext.get("melix.component.text_backbone.model_type", "").strip().lower()
+        or ext.get(f"melix.component.{adapter_scope}.model_type", "").strip().lower()
     )
     component_family = (
         ext.get("melix.lora.family_id", "").strip().lower()
-        or ext.get("melix.component.text_backbone.family_id", "").strip().lower()
+        or ext.get(f"melix.component.{adapter_scope}.family_id", "").strip().lower()
     )
 
     if (
-        adapter_scope == "text_backbone"
-        and training_surface == "text_backbone"
+        adapter_scope in _SUPPORTED_COMPONENT_SCOPES
+        and training_surface in _SUPPORTED_COMPONENT_SCOPES
         and training_ready == "true"
-        and component_model_type == "gemma4_text"
-        and component_family == "gemma"
+        and component_lora_supported == "true"
+        and component_training_ready == "true"
+        and component_model_type
+        and component_family
     ):
         return
 
@@ -922,6 +927,8 @@ def _validate_lora_training_surface(source_model: common_pb2.ModelSpec) -> None:
             "adapter_scope": adapter_scope,
             "training_surface": training_surface,
             "training_ready": training_ready,
+            "component_lora_supported": component_lora_supported,
+            "component_training_ready": component_training_ready,
             "component_model_type": component_model_type,
             "component_family": component_family,
         },

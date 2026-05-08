@@ -202,6 +202,17 @@ def _validate_adapter_scope(
     ext = source_model.ext
     expected_scope = ext.get("melix.lora.adapter_scope", "").strip()
     expected_surface = ext.get("melix.lora.training_surface", "").strip()
+    if not expected_scope or not expected_surface:
+        raise ModelOperationError(
+            code="activation_failure",
+            message="Source model has no component LoRA scope metadata; cannot activate a component-scoped adapter.",
+            details={
+                "source_model_kind": source_model.model_kind,
+                "source_model": source_model.model_id,
+                "adapter_scope": adapter_scope,
+                "training_surface": training_surface,
+            },
+        )
     if adapter_scope != expected_scope or training_surface != expected_surface:
         raise ModelOperationError(
             code="activation_failure",

@@ -312,6 +312,11 @@ def _resolve_adapter_scope_metadata(source_model: common_pb2.ModelSpec) -> dict[
     adapter_scope = ext.get("melix.lora.adapter_scope", "").strip()
     if not adapter_scope and source_model.model_kind == "text":
         adapter_scope = "model"
+    if source_model.model_kind != "text" and not adapter_scope:
+        raise AssertionError(
+            "_resolve_adapter_scope_metadata called on non-text model with no adapter_scope; "
+            "caller should have rejected this model via _validate_lora_training_surface."
+        )
     training_surface = ext.get("melix.lora.training_surface", "").strip() or adapter_scope
     component_model_type = (
         ext.get("melix.lora.component_model_type", "").strip()

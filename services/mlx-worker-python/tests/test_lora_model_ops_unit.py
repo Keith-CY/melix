@@ -26,6 +26,7 @@ from worker.model_ops.lora_training_pipeline import (
     _load_manifest_payload,
     _resolve_resume_context,
     _resolve_resume_path_from_manifest,
+    _resolve_adapter_scope_metadata,
     _validated_resume_path,
 )
 from worker.model_ops.mlx_lm_runner import MLXLMRunner
@@ -2405,6 +2406,35 @@ def test_adapter_activation_pipeline_rejects_component_scope_metadata_mismatches
     assert text_scope_exc.value.code == "activation_failure"
     assert "scope" in text_scope_exc.value.message
 
+    with pytest.raises(ModelOperationError) as missing_scope_exc:
+        AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+            job_id="activate-missing-scope",
+            request_ext={
+                "artifact_path": str(
+                    write_manifest(
+                        {
+                            "job_id": "adapter-missing-scope",
+                            "source_model": "plain-vlm",
+                            "source_model_kind": "vlm",
+                            "adapter_scope": "text_backbone",
+                            "training_surface": "text_backbone",
+                            "component_model_type": "gemma4_text",
+                            "component_family": "gemma",
+                        }
+                    )
+                ),
+                "activation_mode": "adapter_backed_runtime",
+            },
+            source_model=common_pb2.ModelSpec(
+                model_id="plain-vlm",
+                model_path=str(tmp_path / "plain-vlm"),
+                model_kind="vlm",
+            ),
+            output_dir=tmp_path / "activate-missing-scope",
+        )
+    assert missing_scope_exc.value.code == "activation_failure"
+    assert "no component LoRA scope metadata" in missing_scope_exc.value.message
+
     with pytest.raises(ModelOperationError) as type_exc:
         AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
             job_id="activate-type",
@@ -2499,6 +2529,33 @@ def test_normalize_training_config_accepts_gemma4_vlm_text_backbone_scope() -> N
     assert config.quantization_mode == "none"
     assert any(module.endswith(".self_attn.q_proj") for module in config.expanded_target_modules)
     assert any(module.endswith(".mlp.gate_proj") for module in config.expanded_target_modules)
+
+
+def test_normalize_training_config_accepts_registry_owned_component_model_type() -> None:
+    source_model = _gemma4_vlm_model(model_path="models/custom-component-vlm")
+    source_model.ext["melix.lora.component_model_type"] = "custom_text_backbone"
+    source_model.ext["melix.component.text_backbone.model_type"] = "custom_text_backbone"
+
+    config = training_config_module.normalize_training_config(
+        source_model=source_model,
+        ext={},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    assert config.family_id == "gemma"
+    assert any(module.endswith(".self_attn.q_proj") for module in config.expanded_target_modules)
+    assert any(module.endswith(".mlp.gate_proj") for module in config.expanded_target_modules)
+
+
+def test_resolve_adapter_scope_metadata_requires_validated_non_text_scope() -> None:
+    source_model = common_pb2.ModelSpec(model_id="plain-vlm", model_path="models/plain-vlm", model_kind="vlm")
+
+    with pytest.raises(AssertionError) as exc:
+        _resolve_adapter_scope_metadata(source_model)
+
+    assert "no adapter_scope" in str(exc.value)
 
 
 def test_normalize_training_config_rejects_unknown_modes_and_families() -> None:

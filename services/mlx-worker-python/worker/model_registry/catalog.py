@@ -808,7 +808,7 @@ def _gemma4_execution_mode(
 
 
 def _gemma4_text_backbone_config(config_payload: Mapping[str, object] | None) -> Mapping[str, object] | None:
-    config_payload = dict(config_payload or {})
+    config_payload = config_payload or {}
     text_config = config_payload.get("text_config")
     if not isinstance(text_config, Mapping):
         return None
@@ -824,7 +824,7 @@ def _gemma4_has_vision_component(
     *,
     json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
 ) -> bool:
-    config_payload = dict(config_payload or {})
+    config_payload = config_payload or {}
     vision_config = config_payload.get("vision_config")
     if isinstance(vision_config, Mapping) and len(vision_config) > 0:
         return True
@@ -868,7 +868,8 @@ def _gemma4_component_lora_metadata(
         "melix.lora.component_model_type": "gemma4_text",
     }
     if has_vision_component:
-        vision_config = dict(config_payload or {}).get("vision_config")
+        config_payload = config_payload or {}
+        vision_config = config_payload.get("vision_config")
         vision_model_type = ""
         if isinstance(vision_config, Mapping):
             vision_model_type = _normalized(str(vision_config.get("model_type", "")))

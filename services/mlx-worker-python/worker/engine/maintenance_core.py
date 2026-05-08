@@ -2150,6 +2150,8 @@ class MaintenanceCore:
             ("adapter_scope", "melix.lora.adapter_scope"),
             ("training_surface", "melix.lora.training_surface"),
             ("component_model_type", "melix.lora.component_model_type"),
+            # Component-scoped adapters use the trainable component family for downstream
+            # LoRA resolution, which may differ from the wrapper model family.
             ("component_family", "melix.lora.family_id"),
             ("component_model_path", "melix.lora.base_model_path"),
         ):
