@@ -431,9 +431,10 @@ def test_scope_report_selects_dataset_registry_preview_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/dataset_registry/catalog.py"],
     )
 
-    assert scope["selected_count"] == 3
+    assert scope["selected_count"] == 4
     assert {probe["id"] for probe in scope["selected_probes"]} == {
         "dataset-registry-limited-read-streaming",
+        "dataset-registry-json-array-limit-streaming",
         "dataset-registry-snapshot-inference-single-pass",
         "dataset-registry-preview-limit-short-circuit",
     }
