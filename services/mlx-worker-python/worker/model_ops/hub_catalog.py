@@ -334,6 +334,14 @@ def _lowered_tag_set(tags: list[str]) -> set[str]:
     return {tag.lower() for tag in tags}
 
 
+def _tag_payload_contains_mlx(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.lower() == "mlx"
+    if not isinstance(value, list):
+        return False
+    return any(item.lower() == "mlx" for item in value if isinstance(item, str))
+
+
 def _normalized_lowered_tags(tags: list[str], lowered_tags: set[str] | None = None) -> set[str]:
     return lowered_tags if lowered_tags is not None else _lowered_tag_set(tags)
 
@@ -395,7 +403,7 @@ def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     card_tags = card_data.get("tags")
     if not card_tags:
         return False
-    return any(tag.lower() == "mlx" for tag in _string_list(card_tags))
+    return _tag_payload_contains_mlx(card_tags)
 
 
 def _is_mlx_compatible(
@@ -417,7 +425,7 @@ def _is_mlx_compatible(
     card_tags = card_data.get("tags")
     if not card_tags:
         return False
-    return any(tag.lower() == "mlx" for tag in _string_list(card_tags))
+    return _tag_payload_contains_mlx(card_tags)
 
 
 def _local_fit_evidence(

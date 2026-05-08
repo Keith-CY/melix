@@ -188,6 +188,42 @@ def test_search_models_with_mlx_only_prefilters_payloads_before_local_fit(monkey
     ]
 
 
+def test_card_data_tag_mlx_check_avoids_string_list_materialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_string_list(value: object) -> list[str]:
+        raise AssertionError(f"unexpected card tag materialization: {value!r}")  # pragma: no cover
+
+    monkeypatch.setattr(hub_catalog_module, "_string_list", fail_string_list)
+
+    assert _is_mlx_compatible(
+        repo_id="plain/model",
+        tags=[],
+        lowered_tags=set(),
+        library_name="transformers",
+        card_data={"tags": ["Text-Generation", "MLX", object()]},
+    ) is True
+    assert _is_mlx_compatible(
+        repo_id="plain/model",
+        tags=[],
+        lowered_tags=set(),
+        library_name="transformers",
+        card_data={"tags": "mlx"},
+    ) is True
+    assert _is_mlx_compatible(
+        repo_id="plain/model",
+        tags=[],
+        lowered_tags=set(),
+        library_name="transformers",
+        card_data={"tags": ["Text-Generation", object()]},
+    ) is False
+    assert _is_mlx_compatible(
+        repo_id="plain/model",
+        tags=[],
+        lowered_tags=set(),
+        library_name="transformers",
+        card_data={"tags": {"not": "a-list"}},
+    ) is False
+
+
 def test_get_model_card_raises_invalid_argument_for_blank_repo_id() -> None:
     catalog = HubCatalog()
 
