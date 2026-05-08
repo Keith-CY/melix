@@ -2698,6 +2698,7 @@ def test_dispatch_probe_impl_supports_evaluation_store_probe() -> None:
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["probe_sample_limit"] == 1.0
     assert metrics["sample_count"] == 10000.0
     assert metrics["csv_line_count"] == 10001.0
 

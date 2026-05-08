@@ -23,6 +23,34 @@ Make every material Melix run explainable by component and phase.
 - Keep probe attributes small and scrubbed of full prompts, responses, dataset
   rows, credentials, and secrets.
 
+## Implementation Status
+
+- Serving benchmark and evaluation evidence now write root `worker_dispatch`,
+  `runtime_prepare`, `adapter_load`, row/sample stage, and `artifact_write`
+  probes directly into `run-evidence.json`.
+- Benchmark probes are derived from persisted context and batch rows so
+  `dataset_materialize`, `prompt_render`, `cache_lookup`, `cache_restore`,
+  `prefill`, `decode`, and `fallback_enter` phases remain attached to the run
+  evidence artifact.
+- Evaluation probes are derived from persisted sample records with bounded
+  cardinality. Evidence writes aggregate summary probes for every evaluation
+  phase and only expands a configurable representative sample set covering
+  slowest top-N, failed, skipped, and fallback samples. This preserves phase
+  attribution without scaling probe timeline size linearly with suite sample
+  count.
+- Benchmark persistence now owns the context and batch JSONL artifacts used for
+  probe generation, keeping artifact writes and probe evidence in one store
+  transaction.
+- Benchmark/evaluation comparison reports summarize run-evidence probes and
+  export probe-derived metrics for slowest phases, failed phases, skipped
+  phases, and fallback phases.
+- The evaluation-store CSV streaming performance probe pins representative
+  sample detail to a minimal configured bound so it continues measuring CSV
+  streaming overhead rather than diagnostic probe sample expansion.
+- Apple Silicon hardware, process, and power probes remain in Plan 3; this plan
+  keeps the existing explicit telemetry gap instead of synthesizing hardware
+  values.
+
 ## Verification
 
 - Unit tests for probe serialization and parent/child span relationships.
@@ -38,3 +66,5 @@ Make every material Melix run explainable by component and phase.
 - Report generation can summarize slowest phases, failed phases, skipped phases,
   and fallback phases.
 - Release evidence can point to the responsible component for a regression.
+- Large evaluation runs keep probe timeline memory and artifact size bounded by
+  the configured representative sample limit instead of the raw sample count.

@@ -147,6 +147,14 @@ Initial canonical phases:
 Probe attributes must be small structured JSON values. They must not contain
 full prompts, responses, dataset rows, private credentials, or operator secrets.
 
+Fan-out stages that can emit thousands of rows, such as evaluation samples, must
+not expand every row into full per-sample probes. They must write aggregate
+summary probes for the full population and may add only a bounded representative
+sample set for slowest top-N, failed, skipped, and fallback samples. The bound
+must be configurable at runtime, and reports must treat aggregate summary probes
+as the source of count and duration metrics while using representative samples
+only for diagnosis.
+
 ## Apple Silicon Telemetry
 
 Melix hardware telemetry is scoped to macOS on Apple Silicon.

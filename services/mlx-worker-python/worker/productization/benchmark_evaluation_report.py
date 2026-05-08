@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from worker.productization.run_evidence import summarize_run_evidence_probes
+
 _COMMENT_MARKER = "<!-- melix-benchmark-evaluation-report -->"
 _WARNING_THRESHOLD_PCT = 5.0
 _RUNTIME_PARAMETER_KEYS = (
@@ -201,6 +203,10 @@ def build_benchmark_evaluation_report(
             "missing_count": missing_count,
             "not_comparable_count": not_comparable_count,
         },
+        "probe_summary": {
+            "baseline": summarize_run_evidence_probes(_run_evidence_rows(baseline)),
+            "candidate": summarize_run_evidence_probes(_run_evidence_rows(candidate)),
+        },
         "rows": rows,
     }
 
@@ -262,6 +268,9 @@ def render_markdown_report(report: dict[str, object]) -> str:
             )
             + " |"
         )
+    probe_summary = report.get("probe_summary")
+    if isinstance(probe_summary, dict):
+        lines.extend(_render_probe_summary_markdown(probe_summary))
     lines.append("")
     return "\n".join(lines)
 
@@ -343,6 +352,7 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
             if value is not None:
                 metrics[f"eval.{suite_id}.{key}"] = value
     _collect_evaluation_sample_probe_metrics(metrics, bundle.get("evaluation_samples", []))
+    _collect_run_evidence_probe_metrics(metrics, bundle.get("run_evidence", []))
     return metrics
 
 
@@ -528,6 +538,54 @@ def _collect_evaluation_sample_probe_metrics(
         metrics[f"eval.sample.{suite_id}.failure_stage.{failure_stage}.failure_count"] = float(count)
 
 
+def _collect_run_evidence_probe_metrics(metrics: dict[str, object], rows: object) -> None:
+    aggregates_by_key: dict[tuple[str, str, str], _NumericAggregate] = {}
+    counts_by_key: dict[tuple[str, str, str, str], int] = {}
+    for evidence in _dict_rows(rows):
+        run_kind = str(evidence.get("run_kind", "")).strip() or "run"
+        for probe in _dict_rows(evidence.get("probe_timeline", [])):
+            component = str(probe.get("component", "")).strip() or "component"
+            phase = str(probe.get("phase", "")).strip() or "phase"
+            attributes = probe.get("attributes")
+            if not isinstance(attributes, dict):
+                attributes = {}
+            probe_kind = str(attributes.get("probe_kind", "")).strip()
+            if probe_kind == "sample_detail":
+                continue
+            duration = _float_or_none(probe.get("duration_ms"))
+            if duration is not None:
+                aggregate_key = (run_kind, component, phase)
+                aggregates_by_key[aggregate_key] = _update_numeric_aggregate(
+                    aggregates_by_key.get(aggregate_key),
+                    duration,
+                )
+            if probe_kind == "aggregate_summary":
+                for status, attribute_key in (
+                    ("failed", "failed_count"),
+                    ("skipped", "skipped_count"),
+                ):
+                    count = _float_or_none(attributes.get(attribute_key))
+                    if count:
+                        count_key = (run_kind, component, phase, status)
+                        counts_by_key[count_key] = counts_by_key.get(count_key, 0) + int(count)
+                if phase in {"fallback_enter", "fallback_exit"}:
+                    count = _float_or_none(attributes.get("fallback_sample_count"))
+                    if count:
+                        status = str(probe.get("status", "")).strip() or "completed"
+                        count_key = (run_kind, component, phase, status)
+                        counts_by_key[count_key] = counts_by_key.get(count_key, 0) + int(count)
+                continue
+            status = str(probe.get("status", "")).strip()
+            if status in {"failed", "skipped"} or phase in {"fallback_enter", "fallback_exit"}:
+                count_key = (run_kind, component, phase, status or "completed")
+                counts_by_key[count_key] = counts_by_key.get(count_key, 0) + 1
+    for (run_kind, component, phase), aggregate in aggregates_by_key.items():
+        total, count = aggregate
+        metrics[f"probe.{run_kind}.{component}.{phase}.duration_ms_mean"] = total / count
+    for (run_kind, component, phase, status), count in counts_by_key.items():
+        metrics[f"probe.{run_kind}.{component}.{phase}.{status}_count"] = float(count)
+
+
 def _update_numeric_aggregate(
     aggregate: _NumericAggregate | None,
     value: float,
@@ -696,6 +754,44 @@ def _dict_rows(value: object) -> Iterator[dict[str, object]]:
     if not isinstance(value, list):
         return iter(())
     return (row for row in value if isinstance(row, dict))
+
+
+def _run_evidence_rows(bundle: dict[str, object]) -> list[dict[str, object]]:
+    return list(_dict_rows(bundle.get("run_evidence", [])))
+
+
+def _render_probe_summary_markdown(probe_summary: dict[str, object]) -> list[str]:
+    lines = ["", "## Probe Summary", ""]
+    for side in ("baseline", "candidate"):
+        summary = probe_summary.get(side)
+        if not isinstance(summary, dict):
+            continue
+        lines.append(f"### {side.title()}")
+        lines.append("")
+        lines.append(f"- Probes: `{summary.get('probe_count', 0)}`")
+        lines.append(f"- Failed phases: `{len(summary.get('failed_phases', []) if isinstance(summary.get('failed_phases'), list) else [])}`")
+        lines.append(f"- Skipped phases: `{len(summary.get('skipped_phases', []) if isinstance(summary.get('skipped_phases'), list) else [])}`")
+        lines.append(f"- Fallback phases: `{len(summary.get('fallback_phases', []) if isinstance(summary.get('fallback_phases'), list) else [])}`")
+        slowest = summary.get("slowest_phases")
+        if isinstance(slowest, list) and slowest:
+            lines.extend(["", "| Component | Phase | Duration ms | Status |", "| --- | --- | ---: | --- |"])
+            for row in slowest[:5]:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            _markdown_cell(row.get("component", "")),
+                            _markdown_cell(row.get("phase", "")),
+                            _markdown_cell(_format_value(row.get("duration_ms"))),
+                            _markdown_cell(row.get("status", "")),
+                        ]
+                    )
+                    + " |"
+                )
+        lines.append("")
+    return lines
 
 
 def _float_or_none(value: object) -> float | None:
