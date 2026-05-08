@@ -294,6 +294,22 @@ def test_is_mlx_compatible_preserves_card_data_tag_signal_after_fast_paths() -> 
     ) is True
 
 
+def test_is_mlx_compatible_short_circuits_card_tag_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    def card_tags():
+        yield "MLX"
+        raise AssertionError("card tag fallback should stop after the first MLX tag")  # pragma: no cover
+
+    monkeypatch.setattr(hub_catalog_module, "_string_list", lambda _value: card_tags())
+
+    assert _is_mlx_compatible(
+        repo_id="plain/card-tagged-model",
+        tags=["transformers"],
+        library_name="transformers",
+        card_data={"tags": ["MLX", "transformers"]},
+        lowered_tags={"transformers"},
+    ) is True
+
+
 def test_is_mlx_compatible_skips_empty_card_tag_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     string_list = Mock(side_effect=AssertionError("empty cardData.tags should not be normalized"))
     monkeypatch.setattr(hub_catalog_module, "_string_list", string_list)
