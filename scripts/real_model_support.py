@@ -293,7 +293,7 @@ def _huggingface_cache_model_path(
     latest_snapshot_name: str | None = None
     with os.scandir(snapshots_root) as entries:
         for entry in entries:
-            if not entry.is_dir():
+            if not entry.is_dir(follow_symlinks=False):
                 continue
             if latest_snapshot_name is None or entry.name > latest_snapshot_name:
                 latest_snapshot_name = entry.name
