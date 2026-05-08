@@ -154,6 +154,34 @@ def test_bootstrap_interval_sums_replicates_without_per_replicate_mean_helper_ca
     }
 
 
+def test_bootstrap_interval_short_circuits_constant_outcomes_without_sampling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forbidden_random = object()
+
+    monkeypatch.setattr(statistical_evidence_module.random, "Random", forbidden_random)
+
+    evidence = build_paired_statistical_evidence(
+        paired_outcomes=(1, 1, 1, 1, 1),
+        confidence_level=0.95,
+        bootstrap_iterations=1000,
+        bootstrap_seed=17,
+    )
+
+    assert evidence["delta_accuracy"] == 1.0
+    assert evidence["bootstrap"] == {
+        "method": "paired_bootstrap_percentile",
+        "confidence_level": 0.95,
+        "lower_bound": 1.0,
+        "upper_bound": 1.0,
+        "crosses_zero": False,
+        "iterations": 1000,
+        "seed": 17,
+    }
+    assert evidence["analytical"]["lower_bound"] == 1.0
+    assert evidence["analytical"]["upper_bound"] == 1.0
+
+
 def test_classify_release_verdict_returns_inconclusive_when_any_interval_crosses_zero() -> None:
     verdict = classify_release_verdict(
         delta_accuracy=0.2,

@@ -121,6 +121,16 @@ def _paired_bootstrap_interval(
             seed=int(bootstrap_seed),
         )
 
+    if _all_values_equal(outcomes):
+        return _interval_payload(
+            method="paired_bootstrap_percentile",
+            confidence_level=confidence_level,
+            lower_bound=outcomes[0],
+            upper_bound=outcomes[0],
+            iterations=int(bootstrap_iterations),
+            seed=int(bootstrap_seed),
+        )
+
     sampler = random.Random(bootstrap_seed)
     sample_size = len(outcomes)
     inverse_sample_size = 1.0 / sample_size
@@ -140,6 +150,11 @@ def _paired_bootstrap_interval(
         iterations=int(bootstrap_iterations),
         seed=int(bootstrap_seed),
     )
+
+
+def _all_values_equal(values: tuple[float, ...]) -> bool:
+    first_value = values[0]
+    return all(value == first_value for value in values[1:])
 
 
 def _paired_analytical_interval(
