@@ -572,6 +572,9 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
     card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
     direct_card_text = _string(card_data.get("model_size"))
     if direct_card_text:
+        direct_card_hint = _direct_size_hint_from_text(direct_card_text)
+        if direct_card_hint > 0:
+            return direct_card_hint
         direct_card_hint = _size_hint_from_text(direct_card_text, allow_bare=True)
         if direct_card_hint > 0:
             return direct_card_hint
@@ -604,6 +607,27 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
         if text
     )
     return _size_hint_from_text(text, allow_bare=False)
+
+
+def _direct_size_hint_from_text(text: str) -> int:
+    parts = text.split()
+    if len(parts) != 2:
+        return 0
+    value_text, unit_text = parts
+    unit = unit_text.lower()
+    if unit == "kb":
+        multiplier = 1024
+    elif unit == "mb":
+        multiplier = 1024 ** 2
+    elif unit == "gb":
+        multiplier = 1024 ** 3
+    else:
+        return 0
+    try:
+        value = float(value_text)
+    except ValueError:
+        return 0
+    return int(value * multiplier)
 
 
 def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
