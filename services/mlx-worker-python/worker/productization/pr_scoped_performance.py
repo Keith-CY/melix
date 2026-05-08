@@ -45,6 +45,8 @@ _FORCE_ALL_CONTEXT_ONLY_PATHS = frozenset(
 _COVERAGE_PERCENT_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
 _TEXT_FILE_SUFFIXES = {".md", ".py", ".json", ".txt", ".yaml", ".yml"}
 _COMMAND_HEARTBEAT_SECONDS = 30.0
+_MATCH_PROBE_INDEXES_CACHE: dict[tuple[int, int, tuple[str, ...]], frozenset[int]] = {}
+_PROBE_SCOPE_DICT_CACHE: dict[tuple[int, str], dict[str, object]] = {}
 
 
 def _log_progress(message: str) -> None:
@@ -231,7 +233,7 @@ def build_scope_report(
         "changed_files": list(changed_paths),
         "force_all": force_all,
         "matched_probe_ids": matched_probe_ids,
-        "selected_probes": [probe.to_scope_dict() for probe in selected],
+        "selected_probes": [_probe_scope_dict(probe) for probe in selected],
         "selected_count": len(selected),
     }
 
@@ -2271,22 +2273,44 @@ def _float_or_none(value: object) -> float | None:
     return None
 
 
+def _probe_scope_dict(probe: ProbeDefinition) -> dict[str, object]:
+    cache_key = (id(probe), probe.probe_id)
+    cached = _PROBE_SCOPE_DICT_CACHE.get(cache_key)
+    if cached is None:
+        cached = probe.to_scope_dict()
+        _PROBE_SCOPE_DICT_CACHE[cache_key] = cached
+    return cached
+
+
 def _match_probe_indexes(*, changed_paths: set[str] | frozenset[str] | tuple[str, ...], probes: tuple[ProbeDefinition, ...]) -> set[int]:
+    changed_path_tuple = tuple(sorted(changed_paths))
+    cache_key = (id(probes), len(probes), changed_path_tuple)
+    cached = _MATCH_PROBE_INDEXES_CACHE.get(cache_key)
+    if cached is None:
+        cached = _match_probe_indexes_uncached(probes=probes, changed_paths=changed_path_tuple)
+        _MATCH_PROBE_INDEXES_CACHE[cache_key] = cached
+    return set(cached)
+
+
+def _match_probe_indexes_uncached(
+    *,
+    probes: tuple[ProbeDefinition, ...],
+    changed_paths: tuple[str, ...],
+) -> frozenset[int]:
     exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
+    changed_path_set = frozenset(changed_paths)
     matched_probe_indexes: set[int] = set()
-    if not isinstance(changed_paths, (set, frozenset)):
-        changed_paths = set(changed_paths)
-    for path in exact_path_to_probe_indexes.keys() & changed_paths:
+    for path in exact_path_to_probe_indexes.keys() & changed_path_set:
         matched_probe_indexes.update(exact_path_to_probe_indexes[path])
     if not wildcard_glob_matchers:
-        return matched_probe_indexes
+        return frozenset(matched_probe_indexes)
     for path in changed_paths:
         for prefix, pattern, probe_indexes in wildcard_glob_matchers:
             if prefix and not path.startswith(prefix):
                 continue
             if pattern.match(path) is not None:
                 matched_probe_indexes.update(probe_indexes)
-    return matched_probe_indexes
+    return frozenset(matched_probe_indexes)
 
 
 @lru_cache(maxsize=None)
