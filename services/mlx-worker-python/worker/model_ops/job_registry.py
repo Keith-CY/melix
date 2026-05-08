@@ -651,6 +651,11 @@ class ModelOpsJobRegistry:
                 "activation_duration_ms": float(manifest.get("activation_duration_ms", 0.0)),
                 "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
                 "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
+                "adapter_scope": str(manifest.get("adapter_scope", "")),
+                "training_surface": str(manifest.get("training_surface", "")),
+                "component_model_type": str(manifest.get("component_model_type", "")),
+                "component_family": str(manifest.get("component_family", "")),
+                "component_model_path": str(manifest.get("component_model_path", "")),
                 "activation_manifest_path": str(job.get("output_path", "")),
                 "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                 "status": "activated",
@@ -676,6 +681,11 @@ class ModelOpsJobRegistry:
             publish = publish_by_path.get(output_path) or publish_by_name.get(adapter_name)
             activation = activation_by_path.get(output_path) or activation_by_hash.get(adapter_set_hash)
             removal_applied = output_path in removed_adapter_manifest_paths
+            adapter_scope = str(manifest.get("adapter_scope", ""))
+            training_surface = str(manifest.get("training_surface", ""))
+            component_model_type = str(manifest.get("component_model_type", ""))
+            component_family = str(manifest.get("component_family", ""))
+            component_model_path = str(manifest.get("component_model_path", ""))
 
             if publish:
                 status = "published"
@@ -730,6 +740,29 @@ class ModelOpsJobRegistry:
                     "activation_backend": "" if removal_applied else activation["activation_backend"] if activation else "",
                     "adapter_manifest_path": activation["adapter_manifest_path"] if activation else output_path,
                     "adapter_weights_path": "" if removal_applied else activation["adapter_weights_path"] if activation else "",
+                    "adapter_scope": (
+                        "" if removal_applied else activation["adapter_scope"] if activation else adapter_scope
+                    ),
+                    "training_surface": (
+                        ""
+                        if removal_applied
+                        else activation["training_surface"] if activation else training_surface
+                    ),
+                    "component_model_type": (
+                        ""
+                        if removal_applied
+                        else activation["component_model_type"] if activation else component_model_type
+                    ),
+                    "component_family": (
+                        ""
+                        if removal_applied
+                        else activation["component_family"] if activation else component_family
+                    ),
+                    "component_model_path": (
+                        ""
+                        if removal_applied
+                        else activation["component_model_path"] if activation else component_model_path
+                    ),
                     "source_adapter_job_id": activation["source_adapter_job_id"] if activation else job["job_id"],
                     "activation_duration_ms": 0.0 if removal_applied else activation["activation_duration_ms"] if activation else 0.0,
                     "exportable_state": "ready",
@@ -843,6 +876,11 @@ class ModelOpsJobRegistry:
                     "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
                     "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
                     "adapter_name": str(manifest.get("adapter_name", "")),
+                    "adapter_scope": str(manifest.get("adapter_scope", "")),
+                    "training_surface": str(manifest.get("training_surface", "")),
+                    "component_model_type": str(manifest.get("component_model_type", "")),
+                    "component_family": str(manifest.get("component_family", "")),
+                    "component_model_path": str(manifest.get("component_model_path", "")),
                     "derived_model_alias": str(manifest.get("derived_model_alias", "")),
                     "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                     "source_model": str(manifest.get("source_model", "")),

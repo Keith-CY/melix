@@ -99,13 +99,15 @@ class LoRATrainingPipeline:
         emit("apply_lora", 0.65)
         adapter_output_dir = output_dir / "adapter"
         resume_context = _resolve_resume_context(request_ext)
+        adapter_scope = _resolve_adapter_scope_metadata(source_model)
+        training_model_path = Path(adapter_scope["component_model_path"]).expanduser()
 
         emit("train", 0.8)
         training_result = self._runner.train(
             TrainingRequest(
                 job_id=job_id,
                 base_model_id=source_model.model_id,
-                model_path=Path(source_model.model_path).expanduser(),
+                model_path=training_model_path,
                 model_revision=source_model.revision,
                 adapter_output_dir=adapter_output_dir,
                 normalized_dataset_dir=normalized_snapshot.dataset_dir,
@@ -150,8 +152,14 @@ class LoRATrainingPipeline:
             "preset_id": config.preset_id,
             "preset_title": config.preset_title,
             "source_model": source_model.model_id,
+            "source_model_kind": source_model.model_kind,
             "source_model_revision": source_model.revision,
             "source_model_path": source_model.model_path,
+            "adapter_scope": adapter_scope["adapter_scope"],
+            "training_surface": adapter_scope["training_surface"],
+            "component_model_type": adapter_scope["component_model_type"],
+            "component_family": adapter_scope["component_family"],
+            "component_model_path": adapter_scope["component_model_path"],
             "experiment_group_id": experiment_group_id,
             "experiment_group_title": experiment_group_title,
             "dataset_uri": dataset.dataset_uri,
@@ -297,6 +305,40 @@ class LoRATrainingPipeline:
             manifest_path=manifest_path,
         )
         return LoRATrainingPipelineResult(manifest=manifest, manifest_path=manifest_path)
+
+
+def _resolve_adapter_scope_metadata(source_model: common_pb2.ModelSpec) -> dict[str, str]:
+    ext = source_model.ext
+    adapter_scope = ext.get("melix.lora.adapter_scope", "").strip()
+    if not adapter_scope and source_model.model_kind == "text":
+        adapter_scope = "model"
+    if source_model.model_kind != "text" and not adapter_scope:
+        raise AssertionError(
+            "_resolve_adapter_scope_metadata called on non-text model with no adapter_scope; "
+            "caller should have rejected this model via _validate_lora_training_surface."
+        )
+    training_surface = ext.get("melix.lora.training_surface", "").strip() or adapter_scope
+    component_model_type = (
+        ext.get("melix.lora.component_model_type", "").strip()
+        or ext.get(f"melix.component.{adapter_scope}.model_type", "").strip()
+    )
+    component_family = (
+        ext.get("melix.lora.family_id", "").strip()
+        or ext.get(f"melix.component.{adapter_scope}.family_id", "").strip()
+        or ext.get("text_family_id", "").strip()
+    )
+    component_model_path = (
+        ext.get("melix.lora.base_model_path", "").strip()
+        or ext.get(f"melix.component.{adapter_scope}.path", "").strip()
+        or source_model.model_path
+    )
+    return {
+        "adapter_scope": adapter_scope,
+        "training_surface": training_surface,
+        "component_model_type": component_model_type,
+        "component_family": component_family,
+        "component_model_path": component_model_path,
+    }
 
 
 def _int_ext(ext: dict[str, str], key: str) -> int:

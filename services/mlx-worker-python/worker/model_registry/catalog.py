@@ -807,6 +807,84 @@ def _gemma4_execution_mode(
     return "text_backed"
 
 
+def _gemma4_text_backbone_config(config_payload: Mapping[str, object] | None) -> Mapping[str, object] | None:
+    config_payload = config_payload or {}
+    text_config = config_payload.get("text_config")
+    if not isinstance(text_config, Mapping):
+        return None
+    nested_model_type = _normalized(str(text_config.get("model_type", ""))).lower()
+    if nested_model_type != "gemma4_text":
+        return None
+    return text_config
+
+
+def _gemma4_has_vision_component(
+    model_dir: Path,
+    config_payload: Mapping[str, object] | None,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> bool:
+    config_payload = config_payload or {}
+    vision_config = config_payload.get("vision_config")
+    if isinstance(vision_config, Mapping) and len(vision_config) > 0:
+        return True
+    if (model_dir / "processor_config.json").is_file() or (model_dir / "preprocessor_config.json").is_file():
+        return True
+    return _gemma4_index_has_vision_weights(model_dir, json_cache=json_cache)
+
+
+def _gemma4_component_lora_metadata(
+    *,
+    model_path: str,
+    model_dir: Path,
+    config_payload: Mapping[str, object] | None,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> dict[str, str]:
+    text_config = _gemma4_text_backbone_config(config_payload)
+    if text_config is None:
+        return {}
+
+    components = ["text_backbone"]
+    has_vision_component = _gemma4_has_vision_component(
+        model_dir,
+        config_payload,
+        json_cache=json_cache,
+    )
+    if has_vision_component:
+        components.extend(["vision_encoder", "multimodal_projector"])
+
+    ext = {
+        **_text_lora_support_metadata("gemma", moe_enabled=False),
+        "melix.model.components": ",".join(components),
+        "melix.model.component_contract": "component_scoped_v1",
+        "melix.component.text_backbone.model_type": "gemma4_text",
+        "melix.component.text_backbone.family_id": "gemma",
+        "melix.component.text_backbone.lora_supported": "true",
+        "melix.component.text_backbone.training_ready": "true",
+        "melix.component.text_backbone.path": model_path,
+        "melix.lora.adapter_scope": "text_backbone",
+        "melix.lora.training_surface": "text_backbone",
+        "melix.lora.base_model_path": model_path,
+        "melix.lora.component_model_type": "gemma4_text",
+    }
+    if has_vision_component:
+        config_payload = config_payload or {}
+        vision_config = config_payload.get("vision_config")
+        vision_model_type = ""
+        if isinstance(vision_config, Mapping):
+            vision_model_type = _normalized(str(vision_config.get("model_type", "")))
+        ext.update(
+            {
+                "melix.component.vision_encoder.model_type": vision_model_type or "gemma4_vision",
+                "melix.component.vision_encoder.lora_supported": "false",
+                "melix.component.vision_encoder.lora_support_contract": "separate_contract",
+                "melix.component.multimodal_projector.lora_supported": "false",
+                "melix.component.multimodal_projector.lora_support_contract": "separate_contract",
+            }
+        )
+    return ext
+
+
 def _gemma4_index_has_vision_weights(
     model_dir: Path,
     *,
@@ -893,6 +971,14 @@ def _vlm_capability_metadata(
     )
     if execution_mode:
         ext["melix.vlm.execution_mode"] = execution_mode
+    ext.update(
+        _gemma4_component_lora_metadata(
+            model_path=model_path,
+            model_dir=model_dir,
+            config_payload=config_payload,
+            json_cache=json_cache,
+        )
+    )
     return ext
 
 

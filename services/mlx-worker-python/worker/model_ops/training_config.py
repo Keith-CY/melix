@@ -103,6 +103,7 @@ _SUPPORTED_TRAINING_MODES = (
     | _RL_TRAINING_MODES
     | _CPT_TRAINING_MODES
 )
+_SUPPORTED_COMPONENT_SCOPES: frozenset[str] = frozenset({"text_backbone"})
 
 _NORMALIZED_TARGET_MODULE_PRESETS_KEY = "_normalized_target_module_presets"
 _NORMALIZED_DEFAULT_TARGET_MODULES_KEY = "_normalized_default_target_modules"
@@ -348,12 +349,7 @@ def normalize_training_config(
     sample_count: int,
     validation_sample_count: int = 0,
 ) -> LoRATrainingConfig:
-    if source_model.model_kind != "text":
-        raise ModelOperationError(
-            code="unsupported_model_family",
-            message="LoRA training is only supported for text models in v1.",
-            details={"model_kind": source_model.model_kind},
-        )
+    _validate_lora_training_surface(source_model)
 
     training_mode = ext.get("training_mode", "lora").strip().lower() or "lora"
     if training_mode not in _SUPPORTED_TRAINING_MODES:
@@ -891,6 +887,52 @@ def _resolve_family_id(source_model: common_pb2.ModelSpec) -> str:
     if any(token in searchable for token in ("mistral", "llama", "text")):
         return "llama"
     return "llama"
+
+
+def _validate_lora_training_surface(source_model: common_pb2.ModelSpec) -> None:
+    if source_model.model_kind == "text":
+        return
+
+    ext = source_model.ext
+    adapter_scope = ext.get("melix.lora.adapter_scope", "").strip().lower()
+    training_surface = ext.get("melix.lora.training_surface", "").strip().lower() or adapter_scope
+    training_ready = ext.get("melix.lora.training_ready", "").strip().lower()
+    component_lora_supported = ext.get(f"melix.component.{adapter_scope}.lora_supported", "").strip().lower()
+    component_training_ready = ext.get(f"melix.component.{adapter_scope}.training_ready", "").strip().lower()
+    component_model_type = (
+        ext.get("melix.lora.component_model_type", "").strip().lower()
+        or ext.get(f"melix.component.{adapter_scope}.model_type", "").strip().lower()
+    )
+    component_family = (
+        ext.get("melix.lora.family_id", "").strip().lower()
+        or ext.get(f"melix.component.{adapter_scope}.family_id", "").strip().lower()
+    )
+
+    if (
+        adapter_scope in _SUPPORTED_COMPONENT_SCOPES
+        and training_surface in _SUPPORTED_COMPONENT_SCOPES
+        and training_ready == "true"
+        and component_lora_supported == "true"
+        and component_training_ready == "true"
+        and component_model_type
+        and component_family
+    ):
+        return
+
+    raise ModelOperationError(
+        code="unsupported_model_family",
+        message="LoRA training is only supported for text models or training-ready text_backbone components.",
+        details={
+            "model_kind": source_model.model_kind,
+            "adapter_scope": adapter_scope,
+            "training_surface": training_surface,
+            "training_ready": training_ready,
+            "component_lora_supported": component_lora_supported,
+            "component_training_ready": component_training_ready,
+            "component_model_type": component_model_type,
+            "component_family": component_family,
+        },
+    )
 
 
 def _resolve_family_hooks(source_model: common_pb2.ModelSpec, *, family_id: str) -> dict[str, str]:

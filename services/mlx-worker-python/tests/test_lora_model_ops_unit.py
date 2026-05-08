@@ -26,6 +26,7 @@ from worker.model_ops.lora_training_pipeline import (
     _load_manifest_payload,
     _resolve_resume_context,
     _resolve_resume_path_from_manifest,
+    _resolve_adapter_scope_metadata,
     _validated_resume_path,
 )
 from worker.model_ops.mlx_lm_runner import MLXLMRunner
@@ -78,6 +79,69 @@ def _text_model(*, model_path: str = "models/plain-llama", quant_profile_id: str
         model.ext["text_family_id"] = family_id
     model.ext["text_layer_count"] = "2"
     return model
+
+
+def _gemma4_vlm_model(*, model_path: str = "models/gemma-4-E4B-it-bf16") -> common_pb2.ModelSpec:
+    model = common_pb2.ModelSpec(
+        model_id="melix-gemma4-vlm",
+        model_path=model_path,
+        model_kind="vlm",
+        revision="main",
+        max_context=8192,
+    )
+    model.ext["melix.lora.family_id"] = "gemma"
+    model.ext["melix.lora.family_kind"] = "dense"
+    model.ext["melix.lora.support_tier"] = "stable"
+    model.ext["melix.lora.training_ready"] = "true"
+    model.ext["melix.lora.default_target_preset"] = "attention_mlp"
+    model.ext["melix.lora.adapter_scope"] = "text_backbone"
+    model.ext["melix.lora.training_surface"] = "text_backbone"
+    model.ext["melix.lora.base_model_path"] = model_path
+    model.ext["melix.lora.component_model_type"] = "gemma4_text"
+    model.ext["melix.component.text_backbone.model_type"] = "gemma4_text"
+    model.ext["melix.component.text_backbone.family_id"] = "gemma"
+    model.ext["melix.component.text_backbone.lora_supported"] = "true"
+    model.ext["melix.component.text_backbone.training_ready"] = "true"
+    return model
+
+
+def test_lora_training_pipeline_uses_component_scope_metadata_for_gemma4_vlm(tmp_path: Path) -> None:
+    class RecordingRunner(DeterministicLoRARunner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.last_request = None
+
+        def train_native(self, request):  # noqa: ANN001
+            self.last_request = request
+            return super().train_native(request)
+
+    component_model_dir = tmp_path / "gemma4-vlm"
+    component_model_dir.mkdir()
+    dataset_dir = _write_dataset_package(tmp_path / "dataset")
+    runner = RecordingRunner()
+
+    result = LoRATrainingPipeline(runner=runner).run(
+        job_id="train-gemma4-vlm",
+        request_ext={
+            "operation": "train_lora",
+            "adapter_name": "gemma4-text-backbone",
+            "dataset_uri": str(dataset_dir),
+        },
+        source_model=_gemma4_vlm_model(model_path=str(component_model_dir)),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    assert runner.last_request is not None
+    assert runner.last_request.model_path == component_model_dir
+    assert runner.last_request.source_model_kind == "vlm"
+    assert runner.last_request.source_model_ext["melix.lora.adapter_scope"] == "text_backbone"
+    assert result.manifest["source_model_kind"] == "vlm"
+    assert result.manifest["adapter_scope"] == "text_backbone"
+    assert result.manifest["training_surface"] == "text_backbone"
+    assert result.manifest["component_model_type"] == "gemma4_text"
+    assert result.manifest["component_family"] == "gemma"
+    assert result.manifest["component_model_path"] == str(component_model_dir)
 
 
 def test_checkpoint_summary_uses_scandir_stack_without_os_walk(
@@ -2205,6 +2269,223 @@ def test_adapter_activation_pipeline_emits_explicit_adapter_backed_runtime_load_
     assert result.manifest["source_model_ext"]["text_family_id"] == "qwen"
 
 
+def test_adapter_activation_pipeline_validates_component_scope_for_vlm_adapters(tmp_path: Path) -> None:
+    weights_dir = tmp_path / "adapter-weights"
+    weights_dir.mkdir(parents=True)
+    manifest_path = tmp_path / "train_lora.adapter.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-gemma4-vlm",
+                "source_model_kind": "vlm",
+                "weights_path": str(weights_dir / "adapters.safetensors"),
+                "adapter_name": "gemma4-component-adapter",
+                "adapter_set_hash": "gemma4-adapter-hash",
+                "job_id": "model-ops-0003",
+                "adapter_scope": "text_backbone",
+                "training_surface": "text_backbone",
+                "component_model_type": "gemma4_text",
+                "component_family": "gemma",
+                "component_model_path": str(tmp_path / "gemma4-vlm"),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source_model = _gemma4_vlm_model(model_path=str(tmp_path / "gemma4-vlm"))
+
+    result = AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+        job_id="model-ops-0004",
+        request_ext={
+            "artifact_path": str(manifest_path),
+            "activation_mode": "adapter_backed_runtime",
+        },
+        source_model=source_model,
+        output_dir=tmp_path / "activate",
+    )
+
+    assert result.manifest["source_model_kind"] == "vlm"
+    assert result.manifest["adapter_scope"] == "text_backbone"
+    assert result.manifest["training_surface"] == "text_backbone"
+    assert result.manifest["component_model_type"] == "gemma4_text"
+    assert result.manifest["component_family"] == "gemma"
+    assert result.manifest["component_model_path"] == str(tmp_path / "gemma4-vlm")
+    assert result.manifest["derived_model_path"] == source_model.model_path
+
+    mismatched = _gemma4_vlm_model(model_path=str(tmp_path / "gemma4-vlm"))
+    mismatched.ext["melix.lora.adapter_scope"] = "vision_encoder"
+    with pytest.raises(ModelOperationError) as scope_exc:
+        AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+            job_id="model-ops-0005",
+            request_ext={
+                "artifact_path": str(manifest_path),
+                "activation_mode": "adapter_backed_runtime",
+            },
+            source_model=mismatched,
+            output_dir=tmp_path / "mismatch",
+        )
+    assert scope_exc.value.code == "activation_failure"
+    assert "scope" in scope_exc.value.message
+
+    with pytest.raises(ModelOperationError) as fused_exc:
+        AdapterActivationPipeline().run(
+            job_id="model-ops-0006",
+            request_ext={"artifact_path": str(manifest_path)},
+            source_model=source_model,
+            output_dir=tmp_path / "fused",
+        )
+    assert fused_exc.value.code == "activation_failure"
+    assert "adapter_backed_runtime" in fused_exc.value.message
+
+
+def test_adapter_activation_pipeline_rejects_component_scope_metadata_mismatches(tmp_path: Path) -> None:
+    weights_dir = tmp_path / "adapter-weights"
+    weights_dir.mkdir(parents=True)
+
+    def write_manifest(payload: dict[str, object]) -> Path:
+        manifest_path = tmp_path / f"{payload['job_id']}.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "melix.lora_adapter_package.v1",
+                    "weights_path": str(weights_dir / "adapters.safetensors"),
+                    "adapter_name": "scope-mismatch",
+                    "adapter_set_hash": str(payload["job_id"]),
+                    **payload,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return manifest_path
+
+    with pytest.raises(ModelOperationError) as kind_exc:
+        AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+            job_id="activate-kind",
+            request_ext={
+                "artifact_path": str(
+                    write_manifest(
+                        {
+                            "job_id": "adapter-kind",
+                            "source_model": "melix-gemma4-vlm",
+                            "source_model_kind": "text",
+                            "adapter_scope": "text_backbone",
+                            "training_surface": "text_backbone",
+                        }
+                    )
+                ),
+                "activation_mode": "adapter_backed_runtime",
+            },
+            source_model=_gemma4_vlm_model(model_path=str(tmp_path / "gemma4-vlm")),
+            output_dir=tmp_path / "activate-kind",
+        )
+    assert kind_exc.value.code == "activation_failure"
+    assert "kind" in kind_exc.value.message
+
+    with pytest.raises(ModelOperationError) as text_scope_exc:
+        AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+            job_id="activate-text-scope",
+            request_ext={
+                "artifact_path": str(
+                    write_manifest(
+                        {
+                            "job_id": "adapter-text-scope",
+                            "source_model": "melix-test-text",
+                            "source_model_kind": "text",
+                            "adapter_scope": "text_backbone",
+                            "training_surface": "text_backbone",
+                        }
+                    )
+                ),
+                "activation_mode": "adapter_backed_runtime",
+            },
+            source_model=_text_model(model_path=str(tmp_path / "text-model")),
+            output_dir=tmp_path / "activate-text-scope",
+        )
+    assert text_scope_exc.value.code == "activation_failure"
+    assert "scope" in text_scope_exc.value.message
+
+    with pytest.raises(ModelOperationError) as missing_scope_exc:
+        AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+            job_id="activate-missing-scope",
+            request_ext={
+                "artifact_path": str(
+                    write_manifest(
+                        {
+                            "job_id": "adapter-missing-scope",
+                            "source_model": "plain-vlm",
+                            "source_model_kind": "vlm",
+                            "adapter_scope": "text_backbone",
+                            "training_surface": "text_backbone",
+                            "component_model_type": "gemma4_text",
+                            "component_family": "gemma",
+                        }
+                    )
+                ),
+                "activation_mode": "adapter_backed_runtime",
+            },
+            source_model=common_pb2.ModelSpec(
+                model_id="plain-vlm",
+                model_path=str(tmp_path / "plain-vlm"),
+                model_kind="vlm",
+            ),
+            output_dir=tmp_path / "activate-missing-scope",
+        )
+    assert missing_scope_exc.value.code == "activation_failure"
+    assert "no component LoRA scope metadata" in missing_scope_exc.value.message
+
+    with pytest.raises(ModelOperationError) as type_exc:
+        AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+            job_id="activate-type",
+            request_ext={
+                "artifact_path": str(
+                    write_manifest(
+                        {
+                            "job_id": "adapter-type",
+                            "source_model": "melix-gemma4-vlm",
+                            "source_model_kind": "vlm",
+                            "adapter_scope": "text_backbone",
+                            "training_surface": "text_backbone",
+                            "component_model_type": "llama",
+                            "component_family": "gemma",
+                        }
+                    )
+                ),
+                "activation_mode": "adapter_backed_runtime",
+            },
+            source_model=_gemma4_vlm_model(model_path=str(tmp_path / "gemma4-vlm")),
+            output_dir=tmp_path / "activate-type",
+        )
+    assert type_exc.value.code == "activation_failure"
+    assert "component type" in type_exc.value.message
+
+    with pytest.raises(ModelOperationError) as family_exc:
+        AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+            job_id="activate-family",
+            request_ext={
+                "artifact_path": str(
+                    write_manifest(
+                        {
+                            "job_id": "adapter-family",
+                            "source_model": "melix-gemma4-vlm",
+                            "source_model_kind": "vlm",
+                            "adapter_scope": "text_backbone",
+                            "training_surface": "text_backbone",
+                            "component_model_type": "gemma4_text",
+                            "component_family": "qwen",
+                        }
+                    )
+                ),
+                "activation_mode": "adapter_backed_runtime",
+            },
+            source_model=_gemma4_vlm_model(model_path=str(tmp_path / "gemma4-vlm")),
+            output_dir=tmp_path / "activate-family",
+        )
+    assert family_exc.value.code == "activation_failure"
+    assert "component family" in family_exc.value.message
+
+
 
 def test_normalize_training_config_rejects_non_text_models() -> None:
     model = common_pb2.ModelSpec(model_id="melix-embed", model_path="models/embed", model_kind="embedding")
@@ -2219,6 +2500,62 @@ def test_normalize_training_config_rejects_non_text_models() -> None:
         )
 
     assert exc.value.code == "unsupported_model_family"
+    assert exc.value.details["model_kind"] == "embedding"
+
+    vlm = common_pb2.ModelSpec(model_id="melix-vlm", model_path="models/plain-vlm", model_kind="vlm")
+    with pytest.raises(ModelOperationError) as vlm_exc:
+        training_config_module.normalize_training_config(
+            source_model=vlm,
+            ext={},
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=1,
+        )
+
+    assert vlm_exc.value.code == "unsupported_model_family"
+    assert vlm_exc.value.details["adapter_scope"] == ""
+
+
+def test_normalize_training_config_accepts_gemma4_vlm_text_backbone_scope() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_gemma4_vlm_model(model_path="mlx-community/gemma-4-E4B-it-bf16"),
+        ext={},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    assert config.family_id == "gemma"
+    assert config.quantization_mode == "none"
+    assert any(module.endswith(".self_attn.q_proj") for module in config.expanded_target_modules)
+    assert any(module.endswith(".mlp.gate_proj") for module in config.expanded_target_modules)
+
+
+def test_normalize_training_config_accepts_registry_owned_component_model_type() -> None:
+    source_model = _gemma4_vlm_model(model_path="models/custom-component-vlm")
+    source_model.ext["melix.lora.component_model_type"] = "custom_text_backbone"
+    source_model.ext["melix.component.text_backbone.model_type"] = "custom_text_backbone"
+
+    config = training_config_module.normalize_training_config(
+        source_model=source_model,
+        ext={},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    assert config.family_id == "gemma"
+    assert any(module.endswith(".self_attn.q_proj") for module in config.expanded_target_modules)
+    assert any(module.endswith(".mlp.gate_proj") for module in config.expanded_target_modules)
+
+
+def test_resolve_adapter_scope_metadata_requires_validated_non_text_scope() -> None:
+    source_model = common_pb2.ModelSpec(model_id="plain-vlm", model_path="models/plain-vlm", model_kind="vlm")
+
+    with pytest.raises(AssertionError) as exc:
+        _resolve_adapter_scope_metadata(source_model)
+
+    assert "no adapter_scope" in str(exc.value)
 
 
 def test_normalize_training_config_rejects_unknown_modes_and_families() -> None:

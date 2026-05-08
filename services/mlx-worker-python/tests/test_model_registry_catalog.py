@@ -2519,6 +2519,17 @@ def test_registry_snapshot_promotes_gemma4_text_manifest_to_vlm_text_backed(tmp_
     assert gemma4.ext["vision_family_id"] == "gemma4-v1"
     assert gemma4.ext["vision_prompt_profile_id"] == "gemma4-chatml-v1"
     assert gemma4.ext["melix.capability.route_kind"] == "python_vlm"
+    assert gemma4.ext["melix.model.components"] == "text_backbone"
+    assert gemma4.ext["melix.model.component_contract"] == "component_scoped_v1"
+    assert gemma4.ext["melix.component.text_backbone.model_type"] == "gemma4_text"
+    assert gemma4.ext["melix.component.text_backbone.family_id"] == "gemma"
+    assert gemma4.ext["melix.component.text_backbone.lora_supported"] == "true"
+    assert gemma4.ext["melix.component.text_backbone.training_ready"] == "true"
+    assert gemma4.ext["melix.lora.adapter_scope"] == "text_backbone"
+    assert gemma4.ext["melix.lora.training_surface"] == "text_backbone"
+    assert gemma4.ext["melix.lora.component_model_type"] == "gemma4_text"
+    assert gemma4.ext["melix.lora.family_id"] == "gemma"
+    assert gemma4.ext["melix.lora.training_ready"] == "true"
 
 
 def test_registry_snapshot_keeps_multimodal_gemma4_manifest_in_multimodal_mode(tmp_path: Path) -> None:
@@ -2550,6 +2561,49 @@ def test_registry_snapshot_keeps_multimodal_gemma4_manifest_in_multimodal_mode(t
     assert gemma4.ext["melix.vlm.backend_id"] == "mlx_vlm"
     assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
     assert gemma4.ext["vision_family_id"] == "gemma4-v1"
+    assert gemma4.ext["melix.model.components"] == "text_backbone,vision_encoder,multimodal_projector"
+    assert gemma4.ext["melix.component.text_backbone.model_type"] == "gemma4_text"
+    assert gemma4.ext["melix.component.text_backbone.family_id"] == "gemma"
+    assert gemma4.ext["melix.component.text_backbone.lora_supported"] == "true"
+    assert gemma4.ext["melix.component.vision_encoder.model_type"] == "gemma4_vision"
+    assert gemma4.ext["melix.component.vision_encoder.lora_supported"] == "false"
+    assert gemma4.ext["melix.component.vision_encoder.lora_support_contract"] == "separate_contract"
+    assert gemma4.ext["melix.component.multimodal_projector.lora_supported"] == "false"
+    assert gemma4.ext["melix.component.multimodal_projector.lora_support_contract"] == "separate_contract"
+    assert gemma4.ext["melix.lora.adapter_scope"] == "text_backbone"
+    assert gemma4.ext["melix.lora.training_surface"] == "text_backbone"
+    assert gemma4.ext["melix.lora.component_model_type"] == "gemma4_text"
+    assert gemma4.ext["melix.lora.family_id"] == "gemma"
+    assert gemma4.ext["melix.lora.training_ready"] == "true"
+
+
+def test_gemma4_component_lora_metadata_requires_text_backbone_and_detects_processor_components(
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "gemma4"
+    model_dir.mkdir()
+
+    assert catalog_module._gemma4_component_lora_metadata(
+        model_path=str(model_dir),
+        model_dir=model_dir,
+        config_payload={},
+    ) == {}
+    assert catalog_module._gemma4_component_lora_metadata(
+        model_path=str(model_dir),
+        model_dir=model_dir,
+        config_payload={"text_config": {"model_type": "llama"}},
+    ) == {}
+
+    (model_dir / "processor_config.json").write_text("{}\n", encoding="utf-8")
+    metadata = catalog_module._gemma4_component_lora_metadata(
+        model_path=str(model_dir),
+        model_dir=model_dir,
+        config_payload={"text_config": {"model_type": "gemma4_text"}, "vision_config": None},
+    )
+
+    assert metadata["melix.model.components"] == "text_backbone,vision_encoder,multimodal_projector"
+    assert metadata["melix.component.vision_encoder.lora_supported"] == "false"
+    assert metadata["melix.component.multimodal_projector.lora_support_contract"] == "separate_contract"
 
 
 def test_registry_snapshot_promotes_gemma4_from_architecture_hint(tmp_path: Path) -> None:

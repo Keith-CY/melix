@@ -3301,17 +3301,23 @@ def test_activate_adapter_supports_adapter_backed_runtime_and_uses_training_alia
     assert activation_payload["adapter_manifest_path"] == adapter_manifest_path
     assert activation_payload["adapter_weights_path"].endswith("adapters.safetensors")
     assert activation_payload["source_model_kind"] == "text"
+    assert activation_payload["adapter_scope"] == "model"
+    assert activation_payload["training_surface"] == "model"
     assert activation_payload["source_model_ext"]["text_family_id"] == "llama"
     assert activation_payload["derived_model_path"] == source_model.model_path
     assert activation_payload["remove_supported"] is True
     assert snapshot_payload["adapters"][0]["activation_mode"] == "adapter_backed_runtime"
     assert snapshot_payload["adapters"][0]["activation_backend"] == "internal"
     assert snapshot_payload["adapters"][0]["adapter_weights_path"] == activation_payload["adapter_weights_path"]
+    assert snapshot_payload["adapters"][0]["adapter_scope"] == "model"
+    assert snapshot_payload["adapters"][0]["training_surface"] == "model"
     # RuntimeMode enum flows through the snapshot alongside the legacy string.
     # RUNTIME_MODE_ADAPTER_BACKED = 2 per worker/v1/common.proto.
     assert snapshot_payload["adapters"][0]["runtime_mode"] == 2
     assert snapshot_payload["derived_models"][0]["activation_mode"] == "adapter_backed_runtime"
     assert snapshot_payload["derived_models"][0]["activation_backend"] == "internal"
+    assert snapshot_payload["derived_models"][0]["adapter_scope"] == "model"
+    assert snapshot_payload["derived_models"][0]["training_surface"] == "model"
     assert snapshot_payload["derived_models"][0]["runtime_mode"] == 2
     assert snapshot_payload["derived_models"][0]["model_id"] == activation_payload["derived_model_id"]
 
@@ -3320,6 +3326,8 @@ def test_activate_adapter_supports_adapter_backed_runtime_and_uses_training_alia
     assert registered_model.model_path == source_model.model_path
     assert registered_model.ext["melix.activation_mode"] == "adapter_backed_runtime"
     assert registered_model.ext["melix.adapter_manifest_path"] == adapter_manifest_path
+    assert registered_model.ext["melix.adapter_scope"] == "model"
+    assert registered_model.ext["melix.training_surface"] == "model"
     # Typed RuntimeMode enum must propagate from activation manifest through
     # catalog registration — this is the authoritative signal the runtime
     # backend keys off to decide adapter-aware load behavior.
