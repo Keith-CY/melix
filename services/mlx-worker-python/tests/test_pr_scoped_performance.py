@@ -3827,3 +3827,104 @@ def test_engine_generate_usage_token_probe_script_emits_metrics(
     assert metrics["prompt_token_count_calls_mean"] == 0
     assert metrics["prompt_token_count_calls_per_request"] == 0
     assert metrics["token_events_mean"] == 3
+
+
+def test_scope_report_tracks_direct_matches_separately_when_force_all(tmp_path: Path) -> None:
+    registry_path = tmp_path / "probes.json"
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "target",
+                    "name": "Target",
+                    "watch_globs": [
+                        "src/target.py",
+                        "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+                    ],
+                    "probe_impl": "command_json",
+                    "metrics": [
+                        {"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}
+                    ],
+                },
+                {
+                    "id": "context",
+                    "name": "Context",
+                    "watch_globs": [
+                        "src/context.py",
+                        "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+                    ],
+                    "probe_impl": "command_json",
+                    "metrics": [
+                        {"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}
+                    ],
+                },
+            ]
+        )
+    )
+
+    scope = build_scope_report(
+        registry_path=registry_path,
+        changed_files=[
+            "src/target.py",
+            "infra/perf/pr_scoped_probes.json",
+            "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+        ],
+    )
+
+    assert scope["force_all"] is True
+    assert {probe["id"] for probe in scope["selected_probes"]} == {"target", "context"}
+    assert scope["matched_probe_ids"] == ["target"]
+
+
+def test_force_all_context_regressions_do_not_fail_direct_probe_gate() -> None:
+    target_probe = {
+        "id": "target",
+        "name": "Target",
+        "metrics": [{"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better", "warn_pct": 5.0}],
+    }
+    context_probe = {
+        "id": "context",
+        "name": "Context",
+        "metrics": [{"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better", "warn_pct": 5.0}],
+    }
+    scope = {
+        "changed_files": [
+            "src/target.py",
+            "infra/perf/pr_scoped_probes.json",
+        ],
+        "force_all": True,
+        "selected_count": 2,
+        "matched_probe_ids": ["target"],
+        "selected_probes": [target_probe, context_probe],
+    }
+
+    report = build_performance_report(
+        scope=scope,
+        probe_results=[
+            {
+                "probe": target_probe,
+                "head_verification": {
+                    "test": {"ok": True, "coverage_pct": None},
+                    "coverage": {"ok": True, "coverage_pct": 100.0},
+                },
+                "base_probe": {"ok": True, "metrics": {"elapsed_ms_mean": 10.0}},
+                "head_probe": {"ok": True, "metrics": {"elapsed_ms_mean": 9.0}},
+            },
+            {
+                "probe": context_probe,
+                "head_verification": {
+                    "test": {"ok": True, "coverage_pct": None},
+                    "coverage": {"ok": True, "coverage_pct": 100.0},
+                },
+                "base_probe": {"ok": True, "metrics": {"elapsed_ms_mean": 10.0}},
+                "head_probe": {"ok": True, "metrics": {"elapsed_ms_mean": 20.0}},
+            },
+        ],
+    )
+
+    assert report["summary"]["status"] == "ok"
+    assert report["summary"]["regression_count"] == 0
+    assert report["summary"]["context_regression_count"] == 1
+    assert report["rows"][0]["gate"] == "direct"
+    assert report["rows"][1]["gate"] == "context"
+    assert report["rows"][1]["status"] == "regression"

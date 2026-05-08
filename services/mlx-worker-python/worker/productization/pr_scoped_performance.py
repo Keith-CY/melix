@@ -36,6 +36,12 @@ _FORCE_ALL_GLOBS = (
 )
 _FORCE_ALL_EXACT_PATHS = frozenset(glob for glob in _FORCE_ALL_GLOBS if not _glob_has_magic(glob))
 _FORCE_ALL_WILDCARD_GLOBS = tuple(glob for glob in _FORCE_ALL_GLOBS if _glob_has_magic(glob))
+_FORCE_ALL_CONTEXT_ONLY_PATHS = frozenset(
+    {
+        "infra/perf/pr_scoped_probes.json",
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    }
+)
 _COVERAGE_PERCENT_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
 _TEXT_FILE_SUFFIXES = {".md", ".py", ".json", ".txt", ".yaml", ".yml"}
 _COMMAND_HEARTBEAT_SECONDS = 30.0
@@ -212,16 +218,19 @@ def build_scope_report(
     force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
         changed_path_set
     )
+    direct_changed_path_set = changed_path_set - _FORCE_ALL_CONTEXT_ONLY_PATHS
+    matched_probe_indexes = _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
     if force_all:
         selected = probes
     else:
-        matched_probe_indexes = _match_probe_indexes(changed_paths=changed_path_set, probes=probes)
         selected = tuple(probe for index, probe in enumerate(probes) if index in matched_probe_indexes)
+    matched_probe_ids = [probe.probe_id for index, probe in enumerate(probes) if index in matched_probe_indexes]
     changed_paths = tuple(sorted(changed_path_set))
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
         "force_all": force_all,
+        "matched_probe_ids": matched_probe_ids,
         "selected_probes": [probe.to_scope_dict() for probe in selected],
         "selected_count": len(selected),
     }
@@ -281,19 +290,28 @@ def build_performance_report(
         if isinstance(result, dict)
     }
     rows: list[dict[str, object]] = []
+    force_all = bool(scope.get("force_all", False))
+    matched_probe_ids = set(_string_list(scope.get("matched_probe_ids")))
+    gate_probe_ids = matched_probe_ids if force_all and matched_probe_ids else {
+        str(probe.get("id", "")).strip() for probe in selected_probes if str(probe.get("id", "")).strip()
+    }
     regression_count = 0
+    context_regression_count = 0
     verification_failure_count = 0
+    context_verification_failure_count = 0
     for probe_entry in selected_probes:
         probe_id = str(probe_entry.get("id", "")).strip()
         if not probe_id:
             continue
         result = probe_result_map.get(probe_id)
+        is_gate_probe = probe_id in gate_probe_ids
         if result is None:
             rows.append(
                 {
                     "probe_id": probe_id,
                     "name": str(probe_entry.get("name", probe_id)),
                     "status": "missing_result",
+                    "gate": "direct" if is_gate_probe else "context",
                     "metrics": [],
                     "coverage_pct": None,
                     "test_ok": False,
@@ -301,14 +319,24 @@ def build_performance_report(
                     "details": "Probe result artifact is missing.",
                 }
             )
-            verification_failure_count += 1
+            if is_gate_probe:
+                verification_failure_count += 1
+            else:
+                context_verification_failure_count += 1
             continue
         row = _build_probe_report_row(result)
+        row["gate"] = "direct" if is_gate_probe else "context"
         rows.append(row)
         if row["status"] == "regression":
-            regression_count += 1
+            if is_gate_probe:
+                regression_count += 1
+            else:
+                context_regression_count += 1
         if row["status"] in {"verification_failed", "probe_failed", "missing_result"}:
-            verification_failure_count += 1
+            if is_gate_probe:
+                verification_failure_count += 1
+            else:
+                context_verification_failure_count += 1
     status = "ok"
     if verification_failure_count:
         status = "verification_failed"
@@ -321,8 +349,11 @@ def build_performance_report(
             "changed_file_count": len(_string_list(scope.get("changed_files"))),
             "selected_probe_count": len(selected_probes),
             "regression_count": regression_count,
+            "context_regression_count": context_regression_count,
             "verification_failure_count": verification_failure_count,
-            "force_all": bool(scope.get("force_all", False)),
+            "context_verification_failure_count": context_verification_failure_count,
+            "force_all": force_all,
+            "matched_probe_count": len(gate_probe_ids),
         },
         "changed_files": _string_list(scope.get("changed_files")),
         "rows": rows,
@@ -336,7 +367,9 @@ def render_terminal_report(report: dict[str, object]) -> str:
         f"Status: {summary.get('status', 'ok')}",
         f"Changed files: {summary.get('changed_file_count', 0)}",
         f"Selected probes: {summary.get('selected_probe_count', 0)}",
+        f"Direct/gated probes: {summary.get('matched_probe_count', summary.get('selected_probe_count', 0))}",
         f"Regressions: {summary.get('regression_count', 0)}",
+        f"Context regressions: {summary.get('context_regression_count', 0)}",
         f"Verification failures: {summary.get('verification_failure_count', 0)}",
         "",
     ]
@@ -358,7 +391,9 @@ def render_markdown_report(report: dict[str, object]) -> str:
         f"- Status: `{summary.get('status', 'ok')}`",
         f"- Changed files: `{summary.get('changed_file_count', 0)}`",
         f"- Selected probes: `{summary.get('selected_probe_count', 0)}`",
+        f"- Direct/gated probes: `{summary.get('matched_probe_count', summary.get('selected_probe_count', 0))}`",
         f"- Regressions: `{summary.get('regression_count', 0)}`",
+        f"- Context regressions: `{summary.get('context_regression_count', 0)}`",
         f"- Verification failures: `{summary.get('verification_failure_count', 0)}`",
         "",
     ]
@@ -2131,6 +2166,7 @@ def _render_probe_terminal_block(row: dict[str, object]) -> list[str]:
     lines = [
         f"Probe: {row['name']}",
         f"  Status: {row['status']}",
+        f"  Gate: {row.get('gate', 'direct')}",
         f"  Targeted tests: {'pass' if row['test_ok'] else 'fail'}",
         f"  Coverage: {'pass' if row['coverage_ok'] else 'fail'}"
         + (f" ({row['coverage_pct']}%)" if row.get('coverage_pct') is not None else ""),
@@ -2153,6 +2189,7 @@ def _render_probe_markdown_block(row: dict[str, object]) -> list[str]:
         f"## {row['name']}",
         "",
         f"- Status: `{row['status']}`",
+        f"- Gate: `{row.get('gate', 'direct')}`",
         f"- Targeted tests: `{'pass' if row['test_ok'] else 'fail'}`",
         f"- Coverage: `{'pass' if row['coverage_ok'] else 'fail'}`"
         + (f" (`{row['coverage_pct']}%`)" if row.get('coverage_pct') is not None else ""),
