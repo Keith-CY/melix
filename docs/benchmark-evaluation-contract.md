@@ -9,6 +9,15 @@ Define the canonical product contract for Melix operator benchmarking after the 
 
 This specification defines the required inputs, outputs, persistence shape, and presentation rules for both product lines. It does not define implementation sequencing; execution planning remains under `docs/plans/`.
 
+Structured run evidence, probe timelines, Apple Silicon telemetry, report JSON,
+and PR or release-gate verification are governed by
+`docs/evidence-telemetry-report-contract.md`. This document remains the domain
+contract for benchmark and evaluation semantics; the evidence contract defines
+how those results become auditable operator and release artifacts. For new
+evidence and report artifacts, the evidence contract is authoritative and does
+not inherit legacy export compatibility allowances documented later in this
+file.
+
 ## Scope
 
 This contract applies to:
