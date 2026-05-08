@@ -57,6 +57,24 @@ struct BenchmarkExportBundleTests {
         #expect(emptyBundle?.benchmarkCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms\n")
     }
 
+    @Test("decodes unified run evidence envelopes from export bundles")
+    func decodesUnifiedRunEvidence() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: runEvidenceExportBundleJSON)
+        let evidence = try #require(bundle.runEvidence.first)
+
+        #expect(evidence.schemaVersion == "melix.run_evidence.v1")
+        #expect(evidence.runID == "eval-1")
+        #expect(evidence.runKind == "evaluation")
+        #expect(evidence.targetModelID == "melix-dev-text")
+        #expect(evidence.runtimeConfig["scoring_mode"] == .string("exact_match"))
+        #expect(evidence.metrics.first?.name == "eval.mmlu.accuracy")
+        #expect(evidence.probeTimeline.first?.phase == "artifact_write")
+        #expect(evidence.probeTimeline.first?.attributes["artifact_count"] == .number(2))
+        #expect(evidence.telemetrySummary.collectorStatus == "not_collected")
+        #expect(evidence.artifacts.first?.path == "evaluation-result.json")
+        #expect(evidence.failureSummary["failed"] == .bool(false))
+    }
+
     @Test("falls back to job parameters, sorts deterministically, and quotes csv fields")
     func fallsBackToParametersSortsDeterministicallyAndQuotesCSVFields() throws {
         let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: benchmarkExportBundleFallbackJSON)
@@ -385,6 +403,99 @@ struct BenchmarkExportBundleTests {
         #expect(sampleJSONL.contains(#""failure_stage":"scoring""#))
     }
 }
+
+private let runEvidenceExportBundleJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "exported_at_unix_ms": 1712400000000,
+  "run_evidence": [
+    {
+      "schema_version": "melix.run_evidence.v1",
+      "run_id": "eval-1",
+      "melix_commit": "abc123",
+      "git_branch": "main",
+      "dirty_worktree": false,
+      "run_kind": "evaluation",
+      "started_at": 1712400000000,
+      "ended_at": 1712400000100,
+      "duration_ms": 100,
+      "status": "completed",
+      "command": "melix eval run",
+      "artifact_root": "/tmp/melix/evaluation/runs/eval-1",
+      "target_model_id": "melix-dev-text",
+      "hf_repo_id": "HuggingFaceH4/ultrachat_200k",
+      "task_kind": "text-generation",
+      "model_snapshot": "snapshot-a",
+      "adapter_id": "",
+      "adapter_snapshot": "",
+      "runtime_kind": "deterministic",
+      "runtime_config": {
+        "scoring_mode": "exact_match"
+      },
+      "dataset_ref": "mmlu.dev.v1",
+      "dataset_revision": "main",
+      "suite_id": "mmlu",
+      "sample_count": 1,
+      "input_digest": "input-sha",
+      "prompt_template_digest": "prompt-sha",
+      "generation_config": {
+        "seed": 7
+      },
+      "metrics": [
+        {
+          "name": "eval.mmlu.accuracy",
+          "value": 1.0,
+          "unit": "ratio"
+        }
+      ],
+      "probe_timeline": [
+        {
+          "run_id": "eval-1",
+          "trace_id": "eval-1:trace",
+          "span_id": "eval-1:artifact_write",
+          "parent_span_id": "",
+          "component": "report",
+          "phase": "artifact_write",
+          "started_at_monotonic_ms": 10,
+          "duration_ms": 2.5,
+          "status": "completed",
+          "error_stage": "",
+          "error_code": "",
+          "attributes": {
+            "artifact_count": 2
+          }
+        }
+      ],
+      "telemetry_summary": {
+        "schema_version": "melix.telemetry_summary.v1",
+        "collector_status": "not_collected",
+        "time_series_path": "",
+        "telemetry_failures": [
+          "apple_silicon_telemetry_collector_not_connected_until_milestone_3"
+        ]
+      },
+      "artifacts": [
+        {
+          "kind": "result",
+          "path": "evaluation-result.json",
+          "role": "result"
+        }
+      ],
+      "failure_summary": {
+        "failed": false
+      },
+      "fallback_summary": {
+        "fallback_count": 0
+      },
+      "domain_results": {
+        "evaluation": {
+          "sample_count": 1
+        }
+      }
+    }
+  ]
+}
+"""
 
 private let benchmarkExportBundleJSON = """
 {

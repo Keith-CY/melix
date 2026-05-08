@@ -574,6 +574,10 @@ def _write_eval_compare_fixtures(root: Path) -> None:
 
 def test_collect_benchmark_artifacts_finds_persisted_bench_files(tmp_path: Path) -> None:
     _write_bench_fixtures(tmp_path)
+    (tmp_path / "run-evidence.json").write_text(
+        json.dumps({"schema_version": "melix.run_evidence.v1", "run_id": "bench-1"}) + "\n",
+        encoding="utf-8",
+    )
 
     result = collect_benchmark_artifacts(tmp_path)
 
@@ -585,6 +589,7 @@ def test_collect_benchmark_artifacts_finds_persisted_bench_files(tmp_path: Path)
     assert len(result["benchmark_batch_rows"]) == 1
     assert len(result["benchmark_results"]) == 1
     assert result["benchmark_results"][0]["suite"] == "smoke"
+    assert result["run_evidence"][0]["run_id"] == "bench-1"
 
 
 def test_collect_benchmark_artifacts_falls_back_to_legacy_job_json(tmp_path: Path) -> None:
@@ -1208,6 +1213,10 @@ def test_collect_evaluation_artifacts_ignores_blank_and_non_object_jsonl_rows(tm
 
 def test_collect_evaluation_artifacts_finds_persisted_eval_files(tmp_path: Path) -> None:
     _write_eval_fixtures(tmp_path)
+    (tmp_path / "run-evidence.json").write_text(
+        json.dumps({"schema_version": "melix.run_evidence.v1", "run_id": "eval-1"}) + "\n",
+        encoding="utf-8",
+    )
 
     result = collect_evaluation_artifacts(tmp_path)
 
@@ -1217,6 +1226,7 @@ def test_collect_evaluation_artifacts_finds_persisted_eval_files(tmp_path: Path)
     assert result["evaluation_results"][0]["suite_id"] == "mmlu"
     assert len(result["evaluation_samples"]) == 1
     assert result["evaluation_samples"][0]["sample_id"] == "1"
+    assert result["run_evidence"][0]["run_id"] == "eval-1"
 
 
 def test_collect_evaluation_artifacts_prefers_persisted_summary_json_when_present(tmp_path: Path) -> None:
@@ -1681,6 +1691,7 @@ def test_collect_benchmark_artifacts_returns_empty_lists_for_nonexistent_directo
     assert result["benchmark_matrix_jobs"] == []
     assert result["benchmark_matrix_summary_rows"] == []
     assert result["benchmark_matrix_request_rows"] == []
+    assert result["run_evidence"] == []
 
 
 def test_collect_evaluation_artifacts_returns_empty_lists_for_nonexistent_directory(
@@ -1692,6 +1703,7 @@ def test_collect_evaluation_artifacts_returns_empty_lists_for_nonexistent_direct
     assert result["evaluation_results"] == []
     assert result["evaluation_summary_rows"] == []
     assert result["evaluation_samples"] == []
+    assert result["run_evidence"] == []
 
 
 def test_build_comparison_table_returns_empty_string_for_no_runs() -> None:

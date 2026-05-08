@@ -178,10 +178,18 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     assert persisted["summary_csv"] == run_root / "evaluation-summary.csv"
     assert persisted["samples_jsonl"] == run_root / "evaluation-samples.jsonl"
     assert persisted["samples_csv"] == run_root / "evaluation-samples.csv"
+    assert persisted["evidence"] == run_root / "run-evidence.json"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == job.to_dict()
     assert json.loads(persisted["result"].read_text(encoding="utf-8")) == result.to_dict()
     assert json.loads(persisted["summary_json"].read_text(encoding="utf-8"))["scored_sample_count"] == 2
     assert json.loads(persisted["samples_jsonl"].read_text(encoding="utf-8").strip()) == sample.to_dict()
+    evidence = json.loads(persisted["evidence"].read_text(encoding="utf-8"))
+    assert evidence["schema_version"] == "melix.run_evidence.v1"
+    assert evidence["run_id"] == "eval-local"
+    assert evidence["run_kind"] == "evaluation"
+    assert evidence["target_model_id"] == "melix-dev-text"
+    assert evidence["probe_timeline"][0]["phase"] == "artifact_write"
+    assert evidence["telemetry_summary"]["collector_status"] == "not_collected"
     assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,duration_seconds,created_at_unix_ms\n"
     )
@@ -195,6 +203,7 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     )
 
     export_bundle = collect_evaluation_artifacts(jobs_root)
+    assert export_bundle["run_evidence"][0]["run_id"] == "eval-local"
     assert len(export_bundle["evaluation_summary_rows"]) == 1
     assert build_evaluation_summary_csv(export_bundle).startswith(
         "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\r\n"

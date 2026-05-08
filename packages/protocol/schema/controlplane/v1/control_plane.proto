@@ -220,6 +220,7 @@ message OpsReply {
   BenchmarkMatrixJobSummary benchmark_matrix_job = 12;
   repeated BenchmarkMatrixSummaryRow benchmark_matrix_summary_rows = 13;
   DoctorReport doctor = 14;
+  string evidence_path = 15;
 }
 
 message PresetReply {
@@ -557,6 +558,7 @@ message BenchmarkResultSummary {
   repeated BenchmarkMetricValue metrics = 4;
   string report_path = 5;
   string report_markdown = 6;
+  string evidence_path = 7;
 }
 
 message BenchmarkMatrixJobSummary {
@@ -629,6 +631,7 @@ message EvaluationResultSummary {
   uint32 sample_size = 5;
   repeated BenchmarkMetricValue metrics = 6;
   string report_path = 7;
+  string evidence_path = 8;
 }
 
 message HubModelSummary {

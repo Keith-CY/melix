@@ -4065,6 +4065,7 @@ struct ControlPlaneServiceTests {
     @Test("execute handles ops.run_bench through the model-operations worker")
     func executeHandlesOpsRunBenchThroughTheModelOperationsWorker() async throws {
         let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-report.md").path
+        let evidencePath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-run-evidence.json").path
         try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
 
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
@@ -4094,6 +4095,7 @@ struct ControlPlaneServiceTests {
                 var event = Melix_Worker_V1_RunBenchEvent()
                 event.completed = Melix_Worker_V1_BenchCompleted()
                 event.completed.reportPath = reportPath
+                event.completed.evidencePath = evidencePath
                 return event
             }(),
         ])
@@ -4114,6 +4116,7 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.suites == ["smoke", "latency"])
         #expect(lastRequest.parameters["require_live_model"] == nil)
         #expect(response.ops.reportPath == reportPath)
+        #expect(response.ops.evidencePath == evidencePath)
         #expect(response.ops.reportMarkdown.contains("Melix Bench"))
         #expect(response.ops.metrics.values["bench.smoke.ttft_ms"] == 24.45)
         #expect(response.ops.benchmarkJob.schemaVersion == "melix.serving_benchmark_job.v1")
@@ -4129,6 +4132,7 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.benchmarkResults[0].metrics[0].name == "bench.smoke.ttft_ms")
         #expect(response.ops.benchmarkResults[0].metrics[0].unit == "ms")
         #expect(response.ops.benchmarkResults[0].metrics[0].value == 24.45)
+        #expect(response.ops.benchmarkResults[0].evidencePath == evidencePath)
         #expect(snapshot.ops.metrics.values["bench.smoke.ttft_ms"] == 24.45)
     }
 
@@ -5252,6 +5256,7 @@ struct ControlPlaneServiceTests {
             metric.value = 1.0
             result.metrics = [metric]
             result.reportPath = "/tmp/melix-evaluation.json"
+            result.evidencePath = "/tmp/melix-evaluation-run-evidence.json"
             response.results = [result]
             return response
         }())
@@ -5294,6 +5299,7 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.evaluationResults[0].metrics.count == 1)
         #expect(response.ops.evaluationResults[0].metrics[0].name == "eval.qa_smoke.accuracy")
         #expect(response.ops.evaluationResults[0].metrics[0].value == 1.0)
+        #expect(response.ops.evaluationResults[0].evidencePath == "/tmp/melix-evaluation-run-evidence.json")
     }
 
     @Test("execute forwards canonical evaluation request fields to the worker request")

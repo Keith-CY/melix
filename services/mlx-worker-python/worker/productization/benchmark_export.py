@@ -78,6 +78,7 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
     matrix_jobs: list[dict[str, object]] = []
     matrix_summary_rows: list[dict[str, object]] = []
     matrix_request_rows: list[dict[str, object]] = []
+    run_evidence: list[dict[str, object]] = []
 
     _collect_benchmark_run(
         jobs_root,
@@ -85,6 +86,7 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
         context_rows=context_rows,
         batch_rows=batch_rows,
         results=results,
+        run_evidence=run_evidence,
     )
     matrix_roots = [jobs_root]
     nested_bench_root = jobs_root / "bench"
@@ -105,6 +107,7 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
             context_rows=context_rows,
             batch_rows=batch_rows,
             results=results,
+            run_evidence=run_evidence,
         )
     for matrix_root in matrix_roots:
         matrix_runs_root = matrix_root / "matrix-runs"
@@ -125,6 +128,7 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
         "benchmark_matrix_jobs": matrix_jobs,
         "benchmark_matrix_summary_rows": matrix_summary_rows,
         "benchmark_matrix_request_rows": matrix_request_rows,
+        "run_evidence": _dedupe_run_evidence(run_evidence),
     }
 
 
@@ -142,6 +146,7 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
     compare_jobs: list[dict[str, object]] = []
     compare_summary_rows: list[dict[str, object]] = []
     compare_samples: list[dict[str, object]] = []
+    run_evidence: list[dict[str, object]] = []
 
     _collect_evaluation_run(
         jobs_root,
@@ -152,6 +157,7 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
         compare_jobs=compare_jobs,
         compare_summary_rows=compare_summary_rows,
         compare_samples=compare_samples,
+        run_evidence=run_evidence,
     )
     runs_root = jobs_root / "runs"
     for run_root in _iter_sorted_child_directories(runs_root):
@@ -164,6 +170,7 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
             compare_jobs=compare_jobs,
             compare_summary_rows=compare_summary_rows,
             compare_samples=compare_samples,
+            run_evidence=run_evidence,
         )
 
     return {
@@ -174,6 +181,7 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
         "evaluation_compare_jobs": compare_jobs,
         "evaluation_compare_summary_rows": compare_summary_rows,
         "evaluation_compare_samples": compare_samples,
+        "run_evidence": _dedupe_run_evidence(run_evidence),
     }
 
 
@@ -203,11 +211,20 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
     else:
         benchmark = collect_benchmark_artifacts(jobs_root)
         evaluation = collect_evaluation_artifacts(jobs_root)
+    run_evidence = _dedupe_run_evidence(
+        [
+            *[row for row in benchmark.get("run_evidence", []) if isinstance(row, dict)],
+            *[row for row in evaluation.get("run_evidence", []) if isinstance(row, dict)],
+        ]
+    )
+    benchmark_payload = {key: value for key, value in benchmark.items() if key != "run_evidence"}
+    evaluation_payload = {key: value for key, value in evaluation.items() if key != "run_evidence"}
     return {
         "export_schema_version": _EXPORT_SCHEMA_VERSION,
         "exported_at_unix_ms": int(time.time() * 1000),
-        **benchmark,
-        **evaluation,
+        **benchmark_payload,
+        **evaluation_payload,
+        "run_evidence": run_evidence,
     }
 
 
@@ -230,6 +247,7 @@ def _collect_shared_export_artifacts(
     compare_jobs: list[dict[str, object]] = []
     compare_summary_rows: list[dict[str, object]] = []
     compare_samples: list[dict[str, object]] = []
+    run_evidence: list[dict[str, object]] = []
 
     _collect_benchmark_run(
         shared_root,
@@ -237,6 +255,7 @@ def _collect_shared_export_artifacts(
         context_rows=context_rows,
         batch_rows=batch_rows,
         results=benchmark_results,
+        run_evidence=run_evidence,
         scanned_entries=shared_scan,
     )
     _collect_evaluation_run(
@@ -248,6 +267,7 @@ def _collect_shared_export_artifacts(
         compare_jobs=compare_jobs,
         compare_summary_rows=compare_summary_rows,
         compare_samples=compare_samples,
+        run_evidence=run_evidence,
         scanned_entries=shared_scan,
     )
 
@@ -302,6 +322,7 @@ def _collect_shared_export_artifacts(
             context_rows=context_rows,
             batch_rows=batch_rows,
             results=benchmark_results,
+            run_evidence=run_evidence,
             scanned_entries=run_scan,
         )
         _collect_evaluation_run(
@@ -313,6 +334,7 @@ def _collect_shared_export_artifacts(
             compare_jobs=compare_jobs,
             compare_summary_rows=compare_summary_rows,
             compare_samples=compare_samples,
+            run_evidence=run_evidence,
             scanned_entries=run_scan,
         )
 
@@ -325,6 +347,7 @@ def _collect_shared_export_artifacts(
         "benchmark_matrix_jobs": matrix_jobs,
         "benchmark_matrix_summary_rows": matrix_summary_rows,
         "benchmark_matrix_request_rows": matrix_request_rows,
+        "run_evidence": _dedupe_run_evidence(run_evidence),
     }
     evaluation = {
         "evaluation_jobs": evaluation_jobs,
@@ -683,6 +706,18 @@ def _try_iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
         return
 
 
+def _dedupe_run_evidence(rows: Iterable[dict[str, object]]) -> list[dict[str, object]]:
+    deduped: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        key = (str(row.get("schema_version", "")), str(row.get("run_id", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
 def _collect_benchmark_run(
     run_root: Path,
     *,
@@ -690,6 +725,7 @@ def _collect_benchmark_run(
     context_rows: list[dict[str, object]],
     batch_rows: list[dict[str, object]],
     results: list[dict[str, object]],
+    run_evidence: list[dict[str, object]] | None = None,
     scanned_entries: _ScannedDirectoryEntries | None = None,
 ) -> None:
     scan = scanned_entries if scanned_entries is not None and scanned_entries.directory == run_root else _scan_directory(run_root)
@@ -700,6 +736,7 @@ def _collect_benchmark_run(
     context_path = scan.file_path("bench-context-rows.jsonl")
     batch_path = scan.file_path("bench-batch-rows.jsonl")
     result_paths = scan.matching_file_paths(prefix="bench-result-", suffix=".json")
+    evidence_path = scan.file_path("run-evidence.json")
 
     if summary_path is not None:
         summary_row = _try_load_json_object(summary_path)
@@ -724,6 +761,11 @@ def _collect_benchmark_run(
         result_row = _try_load_json_object(result_path)
         if result_row is not None:
             results.append(result_row)
+
+    if run_evidence is not None and evidence_path is not None:
+        evidence_row = _try_load_json_object(evidence_path)
+        if evidence_row is not None:
+            run_evidence.append(evidence_row)
 
 
 def _collect_benchmark_matrix_run(
@@ -1038,6 +1080,7 @@ def _collect_evaluation_run(
     compare_jobs: list[dict[str, object]],
     compare_summary_rows: list[dict[str, object]],
     compare_samples: list[dict[str, object]],
+    run_evidence: list[dict[str, object]] | None = None,
     scanned_entries: _ScannedDirectoryEntries | None = None,
 ) -> None:
     scan = scanned_entries if scanned_entries is not None and scanned_entries.directory == run_root else _scan_directory(run_root)
@@ -1050,6 +1093,12 @@ def _collect_evaluation_run(
     compare_job_path = scan.file_path("evaluation-compare-job.json")
     compare_summary_path = scan.file_path("evaluation-compare-summary.json")
     compare_samples_path = scan.file_path("evaluation-compare-samples.jsonl")
+    evidence_path = scan.file_path("run-evidence.json")
+
+    if run_evidence is not None and evidence_path is not None:
+        evidence_row = _try_load_json_object(evidence_path)
+        if evidence_row is not None:
+            run_evidence.append(evidence_row)
 
     job: dict[str, object] | None = None
     if job_path is not None:

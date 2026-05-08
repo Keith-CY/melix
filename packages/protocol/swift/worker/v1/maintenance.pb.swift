@@ -595,6 +595,8 @@ public struct Melix_Worker_V1_BenchCompleted: Sendable {
 
   public var reportPath: String = String()
 
+  public var evidencePath: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1187,6 +1189,8 @@ public struct Melix_Worker_V1_WorkerEvaluationResult: Sendable {
   public var metrics: [Melix_Worker_V1_EvaluationMetricValue] = []
 
   public var reportPath: String = String()
+
+  public var evidencePath: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2800,7 +2804,7 @@ extension Melix_Worker_V1_BenchMetric: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 extension Melix_Worker_V1_BenchCompleted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BenchCompleted"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}report_path\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}report_path\0\u{3}evidence_path\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2809,6 +2813,7 @@ extension Melix_Worker_V1_BenchCompleted: SwiftProtobuf.Message, SwiftProtobuf._
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.reportPath) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.evidencePath) }()
       default: break
       }
     }
@@ -2818,11 +2823,15 @@ extension Melix_Worker_V1_BenchCompleted: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.reportPath.isEmpty {
       try visitor.visitSingularStringField(value: self.reportPath, fieldNumber: 1)
     }
+    if !self.evidencePath.isEmpty {
+      try visitor.visitSingularStringField(value: self.evidencePath, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_BenchCompleted, rhs: Melix_Worker_V1_BenchCompleted) -> Bool {
     if lhs.reportPath != rhs.reportPath {return false}
+    if lhs.evidencePath != rhs.evidencePath {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -3972,7 +3981,7 @@ extension Melix_Worker_V1_WorkerEvaluationJob: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Worker_V1_WorkerEvaluationResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkerEvaluationResult"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}metrics\0\u{3}report_path\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}metrics\0\u{3}report_path\0\u{3}evidence_path\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3987,6 +3996,7 @@ extension Melix_Worker_V1_WorkerEvaluationResult: SwiftProtobuf.Message, SwiftPr
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.sampleSize) }()
       case 6: try { try decoder.decodeRepeatedMessageField(value: &self.metrics) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.reportPath) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.evidencePath) }()
       default: break
       }
     }
@@ -4014,6 +4024,9 @@ extension Melix_Worker_V1_WorkerEvaluationResult: SwiftProtobuf.Message, SwiftPr
     if !self.reportPath.isEmpty {
       try visitor.visitSingularStringField(value: self.reportPath, fieldNumber: 7)
     }
+    if !self.evidencePath.isEmpty {
+      try visitor.visitSingularStringField(value: self.evidencePath, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4025,6 +4038,7 @@ extension Melix_Worker_V1_WorkerEvaluationResult: SwiftProtobuf.Message, SwiftPr
     if lhs.sampleSize != rhs.sampleSize {return false}
     if lhs.metrics != rhs.metrics {return false}
     if lhs.reportPath != rhs.reportPath {return false}
+    if lhs.evidencePath != rhs.evidencePath {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

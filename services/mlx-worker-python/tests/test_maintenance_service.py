@@ -4567,6 +4567,7 @@ def test_doctor_and_bench_return_deterministic_reports(tmp_path: Path) -> None:
     assert any(event.HasField("metric") and event.metric.name == "bench.smoke.ttft_ms" for event in bench_events)
     assert any(event.HasField("metric") and event.metric.name == "bench.latency.p95_ms" for event in bench_events)
     assert bench_events[-1].completed.report_path.endswith("bench-report.md")
+    assert bench_events[-1].completed.evidence_path.endswith("run-evidence.json")
     report = Path(bench_events[-1].completed.report_path).read_text(encoding="utf-8")
     assert "# Melix Bench" in report
     assert "bench.smoke.ttft_ms" in report
@@ -4595,10 +4596,16 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
     )
 
     report_path = Path(events[-1].completed.report_path)
+    evidence_path = Path(events[-1].completed.evidence_path)
     run_dir = report_path.parent
     summary = json.loads((run_dir / "bench-summary.json").read_text(encoding="utf-8"))
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     report = report_path.read_text(encoding="utf-8")
 
+    assert evidence_path == run_dir / "run-evidence.json"
+    assert evidence["run_id"] == events[0].started.job_id
+    assert evidence["probe_timeline"][0]["phase"] == "artifact_write"
+    assert evidence["telemetry_summary"]["collector_status"] == "not_collected"
     assert summary["parameters"]["runtime_live_model"] == "true"
     assert summary["parameters"]["runtime_name"] == "fast-benchmark"
     assert summary["parameters"]["runtime_model_handle"] == loaded.handle
@@ -4637,9 +4644,11 @@ def test_run_bench_persists_report_without_reading_report_file(tmp_path: Path, m
     )
 
     report_path = Path(events[-1].completed.report_path)
+    evidence_path = Path(events[-1].completed.evidence_path)
     report = original_read_text(report_path, encoding="utf-8")
 
     assert report_path.name == "bench-report.md"
+    assert evidence_path.name == "run-evidence.json"
     assert "# Melix Bench" in report
     assert "runtime_name: fast-benchmark" in report
 
@@ -6372,6 +6381,7 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     )
 
     report_path = Path(events[-1].completed.report_path)
+    evidence_path = Path(events[-1].completed.evidence_path)
     run_dir = tmp_path / "model-ops" / "bench" / "runs" / events[0].started.job_id
     bench_parameters = {
         "context_lengths": "16,32",
@@ -6399,6 +6409,7 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     batch_rows_path = run_dir / "bench-batch-rows.jsonl"
     smoke_result = run_dir / "bench-result-smoke.json"
     latency_result = run_dir / "bench-result-latency.json"
+    run_evidence = run_dir / "run-evidence.json"
 
     assert job_manifest.exists() is True
     assert summary_manifest.exists() is True
@@ -6406,7 +6417,9 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     assert batch_rows_path.exists() is True
     assert smoke_result.exists() is True
     assert latency_result.exists() is True
+    assert run_evidence.exists() is True
     assert report_path.parent == run_dir
+    assert evidence_path == run_evidence
 
     job_payload = json.loads(job_manifest.read_text(encoding="utf-8"))
     summary_payload = json.loads(summary_manifest.read_text(encoding="utf-8"))

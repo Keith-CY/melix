@@ -2672,6 +2672,11 @@ public struct Melix_Controlplane_V1_OpsReply: @unchecked Sendable {
   /// Clears the value of `doctor`. Subsequent reads from it will return its default value.
   public mutating func clearDoctor() {_uniqueStorage()._doctor = nil}
 
+  public var evidencePath: String {
+    get {_storage._evidencePath}
+    set {_uniqueStorage()._evidencePath = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3802,6 +3807,8 @@ public struct Melix_Controlplane_V1_BenchmarkResultSummary: Sendable {
 
   public var reportMarkdown: String = String()
 
+  public var evidencePath: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4047,6 +4054,8 @@ public struct Melix_Controlplane_V1_EvaluationResultSummary: Sendable {
   public var metrics: [Melix_Controlplane_V1_BenchmarkMetricValue] = []
 
   public var reportPath: String = String()
+
+  public var evidencePath: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -9187,7 +9196,7 @@ extension Melix_Controlplane_V1_SessionReply: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".OpsReply"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}report_path\0\u{3}report_markdown\0\u{1}metrics\0\u{3}benchmark_job\0\u{3}benchmark_results\0\u{3}evaluation_job\0\u{3}evaluation_results\0\u{3}export_bundle_json\0\u{3}submission_json\0\u{3}hub_search\0\u{3}hub_model_card\0\u{3}benchmark_matrix_job\0\u{3}benchmark_matrix_summary_rows\0\u{1}doctor\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}report_path\0\u{3}report_markdown\0\u{1}metrics\0\u{3}benchmark_job\0\u{3}benchmark_results\0\u{3}evaluation_job\0\u{3}evaluation_results\0\u{3}export_bundle_json\0\u{3}submission_json\0\u{3}hub_search\0\u{3}hub_model_card\0\u{3}benchmark_matrix_job\0\u{3}benchmark_matrix_summary_rows\0\u{1}doctor\0\u{3}evidence_path\0")
 
   fileprivate class _StorageClass {
     var _reportPath: String = String()
@@ -9204,6 +9213,7 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
     var _benchmarkMatrixJob: Melix_Controlplane_V1_BenchmarkMatrixJobSummary? = nil
     var _benchmarkMatrixSummaryRows: [Melix_Controlplane_V1_BenchmarkMatrixSummaryRow] = []
     var _doctor: Melix_Controlplane_V1_DoctorReport? = nil
+    var _evidencePath: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -9228,6 +9238,7 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
       _benchmarkMatrixJob = source._benchmarkMatrixJob
       _benchmarkMatrixSummaryRows = source._benchmarkMatrixSummaryRows
       _doctor = source._doctor
+      _evidencePath = source._evidencePath
     }
   }
 
@@ -9260,6 +9271,7 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
         case 12: try { try decoder.decodeSingularMessageField(value: &_storage._benchmarkMatrixJob) }()
         case 13: try { try decoder.decodeRepeatedMessageField(value: &_storage._benchmarkMatrixSummaryRows) }()
         case 14: try { try decoder.decodeSingularMessageField(value: &_storage._doctor) }()
+        case 15: try { try decoder.decodeSingularStringField(value: &_storage._evidencePath) }()
         default: break
         }
       }
@@ -9314,6 +9326,9 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
       try { if let v = _storage._doctor {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
       } }()
+      if !_storage._evidencePath.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._evidencePath, fieldNumber: 15)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -9337,6 +9352,7 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
         if _storage._benchmarkMatrixJob != rhs_storage._benchmarkMatrixJob {return false}
         if _storage._benchmarkMatrixSummaryRows != rhs_storage._benchmarkMatrixSummaryRows {return false}
         if _storage._doctor != rhs_storage._doctor {return false}
+        if _storage._evidencePath != rhs_storage._evidencePath {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -11882,7 +11898,7 @@ extension Melix_Controlplane_V1_BenchmarkJobSummary: SwiftProtobuf.Message, Swif
 
 extension Melix_Controlplane_V1_BenchmarkResultSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BenchmarkResultSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{1}suite\0\u{1}metrics\0\u{3}report_path\0\u{3}report_markdown\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{1}suite\0\u{1}metrics\0\u{3}report_path\0\u{3}report_markdown\0\u{3}evidence_path\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -11896,6 +11912,7 @@ extension Melix_Controlplane_V1_BenchmarkResultSummary: SwiftProtobuf.Message, S
       case 4: try { try decoder.decodeRepeatedMessageField(value: &self.metrics) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.reportPath) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.reportMarkdown) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.evidencePath) }()
       default: break
       }
     }
@@ -11920,6 +11937,9 @@ extension Melix_Controlplane_V1_BenchmarkResultSummary: SwiftProtobuf.Message, S
     if !self.reportMarkdown.isEmpty {
       try visitor.visitSingularStringField(value: self.reportMarkdown, fieldNumber: 6)
     }
+    if !self.evidencePath.isEmpty {
+      try visitor.visitSingularStringField(value: self.evidencePath, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -11930,6 +11950,7 @@ extension Melix_Controlplane_V1_BenchmarkResultSummary: SwiftProtobuf.Message, S
     if lhs.metrics != rhs.metrics {return false}
     if lhs.reportPath != rhs.reportPath {return false}
     if lhs.reportMarkdown != rhs.reportMarkdown {return false}
+    if lhs.evidencePath != rhs.evidencePath {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -12367,7 +12388,7 @@ extension Melix_Controlplane_V1_EvaluationJobSummary: SwiftProtobuf.Message, Swi
 
 extension Melix_Controlplane_V1_EvaluationResultSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EvaluationResultSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}metrics\0\u{3}report_path\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}metrics\0\u{3}report_path\0\u{3}evidence_path\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -12382,6 +12403,7 @@ extension Melix_Controlplane_V1_EvaluationResultSummary: SwiftProtobuf.Message, 
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.sampleSize) }()
       case 6: try { try decoder.decodeRepeatedMessageField(value: &self.metrics) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.reportPath) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.evidencePath) }()
       default: break
       }
     }
@@ -12409,6 +12431,9 @@ extension Melix_Controlplane_V1_EvaluationResultSummary: SwiftProtobuf.Message, 
     if !self.reportPath.isEmpty {
       try visitor.visitSingularStringField(value: self.reportPath, fieldNumber: 7)
     }
+    if !self.evidencePath.isEmpty {
+      try visitor.visitSingularStringField(value: self.evidencePath, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -12420,6 +12445,7 @@ extension Melix_Controlplane_V1_EvaluationResultSummary: SwiftProtobuf.Message, 
     if lhs.sampleSize != rhs.sampleSize {return false}
     if lhs.metrics != rhs.metrics {return false}
     if lhs.reportPath != rhs.reportPath {return false}
+    if lhs.evidencePath != rhs.evidencePath {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

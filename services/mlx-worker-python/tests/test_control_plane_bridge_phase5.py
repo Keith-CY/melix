@@ -138,7 +138,10 @@ class FakeMaintenanceStub:
             metric=maintenance_pb2.BenchMetric(name="bench.smoke.ttft_ms", value=24.45, unit="ms")
         )
         yield maintenance_pb2.RunBenchEvent(
-            completed=maintenance_pb2.BenchCompleted(report_path="/tmp/model-ops/bench-report.md")
+            completed=maintenance_pb2.BenchCompleted(
+                report_path="/tmp/model-ops/bench-report.md",
+                evidence_path="/tmp/model-ops/run-evidence.json",
+            )
         )
 
     def RunBenchMatrix(self, request):
@@ -191,6 +194,7 @@ class FakeMaintenanceStub:
         metric.name = f"eval.{request.suite_id}.accuracy"
         metric.value = 1.0
         result.report_path = "/tmp/model-ops/evaluation-result.json"
+        result.evidence_path = "/tmp/model-ops/evaluation-run-evidence.json"
         return response
 
     def SearchHubModels(self, request):
@@ -386,6 +390,7 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
     bench_completed = maintenance_pb2.RunBenchEvent.FromString(base64.b64decode(bench_lines[-1]["message_b64"]))
     assert bench_started.started.job_id == "bench-1"
     assert bench_completed.completed.report_path == "/tmp/model-ops/bench-report.md"
+    assert bench_completed.completed.evidence_path == "/tmp/model-ops/run-evidence.json"
 
     matrix_request = maintenance_pb2.RunBenchMatrixRequest(
         model_handle="melix-dev-text::1",
@@ -447,6 +452,7 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
     assert eval_payload.job.suite_id == "mmlu"
     assert eval_payload.job.dataset_id == "qa_smoke.dev.v1"
     assert eval_payload.results[0].metrics[0].name == "eval.mmlu.accuracy"
+    assert eval_payload.results[0].evidence_path == "/tmp/model-ops/evaluation-run-evidence.json"
 
     search_request = maintenance_pb2.SearchHubModelsRequest(
         query="qwen",

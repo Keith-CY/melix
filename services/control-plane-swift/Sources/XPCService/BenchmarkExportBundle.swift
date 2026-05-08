@@ -47,6 +47,136 @@ public struct ControlPlaneBenchmarkMetricRecord: Codable, Equatable, Sendable {
     public let unit: String
 }
 
+public struct ControlPlaneRunEvidenceMetricRecord: Codable, Equatable, Sendable {
+    public let name: String
+    public let value: Double
+    public let unit: String
+}
+
+public struct ControlPlaneRunEvidenceProbeRecord: Codable, Equatable, Sendable {
+    public let runID: String
+    public let traceID: String
+    public let spanID: String
+    public let parentSpanID: String
+    public let component: String
+    public let phase: String
+    public let startedAtMonotonicMS: Int64
+    public let durationMS: Double
+    public let status: String
+    public let errorStage: String
+    public let errorCode: String
+    public let attributes: [String: StructuredJSONValue]
+
+    enum CodingKeys: String, CodingKey {
+        case runID = "run_id"
+        case traceID = "trace_id"
+        case spanID = "span_id"
+        case parentSpanID = "parent_span_id"
+        case component
+        case phase
+        case startedAtMonotonicMS = "started_at_monotonic_ms"
+        case durationMS = "duration_ms"
+        case status
+        case errorStage = "error_stage"
+        case errorCode = "error_code"
+        case attributes
+    }
+}
+
+public struct ControlPlaneRunEvidenceTelemetrySummaryRecord: Codable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let collectorStatus: String
+    public let timeSeriesPath: String
+    public let telemetryFailures: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case collectorStatus = "collector_status"
+        case timeSeriesPath = "time_series_path"
+        case telemetryFailures = "telemetry_failures"
+    }
+}
+
+public struct ControlPlaneRunEvidenceArtifactRecord: Codable, Equatable, Sendable {
+    public let kind: String
+    public let path: String
+    public let role: String
+}
+
+public struct ControlPlaneRunEvidenceRecord: Codable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let runID: String
+    public let melixCommit: String
+    public let gitBranch: String
+    public let dirtyWorktree: Bool
+    public let runKind: String
+    public let startedAt: Int64
+    public let endedAt: Int64
+    public let durationMS: Int64
+    public let status: String
+    public let command: String
+    public let artifactRoot: String
+    public let targetModelID: String
+    public let hfRepoID: String
+    public let taskKind: String
+    public let modelSnapshot: String
+    public let adapterID: String
+    public let adapterSnapshot: String
+    public let runtimeKind: String
+    public let runtimeConfig: [String: StructuredJSONValue]
+    public let datasetRef: String
+    public let datasetRevision: String
+    public let suiteID: String
+    public let sampleCount: Int
+    public let inputDigest: String
+    public let promptTemplateDigest: String
+    public let generationConfig: [String: StructuredJSONValue]
+    public let metrics: [ControlPlaneRunEvidenceMetricRecord]
+    public let probeTimeline: [ControlPlaneRunEvidenceProbeRecord]
+    public let telemetrySummary: ControlPlaneRunEvidenceTelemetrySummaryRecord
+    public let artifacts: [ControlPlaneRunEvidenceArtifactRecord]
+    public let failureSummary: [String: StructuredJSONValue]
+    public let fallbackSummary: [String: StructuredJSONValue]
+    public let domainResults: [String: StructuredJSONValue]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case runID = "run_id"
+        case melixCommit = "melix_commit"
+        case gitBranch = "git_branch"
+        case dirtyWorktree = "dirty_worktree"
+        case runKind = "run_kind"
+        case startedAt = "started_at"
+        case endedAt = "ended_at"
+        case durationMS = "duration_ms"
+        case status
+        case command
+        case artifactRoot = "artifact_root"
+        case targetModelID = "target_model_id"
+        case hfRepoID = "hf_repo_id"
+        case taskKind = "task_kind"
+        case modelSnapshot = "model_snapshot"
+        case adapterID = "adapter_id"
+        case adapterSnapshot = "adapter_snapshot"
+        case runtimeKind = "runtime_kind"
+        case runtimeConfig = "runtime_config"
+        case datasetRef = "dataset_ref"
+        case datasetRevision = "dataset_revision"
+        case suiteID = "suite_id"
+        case sampleCount = "sample_count"
+        case inputDigest = "input_digest"
+        case promptTemplateDigest = "prompt_template_digest"
+        case generationConfig = "generation_config"
+        case metrics
+        case probeTimeline = "probe_timeline"
+        case telemetrySummary = "telemetry_summary"
+        case artifacts
+        case failureSummary = "failure_summary"
+        case fallbackSummary = "fallback_summary"
+        case domainResults = "domain_results"
+    }
+}
+
 public struct ControlPlaneBenchmarkResultRecord: Codable, Equatable, Sendable {
     public let schemaVersion: String
     public let jobID: String
@@ -1306,6 +1436,7 @@ public struct ControlPlaneEvaluationCompareSampleRecord: Codable, Equatable, Sen
 public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
     public let exportSchemaVersion: String
     public let exportedAtUnixMS: Int64
+    public let runEvidence: [ControlPlaneRunEvidenceRecord]
     public let benchmarkJobs: [ControlPlaneBenchmarkJobRecord]
     public let benchmarkResults: [ControlPlaneBenchmarkResultRecord]
     public let benchmarkMatrixJobs: [ControlPlaneBenchmarkMatrixJobRecord]
@@ -1322,6 +1453,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case exportSchemaVersion = "export_schema_version"
         case exportedAtUnixMS = "exported_at_unix_ms"
+        case runEvidence = "run_evidence"
         case benchmarkJobs = "benchmark_jobs"
         case benchmarkResults = "benchmark_results"
         case benchmarkMatrixJobs = "benchmark_matrix_jobs"
@@ -1340,6 +1472,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         exportSchemaVersion = try container.decodeIfPresent(String.self, forKey: .exportSchemaVersion) ?? ""
         exportedAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .exportedAtUnixMS) ?? 0
+        runEvidence = try container.decodeIfPresent([ControlPlaneRunEvidenceRecord].self, forKey: .runEvidence) ?? []
         benchmarkJobs = try container.decodeIfPresent([ControlPlaneBenchmarkJobRecord].self, forKey: .benchmarkJobs) ?? []
         benchmarkResults = try container.decodeIfPresent([ControlPlaneBenchmarkResultRecord].self, forKey: .benchmarkResults) ?? []
         benchmarkMatrixJobs = try container.decodeIfPresent([ControlPlaneBenchmarkMatrixJobRecord].self, forKey: .benchmarkMatrixJobs) ?? []

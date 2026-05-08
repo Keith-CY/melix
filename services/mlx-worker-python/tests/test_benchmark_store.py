@@ -59,11 +59,19 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
     assert persisted["job"] == jobs_root / "bench-job.json"
     assert persisted["smoke"] == jobs_root / "bench-result-smoke.json"
     assert persisted["latency"] == jobs_root / "bench-result-latency.json"
+    assert persisted["evidence"] == jobs_root / "run-evidence.json"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == job.to_dict()
     expected_results = {result.suite: result.to_dict() for result in results}
 
     assert json.loads(persisted["smoke"].read_text(encoding="utf-8")) == expected_results["smoke"]
     assert json.loads(persisted["latency"].read_text(encoding="utf-8")) == expected_results["latency"]
+    evidence = json.loads(persisted["evidence"].read_text(encoding="utf-8"))
+    assert evidence["schema_version"] == "melix.run_evidence.v1"
+    assert evidence["run_id"] == "bench-123"
+    assert evidence["run_kind"] == "serving_benchmark"
+    assert evidence["target_model_id"] == "melix-dev-text"
+    assert evidence["probe_timeline"][0]["phase"] == "artifact_write"
+    assert evidence["telemetry_summary"]["collector_status"] == "not_collected"
 
 
 def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(

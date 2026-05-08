@@ -1347,7 +1347,7 @@ class MaintenanceCore:
             )
             if self._benchmark_store is None:
                 self._benchmark_store = BenchmarkStore()
-            self._benchmark_store.persist_serving_benchmark(
+            persisted_paths = self._benchmark_store.persist_serving_benchmark(
                 jobs_root=output_dir,
                 job=job_record,
                 results=result_records,
@@ -1374,7 +1374,10 @@ class MaintenanceCore:
                 updated_at_unix_ms=completed_at,
             )
             yield maintenance_pb2.RunBenchEvent(
-                completed=maintenance_pb2.BenchCompleted(report_path=str(report_path))
+                completed=maintenance_pb2.BenchCompleted(
+                    report_path=str(report_path),
+                    evidence_path=str(persisted_paths.get("evidence", "")),
+                )
             )
         finally:
             if lazy_model_handle and loaded_model is not None and lazy_model_handle == loaded_model.handle:
