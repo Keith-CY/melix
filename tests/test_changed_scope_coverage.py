@@ -293,6 +293,26 @@ def test_measurable_changed_lines_skips_source_read_when_no_changed_lines(monkey
     assert read_calls == []
 
 
+def test_measurable_changed_lines_skips_empty_measured_lines(monkeypatch, tmp_path: Path) -> None:
+    coverage_payload = {"files": {"foo.py": {"executed_lines": [], "missing_lines": []}}}
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("source file should not be read when coverage has no measured lines")
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {1, 2},
+    )
+
+    assert measurable == []
+    assert covered == []
+    assert missed == []
+
+
 def test_changed_scope_coverage_probe_emits_empty_path_metrics() -> None:
     metrics = changed_scope_coverage_probe.run_probe(Path(__file__).resolve().parents[1], path_count=5, samples=2)
 

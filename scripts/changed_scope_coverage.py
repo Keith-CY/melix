@@ -92,10 +92,27 @@ def _measurable_changed_lines(
         return [], [], []
 
     entry = coverage_payload["files"][rel_path]
-    executed = set(entry["executed_lines"])
-    missing = set(entry["missing_lines"])
-    measured = executed | missing
-    measured_changed = changed & measured
+    executed_lines = entry["executed_lines"]
+    missing_lines = entry["missing_lines"]
+    if len(executed_lines) == 1 and len(missing_lines) == 1:
+        executed_line = executed_lines[0]
+        missing_line = missing_lines[0]
+        if executed_line not in changed and missing_line not in changed:
+            return [], [], []
+        measured_changed = [
+            line_no
+            for line_no in changed
+            if line_no == executed_line or line_no == missing_line
+        ]
+        executed_lookup = (executed_line,)
+        missing_lookup = (missing_line,)
+    else:
+        executed = set(executed_lines)
+        missing = set(missing_lines)
+        measured = executed | missing
+        measured_changed = changed & measured
+        executed_lookup = executed
+        missing_lookup = missing
     if not measured_changed:
         return [], [], []
 
@@ -105,8 +122,8 @@ def _measurable_changed_lines(
         stripped = source_lines[line_no - 1].strip()
         if stripped and not stripped.startswith("#"):
             measurable.append(line_no)
-    covered = [line_no for line_no in measurable if line_no in executed]
-    missed = [line_no for line_no in measurable if line_no in missing]
+    covered = [line_no for line_no in measurable if line_no in executed_lookup]
+    missed = [line_no for line_no in measurable if line_no in missing_lookup]
     return measurable, covered, missed
 
 
