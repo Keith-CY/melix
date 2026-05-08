@@ -207,6 +207,7 @@ def test_dataset_catalog_selected_split_filters_during_iteration(
     assert iterated_paths == list(supported_paths)
     assert catalog._selected_dataset_files(snapshot_dir, split="missing") == ()
     assert catalog._selected_dataset_files(snapshot_dir, split="") == supported_paths[1:]
+    assert list(catalog._iter_matching_dataset_files(snapshot_dir, split="")) == []
 
 
 def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
@@ -390,6 +391,36 @@ def test_dataset_catalog_row_reader_keeps_split_filtering_eager_for_missing_spli
 
     assert rows == []
     assert sorted(set(considered_paths)) == [train_path, validation_path]
+
+
+def test_dataset_catalog_limited_split_read_stops_after_first_matching_row(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    first_validation = data_dir / "validation-00000.jsonl"
+    train = data_dir / "train-00000.jsonl"
+    later_validation = data_dir / "validation-00001.jsonl"
+    first_validation.write_text('{"prompt":"first-validation"}\n', encoding="utf-8")
+    train.write_text('{"prompt":"train"}\n', encoding="utf-8")
+    later_validation.write_text('{"prompt":"later-validation"}\n', encoding="utf-8")
+    supported_paths = (first_validation, train, later_validation)
+    considered_paths: list[Path] = []
+
+    def fake_supported_files(path: Path):
+        assert path == snapshot_dir
+        for candidate in supported_paths:
+            considered_paths.append(candidate)
+            yield candidate
+
+    monkeypatch.setattr(catalog, "_iter_supported_dataset_files", fake_supported_files)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, split="validation", limit=1)
+
+    assert rows == [{"prompt": "first-validation"}]
+    assert considered_paths == [first_validation]
 
 
 def test_dataset_catalog_reads_json_and_csv_snapshots(tmp_path: Path) -> None:

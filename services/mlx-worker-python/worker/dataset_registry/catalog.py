@@ -439,12 +439,14 @@ def read_hf_dataset_snapshot_rows(
         if remaining == 0:
             return rows
         rows.extend(_read_rows_from_file(path, limit=remaining))
+        if limit is not None and len(rows) >= limit:
+            return rows
     return rows
 
 
 def _iter_selected_dataset_files(snapshot_path: Path, *, split: str) -> Iterator[Path]:
     if split:
-        yield from _selected_dataset_files(snapshot_path, split=split)
+        yield from _iter_matching_dataset_files(snapshot_path, split=split)
         return
     for path in _iter_supported_dataset_files(snapshot_path):
         if path.name not in _README_NAMES:
@@ -506,18 +508,23 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
 def _selected_dataset_files(snapshot_path: Path, *, split: str) -> tuple[Path, ...]:
     normalized_split = _normalized(split)
     if normalized_split:
-        split_matches: list[Path] = []
-        for path in _iter_supported_dataset_files(snapshot_path):
-            if path.name in _README_NAMES:
-                continue
-            if _path_matches_split(path.relative_to(snapshot_path), normalized_split):
-                split_matches.append(path)
-        return tuple(split_matches)
+        return tuple(_iter_matching_dataset_files(snapshot_path, split=normalized_split))
     return tuple(
         path
         for path in _iter_supported_dataset_files(snapshot_path)
         if path.name not in _README_NAMES
     )
+
+
+def _iter_matching_dataset_files(snapshot_path: Path, *, split: str) -> Iterator[Path]:
+    normalized_split = _normalized(split)
+    if not normalized_split:
+        return
+    for path in _iter_supported_dataset_files(snapshot_path):
+        if path.name in _README_NAMES:
+            continue
+        if _path_matches_split(path.relative_to(snapshot_path), normalized_split):
+            yield path
 
 
 def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
