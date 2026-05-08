@@ -1959,7 +1959,8 @@
       {
         "key": "elapsed_ms_mean",
         "unit": "ms",
-        "direction": "informational"
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
       },
       {
         "key": "peak_bytes_mean",
