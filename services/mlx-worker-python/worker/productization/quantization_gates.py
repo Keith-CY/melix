@@ -43,10 +43,11 @@ def collect_quantization_benchmark_evidence(
     profiles: tuple[str, ...] = ("q2", "q3", "q4", "q5", "q6", "q7", "q8"),
 ) -> dict[str, Any]:
     core = _build_maintenance_core(jobs_root)
+    jobs_root_path = Path(jobs_root)
     profile_reports: dict[str, Any] = {}
 
     for profile_id in profiles:
-        output_dir = Path(jobs_root) / profile_id
+        output_dir = jobs_root_path / profile_id
         request = maintenance_pb2.ConvertModelRequest(
             source_model="melix-dev-text",
             output_dir=str(output_dir),
@@ -57,9 +58,8 @@ def collect_quantization_benchmark_evidence(
             ext={"operation": "quantize", "quant_profile_id": profile_id},
         )
         started_at = time.perf_counter()
-        events = list(core.convert_model(request))
+        manifest = _first_convert_manifest(core.convert_model(request))
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-        manifest = next(event.manifest for event in events if event.HasField("manifest"))
         payload = json.loads(manifest.manifest_json)
         profile_reports[profile_id] = {
             "quant_profile_id": profile_id,
@@ -81,6 +81,15 @@ def collect_quantization_benchmark_evidence(
         },
         "profiles": profile_reports,
     }
+
+
+def _first_convert_manifest(
+    events: Any,
+) -> maintenance_pb2.ConvertManifest:
+    for event in events:
+        if event.HasField("manifest"):
+            return event.manifest
+    raise StopIteration("convert_model did not emit a manifest event")
 
 
 def evaluate_quantization_gate(report: dict[str, Any], policy: dict[str, Any]) -> list[str]:
