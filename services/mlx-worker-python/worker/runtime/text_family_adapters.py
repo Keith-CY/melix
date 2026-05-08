@@ -89,6 +89,7 @@ class ResolvedTextFamilyConfig:
 
 
 _DEFAULT_TEXT_FAMILY_ID = "llama"
+_EMPTY_CONFIG_PAYLOAD: Mapping[str, Any] = {}
 _TEXT_FAMILY_ADAPTERS: dict[str, TextFamilyDescriptor] = {
     "llama": TextFamilyDescriptor(
         family_id="llama",
@@ -296,7 +297,7 @@ def resolve_text_family_config(
 
 
 def _detected_architecture(config_payload: Mapping[str, Any] | None) -> str:
-    config_payload = dict(config_payload or {})
+    config_payload = _config_mapping(config_payload)
     model_type = _model_type(config_payload)
     if model_type:
         return model_type
@@ -314,7 +315,7 @@ def _detected_architecture(config_payload: Mapping[str, Any] | None) -> str:
 
 
 def _model_type(config_payload: Mapping[str, Any] | None) -> str:
-    config_payload = dict(config_payload or {})
+    config_payload = _config_mapping(config_payload)
     model_type = _string(config_payload.get("model_type"))
     if model_type:
         return model_type.lower()
@@ -322,7 +323,7 @@ def _model_type(config_payload: Mapping[str, Any] | None) -> str:
 
 
 def _inferred_attention_profile(config_payload: Mapping[str, Any] | None, *, default: str) -> str:
-    config_payload = dict(config_payload or {})
+    config_payload = _config_mapping(config_payload)
     for key in ("attention_type", "attn_type", "attention_impl", "attn_impl"):
         value = _string(config_payload.get(key)).lower()
         if "mla" in value:
@@ -333,7 +334,7 @@ def _inferred_attention_profile(config_payload: Mapping[str, Any] | None, *, def
 
 
 def _inferred_rope_profile(config_payload: Mapping[str, Any] | None, *, default: str) -> str:
-    config_payload = dict(config_payload or {})
+    config_payload = _config_mapping(config_payload)
     rope_scaling = config_payload.get("rope_scaling")
     if isinstance(rope_scaling, Mapping):
         rope_type = _string(rope_scaling.get("rope_type") or rope_scaling.get("type")).lower()
@@ -379,7 +380,7 @@ def _resolved_expert_count(
 
 
 def _expert_count_from_config(config_payload: Mapping[str, Any] | None) -> int | None:
-    config_payload = dict(config_payload or {})
+    config_payload = _config_mapping(config_payload)
     for key in ("num_local_experts", "num_experts", "moe_num_experts", "n_routed_experts"):
         value = config_payload.get(key)
         if isinstance(value, bool):
@@ -397,12 +398,18 @@ def _expert_count_from_config(config_payload: Mapping[str, Any] | None) -> int |
 
 
 def _inferred_moe_gate_dequant(config_payload: Mapping[str, Any] | None, *, default: bool) -> bool:
-    config_payload = dict(config_payload or {})
+    config_payload = _config_mapping(config_payload)
     for key in ("moe_gate_dequant", "dequantize_router_logits", "moe_gate_requires_dequant"):
         value = config_payload.get(key)
         if value is not None:
             return _bool_from_any(value)
     return default
+
+
+def _config_mapping(config_payload: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    if config_payload is None:
+        return _EMPTY_CONFIG_PAYLOAD
+    return config_payload
 
 
 def _string_value(metadata: Mapping[str, str], key: str, default: str) -> str:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+from typing import Any
+
 import pytest
 
 from worker.runtime.text_family_adapters import (
@@ -7,6 +10,25 @@ from worker.runtime.text_family_adapters import (
     detect_text_family_identity,
     resolve_text_family_config,
 )
+
+
+class _CopyCountingConfig(Mapping[str, Any]):
+    def __init__(self, payload: Mapping[str, Any]) -> None:
+        self._payload = dict(payload)
+        self.copy_attempts = 0
+
+    def __getitem__(self, key: str) -> Any:
+        return self._payload[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._payload)
+
+    def __len__(self) -> int:
+        return len(self._payload)
+
+    def keys(self):  # type: ignore[override]
+        self.copy_attempts += 1
+        return self._payload.keys()
 
 
 def test_detect_text_family_identity_prefers_explicit_supported_override() -> None:
@@ -225,3 +247,32 @@ def test_resolve_text_family_config_prefers_live_config_over_stale_expert_metada
 def test_inferred_expert_count_preserves_config_before_family_default() -> None:
     assert _inferred_expert_count({"num_experts": 4}, default=128) == 4
     assert _inferred_expert_count({}, default=128) == 128
+
+
+def test_resolve_text_family_config_reads_config_mapping_without_copying() -> None:
+    config = _CopyCountingConfig(
+        {
+            **{f"unused_{index}": index for index in range(512)},
+            "model_type": "qwen3_moe",
+            "rope_scaling": {"type": "yarn", "interleaved": True},
+            "num_local_experts": 128,
+            "moe_gate_dequant": True,
+        }
+    )
+
+    resolved = resolve_text_family_config(
+        {"text_family_id": "qwen3moe"},
+        model_path="models/qwen3-moe-128e",
+        config_payload=config,
+        default_route_kind="swift_text",
+    )
+
+    assert resolved.family_id == "qwen3moe"
+    assert resolved.rope_profile == "yarn_interleaved"
+    assert resolved.expert_count == 128
+    assert resolved.moe_gate_dequant is True
+    assert config.copy_attempts == 0
+    assert list(config)[:1] == ["unused_0"]
+    assert len(config) == 516
+    assert dict(config)["model_type"] == "qwen3_moe"
+    assert config.copy_attempts == 1
