@@ -25,3 +25,4 @@ Reduce redundant memory work in MLX audio transcription for local `audio_uri` in
 - Avoid `Path.read_bytes()` on the MLX local URI transcription path.
 - Reduce `preprocess_peak_memory_bytes_mean` and `preprocess_elapsed_ms_mean` in the synthetic local-URI probe.
 - Keep deterministic/default audio preprocessing behavior unchanged for callers that still need decoded bytes.
+- Resolve ordinary local paths and `file:///...` URIs without invoking generic URL parsing on the hot local-audio path; retain URL parsing only for unusual file authorities and unsupported-scheme diagnostics.

@@ -136,6 +136,43 @@ def test_mlx_audio_transcription_runtime_uses_local_uri_path_without_reading_byt
     assert probe.preprocess_input_bytes == audio_path.stat().st_size
     assert probe.preprocess_peak_memory_bytes == audio_path.stat().st_size
 
+    fail_urlparse = lambda uri: (_ for _ in ()).throw(  # noqa: E731
+        AssertionError(f"local audio URI should use the fast path: {uri}")
+    )
+
+    monkeypatch.setattr(audio_preprocessing, "urlparse", fail_urlparse)
+    assert audio_preprocessing._path_from_uri(audio_path.as_uri()) == audio_path
+
+    monkeypatch.setattr(audio_preprocessing, "urlparse", fail_urlparse)
+    assert audio_preprocessing._path_from_uri(str(audio_path)) == audio_path
+
+    monkeypatch.setattr(audio_preprocessing, "urlparse", fail_urlparse)
+    assert audio_preprocessing._path_from_uri(f"file://localhost{audio_path}") == audio_path
+
+    monkeypatch.setattr(
+        audio_preprocessing,
+        "urlparse",
+        lambda uri: SimpleNamespace(scheme="file", path=str(audio_path)),
+    )
+    assert audio_preprocessing._path_from_uri(f"file://remote-host{audio_path}") == audio_path
+
+    monkeypatch.setattr(
+        audio_preprocessing,
+        "urlparse",
+        lambda uri: SimpleNamespace(scheme="file", path=str(audio_path)),
+    )
+    assert audio_preprocessing._path_from_uri("custom://audio.wav") == audio_path
+
+    monkeypatch.setattr(
+        audio_preprocessing,
+        "urlparse",
+        lambda uri: SimpleNamespace(scheme="https", path="/audio.wav"),
+    )
+    with pytest.raises(audio_preprocessing.AudioPreprocessError, match="Unsupported audio URI scheme"):
+        audio_preprocessing._path_from_uri("https://example.com/audio.wav")
+    with pytest.raises(audio_preprocessing.AudioPreprocessError, match="Missing local audio input"):
+        audio_preprocessing._path_from_uri(str(tmp_path / "missing.wav"))
+
     monkeypatch.setattr(Path, "read_bytes", original_read_bytes)
     prepared = audio_preprocessing.prepare_audio_input(
         inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri(), format="wav")

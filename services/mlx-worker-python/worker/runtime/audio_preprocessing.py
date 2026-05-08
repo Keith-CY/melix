@@ -82,10 +82,21 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
 
 
 def _path_from_uri(uri: str) -> Path:
-    parsed = urlparse(uri)
-    if parsed.scheme in {"", "file"}:
-        candidate = Path(unquote(parsed.path)) if parsed.scheme == "file" else Path(uri)
-        if not candidate.exists():
-            raise AudioPreprocessError(f"Missing local audio input: {uri}")
-        return candidate
-    raise AudioPreprocessError(f"Unsupported audio URI scheme: {parsed.scheme}")
+    if uri.startswith("file://"):
+        path_part = uri[7:]
+        if path_part.startswith("localhost/"):
+            path_part = path_part[len("localhost") :]
+        elif not path_part.startswith("/"):
+            parsed = urlparse(uri)
+            path_part = parsed.path
+        candidate = Path(unquote(path_part))
+    elif "://" not in uri:
+        candidate = Path(uri)
+    else:
+        parsed = urlparse(uri)
+        if parsed.scheme != "file":
+            raise AudioPreprocessError(f"Unsupported audio URI scheme: {parsed.scheme}")
+        candidate = Path(unquote(parsed.path))
+    if not candidate.exists():
+        raise AudioPreprocessError(f"Missing local audio input: {uri}")
+    return candidate
