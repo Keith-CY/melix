@@ -1116,6 +1116,36 @@ def test_mlx_lm_source_and_smoke_file_helpers_cover_edge_cases(tmp_path: Path) -
         "model-00001-of-00001.safetensors",
     )
 
+    duplicate_shard_bundle = tmp_path / "duplicate-shard-bundle"
+    duplicate_shard_bundle.mkdir()
+    (duplicate_shard_bundle / "tokenizer.json").write_text("{}\n", encoding="utf-8")
+    (duplicate_shard_bundle / "model-00001-of-00003.safetensors").write_bytes(b"first")
+    (duplicate_shard_bundle / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "z.weight": "model-00003-of-00003.safetensors",
+                    "a.weight": "model-00001-of-00003.safetensors",
+                    "b.weight": "model-00002-of-00003.safetensors",
+                    "dup.weight": "model-00001-of-00003.safetensors",
+                    "ignored_empty": "",
+                    "ignored_non_string": 7,
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert _smoke_required_files_for_backend(
+        duplicate_shard_bundle,
+        quantization_backend="mlx_lm_convert",
+    ) == (
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00003.safetensors",
+    )
+
     missing_shard_bundle = tmp_path / "missing-shard-bundle"
     missing_shard_bundle.mkdir()
     (missing_shard_bundle / "model.safetensors.index.json").write_text(

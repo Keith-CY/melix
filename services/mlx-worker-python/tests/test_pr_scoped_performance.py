@@ -304,7 +304,9 @@ def test_scope_report_selects_quantization_qat_source_scan_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/model_ops/quantization_pipeline.py"],
     )
 
-    assert "quantization-qat-source-scan-scandir" in _selected_probe_ids(scope)
+    probe_ids = _selected_probe_ids(scope)
+    assert "quantization-qat-source-scan-scandir" in probe_ids
+    assert "quantization-index-shard-min-single-pass" in probe_ids
 
 
 def test_scope_report_selects_startup_signals_probe() -> None:
@@ -1650,6 +1652,30 @@ def test_quantization_qat_source_scan_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
 
 
+def test_quantization_index_shard_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_QUANTIZATION_INDEX_SHARD_PROBE_ENTRIES", "6")
+    monkeypatch.setenv("MELIX_QUANTIZATION_INDEX_SHARD_PROBE_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_QUANTIZATION_INDEX_SHARD_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/quantization_index_shard_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations_per_sample"] == 2.0
+    assert metrics["weight_map_entries"] == 9.0
+    assert metrics["sorted_calls_mean"] == 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_mlx_audio_speech_signature_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1775,6 +1801,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
         "quantization-qat-source-scan-scandir",
+        "quantization-index-shard-min-single-pass",
         "release-gates-m9-failure-count-single-pass",
         "training-config-target-module-cache",
         "training-dataset-token-percentiles-single-sort",
