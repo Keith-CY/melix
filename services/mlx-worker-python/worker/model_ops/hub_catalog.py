@@ -17,6 +17,17 @@ RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
 
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
+_QUANTIZATION_ALIASES = (
+    ("2-bit", frozenset(("2bit", "2-bit"))),
+    ("3-bit", frozenset(("3bit", "3-bit"))),
+    ("4-bit", frozenset(("4bit", "4-bit"))),
+    ("8-bit", frozenset(("8bit", "8-bit"))),
+    ("mixed-precision", frozenset(("mixed-precision", "mixed_precision"))),
+    ("optiq", frozenset(("optiq",))),
+    ("fp32", frozenset(("fp32", "float32", "f32"))),
+    ("bf16", frozenset(("bf16",))),
+    ("fp16", frozenset(("fp16", "float16"))),
+)
 
 
 @dataclass(frozen=True)
@@ -662,18 +673,7 @@ def _bytes_per_parameter(tags: list[str], *, lowered_tags: set[str] | None = Non
 
 def _quantization_summary(tags: list[str], *, lowered_tags: set[str] | None = None) -> str:
     lowered = _normalized_lowered_tags(tags, lowered_tags)
-    ordered = [
-        ("2-bit", {"2bit", "2-bit"}),
-        ("3-bit", {"3bit", "3-bit"}),
-        ("4-bit", {"4bit", "4-bit"}),
-        ("8-bit", {"8bit", "8-bit"}),
-        ("mixed-precision", {"mixed-precision", "mixed_precision"}),
-        ("optiq", {"optiq"}),
-        ("fp32", {"fp32", "float32", "f32"}),
-        ("bf16", {"bf16"}),
-        ("fp16", {"fp16", "float16"}),
-    ]
-    values = [label for label, aliases in ordered if lowered.intersection(aliases)]
+    values = [label for label, aliases in _QUANTIZATION_ALIASES if lowered.intersection(aliases)]
     return ", ".join(values)
 
 
