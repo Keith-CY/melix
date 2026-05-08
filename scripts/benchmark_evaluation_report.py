@@ -30,6 +30,11 @@ def main() -> int:
         choices=("terminal", "markdown", "json"),
         default="terminal",
     )
+    parser.add_argument(
+        "--report-kind",
+        choices=("single_run", "comparison", "pr_evidence", "release_gate"),
+        default="comparison",
+    )
     parser.add_argument("--output-dir", default="")
     parser.add_argument("--sticky-comment", action="store_true")
     args = parser.parse_args()
@@ -38,6 +43,7 @@ def main() -> int:
         report = build_benchmark_evaluation_report(
             baseline=load_report_input(args.baseline),
             candidate=load_report_input(args.candidate),
+            report_kind=args.report_kind,
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)

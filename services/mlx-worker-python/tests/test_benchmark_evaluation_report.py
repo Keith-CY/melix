@@ -25,11 +25,14 @@ from worker.productization.benchmark_evaluation_report import (
     _update_numeric_aggregate,
     _update_probe_aggregate_pairs,
     _update_probe_aggregates_by_label,
+    ReportValidationError,
+    assert_valid_report_payload,
     build_benchmark_evaluation_report,
     build_sticky_comment_body,
     load_report_input,
     render_markdown_report,
     render_terminal_report,
+    validate_report_payload,
     write_report_outputs,
 )
 
@@ -112,6 +115,7 @@ def _run_evidence(
     fallback_count: int = 0,
     system_power_w: float = 15.0,
     telemetry_failure_count: int = 0,
+    include_process_attribution: bool = True,
 ) -> dict[str, object]:
     probes: list[dict[str, object]] = [
         {
@@ -146,20 +150,87 @@ def _run_evidence(
                 "attributes": {"fallback_count": fallback_count},
             }
         )
+    telemetry_summary: dict[str, object] = {
+        "schema_version": "melix.telemetry_summary.v1",
+        "collector_status": "partial" if telemetry_failure_count else "collected",
+        "time_series_path": "telemetry-samples.jsonl",
+        "telemetry_failures": ["powermetrics_failed:fixture"] * telemetry_failure_count,
+        "average_system_power_w": system_power_w,
+        "peak_system_power_w": system_power_w + 1.0,
+        "watts_per_output_token": system_power_w / 10.0,
+        "sample_count": 2,
+    }
+    if include_process_attribution:
+        telemetry_summary["process_attribution"] = {
+            "primary_runtime_process": {
+                "pid": 101,
+                "name": "mlx-runner",
+                "role": "primary_runtime",
+                "port": 12434,
+                "bundle_prefix": "com.melix",
+                "peak_memory_bytes": 4096,
+                "avg_cpu_percent": 12.5,
+                "sample_count": 2,
+            },
+            "control_plane_process": {
+                "pid": 102,
+                "name": "melix-control",
+                "role": "control_plane",
+                "port": 11434,
+                "bundle_prefix": "com.melix",
+                "peak_memory_bytes": 2048,
+                "avg_cpu_percent": 2.5,
+                "sample_count": 2,
+            },
+            "worker_processes": [
+                {
+                    "pid": 103,
+                    "name": "melix-worker",
+                    "role": "worker",
+                    "port": 0,
+                    "bundle_prefix": "com.melix",
+                    "peak_memory_bytes": 1024,
+                    "avg_cpu_percent": 4.5,
+                    "sample_count": 2,
+                }
+            ],
+            "external_provider_processes": [],
+            "process_tree_summary": {"roles": ["primary_runtime", "control_plane", "worker"]},
+        }
     return {
         "schema_version": "melix.run_evidence.v1",
         "run_id": run_id,
+        "melix_commit": "abc123",
+        "git_branch": "codex/report-json-export",
+        "dirty_worktree": False,
         "run_kind": run_kind,
+        "started_at": 1_779_000_000_000,
+        "ended_at": 1_779_000_001_000,
+        "duration_ms": 1000,
+        "status": status,
+        "command": "melix evidence fixture",
+        "artifact_root": f"/tmp/{run_id}",
+        "target_model_id": "mlx-community/test-model",
+        "hf_repo_id": "mlx-community/test-model",
+        "task_kind": "text-generation",
+        "model_snapshot": "model-sha",
+        "adapter_id": "adapter-a",
+        "adapter_snapshot": "adapter-sha",
+        "runtime_kind": "mlx",
+        "runtime_config": {"quantization": "4bit"},
+        "dataset_ref": "fixture.dataset",
+        "dataset_revision": "dataset-sha",
+        "suite_id": "smoke",
+        "sample_count": 1,
+        "input_digest": "input-sha",
+        "prompt_template_digest": "prompt-sha",
+        "generation_config": {"max_tokens": 16},
+        "metrics": [{"name": "decode_ms", "value": decode_ms, "unit": "ms"}],
         "probe_timeline": probes,
-        "telemetry_summary": {
-            "schema_version": "melix.telemetry_summary.v1",
-            "collector_status": "partial" if telemetry_failure_count else "collected",
-            "time_series_path": "telemetry-samples.jsonl",
-            "telemetry_failures": ["powermetrics_failed:fixture"] * telemetry_failure_count,
-            "average_system_power_w": system_power_w,
-            "peak_system_power_w": system_power_w + 1.0,
-            "watts_per_output_token": system_power_w / 10.0,
-        },
+        "telemetry_summary": telemetry_summary,
+        "artifacts": [{"kind": "probe_timeline", "path": "probes.jsonl", "role": "diagnostic"}],
+        "failure_summary": {"failed": status == "failed"},
+        "fallback_summary": {"fallback_count": fallback_count},
     }
 
 
@@ -1138,6 +1209,222 @@ def test_report_builder_uses_aggregate_probe_metrics_not_sample_details() -> Non
     assert rows_by_metric["probe.evaluation.runtime.fallback_enter.completed_count"]["candidate"] == 1.0
 
 
+def test_report_builder_adds_contract_sections_from_run_evidence() -> None:
+    report = build_benchmark_evaluation_report(
+        baseline={
+            "run_evidence": [
+                _run_evidence(
+                    run_id="base-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=10.0,
+                    status="completed",
+                    system_power_w=15.0,
+                )
+            ]
+        },
+        candidate={
+            "run_evidence": [
+                _run_evidence(
+                    run_id="head-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=20.0,
+                    status="failed",
+                    fallback_count=1,
+                    system_power_w=25.0,
+                    telemetry_failure_count=1,
+                )
+            ]
+        },
+        report_kind="pr_evidence",
+    )
+
+    assert report["report_kind"] == "pr_evidence"
+    assert report["source_evidence_ids"] == ["base-run", "head-run"]
+    assert report["runs"][0]["trace_id"] == "base-run:trace"
+    assert report["targets"][0]["target_model_id"] == "mlx-community/test-model"
+    assert report["telemetry_summary"]["candidate"][0]["collector_status"] == "partial"
+    assert report["process_attribution"]["candidate"][0]["primary_runtime_process"]["pid"] == 101
+    assert report["comparison"]["comparison_validity"] == "valid"
+    assert report["gate_result"]["overall_result"] == "fail"
+    assert report["gate_result"]["required_telemetry_present"] is True
+    assert any(
+        row["metric"] == "probe.serving_benchmark.runtime.decode.duration_ms_mean"
+        and row["result"] == "fail"
+        for row in report["metrics"]
+    )
+    assert_valid_report_payload(report)
+
+    markdown = render_markdown_report(report)
+    assert "## Report Identity" in markdown
+    assert "## Gate Summary" in markdown
+    assert "## Telemetry Summary" in markdown
+    assert "powermetrics_failed:fixture" in markdown
+
+
+def test_report_verifier_rejects_missing_required_sections() -> None:
+    report = build_benchmark_evaluation_report(
+        baseline={
+            "run_evidence": [
+                _run_evidence(
+                    run_id="base-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=10.0,
+                    status="completed",
+                )
+            ]
+        },
+        candidate={
+            "run_evidence": [
+                _run_evidence(
+                    run_id="head-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=10.0,
+                    status="completed",
+                )
+            ]
+        },
+    )
+    malformed = dict(report)
+    malformed.pop("report_id")
+    malformed["targets"] = []
+    malformed["metrics"] = []
+    malformed["probe_summary"] = {"baseline": {"probe_count": 0}, "candidate": {"probe_count": 0}}
+    malformed["telemetry_summary"] = {"baseline": [], "candidate": []}
+    malformed["gate_result"] = {}
+
+    errors = validate_report_payload(malformed)
+
+    assert "missing required report identity field: report_id" in errors
+    assert "targets must be a non-empty list" in errors
+    assert "metrics must be a non-empty list" in errors
+    assert "probe_summary.baseline.probe_count must be positive" in errors
+    assert "telemetry_summary.candidate must be a non-empty list" in errors
+    assert "gate_result.overall_result must be pass, fail, or informational" in errors
+
+
+def test_report_verifier_reports_field_level_shape_errors() -> None:
+    valid_report = build_benchmark_evaluation_report(
+        baseline={
+            "run_evidence": [
+                _run_evidence(
+                    run_id="base-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=10.0,
+                    status="completed",
+                )
+            ]
+        },
+        candidate={
+            "run_evidence": [
+                _run_evidence(
+                    run_id="head-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=10.0,
+                    status="completed",
+                )
+            ]
+        },
+    )
+    malformed = dict(valid_report)
+    malformed["schema_version"] = "bad.schema"
+    malformed["generator_name"] = ""
+    malformed["source_evidence_ids"] = []
+    malformed["runs"] = [
+        "not-a-run",
+        {"side": "baseline"},
+        {**valid_report["runs"][0], "run_id": ""},
+    ]
+    malformed["targets"] = [
+        "not-a-target",
+        {"side": "baseline"},
+        {**valid_report["targets"][0], "target_model_id": ""},
+    ]
+    malformed["metrics"] = [
+        "not-a-metric",
+        {**valid_report["metrics"][0], "metric": ""},
+        {"metric": "missing.gate", "result": "bogus"},
+    ]
+    malformed["probe_summary"] = {"baseline": [], "candidate": {"probe_count": 0}}
+    malformed["telemetry_summary"] = {
+        "baseline": ["not-telemetry", {"collector_status": "", "telemetry_failures": "bad"}],
+        "candidate": [{"collector_status": "collected"}],
+    }
+    malformed["gate_result"] = []
+
+    errors = validate_report_payload(malformed)
+
+    assert "schema_version must be melix.benchmark_evaluation_report.v1" in errors
+    assert "required report identity field is empty: generator_name" in errors
+    assert "source_evidence_ids must be a non-empty list" in errors
+    assert "runs[0] must be an object" in errors
+    assert "runs[1] missing required field: run_id" in errors
+    assert "runs[2] required field is empty: run_id" in errors
+    assert "targets[0] must be an object" in errors
+    assert "targets[1] missing required field: run_id" in errors
+    assert "targets[2] required field is empty: target_model_id" in errors
+    assert "metrics[0] must be an object" in errors
+    assert "metrics[1] missing metric name" in errors
+    assert "metrics[2] missing gate_policy" in errors
+    assert "metrics[2] result must be pass, fail, or informational" in errors
+    assert "probe_summary.baseline must be an object" in errors
+    assert "telemetry_summary.baseline[0] must be an object" in errors
+    assert "telemetry_summary.baseline[1] missing collector_status" in errors
+    assert "telemetry_summary.baseline[1] missing telemetry_failures" in errors
+    assert "gate_result must be an object" in errors
+
+    malformed_probe_root = dict(valid_report)
+    malformed_probe_root["probe_summary"] = []
+    malformed_probe_root["telemetry_summary"] = []
+    assert "probe_summary must be an object" in validate_report_payload(malformed_probe_root)
+    assert "telemetry_summary must be an object" in validate_report_payload(malformed_probe_root)
+
+    with pytest.raises(ReportValidationError) as exc_info:
+        assert_valid_report_payload(malformed)
+    assert "schema_version must be melix.benchmark_evaluation_report.v1" in str(exc_info.value)
+
+
+def test_report_verifier_rejects_failed_telemetry_encoded_as_zero() -> None:
+    report = build_benchmark_evaluation_report(
+        baseline={
+            "run_evidence": [
+                _run_evidence(
+                    run_id="base-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=10.0,
+                    status="completed",
+                    system_power_w=15.0,
+                )
+            ]
+        },
+        candidate={
+            "run_evidence": [
+                _run_evidence(
+                    run_id="head-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=10.0,
+                    status="completed",
+                    system_power_w=0.0,
+                    telemetry_failure_count=1,
+                )
+            ]
+        },
+    )
+
+    errors = validate_report_payload(report)
+
+    assert (
+        "telemetry_summary.candidate[0].average_system_power_w must not synthesize zero telemetry"
+        in errors
+    )
+
+
+def test_report_private_helpers_cover_remaining_edge_branches() -> None:
+    assert benchmark_evaluation_report._int_or_none(1.5) == 1
+    assert benchmark_evaluation_report._int_or_none("2.0") == 2
+    assert benchmark_evaluation_report._int_or_none("bad") is None
+    assert benchmark_evaluation_report._int_or_none(None) is None
+
+
 def test_metric_direction_fast_path_covers_report_probe_keys() -> None:
     expected = {
         "ttft_ms": "lower_is_better",
@@ -1474,15 +1761,47 @@ def test_eval_sample_neutral_metrics_ok_when_equal_not_comparable_when_changed()
 
 def test_write_report_outputs_writes_json_and_markdown(tmp_path: Path) -> None:
     report = build_benchmark_evaluation_report(
-        baseline=_bundle(ttft_ms=100.0, tokens_per_second=50.0, accuracy=0.8),
-        candidate=_bundle(ttft_ms=95.0, tokens_per_second=55.0, accuracy=0.82),
+        baseline={
+            **_bundle(ttft_ms=100.0, tokens_per_second=50.0, accuracy=0.8),
+            "run_evidence": [
+                _run_evidence(
+                    run_id="base-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=10.0,
+                    status="completed",
+                )
+            ],
+        },
+        candidate={
+            **_bundle(ttft_ms=95.0, tokens_per_second=55.0, accuracy=0.82),
+            "run_evidence": [
+                _run_evidence(
+                    run_id="head-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=8.0,
+                    status="completed",
+                )
+            ],
+        },
     )
 
     outputs = write_report_outputs(report=report, output_dir=tmp_path / "report")
 
-    assert json.loads(outputs["json"].read_text(encoding="utf-8"))["schema_version"] == (
-        "melix.benchmark_evaluation_report.v1"
-    )
+    report_json = json.loads(outputs["json"].read_text(encoding="utf-8"))
+    assert report_json["schema_version"] == "melix.benchmark_evaluation_report.v1"
+    assert report_json["artifacts"]["csv_export_paths"]["metrics"].endswith("metrics.csv")
     assert "| Metric | Baseline | Candidate | Delta | Status |" in outputs["markdown"].read_text(
         encoding="utf-8"
     )
+    assert outputs["csv_dir"].is_dir()
+    assert outputs["runs_csv"].read_text(encoding="utf-8").splitlines()[0].startswith(
+        "side,run_id,trace_id"
+    )
+    assert "bench.smoke.ttft_ms" in outputs["metrics_csv"].read_text(encoding="utf-8")
+    assert "slowest_phases" in outputs["probe_phases_csv"].read_text(encoding="utf-8")
+    assert "average_system_power_w" in outputs["telemetry_summary_csv"].read_text(
+        encoding="utf-8"
+    )
+    assert "primary_runtime_process" in outputs["processes_csv"].read_text(encoding="utf-8")
+    assert "overall_result" not in outputs["gate_results_csv"].read_text(encoding="utf-8")
+    assert "telemetry" in outputs["comparison_deltas_csv"].read_text(encoding="utf-8")
