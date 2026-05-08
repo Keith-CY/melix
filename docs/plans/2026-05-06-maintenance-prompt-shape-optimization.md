@@ -18,11 +18,12 @@ This slice is Python-only and can be verified on Linux with focused pytest, chan
 
 ## Proposed change
 
-Replace the repeated `list.extend(...)` loop used for prompt repetition with a `divmod(...)`-based list multiplication path:
+Build the repeated prompt as repeated text instead of materializing the entire repeated token vector:
 
 1. Keep empty-prompt fallback as `benchmark`.
 2. Keep truncation behavior when the prompt already contains at least `context_length` tokens.
-3. For shorter prompts, compute full repeats and remainder once, build the repeated token list directly, and join once.
+3. For shorter prompts, compute full repeats and remainder once, join the base token phrase once, repeat the phrase string, and append only the remainder phrase when needed.
+4. Keep the registered probe command on `python3` so local and CI evidence follows the repository operator constraint.
 
 ## Performance probe
 

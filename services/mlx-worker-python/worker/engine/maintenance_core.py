@@ -3542,10 +3542,11 @@ class MaintenanceCore:
         if len(tokens) >= context_length:
             return " ".join(tokens[:context_length])
         full_repeats, remainder = divmod(context_length, len(tokens))
-        shaped_tokens = tokens * full_repeats
+        token_phrase = " ".join(tokens)
         if remainder:
-            shaped_tokens += tokens[:remainder]
-        return " ".join(shaped_tokens)
+            remainder_phrase = " ".join(tokens[:remainder])
+            return f"{(token_phrase + ' ') * full_repeats}{remainder_phrase}"
+        return ((token_phrase + " ") * full_repeats)[:-1]
 
     @staticmethod
     def _benchmark_execution_ext(
