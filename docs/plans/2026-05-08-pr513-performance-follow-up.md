@@ -19,11 +19,16 @@ artifacts from PR 513.
    improvements.
 2. Add focused coverage proving informational metrics remain neutral when head
    values are higher or lower than base values.
-3. Reduce `worker.runtime.wav_helpers.audio_to_pcm_chunks` peak live memory by
+3. Raise an explicit configuration error for unknown metric directions so a
+   misspelled probe direction cannot silently produce neutral rows.
+4. Reduce `worker.runtime.wav_helpers.audio_to_pcm_chunks` peak live memory by
    resetting the reusable PCM array before yielding the materialized bytes, and
    inline the per-sample clamp/scale operation on the hot path.
-4. Keep the existing WAV byte output contract unchanged for nested iterables,
+5. Keep the existing WAV byte output contract unchanged for nested iterables,
    array-like `.flat` values, and big-endian byte swapping.
+6. Keep `write_pcm_chunks` delegated through `audio_to_pcm_chunks` so unary WAV
+   writing and progressive streaming share the same clamp/chunk conversion
+   path.
 
 ## Metrics
 
@@ -44,6 +49,7 @@ Success criteria:
 - Changed-line coverage for touched Python paths is at least 95 percent.
 - The two primary probes run locally and show no report-level false regression
   from informational metrics.
+- Unknown metric directions fail fast before producing report rows.
 - Any remaining runtime probe variance is reported explicitly in the PR body.
 
 ## Verification Commands

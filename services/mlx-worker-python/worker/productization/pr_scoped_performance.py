@@ -1998,6 +1998,8 @@ def _build_metric_row(
     base_metrics: object,
     head_metrics: object,
 ) -> dict[str, object]:
+    if direction not in {"informational", "lower_is_better", "higher_is_better"}:
+        raise ValueError(f"Unknown metric direction: {direction!r}")
     base_value = _float_or_none(base_metrics.get(key) if isinstance(base_metrics, dict) else None)
     head_value = _float_or_none(head_metrics.get(key) if isinstance(head_metrics, dict) else None)
     if base_value is None or head_value is None:

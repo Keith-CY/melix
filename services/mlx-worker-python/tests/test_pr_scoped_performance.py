@@ -2849,6 +2849,15 @@ def test_metric_and_probe_helpers_cover_error_branches() -> None:
     assert informational_slower["delta"] == 20.0
     assert informational_slower["status"] == "neutral"
     assert zero_baseline["delta_pct"] is None
+    with pytest.raises(ValueError, match="Unknown metric direction: 'descending'"):
+        _build_metric_row(
+            key="elapsed_ms_mean",
+            unit="ms",
+            direction="descending",
+            warn_pct=5.0,
+            base_metrics={"elapsed_ms_mean": 10.0},
+            head_metrics={"elapsed_ms_mean": 8.0},
+        )
 
     probe_result = {
         "probe": {"id": "demo", "name": "Demo", "metrics": [{"key": "score", "unit": "ms", "direction": "lower_is_better", "warn_pct": 5.0}]},
