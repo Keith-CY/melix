@@ -327,6 +327,62 @@ def test_evaluate_event_extraction_uses_soft_alignment_but_exact_field_scores(tm
     assert summary["overall_weighted_f1"] == 0.611111
 
 
+def test_evaluate_event_extraction_reuses_alignment_payloads_for_matched_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_summary.json"
+    details_path = tmp_path / "event_eval_details.jsonl"
+    original_event_alignment = event_extraction_module._event_alignment
+    call_count = 0
+
+    def counted_event_alignment(gold_event: dict[str, object], pred_event: dict[str, object]) -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        return original_event_alignment(gold_event, pred_event)
+
+    monkeypatch.setattr(event_extraction_module, "_event_alignment", counted_event_alignment)
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-reuse",
+                "dialogue": ["A: hi"],
+                "events": [
+                    {"actor": ["A"], "time": ["周一"], "location": None, "action": ["开会"], "digest": ""},
+                    {"actor": ["B"], "time": ["周二"], "location": ["上海"], "action": ["出差"], "digest": ""},
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-reuse",
+                "dialogue": ["A: hi"],
+                "events": [
+                    {"actor": ["A"], "time": ["周一"], "location": None, "action": ["开会"], "digest": ""},
+                    {"actor": ["B"], "time": ["周二"], "location": ["上海"], "action": ["出差"], "digest": ""},
+                ],
+            }
+        ],
+    )
+
+    summary = evaluate_event_extraction(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+    )
+
+    details = [json.loads(line) for line in details_path.read_text(encoding="utf-8").splitlines()]
+    assert summary["event_alignment"]["matched_pairs"] == 2
+    assert [row["alignment_score"] for row in details] == [1.0, 1.0]
+    assert call_count == 4
+
+
 def test_evaluate_event_extraction_keeps_low_similarity_events_unmatched(tmp_path: Path) -> None:
     gold = tmp_path / "gold.jsonl"
     pred = tmp_path / "pred.jsonl"
