@@ -493,6 +493,7 @@ def test_semantic_field_values_reuses_cached_group_actor_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
+    event_extraction_module._is_group_actor_alias.cache_clear()
     calls: list[str] = []
     original_normalize = event_extraction_module._normalize_similarity_text
 
@@ -508,12 +509,14 @@ def test_semantic_field_values_reuses_cached_group_actor_aliases(
     ) == ["speaker_1", "speaker_2"]
     assert calls == ["我 们"]
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
+    event_extraction_module._is_group_actor_alias.cache_clear()
 
 
 def test_semantic_field_values_caches_repeated_group_actor_expansion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
+    event_extraction_module._is_group_actor_alias.cache_clear()
     calls: list[str] = []
     original_normalize = event_extraction_module._normalize_similarity_text
 
@@ -528,6 +531,7 @@ def test_semantic_field_values_caches_repeated_group_actor_expansion(
     assert event_extraction_module._semantic_field_values("actor", event) == ["speaker_1", "speaker_2"]
     assert calls == ["我 们"]
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
+    event_extraction_module._is_group_actor_alias.cache_clear()
 
 
 def test_semantic_field_values_normalizes_and_deduplicates_in_one_pass(monkeypatch) -> None:

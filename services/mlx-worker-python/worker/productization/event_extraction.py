@@ -2142,6 +2142,7 @@ _NORMALIZED_GROUP_ACTOR_ALIASES = frozenset(
 )
 
 
+@lru_cache(maxsize=512)
 def _is_group_actor_alias(value: str) -> bool:
     if value in _GROUP_ACTOR_ALIASES:
         return True
