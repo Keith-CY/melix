@@ -2817,6 +2817,22 @@ def test_metric_and_probe_helpers_cover_error_branches() -> None:
         base_metrics={"score": 10.0},
         head_metrics={"score": 8.0},
     )
+    informational_faster = _build_metric_row(
+        key="elapsed_ms_mean",
+        unit="ms",
+        direction="informational",
+        warn_pct=5.0,
+        base_metrics={"elapsed_ms_mean": 10.0},
+        head_metrics={"elapsed_ms_mean": 8.0},
+    )
+    informational_slower = _build_metric_row(
+        key="peak_bytes_mean",
+        unit="bytes",
+        direction="informational",
+        warn_pct=5.0,
+        base_metrics={"peak_bytes_mean": 100.0},
+        head_metrics={"peak_bytes_mean": 120.0},
+    )
     zero_baseline = _build_metric_row(
         key="count",
         unit="count",
@@ -2828,6 +2844,10 @@ def test_metric_and_probe_helpers_cover_error_branches() -> None:
 
     assert missing["status"] == "missing"
     assert higher_is_better["status"] == "regression"
+    assert informational_faster["delta"] == -2.0
+    assert informational_faster["status"] == "neutral"
+    assert informational_slower["delta"] == 20.0
+    assert informational_slower["status"] == "neutral"
     assert zero_baseline["delta_pct"] is None
 
     probe_result = {
@@ -2846,6 +2866,46 @@ def test_metric_and_probe_helpers_cover_error_branches() -> None:
     assert "Coverage command failed." in _build_probe_details(result=probe_result)
     assert "base boom" in _build_probe_details(result=probe_result)
     assert "head boom" in _build_probe_details(result=probe_result)
+
+
+def test_report_keeps_informational_metric_deltas_neutral() -> None:
+    scope = {
+        "changed_files": ["scripts/mlx_audio_wav_streaming_probe.py"],
+        "force_all": False,
+        "selected_count": 1,
+        "selected_probes": [
+            {
+                "id": "wav",
+                "name": "WAV",
+                "metrics": [
+                    {
+                        "key": "elapsed_ms_mean",
+                        "unit": "ms",
+                        "direction": "informational",
+                        "warn_pct": 5.0,
+                    }
+                ],
+            }
+        ],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {"ok": True, "metrics": {"elapsed_ms_mean": 10.0}},
+        "head_probe": {"ok": True, "metrics": {"elapsed_ms_mean": 8.0}},
+    }
+
+    report = build_performance_report(scope=scope, probe_results=[result])
+    row = report["rows"][0]
+
+    assert report["summary"]["status"] == "ok"
+    assert report["summary"]["regression_count"] == 0
+    assert row["status"] == "ok"
+    assert row["metrics"][0]["delta"] == -2.0
+    assert row["metrics"][0]["status"] == "neutral"
 
 
 def test_command_and_verification_helpers_cover_skip_and_failure_paths(

@@ -2016,12 +2016,14 @@ def _build_metric_row(
     delta_pct = None if base_value == 0 else (delta / base_value) * 100.0
     status = "neutral"
     threshold = abs(base_value) * (warn_pct / 100.0)
-    if direction == "lower_is_better":
+    if direction == "informational":
+        status = "neutral"
+    elif direction == "lower_is_better":
         if head_value > base_value + threshold:
             status = "regression"
         elif head_value < base_value - threshold:
             status = "improvement"
-    else:
+    elif direction == "higher_is_better":
         if head_value < base_value - threshold:
             status = "regression"
         elif head_value > base_value + threshold:
