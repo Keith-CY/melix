@@ -1867,6 +1867,10 @@ public final class RuntimeViewModel {
     public private(set) var evaluationMetricCards: [RuntimeEvaluationMetricCardState] = []
     public private(set) var evaluationSamplePreview: [RuntimeEvaluationSamplePreviewState] = []
     public private(set) var lastEvaluationExport: RuntimeEvaluationExportState?
+    public private(set) var evidenceReport: RuntimeEvidenceReportState?
+    public private(set) var evidenceReportLoadError = ""
+    public private(set) var evidenceReportOpenError = ""
+    public private(set) var evidenceReportSourcePath = ""
     public private(set) var adapterPackages: [RuntimeAdapterPackageState] = []
     public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
     public private(set) var loraExperimentGroups: [RuntimeLoraExperimentGroupState] = []
@@ -4716,6 +4720,49 @@ public final class RuntimeViewModel {
     public var selectedEvaluationHistoryEntry: RuntimeEvaluationHistoryEntryState? {
         evaluationHistory.first(where: { $0.jobID == selectedEvaluationHistoryJobID })
             ?? evaluationHistory.first
+    }
+
+    public func loadEvidenceReport(json: String) throws {
+        try loadEvidenceReport(json: json, sourcePath: "")
+    }
+
+    private func loadEvidenceReport(json: String, sourcePath: String) throws {
+        evidenceReport = try RuntimeEvidenceReportState.decode(json: json)
+        evidenceReportSourcePath = sourcePath
+        evidenceReportLoadError = ""
+        evidenceReportOpenError = ""
+        notifyStateChanged()
+    }
+
+    public func loadEvidenceReport(from url: URL) async throws {
+        let sourcePath = url.path
+        let json = try await Task.detached(priority: .userInitiated) {
+            try String(contentsOfFile: sourcePath, encoding: .utf8)
+        }.value
+        try loadEvidenceReport(json: json, sourcePath: sourcePath)
+    }
+
+    public func clearEvidenceReport() {
+        evidenceReport = nil
+        evidenceReportLoadError = ""
+        evidenceReportOpenError = ""
+        evidenceReportSourcePath = ""
+        notifyStateChanged()
+    }
+
+    public func recordEvidenceReportLoadError(_ error: Error) {
+        evidenceReportLoadError = error.localizedDescription
+        notifyStateChanged()
+    }
+
+    public func recordEvidenceReportOpenError(_ message: String) {
+        evidenceReportOpenError = message
+        notifyStateChanged()
+    }
+
+    public func clearEvidenceReportOpenError() {
+        evidenceReportOpenError = ""
+        notifyStateChanged()
     }
 
     private var selectedServerSessionID = ""

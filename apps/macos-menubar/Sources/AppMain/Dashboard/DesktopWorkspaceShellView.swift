@@ -2,6 +2,7 @@ import AppKit
 import Charts
 import MelixCLICore
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 struct DesktopWorkspaceShellView: View {
@@ -3854,9 +3855,20 @@ struct DesktopDiagnosticsToolSectionView: View {
     static let emptyEvaluationTitle = "No Evaluation Results Yet"
     static let emptyEvaluationDetail = "Run Evaluation to inspect scores and sample previews."
 
+    private enum EvidenceRowLimit {
+        static let metrics = 6
+        static let runs = 8
+        static let probes = 10
+        static let telemetry = 8
+        static let processes = 8
+        static let artifacts = 12
+        static let gaps = 6
+    }
+
     let viewModel: RuntimeViewModel
     let foundation: DesktopFoundationState
     @State private var selectedStage: DesktopDiagnosticsStage
+    @State private var evidenceReportFilter = ""
 
     init(viewModel: RuntimeViewModel, foundation: DesktopFoundationState) {
         self.viewModel = viewModel
@@ -4239,6 +4251,449 @@ struct DesktopDiagnosticsToolSectionView: View {
         return "\(entry.taskTitle) • \(selectedSource) • \(entry.datasetID)"
     }
 
+    @ViewBuilder
+    private var evidenceReportSections: some View {
+        if let report = viewModel.evidenceReport {
+            DesktopEditorialSectionCard("Run Evidence Report") {
+                VStack(alignment: .leading, spacing: 12) {
+                    evidenceReportControlRow(report: report)
+                    evidenceReportStatusRows
+                    DesktopPassiveHeadlineButton(
+                        title: "\(report.reportKindText) • \(report.reportID)"
+                    )
+                    Text("\(report.generatedAtText) • \(report.identityText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    snapshotMetricGrid(
+                        items: report.summaryItems.map {
+                            DesktopEditorialMetricItem(
+                                title: $0.title,
+                                value: $0.value,
+                                detail: $0.detail
+                            )
+                        }
+                    )
+                    evidenceReportFilterField
+                    evidenceMetricRows(
+                        report.metricRows(matching: evidenceReportFilter)
+                            .prefix(EvidenceRowLimit.metrics)
+                    )
+                    evidenceGapRows(report)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            DesktopEditorialSectionCard("Run History") {
+                VStack(alignment: .leading, spacing: 10) {
+                    if report.runRows.isEmpty {
+                        DesktopInlineEmptyStateView(
+                            title: "No run evidence",
+                            detail: "Structured report has no run rows.",
+                            symbolName: "clock.badge.questionmark"
+                        )
+                    } else {
+                        ForEach(report.runRows.prefix(EvidenceRowLimit.runs)) { row in
+                            evidenceRunRow(row)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            DesktopEditorialSectionCard("Runtime Diagnostics") {
+                VStack(alignment: .leading, spacing: 10) {
+                    if report.probeRows.isEmpty {
+                        DesktopInlineEmptyStateView(
+                            title: "No probe timeline",
+                            detail: "Structured report did not include probe phase summaries.",
+                            symbolName: "waveform.path.ecg"
+                        )
+                    } else {
+                        ForEach(report.probeRows.prefix(EvidenceRowLimit.probes)) { row in
+                            evidenceProbeRow(row)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            DesktopEditorialSectionCard("Hardware Monitor") {
+                VStack(alignment: .leading, spacing: 12) {
+                    if report.telemetryRows.isEmpty {
+                        DesktopInlineEmptyStateView(
+                            title: "No Apple Silicon telemetry",
+                            detail: "Structured report did not include hardware telemetry rows.",
+                            symbolName: "cpu"
+                        )
+                    } else {
+                        ForEach(report.telemetryRows.prefix(EvidenceRowLimit.telemetry)) { row in
+                            evidenceTelemetryRow(row)
+                        }
+                    }
+
+                    if report.processRows.isEmpty == false {
+                        Divider()
+                        Text("Process Attribution")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(report.processRows.prefix(EvidenceRowLimit.processes)) { row in
+                            evidenceProcessRow(row)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            DesktopEditorialSectionCard("Evidence Artifacts") {
+                VStack(alignment: .leading, spacing: 10) {
+                    if report.artifactRows.isEmpty {
+                        DesktopInlineEmptyStateView(
+                            title: "No artifact paths",
+                            detail: "Structured report did not include report, CSV, probe, or telemetry artifacts.",
+                            symbolName: "doc.badge.questionmark"
+                        )
+                    } else {
+                        ForEach(
+                            report.artifactRows(matching: evidenceReportFilter)
+                                .prefix(EvidenceRowLimit.artifacts)
+                        ) { row in
+                            evidenceArtifactRow(row)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else if viewModel.evidenceReportLoadError.isEmpty == false {
+            DesktopEditorialSectionCard("Run Evidence Report") {
+                VStack(alignment: .leading, spacing: 12) {
+                    evidenceReportControlRow(report: nil)
+                    evidenceReportStatusRows
+                    DesktopInlineEmptyStateView(
+                        title: "Evidence report failed to load",
+                        detail: viewModel.evidenceReportLoadError,
+                        symbolName: "exclamationmark.triangle"
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            DesktopEditorialSectionCard("Run Evidence Report") {
+                VStack(alignment: .leading, spacing: 12) {
+                    evidenceReportControlRow(report: nil)
+                    evidenceReportStatusRows
+                    DesktopInlineEmptyStateView(
+                        title: "No structured report loaded",
+                        detail: "Load a report JSON artifact to inspect run evidence, probe phases, telemetry, and exports.",
+                        symbolName: "doc.text.magnifyingglass"
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var evidenceReportStatusRows: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if viewModel.evidenceReportSourcePath.isEmpty == false {
+                Text(viewModel.evidenceReportSourcePath)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            if viewModel.evidenceReportLoadError.isEmpty == false {
+                Text(viewModel.evidenceReportLoadError)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            if viewModel.evidenceReportOpenError.isEmpty == false {
+                Text(viewModel.evidenceReportOpenError)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private var evidenceReportFilterField: some View {
+        TextField("Filter report rows", text: $evidenceReportFilter)
+            .textFieldStyle(.roundedBorder)
+    }
+
+    private func evidenceReportControlRow(report: RuntimeEvidenceReportState?) -> some View {
+        HStack(spacing: 8) {
+            Button(action: loadEvidenceReportFromPicker) {
+                Label("Load Report JSON", systemImage: "doc.badge.plus")
+            }
+            Button(action: clearEvidenceReportSelection) {
+                Label("Clear", systemImage: "xmark.circle")
+            }
+            .disabled(report == nil && viewModel.evidenceReportLoadError.isEmpty && viewModel.evidenceReportOpenError.isEmpty)
+
+            if let markdownPath = report?.markdownReportPath {
+                Button(action: { openEvidenceArtifact(path: markdownPath, opener: NSWorkspace.shared.open) }) {
+                    Label("Open Markdown", systemImage: "doc.richtext")
+                }
+            }
+
+            if let report, report.csvArtifactRows.isEmpty == false {
+                Menu {
+                    ForEach(report.csvArtifactRows) { row in
+                        Button(row.kindText) {
+                            openEvidenceArtifact(path: row.path, opener: NSWorkspace.shared.open)
+                        }
+                    }
+                } label: {
+                    Label("Open CSV", systemImage: "tablecells")
+                }
+            }
+        }
+    }
+
+    private func loadEvidenceReportFromPicker() {
+        guard let url = Self.selectEvidenceReportURL() else {
+            return
+        }
+        Task {
+            await loadEvidenceReport(from: url)
+        }
+    }
+
+    @MainActor
+    private static func selectEvidenceReportURL() -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = "Load Evidence Report JSON"
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.json]
+
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    @MainActor
+    private func loadEvidenceReport(from url: URL) async {
+        do {
+            try await viewModel.loadEvidenceReport(from: url)
+            evidenceReportFilter = ""
+        } catch {
+            viewModel.recordEvidenceReportLoadError(error)
+        }
+    }
+
+    private func clearEvidenceReportSelection() {
+        evidenceReportFilter = ""
+        viewModel.clearEvidenceReport()
+    }
+
+    func openEvidenceArtifact(path: String, opener: (URL) -> Bool) {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPath.isEmpty == false else {
+            viewModel.recordEvidenceReportOpenError("Evidence artifact path is empty.")
+            return
+        }
+
+        let opened = opener(URL(fileURLWithPath: trimmedPath))
+        if opened {
+            viewModel.clearEvidenceReportOpenError()
+        } else {
+            viewModel.recordEvidenceReportOpenError("Could not open evidence artifact at \(trimmedPath).")
+        }
+    }
+
+    @ViewBuilder
+    private func evidenceMetricRows(_ rows: ArraySlice<RuntimeEvidenceReportMetricRow>) -> some View {
+        if rows.isEmpty == false {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Gate Metrics")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(Array(rows)) { row in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(row.metric)
+                                .font(.headline)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(row.resultText)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("\(row.statusText) • \(row.directionText) • \(row.deltaText)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(
+                        Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+                        in: RoundedRectangle(cornerRadius: 12)
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func evidenceGapRows(_ report: RuntimeEvidenceReportState) -> some View {
+        let gaps = Array((report.knownGapRows + report.instrumentationGapRows).prefix(EvidenceRowLimit.gaps))
+        if gaps.isEmpty == false {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Instrumentation Gaps")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(Array(gaps.enumerated()), id: \.offset) { _, gap in
+                    Text(gap)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private func evidenceRunRow(_ row: RuntimeEvidenceReportRunRow) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("\(row.side) • \(row.runID)")
+                    .font(.headline)
+                Spacer()
+                Text(row.statusText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(row.runKindText) • \(row.durationText) • \(row.targetText)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if row.issueText.isEmpty == false {
+                Text(row.issueText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if row.artifactRoot.isEmpty == false {
+                Text(row.artifactRoot)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+    }
+
+    private func evidenceProbeRow(_ row: RuntimeEvidenceReportProbeRow) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("\(row.kind) • \(row.component) • \(row.phase)")
+                    .font(.headline)
+                Spacer()
+                Text(row.durationText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(row.side) • \(row.runID) • \(row.statusText)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if row.detailText.isEmpty == false {
+                Text(row.detailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+    }
+
+    private func evidenceTelemetryRow(_ row: RuntimeEvidenceReportTelemetryRow) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("\(row.side) • \(row.runID)")
+                    .font(.headline)
+                Spacer()
+                Text(row.collectorStatusText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text(row.powerText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text([row.utilizationText, row.memoryText].filter { $0.isEmpty == false }.joined(separator: " • "))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if row.failureText.isEmpty == false {
+                Text(row.failureText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+    }
+
+    private func evidenceProcessRow(_ row: RuntimeEvidenceReportProcessRow) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("\(row.roleText) • \(row.nameText)")
+                    .font(.headline)
+                Spacer()
+                Text(row.side)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(row.runID) • \(row.pidText)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if row.resourceText.isEmpty == false {
+                Text(row.resourceText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+    }
+
+    private func evidenceArtifactRow(_ row: RuntimeEvidenceReportArtifactRow) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(row.kindText)
+                    .font(.headline)
+                Spacer()
+                Text(row.detailText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text(row.path)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             DesktopEditorialSectionCard("Diagnostics Actions") {
@@ -4310,6 +4765,8 @@ struct DesktopDiagnosticsToolSectionView: View {
             DesktopEditorialSectionCard(diagnosticsSnapshotTitle) {
                 diagnosticsSnapshotContent
             }
+
+            evidenceReportSections
 
             if selectedStage != .evaluation {
                 DesktopEditorialSectionCard(selectedStage == .matrix ? "Matrix Configuration" : "Bench Configuration") {

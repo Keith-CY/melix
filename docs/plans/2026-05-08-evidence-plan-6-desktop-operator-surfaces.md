@@ -36,3 +36,18 @@ runtime diagnostics in the macOS operator app.
 - Operators can diagnose a run from the app without opening raw logs.
 - UI displays probe and telemetry gaps or failures explicitly.
 - All views are derived from structured artifacts.
+
+## Implementation Status
+
+- Added a read-only `RuntimeEvidenceReportState` decoder for
+  `melix.benchmark_evaluation_report.v1` JSON artifacts.
+- Added derived operator rows for report summary, run history, gate metrics,
+  probe phases, Apple Silicon telemetry, process attribution, artifacts, CSV
+  exports, and instrumentation gaps.
+- Added Diagnostics surfaces for Run Evidence Report, Run History, Runtime
+  Diagnostics, Hardware Monitor, and Evidence Artifacts.
+- Added JSON report loading, report-row filtering, Markdown artifact opening,
+  CSV artifact opening, and explicit load/open error state to the diagnostics
+  surface.
+- Added focused Swift tests for completed, failed, fallback, telemetry-failure,
+  probe, process, Markdown artifact, and CSV export report rows.
