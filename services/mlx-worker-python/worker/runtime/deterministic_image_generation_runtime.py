@@ -226,8 +226,9 @@ class DeterministicImageGenerationRuntime:
             )
             artifact_path = output_dir / f"output-{index}.{image_format}"
             artifact_publish_ms += self._write_bytes(artifact_path, payload)
+            payload_byte_length = len(payload)
             images.append(payload)
-            total_output_bytes += len(payload)
+            total_output_bytes += payload_byte_length
             artifacts.append(
                 self._artifact_metadata(
                     job_id=job_id,
@@ -238,6 +239,7 @@ class DeterministicImageGenerationRuntime:
                     width=width,
                     height=height,
                     payload=payload,
+                    payload_byte_length=payload_byte_length,
                     storage_path=artifact_path,
                     variant_index=index,
                     parent_artifact_id=request.source_artifact_id,
@@ -329,6 +331,7 @@ class DeterministicImageGenerationRuntime:
         height: int,
         payload: bytes,
         payload_sha256: str | None = None,
+        payload_byte_length: int | None = None,
         storage_path: Path,
         variant_index: int,
         parent_artifact_id: str = "",
@@ -343,7 +346,7 @@ class DeterministicImageGenerationRuntime:
             format=image_format,
             width=width,
             height=height,
-            byte_length=len(payload),
+            byte_length=payload_byte_length if payload_byte_length is not None else len(payload),
             storage_uri=str(storage_path),
             sha256=digest,
             variant_index=variant_index,

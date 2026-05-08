@@ -9,9 +9,11 @@ that output byte accounting does not rescan generated images.
 
 ## Slice
 
-Reuse the generated payload byte length inside the `generate_images` artifact
-loop instead of calling `len(payload)` separately for artifact metadata and
-aggregate output byte accounting.
+Reuse the generated payload byte length inside the `generate_images` and `edit_image`
+artifact loops instead of calling `len(payload)` separately for artifact metadata
+and aggregate output byte accounting. The shared artifact metadata helper accepts
+an already-known payload byte length so edit-generated artifacts do not re-read
+the payload length after the loop has already accounted for output bytes.
 
 ## Scope
 
