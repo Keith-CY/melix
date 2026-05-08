@@ -6,6 +6,7 @@ from functools import lru_cache
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import tempfile
 import textwrap
 
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
+_NONBLANK_TEST_LINE_RE = re.compile(r"\S[^\r\n]*(?:\r\n?|\n|$)")
 
 
 @dataclass(frozen=True)
@@ -229,9 +231,13 @@ def _count_tests(test_code: str) -> int:
     try:
         module = ast.parse(test_code, filename="<tests>", mode="exec")
     except SyntaxError:
-        return len([line for line in test_code.splitlines() if line.strip()])
+        return _count_nonblank_test_lines(test_code)
     assert_count = sum(1 for node in ast.walk(module) if isinstance(node, ast.Assert))
-    return assert_count or len([line for line in test_code.splitlines() if line.strip()])
+    return assert_count or _count_nonblank_test_lines(test_code)
+
+
+def _count_nonblank_test_lines(test_code: str) -> int:
+    return sum(1 for _ in _NONBLANK_TEST_LINE_RE.finditer(test_code))
 
 
 def _load_payload_file(payload_path: Path) -> dict[str, object] | None:
