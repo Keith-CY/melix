@@ -1578,12 +1578,12 @@ def evaluate_m9_release_evidence(
             prefix=f"m9.{section_name}.",
         )
         failures.extend(section_failures)
-        missing_probe_count += float(
-            sum(1 for failure in section_failures if failure.endswith(" is missing"))
-        )
-        failed_threshold_count += float(
-            sum(1 for failure in section_failures if not failure.endswith(" is missing"))
-        )
+        missing_for_section = 0
+        for failure in section_failures:
+            if failure.endswith(" is missing"):
+                missing_for_section += 1
+        missing_probe_count += float(missing_for_section)
+        failed_threshold_count += float(len(section_failures) - missing_for_section)
 
     return failures, {
         "required_probe_count": required_probe_count,

@@ -316,6 +316,16 @@ def test_scope_report_selects_startup_signals_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "startup-signals-lazy-worker-log-excerpts"
 
 
+def test_scope_report_selects_release_gates_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/release_gates.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "release-gates-m9-failure-count-single-pass"
+
+
 def test_scope_report_selects_real_model_support_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1566,6 +1576,27 @@ def test_dataset_registry_preview_limit_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_release_gates_m9_failure_count_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_RELEASE_GATES_M9_PROBE_SECTIONS", "3")
+    monkeypatch.setenv("MELIX_RELEASE_GATES_M9_PROBE_FAILURES", "4")
+    monkeypatch.setenv("MELIX_RELEASE_GATES_M9_PROBE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/release_gates_m9_failure_count_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["endswith_checks_mean"] == 12.0
+    assert metrics["failure_count_mean"] == 12.0
+    assert metrics["section_count"] == 3.0
+    assert metrics["failures_per_section"] == 4.0
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "dataset-registry-limited-read-streaming",
@@ -1627,6 +1658,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
         "quantization-qat-source-scan-scandir",
+        "release-gates-m9-failure-count-single-pass",
         "training-config-target-module-cache",
         "training-dataset-token-percentiles-single-sort",
         "training-dataset-validation-split-nsmallest",
