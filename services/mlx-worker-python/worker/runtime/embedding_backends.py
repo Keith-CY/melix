@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import math
+import struct
 import unicodedata
 
 
@@ -44,11 +45,8 @@ class DeterministicEmbeddingBackend:
         digest = hashlib.sha256(seed_text.encode("utf-8")).digest()
         base_values: list[float] = []
         base_squared_sum = 0.0
-        for start in range(0, len(digest), 4):
-            value = (
-                (int.from_bytes(digest[start : start + 4], "little") / 0xFFFFFFFF) * 2.0
-                - 1.0
-            )
+        for raw in struct.unpack("<8I", digest):
+            value = (raw / 0xFFFFFFFF) * 2.0 - 1.0
             base_values.append(value)
             base_squared_sum += value * value
         base_count = len(base_values)
