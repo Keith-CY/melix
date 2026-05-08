@@ -1634,6 +1634,7 @@ def test_quantization_qat_source_scan_probe_script_emits_metrics(
 ) -> None:
     monkeypatch.setenv("MELIX_QAT_SOURCE_SCAN_PROBE_FILES", "4")
     monkeypatch.setenv("MELIX_QAT_SOURCE_SCAN_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_QAT_SOURCE_STATS_PROBE_BYTES_PER_FILE", "256")
 
     with pytest.raises(SystemExit) as exc_info:
         runpy.run_path(
@@ -1647,6 +1648,9 @@ def test_quantization_qat_source_scan_probe_script_emits_metrics(
     assert metrics["file_count"] == 4.0
     assert metrics["rglob_calls_mean"] == 0.0
     assert metrics["scandir_calls_mean"] >= 1.0
+    assert metrics["source_stats_byte_count"] == 1024.0
+    assert metrics["source_stats_elapsed_ms_mean"] >= 0
+    assert metrics["source_stats_peak_bytes_mean"] > 0
     assert metrics["elapsed_ms_mean"] >= 0
 
 
