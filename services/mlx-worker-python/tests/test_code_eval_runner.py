@@ -348,6 +348,18 @@ def test_count_tests_falls_back_for_syntax_error_input() -> None:
     assert code_eval_runner._count_tests("assert True\n  assert False") == 2
 
 
+def test_count_tests_reuses_cached_counts_for_repeated_payloads() -> None:
+    test_code = "assert identity(1) == 1\nassert identity(2) == 2"
+    code_eval_runner._count_tests.cache_clear()
+
+    assert code_eval_runner._count_tests(test_code) == 2
+    assert code_eval_runner._count_tests(test_code) == 2
+
+    cache_info = code_eval_runner._count_tests.cache_info()
+    assert cache_info.hits == 1
+    assert cache_info.misses == 1
+
+
 def test_count_nonblank_test_lines_matches_splitlines_semantics() -> None:
     test_code = "\n assert one\r\n\t\rassert two\n   \nassert three"
 

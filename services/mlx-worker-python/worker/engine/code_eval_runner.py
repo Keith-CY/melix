@@ -236,6 +236,7 @@ def run_python_code_evaluation(
         )
 
 
+@lru_cache(maxsize=128)
 def _count_tests(test_code: str) -> int:
     try:
         module = ast.parse(test_code, filename="<tests>", mode="exec")
