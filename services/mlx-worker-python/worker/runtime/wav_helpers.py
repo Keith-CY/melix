@@ -38,15 +38,19 @@ def audio_to_pcm_chunks(audio, *, chunk_sample_limit: int):
     limit = max(1, int(chunk_sample_limit))
 
     for sample in iter_samples(audio):
-        clamped = max(-1.0, min(1.0, float(sample)))
-        chunk.append(int(clamped * 32767.0))
+        value = float(sample)
+        if value > 1.0:
+            value = 1.0
+        elif value < -1.0:
+            value = -1.0
+        chunk.append(int(value * 32767.0))
         if len(chunk) >= limit:
             pcm_bytes = _drain_chunk_to_bytes(chunk)
-            chunk = array.array("h")
+            del chunk[:]
             yield pcm_bytes
     if chunk:
         pcm_bytes = _drain_chunk_to_bytes(chunk)
-        chunk = array.array("h")
+        del chunk[:]
         yield pcm_bytes
 
 
