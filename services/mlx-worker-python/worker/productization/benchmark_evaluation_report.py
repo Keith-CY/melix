@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import csv
+from datetime import UTC, datetime
+import hashlib
+import io
 from collections.abc import Iterator
 from functools import lru_cache
 import json
@@ -9,6 +13,9 @@ from typing import Any
 from worker.productization.run_evidence import summarize_run_evidence_probes
 
 _COMMENT_MARKER = "<!-- melix-benchmark-evaluation-report -->"
+_REPORT_SCHEMA_VERSION = "melix.benchmark_evaluation_report.v1"
+_REPORT_GENERATOR_NAME = "worker.productization.benchmark_evaluation_report"
+_REPORT_GENERATOR_VERSION = "2026-05-08.plan4"
 _WARNING_THRESHOLD_PCT = 5.0
 _RUNTIME_PARAMETER_KEYS = (
     "runtime_live_model",
@@ -138,10 +145,100 @@ _METRIC_DIRECTION_BY_KEY = {
     "typed_score_mean": "higher_is_better",
     "validation_ms_mean": "lower_is_better",
 }
+_RUN_SUMMARY_FIELDS = (
+    "side",
+    "run_id",
+    "trace_id",
+    "run_kind",
+    "status",
+    "started_at",
+    "ended_at",
+    "duration_ms",
+    "command",
+    "operator",
+    "artifact_root",
+    "failure_summary",
+    "fallback_summary",
+)
+_TARGET_FIELDS = (
+    "side",
+    "run_id",
+    "target_model_id",
+    "hf_repo_id",
+    "task_kind",
+    "model_snapshot",
+    "adapter_id",
+    "adapter_snapshot",
+    "runtime_kind",
+    "runtime_config",
+    "dataset_ref",
+    "dataset_revision",
+    "suite_id",
+    "sample_count",
+    "input_digest",
+    "prompt_template_digest",
+    "generation_config",
+)
+_TELEMETRY_NUMERIC_FIELDS = (
+    "sample_count",
+    "average_cpu_utilization_percent",
+    "peak_cpu_utilization_percent",
+    "average_p_core_utilization_percent",
+    "peak_p_core_utilization_percent",
+    "average_e_core_utilization_percent",
+    "peak_e_core_utilization_percent",
+    "average_gpu_utilization_percent",
+    "peak_gpu_utilization_percent",
+    "average_gpu_frequency_mhz",
+    "peak_gpu_frequency_mhz",
+    "average_cpu_power_w",
+    "peak_cpu_power_w",
+    "average_gpu_power_w",
+    "peak_gpu_power_w",
+    "average_ane_power_w",
+    "peak_ane_power_w",
+    "average_dram_power_w",
+    "peak_dram_power_w",
+    "average_system_power_w",
+    "peak_system_power_w",
+    "watts_per_output_token",
+    "memory_used_bytes",
+    "memory_total_bytes",
+    "peak_process_memory_bytes",
+    "average_process_cpu_percent",
+)
+_TELEMETRY_ZERO_SYNTHESIS_FIELDS = (
+    "average_cpu_power_w",
+    "peak_cpu_power_w",
+    "average_gpu_power_w",
+    "peak_gpu_power_w",
+    "average_ane_power_w",
+    "peak_ane_power_w",
+    "average_dram_power_w",
+    "peak_dram_power_w",
+    "average_system_power_w",
+    "peak_system_power_w",
+    "watts_per_output_token",
+)
+_CSV_EXPORT_NAMES = (
+    "runs",
+    "metrics",
+    "probe_phases",
+    "telemetry_summary",
+    "processes",
+    "gate_results",
+    "comparison_deltas",
+)
 
 _NumericAggregate = tuple[float, int]
 _ProbeAggregateKey = tuple[str, str]
 _BenchmarkLabelCacheKey = tuple[str, str, str, str, str, str]
+
+
+class ReportValidationError(ValueError):
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = tuple(errors)
+        super().__init__("; ".join(errors))
 
 
 def load_report_input(path: str | Path) -> dict[str, object]:
@@ -166,6 +263,7 @@ def build_benchmark_evaluation_report(
     *,
     baseline: dict[str, object],
     candidate: dict[str, object],
+    report_kind: str = "comparison",
 ) -> dict[str, object]:
     baseline_metrics = _collect_metrics(baseline)
     candidate_metrics = _collect_metrics(candidate)
@@ -196,8 +294,65 @@ def build_benchmark_evaluation_report(
         status = "not_comparable"
     else:
         status = "ok"
+    baseline_evidence = _run_evidence_rows(baseline)
+    candidate_evidence = _run_evidence_rows(candidate)
+    source_evidence_ids = _source_evidence_ids(baseline_evidence, candidate_evidence)
+    evidence_rows = (*baseline_evidence, *candidate_evidence)
+    run_summaries = [
+        *_run_summaries("baseline", baseline_evidence),
+        *_run_summaries("candidate", candidate_evidence),
+    ]
+    targets = [
+        *_target_summaries("baseline", baseline_evidence),
+        *_target_summaries("candidate", candidate_evidence),
+    ]
+    metric_rows = [_report_metric_row(row) for row in rows]
+    probe_summary = {
+        "baseline": summarize_run_evidence_probes(baseline_evidence),
+        "candidate": summarize_run_evidence_probes(candidate_evidence),
+    }
+    telemetry_summary = {
+        "hardware_banner": "Apple Silicon / macOS telemetry",
+        "baseline": _telemetry_summaries("baseline", baseline_evidence),
+        "candidate": _telemetry_summaries("candidate", candidate_evidence),
+    }
+    process_attribution = {
+        "baseline": _process_attribution_summaries("baseline", baseline_evidence),
+        "candidate": _process_attribution_summaries("candidate", candidate_evidence),
+    }
+    known_gaps, instrumentation_gaps = _report_gaps(
+        source_evidence_ids=source_evidence_ids,
+        probe_summary=probe_summary,
+        telemetry_summary=telemetry_summary,
+    )
+    comparison = _comparison_section(
+        metric_rows=metric_rows,
+        targets=targets,
+        baseline_evidence=baseline_evidence,
+        candidate_evidence=candidate_evidence,
+    )
+    gate_result = _gate_result(
+        metric_rows=metric_rows,
+        source_evidence_ids=source_evidence_ids,
+        probe_summary=probe_summary,
+        telemetry_summary=telemetry_summary,
+        known_gaps=known_gaps,
+    )
     return {
-        "schema_version": "melix.benchmark_evaluation_report.v1",
+        "schema_version": _REPORT_SCHEMA_VERSION,
+        "report_id": _report_id(
+            source_evidence_ids=source_evidence_ids,
+            rows=rows,
+            report_kind=report_kind,
+        ),
+        "generated_at": _generated_at(evidence_rows),
+        "generator_name": _REPORT_GENERATOR_NAME,
+        "generator_version": _REPORT_GENERATOR_VERSION,
+        "melix_commit": _identity_value(evidence_rows, "melix_commit"),
+        "git_branch": _identity_value(evidence_rows, "git_branch"),
+        "dirty_worktree": any(bool(row.get("dirty_worktree")) for row in evidence_rows),
+        "source_evidence_ids": source_evidence_ids,
+        "report_kind": report_kind,
         "summary": {
             "status": status,
             "metric_count": len(rows),
@@ -205,10 +360,20 @@ def build_benchmark_evaluation_report(
             "missing_count": missing_count,
             "not_comparable_count": not_comparable_count,
         },
-        "probe_summary": {
-            "baseline": summarize_run_evidence_probes(_run_evidence_rows(baseline)),
-            "candidate": summarize_run_evidence_probes(_run_evidence_rows(candidate)),
-        },
+        "runs": run_summaries,
+        "targets": targets,
+        "metrics": metric_rows,
+        "probe_summary": probe_summary,
+        "probe_timeline_summary": probe_summary,
+        "telemetry_summary": telemetry_summary,
+        "process_attribution": process_attribution,
+        "comparison": comparison,
+        "gate_result": gate_result,
+        "artifacts": _default_artifacts(evidence_rows),
+        "known_gaps": known_gaps,
+        "instrumentation_gaps": instrumentation_gaps,
+        "operator_notes": [],
+        "non_blocking_warnings": list(instrumentation_gaps),
         "rows": rows,
     }
 
@@ -253,9 +418,26 @@ def render_markdown_report(report: dict[str, object]) -> str:
         f"- Missing: `{summary.get('missing_count', 0)}`",
         f"- Not Comparable: `{summary.get('not_comparable_count', 0)}`",
         "",
+        "## Report Identity",
+        "",
+        f"- Report ID: `{report.get('report_id', '')}`",
+        f"- Report Kind: `{report.get('report_kind', 'comparison')}`",
+        f"- Generated At: `{report.get('generated_at', '')}`",
+        f"- Melix Commit: `{report.get('melix_commit', 'unknown')}`",
+        f"- Git Branch: `{report.get('git_branch', 'unknown')}`",
+        "",
+    ]
+    lines.extend(_render_run_summary_markdown(report.get("runs")))
+    lines.extend(_render_gate_summary_markdown(report.get("gate_result")))
+    lines.extend(_render_telemetry_summary_markdown(report.get("telemetry_summary")))
+    lines.extend(
+        [
+            "## Result Metrics",
+            "",
         "| Metric | Baseline | Candidate | Delta | Status |",
         "| --- | ---: | ---: | ---: | --- |",
-    ]
+        ]
+    )
     for row in _report_rows(report):
         lines.append(
             "| "
@@ -273,6 +455,8 @@ def render_markdown_report(report: dict[str, object]) -> str:
     probe_summary = report.get("probe_summary")
     if isinstance(probe_summary, dict):
         lines.extend(_render_probe_summary_markdown(probe_summary))
+    lines.extend(_render_known_gaps_markdown(report))
+    lines.extend(_render_artifacts_markdown(report.get("artifacts")))
     lines.append("")
     return "\n".join(lines)
 
@@ -290,9 +474,967 @@ def write_report_outputs(
     root.mkdir(parents=True, exist_ok=True)
     json_path = root / "report.json"
     markdown_path = root / "report.md"
-    json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    markdown_path.write_text(render_markdown_report(report), encoding="utf-8")
-    return {"json": json_path, "markdown": markdown_path}
+    csv_dir = root / "csv"
+    csv_paths = {name: csv_dir / f"{name}.csv" for name in _CSV_EXPORT_NAMES}
+    report_payload = _report_with_output_artifacts(
+        report=report,
+        json_path=json_path,
+        markdown_path=markdown_path,
+        csv_paths=csv_paths,
+    )
+    json_path.write_text(json.dumps(report_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    markdown_path.write_text(render_markdown_report(report_payload), encoding="utf-8")
+    _write_report_csv_outputs(report_payload, csv_paths)
+    outputs = {"json": json_path, "markdown": markdown_path, "csv_dir": csv_dir}
+    outputs.update({f"{name}_csv": path for name, path in csv_paths.items()})
+    return outputs
+
+
+def validate_report_payload(report: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    for field_name in (
+        "schema_version",
+        "report_id",
+        "generated_at",
+        "generator_name",
+        "generator_version",
+        "melix_commit",
+        "git_branch",
+        "source_evidence_ids",
+        "report_kind",
+    ):
+        if field_name not in report:
+            errors.append(f"missing required report identity field: {field_name}")
+        elif field_name != "source_evidence_ids" and not str(report.get(field_name) or "").strip():
+            errors.append(f"required report identity field is empty: {field_name}")
+    if report.get("schema_version") != _REPORT_SCHEMA_VERSION:
+        errors.append(f"schema_version must be {_REPORT_SCHEMA_VERSION}")
+    if not isinstance(report.get("source_evidence_ids"), list) or not report.get("source_evidence_ids"):
+        errors.append("source_evidence_ids must be a non-empty list")
+
+    runs = report.get("runs")
+    if not isinstance(runs, list) or not runs:
+        errors.append("runs must be a non-empty list")
+    else:
+        for index, run in enumerate(runs):
+            if not isinstance(run, dict):
+                errors.append(f"runs[{index}] must be an object")
+                continue
+            for field_name in _RUN_SUMMARY_FIELDS:
+                if field_name not in run:
+                    errors.append(f"runs[{index}] missing required field: {field_name}")
+            for field_name in ("run_id", "trace_id", "run_kind", "status", "artifact_root"):
+                if field_name in run and not str(run.get(field_name) or "").strip():
+                    errors.append(f"runs[{index}] required field is empty: {field_name}")
+
+    targets = report.get("targets")
+    if not isinstance(targets, list) or not targets:
+        errors.append("targets must be a non-empty list")
+    else:
+        for index, target in enumerate(targets):
+            if not isinstance(target, dict):
+                errors.append(f"targets[{index}] must be an object")
+                continue
+            for field_name in _TARGET_FIELDS:
+                if field_name not in target:
+                    errors.append(f"targets[{index}] missing required field: {field_name}")
+            for field_name in ("run_id", "target_model_id", "task_kind", "suite_id"):
+                if field_name in target and not str(target.get(field_name) or "").strip():
+                    errors.append(f"targets[{index}] required field is empty: {field_name}")
+
+    metrics = report.get("metrics")
+    if not isinstance(metrics, list) or not metrics:
+        errors.append("metrics must be a non-empty list")
+    else:
+        for index, row in enumerate(metrics):
+            if not isinstance(row, dict):
+                errors.append(f"metrics[{index}] must be an object")
+                continue
+            if not str(row.get("metric") or "").strip():
+                errors.append(f"metrics[{index}] missing metric name")
+            if not isinstance(row.get("gate_policy"), dict):
+                errors.append(f"metrics[{index}] missing gate_policy")
+            if str(row.get("result") or "") not in {"pass", "fail", "informational"}:
+                errors.append(f"metrics[{index}] result must be pass, fail, or informational")
+
+    probe_summary = report.get("probe_summary")
+    if not isinstance(probe_summary, dict):
+        errors.append("probe_summary must be an object")
+    else:
+        for side in ("baseline", "candidate"):
+            side_summary = probe_summary.get(side)
+            if not isinstance(side_summary, dict):
+                errors.append(f"probe_summary.{side} must be an object")
+            elif int(side_summary.get("probe_count") or 0) <= 0:
+                errors.append(f"probe_summary.{side}.probe_count must be positive")
+
+    telemetry_summary = report.get("telemetry_summary")
+    if not isinstance(telemetry_summary, dict):
+        errors.append("telemetry_summary must be an object")
+    else:
+        for side in ("baseline", "candidate"):
+            side_rows = telemetry_summary.get(side)
+            if not isinstance(side_rows, list) or not side_rows:
+                errors.append(f"telemetry_summary.{side} must be a non-empty list")
+                continue
+            for index, row in enumerate(side_rows):
+                if not isinstance(row, dict):
+                    errors.append(f"telemetry_summary.{side}[{index}] must be an object")
+                    continue
+                if not str(row.get("collector_status") or "").strip():
+                    errors.append(f"telemetry_summary.{side}[{index}] missing collector_status")
+                if not isinstance(row.get("telemetry_failures"), list):
+                    errors.append(f"telemetry_summary.{side}[{index}] missing telemetry_failures")
+                errors.extend(_zero_synthesized_telemetry_errors(row, prefix=f"telemetry_summary.{side}[{index}]"))
+
+    gate_result = report.get("gate_result")
+    if not isinstance(gate_result, dict):
+        errors.append("gate_result must be an object")
+    else:
+        if str(gate_result.get("overall_result") or "") not in {"pass", "fail", "informational"}:
+            errors.append("gate_result.overall_result must be pass, fail, or informational")
+        if not isinstance(gate_result.get("gate_results"), list):
+            errors.append("gate_result.gate_results must be a list")
+        for field_name in (
+            "required_evidence_present",
+            "required_probe_phases_present",
+            "required_telemetry_present",
+        ):
+            if not isinstance(gate_result.get(field_name), bool):
+                errors.append(f"gate_result.{field_name} must be boolean")
+
+    return errors
+
+
+def assert_valid_report_payload(report: dict[str, object]) -> None:
+    errors = validate_report_payload(report)
+    if errors:
+        raise ReportValidationError(errors)
+
+
+def _source_evidence_ids(
+    baseline_evidence: list[dict[str, object]],
+    candidate_evidence: list[dict[str, object]],
+) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for evidence in (*baseline_evidence, *candidate_evidence):
+        run_id = str(evidence.get("run_id") or "").strip()
+        if run_id and run_id not in seen:
+            ids.append(run_id)
+            seen.add(run_id)
+    return ids
+
+
+def _run_summaries(side: str, evidence_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for evidence in evidence_rows:
+        probes = list(_dict_rows(evidence.get("probe_timeline", [])))
+        trace_id = ""
+        if probes:
+            trace_id = str(probes[0].get("trace_id") or "")
+        summaries.append(
+            {
+                "side": side,
+                "run_id": str(evidence.get("run_id") or ""),
+                "trace_id": trace_id,
+                "run_kind": str(evidence.get("run_kind") or ""),
+                "status": str(evidence.get("status") or ""),
+                "started_at": evidence.get("started_at"),
+                "ended_at": evidence.get("ended_at"),
+                "duration_ms": evidence.get("duration_ms"),
+                "command": str(evidence.get("command") or ""),
+                "operator": str(evidence.get("operator") or ""),
+                "artifact_root": str(evidence.get("artifact_root") or ""),
+                "failure_summary": dict(evidence.get("failure_summary") or {})
+                if isinstance(evidence.get("failure_summary"), dict)
+                else {},
+                "fallback_summary": dict(evidence.get("fallback_summary") or {})
+                if isinstance(evidence.get("fallback_summary"), dict)
+                else {},
+            }
+        )
+    return summaries
+
+
+def _target_summaries(side: str, evidence_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for evidence in evidence_rows:
+        summary = {"side": side}
+        for field_name in _TARGET_FIELDS:
+            if field_name == "side":
+                continue
+            value = evidence.get(field_name)
+            if isinstance(value, dict):
+                summary[field_name] = dict(value)
+            else:
+                summary[field_name] = value if value is not None else ""
+        summaries.append(summary)
+    return summaries
+
+
+def _report_metric_row(row: dict[str, object]) -> dict[str, object]:
+    result = _row_result(row)
+    return {
+        "metric": row.get("metric"),
+        "baseline": row.get("baseline"),
+        "current": row.get("candidate"),
+        "candidate": row.get("candidate"),
+        "delta": row.get("delta"),
+        "delta_percent": row.get("delta_pct"),
+        "delta_pct": row.get("delta_pct"),
+        "direction": row.get("direction"),
+        "status": row.get("status"),
+        "gate_policy": _row_gate_policy(row),
+        "result": result,
+    }
+
+
+def _row_result(row: dict[str, object]) -> str:
+    status = str(row.get("status") or "")
+    if status == "warning":
+        return "fail"
+    if status in {"missing", "not_comparable"}:
+        return "informational"
+    return "pass"
+
+
+def _row_gate_policy(row: dict[str, object]) -> dict[str, object]:
+    direction = str(row.get("direction") or "neutral")
+    return {
+        "direction": direction,
+        "warning_threshold_pct": _WARNING_THRESHOLD_PCT,
+        "required": direction in {"lower_is_better", "higher_is_better"},
+    }
+
+
+def _telemetry_summaries(side: str, evidence_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for evidence in evidence_rows:
+        telemetry = evidence.get("telemetry_summary")
+        if not isinstance(telemetry, dict):
+            continue
+        failures = telemetry.get("telemetry_failures")
+        thermal_events = telemetry.get("thermal_events")
+        summary: dict[str, object] = {
+            "side": side,
+            "run_id": str(evidence.get("run_id") or ""),
+            "run_kind": str(evidence.get("run_kind") or ""),
+            "collector_status": str(telemetry.get("collector_status") or ""),
+            "time_series_path": str(telemetry.get("time_series_path") or ""),
+            "telemetry_failures": list(failures) if isinstance(failures, list) else [],
+            "thermal_events": list(thermal_events) if isinstance(thermal_events, list) else [],
+        }
+        for field_name in _TELEMETRY_NUMERIC_FIELDS:
+            if field_name in telemetry:
+                summary[field_name] = telemetry[field_name]
+        process_attribution = telemetry.get("process_attribution")
+        if isinstance(process_attribution, dict):
+            summary["process_attribution"] = dict(process_attribution)
+        summaries.append(summary)
+    return summaries
+
+
+def _process_attribution_summaries(
+    side: str,
+    evidence_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for evidence in evidence_rows:
+        telemetry = evidence.get("telemetry_summary")
+        if not isinstance(telemetry, dict):
+            continue
+        process_attribution = telemetry.get("process_attribution")
+        if not isinstance(process_attribution, dict):
+            continue
+        summaries.append(
+            {
+                "side": side,
+                "run_id": str(evidence.get("run_id") or ""),
+                "run_kind": str(evidence.get("run_kind") or ""),
+                "primary_runtime_process": dict(process_attribution.get("primary_runtime_process") or {})
+                if isinstance(process_attribution.get("primary_runtime_process"), dict)
+                else {},
+                "control_plane_process": dict(process_attribution.get("control_plane_process") or {})
+                if isinstance(process_attribution.get("control_plane_process"), dict)
+                else {},
+                "worker_processes": list(process_attribution.get("worker_processes") or [])
+                if isinstance(process_attribution.get("worker_processes"), list)
+                else [],
+                "external_provider_processes": list(process_attribution.get("external_provider_processes") or [])
+                if isinstance(process_attribution.get("external_provider_processes"), list)
+                else [],
+                "process_tree_summary": dict(process_attribution.get("process_tree_summary") or {})
+                if isinstance(process_attribution.get("process_tree_summary"), dict)
+                else {},
+            }
+        )
+    return summaries
+
+
+def _report_gaps(
+    *,
+    source_evidence_ids: list[str],
+    probe_summary: dict[str, object],
+    telemetry_summary: dict[str, object],
+) -> tuple[list[str], list[str]]:
+    known_gaps: list[str] = []
+    instrumentation_gaps: list[str] = []
+    if not source_evidence_ids:
+        known_gaps.append("run_evidence_missing")
+    for side in ("baseline", "candidate"):
+        side_probe_summary = probe_summary.get(side)
+        if not isinstance(side_probe_summary, dict) or int(side_probe_summary.get("probe_count") or 0) <= 0:
+            known_gaps.append(f"{side}_probe_timeline_missing")
+        side_telemetry = telemetry_summary.get(side)
+        if not isinstance(side_telemetry, list) or not side_telemetry:
+            known_gaps.append(f"{side}_telemetry_summary_missing")
+            continue
+        for row in side_telemetry:
+            if not isinstance(row, dict):
+                continue
+            failures = row.get("telemetry_failures")
+            if isinstance(failures, list):
+                instrumentation_gaps.extend(
+                    f"{side}:{row.get('run_id', '')}:{failure}"
+                    for failure in failures
+                    if str(failure).strip()
+                )
+    return known_gaps, instrumentation_gaps
+
+
+def _comparison_section(
+    *,
+    metric_rows: list[dict[str, object]],
+    targets: list[dict[str, object]],
+    baseline_evidence: list[dict[str, object]],
+    candidate_evidence: list[dict[str, object]],
+) -> dict[str, object]:
+    metric_deltas = [_comparison_delta(row) for row in metric_rows]
+    probe_deltas = [row for row in metric_deltas if str(row.get("metric") or "").startswith("probe.")]
+    telemetry_deltas = [
+        row for row in metric_deltas if str(row.get("metric") or "").startswith("telemetry.")
+    ]
+    return {
+        "baseline_report_id": _side_report_id("baseline", baseline_evidence),
+        "current_report_id": _side_report_id("candidate", candidate_evidence),
+        "comparison_dimensions": _comparison_dimensions(targets),
+        "metric_deltas": metric_deltas,
+        "probe_deltas": probe_deltas,
+        "telemetry_deltas": telemetry_deltas,
+        "regressions": [row for row in metric_deltas if row.get("result") == "fail"],
+        "improvements": [row for row in metric_deltas if _is_improvement(row)],
+        "unchanged": [row for row in metric_deltas if _float_or_none(row.get("delta")) == 0.0],
+        "comparison_validity": "valid" if baseline_evidence and candidate_evidence else "partial",
+    }
+
+
+def _comparison_delta(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "metric": row.get("metric"),
+        "baseline": row.get("baseline"),
+        "current": row.get("current"),
+        "delta": row.get("delta"),
+        "delta_percent": row.get("delta_percent"),
+        "direction": row.get("direction"),
+        "gate_policy": row.get("gate_policy"),
+        "result": row.get("result"),
+    }
+
+
+def _comparison_dimensions(targets: list[dict[str, object]]) -> list[dict[str, object]]:
+    baseline = next((target for target in targets if target.get("side") == "baseline"), None)
+    candidate = next((target for target in targets if target.get("side") == "candidate"), None)
+    if not isinstance(baseline, dict) or not isinstance(candidate, dict):
+        return []
+    dimensions: list[dict[str, object]] = []
+    for field_name in _TARGET_FIELDS:
+        if field_name in {"side", "run_id"}:
+            continue
+        baseline_value = baseline.get(field_name)
+        candidate_value = candidate.get(field_name)
+        if baseline_value != candidate_value:
+            dimensions.append(
+                {
+                    "dimension": field_name,
+                    "baseline": baseline_value,
+                    "current": candidate_value,
+                }
+            )
+    return dimensions
+
+
+def _gate_result(
+    *,
+    metric_rows: list[dict[str, object]],
+    source_evidence_ids: list[str],
+    probe_summary: dict[str, object],
+    telemetry_summary: dict[str, object],
+    known_gaps: list[str],
+) -> dict[str, object]:
+    gate_rows = [_gate_row(row) for row in metric_rows]
+    informational_rows = [row for row in gate_rows if row.get("result") == "informational"]
+    blocking_failures = [row for row in gate_rows if row.get("result") == "fail"]
+    required_evidence_present = bool(source_evidence_ids)
+    required_probe_phases_present = all(
+        isinstance(probe_summary.get(side), dict)
+        and int(probe_summary[side].get("probe_count") or 0) > 0
+        for side in ("baseline", "candidate")
+    )
+    required_telemetry_present = all(
+        isinstance(telemetry_summary.get(side), list) and bool(telemetry_summary.get(side))
+        for side in ("baseline", "candidate")
+    )
+    if blocking_failures:
+        overall_result = "fail"
+    elif not (
+        required_evidence_present and required_probe_phases_present and required_telemetry_present
+    ) or informational_rows:
+        overall_result = "informational"
+    else:
+        overall_result = "pass"
+    return {
+        "overall_result": overall_result,
+        "gate_results": gate_rows,
+        "informational_results": informational_rows,
+        "known_gaps": list(known_gaps),
+        "blocking_failures": blocking_failures,
+        "required_evidence_present": required_evidence_present,
+        "required_probe_phases_present": required_probe_phases_present,
+        "required_telemetry_present": required_telemetry_present,
+    }
+
+
+def _gate_row(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "metric": row.get("metric"),
+        "result": row.get("result"),
+        "status": row.get("status"),
+        "direction": row.get("direction"),
+        "gate_policy": row.get("gate_policy"),
+        "baseline": row.get("baseline"),
+        "current": row.get("current"),
+        "delta": row.get("delta"),
+        "delta_percent": row.get("delta_percent"),
+    }
+
+
+def _report_id(
+    *,
+    source_evidence_ids: list[str],
+    rows: list[dict[str, object]],
+    report_kind: str,
+) -> str:
+    payload = {
+        "source_evidence_ids": source_evidence_ids,
+        "rows": rows,
+        "report_kind": report_kind,
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"report-{digest[:16]}"
+
+
+def _side_report_id(side: str, evidence_rows: list[dict[str, object]]) -> str:
+    run_ids = [str(row.get("run_id") or "") for row in evidence_rows]
+    digest = hashlib.sha256(json.dumps(run_ids, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"{side}-{digest[:16]}"
+
+
+def _generated_at(evidence_rows: tuple[dict[str, object], ...]) -> str:
+    ended_at_values = [
+        value
+        for value in (_int_or_none(row.get("ended_at")) for row in evidence_rows)
+        if value is not None and value > 0
+    ]
+    if not ended_at_values:
+        return "1970-01-01T00:00:00Z"
+    value = max(ended_at_values)
+    seconds = value / 1000.0 if value > 10_000_000_000 else float(value)
+    return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
+
+
+def _identity_value(evidence_rows: tuple[dict[str, object], ...], field_name: str) -> str:
+    values = sorted({str(row.get(field_name) or "").strip() for row in evidence_rows})
+    values = [value for value in values if value]
+    if not values:
+        return "unknown"
+    if len(values) == 1:
+        return values[0]
+    return ",".join(values)
+
+
+def _default_artifacts(evidence_rows: tuple[dict[str, object], ...]) -> dict[str, object]:
+    raw_output_paths: list[str] = []
+    telemetry_paths: list[str] = []
+    probe_paths: list[str] = []
+    for evidence in evidence_rows:
+        artifact_root = str(evidence.get("artifact_root") or "")
+        if artifact_root:
+            raw_output_paths.append(artifact_root)
+        telemetry = evidence.get("telemetry_summary")
+        if isinstance(telemetry, dict):
+            time_series_path = str(telemetry.get("time_series_path") or "")
+            if time_series_path:
+                telemetry_paths.append(time_series_path)
+        for artifact in _dict_rows(evidence.get("artifacts", [])):
+            artifact_path = str(artifact.get("path") or "")
+            artifact_kind = str(artifact.get("kind") or "")
+            if artifact_path:
+                raw_output_paths.append(artifact_path)
+            if artifact_kind == "probe_timeline" and artifact_path:
+                probe_paths.append(artifact_path)
+    return {
+        "evidence_json_path": "",
+        "report_json_path": "",
+        "markdown_report_path": "",
+        "csv_export_paths": {},
+        "probe_timeline_path": probe_paths[0] if probe_paths else "",
+        "telemetry_jsonl_path": telemetry_paths[0] if telemetry_paths else "",
+        "raw_output_paths": raw_output_paths,
+        "logs_path": "",
+        "screenshots_path": "",
+        "coverage_path": "",
+    }
+
+
+def _report_with_output_artifacts(
+    *,
+    report: dict[str, object],
+    json_path: Path,
+    markdown_path: Path,
+    csv_paths: dict[str, Path],
+) -> dict[str, object]:
+    payload = dict(report)
+    artifacts = dict(payload.get("artifacts") or {}) if isinstance(payload.get("artifacts"), dict) else {}
+    artifacts["report_json_path"] = str(json_path)
+    artifacts["markdown_report_path"] = str(markdown_path)
+    artifacts["csv_export_paths"] = {name: str(path) for name, path in csv_paths.items()}
+    payload["artifacts"] = artifacts
+    return payload
+
+
+def _zero_synthesized_telemetry_errors(row: dict[str, object], *, prefix: str) -> list[str]:
+    failures = row.get("telemetry_failures")
+    has_failure = (
+        isinstance(failures, list)
+        and bool(failures)
+        or str(row.get("collector_status") or "") in {"failed", "unsupported"}
+    )
+    if not has_failure:
+        return []
+    errors: list[str] = []
+    for field_name in _TELEMETRY_ZERO_SYNTHESIS_FIELDS:
+        if field_name in row and _float_or_none(row.get(field_name)) == 0.0:
+            errors.append(f"{prefix}.{field_name} must not synthesize zero telemetry")
+    return errors
+
+
+def _write_report_csv_outputs(report: dict[str, object], csv_paths: dict[str, Path]) -> None:
+    for path in csv_paths.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    _write_csv(
+        csv_paths["runs"],
+        _dict_list(report.get("runs")),
+        _RUN_SUMMARY_FIELDS,
+    )
+    _write_csv(
+        csv_paths["metrics"],
+        _dict_list(report.get("metrics")),
+        (
+            "metric",
+            "baseline",
+            "current",
+            "candidate",
+            "delta",
+            "delta_percent",
+            "direction",
+            "status",
+            "result",
+            "gate_policy",
+        ),
+    )
+    _write_csv(
+        csv_paths["probe_phases"],
+        _probe_phase_csv_rows(report),
+        (
+            "side",
+            "scope",
+            "run_id",
+            "run_kind",
+            "bucket",
+            "component",
+            "phase",
+            "duration_ms",
+            "status",
+            "error_stage",
+            "error_code",
+        ),
+    )
+    _write_csv(
+        csv_paths["telemetry_summary"],
+        _telemetry_csv_rows(report),
+        (
+            "side",
+            "run_id",
+            "run_kind",
+            "collector_status",
+            "sample_count",
+            "average_system_power_w",
+            "peak_system_power_w",
+            "average_cpu_power_w",
+            "average_gpu_power_w",
+            "average_ane_power_w",
+            "average_dram_power_w",
+            "watts_per_output_token",
+            "peak_process_memory_bytes",
+            "average_process_cpu_percent",
+            "thermal_events",
+            "telemetry_failures",
+            "time_series_path",
+        ),
+    )
+    _write_csv(
+        csv_paths["processes"],
+        _process_csv_rows(report),
+        (
+            "side",
+            "run_id",
+            "run_kind",
+            "group",
+            "pid",
+            "name",
+            "role",
+            "port",
+            "bundle_prefix",
+            "peak_memory_bytes",
+            "avg_cpu_percent",
+            "sample_count",
+            "process_tree_summary",
+        ),
+    )
+    _write_csv(
+        csv_paths["gate_results"],
+        _dict_list((report.get("gate_result") or {}).get("gate_results") if isinstance(report.get("gate_result"), dict) else []),
+        (
+            "metric",
+            "result",
+            "status",
+            "direction",
+            "baseline",
+            "current",
+            "delta",
+            "delta_percent",
+            "gate_policy",
+        ),
+    )
+    _write_csv(
+        csv_paths["comparison_deltas"],
+        _comparison_delta_csv_rows(report),
+        (
+            "kind",
+            "metric",
+            "baseline",
+            "current",
+            "delta",
+            "delta_percent",
+            "direction",
+            "result",
+            "gate_policy",
+        ),
+    )
+
+
+def _write_csv(path: Path, rows: list[dict[str, object]], headers: tuple[str, ...]) -> None:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=headers, extrasaction="ignore", lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({header: _csv_value(row.get(header)) for header in headers})
+    path.write_text(buffer.getvalue(), encoding="utf-8")
+
+
+def _csv_value(value: object) -> object:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, sort_keys=True)
+    return value
+
+
+def _probe_phase_csv_rows(report: dict[str, object]) -> list[dict[str, object]]:
+    probe_summary = report.get("probe_summary")
+    if not isinstance(probe_summary, dict):
+        return []
+    rows: list[dict[str, object]] = []
+    for side in ("baseline", "candidate"):
+        side_summary = probe_summary.get(side)
+        if not isinstance(side_summary, dict):
+            continue
+        rows.extend(_probe_summary_rows(side=side, scope="combined", summary=side_summary))
+        for run_summary in _dict_list(side_summary.get("runs")):
+            rows.extend(
+                _probe_summary_rows(
+                    side=side,
+                    scope="run",
+                    summary=run_summary,
+                    run_id=str(run_summary.get("run_id") or ""),
+                    run_kind=str(run_summary.get("run_kind") or ""),
+                )
+            )
+    return rows
+
+
+def _probe_summary_rows(
+    *,
+    side: str,
+    scope: str,
+    summary: dict[str, object],
+    run_id: str = "",
+    run_kind: str = "",
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for bucket in ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases"):
+        for item in _dict_list(summary.get(bucket)):
+            rows.append(
+                {
+                    "side": side,
+                    "scope": scope,
+                    "run_id": run_id or str(item.get("run_id") or ""),
+                    "run_kind": run_kind,
+                    "bucket": bucket,
+                    "component": item.get("component"),
+                    "phase": item.get("phase"),
+                    "duration_ms": item.get("duration_ms"),
+                    "status": item.get("status"),
+                    "error_stage": item.get("error_stage"),
+                    "error_code": item.get("error_code"),
+                }
+            )
+    return rows
+
+
+def _telemetry_csv_rows(report: dict[str, object]) -> list[dict[str, object]]:
+    telemetry_summary = report.get("telemetry_summary")
+    if not isinstance(telemetry_summary, dict):
+        return []
+    rows: list[dict[str, object]] = []
+    for side in ("baseline", "candidate"):
+        rows.extend(_dict_list(telemetry_summary.get(side)))
+    return rows
+
+
+def _process_csv_rows(report: dict[str, object]) -> list[dict[str, object]]:
+    process_attribution = report.get("process_attribution")
+    if not isinstance(process_attribution, dict):
+        return []
+    rows: list[dict[str, object]] = []
+    for side in ("baseline", "candidate"):
+        for summary in _dict_list(process_attribution.get(side)):
+            common = {
+                "side": side,
+                "run_id": summary.get("run_id"),
+                "run_kind": summary.get("run_kind"),
+            }
+            for group in ("primary_runtime_process", "control_plane_process"):
+                process = summary.get(group)
+                if isinstance(process, dict) and process:
+                    rows.append({**common, "group": group, **_process_csv_row(process)})
+            for group in ("worker_processes", "external_provider_processes"):
+                for process in _dict_list(summary.get(group)):
+                    rows.append({**common, "group": group, **_process_csv_row(process)})
+            process_tree_summary = summary.get("process_tree_summary")
+            if isinstance(process_tree_summary, dict) and process_tree_summary:
+                rows.append(
+                    {
+                        **common,
+                        "group": "process_tree_summary",
+                        "process_tree_summary": process_tree_summary,
+                    }
+                )
+    return rows
+
+
+def _process_csv_row(process: dict[str, object]) -> dict[str, object]:
+    return {
+        "pid": process.get("pid"),
+        "name": process.get("name"),
+        "role": process.get("role"),
+        "port": process.get("port"),
+        "bundle_prefix": process.get("bundle_prefix"),
+        "peak_memory_bytes": process.get("peak_memory_bytes", process.get("memory_bytes")),
+        "avg_cpu_percent": process.get("avg_cpu_percent", process.get("cpu_percent")),
+        "sample_count": process.get("sample_count"),
+    }
+
+
+def _comparison_delta_csv_rows(report: dict[str, object]) -> list[dict[str, object]]:
+    comparison = report.get("comparison")
+    if not isinstance(comparison, dict):
+        return []
+    rows: list[dict[str, object]] = []
+    for key, kind in (
+        ("metric_deltas", "metric"),
+        ("probe_deltas", "probe"),
+        ("telemetry_deltas", "telemetry"),
+    ):
+        for row in _dict_list(comparison.get(key)):
+            rows.append({"kind": kind, **row})
+    return rows
+
+
+def _render_run_summary_markdown(runs: object) -> list[str]:
+    run_rows = _dict_list(runs)
+    if not run_rows:
+        return []
+    lines = [
+        "## Run Summary",
+        "",
+        "| Side | Run ID | Kind | Status | Duration ms | Artifact Root |",
+        "| --- | --- | --- | --- | ---: | --- |",
+    ]
+    for row in run_rows:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_cell(row.get("side", "")),
+                    _markdown_cell(row.get("run_id", "")),
+                    _markdown_cell(row.get("run_kind", "")),
+                    _markdown_cell(row.get("status", "")),
+                    _markdown_cell(_format_value(row.get("duration_ms"))),
+                    _markdown_cell(row.get("artifact_root", "")),
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    return lines
+
+
+def _render_gate_summary_markdown(gate_result: object) -> list[str]:
+    if not isinstance(gate_result, dict):
+        return []
+    lines = [
+        "## Gate Summary",
+        "",
+        f"- Overall Result: `{gate_result.get('overall_result', 'informational')}`",
+        f"- Blocking Failures: `{len(_dict_list(gate_result.get('blocking_failures')))}`",
+        f"- Informational Results: `{len(_dict_list(gate_result.get('informational_results')))}`",
+        f"- Required Evidence Present: `{gate_result.get('required_evidence_present', False)}`",
+        f"- Required Probe Phases Present: `{gate_result.get('required_probe_phases_present', False)}`",
+        f"- Required Telemetry Present: `{gate_result.get('required_telemetry_present', False)}`",
+        "",
+    ]
+    return lines
+
+
+def _render_telemetry_summary_markdown(telemetry_summary: object) -> list[str]:
+    if not isinstance(telemetry_summary, dict):
+        return []
+    lines = [
+        "## Telemetry Summary",
+        "",
+        f"- Hardware: `{telemetry_summary.get('hardware_banner', 'Apple Silicon / macOS telemetry')}`",
+        "",
+        "| Side | Run ID | Status | Avg System W | Peak System W | Watts / Token | Failures |",
+        "| --- | --- | --- | ---: | ---: | ---: | --- |",
+    ]
+    has_rows = False
+    for side in ("baseline", "candidate"):
+        for row in _dict_list(telemetry_summary.get(side)):
+            has_rows = True
+            failures = row.get("telemetry_failures")
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _markdown_cell(side),
+                        _markdown_cell(row.get("run_id", "")),
+                        _markdown_cell(row.get("collector_status", "")),
+                        _markdown_cell(_format_value(row.get("average_system_power_w"))),
+                        _markdown_cell(_format_value(row.get("peak_system_power_w"))),
+                        _markdown_cell(_format_value(row.get("watts_per_output_token"))),
+                        _markdown_cell(", ".join(str(item) for item in failures) if isinstance(failures, list) else ""),
+                    ]
+                )
+                + " |"
+            )
+    if not has_rows:
+        lines.append("| - | - | missing | - | - | - | telemetry_summary_missing |")
+    lines.append("")
+    return lines
+
+
+def _render_known_gaps_markdown(report: dict[str, object]) -> list[str]:
+    known_gaps = [str(item) for item in report.get("known_gaps", []) if str(item).strip()] if isinstance(report.get("known_gaps"), list) else []
+    instrumentation_gaps = [str(item) for item in report.get("instrumentation_gaps", []) if str(item).strip()] if isinstance(report.get("instrumentation_gaps"), list) else []
+    if not known_gaps and not instrumentation_gaps:
+        return []
+    lines = ["", "## Known Gaps", ""]
+    for gap in known_gaps:
+        lines.append(f"- `{_markdown_cell(gap)}`")
+    for gap in instrumentation_gaps:
+        lines.append(f"- `{_markdown_cell(gap)}`")
+    lines.append("")
+    return lines
+
+
+def _render_artifacts_markdown(artifacts: object) -> list[str]:
+    if not isinstance(artifacts, dict):
+        return []
+    artifact_rows = [
+        ("Report JSON", artifacts.get("report_json_path")),
+        ("Markdown", artifacts.get("markdown_report_path")),
+        ("Probe Timeline", artifacts.get("probe_timeline_path")),
+        ("Telemetry JSONL", artifacts.get("telemetry_jsonl_path")),
+        ("Coverage", artifacts.get("coverage_path")),
+    ]
+    csv_paths = artifacts.get("csv_export_paths")
+    if isinstance(csv_paths, dict):
+        for name, path in sorted(csv_paths.items()):
+            artifact_rows.append((f"CSV {name}", path))
+    artifact_rows = [(label, path) for label, path in artifact_rows if str(path or "").strip()]
+    if not artifact_rows:
+        return []
+    lines = ["", "## Artifacts", ""]
+    for label, path in artifact_rows:
+        lines.append(f"- {label}: `{_markdown_cell(path)}`")
+    lines.append("")
+    return lines
+
+
+def _is_improvement(row: dict[str, object]) -> bool:
+    delta = _float_or_none(row.get("delta"))
+    if delta is None:
+        return False
+    direction = str(row.get("direction") or "")
+    if direction == "lower_is_better":
+        return delta < 0
+    if direction == "higher_is_better":
+        return delta > 0
+    return False
+
+
+def _dict_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [row for row in value if isinstance(row, dict)]
+
+
+def _int_or_none(value: object) -> int | None:
+    value_type = type(value)
+    if value_type is int or value_type is bool:
+        return int(value)
+    if value_type is float:
+        return int(value)
+    if isinstance(value, str):
+        stripped_value = value.strip()
+        if stripped_value:
+            try:
+                return int(float(stripped_value))
+            except ValueError:
+                return None
+    return None
 
 
 def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:

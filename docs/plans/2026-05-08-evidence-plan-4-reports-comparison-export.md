@@ -38,3 +38,21 @@ evidence.
 - Operators can inspect single-run and comparison reports without reading logs.
 - PR and release workflows can verify report JSON.
 - Markdown and CSV remain derived views of report JSON.
+
+## Implementation Status
+
+- Added structured report identity, run summaries, target summaries, metric
+  rows, probe summaries, Apple Silicon telemetry summaries, process
+  attribution, comparison deltas, gate results, artifacts, known gaps, and
+  instrumentation gaps to `report.json`.
+- Kept the existing `summary`, `rows`, terminal output, and metric comparison
+  behavior backward-compatible for existing benchmark/evaluation consumers.
+- Added a report verifier that rejects missing identity, run, target, metric,
+  probe, telemetry, and gate-policy sections, including telemetry failures
+  encoded as synthetic zero-watt values.
+- Updated Markdown rendering to include identity, run, gate, telemetry, probe,
+  known-gap, and artifact sections while retaining the existing metrics table.
+- Updated report output writing so `report.json` remains the source of truth
+  and Markdown plus split CSV exports are derived views:
+  `runs.csv`, `metrics.csv`, `probe_phases.csv`, `telemetry_summary.csv`,
+  `processes.csv`, `gate_results.csv`, and `comparison_deltas.csv`.
