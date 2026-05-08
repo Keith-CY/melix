@@ -417,7 +417,7 @@ def _is_mlx_compatible(
     card_tags = card_data.get("tags")
     if not card_tags:
         return False
-    return "mlx" in {tag.lower() for tag in _string_list(card_tags)}
+    return any(tag.lower() == "mlx" for tag in _string_list(card_tags))
 
 
 def _local_fit_evidence(
