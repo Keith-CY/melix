@@ -2988,9 +2988,9 @@
       "scripts/quantization_qat_source_scan_probe.py",
       "scripts/changed_scope_coverage.py"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_uses_scandir_stack_without_path_rglob services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_skips_bad_scandir_entries_and_empty_roots services/mlx-worker-python/tests/test_quantization_pipeline.py::test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantization_qat_source_scan_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantization_qat_source_scan_probe_script_emits_metrics",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_uses_scandir_stack_without_path_rglob services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_skips_bad_scandir_entries_and_empty_roots services/mlx-worker-python/tests/test_quantization_pipeline.py::test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantization_qat_source_scan_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantization_qat_source_scan_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/quantization_pipeline.py services/mlx-worker-python/tests/test_quantization_pipeline.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/quantization_qat_source_scan_probe.py",
-    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_QAT_SOURCE_SCAN_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python python3 \"${PWD}/scripts/quantization_qat_source_scan_probe.py\" || PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_QAT_SOURCE_SCAN_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python python3 \"${PWD}/../head/scripts/quantization_qat_source_scan_probe.py\"",
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_uses_scandir_stack_without_path_rglob services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_skips_bad_scandir_entries_and_empty_roots services/mlx-worker-python/tests/test_quantization_pipeline.py::test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_error_table_matches_reference_and_caches services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_source_stats_reuses_byte_error_table services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantization_qat_source_scan_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantization_qat_source_scan_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_uses_scandir_stack_without_path_rglob services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_skips_bad_scandir_entries_and_empty_roots services/mlx-worker-python/tests/test_quantization_pipeline.py::test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_error_table_matches_reference_and_caches services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_source_stats_reuses_byte_error_table services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantization_qat_source_scan_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantization_qat_source_scan_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/quantization_pipeline.py services/mlx-worker-python/tests/test_quantization_pipeline.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/quantization_qat_source_scan_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_QAT_SOURCE_SCAN_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"${PWD}/scripts/quantization_qat_source_scan_probe.py\"; for CANDIDATE in \"${PWD}/../head/scripts/quantization_qat_source_scan_probe.py\" /tmp/melix-cron-opt-*/scripts/quantization_qat_source_scan_probe.py; do if [ -f \"$CANDIDATE\" ] && grep -q source_stats_elapsed_ms_mean \"$CANDIDATE\"; then SCRIPT=\"$CANDIDATE\"; break; fi; done; python3 \"$SCRIPT\"'",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -3008,6 +3008,22 @@
       },
       {
         "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "informational"
+      },
+      {
+        "key": "source_stats_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "source_stats_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "informational"
+      },
+      {
+        "key": "source_stats_byte_count",
         "unit": "bytes",
         "direction": "informational"
       }

@@ -16,6 +16,8 @@ from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.quantization_pipeline import (
     OQQuantizationPipeline,
     _local_source_path_for_mlx_lm_convert,
+    _qat_fake_quant_error_table,
+    _qat_fake_quant_source_stats,
     _smoke_required_files_for_backend,
     _source_artifact_files_for_qat,
     _sum_bundle_file_bytes,
@@ -1257,6 +1259,55 @@ def test_qat_source_artifact_files_skips_bad_scandir_entries_and_empty_roots(
     with pytest.raises(ModelOperationError) as root_error:
         _source_artifact_files_for_qat(source_path)
     assert root_error.value.code == "invalid_qat_source_artifact"
+
+
+def test_qat_fake_quant_error_table_matches_reference_and_caches() -> None:
+    _qat_fake_quant_error_table.cache_clear()
+
+    for q_bits in (2, 4, 8):
+        levels = (1 << q_bits) - 1
+        expected = tuple(
+            abs(value - round((round((value / 255.0) * levels) / levels) * 255.0)) / 255.0
+            for value in range(256)
+        )
+        first = _qat_fake_quant_error_table(q_bits)
+        second = _qat_fake_quant_error_table(q_bits)
+
+        assert first == expected
+        assert second is first
+
+    cache_info = _qat_fake_quant_error_table.cache_info()
+    assert cache_info.misses == 3
+    assert cache_info.hits == 3
+
+    with pytest.raises(ModelOperationError) as error:
+        _qat_fake_quant_error_table(0)
+    assert error.value.code == "invalid_quantization_backend_config"
+
+
+def test_qat_fake_quant_source_stats_reuses_byte_error_table(tmp_path: Path) -> None:
+    source_a = tmp_path / "a.safetensors"
+    source_b = tmp_path / "b.json"
+    source_a.write_bytes(bytes(range(256)) * 3)
+    source_b.write_bytes(b"melix-qat-source-stats\n")
+
+    q_bits = 4
+    levels = (1 << q_bits) - 1
+    payload = source_a.read_bytes() + source_b.read_bytes()
+    expected_errors = [
+        abs(value - round((round((value / 255.0) * levels) / levels) * 255.0)) / 255.0
+        for value in payload
+    ]
+
+    _qat_fake_quant_error_table.cache_clear()
+    stats = _qat_fake_quant_source_stats([source_a, source_b], q_bits=q_bits)
+
+    assert stats["source_sha256"] == quantization_pipeline_module.hashlib.sha256(payload).hexdigest()
+    assert stats["source_file_count"] == 2
+    assert stats["source_byte_count"] == len(payload)
+    assert stats["quant_error_proxy_mean"] == pytest.approx(sum(expected_errors) / len(payload))
+    assert stats["quant_error_proxy_max"] == max(expected_errors)
+    assert _qat_fake_quant_error_table.cache_info().misses == 1
 
 
 def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp_path: Path) -> None:
