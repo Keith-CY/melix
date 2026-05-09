@@ -740,7 +740,28 @@ def test_train_lora_materializes_hf_dataset_and_reuses_cached_package(tmp_path: 
 
 def test_train_lora_supports_qlora_with_hf_valid_split_and_persists_desired_alias(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    manifest_write_count = 0
+    manifest_read_count = 0
+    original_write_text = Path.write_text
+    original_read_text = Path.read_text
+
+    def counting_write_text(self: Path, data: str, *args: object, **kwargs: object) -> int:
+        nonlocal manifest_write_count
+        if self.parts[-2:] == ("normalized_dataset", "manifest.json"):
+            manifest_write_count += 1
+        return original_write_text(self, data, *args, **kwargs)
+
+    def counting_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        nonlocal manifest_read_count
+        if self.parts[-2:] == ("normalized_dataset", "manifest.json"):
+            manifest_read_count += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", counting_write_text)
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
     fetcher = FakeHFDatasetFetcher()
     runner = SuccessfulRunner()
     service = _build_service(tmp_path, runner)
@@ -783,6 +804,8 @@ def test_train_lora_supports_qlora_with_hf_valid_split_and_persists_desired_alia
 
     payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
     normalized_dataset_path = Path(payload["normalized_dataset_manifest_path"])
+    assert manifest_write_count == 1
+    assert manifest_read_count == 0
     normalized_dataset_payload = json.loads(normalized_dataset_path.read_text(encoding="utf-8"))
 
     assert payload["training_mode"] == "qlora"

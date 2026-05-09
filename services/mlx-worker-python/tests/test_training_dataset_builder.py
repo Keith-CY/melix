@@ -117,6 +117,43 @@ def test_write_normalized_dataset_snapshot_writes_matching_train_and_samples_jso
     )
 
 
+def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "dataset-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    dataset = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=package_path / "manifest.json",
+        samples_path=package_path / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="melix-demo",
+        format="prompt_completion",
+        sample_count=1,
+        version="1",
+        normalized_samples=[{"prompt": "alpha", "completion": "beta"}],
+        normalized_validation_samples=[],
+        validation_sample_count=0,
+        response_only_supported=False,
+    )
+
+    snapshot = write_normalized_dataset_snapshot(
+        dataset,
+        output_dir=tmp_path / "exports",
+        manifest_overrides={
+            "validation_strategy": "hf_split",
+            "validation_sample_count": 3,
+            "hf_valid_split": "validation",
+        },
+    )
+
+    payload = json.loads(snapshot.manifest_path.read_text(encoding="utf-8"))
+    assert payload["dataset_id"] == "melix-demo"
+    assert payload["validation_strategy"] == "hf_split"
+    assert payload["validation_sample_count"] == 3
+    assert payload["hf_valid_split"] == "validation"
+
+
 def test_write_normalized_dataset_snapshot_clears_stale_valid_jsonl_when_no_validation_samples(
     tmp_path: Path,
 ) -> None:
