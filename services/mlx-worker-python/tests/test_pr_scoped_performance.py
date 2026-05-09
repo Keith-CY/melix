@@ -1672,6 +1672,7 @@ def test_video_preprocessing_uri_probe_script_emits_metrics(
     assert metrics["sample_count"] == 5.0
     assert metrics["iterations_per_sample"] == 50000.0
     assert metrics["byte_length_getattrs_per_call"] == 1.0
+    assert metrics["parse_calls_per_call"] == 1.0
     assert metrics["elapsed_ms_mean"] >= 0
 
 
