@@ -152,8 +152,11 @@ def test_scope_report_selects_runtime_utils_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/runtime_utils.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "runtime-utils-kwarg-signature-cache"
+    assert scope["selected_count"] == 2
+    assert _selected_probe_ids(scope) == [
+        "runtime-utils-kwarg-signature-cache",
+        "runtime-utils-package-version-cache",
+    ]
 
 
 def test_scope_report_selects_engine_generate_usage_probe() -> None:
@@ -1553,6 +1556,24 @@ def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
 
 
+def test_runtime_utils_package_version_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_utils_package_version_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["iterations_per_sample"] == 60000.0
+    assert metrics["package_count"] == 3.0
+    assert metrics["metadata_version_calls_mean"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
 def test_mlx_text_stop_kwarg_signature_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1892,6 +1913,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
         "runtime-utils-kwarg-signature-cache",
+        "runtime-utils-package-version-cache",
         "mlx-text-stop-kwarg-signature-cache",
         "mlx-text-stop-filter-prefix-cache",
         "mlx-audio-wav-streaming-pcm",

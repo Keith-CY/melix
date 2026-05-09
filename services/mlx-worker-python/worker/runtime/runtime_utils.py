@@ -104,8 +104,13 @@ def clear_callable_kwarg_signature_cache() -> None:
     _callable_kwarg_signature_cached.cache_clear()
 
 
+@lru_cache(maxsize=128)
 def installed_package_version(package_name: str) -> str:
     try:
         return importlib.metadata.version(package_name)
     except importlib.metadata.PackageNotFoundError:
         return ""
+
+
+def clear_installed_package_version_cache() -> None:
+    installed_package_version.cache_clear()

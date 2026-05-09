@@ -174,6 +174,8 @@ def test_callable_accepts_kwarg_falls_back_for_unhashable_callable(monkeypatch: 
 
 
 def test_installed_package_version_returns_empty_for_missing_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_utils.clear_installed_package_version_cache()
+
     def fake_version(package_name: str) -> str:
         _ = package_name
         raise importlib.metadata.PackageNotFoundError
@@ -181,3 +183,44 @@ def test_installed_package_version_returns_empty_for_missing_package(monkeypatch
     monkeypatch.setattr(runtime_utils.importlib.metadata, "version", fake_version)
 
     assert runtime_utils.installed_package_version("missing-package") == ""
+
+    runtime_utils.clear_installed_package_version_cache()
+
+
+def test_installed_package_version_caches_successful_lookups(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_utils.clear_installed_package_version_cache()
+    version_calls: list[str] = []
+
+    def fake_version(package_name: str) -> str:
+        version_calls.append(package_name)
+        return f"{package_name}-1.0"
+
+    monkeypatch.setattr(runtime_utils.importlib.metadata, "version", fake_version)
+
+    assert runtime_utils.installed_package_version("mlx") == "mlx-1.0"
+    assert runtime_utils.installed_package_version("mlx") == "mlx-1.0"
+    assert runtime_utils.installed_package_version("mlx-lm") == "mlx-lm-1.0"
+    assert runtime_utils.installed_package_version("mlx") == "mlx-1.0"
+
+    assert version_calls == ["mlx", "mlx-lm"]
+
+    runtime_utils.clear_installed_package_version_cache()
+
+
+def test_installed_package_version_caches_missing_lookups(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_utils.clear_installed_package_version_cache()
+    version_calls = 0
+
+    def fake_version(package_name: str) -> str:
+        nonlocal version_calls
+        version_calls += 1
+        _ = package_name
+        raise importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(runtime_utils.importlib.metadata, "version", fake_version)
+
+    assert runtime_utils.installed_package_version("missing-package") == ""
+    assert runtime_utils.installed_package_version("missing-package") == ""
+    assert version_calls == 1
+
+    runtime_utils.clear_installed_package_version_cache()
