@@ -2120,6 +2120,7 @@ def _soft_field_f1(gold_values: list[str], pred_values: list[str]) -> float:
     return _safe_divide(2.0 * soft_tp, len(gold_values) + len(pred_values))
 
 
+@lru_cache(maxsize=8192)
 def _string_similarity(left: str, right: str) -> float:
     normalized_left = _normalize_similarity_text(left)
     normalized_right = _normalize_similarity_text(right)

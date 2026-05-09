@@ -20,10 +20,10 @@ Reduce repeated pure string-preparation work in event extraction alignment on Li
 Use the existing event extraction alignment scoped probe:
 
 ```bash
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" python scripts/event_extraction_alignment_probe.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" python3 scripts/event_extraction_alignment_probe.py
 ```
 
-Success metric: preserve structural metrics while reducing `elapsed_ms_mean` for repeated lexical similarity comparisons. The registered scoped CI probe is `event-extraction-alignment-accepted-edge-cache`.
+Success metric: preserve structural metrics while reducing `similarity_elapsed_ms_mean` for repeated lexical similarity comparisons. The registered scoped CI probe is `event-extraction-alignment-accepted-edge-cache`; this slice records `similarity_elapsed_ms_mean` as a lower-is-better metric and memoizes `_string_similarity()` for repeated comparison pairs.
 
 ## Verification Commands
 

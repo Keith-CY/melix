@@ -131,16 +131,20 @@ def test_normalize_event_fields_nulls_empty_values_and_builds_digest() -> None:
 
 
 def test_string_similarity_reuses_normalized_text_and_bigram_counts() -> None:
+    event_extraction_module._string_similarity.cache_clear()
     event_extraction_module._normalize_similarity_text.cache_clear()
     event_extraction_module._character_bigram_items.cache_clear()
 
     first = event_extraction_module._string_similarity("Delivered supply crate", "delivered supply crates")
     second = event_extraction_module._string_similarity("Delivered supply crate", "delivered supply crates")
+    third = event_extraction_module._string_similarity("Delivered supply crate 2", "delivered supply crates 2")
+    fourth = event_extraction_module._string_similarity("Delivered supply crate 2", "delivered supply crates 2")
 
     assert first == second
+    assert third == fourth
     assert first > 0.9
-    assert event_extraction_module._normalize_similarity_text.cache_info().hits >= 2
-    assert event_extraction_module._character_bigram_items.cache_info().hits >= 2
+    assert third > 0.9
+    assert event_extraction_module._string_similarity.cache_info().hits >= 2
     assert event_extraction_module._character_bigrams("aba") == {"ab": 1, "ba": 1}
 
 
