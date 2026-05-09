@@ -39,6 +39,7 @@ def main() -> int:
     from worker.productization.event_extraction import (  # noqa: PLC0415
         _accepted_event_matching_edges,
         _maximum_weight_event_matching,
+        _string_similarity,
     )
 
     size = _int_env("MELIX_EVENT_ALIGNMENT_PROBE_SIZE", 14)
@@ -69,11 +70,28 @@ def main() -> int:
     if abs(checksum - expected_total_checksum) > 1e-6:
         raise RuntimeError(f"unexpected matching checksum: {checksum} != {expected_total_checksum}")
 
+    similarity_pairs = [
+        (f"Delivered supply crate {index % 32}", f"delivered supply crates {index % 32}")
+        for index in range(512)
+    ]
+    similarity_elapsed_samples: list[float] = []
+    similarity_checksum = 0.0
+    for _sample_index in range(sample_count):
+        started = time.perf_counter()
+        for _iteration in range(iterations):
+            for left, right in similarity_pairs:
+                similarity_checksum += _string_similarity(left, right)
+        similarity_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
     print(
         json.dumps(
             {
                 "elapsed_ms_mean": statistics.fmean(elapsed_samples),
                 "elapsed_ms_min": min(elapsed_samples),
+                "similarity_elapsed_ms_mean": statistics.fmean(similarity_elapsed_samples),
+                "similarity_elapsed_ms_min": min(similarity_elapsed_samples),
+                "similarity_pair_count": float(len(similarity_pairs)),
+                "similarity_checksum": similarity_checksum,
                 "matrix_size": float(size),
                 "accepted_edges": float(edge_count),
                 "iterations_per_sample": float(iterations),

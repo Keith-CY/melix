@@ -1102,6 +1102,9 @@ def test_event_extraction_alignment_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["match_count_mean"] > 0
     assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["similarity_pair_count"] == 512.0
+    assert metrics["similarity_elapsed_ms_mean"] >= 0
+    assert metrics["similarity_checksum"] > 0
 
 
 def test_event_extraction_semantic_value_group_probe_script_emits_metrics(

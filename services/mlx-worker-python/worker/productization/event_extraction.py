@@ -2133,6 +2133,7 @@ def _string_similarity(left: str, right: str) -> float:
     return max(containment_score, _bigram_dice(normalized_left, normalized_right))
 
 
+@lru_cache(maxsize=4096)
 def _normalize_similarity_text(value: str) -> str:
     return "".join(char for char in value.strip().lower() if char not in _SIMILARITY_IGNORED_CHARS)
 
@@ -2153,28 +2154,36 @@ def _is_group_actor_alias(value: str) -> bool:
 
 
 def _bigram_dice(left: str, right: str) -> float:
-    left_units = _character_bigrams(left)
-    right_units = _character_bigrams(right)
+    left_units = _character_bigram_items(left)
+    right_units = _character_bigram_items(right)
     if not left_units or not right_units:
         return 0.0
     overlap = 0
     remaining = dict(right_units)
-    for unit, count in left_units.items():
+    for unit, count in left_units:
         matched = min(count, remaining.get(unit, 0))
         overlap += matched
         if matched:
             remaining[unit] = remaining.get(unit, 0) - matched
-    return _safe_divide(2.0 * overlap, sum(left_units.values()) + sum(right_units.values()))
+    return _safe_divide(
+        2.0 * overlap,
+        sum(count for _unit, count in left_units) + sum(count for _unit, count in right_units),
+    )
 
 
 def _character_bigrams(value: str) -> dict[str, int]:
+    return dict(_character_bigram_items(value))
+
+
+@lru_cache(maxsize=4096)
+def _character_bigram_items(value: str) -> tuple[tuple[str, int], ...]:
     if len(value) <= 1:
-        return {value: 1} if value else {}
+        return ((value, 1),) if value else ()
     counts: dict[str, int] = {}
     for index in range(len(value) - 1):
         unit = value[index : index + 2]
         counts[unit] = counts.get(unit, 0) + 1
-    return counts
+    return tuple(counts.items())
 
 
 def _accepted_event_matching_edges(
