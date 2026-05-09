@@ -4830,6 +4830,388 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.benchmarkJob.taskKind == "text-generation")
     }
 
+    @Test("execute imports Qwen3.6 benchmark targets with multimodal-looking metadata as text generation")
+    func executeImportsQwen36BenchmarkTargetWithProcessorMetadataAsText() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-qwen36-report.md").path
+        try "# Qwen3.6 Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit",
+                modelName: "Qwen3.6-35B-A3B-UD-MLX-4bit",
+                pipelineTag: "image-text-to-text",
+                tags: ["mlx", "qwen3.6", "vision-language-model"],
+                siblingFiles: [
+                    "config.json",
+                    "processor_config.json",
+                    "tokenizer.json",
+                    "tokenizer_config.json",
+                    "model.safetensors.index.json",
+                ]
+            )
+        )
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-qwen36", reportPath: reportPath))
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(hfRepoID: "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit")
+        )
+        let lastLoadRequest = try #require(await pythonRuntimeClient.lastLoadModelRequest)
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastLoadRequest.model.modelID == "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit")
+        #expect(lastLoadRequest.model.modelKind == "text")
+        #expect(lastLoadRequest.model.ext["melix.task_kind"] == "text-generation")
+        #expect(lastLoadRequest.model.ext["melix.capability.route_kind"] == "python_text_compatibility")
+        #expect(lastLoadRequest.model.ext["melix.benchmark.task_kind"] == nil)
+        #expect(lastLoadRequest.model.ext["melix.vlm.execution_mode"] == nil)
+        #expect(lastBenchRequest.taskKind == "text-generation")
+        #expect(lastBenchRequest.sourceRepo == "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit")
+        #expect(response.ops.benchmarkJob.taskKind == "text-generation")
+    }
+
+    @Test("execute resolves Qwen3.6 any-to-any benchmark targets as text generation")
+    func executeImportsQwen36AnyToAnyBenchmarkTargetAsText() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-qwen36-any-report.md").path
+        try "# Qwen3.6 Any-to-Any Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                modelName: "Qwen3.6-35B-A3B-4bit",
+                pipelineTag: "any-to-any",
+                tags: ["mlx", "qwen3_6", "multimodal"],
+                siblingFiles: [
+                    "config.json",
+                    "processor_config.json",
+                    "tokenizer.json",
+                    "model.safetensors.index.json",
+                ]
+            )
+        )
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-qwen36-any", reportPath: reportPath))
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(hfRepoID: "mlx-community/Qwen3.6-35B-A3B-4bit")
+        )
+        let lastLoadRequest = try #require(await pythonRuntimeClient.lastLoadModelRequest)
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastLoadRequest.model.modelKind == "text")
+        #expect(lastBenchRequest.taskKind == "text-generation")
+        #expect(response.ops.benchmarkJob.taskKind == "text-generation")
+    }
+
+    @Test("execute prefers a matching Hugging Face cache snapshot before importing a direct benchmark target")
+    func executePrefersMatchingHFCacheSnapshotBeforeDirectBenchmarkImport() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-hf-cache-report.md").path
+        try "# HF Cache Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let repoID = "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit"
+        let snapshotModelID = "hf-cache/unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/abc123"
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": snapshotModelID,
+                    "model_path": "/tmp/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/abc123",
+                    "model_kind": "text",
+                    "quant_profile_id": "mlx-4bit",
+                    "max_context": 32768,
+                    "ext": [
+                        "melix.registry_root_id": "hf-cache",
+                        "melix.registry_root_path": "/tmp/huggingface/hub",
+                        "melix.registry_relative_path": "models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/abc123",
+                        "melix.source_kind": "hf_cache_snapshot",
+                        "melix.hf_repo_id": repoID,
+                        "melix.source_repo": repoID,
+                        "melix.model_path": "/tmp/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/abc123",
+                        "melix.task_kind": "text-generation",
+                    ],
+                ],
+                [
+                    "model_id": repoID,
+                    "model_path": "/tmp/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/exact",
+                    "model_kind": "text",
+                    "quant_profile_id": "mlx-4bit",
+                    "max_context": 32768,
+                    "ext": [
+                        "melix.registry_root_id": "hf-cache",
+                        "melix.registry_root_path": "/tmp/huggingface/hub",
+                        "melix.registry_relative_path": "models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/exact",
+                        "melix.source_kind": "hf_cache_snapshot",
+                        "melix.model_path": "/tmp/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/exact",
+                        "melix.task_kind": "text-generation",
+                    ],
+                ],
+                [
+                    "model_id": "hf-cache/unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/vlm-text-backed",
+                    "model_path": "/tmp/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/vlm-text-backed",
+                    "model_kind": "vlm",
+                    "quant_profile_id": "mlx-4bit",
+                    "max_context": 32768,
+                    "ext": [
+                        "melix.registry_root_id": "hf-cache",
+                        "melix.registry_root_path": "/tmp/huggingface/hub",
+                        "melix.source_kind": "hf_cache_snapshot",
+                        "melix.hf_repo_id": repoID,
+                        "melix.source_repo": repoID,
+                        "melix.model_path": "/tmp/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/vlm-text-backed",
+                        "melix.task_kind": "text-generation",
+                    ],
+                ],
+                [
+                    "model_id": "hf-cache/unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/vlm",
+                    "model_path": "/tmp/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/vlm",
+                    "model_kind": "vlm",
+                    "quant_profile_id": "mlx-4bit",
+                    "max_context": 32768,
+                    "ext": [
+                        "melix.registry_root_id": "hf-cache",
+                        "melix.registry_root_path": "/tmp/huggingface/hub",
+                        "melix.source_kind": "hf_cache_snapshot",
+                        "melix.hf_repo_id": repoID,
+                        "melix.source_repo": repoID,
+                        "melix.model_path": "/tmp/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit/snapshots/vlm",
+                        "melix.task_kind": "image-text-to-text",
+                    ],
+                ],
+                [
+                    "model_id": "hf-cache/other/snapshots/not-this-repo",
+                    "model_path": "/tmp/huggingface/hub/models--other--Model/snapshots/not-this-repo",
+                    "model_kind": "text",
+                    "quant_profile_id": "mlx-4bit",
+                    "max_context": 4096,
+                    "ext": [
+                        "melix.registry_root_id": "hf-cache",
+                        "melix.registry_root_path": "/tmp/huggingface/hub",
+                        "melix.source_kind": "hf_cache_snapshot",
+                        "melix.hf_repo_id": "mlx-community/Other-Model",
+                        "melix.source_repo": "mlx-community/Other-Model",
+                        "melix.model_path": "/tmp/huggingface/hub/models--other--Model/snapshots/not-this-repo",
+                        "melix.task_kind": "text-generation",
+                    ],
+                ],
+            ]
+        )
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+        await modelOpsClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: repoID,
+                modelName: "Qwen3.6-35B-A3B-UD-MLX-4bit",
+                pipelineTag: "image-text-to-text",
+                tags: ["mlx", "qwen3.6", "vision-language-model"],
+                siblingFiles: ["config.json", "processor_config.json", "tokenizer.json"]
+            )
+        )
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-hf-cache", reportPath: reportPath))
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: []),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(hfRepoID: repoID)
+        )
+        let convertRequest = try #require(await modelOpsClient.lastConvertRequest)
+        let loadRequest = try #require(await pythonRuntimeClient.lastLoadModelRequest)
+        let benchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(convertRequest.ext["melix.registry_rescan"] == "true")
+        #expect(await modelOpsClient.lastHubModelCardRequest == nil)
+        #expect(loadRequest.model.modelID == snapshotModelID)
+        #expect(loadRequest.model.modelKind == "text")
+        #expect(benchRequest.modelHandle == snapshotModelID)
+        #expect(benchRequest.taskKind == "text-generation")
+        #expect(benchRequest.sourceRepo == repoID)
+        #expect(benchRequest.parameters["live_model_source"] == "hf_cache_snapshot")
+        #expect(response.ops.benchmarkJob.modelID == snapshotModelID)
+        #expect(response.ops.benchmarkJob.taskKind == "text-generation")
+    }
+
+    @Test("execute surfaces direct benchmark worker load rejection instead of masking it as not found")
+    func executeSurfacesDirectBenchmarkWorkerLoadRejection() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                modelName: "Qwen3.6-35B-A3B-4bit",
+                pipelineTag: "text-generation",
+                tags: ["mlx", "qwen3.6"],
+                siblingFiles: ["config.json", "tokenizer.json", "model.safetensors.index.json"]
+            )
+        )
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        await pythonRuntimeClient.setLoadModelResponse({
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = false
+            response.error.code = "memory_budget_exceeded"
+            response.error.message = "Required memory exceeds available headroom."
+            response.error.details = [
+                "required_bytes": "42000000000",
+                "headroom_bytes": "16000000000",
+            ]
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(hfRepoID: "mlx-community/Qwen3.6-35B-A3B-4bit")
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "memory_budget_exceeded")
+        #expect(response.error.message == "Required memory exceeds available headroom.")
+        #expect(response.error.details["required_bytes"] == "42000000000")
+        #expect(await modelOpsClient.lastBenchRequest == nil)
+    }
+
+    @Test("execute retries direct benchmark load with a Hugging Face cache snapshot discovered after hub import fails")
+    func executeRetriesDirectBenchmarkLoadWithHFCacheSnapshotAfterHubImportFailure() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-hf-cache-retry-report.md").path
+        try "# HF Cache Retry Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let repoID = "mlx-community/Qwen3.6-35B-A3B-4bit"
+        let snapshotModelID = "hf-cache/mlx-community/Qwen3.6-35B-A3B-4bit/snapshots/recovered"
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": snapshotModelID,
+                    "model_path": "/tmp/huggingface/hub/models--mlx-community--Qwen3.6-35B-A3B-4bit/snapshots/recovered",
+                    "model_kind": "text",
+                    "quant_profile_id": "mlx-4bit",
+                    "max_context": 32768,
+                    "ext": [
+                        "melix.registry_root_id": "hf-cache",
+                        "melix.registry_root_path": "/tmp/huggingface/hub",
+                        "melix.registry_relative_path": "models--mlx-community--Qwen3.6-35B-A3B-4bit/snapshots/recovered",
+                        "melix.source_kind": "hf_cache_snapshot",
+                        "melix.hf_repo_id": repoID,
+                        "melix.source_repo": repoID,
+                        "melix.model_path": "/tmp/huggingface/hub/models--mlx-community--Qwen3.6-35B-A3B-4bit/snapshots/recovered",
+                        "melix.task_kind": "text-generation",
+                    ],
+                ],
+            ]
+        )
+        let manifestEvent = {
+            var event = Melix_Worker_V1_ConvertModelEvent()
+            event.manifest = Melix_Worker_V1_ConvertManifest()
+            event.manifest.manifestJson = manifestJSON
+            return event
+        }()
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEventBatches([[], [manifestEvent]])
+        await modelOpsClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: repoID,
+                modelName: "Qwen3.6-35B-A3B-4bit",
+                pipelineTag: "text-generation",
+                tags: ["mlx", "qwen3.6"],
+                siblingFiles: ["config.json", "tokenizer.json", "model.safetensors.index.json"]
+            )
+        )
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-hf-cache-retry", reportPath: reportPath))
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        await pythonRuntimeClient.setLoadModelResponses([
+            {
+                var response = Melix_Worker_V1_LoadModelResponse()
+                response.ok = false
+                response.error.code = "load_failed"
+                response.error.message = "Hub import path did not produce a local runtime handle."
+                return response
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: []),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: pythonRuntimeClient,
+                pythonCompatibilityClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunBenchRequest(hfRepoID: repoID))
+        let loadRequests = await pythonRuntimeClient.loadModelRequests
+        let benchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(await modelOpsClient.convertRequests.count == 2)
+        #expect(loadRequests.map { $0.model.modelID } == [repoID, snapshotModelID])
+        #expect(benchRequest.modelHandle == snapshotModelID)
+        #expect(benchRequest.taskKind == "text-generation")
+        #expect(benchRequest.parameters["live_model_source"] == "hf_cache_snapshot")
+        #expect(response.ops.benchmarkJob.modelID == snapshotModelID)
+    }
+
+    @Test("execute surfaces missing runtime cache for benchmark targets before worker load")
+    func executeSurfacesMissingRuntimeCacheForBenchmarkTargetsBeforeWorkerLoad() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.ext["melix.model_path_missing"] = "true"
+        model.settings.ext["melix.hf_repo_id"] = "mlx-community/Qwen3.6-35B-A3B-4bit"
+        let catalog = ModelCatalog(seedModels: [model])
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunBenchRequest(modelID: "melix-dev-text"))
+
+        #expect(response.ok == false)
+        #expect(response.error.code == ModelRuntimeAvailability.missingRuntimeCacheCode)
+        #expect(response.error.message == ModelRuntimeAvailability.missingRuntimeCacheMessage)
+        #expect(response.error.details["model_id"] == "melix-dev-text")
+        #expect(await pythonRuntimeClient.lastLoadModelRequest == nil)
+        #expect(await modelOpsClient.lastBenchRequest == nil)
+    }
+
     @Test("execute infers missing pipeline tags from explicit modality metadata")
     func executeInfersMissingPipelineTagsFromExplicitModalityMetadata() async throws {
         let cases: [(repoID: String, modelName: String, tags: [String], siblingFiles: [String], expectedTaskKind: String, expectedModelKind: String)] = [
@@ -10328,6 +10710,7 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private(set) var lastSubmitRequest: Melix_Worker_V1_SubmitResultsRequest?
     private var infoResponse = Melix_Worker_V1_GetModelInfoResponse()
     private var convertEvents: [Melix_Worker_V1_ConvertModelEvent] = []
+    private var convertEventBatches: [[Melix_Worker_V1_ConvertModelEvent]] = []
     private var doctorResponse = Melix_Worker_V1_RunDoctorResponse()
     private var hubSearchResponse = Melix_Worker_V1_SearchHubModelsResponse()
     private var hubModelCardResponse = Melix_Worker_V1_GetHubModelCardResponse()
@@ -10351,6 +10734,11 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
 
     func setConvertEvents(_ events: [Melix_Worker_V1_ConvertModelEvent]) {
         convertEvents = events
+        convertEventBatches = []
+    }
+
+    func setConvertEventBatches(_ batches: [[Melix_Worker_V1_ConvertModelEvent]]) {
+        convertEventBatches = batches
     }
 
     func setDoctorResponse(_ response: Melix_Worker_V1_RunDoctorResponse) {
@@ -10458,7 +10846,12 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
         if let convertError {
             throw convertError
         }
-        let events = convertEvents
+        let events: [Melix_Worker_V1_ConvertModelEvent]
+        if convertEventBatches.isEmpty {
+            events = convertEvents
+        } else {
+            events = convertEventBatches.removeFirst()
+        }
         return AsyncThrowingStream { continuation in
             for event in events {
                 continuation.yield(event)
@@ -10552,10 +10945,23 @@ private actor ScriptedChatWorkerClient: WorkerRoutingClient {
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
+    private(set) var loadModelRequests: [Melix_Worker_V1_LoadModelRequest] = []
     private(set) var unloadRequests: [Melix_Worker_V1_UnloadModelRequest] = []
+    private var loadModelResponse: Melix_Worker_V1_LoadModelResponse?
+    private var loadModelResponses: [Melix_Worker_V1_LoadModelResponse] = []
 
     init(events: [Melix_Worker_V1_ExecuteEvent]) {
         self.events = events
+    }
+
+    func setLoadModelResponse(_ response: Melix_Worker_V1_LoadModelResponse) {
+        loadModelResponse = response
+        loadModelResponses = []
+    }
+
+    func setLoadModelResponses(_ responses: [Melix_Worker_V1_LoadModelResponse]) {
+        loadModelResponses = responses
+        loadModelResponse = nil
     }
 
     func canDispatchRequests() async -> Bool {
@@ -10584,6 +10990,13 @@ private actor ScriptedChatWorkerClient: WorkerRoutingClient {
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
         lastLoadModelRequest = request
+        loadModelRequests.append(request)
+        if !loadModelResponses.isEmpty {
+            return loadModelResponses.removeFirst()
+        }
+        if let loadModelResponse {
+            return loadModelResponse
+        }
         var response = Melix_Worker_V1_LoadModelResponse()
         response.ok = true
         response.modelHandle = request.model.modelID
