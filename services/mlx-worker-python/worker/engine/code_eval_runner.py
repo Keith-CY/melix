@@ -246,8 +246,23 @@ def _count_tests(test_code: str) -> int:
         module = ast.parse(test_code, filename="<tests>", mode="exec")
     except SyntaxError:
         return _count_nonblank_test_lines(test_code)
-    assert_count = sum(1 for node in ast.walk(module) if isinstance(node, ast.Assert))
+    assert_count = _count_assert_statements(module)
     return assert_count or _count_nonblank_test_lines(test_code)
+
+
+def _count_assert_statements(module: ast.Module) -> int:
+    assert_count = 0
+    stack: list[ast.AST] = list(module.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Assert):
+            assert_count += 1
+        stack.extend(
+            child
+            for child in ast.iter_child_nodes(node)
+            if isinstance(child, ast.stmt | ast.ExceptHandler | ast.match_case)
+        )
+    return assert_count
 
 
 def _count_nonblank_test_lines(test_code: str) -> int:

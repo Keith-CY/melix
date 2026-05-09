@@ -360,6 +360,27 @@ def test_count_tests_reuses_cached_counts_for_repeated_payloads() -> None:
     assert cache_info.misses == 1
 
 
+def test_count_tests_counts_assert_statements_without_expression_walk() -> None:
+    test_code = textwrap.dedent(
+        """
+        assert identity(1) == 1
+        if identity(2):
+            assert identity(3) == 3
+        try:
+            identity(4)
+        except Exception:
+            assert identity(5) == 5
+        match identity(6):
+            case 6:
+                assert identity(6) == 6
+        value = "assert inside string should not count"
+        """
+    )
+    code_eval_runner._count_tests.cache_clear()
+
+    assert code_eval_runner._count_tests(test_code) == 4
+
+
 def test_count_nonblank_test_lines_matches_splitlines_semantics() -> None:
     test_code = "\n assert one\r\n\t\rassert two\n   \nassert three"
 
