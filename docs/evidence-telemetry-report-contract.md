@@ -159,6 +159,11 @@ only for diagnosis.
 
 Melix hardware telemetry is scoped to macOS on Apple Silicon.
 
+The canonical power collector uses `powermetrics` with the
+`cpu_power,gpu_power,ane_power,thermal` samplers. It must not request the legacy
+`smc` sampler as a required path; if this Apple Silicon sampler set fails, the
+run records an instrumentation gap instead of inventing substitute telemetry.
+
 The collector records:
 
 - CPU utilization
@@ -194,9 +199,9 @@ Each run records:
 Telemetry sampling runs off the hot path. Benchmark and evaluation execution
 read only cached telemetry samples.
 
-If IOReport or IORegistry sampling fails during a Melix run, the run records a
-telemetry failure probe and report entry. Implementations must not synthesize
-zero-watt or zero-duration values for missing telemetry.
+If `powermetrics`, memory, or process sampling fails during a Melix run, the run
+records a telemetry failure probe and report entry. Implementations must not
+synthesize zero-watt or zero-duration values for missing telemetry.
 
 ## Process Attribution
 

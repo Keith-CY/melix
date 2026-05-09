@@ -128,6 +128,13 @@ Melix benchmark and evaluation targets use the following task-aligned values:
 - `image-to-text`
 - `image-text-to-text`
 
+Direct Hugging Face target resolution must prefer the explicit Hub
+`pipeline_tag` when it is present. Some valid MLX repositories omit
+`pipeline_tag`; Melix may infer the task kind from stronger repository metadata
+such as MLX/Qwen text-generation signals, sibling tokenizer and weight files,
+or explicit modality tags. A missing `pipeline_tag` alone is not an unsupported
+task-family signal.
+
 ## Performance Benchmark Contract
 
 Melix exposes two distinct performance workflows:
