@@ -73,7 +73,7 @@ class ResolvedVisionFamilyConfig:
         return _with_prompt_text(prepared_request, prompt_text)
 
     def prompt_token_count(self, prepared_request: PreparedVisionRequest) -> int:
-        prompt_tokens = len(prepared_request.prompt_text.split())
+        prompt_tokens = _whitespace_token_count(prepared_request.prompt_text)
         image_tokens = sum(
             max(1, image.byte_length // max(1, self.image_token_divisor))
             for image in prepared_request.images
@@ -191,6 +191,18 @@ def resolve_vision_family_config(metadata: dict[str, str] | None = None) -> Reso
     if adapter is None:
         raise ValueError(f"Unsupported vision family adapter: {family_id}")
     return adapter.resolve(metadata)
+
+
+def _whitespace_token_count(text: str) -> int:
+    token_count = 0
+    in_token = False
+    for character in text:
+        if character.isspace():
+            in_token = False
+        elif not in_token:
+            token_count += 1
+            in_token = True
+    return token_count
 
 
 def _with_prompt_text(
