@@ -24,14 +24,16 @@ Add a `limit=1` no-split preview helper that finds the first readable dataset fi
 
 ## Performance probe
 
-Register `dataset-registry-preview-limit-short-circuit` in the PR-scoped performance registry. The probe creates a synthetic snapshot with many JSONL files, reads `limit=1`, and reports:
+Registered probe `dataset-registry-preview-limit-short-circuit` in the PR-scoped performance registry. The original probe creates a synthetic snapshot with many JSONL files, reads `limit=1`, and reports traversal latency and peak allocation. This follow-up slice keeps the same registered probe but switches its synthetic workload to a large JSON `rows` payload so the registered comparison covers JSON row materialization in the same preview path.
+
+The probe reports:
 
 - `elapsed_ms_mean`
 - `peak_bytes_mean`
-- `file_count`
+- `row_count`
 - `rows_returned`
 
-Success means the branch preserves row output while materially lowering elapsed time and peak traced allocation for a many-file `limit=1` preview.
+Success means the branch preserves row output while lowering or holding steady elapsed time and peak traced allocation for a large JSON `limit=1` preview.
 
 ## Verification commands
 

@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import time
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any, Iterable, Iterator, Mapping, cast
 
 from worker.model_ops.errors import ModelOperationError
 
@@ -544,7 +544,7 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
         return rows
     if suffix == ".json":
         payload = json.loads(path.read_text(encoding="utf-8"))
-        return _limit_rows(_rows_from_json_payload(payload), limit)
+        return _rows_from_json_payload(payload, limit=limit)
     if suffix == ".csv":
         rows: list[dict[str, Any]] = []
         with path.open("r", encoding="utf-8", newline="") as handle:
@@ -582,24 +582,34 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
 
 
 def _limit_rows(rows: list[dict[str, Any]], limit: int | None) -> list[dict[str, Any]]:
-    if limit is None:
+    if limit is None or len(rows) <= limit:
         return rows
     return rows[:limit]
 
 
-def _rows_from_json_payload(payload: Any) -> list[dict[str, Any]]:
+def _limited_dict_rows(values: list[Any], limit: int | None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for value in values:
+        if isinstance(value, dict):
+            rows.append(value)
+            if limit is not None and len(rows) >= limit:
+                break
+    return rows
+
+
+def _rows_from_json_payload(payload: Any, limit: int | None = None) -> list[dict[str, Any]]:
     if isinstance(payload, list):
-        return [row for row in payload if isinstance(row, dict)]
+        return _limited_dict_rows(payload, limit)
     if isinstance(payload, dict):
         rows = payload.get("rows")
         if isinstance(rows, list):
-            return [row for row in rows if isinstance(row, dict)]
+            return _limited_dict_rows(rows, limit)
         data = payload.get("data")
         if isinstance(data, list):
-            return [row for row in data if isinstance(row, dict)]
+            return _limited_dict_rows(data, limit)
         for value in payload.values():
             if isinstance(value, list) and all(isinstance(row, dict) for row in value):
-                return list(value)
+                return _limit_rows(cast(list[dict[str, Any]], value), limit)
         return [payload]
     return []
 
