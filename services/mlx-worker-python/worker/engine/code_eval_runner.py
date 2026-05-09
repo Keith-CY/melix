@@ -15,6 +15,8 @@ import tempfile
 import textwrap
 
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
+_JSON_LOADS = json.loads
+_JSON_DECODE_ERROR = json.JSONDecodeError
 _NONBLANK_TEST_LINE_RE = re.compile(r"\S[^\r\n]*(?:\r\n?|\n|$)")
 
 
@@ -252,12 +254,17 @@ def _count_nonblank_test_lines(test_code: str) -> int:
     return sum(1 for _ in _NONBLANK_TEST_LINE_RE.finditer(test_code))
 
 
-def _load_payload_file(payload_path: Path) -> dict[str, object] | None:
+def _load_payload_file(
+    payload_path: Path,
+    *,
+    _loads=_JSON_LOADS,
+    _decode_error=_JSON_DECODE_ERROR,
+) -> dict[str, object] | None:
     try:
-        payload = json.loads(payload_path.read_bytes())
+        payload = _loads(payload_path.read_bytes())
     except OSError:
         return None
-    except json.JSONDecodeError:
+    except _decode_error:
         return None
     if not isinstance(payload, dict):
         return None
