@@ -25,6 +25,7 @@ class EngineCore:
 
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
+        allocate_seq = state.allocate_seq
         assembler = self._stream_assembler(request)
         stop_contract = resolve_text_stop_contract(
             loaded_model.runtime_model,
@@ -64,7 +65,7 @@ class EngineCore:
                     yield inference_pb2.ExecuteEvent(
                         request_id=request_id,
                         execution_kind="generate",
-                        seq=state.allocate_seq(),
+                        seq=allocate_seq(),
                         tool_call_delta=inference_pb2.ToolCallDelta(
                             call_id=runtime_event.call_id,
                             tool_name=runtime_event.tool_name,
@@ -87,7 +88,7 @@ class EngineCore:
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
                             execution_kind="generate",
-                            seq=state.allocate_seq(),
+                            seq=allocate_seq(),
                             reasoning_delta=inference_pb2.ReasoningDelta(
                                 text=delta.reasoning_text,
                                 raw_text=delta.raw_text,
@@ -98,7 +99,7 @@ class EngineCore:
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
                             execution_kind="generate",
-                            seq=state.allocate_seq(),
+                            seq=allocate_seq(),
                             tool_call_delta=inference_pb2.ToolCallDelta(
                                 call_id=delta.tool_call.call_id,
                                 tool_name=delta.tool_call.tool_name,
@@ -114,7 +115,7 @@ class EngineCore:
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
                             execution_kind="generate",
-                            seq=state.allocate_seq(),
+                            seq=allocate_seq(),
                             token_delta=inference_pb2.TokenDelta(
                                 text=delta.content_text,
                                 raw_text=delta.raw_text,
@@ -138,7 +139,7 @@ class EngineCore:
                 yield inference_pb2.ExecuteEvent(
                     request_id=request_id,
                     execution_kind="generate",
-                    seq=state.allocate_seq(),
+                    seq=allocate_seq(),
                     usage_delta=inference_pb2.UsageDelta(
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
@@ -159,7 +160,7 @@ class EngineCore:
             yield inference_pb2.ExecuteEvent(
                 request_id=request_id,
                 execution_kind="generate",
-                seq=state.allocate_seq(),
+                seq=allocate_seq(),
                 completed=inference_pb2.Completed(
                     finish_reason=finish_reason,
                     assistant_text=assembled.assistant_text,
@@ -172,7 +173,7 @@ class EngineCore:
                 ),
             )
         except Exception as exc:  # pragma: no cover - defensive branch
-            yield self._error_event(request_id, state.allocate_seq(), "runtime_error", str(exc))
+            yield self._error_event(request_id, allocate_seq(), "runtime_error", str(exc))
         finally:
             if loaded_model.runtime_kind in {"ocr", "vlm"} and hasattr(runtime, "last_probe_snapshot"):
                 self._registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
