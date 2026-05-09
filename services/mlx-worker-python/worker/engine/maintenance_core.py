@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 import logging
 import math
 import os
@@ -3542,6 +3543,7 @@ class MaintenanceCore:
         return self._shape_benchmark_prompt(prompt, context_length=context_length)
 
     @staticmethod
+    @lru_cache(maxsize=256)
     def _shape_benchmark_prompt(prompt: str, *, context_length: int) -> str:
         tokens = prompt.split()
         if not tokens:

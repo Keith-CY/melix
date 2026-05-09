@@ -5394,12 +5394,16 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     ) == ("cold", "warm")
     assert [value.calls for value in counted_strings] == [1, 1, 1]
 
+    MaintenanceCore._shape_benchmark_prompt.cache_clear()
     assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
     assert core._shape_benchmark_prompt("one two three", context_length=2) == "one two"
     assert core._shape_benchmark_prompt("one two three", context_length=8) == (
         "one two three one two three one two"
     )
     assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
+    assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
+    assert MaintenanceCore._shape_benchmark_prompt.cache_info().hits == 1
+    MaintenanceCore._shape_benchmark_prompt.cache_clear()
 
     shape_calls: list[tuple[str, int]] = []
     original_shape_prompt = MaintenanceCore._shape_benchmark_prompt
