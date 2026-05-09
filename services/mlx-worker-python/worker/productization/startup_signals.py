@@ -271,7 +271,9 @@ def _seek_last_nonempty_line_bounds(handle: Any, *, chunk_size: int) -> tuple[in
                 position = start
                 continue
             payload_end = start + search_end
-        newline_index = max(chunk.rfind(b"\n", 0, search_end), chunk.rfind(b"\r", 0, search_end))
+        newline_index = chunk.rfind(b"\n", 0, search_end)
+        if newline_index < 0:
+            newline_index = chunk.rfind(b"\r", 0, search_end)
         if newline_index >= 0:
             return start + newline_index + 1, payload_end
         position = start
