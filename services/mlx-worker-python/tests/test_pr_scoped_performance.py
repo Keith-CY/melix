@@ -84,6 +84,7 @@ SCOPE_MATCHER_SELECTED_PROBE_IDS = [
     "benchmark-export-run-scan-single-pass",
     "evaluation-job-id-high-water-mark",
     "evaluation-sample-probe-aggregation",
+    "evaluation-answer-normalization-fast-path",
     "evaluation-latency-percentile-vector-reuse",
     "evaluation-dialogue-diagnostics-top-k",
     "download-pipeline-directory-size-single-stat",
@@ -343,13 +344,31 @@ def test_scope_report_selects_evaluation_probes() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 4
+    assert scope["selected_count"] == 5
     assert probe_ids == {
+        "evaluation-answer-normalization-fast-path",
         "evaluation-dialogue-diagnostics-top-k",
         "evaluation-job-id-high-water-mark",
         "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
     }
+
+
+def test_evaluation_answer_normalization_probe_command_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-answer-normalization-fast-path"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["numeric_extract_calls_mean"] == 300.0
+    assert metrics["option_extract_calls_mean"] == 300.0
+    assert metrics["answer_count"] == 3000.0
+    assert metrics["free_text_answer_count"] == 2400.0
+    assert metrics["normalization_checksum"] > 0
 
 
 def test_scope_report_selects_code_eval_stdio_probe() -> None:
@@ -1679,6 +1698,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "mlx-audio-speech-signature-cache",
         "video-preprocessing-uri-byte-length-reuse",
         "dev-up-mlx-metal-dist-info-scandir",
+        "evaluation-answer-normalization-fast-path",
         "evaluation-dialogue-diagnostics-top-k",
         "evaluation-job-id-high-water-mark",
         "evaluation-dialogue-diagnostics-top-k",

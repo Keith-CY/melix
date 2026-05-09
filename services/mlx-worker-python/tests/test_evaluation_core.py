@@ -2266,6 +2266,35 @@ def test_evaluation_helpers_cover_numeric_option_and_normalization_paths() -> No
     assert EvaluationCore._answers_match(expected="b", predicted="B") is True
 
 
+def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    numeric_calls = 0
+    option_calls = 0
+    original_numeric = EvaluationCore._extract_numeric_value
+    original_option = EvaluationCore._extract_option_value
+
+    def counting_numeric(value: str) -> str | None:
+        nonlocal numeric_calls
+        numeric_calls += 1
+        return original_numeric(value)
+
+    def counting_option(value: str) -> str | None:
+        nonlocal option_calls
+        option_calls += 1
+        return original_option(value)
+
+    monkeypatch.setattr(EvaluationCore, "_extract_numeric_value", staticmethod(counting_numeric))
+    monkeypatch.setattr(EvaluationCore, "_extract_option_value", staticmethod(counting_option))
+
+    assert EvaluationCore._normalized_answer("  Final Answer: Paris. ") == "final answer: paris"
+    assert EvaluationCore._normalized_answer("`New   York`") == "new york"
+    assert EvaluationCore._normalized_answer("9.0") == "9"
+    assert EvaluationCore._normalized_answer("b") == "B"
+    assert EvaluationCore._normalized_answer("Option C is correct") == "option c is correct"
+
+    assert numeric_calls == 1
+    assert option_calls == 1
+
+
 def test_evaluation_helpers_cover_timeout_fallback_and_digit_choice_resolution() -> None:
     assert (
         EvaluationCore._sample_code_timeout_seconds({}, {"code_timeout_seconds": "invalid"}) == 5.0
