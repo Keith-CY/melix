@@ -33,8 +33,10 @@ class EngineCore:
         )
         effective_sampling = self._sampling_with_resolved_stop(request.sampling, stop_contract.sequences)
         prompt_tokens_default: int | None = None
+        track_usage = bool(request.return_usage)
         completion_token_count = 0
         last_token_event: RuntimeTokenEvent | None = None
+        last_finish_reason = ""
         turn_boundary_stop_reason = ""
 
         try:
@@ -71,9 +73,13 @@ class EngineCore:
                     )
                     continue
 
-                last_token_event = runtime_event
-                if runtime_event.finish_reason == "stop_sequence":
-                    turn_boundary_stop_reason = "stop_sequence"
+                finish_reason = runtime_event.finish_reason
+                if finish_reason:
+                    last_finish_reason = finish_reason
+                    if finish_reason == "stop_sequence":
+                        turn_boundary_stop_reason = "stop_sequence"
+                if track_usage:
+                    last_token_event = runtime_event
                 for delta in assembler.accept(
                     StreamFragment(text=runtime_event.text, raw_text=runtime_event.raw_text)
                 ):
@@ -103,7 +109,8 @@ class EngineCore:
                             ),
                         )
                     if delta.content_text:
-                        completion_token_count += 1
+                        if track_usage:
+                            completion_token_count += 1
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
                             execution_kind="generate",
@@ -114,7 +121,7 @@ class EngineCore:
                             ),
                         )
 
-            if request.return_usage and not state.cancel_event.is_set():
+            if track_usage and not state.cancel_event.is_set():
                 completion_tokens = completion_token_count
                 if last_token_event is not None and last_token_event.prompt_tokens:
                     prompt_tokens = int(last_token_event.prompt_tokens)
@@ -141,8 +148,8 @@ class EngineCore:
             finish_reason = "stop"
             if state.cancel_event.is_set():
                 finish_reason = "cancelled"
-            elif last_token_event is not None and last_token_event.finish_reason:
-                finish_reason = last_token_event.finish_reason
+            elif last_finish_reason:
+                finish_reason = last_finish_reason
 
             assembled = assembler.completed()
             parser_metrics: dict[str, object] = dict(assembled.metrics)

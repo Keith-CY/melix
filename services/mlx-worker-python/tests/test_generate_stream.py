@@ -330,6 +330,35 @@ def test_generate_streams_token_and_terminal_completion_without_request_token_ac
     assert usage.completion_tokens == 2
 
 
+def test_generate_streams_token_and_terminal_completion_without_usage_preserves_finish_reason() -> None:
+    _, inference_service, model_handle = build_services()
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-generate-no-usage-finish"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Say hello")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+        return_usage=False,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert token_text == ["Hello", " world"]
+    assert completed.finish_reason == "length"
+    assert completed.assistant_text == "Hello world"
+    assert not any(event.HasField("usage_delta") for event in events)
+
+
 def test_generate_streams_token_and_terminal_completion() -> None:
     _, inference_service, model_handle = build_services()
 
