@@ -418,7 +418,9 @@ def _string_value(metadata: Mapping[str, str], key: str, default: str) -> str:
 
 
 def _split_csv(raw_value: str) -> list[str]:
-    return [item.strip() for item in raw_value.split(",") if item.strip()]
+    if not raw_value:
+        return []
+    return [item for part in raw_value.split(",") if (item := part.strip())]
 
 
 def _int_value(metadata: Mapping[str, str], key: str, *, default: int) -> int:
