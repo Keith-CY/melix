@@ -29,7 +29,7 @@ class FakeSTTModel:
         return SimpleNamespace(text="probe", language=kwargs.get("language") or "en", total_time=0.0)
 
 
-def _measure_once(audio_path: Path) -> tuple[float, int, float]:
+def _measure_once(audio_path: Path) -> tuple[float, int, int, float]:
     runtime = MLXAudioTranscriptionRuntime()
     loaded = AudioRuntimeLoadedModel(
         backend_id="probe",
@@ -40,7 +40,9 @@ def _measure_once(audio_path: Path) -> tuple[float, int, float]:
     )
     request = inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri(), language="en", format="wav")
     original_read_bytes = Path.read_bytes
+    original_exists = Path.exists
     read_count = 0
+    exists_count = 0
 
     def counted_read_bytes(self: Path) -> bytes:
         nonlocal read_count
@@ -48,7 +50,14 @@ def _measure_once(audio_path: Path) -> tuple[float, int, float]:
             read_count += 1
         return original_read_bytes(self)
 
+    def counted_exists(self: Path) -> bool:  # pragma: no cover - covered on origin/main before elision.
+        nonlocal exists_count
+        if self == audio_path:
+            exists_count += 1
+        return original_exists(self)
+
     Path.read_bytes = counted_read_bytes
+    Path.exists = counted_exists
     try:
         tracemalloc.start()
         started = time.perf_counter()
@@ -58,12 +67,13 @@ def _measure_once(audio_path: Path) -> tuple[float, int, float]:
         tracemalloc.stop()
     finally:
         Path.read_bytes = original_read_bytes
+        Path.exists = original_exists
 
     if result.text != "probe" or result.language != "en":
         raise AssertionError("unexpected transcription probe result")
     if runtime.last_probe_snapshot().preprocess_input_bytes != AUDIO_SIZE_BYTES:
         raise AssertionError("unexpected preprocess byte count")
-    return elapsed_ms, read_count, float(peak_bytes)
+    return elapsed_ms, read_count, exists_count, float(peak_bytes)
 
 
 def main() -> int:
@@ -73,15 +83,18 @@ def main() -> int:
         elapsed_samples: list[float] = []
         read_samples: list[float] = []
         peak_samples: list[float] = []
+        exists_samples: list[float] = []
         for _ in range(SAMPLE_COUNT):
-            elapsed_ms, read_count, peak_bytes = _measure_once(audio_path)
+            elapsed_ms, read_count, exists_count, peak_bytes = _measure_once(audio_path)
             elapsed_samples.append(elapsed_ms)
             read_samples.append(float(read_count))
+            exists_samples.append(float(exists_count))
             peak_samples.append(peak_bytes)
 
     payload = {
         "audio_size_bytes": float(AUDIO_SIZE_BYTES),
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "local_uri_exists_calls_mean": statistics.fmean(exists_samples),
         "local_uri_read_bytes_calls_mean": statistics.fmean(read_samples),
         "peak_bytes_mean": statistics.fmean(peak_samples),
         "sample_count": float(SAMPLE_COUNT),
