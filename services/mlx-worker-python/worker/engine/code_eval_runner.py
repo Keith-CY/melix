@@ -238,6 +238,8 @@ def run_python_code_evaluation(
 
 @lru_cache(maxsize=128)
 def _count_tests(test_code: str) -> int:
+    if "assert" not in test_code:
+        return _count_nonblank_test_lines(test_code)
     try:
         module = ast.parse(test_code, filename="<tests>", mode="exec")
     except SyntaxError:
