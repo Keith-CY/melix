@@ -225,6 +225,126 @@ def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     assert rows == [{"prompt": "first", "answer": "a"}]
 
 
+class _FakeColumnarBatch:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def to_pylist(self) -> list[object]:
+        return list(self._rows)
+
+
+class _FakeColumnarTable(_FakeColumnarBatch):
+    def slice(self, offset: int, length: int) -> "_FakeColumnarTable":
+        return _FakeColumnarTable(self._rows[offset : offset + length])
+
+
+def _install_fake_pyarrow_module(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    module_name: str,
+    module: types.ModuleType,
+) -> None:
+    pyarrow_module = types.ModuleType("pyarrow")
+    setattr(pyarrow_module, module_name.rsplit(".", 1)[-1], module)
+    monkeypatch.setitem(sys.modules, "pyarrow", pyarrow_module)
+    monkeypatch.setitem(sys.modules, module_name, module)
+
+
+def test_dataset_catalog_parquet_limit_uses_batched_reader(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    parquet_path = tmp_path / "preview.parquet"
+    parquet_path.write_bytes(b"fake")
+    batch_sizes: list[int] = []
+    read_table_calls = 0
+
+    class FakeParquetFile:
+        def __init__(self, path: Path) -> None:
+            assert path == parquet_path
+
+        def iter_batches(self, *, batch_size: int):
+            batch_sizes.append(batch_size)
+            yield _FakeColumnarBatch([
+                {"prompt": "first"},
+                ["not", "a", "dict"],
+                {"prompt": "second"},
+            ])
+            yield _FakeColumnarBatch([{"prompt": "third"}])
+
+    parquet_module = types.ModuleType("pyarrow.parquet")
+    parquet_module.ParquetFile = FakeParquetFile
+
+    def read_table(_path: Path) -> object:
+        nonlocal read_table_calls
+        assert _path == parquet_path
+        read_table_calls += 1
+        return _FakeColumnarTable([{"prompt": "full"}, {"prompt": "later"}])
+
+    parquet_module.read_table = read_table
+    _install_fake_pyarrow_module(monkeypatch, module_name="pyarrow.parquet", module=parquet_module)
+
+    rows = catalog._read_rows_from_file(parquet_path, limit=2)
+
+    assert rows == [{"prompt": "first"}, {"prompt": "second"}]
+    assert batch_sizes == [2]
+    assert read_table_calls == 0
+    assert catalog._read_rows_from_file(parquet_path) == [{"prompt": "full"}, {"prompt": "later"}]
+    assert read_table_calls == 1
+
+
+def test_dataset_catalog_arrow_limit_uses_first_batches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    arrow_path = tmp_path / "preview.arrow"
+    arrow_path.write_bytes(b"fake")
+    read_all_calls = 0
+    batch_indexes: list[int] = []
+
+    class FakeReader:
+        num_record_batches = 3
+
+        def __enter__(self) -> "FakeReader":
+            return self
+
+        def __exit__(self, *_exc_info: object) -> None:
+            return None
+
+        def get_batch(self, index: int) -> _FakeColumnarBatch:
+            batch_indexes.append(index)
+            batches = [
+                _FakeColumnarBatch([{"prompt": "first"}]),
+                _FakeColumnarBatch([["not", "a", "dict"], {"prompt": "second"}]),
+                _FakeColumnarBatch([{"prompt": "third"}]),
+            ]
+            return batches[index]
+
+        def read_all(self) -> object:
+            nonlocal read_all_calls
+            read_all_calls += 1
+            return _FakeColumnarTable([{"prompt": "full"}, ["not", "a", "dict"], {"prompt": "later"}])
+
+    ipc_module = types.ModuleType("pyarrow.ipc")
+    ipc_module.open_file = lambda path: FakeReader() if path == arrow_path else None
+    _install_fake_pyarrow_module(monkeypatch, module_name="pyarrow.ipc", module=ipc_module)
+
+    rows = catalog._read_rows_from_file(arrow_path, limit=2)
+
+    assert rows == [{"prompt": "first"}, {"prompt": "second"}]
+    assert batch_indexes == [0, 1]
+    assert read_all_calls == 0
+    assert catalog._read_rows_from_file(arrow_path) == [{"prompt": "full"}, {"prompt": "later"}]
+    assert read_all_calls == 1
+
+
+def test_dataset_catalog_row_reader_zero_limit_returns_empty(tmp_path: Path) -> None:
+    jsonl_path = tmp_path / "preview.jsonl"
+    jsonl_path.write_text('{"prompt":"first"}\n', encoding="utf-8")
+
+    assert catalog._read_rows_from_file(jsonl_path, limit=0) == []
+
+
 def test_dataset_catalog_limited_unfiltered_read_stops_before_later_files(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

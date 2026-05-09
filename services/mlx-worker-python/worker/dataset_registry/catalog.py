@@ -528,6 +528,8 @@ def _iter_matching_dataset_files(snapshot_path: Path, *, split: str) -> Iterator
 
 
 def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
+    if limit is not None and limit <= 0:
+        return []
     suffix = path.suffix.lower()
     if suffix == ".jsonl":
         rows: list[dict[str, Any]] = []
@@ -561,10 +563,15 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
                 code="unavailable",
                 message="pyarrow is required to read local parquet dataset snapshots.",
             ) from exc
-        table = pq.read_table(path)
-        if limit is not None:
-            table = table.slice(0, limit)
-        return [row for row in table.to_pylist() if isinstance(row, dict)]
+        if limit is not None and hasattr(pq, "ParquetFile"):
+            rows: list[dict[str, Any]] = []
+            parquet_file = pq.ParquetFile(path)
+            for batch in parquet_file.iter_batches(batch_size=max(limit, 1)):
+                _extend_dict_rows_from_pylist(rows, batch.to_pylist(), limit=limit)
+                if len(rows) >= limit:
+                    break
+            return rows
+        return _dict_rows_from_pyarrow_table(pq.read_table(path), limit=limit)
     if suffix == ".arrow":
         try:
             import pyarrow.ipc as ipc
@@ -574,11 +581,41 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
                 message="pyarrow is required to read local Arrow dataset snapshots.",
             ) from exc
         with ipc.open_file(path) as reader:
+            if limit is not None and hasattr(reader, "get_batch"):
+                rows: list[dict[str, Any]] = []
+                for batch_index in range(getattr(reader, "num_record_batches", 0)):
+                    _extend_dict_rows_from_pylist(
+                        rows,
+                        reader.get_batch(batch_index).to_pylist(),
+                        limit=limit,
+                    )
+                    if len(rows) >= limit:
+                        break
+                return rows
             table = reader.read_all()
-            if limit is not None:
-                table = table.slice(0, limit)
-            return [row for row in table.to_pylist() if isinstance(row, dict)]
+            return _dict_rows_from_pyarrow_table(table, limit=limit)
     return []
+
+
+def _extend_dict_rows_from_pylist(
+    rows: list[dict[str, Any]],
+    values: Iterable[Any],
+    *,
+    limit: int | None,
+) -> None:
+    for row in values:
+        if isinstance(row, dict):
+            rows.append(row)
+            if limit is not None and len(rows) >= limit:
+                return
+
+
+def _dict_rows_from_pyarrow_table(table: Any, *, limit: int | None) -> list[dict[str, Any]]:
+    if limit is not None:
+        table = table.slice(0, limit)
+    rows: list[dict[str, Any]] = []
+    _extend_dict_rows_from_pylist(rows, table.to_pylist(), limit=limit)
+    return rows
 
 
 def _limit_rows(rows: list[dict[str, Any]], limit: int | None) -> list[dict[str, Any]]:
