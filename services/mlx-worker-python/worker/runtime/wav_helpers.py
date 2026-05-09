@@ -17,7 +17,9 @@ def iter_samples(value):
     if hasattr(value, "tolist"):
         value = value.tolist()
     for item in value:
-        if (
+        if isinstance(item, (float, int)):
+            yield float(item)
+        elif (
             isinstance(item, (list, tuple))
             or hasattr(item, "flat")
             or hasattr(item, "tolist")
@@ -37,8 +39,7 @@ def audio_to_pcm_chunks(audio, *, chunk_sample_limit: int):
     chunk = array.array("h")
     limit = max(1, int(chunk_sample_limit))
 
-    for sample in iter_samples(audio):
-        value = float(sample)
+    for value in iter_samples(audio):
         if value > 1.0:
             value = 1.0
         elif value < -1.0:
