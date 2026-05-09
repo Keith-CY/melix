@@ -147,9 +147,10 @@ def _iter_word_segments(words: list[str], k: int) -> Iterable[str]:
     bucket_size = len(words) // k
     extras = len(words) % k
     start = 0
+    join_words = " ".join
     for bucket_idx in range(k):
         length = bucket_size + (1 if bucket_idx < extras else 0)
-        segment = " ".join(words[start : start + length])
+        segment = join_words(words[start : start + length])
         start += length
         if segment:
             yield segment

@@ -252,9 +252,10 @@ class ProbeRuntime:
         self._response = response
         self._probe = probe
 
-    def render_prompt(self, messages, loaded_model=None, execution_ext=None):
+    def render_prompt(self, messages, loaded_model=None, execution_ext=None, template_kwargs=None):
         _ = loaded_model
         _ = execution_ext
+        _ = template_kwargs
         return "\n".join(part.text for message in messages for part in message.parts)
 
     def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
