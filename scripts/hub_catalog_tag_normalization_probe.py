@@ -26,7 +26,7 @@ def _payload(index: int) -> dict[str, Any]:
         "library_name": "transformers",
         "siblings": [{"rfilename": "config.json"}],
         "safetensors": {"total": 2_000_000_000 + index},
-        "cardData": {},
+        "cardData": {"tags": ["Transformers", "Safetensors", f"family-{index % 17}"]},
     }
 
 
