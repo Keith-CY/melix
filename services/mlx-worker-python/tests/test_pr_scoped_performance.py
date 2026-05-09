@@ -2601,6 +2601,32 @@ def test_job_registry_restore_probe_script_emits_metrics(
     assert ModelOpsJobRegistry()._read_manifest_dict(tmp_path / "missing.json") == {}
 
 
+def test_benchmark_store_probe_counts_lines_without_read_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "benchmark_store_probe_for_test",
+        REPO_ROOT / "scripts/benchmark_store_probe.py",
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    rows_path = tmp_path / "rows.jsonl"
+    rows_path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        raise AssertionError(f"read_text should not count probe rows: {self}")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert module._count_text_lines(rows_path) == 3.0
+    with pytest.raises(AssertionError, match="read_text should not count"):
+        rows_path.read_text(encoding="utf-8")
+
+
 def test_benchmark_store_probe_script_emits_metrics(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as excinfo:
         runpy.run_path(str(REPO_ROOT / "scripts/benchmark_store_probe.py"), run_name="__main__")

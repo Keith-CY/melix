@@ -21,6 +21,11 @@ from worker.productization.benchmark_schemas import (  # noqa: E402
 from worker.productization.benchmark_store import BenchmarkStore  # noqa: E402
 
 
+def _count_text_lines(path: Path) -> float:
+    with path.open("r", encoding="utf-8") as handle:
+        return float(sum(1 for _ in handle))
+
+
 def _build_summary_rows(job_id: str, summary_count: int) -> tuple[object, ...]:
     return tuple(
         build_benchmark_matrix_summary_row(
@@ -127,9 +132,9 @@ def main() -> int:
             peak_samples.append(float(peak_bytes))
             tracemalloc.stop()
 
-            summary_line_count = float(len(persisted["summary_jsonl"].read_text(encoding="utf-8").splitlines()))
-            request_line_count = float(len(persisted["requests_jsonl"].read_text(encoding="utf-8").splitlines()))
-            csv_line_count = float(len(persisted["requests_csv"].read_text(encoding="utf-8").splitlines()))
+            summary_line_count = _count_text_lines(persisted["summary_jsonl"])
+            request_line_count = _count_text_lines(persisted["requests_jsonl"])
+            csv_line_count = _count_text_lines(persisted["requests_csv"])
             if summary_line_count != float(summary_count):
                 raise RuntimeError(f"unexpected summary row count: {summary_line_count}")
             if request_line_count != float(request_count):
