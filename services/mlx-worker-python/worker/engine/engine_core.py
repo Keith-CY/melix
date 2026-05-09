@@ -39,6 +39,7 @@ class EngineCore:
         last_token_event: RuntimeTokenEvent | None = None
         last_finish_reason = ""
         turn_boundary_stop_reason = ""
+        accept_stream_fragment = assembler.accept
 
         try:
             template_kwargs = self._chat_template_kwargs(request)
@@ -81,7 +82,7 @@ class EngineCore:
                         turn_boundary_stop_reason = "stop_sequence"
                 if track_usage:
                     last_token_event = runtime_event
-                for delta in assembler.accept(
+                for delta in accept_stream_fragment(
                     StreamFragment(text=runtime_event.text, raw_text=runtime_event.raw_text)
                 ):
                     if delta.reasoning_text:
