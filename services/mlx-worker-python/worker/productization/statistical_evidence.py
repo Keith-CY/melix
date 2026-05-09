@@ -153,8 +153,9 @@ def _paired_bootstrap_interval(
 
 
 def _all_values_equal(values: tuple[float, ...]) -> bool:
-    first_value = values[0]
-    return all(value == first_value for value in values[1:])
+    iterator = iter(values)
+    first_value = next(iterator)
+    return all(value == first_value for value in iterator)
 
 
 def _paired_analytical_interval(
