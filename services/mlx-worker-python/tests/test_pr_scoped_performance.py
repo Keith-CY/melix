@@ -985,6 +985,24 @@ def test_changed_paths_force_all_wildcards_handles_empty_matchers(monkeypatch: p
     assert pr_scoped_performance_module._changed_paths_match_force_all_wildcards({"README.md"}) is False
 
 
+def test_scope_report_empty_direct_paths_skips_probe_matching(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_probe_match(
+        changed_paths: set[str],
+        probes: tuple[ProbeDefinition, ...],
+    ) -> frozenset[int]:  # pragma: no cover - sentinel
+        _ = (changed_paths, probes)
+        raise AssertionError("empty direct changed paths should not scan probe watch globs")
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_match_probe_indexes", fail_probe_match)
+
+    scope = build_scope_report(registry_path=REGISTRY_PATH, changed_files=[])
+
+    assert scope["force_all"] is False
+    assert scope["selected_count"] == 0
+    assert scope["selected_probes"] == []
+    assert scope["matched_probe_ids"] == []
+
+
 def test_scope_report_large_changed_set_preserves_exact_selection_semantics() -> None:
     changed_files = _build_large_scope_probe_changed_files() + [
         "services/mlx-worker-python/worker/engine/evaluation_core.py",
