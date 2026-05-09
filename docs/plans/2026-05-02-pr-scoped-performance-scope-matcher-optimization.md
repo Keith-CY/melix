@@ -41,6 +41,10 @@ This slice keeps the existing registry and probe shape intact. The affected path
 - Match exact watch globs through dictionary-key set intersection before wildcard scanning. Current registered probe watch lists are exact-path heavy, so large synthetic changed-file sets avoid one dictionary miss per changed path while preserving selected-probe ordering through the existing probe-order projection.
 - Keep the wildcard matcher path unchanged except for receiving the same deduplicated changed-path set.
 
+## Slice update: cached matcher result reuse
+- Return the cached `frozenset[int]` from `_match_probe_indexes(...)` directly instead of allocating a defensive `set(...)` copy on every scope report.
+- The result is consumed through membership checks and equality-compatible assertions, so the scope-selection behavior and selected probe ordering remain unchanged while repeated scope reports avoid one matched-index allocation.
+
 ## Performance probe
 - Probe target: `build_scope_report(...)` on a synthetic large changed-file set and current probe registry.
 - Primary metrics:

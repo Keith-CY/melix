@@ -1099,6 +1099,29 @@ def test_match_probe_indexes_exact_only_intersects_changed_paths() -> None:
     assert matched == {0, 1}
 
 
+def test_match_probe_indexes_reuses_cached_frozenset_without_copying() -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/a.py", "shared.py"),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+
+    first = _match_probe_indexes(changed_paths={"shared.py", "docs/readme.md"}, probes=probes)
+    second = _match_probe_indexes(changed_paths=("docs/readme.md", "shared.py"), probes=probes)
+
+    assert first == {0}
+    assert first is second
+    assert isinstance(first, frozenset)
+
+
 def test_match_probe_indexes_skips_prefix_misses_before_regex(monkeypatch: pytest.MonkeyPatch) -> None:
     probes = (
         ProbeDefinition(
