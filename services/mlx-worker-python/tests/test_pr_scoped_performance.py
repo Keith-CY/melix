@@ -1338,7 +1338,7 @@ def test_statistical_evidence_bootstrap_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["sample_size"] == 16.0
     assert metrics["bootstrap_iterations"] == 8.0
-    assert metrics["sorted_calls_mean"] == 1.0
+    assert metrics["sorted_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["lower_bound_mean"] <= metrics["upper_bound_mean"]

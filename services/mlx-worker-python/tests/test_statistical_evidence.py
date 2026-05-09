@@ -93,7 +93,7 @@ def test_build_paired_statistical_evidence_keeps_full_confidence_intervals_finit
     assert evidence["analytical"]["lower_bound"] <= evidence["analytical"]["upper_bound"]
 
 
-def test_bootstrap_interval_reuses_one_sorted_replicate_vector(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bootstrap_interval_sorts_replicates_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
     sorted_call_lengths: list[int] = []
     original_sorted = builtins.sorted
 
@@ -111,7 +111,7 @@ def test_bootstrap_interval_reuses_one_sorted_replicate_vector(monkeypatch: pyte
         bootstrap_seed=13,
     )
 
-    assert sorted_call_lengths == [64]
+    assert sorted_call_lengths == []
     assert evidence["bootstrap"] == {
         "method": "paired_bootstrap_percentile",
         "confidence_level": 0.9,

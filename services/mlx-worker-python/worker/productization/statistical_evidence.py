@@ -141,12 +141,12 @@ def _paired_bootstrap_interval(
         append_replicate(sum(choices(outcomes, k=sample_size)) * inverse_sample_size)
 
     alpha = (1.0 - confidence_level) / 2.0
-    ordered_replicates = sorted(replicates)
+    replicates.sort()
     return _interval_payload(
         method="paired_bootstrap_percentile",
         confidence_level=confidence_level,
-        lower_bound=_ordered_percentile(ordered_replicates, alpha),
-        upper_bound=_ordered_percentile(ordered_replicates, 1.0 - alpha),
+        lower_bound=_ordered_percentile(replicates, alpha),
+        upper_bound=_ordered_percentile(replicates, 1.0 - alpha),
         iterations=int(bootstrap_iterations),
         seed=int(bootstrap_seed),
     )
