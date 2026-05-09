@@ -330,6 +330,30 @@ def test_scope_report_selects_quantization_qat_source_scan_probe() -> None:
     assert "quantization-qat-source-scan-scandir" in _selected_probe_ids(scope)
 
 
+def test_scope_report_selects_quantization_gate_manifest_event_streaming_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/quantization_gates.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "quantization-gate-manifest-event-streaming"
+
+
+def test_quantization_gate_manifest_event_streaming_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/quantization_gate_manifest_event_streaming_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["events_consumed_mean"] == 12.0
+    assert metrics["profile_count"] == 6.0
+
+
 def test_scope_report_selects_startup_signals_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1829,6 +1853,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "package-macos-resolve-fallback-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
+        "quantization-gate-manifest-event-streaming",
         "quantization-qat-source-scan-scandir",
         "release-gates-m9-failure-count-single-pass",
         "training-config-target-module-cache",

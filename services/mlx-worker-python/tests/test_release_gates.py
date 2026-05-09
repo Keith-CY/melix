@@ -31,6 +31,7 @@ from worker.productization.quantization_gates import (
     evaluate_quantization_gate,
     load_quantization_gate_policy,
 )
+from worker.productization import quantization_gates as quantization_gates_module
 from worker.productization import release_gates as release_gates_module
 
 
@@ -474,6 +475,55 @@ def test_collect_quantization_benchmark_evidence_returns_profile_metrics(tmp_pat
     assert evidence["profiles"]["q2"]["artifact_bytes"] > 0
     assert evidence["profiles"]["q2"]["manifest_bytes"] > 0
     assert evidence["profiles"]["q2"]["job_ms"] >= 0.0
+
+
+def test_collect_quantization_benchmark_evidence_stops_after_manifest_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    consumed_events = 0
+    requested_profiles: list[str] = []
+
+    payload = {
+        "artifact_bytes": 128,
+        "manifest_bytes": 96,
+        "calibration": {"sample_count": 16},
+        "compatibility": {"smoke_test_passed": True},
+        "manifest_path": str(tmp_path / "manifest.json"),
+        "artifact_path": str(tmp_path / "artifact.bin"),
+    }
+
+    class FakeCore:
+        def convert_model(self, request: maintenance_pb2.ConvertModelRequest):
+            nonlocal consumed_events
+            requested_profiles.append(request.weight_quant)
+            consumed_events += 1
+            yield maintenance_pb2.ConvertModelEvent(started=maintenance_pb2.ConvertStarted())
+            consumed_events += 1
+            yield maintenance_pb2.ConvertModelEvent(
+                manifest=maintenance_pb2.ConvertManifest(manifest_json=json.dumps(payload))
+            )
+            raise AssertionError(  # pragma: no cover - would mean streaming regressed
+                "collect_quantization_benchmark_evidence consumed post-manifest events"
+            )
+
+    monkeypatch.setattr(
+        quantization_gates_module,
+        "_build_maintenance_core",
+        lambda jobs_root: FakeCore(),
+    )
+
+    evidence = collect_quantization_benchmark_evidence(tmp_path / "jobs", profiles=("q4",))
+
+    assert requested_profiles == ["q4"]
+    assert consumed_events == 2
+    assert evidence["summary"] == {"profile_count": 1, "smoke_pass_rate": 100.0}
+    assert evidence["profiles"]["q4"]["artifact_bytes"] == 128
+
+
+def test_first_convert_manifest_raises_when_manifest_is_missing() -> None:
+    with pytest.raises(StopIteration, match="did not emit a manifest"):
+        quantization_gates_module._first_convert_manifest(iter(()))
 
 
 def test_evaluate_quantization_gate_reports_regressions() -> None:
