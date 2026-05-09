@@ -41,6 +41,7 @@ _SIMILARITY_IGNORED_CHARS = set(
     "“”\"'`"
     "-_—"
 )
+_SIMILARITY_IGNORED_TRANSLATION = str.maketrans("", "", "".join(_SIMILARITY_IGNORED_CHARS))
 EVENT_EXTRACTION_PROMPT_ID = "builtin.event-extraction.baseline"
 EVENT_EXTRACTION_PROMPT_REVISION_ID = "baseline.v6"
 SEMANTIC_JUDGE_SYSTEM_PROMPT = """You are a semantic judge for event extraction evaluation.
@@ -2136,7 +2137,7 @@ def _string_similarity(left: str, right: str) -> float:
 
 @lru_cache(maxsize=4096)
 def _normalize_similarity_text(value: str) -> str:
-    return "".join(char for char in value.strip().lower() if char not in _SIMILARITY_IGNORED_CHARS)
+    return value.strip().lower().translate(_SIMILARITY_IGNORED_TRANSLATION)
 
 
 _NORMALIZED_GROUP_ACTOR_ALIASES = frozenset(
