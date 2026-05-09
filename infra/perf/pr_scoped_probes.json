@@ -2476,6 +2476,18 @@
         "warn_pct": 0.0
       },
       {
+        "key": "direct_control_crash_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 15.0
+      },
+      {
+        "key": "direct_control_crash_log_reads_mean",
+        "unit": "reads",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
         "key": "worker_crash_elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",

@@ -170,6 +170,11 @@ def classify_startup_failure(
         )
         excerpt = error_text
         classification = "host_port_conflict"
+    elif any(pattern in error_lower for pattern in CRASH_PATTERNS):
+        summary = "Control plane crashed before startup completed."
+        detail = f"Melix never reached {ready_probe_url}. Inspect the control-plane logs for the crash cause."
+        excerpt = error_text
+        classification = "control_plane_crash"
     else:
         control_plane_excerpt = _log_excerpt(
             manifest.get("control_plane_stderr_path"),

@@ -97,6 +97,9 @@ def main() -> int:
     control_elapsed: list[float] = []
     control_reads: list[float] = []
     control_exists: list[float] = []
+    direct_control_elapsed: list[float] = []
+    direct_control_reads: list[float] = []
+    direct_control_exists: list[float] = []
     worker_elapsed: list[float] = []
     worker_reads: list[float] = []
     worker_exists: list[float] = []
@@ -127,6 +130,16 @@ def main() -> int:
             control_reads.append(reads / iterations)
             control_exists.append(exists / iterations)
 
+            elapsed, reads, exists = _measure_case(
+                manifest,
+                error_text="fatal error: control plane crashed",
+                expected_classification="control_plane_crash",
+                iterations=iterations,
+            )
+            direct_control_elapsed.append(elapsed)
+            direct_control_reads.append(reads / iterations)
+            direct_control_exists.append(exists / iterations)
+
             worker_manifest = dict(manifest)
             worker_manifest.pop("control_plane_stderr_path")
             elapsed, reads, exists = _measure_case(
@@ -150,6 +163,18 @@ def main() -> int:
                 "control_crash_elapsed_ms_mean": round(statistics.fmean(control_elapsed), 6),
                 "control_crash_log_path_exists_checks_mean": round(statistics.fmean(control_exists), 6),
                 "control_crash_log_reads_mean": round(statistics.fmean(control_reads), 6),
+                "direct_control_crash_elapsed_ms_mean": round(
+                    statistics.fmean(direct_control_elapsed),
+                    6,
+                ),
+                "direct_control_crash_log_path_exists_checks_mean": round(
+                    statistics.fmean(direct_control_exists),
+                    6,
+                ),
+                "direct_control_crash_log_reads_mean": round(
+                    statistics.fmean(direct_control_reads),
+                    6,
+                ),
                 "iterations": float(iterations),
                 "sample_count": float(samples),
                 "tail_scan_elapsed_ms_mean": round(tail_elapsed_mean, 6),

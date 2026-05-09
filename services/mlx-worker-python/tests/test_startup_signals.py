@@ -191,6 +191,36 @@ def test_classify_startup_failure_skips_log_reads_when_error_text_reports_port_c
     assert read_paths == []
 
 
+def test_classify_startup_failure_skips_logs_when_error_text_reports_control_plane_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control_plane_stderr = tmp_path / "control-plane.stderr.log"
+    worker_stderr = tmp_path / "python-worker.stderr.log"
+    control_plane_stderr.write_text("fatal error: stale control crash\n", encoding="utf-8")
+    worker_stderr.write_text("Traceback: stale worker crash\n", encoding="utf-8")
+
+    def fail_read(path: Path, *, chunk_size: int = 8192) -> str:
+        raise AssertionError(  # pragma: no cover
+            f"logs should not be read when error text already identifies a crash: {path}"
+        )
+
+    monkeypatch.setattr(startup_signals_module, "_read_last_nonempty_line", fail_read)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+            "control_plane_stderr_path": str(control_plane_stderr),
+            "python_worker_stderr_path": str(worker_stderr),
+        },
+        error_text="fatal error: control plane crashed",
+    )
+
+    assert report.classification == "control_plane_crash"
+    assert report.log_excerpt == "fatal error: control plane crashed"
+
+
 def test_classify_startup_failure_reports_worker_crash(tmp_path: Path) -> None:
     python_worker_stderr = tmp_path / "python-worker.stderr.log"
     python_worker_stderr.write_text("Traceback: worker bootstrap failed\n", encoding="utf-8")
