@@ -33,6 +33,14 @@ The probe will run a synthetic request with many duplicate input strings, measur
 
 Success means the branch keeps identical output cardinality/checksum while reducing repeated embed calls to the unique input count and improving elapsed time on the duplicate-heavy workload.
 
+## 2026-05-09 Follow-up Slice
+
+This follow-up keeps the existing request-local duplicate-vector cache and only
+binds the hot-loop cache lookup, append, and embedding-family callables before
+iterating over inputs. The change preserves vector ordering, duplicate-copy
+semantics, and the existing registered probe while reducing repeated attribute
+lookups in duplicate-heavy deterministic embedding requests.
+
 ## Verification commands
 
 - Focused pytest for embedding runtime and PR-scoped probe selection/smoke tests

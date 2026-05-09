@@ -38,12 +38,15 @@ class DeterministicEmbeddingRuntime:
 
         vector_cache: dict[str, list[float]] = {}
         vectors: list[list[float]] = []
+        cache_get = vector_cache.get
+        append_vector = vectors.append
+        embed_text = family.embed_text
         for text in inputs:
-            vector = vector_cache.get(text)
+            vector = cache_get(text)
             if vector is None:
-                vector = family.embed_text(backend, text, dimensions)
+                vector = embed_text(backend, text, dimensions)
                 vector_cache[text] = vector
-                vectors.append(vector)
+                append_vector(vector)
             else:
-                vectors.append(vector.copy())
+                append_vector(vector.copy())
         return vectors
