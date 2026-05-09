@@ -1791,9 +1791,21 @@
         "warn_pct": 0.0
       },
       {
+        "key": "score_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
         "key": "tokenize_calls_mean",
         "unit": "calls",
         "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "unique_document_count",
+        "unit": "documents",
+        "direction": "informational",
         "warn_pct": 0.0
       }
     ]
