@@ -1810,6 +1810,31 @@ def test_release_gates_m9_failure_count_probe_script_emits_metrics(
     assert metrics["failures_per_section"] == 4.0
 
 
+def test_scope_report_selects_text_family_config_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/text_family_adapters.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "text-family-config-copy-elision"
+
+
+def test_text_family_config_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["text_family_config_probe.py"])
+
+    runpy.run_path(str(REPO_ROOT / "scripts/text_family_config_probe.py"), run_name="__main__")
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["config_copy_calls_mean"] == 0.0
+    assert metrics["iterations"] == 10_000
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "dataset-registry-limited-read-streaming",
