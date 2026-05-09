@@ -392,6 +392,19 @@ def test_count_tests_no_assert_fallback_avoids_splitlines_materialization() -> N
     assert code_eval_runner._count_tests(test_code) == 3
 
 
+def test_count_tests_no_assert_fast_path_skips_ast_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    code_eval_runner._count_tests.cache_clear()
+
+    def fail_parse(*args, **kwargs):
+        raise AssertionError(  # pragma: no cover - regression-only failure path
+            "no-assert fallback should not parse the test AST"
+        )
+
+    monkeypatch.setattr(code_eval_runner.ast, "parse", fail_parse)
+
+    assert code_eval_runner._count_tests("setup()\nrun_case(identity)\n") == 2
+
+
 def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -> None:
     missing_path = tmp_path / "missing.txt"
     assert code_eval_runner._read_limited_text(missing_path, 8) == ""
