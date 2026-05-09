@@ -2293,14 +2293,18 @@ def _probe_scope_dict(probe: ProbeDefinition) -> dict[str, object]:
     return cached
 
 
-def _match_probe_indexes(*, changed_paths: set[str] | frozenset[str] | tuple[str, ...], probes: tuple[ProbeDefinition, ...]) -> set[int]:
+def _match_probe_indexes(
+    *,
+    changed_paths: set[str] | frozenset[str] | tuple[str, ...],
+    probes: tuple[ProbeDefinition, ...],
+) -> frozenset[int]:
     changed_path_tuple = tuple(sorted(changed_paths))
     cache_key = (id(probes), len(probes), changed_path_tuple)
     cached = _MATCH_PROBE_INDEXES_CACHE.get(cache_key)
     if cached is None:
         cached = _match_probe_indexes_uncached(probes=probes, changed_paths=changed_path_tuple)
         _MATCH_PROBE_INDEXES_CACHE[cache_key] = cached
-    return set(cached)
+    return cached
 
 
 def _match_probe_indexes_uncached(
