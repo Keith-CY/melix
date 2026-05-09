@@ -8,6 +8,7 @@ from worker.runtime.video_preprocessing import (
     PreparedVideoInput,
     VideoPreprocessError,
     _parse_video_reference,
+    _uri_identity_hash,
     prepare_video_input,
 )
 
@@ -156,6 +157,25 @@ def test_parse_video_reference_decodes_remote_and_file_uris_once() -> None:
     assert local.decoded_path == "/tmp/local demo.webm"
     assert local.path_name == "local demo.webm"
     assert local.path_suffix == "webm"
+
+
+def test_uri_identity_hash_preserves_nul_framed_payload_digest() -> None:
+    expected = "e3730f5d0390fa0e5ca66427b4af3d8222d03dbcbabde46cb417fe93681038f5"
+
+    assert (
+        _uri_identity_hash(
+            uri="https://example.com/media/demo.mov",
+            mime_type="video/quicktime",
+            format_name="mov",
+            filename="demo.mov",
+            byte_length=123,
+            duration_ms=12_000,
+            frame_budget=12,
+            start_ms=500,
+            end_ms=3_500,
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize(

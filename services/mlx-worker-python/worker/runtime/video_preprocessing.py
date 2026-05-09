@@ -206,21 +206,21 @@ def _uri_identity_hash(
     start_ms: int,
     end_ms: int,
 ) -> str:
-    digest = hashlib.sha256()
-    for value in (
-        uri,
-        mime_type,
-        format_name,
-        filename,
-        str(byte_length),
-        str(duration_ms),
-        str(frame_budget),
-        str(start_ms),
-        str(end_ms),
-    ):
-        digest.update(value.encode("utf-8"))
-        digest.update(b"\0")
-    return digest.hexdigest()
+    framed_payload = "\0".join(
+        (
+            uri,
+            mime_type,
+            format_name,
+            filename,
+            str(byte_length),
+            str(duration_ms),
+            str(frame_budget),
+            str(start_ms),
+            str(end_ms),
+            "",
+        )
+    )
+    return hashlib.sha256(framed_payload.encode("utf-8")).hexdigest()
 
 
 def _sha256_hex(payload: bytes) -> str:
