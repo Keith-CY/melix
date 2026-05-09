@@ -156,6 +156,15 @@ def test_scope_report_selects_runtime_utils_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "runtime-utils-kwarg-signature-cache"
 
 
+def test_scope_report_selects_run_evidence_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/run_evidence.py"],
+    )
+
+    assert _selected_probe_ids(scope) == ["run-evidence-probe-summary-top-k"]
+
+
 def test_scope_report_selects_engine_generate_usage_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1718,6 +1727,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
         "runtime-utils-kwarg-signature-cache",
+        "run-evidence-probe-summary-top-k",
         "mlx-text-stop-kwarg-signature-cache",
         "mlx-audio-wav-streaming-pcm",
         "mlx-audio-generate-signature-cache",
@@ -2189,6 +2199,24 @@ def test_code_eval_payload_json_probe_script_emits_metrics(
     assert metrics["payload_bytes"] > 0
     assert metrics["sample_count"] == 7.0
     assert metrics["iteration_count"] == 1200.0
+
+
+def test_run_evidence_probe_summary_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MELIX_RUN_EVIDENCE_PROBE_COUNT", "1000")
+    monkeypatch.setenv("MELIX_RUN_EVIDENCE_PROBE_SAMPLES", "2")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/run_evidence_probe_summary_probe.py"))
+
+    probe_script["main"]()
+    metrics = json.loads(capsys.readouterr().out)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["probe_count"] == 1000.0
+    assert metrics["sample_count"] == 2.0
+    assert metrics["slowest_count"] == 5.0
 
 
 def test_code_eval_runner_script_probe_script_emits_metrics(

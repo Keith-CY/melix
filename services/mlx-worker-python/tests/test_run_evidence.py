@@ -146,6 +146,34 @@ def test_benchmark_stage_probes_record_parent_child_runtime_and_fallback_phases(
     assert summary["fallback_phases"][0]["phase"] == "fallback_enter"
 
 
+def test_probe_timeline_slowest_phases_preserve_stable_top_five_order() -> None:
+    durations = [1.0, 9.0, 7.0, 9.0, 3.0, 8.0, 9.0, 2.0]
+    probes = [
+        RunEvidenceProbe(
+            run_id="run-top-k",
+            trace_id="run-top-k:trace",
+            span_id=f"run-top-k:span-{index}",
+            parent_span_id="run-top-k:parent",
+            component="worker",
+            phase=f"phase-{index}",
+            started_at_monotonic_ms=index,
+            duration_ms=duration,
+            status="completed",
+        )
+        for index, duration in enumerate(durations)
+    ]
+
+    summary = summarize_probe_timeline(probes)
+
+    assert [row["phase"] for row in summary["slowest_phases"]] == [
+        "phase-1",
+        "phase-3",
+        "phase-6",
+        "phase-5",
+        "phase-2",
+    ]
+
+
 def test_evaluation_stage_probes_record_failed_and_skipped_phases() -> None:
     probes = build_evaluation_stage_probes(
         run_id="eval-1",

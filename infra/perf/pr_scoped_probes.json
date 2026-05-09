@@ -1,5 +1,41 @@
 [
   {
+    "id": "run-evidence-probe-summary-top-k",
+    "name": "Run evidence probe summary top-k",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/run_evidence.py",
+      "services/mlx-worker-python/tests/test_run_evidence.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/run_evidence_probe_summary_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_run_evidence.py::test_probe_timeline_slowest_phases_preserve_stable_top_five_order services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_run_evidence_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_run_evidence_probe_summary_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_run_evidence.py::test_probe_timeline_slowest_phases_preserve_stable_top_five_order services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_run_evidence_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_run_evidence_probe_summary_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/run_evidence.py services/mlx-worker-python/tests/test_run_evidence.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/run_evidence_probe_summary_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/run_evidence_probe_summary_probe.py ]; then python scripts/run_evidence_probe_summary_probe.py; else python -c \"import base64; exec(base64.b64decode(\\\"ZnJvbSBfX2Z1dHVyZV9fIGltcG9ydCBhbm5vdGF0aW9ucwppbXBvcnQganNvbiwgb3MsIHN0YXRpc3RpY3MsIHN5cywgdGltZSwgdHJhY2VtYWxsb2MKZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCnJlcG9fcm9vdCA9IFBhdGguY3dkKCkKc3lzLnBhdGguaW5zZXJ0KDAsIHN0cihyZXBvX3Jvb3QpKTsgc3lzLnBhdGguaW5zZXJ0KDAsIHN0cihyZXBvX3Jvb3QgLyAic2VydmljZXMvbWx4LXdvcmtlci1weXRob24iKSkKZnJvbSB3b3JrZXIucHJvZHVjdGl6YXRpb24ucnVuX2V2aWRlbmNlIGltcG9ydCBSdW5FdmlkZW5jZVByb2JlLCBzdW1tYXJpemVfcHJvYmVfdGltZWxpbmUKcHJvYmVfY291bnQgPSBpbnQob3MuZW52aXJvbi5nZXQoIk1FTElYX1JVTl9FVklERU5DRV9QUk9CRV9DT1VOVCIsICIxMDAwMDAiKSkKc2FtcGxlX2NvdW50ID0gaW50KG9zLmVudmlyb24uZ2V0KCJNRUxJWF9SVU5fRVZJREVOQ0VfUFJPQkVfU0FNUExFUyIsICI1IikpCnByb2JlcyA9IFtSdW5FdmlkZW5jZVByb2JlKHJ1bl9pZD0icHJvYmUtc3VtbWFyeSIsIHRyYWNlX2lkPSJwcm9iZS1zdW1tYXJ5OnRyYWNlIiwgc3Bhbl9pZD1mInByb2JlLXN1bW1hcnk6c3Bhbi17aW5kZXh9IiwgcGFyZW50X3NwYW5faWQ9InByb2JlLXN1bW1hcnk6cGFyZW50IiwgY29tcG9uZW50PSJydW50aW1lIiBpZiBpbmRleCAlIDMgZWxzZSAid29ya2VyIiwgcGhhc2U9ZiJwaGFzZS17aW5kZXggJSA5N30iLCBzdGFydGVkX2F0X21vbm90b25pY19tcz1pbmRleCwgZHVyYXRpb25fbXM9ZmxvYXQoKGluZGV4ICogMzcpICUgMTAwMCkgKyAoMC4wMDEgKiAoaW5kZXggJSAxMSkpLCBzdGF0dXM9ImNvbXBsZXRlZCIpIGZvciBpbmRleCBpbiByYW5nZShwcm9iZV9jb3VudCldCmVsYXBzZWQ9W107IHBlYWtzPVtdOyBjaGVja3N1bT0wCmZvciBfIGluIHJhbmdlKHNhbXBsZV9jb3VudCk6CiAgICB0cmFjZW1hbGxvYy5zdGFydCgpOyBzdGFydGVkPXRpbWUucGVyZl9jb3VudGVyKCk7IHN1bW1hcnk9c3VtbWFyaXplX3Byb2JlX3RpbWVsaW5lKHByb2Jlcyk7IGVsYXBzZWQuYXBwZW5kKCh0aW1lLnBlcmZfY291bnRlcigpLXN0YXJ0ZWQpKjEwMDAuMCk7IF8sIHBlYWs9dHJhY2VtYWxsb2MuZ2V0X3RyYWNlZF9tZW1vcnkoKTsgcGVha3MuYXBwZW5kKGZsb2F0KHBlYWspKTsgdHJhY2VtYWxsb2Muc3RvcCgpOyBzbG93ZXN0PXN1bW1hcnkuZ2V0KCJzbG93ZXN0X3BoYXNlcyIsIFtdKQogICAgaWYgbGVuKHNsb3dlc3QpICE9IDU6IHJhaXNlIFN5c3RlbUV4aXQoZiJ1bmV4cGVjdGVkIHNsb3dlc3QgcGhhc2UgY291bnQ6IHtsZW4oc2xvd2VzdCl9IikKICAgIGNoZWNrc3VtPXN1bShsZW4oc3RyKHJvdy5nZXQoInNwYW5faWQiLCAiIikpKSBmb3Igcm93IGluIHNsb3dlc3QpCnByaW50KGpzb24uZHVtcHMoeyJlbGFwc2VkX21zX21lYW4iOiBzdGF0aXN0aWNzLmZtZWFuKGVsYXBzZWQpLCAicGVha19ieXRlc19tZWFuIjogc3RhdGlzdGljcy5mbWVhbihwZWFrcyksICJwcm9iZV9jb3VudCI6IGZsb2F0KHByb2JlX2NvdW50KSwgInNhbXBsZV9jb3VudCI6IGZsb2F0KHNhbXBsZV9jb3VudCksICJzbG93ZXN0X2NvdW50IjogNS4wLCAiY2hlY2tzdW0iOiBmbG9hdChjaGVja3N1bSl9LCBzb3J0X2tleXM9VHJ1ZSkpCg==\\\"))\"; fi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0
+      },
+      {
+        "key": "slowest_count",
+        "unit": "count",
+        "direction": "informational"
+      }
+    ]
+  },
+  {
     "id": "dataset-registry-limited-read-streaming",
     "name": "Dataset registry split match string stem",
     "runner": "ubuntu-latest",

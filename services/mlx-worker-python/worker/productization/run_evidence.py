@@ -6,6 +6,7 @@ import subprocess
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from operator import attrgetter
 from pathlib import Path
 from typing import Any
 
@@ -1195,6 +1196,13 @@ def artifact_write_probe(
     )
 
 
+def _slowest_probes_top_k(
+    probes: Iterable[RunEvidenceProbe],
+    limit: int = 5,
+) -> list[RunEvidenceProbe]:
+    return heapq.nlargest(limit, probes, key=attrgetter("duration_ms"))
+
+
 def summarize_probe_timeline(probes: Iterable[RunEvidenceProbe | dict[str, object]]) -> dict[str, object]:
     normalized = [
         probe if isinstance(probe, RunEvidenceProbe) else RunEvidenceProbe.from_dict(probe)
@@ -1214,8 +1222,7 @@ def summarize_probe_timeline(probes: Iterable[RunEvidenceProbe | dict[str, objec
         "probe_count": len(normalized),
         "component_duration_ms": dict(sorted(component_durations.items())),
         "slowest_phases": [
-            _probe_summary_row(probe)
-            for probe in sorted(normalized, key=lambda item: item.duration_ms, reverse=True)[:5]
+            _probe_summary_row(probe) for probe in _slowest_probes_top_k(normalized)
         ],
         "failed_phases": [
             _probe_summary_row(probe)
