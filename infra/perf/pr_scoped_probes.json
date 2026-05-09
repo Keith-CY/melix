@@ -3259,8 +3259,21 @@
         "key": "elapsed_ms_mean",
         "unit": "ms",
         "direction": "informational"
+      },
+      {
+        "key": "fallback_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "fallback_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
       }
-    ]
+    ],
+    "description": "Avoid prompt-token work when usage is disabled and scan fallback prompt tokens without split-list materialization."
   },
   {
     "id": "vision-family-prompt-token-count-scan",
