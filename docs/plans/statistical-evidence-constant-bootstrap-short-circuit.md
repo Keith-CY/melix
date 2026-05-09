@@ -2,7 +2,7 @@
 
 ## Goal
 
-Avoid redundant paired-bootstrap sampling when every paired outcome has the same value. In that case every bootstrap replicate has the same mean, so the percentile interval can be returned exactly without allocating and sorting the replicate vector.
+Avoid redundant paired-bootstrap work when every paired outcome has the same value. In that case every bootstrap replicate has the same mean, so the percentile interval can be returned exactly without allocating and sorting the replicate vector. This follow-up slice keeps that short-circuit and removes the preflight tuple-tail slice used to detect constant outcomes.
 
 ## Linux-only constraint
 
@@ -12,12 +12,11 @@ This is a Python worker/productization slice and is verifiable on Linux with foc
 
 - `services/mlx-worker-python/worker/productization/statistical_evidence.py`
 - `services/mlx-worker-python/tests/test_statistical_evidence.py`
-- `infra/perf/pr_scoped_probes.json`
 - `docs/plans/statistical-evidence-constant-bootstrap-short-circuit.md`
 
 ## Performance probe definition
 
-Run `/tmp/statistical_evidence_constant_probe.py <origin-main-worktree> <head-worktree>` against a synthetic homogeneous `paired_outcomes=(1.0,) * 10000` workload with `bootstrap_iterations=1000` and five samples. Compare mean elapsed time and traced peak allocation while asserting the returned bootstrap bounds stay exactly `1.0`.
+Run `/tmp/statistical_evidence_constant_probe.py <origin-main-worktree> <head-worktree>` against a synthetic homogeneous `paired_outcomes=(1.0,) * 200000` workload with `bootstrap_iterations=1000` and five samples. Compare mean elapsed time and traced peak allocation while asserting the returned bootstrap bounds stay exactly `1.0`.
 
 The repository already has the `statistical-evidence-bootstrap-single-sort` PR-scoped performance probe watching this production file and test file. This slice relies on that registered probe to validate no regression in the mixed-outcome bootstrap path, and the local homogeneous probe validates the new short-circuit path.
 

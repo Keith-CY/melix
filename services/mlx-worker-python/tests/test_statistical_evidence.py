@@ -182,6 +182,39 @@ def test_bootstrap_interval_short_circuits_constant_outcomes_without_sampling(
     assert evidence["analytical"]["upper_bound"] == 1.0
 
 
+def test_constant_outcome_detection_avoids_tail_slice_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SliceGuardedTuple(tuple):
+        def __getitem__(self, key: object) -> object:
+            if isinstance(key, slice):
+                raise AssertionError("constant bootstrap detection must not slice outcomes")
+            return super().__getitem__(key)
+
+    forbidden_random = object()
+    monkeypatch.setattr(statistical_evidence_module.random, "Random", forbidden_random)
+    outcomes = SliceGuardedTuple((1.0,) * 512)
+    with pytest.raises(AssertionError, match="must not slice outcomes"):
+        _ = outcomes[1:]
+
+    evidence = statistical_evidence_module._paired_bootstrap_interval(
+        outcomes=outcomes,  # type: ignore[arg-type]
+        confidence_level=0.95,
+        bootstrap_iterations=1000,
+        bootstrap_seed=17,
+    )
+
+    assert evidence == {
+        "method": "paired_bootstrap_percentile",
+        "confidence_level": 0.95,
+        "lower_bound": 1.0,
+        "upper_bound": 1.0,
+        "crosses_zero": False,
+        "iterations": 1000,
+        "seed": 17,
+    }
+
+
 def test_classify_release_verdict_returns_inconclusive_when_any_interval_crosses_zero() -> None:
     verdict = classify_release_verdict(
         delta_accuracy=0.2,
