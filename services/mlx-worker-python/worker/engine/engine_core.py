@@ -3,6 +3,18 @@ from __future__ import annotations
 from collections.abc import Iterator
 import json
 
+
+def _whitespace_token_count(text: str) -> int:
+    token_count = 0
+    in_token = False
+    for character in text:
+        if character.isspace():
+            in_token = False
+        elif not in_token:
+            token_count += 1
+            in_token = True
+    return token_count
+
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.registry import WorkerRegistry
@@ -132,7 +144,7 @@ class EngineCore:
                         prompt_tokens_default = (
                             runtime.prompt_token_count(prompt)
                             if hasattr(runtime, "prompt_token_count")
-                            else len(prompt.split())
+                            else _whitespace_token_count(prompt)
                         )
                     prompt_tokens = prompt_tokens_default
                 if last_token_event is not None:
