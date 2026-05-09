@@ -402,6 +402,32 @@ def test_scope_report_selects_evaluation_store_probe() -> None:
     }
 
 
+def test_scope_report_selects_evaluation_compare_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/evaluation_compare.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "evaluation-compare-target-lookup-short-circuit"
+
+
+def test_evaluation_compare_target_lookup_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/evaluation_compare_target_lookup_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["get_loaded_model_calls_mean"] == 3.0
+    assert metrics["loaded_model_count"] == 10000.0
+    assert metrics["target_count"] == 3.0
+    assert metrics["checksum"] == 6000.0
+
+
 def test_scope_report_selects_evaluation_final_result_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1706,6 +1732,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-final-result-json-typed-score-aggregate",
         "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
+        "evaluation-compare-target-lookup-short-circuit",
         "evaluation-store-compare-summary-csv-streaming",
         "evaluation-compare-target-lookup-early-stop",
         "evaluation-store-samples-csv-streaming",

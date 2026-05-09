@@ -178,14 +178,16 @@ def resolve_compare_target_models(
         return {}
     requested_targets = {model_id for model_id in target_model_ids if model_id}
     loaded_models_by_id: dict[str, Any] = {}
+    remaining_targets = set(target_model_ids)
     for handle in registry.list_loaded_models():
         loaded_model = registry.get_loaded_model(handle)
         if loaded_model is None:
             continue
         model_id = str(getattr(getattr(loaded_model, "spec", None), "model_id", "")).strip()
-        if model_id in requested_targets and model_id not in loaded_models_by_id:
+        if model_id and model_id in remaining_targets:
             loaded_models_by_id[model_id] = loaded_model
-            if len(loaded_models_by_id) == len(requested_targets):
+            remaining_targets.remove(model_id)
+            if not remaining_targets:
                 break
     unknown_targets = [model_id for model_id in target_model_ids if model_id not in loaded_models_by_id]
     if unknown_targets:
