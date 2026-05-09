@@ -128,7 +128,9 @@ enum OnDemandModelLoader {
                 reason: failureReason,
                 memoryBudgetEvidence: memoryBudgetEvidence
             )
-            if response.error.code == "audio_processor_validation_failed" {
+            if !response.error.code.isEmpty
+                || !response.error.message.isEmpty
+                || !response.error.details.isEmpty {
                 throw OnDemandModelLoadError.workerRejected(response.error)
             }
             throw OnDemandModelLoadError.workerUnavailable

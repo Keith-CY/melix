@@ -414,7 +414,15 @@ struct OnDemandModelLoaderTests {
         )
         let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
 
-        await #expect(throws: OnDemandModelLoadError.workerUnavailable) {
+        var expectedMemoryError = Melix_Worker_V1_ErrorStatus()
+        expectedMemoryError.code = "memory_budget_exceeded"
+        expectedMemoryError.message = "Projected resident memory would exceed the process budget."
+        expectedMemoryError.details = [
+            "budget_bytes": "32768",
+            "headroom_bytes": "2048",
+            "required_bytes": "34816",
+        ]
+        await #expect(throws: OnDemandModelLoadError.workerRejected(expectedMemoryError)) {
             try await OnDemandModelLoader.ensureTextModelReady(
                 modelID: "melix-dev-text",
                 modelCatalog: catalog,
@@ -451,7 +459,10 @@ struct OnDemandModelLoaderTests {
         )
         let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
 
-        await #expect(throws: OnDemandModelLoadError.workerUnavailable) {
+        var expectedDiskStreamingError = Melix_Worker_V1_ErrorStatus()
+        expectedDiskStreamingError.code = "disk_streaming_unsupported"
+        expectedDiskStreamingError.message = "The selected runtime does not support disk-streaming mode."
+        await #expect(throws: OnDemandModelLoadError.workerRejected(expectedDiskStreamingError)) {
             try await OnDemandModelLoader.ensureTextModelReady(
                 modelID: "melix-dev-text",
                 modelCatalog: catalog,
@@ -480,7 +491,10 @@ struct OnDemandModelLoaderTests {
         )
         let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
 
-        await #expect(throws: OnDemandModelLoadError.workerUnavailable) {
+        var expectedSanitizedError = Melix_Worker_V1_ErrorStatus()
+        expectedSanitizedError.code = "memory-budget.exceeded"
+        expectedSanitizedError.message = "Projected resident memory would exceed the process budget."
+        await #expect(throws: OnDemandModelLoadError.workerRejected(expectedSanitizedError)) {
             try await OnDemandModelLoader.ensureTextModelReady(
                 modelID: "melix-dev-text",
                 modelCatalog: catalog,

@@ -7,6 +7,11 @@ private struct ModelLoadOutcome {
     let error: Melix_Controlplane_V1_ErrorStatus?
 }
 
+private struct BenchmarkModelHandle {
+    let model: Melix_Controlplane_V1_ModelSummary
+    let handle: String
+}
+
 private struct BenchmarkTargetResolutionError: Error {
     let code: String
     let message: String
@@ -918,7 +923,7 @@ public actor ControlPlaneService {
 
         let requestedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let requestedHFRepoID = command.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let benchmarkModel: Melix_Controlplane_V1_ModelSummary
+        var benchmarkModel: Melix_Controlplane_V1_ModelSummary
         do {
             benchmarkModel = try await resolvedBenchmarkModel(
                 preferredModelID: requestedModelID,
@@ -978,12 +983,18 @@ public actor ControlPlaneService {
         let normalizedBatchSizes = ControlPlaneBenchRequest.normalizedBenchValues(command.batchSizes)
         let modelHandle: String
         do {
-            modelHandle = try await benchmarkModelHandle(for: benchmarkModel)
+            let resolvedHandle = try await benchmarkModelHandle(
+                for: benchmarkModel,
+                explicitHFRepoID: requestedHFRepoID
+            )
+            benchmarkModel = resolvedHandle.model
+            modelHandle = resolvedHandle.handle
         } catch {
-            return errorResponse(
+            return benchmarkLoadErrorResponse(
                 for: request,
-                code: "not_found",
-                message: "No loaded benchmark target is available for \(benchmarkModel.modelID)."
+                error: error,
+                modelID: benchmarkModel.modelID,
+                targetDescription: "benchmark target"
             )
         }
 
@@ -1176,7 +1187,7 @@ public actor ControlPlaneService {
 
         let requestedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let requestedHFRepoID = command.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let benchmarkModel: Melix_Controlplane_V1_ModelSummary
+        var benchmarkModel: Melix_Controlplane_V1_ModelSummary
         do {
             benchmarkModel = try await resolvedBenchmarkModel(
                 preferredModelID: requestedModelID,
@@ -1279,12 +1290,18 @@ public actor ControlPlaneService {
 
         let modelHandle: String
         do {
-            modelHandle = try await benchmarkModelHandle(for: benchmarkModel)
+            let resolvedHandle = try await benchmarkModelHandle(
+                for: benchmarkModel,
+                explicitHFRepoID: requestedHFRepoID
+            )
+            benchmarkModel = resolvedHandle.model
+            modelHandle = resolvedHandle.handle
         } catch {
-            return errorResponse(
+            return benchmarkLoadErrorResponse(
                 for: request,
-                code: "not_found",
-                message: "No loaded benchmark target is available for \(benchmarkModel.modelID)."
+                error: error,
+                modelID: benchmarkModel.modelID,
+                targetDescription: "benchmark target"
             )
         }
 
@@ -1339,7 +1356,7 @@ public actor ControlPlaneService {
 
         let requestedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let requestedHFRepoID = command.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let evaluationModel: Melix_Controlplane_V1_ModelSummary
+        var evaluationModel: Melix_Controlplane_V1_ModelSummary
         do {
             evaluationModel = try await resolvedBenchmarkModel(
                 preferredModelID: requestedModelID,
@@ -1368,12 +1385,18 @@ public actor ControlPlaneService {
 
         let modelHandle: String
         do {
-            modelHandle = try await benchmarkModelHandle(for: evaluationModel)
+            let resolvedHandle = try await benchmarkModelHandle(
+                for: evaluationModel,
+                explicitHFRepoID: requestedHFRepoID
+            )
+            evaluationModel = resolvedHandle.model
+            modelHandle = resolvedHandle.handle
         } catch {
-            return errorResponse(
+            return benchmarkLoadErrorResponse(
                 for: request,
-                code: "not_found",
-                message: "No loaded evaluation target is available for \(evaluationModel.modelID)."
+                error: error,
+                modelID: evaluationModel.modelID,
+                targetDescription: "evaluation target"
             )
         }
 
@@ -2946,6 +2969,10 @@ public actor ControlPlaneService {
         workerClient: any ModelOperationsWorkerClientProtocol
     ) async throws -> Melix_Controlplane_V1_ModelSummary {
         if !hfRepoID.isEmpty {
+            await syncRegistryModelsFromWorkerIfAvailable(rescan: true)
+            if let cacheSnapshot = await preferredHFCacheBenchmarkModel(repoID: hfRepoID) {
+                return cacheSnapshot
+            }
             return try await importBenchmarkTargetFromHub(repoID: hfRepoID, workerClient: workerClient)
         }
         await syncRegistryModelsFromWorkerIfAvailable()
@@ -2959,7 +2986,41 @@ public actor ControlPlaneService {
         return benchmarkModel
     }
 
-    private func benchmarkModelHandle(for model: Melix_Controlplane_V1_ModelSummary) async throws -> String {
+    private func benchmarkModelHandle(
+        for model: Melix_Controlplane_V1_ModelSummary,
+        explicitHFRepoID: String
+    ) async throws -> BenchmarkModelHandle {
+        do {
+            return BenchmarkModelHandle(
+                model: model,
+                handle: try await loadBenchmarkModelHandle(for: model)
+            )
+        } catch {
+            let normalizedRepoID = normalizedHFRepoID(explicitHFRepoID)
+            guard !normalizedRepoID.isEmpty else {
+                throw error
+            }
+
+            await syncRegistryModelsFromWorkerIfAvailable(rescan: true)
+            let modelSourceKind = model.settings.ext["melix.source_kind"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard
+                let cacheSnapshot = await preferredHFCacheBenchmarkModel(repoID: explicitHFRepoID),
+                normalizedHFRepoID(cacheSnapshot.modelID) != normalizedHFRepoID(model.modelID)
+                    || modelSourceKind != "hf_cache_snapshot"
+            else {
+                throw error
+            }
+
+            return BenchmarkModelHandle(
+                model: cacheSnapshot,
+                handle: try await loadBenchmarkModelHandle(for: cacheSnapshot)
+            )
+        }
+    }
+
+    private func loadBenchmarkModelHandle(for model: Melix_Controlplane_V1_ModelSummary) async throws -> String {
         try await OnDemandModelLoader.ensureModelReady(
             modelID: model.modelID,
             modelCatalog: modelCatalog,
@@ -2969,6 +3030,108 @@ public actor ControlPlaneService {
             metricsPrefix: benchmarkMetricsPrefix(for: model),
             requiresTextCapability: false
         )
+    }
+
+    private func preferredHFCacheBenchmarkModel(repoID: String) async -> Melix_Controlplane_V1_ModelSummary? {
+        let normalizedRepoID = normalizedHFRepoID(repoID)
+        guard !normalizedRepoID.isEmpty else {
+            return nil
+        }
+
+        let models = await modelCatalog.listModels()
+        let matchingSnapshots = models.filter { model in
+            let sourceKind = model.settings.ext["melix.source_kind"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard sourceKind == "hf_cache_snapshot" else {
+                return false
+            }
+            return benchmarkModel(model, matchesHFRepoID: normalizedRepoID)
+        }
+        return matchingSnapshots.sorted { lhs, rhs in
+            let lhsTextPriority = benchmarkTextPriority(lhs)
+            let rhsTextPriority = benchmarkTextPriority(rhs)
+            if lhsTextPriority != rhsTextPriority {
+                return lhsTextPriority < rhsTextPriority
+            }
+            return lhs.modelID < rhs.modelID
+        }.first
+    }
+
+    private func benchmarkModel(
+        _ model: Melix_Controlplane_V1_ModelSummary,
+        matchesHFRepoID normalizedRepoID: String
+    ) -> Bool {
+        if normalizedHFRepoID(model.modelID) == normalizedRepoID {
+            return true
+        }
+        for key in ["melix.hf_repo_id", "melix.source_repo", "melix.source_locator"] {
+            if normalizedHFRepoID(model.settings.ext[key]) == normalizedRepoID {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func benchmarkTextPriority(_ model: Melix_Controlplane_V1_ModelSummary) -> Int {
+        if model.kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "text" {
+            return 0
+        }
+        if benchmarkTaskKind(for: model) == BenchmarkTaskKind.textGeneration.rawValue {
+            return 0
+        }
+        return 1
+    }
+
+    private func normalizedHFRepoID(_ value: String?) -> String {
+        (value ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    private func benchmarkLoadErrorResponse(
+        for request: Melix_Controlplane_V1_ControlPlaneRequest,
+        error: Error,
+        modelID: String,
+        targetDescription: String
+    ) -> Melix_Controlplane_V1_ControlPlaneResponse {
+        if let loadError = error as? OnDemandModelLoadError {
+            switch loadError {
+            case .workerRejected(let workerError):
+                return errorResponse(
+                    for: request,
+                    error: controlPlaneErrorStatus(
+                        from: workerError,
+                        fallbackCode: "unavailable",
+                        fallbackMessage: "Model worker rejected \(targetDescription) load for \(modelID)."
+                    )
+                )
+            case .runtimeCacheMissing:
+                return errorResponse(
+                    for: request,
+                    error: ModelRuntimeAvailability.missingRuntimeCacheErrorStatus(modelID: modelID)
+                )
+            case .modelNotReady, .workerUnavailable:
+                break
+            }
+        }
+        return errorResponse(
+            for: request,
+            code: "not_found",
+            message: "No loaded \(targetDescription) is available for \(modelID)."
+        )
+    }
+
+    private func controlPlaneErrorStatus(
+        from workerError: Melix_Worker_V1_ErrorStatus,
+        fallbackCode: String,
+        fallbackMessage: String
+    ) -> Melix_Controlplane_V1_ErrorStatus {
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = workerError.code.isEmpty ? fallbackCode : workerError.code
+        error.message = workerError.message.isEmpty ? fallbackMessage : workerError.message
+        error.details = workerError.details
+        return error
     }
 
     private func benchmarkTaskKind(for model: Melix_Controlplane_V1_ModelSummary) -> String {
@@ -3007,14 +3170,14 @@ public actor ControlPlaneService {
         for model: Melix_Controlplane_V1_ModelSummary,
         explicitHFRepoID: String
     ) -> String? {
-        if !explicitHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "hf_repo"
-        }
         let sourceKind = model.settings.ext["melix.source_kind"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         if ["hf_repo", "hub_repo", "hf_cache_snapshot"].contains(sourceKind) {
             return sourceKind
+        }
+        if !explicitHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "hf_repo"
         }
         if ["local_path", "local", "local_mlx_directory", "managed_local"].contains(sourceKind) {
             return nil
@@ -3109,6 +3272,10 @@ public actor ControlPlaneService {
         from card: Melix_Worker_V1_HubModelCard
     ) throws -> BenchmarkTaskKind {
         let pipelineTag = card.pipelineTag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedTags = normalizedHubTags(for: card)
+        if supportsQwenTextBenchmarkImport(for: card, normalizedTags: normalizedTags) {
+            return .textGeneration
+        }
         switch pipelineTag {
         case "":
             if let inferredTaskKind = inferredBenchmarkTaskKindForMissingPipelineTag(from: card) {
@@ -3175,15 +3342,26 @@ public actor ControlPlaneService {
         for card: Melix_Worker_V1_HubModelCard,
         normalizedTags: Set<String>
     ) -> Bool {
-        let identity = ([card.repoID, card.modelName] + card.tags)
+        let identityTokens = [card.repoID, card.modelName] + card.tags
+        let identity = identityTokens
             .joined(separator: " ")
             .lowercased()
-        let hasQwen35Signal = identity.contains("qwen3.5")
+        let normalizedIdentity = identity
+            .replacingOccurrences(of: "_", with: "-")
+            .replacingOccurrences(of: ".", with: "-")
+        let hasQwen3TextSignal = identity.contains("qwen3.5")
             || identity.contains("qwen3-5")
             || identity.contains("qwen3_5")
+            || identity.contains("qwen3.6")
+            || identity.contains("qwen3-6")
+            || identity.contains("qwen3_6")
+            || normalizedIdentity.contains("qwen3")
             || normalizedTags.contains("qwen3-5")
             || normalizedTags.contains("qwen3.5")
-        guard hasQwen35Signal else {
+            || normalizedTags.contains("qwen3-6")
+            || normalizedTags.contains("qwen3.6")
+            || normalizedTags.contains("qwen3")
+        guard hasQwen3TextSignal, !hasExplicitQwenVisionSignal(identityTokens) else {
             return false
         }
         let siblingFiles = Set(card.siblingFiles.map { $0.lowercased() })
@@ -3192,6 +3370,32 @@ public actor ControlPlaneService {
         let hasWeights = siblingFiles.contains("model.safetensors.index.json")
             || siblingFiles.contains { $0.hasSuffix(".safetensors") }
         return hasTokenizer && hasWeights
+    }
+
+    private func hasExplicitQwenVisionSignal(_ identityTokens: [String]) -> Bool {
+        let normalizedTokens = identityTokens
+            .map {
+                $0
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                    .replacingOccurrences(of: "_", with: "-")
+            }
+            .filter { !$0.isEmpty }
+        return normalizedTokens.contains { token in
+            token.contains("qwen-vl")
+                || token.contains("qwen2-vl")
+                || token.contains("qwen2.5-vl")
+                || token.contains("qwen2-5-vl")
+                || token.contains("qwen3-vl")
+                || token.contains("qwen3.5-vl")
+                || token.contains("qwen3-5-vl")
+                || token.contains("qwen3.6-vl")
+                || token.contains("qwen3-6-vl")
+                || token.contains("qwen-omni")
+                || token.contains("qwen2.5-omni")
+                || token.contains("qwen2-5-omni")
+                || token.contains("qwen3-omni")
+        }
     }
 
     private func makeImportedBenchmarkModel(
