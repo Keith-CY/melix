@@ -706,6 +706,7 @@ class MLXTextRuntime:
             yield from events
             return
 
+        max_stop_prefix_length = _stop_sequence_max_prefix_length(stop_sequences)
         pending = ""
         last_token_event: RuntimeTokenEvent | None = None
         for event in events:
@@ -726,7 +727,7 @@ class MLXTextRuntime:
                 yield replace(event, text="", raw_text="", finish_reason="stop_sequence")
                 return
 
-            held_suffix = _viable_stop_prefix_suffix(candidate, stop_sequences)
+            held_suffix = _viable_stop_prefix_suffix(candidate, stop_sequences, max_stop_prefix_length)
             if held_suffix:
                 visible = candidate[: -len(held_suffix)]
                 pending = held_suffix
@@ -749,12 +750,30 @@ class MLXTextRuntime:
 
 
 def _first_stop_sequence_index(text: str, stop_sequences: tuple[str, ...]) -> int | None:
-    indexes = [index for sequence in stop_sequences if (index := text.find(sequence)) >= 0]
-    return min(indexes) if indexes else None
+    first_index: int | None = None
+    for sequence in stop_sequences:
+        index = text.find(sequence)
+        if index < 0:
+            continue
+        if first_index is None or index < first_index:
+            first_index = index
+            if first_index == 0:
+                break
+    return first_index
 
 
-def _viable_stop_prefix_suffix(text: str, stop_sequences: tuple[str, ...]) -> str:
-    max_prefix_length = min(len(text), max((len(sequence) for sequence in stop_sequences), default=0) - 1)
+def _stop_sequence_max_prefix_length(stop_sequences: tuple[str, ...]) -> int:
+    return max((len(sequence) for sequence in stop_sequences), default=0) - 1
+
+
+def _viable_stop_prefix_suffix(
+    text: str,
+    stop_sequences: tuple[str, ...],
+    max_stop_prefix_length: int | None = None,
+) -> str:
+    if max_stop_prefix_length is None:
+        max_stop_prefix_length = _stop_sequence_max_prefix_length(stop_sequences)
+    max_prefix_length = min(len(text), max_stop_prefix_length)
     for length in range(max_prefix_length, 0, -1):
         suffix = text[-length:]
         if any(sequence.startswith(suffix) for sequence in stop_sequences):

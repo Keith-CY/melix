@@ -553,6 +553,41 @@ def test_runtime_stop_sequence_filter_flushes_trailing_viable_prefix() -> None:
     assert [event.text for event in events] == ["<sto"]
 
 
+def test_stop_sequence_filter_reuses_max_prefix_length(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = MLXTextRuntime(backend=object())
+    original = mlx_text_runtime_module._stop_sequence_max_prefix_length
+    calls = 0
+
+    def counted_max_prefix_length(stop_sequences: tuple[str, ...]) -> int:
+        nonlocal calls
+        calls += 1
+        return original(stop_sequences)
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_stop_sequence_max_prefix_length", counted_max_prefix_length)
+
+    events = list(
+        runtime._apply_stop_sequences(
+            [RuntimeTokenEvent(text="chunk", prompt_tokens=1, completion_tokens=index) for index in range(25)],
+            ("<stop>", "</turn>", "END"),
+        )
+    )
+
+    assert calls == 1
+    assert "".join(event.text for event in events) == "chunk" * 25
+
+
+def test_stop_sequence_helpers_preserve_earliest_match_and_viable_suffix() -> None:
+    assert mlx_text_runtime_module._first_stop_sequence_index("abcEND<stop>", ("<stop>", "END")) == 3
+    assert mlx_text_runtime_module._first_stop_sequence_index("<stop>END", ("END", "<stop>")) == 0
+    assert mlx_text_runtime_module._first_stop_sequence_index("no marker", ("END", "<stop>")) is None
+
+    stop_sequences = ("<stop>", "</turn>")
+    max_prefix_length = mlx_text_runtime_module._stop_sequence_max_prefix_length(stop_sequences)
+    assert mlx_text_runtime_module._viable_stop_prefix_suffix("hello <sto", stop_sequences, max_prefix_length) == "<sto"
+    assert mlx_text_runtime_module._viable_stop_prefix_suffix("hello <sto", stop_sequences) == "<sto"
+    assert mlx_text_runtime_module._viable_stop_prefix_suffix("hello", stop_sequences, max_prefix_length) == ""
+
+
 def test_auto_backend_records_installed_mlx_package_versions(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_version(package_name: str) -> str:
         return {
