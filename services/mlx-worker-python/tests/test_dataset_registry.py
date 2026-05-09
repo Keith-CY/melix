@@ -552,6 +552,13 @@ def test_dataset_catalog_json_payload_helpers_cover_supported_shapes() -> None:
     assert catalog._rows_from_json_payload("ignored") == []
 
 
+def test_dataset_catalog_json_payload_limit_short_circuits_canonical_lists() -> None:
+    assert catalog._rows_from_json_payload({"rows": [{"a": 1}, {"a": 2}]}, limit=1) == [{"a": 1}]
+    assert catalog._rows_from_json_payload({"data": [{"a": 1}, {"a": 2}]}, limit=1) == [{"a": 1}]
+    assert catalog._rows_from_json_payload([{"a": 1}, {"a": 2}], limit=1) == [{"a": 1}]
+    assert catalog._rows_from_json_payload({"items": [{"a": 1}, {"a": 2}]}, limit=1) == [{"a": 1}]
+
+
 def test_dataset_catalog_downloads_dataset_repo_type_without_leaking_token(
     monkeypatch,
     tmp_path: Path,

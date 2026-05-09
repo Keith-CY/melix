@@ -10,7 +10,7 @@ import tempfile
 import time
 import tracemalloc
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(os.environ.get("MELIX_DATASET_PREVIEW_PROBE_REPO_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
@@ -24,25 +24,22 @@ def _int_env(name: str, default: int) -> int:
     return int(raw_value)
 
 
-def _build_snapshot(root: Path, *, file_count: int) -> Path:
+def _build_snapshot(root: Path, *, row_count: int) -> Path:
     snapshot_dir = root / "snapshot" / "data"
     snapshot_dir.mkdir(parents=True)
-    for index in range(file_count):
-        (snapshot_dir / f"part-{index:05d}.jsonl").write_text(
-            json.dumps({"prompt": f"prompt-{index}", "answer": f"answer-{index}"}) + "\n",
-            encoding="utf-8",
-        )
+    rows = [{"prompt": f"prompt-{index}", "answer": f"answer-{index}"} for index in range(row_count)]
+    (snapshot_dir / "train.json").write_text(json.dumps({"rows": rows}), encoding="utf-8")
     (root / "snapshot" / "README.md").write_text("# Synthetic dataset\n", encoding="utf-8")
     return root / "snapshot"
 
 
 def main() -> int:
-    file_count = _int_env("MELIX_DATASET_PREVIEW_PROBE_FILES", 1500)
+    row_count = _int_env("MELIX_DATASET_PREVIEW_PROBE_FILES", 50_000)
     sample_count = _int_env("MELIX_DATASET_PREVIEW_PROBE_SAMPLES", 7)
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-dataset-preview-probe-") as temp_dir:
-        snapshot_dir = _build_snapshot(Path(temp_dir), file_count=file_count)
+        snapshot_dir = _build_snapshot(Path(temp_dir), row_count=row_count)
         expected = [{"prompt": "prompt-0", "answer": "answer-0"}]
         for _ in range(sample_count):
             tracemalloc.start()
@@ -61,7 +58,7 @@ def main() -> int:
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
                 "elapsed_ms_min": round(min(elapsed_samples), 6),
                 "peak_bytes_mean": round(statistics.fmean(peak_samples), 3),
-                "file_count": float(file_count),
+                "file_count": float(row_count),
                 "rows_returned": 1.0,
                 "sample_count": float(sample_count),
             },

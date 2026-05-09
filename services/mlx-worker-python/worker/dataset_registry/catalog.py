@@ -544,7 +544,7 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
         return rows
     if suffix == ".json":
         payload = json.loads(path.read_text(encoding="utf-8"))
-        return _limit_rows(_rows_from_json_payload(payload), limit)
+        return _rows_from_json_payload(payload, limit=limit)
     if suffix == ".csv":
         rows: list[dict[str, Any]] = []
         with path.open("r", encoding="utf-8", newline="") as handle:
@@ -587,19 +587,33 @@ def _limit_rows(rows: list[dict[str, Any]], limit: int | None) -> list[dict[str,
     return rows[:limit]
 
 
-def _rows_from_json_payload(payload: Any) -> list[dict[str, Any]]:
+def _append_limited_dict_rows(
+    rows: list[dict[str, Any]],
+    candidates: list[Any],
+    *,
+    limit: int | None,
+) -> list[dict[str, Any]]:
+    for row in candidates:
+        if isinstance(row, dict):
+            rows.append(row)
+            if limit is not None and len(rows) >= limit:
+                break
+    return rows
+
+
+def _rows_from_json_payload(payload: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
     if isinstance(payload, list):
-        return [row for row in payload if isinstance(row, dict)]
+        return _append_limited_dict_rows([], payload, limit=limit)
     if isinstance(payload, dict):
         rows = payload.get("rows")
         if isinstance(rows, list):
-            return [row for row in rows if isinstance(row, dict)]
+            return _append_limited_dict_rows([], rows, limit=limit)
         data = payload.get("data")
         if isinstance(data, list):
-            return [row for row in data if isinstance(row, dict)]
+            return _append_limited_dict_rows([], data, limit=limit)
         for value in payload.values():
             if isinstance(value, list) and all(isinstance(row, dict) for row in value):
-                return list(value)
+                return _limit_rows(value, limit)
         return [payload]
     return []
 
