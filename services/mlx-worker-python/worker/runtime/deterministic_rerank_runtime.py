@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from worker.runtime.rerank_backends import (
     resolve_rerank_backend,
     resolve_rerank_family,
@@ -23,7 +25,7 @@ class DeterministicRerankRuntime:
         backend = resolve_rerank_backend(model_spec.ext.get("rerank_backend_id", "token-overlap-v1"))
         return int(backend.descriptor.estimated_resident_bytes)
 
-    def score_documents(self, loaded_model, query: str, documents: list[str]) -> list[float]:
+    def score_documents(self, loaded_model, query: str, documents: Iterable[str]) -> list[float]:
         backend = loaded_model.get("rerank_backend")
         if backend is None:
             backend = resolve_rerank_backend(loaded_model.get("rerank_backend_id", "token-overlap-v1"))

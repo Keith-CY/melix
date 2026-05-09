@@ -751,6 +751,8 @@ def test_rerank_top_k_probe_script_emits_top_k_one_metrics(
     monkeypatch.setenv("MELIX_RERANK_TOP_K_PROBE_DOCUMENTS", "64")
     monkeypatch.setenv("MELIX_RERANK_TOP_K_PROBE_ITERATIONS", "2")
     monkeypatch.setenv("MELIX_RERANK_TOP_K_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_RERANK_REQUEST_PROBE_DOCUMENTS", "16")
+    monkeypatch.setenv("MELIX_RERANK_REQUEST_PROBE_ITERATIONS", "3")
 
     with pytest.raises(SystemExit) as exc_info:
         runpy.run_path(
@@ -766,6 +768,11 @@ def test_rerank_top_k_probe_script_emits_top_k_one_metrics(
     assert metrics["top_k"] == 1.0
     assert metrics["result_count"] == 1.0
     assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["request_document_count"] == 16.0
+    assert metrics["request_iteration_count"] == 3.0
+    assert metrics["request_document_identity_hits"] == 3.0
+    assert metrics["request_document_iterations"] == 3.0
+    assert metrics["request_score_checksum"] == 45.0
 
 
 def test_scope_report_selects_deterministic_embedding_probe() -> None:
