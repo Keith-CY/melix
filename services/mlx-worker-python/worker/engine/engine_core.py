@@ -152,14 +152,10 @@ class EngineCore:
                 finish_reason = last_finish_reason
 
             assembled = assembler.completed()
-            parser_metrics: dict[str, object] = dict(assembled.metrics)
-            parser_metrics.update(
-                {
-                    "resolved_stop_token_count": stop_contract.resolved_stop_token_count,
-                    "reasoning_flag_source": self._reasoning_flag_source(request),
-                    "turn_boundary_stop_reason": turn_boundary_stop_reason or finish_reason,
-                }
-            )
+            parser_metrics = {key: str(value) for key, value in assembled.metrics.items()}
+            parser_metrics["resolved_stop_token_count"] = str(stop_contract.resolved_stop_token_count)
+            parser_metrics["reasoning_flag_source"] = self._reasoning_flag_source(request)
+            parser_metrics["turn_boundary_stop_reason"] = turn_boundary_stop_reason or finish_reason
             yield inference_pb2.ExecuteEvent(
                 request_id=request_id,
                 execution_kind="generate",
@@ -172,7 +168,7 @@ class EngineCore:
                     reasoning_mode_source=request.execution.reasoning.mode_source,
                     reasoning_effort=request.execution.reasoning.effort,
                     reasoning_continuity_preserved=request.execution.reasoning.continuity_rehydrated,
-                    parser_metrics={key: str(value) for key, value in parser_metrics.items()},
+                    parser_metrics=parser_metrics,
                 ),
             )
         except Exception as exc:  # pragma: no cover - defensive branch

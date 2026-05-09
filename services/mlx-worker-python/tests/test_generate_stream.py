@@ -385,6 +385,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert token_text == ["Hello", " world"]
     assert completed.finish_reason == "length"
     assert completed.assistant_text == "Hello world"
+    assert completed.parser_metrics["resolved_stop_token_count"] == "0"
+    assert completed.parser_metrics["reasoning_flag_source"] == "unspecified"
+    assert completed.parser_metrics["turn_boundary_stop_reason"] == "length"
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
     assert usage.prompt_tokens == 5
     assert usage.completion_tokens == 2
