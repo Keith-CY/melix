@@ -33,11 +33,16 @@ def _parse_hunk_new_start(line: str) -> int | None:
     digit_index = new_range_index + 2
     end_index = digit_index
     line_length = len(line)
-    while end_index < line_length and line[end_index].isdigit():
+    value = 0
+    while end_index < line_length:
+        digit = ord(line[end_index]) - 48
+        if digit < 0 or digit > 9:
+            break
+        value = value * 10 + digit
         end_index += 1
     if end_index == digit_index:
         return None
-    return int(line[digit_index:end_index])
+    return value
 
 
 def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
