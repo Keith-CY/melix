@@ -3,9 +3,11 @@ from __future__ import annotations
 import builtins
 import json
 import runpy
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -74,6 +76,111 @@ def test_default_event_extraction_prompt_spec_uses_baseline_v6_feedback_rules() 
     assert "周二晚上7点上飞机" in spec.system_prompt
     assert "同事/朋友/表姐" in spec.system_prompt
     assert spec.content_hash == event_extraction_module.event_prompt_content_hash(spec.system_prompt, [])
+
+
+def test_local_event_extraction_disables_thinking_template_kwargs() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeRuntime:
+        def render_prompt(self, messages, *, loaded_model, template_kwargs=None, execution_ext=None):
+            captured["messages"] = messages
+            captured["loaded_model"] = loaded_model
+            captured["template_kwargs"] = template_kwargs
+            captured["execution_ext"] = execution_ext
+            return "rendered prompt"
+
+        def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+            captured["prompt"] = prompt
+            yield SimpleNamespace(text='{"events":[{"actor":["speaker_1"],"time":["明天"],"location":null,"action":["开会"]}]}')
+
+    class FakeRegistry:
+        def __init__(self) -> None:
+            self.runtime = FakeRuntime()
+            self.finished_request_id = ""
+
+        def runtime_for_loaded_model(self, loaded_model):
+            return self.runtime
+
+        def start_request(self, request_id, *, runtime_kind):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, request_id) -> None:
+            self.finished_request_id = request_id
+
+    registry = FakeRegistry()
+    client = evaluation_core._LocalEventExtractionClient(
+        registry=registry,
+        loaded_model=SimpleNamespace(runtime_model={"model": "fixture"}, runtime_kind="text"),
+        prompt_spec=event_extraction_module.default_event_extraction_prompt_spec(),
+        max_output_tokens=128,
+        seed=0,
+    )
+
+    events, raw_text = client.extract_events(["speaker_1: 明天我开会"], dialogue_id="dlg-local")
+
+    assert captured["template_kwargs"] == {"enable_thinking": False}
+    assert captured["prompt"] == "rendered prompt"
+    assert registry.finished_request_id.startswith("event-extraction:local:dlg-local:")
+    assert events == [{"actor": ["speaker_1"], "time": ["明天"], "location": None, "action": ["开会"]}]
+    assert raw_text.startswith("{")
+
+
+def test_local_event_extraction_parse_errors_keep_raw_response_for_diagnostics(tmp_path: Path) -> None:
+    source = tmp_path / "top200_final.jsonl"
+    _write_jsonl(
+        source,
+        [
+            {
+                "dialogue_id": "dlg-raw",
+                "dialogue": ["speaker_1: 明天我开会"],
+                "events": [{"actor": ["speaker_1"], "time": ["明天"], "location": None, "action": ["开会"]}],
+            }
+        ],
+    )
+
+    class FakeRuntime:
+        def render_prompt(self, messages, *, loaded_model, template_kwargs=None, execution_ext=None):
+            return "rendered prompt"
+
+        def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+            yield SimpleNamespace(text="Thinking Process:")
+
+    class FakeRegistry:
+        def runtime_for_loaded_model(self, loaded_model):
+            return FakeRuntime()
+
+        def start_request(self, request_id, *, runtime_kind):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, request_id) -> None:
+            return None
+
+    loaded_model = SimpleNamespace(
+        runtime_model={"model": "fixture"},
+        runtime_kind="text",
+    )
+    core = EvaluationCore(jobs_root=tmp_path / "evals", registry=FakeRegistry())
+    run = core._run_event_extraction_suite(
+        model_id="local-qwen",
+        suite_id="event_extraction",
+        dataset_id="top200",
+        sample_size=1,
+        scoring_mode="event_extraction_weighted_f1",
+        parameters={"event_source_jsonl": str(source), "dataset_id": "top200"},
+        remote_target=None,
+        loaded_model=loaded_model,
+    )
+
+    trace_path = Path(run.job.parameters["event_eval_dialogue_traces"])
+    failure_path = Path(run.job.parameters["failure_jsonl"])
+    trace = json.loads(trace_path.read_text(encoding="utf-8").splitlines()[0])
+    failure = json.loads(failure_path.read_text(encoding="utf-8").splitlines()[0])
+
+    assert trace["status"] == "failed"
+    assert trace["raw_response_chars"] == len("Thinking Process:")
+    assert trace["response_body_bytes"] == len("Thinking Process:".encode("utf-8"))
+    assert Path(trace["raw_response_path"]).read_text(encoding="utf-8") == "Thinking Process:"
+    assert failure["raw_response_path"] == trace["raw_response_path"]
 
 
 def test_semantic_judge_prompt_v4_documents_event_field_and_group_boundaries() -> None:

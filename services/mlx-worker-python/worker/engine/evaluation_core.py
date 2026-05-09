@@ -134,6 +134,21 @@ class EvaluationRun:
         return self.results[0]
 
 
+class _LocalEventExtractionResponseParseError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_response: str,
+        request_body_bytes: int,
+        response_body_bytes: int,
+    ) -> None:
+        super().__init__(message)
+        self.raw_response = raw_response
+        self.request_body_bytes = request_body_bytes
+        self.response_body_bytes = response_body_bytes
+
+
 class _LocalEventExtractionClient:
     def __init__(
         self,
@@ -177,6 +192,7 @@ class _LocalEventExtractionClient:
             rendered_prompt = runtime.render_prompt(
                 chat_messages,
                 loaded_model=self._loaded_model.runtime_model,
+                template_kwargs={"enable_thinking": False},
                 execution_ext={},
             )
             sampling = common_pb2.SamplingConfig(
@@ -202,11 +218,21 @@ class _LocalEventExtractionClient:
                 self._registry.record_vision_probe(runtime_kind, runtime.last_probe_snapshot())
             self._registry.finish_request(request_id)
         raw_response = "".join(chunks).strip()
+        response_body_bytes = len(raw_response.encode("utf-8"))
+        try:
+            events = extract_events_from_response_text(raw_response)
+        except Exception as exc:  # noqa: BLE001
+            raise _LocalEventExtractionResponseParseError(
+                str(exc),
+                raw_response=raw_response,
+                request_body_bytes=request_body_bytes,
+                response_body_bytes=response_body_bytes,
+            ) from exc
         return EventExtractionClientResult(
-            events=extract_events_from_response_text(raw_response),
+            events=events,
             raw_response=raw_response,
             request_body_bytes=request_body_bytes,
-            response_body_bytes=len(raw_response.encode("utf-8")),
+            response_body_bytes=response_body_bytes,
         )
 
 
@@ -758,12 +784,24 @@ class EvaluationCore:
                 )
             except Exception as exc:  # noqa: BLE001
                 request_duration_ms = self._round_ms((time.perf_counter() - request_started_at) * 1_000.0)
+                failure_raw_response = str(getattr(exc, "raw_response", "") or "")
+                failure_raw_response_path: Path | None = None
+                if failure_raw_response:
+                    failure_raw_response_path = (
+                        raw_response_dir / f"{line_number:04d}-{self._safe_path_component(dialogue_id)}.txt"
+                    )
+                    failure_raw_response_path.write_text(
+                        failure_raw_response,
+                        encoding="utf-8",
+                    )
                 failure_record = {
                     "dialogue_id": dialogue_id,
                     "line_number": line_number,
                     "event_index": None,
                     "reason": str(exc),
                 }
+                if failure_raw_response_path is not None:
+                    failure_record["raw_response_path"] = str(failure_raw_response_path)
                 provider_error_code = self._event_extraction_provider_error_code(exc)
                 if provider_error_code:
                     failure_record["code"] = provider_error_code
@@ -779,10 +817,10 @@ class EvaluationCore:
                         request_duration_ms=request_duration_ms,
                         normalization_duration_ms=0.0,
                         dialogue=dialogue,
-                        request_body_bytes=0,
-                        response_body_bytes=0,
-                        raw_response="",
-                        raw_response_path=None,
+                        request_body_bytes=self._client_result_int(exc, "request_body_bytes"),
+                        response_body_bytes=self._client_result_int(exc, "response_body_bytes"),
+                        raw_response=failure_raw_response,
+                        raw_response_path=failure_raw_response_path,
                         predicted_event_count=0,
                         normalized_event_count=0,
                         normalization_failure_count=0,

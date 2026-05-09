@@ -269,6 +269,7 @@ Pages occupied by compressor:               50.
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
         if command[0] == "/usr/bin/powermetrics":
+            assert command[command.index("--samplers") + 1] == "cpu_power,gpu_power,ane_power,thermal"
             return subprocess.CompletedProcess(command, 0, stdout=plistlib.dumps(powermetrics_payload), stderr=b"")
         if command[0] == "/usr/bin/vm_stat":
             return subprocess.CompletedProcess(command, 0, stdout=vm_stat_output, stderr="")
@@ -282,6 +283,7 @@ Pages occupied by compressor:               50.
 
     assert sample.cpu_power_w == 8.0
     assert sample.gpu_power_w == 4.0
+    assert sample.ane_power_w == 1.0
     assert sample.system_power_w == 15.0
     assert sample.memory_used_bytes == 614_400
     assert sample.memory_total_bytes == 32_000_000_000

@@ -4782,6 +4782,131 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.benchmarkJob.sourceRepo == "unsloth/gemma-4-E4B-it-MLX-8bit")
     }
 
+    @Test("execute imports Qwen3.5 benchmark targets with missing pipeline tag as text generation")
+    func executeImportsQwen35BenchmarkTargetWithMissingPipelineTag() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-qwen35-report.md").path
+        try "# Qwen3.5 Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "mlx-community/Qwen3.5-9B-MLX-8bit",
+                modelName: "Qwen3.5-9B-MLX-8bit",
+                pipelineTag: "",
+                tags: ["mlx", "qwen3_5", "vision-language-model"],
+                siblingFiles: [
+                    "config.json",
+                    "processor_config.json",
+                    "tokenizer.json",
+                    "tokenizer_config.json",
+                    "model.safetensors.index.json",
+                ]
+            )
+        )
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-qwen35", reportPath: reportPath))
+        let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: pythonRuntimeClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(hfRepoID: "mlx-community/Qwen3.5-9B-MLX-8bit")
+        )
+        let lastLoadRequest = try #require(await pythonRuntimeClient.lastLoadModelRequest)
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastLoadRequest.model.modelID == "mlx-community/Qwen3.5-9B-MLX-8bit")
+        #expect(lastLoadRequest.model.modelKind == "text")
+        #expect(lastLoadRequest.model.ext["melix.task_kind"] == "text-generation")
+        #expect(lastLoadRequest.model.ext["melix.capability.route_kind"] == "python_text_compatibility")
+        #expect(lastBenchRequest.taskKind == "text-generation")
+        #expect(lastBenchRequest.sourceRepo == "mlx-community/Qwen3.5-9B-MLX-8bit")
+        #expect(response.ops.benchmarkJob.taskKind == "text-generation")
+    }
+
+    @Test("execute infers missing pipeline tags from explicit modality metadata")
+    func executeInfersMissingPipelineTagsFromExplicitModalityMetadata() async throws {
+        let cases: [(repoID: String, modelName: String, tags: [String], siblingFiles: [String], expectedTaskKind: String, expectedModelKind: String)] = [
+            (
+                repoID: "google/paligemma2-3b-ft-docci-448",
+                modelName: "paligemma2-3b-ft-docci-448",
+                tags: ["mlx", "image_to_text", "paligemma"],
+                siblingFiles: ["config.json", "processor_config.json", "tokenizer.json"],
+                expectedTaskKind: "image-to-text",
+                expectedModelKind: "vlm"
+            ),
+            (
+                repoID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                modelName: "gemma-4-E4B-it-MLX-8bit",
+                tags: ["mlx", "vision-language-model", "gemma4"],
+                siblingFiles: ["config.json", "processor_config.json", "tokenizer.json", "model.safetensors.index.json"],
+                expectedTaskKind: "image-text-to-text",
+                expectedModelKind: "vlm"
+            ),
+            (
+                repoID: "mlx-community/FLUX.1-schnell-4bit",
+                modelName: "FLUX.1-schnell-4bit",
+                tags: ["mlx", "text-to-image"],
+                siblingFiles: ["config.json"],
+                expectedTaskKind: "text-to-image",
+                expectedModelKind: "image"
+            ),
+            (
+                repoID: "mlx-community/sdxl-edit",
+                modelName: "sdxl-edit",
+                tags: ["mlx", "image-text-to-image"],
+                siblingFiles: ["config.json"],
+                expectedTaskKind: "image-text-to-image",
+                expectedModelKind: "image"
+            ),
+        ]
+
+        for testCase in cases {
+            let reportPath = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("melix-bench-missing-pipeline-\(testCase.expectedTaskKind).md")
+                .path
+            try "# Missing Pipeline Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+            let modelOpsClient = ScriptedModelOperationsWorkerClient()
+            await modelOpsClient.setHubModelCardResponse(
+                makeBenchmarkHubModelCardResponse(
+                    repoID: testCase.repoID,
+                    modelName: testCase.modelName,
+                    pipelineTag: " ",
+                    tags: testCase.tags,
+                    siblingFiles: testCase.siblingFiles
+                )
+            )
+            await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-\(testCase.expectedTaskKind)", reportPath: reportPath))
+            let pythonRuntimeClient = ScriptedChatWorkerClient(events: [])
+            let service = ControlPlaneService(
+                modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+                workerRegistry: WorkerRegistry(
+                    defaultTextClient: NullWorkerClient(),
+                    pythonCompatibilityClient: pythonRuntimeClient,
+                    modelOperationsClient: modelOpsClient
+                )
+            )
+
+            let response = try await service.execute(
+                makeRunBenchRequest(hfRepoID: testCase.repoID)
+            )
+            let lastLoadRequest = try #require(await pythonRuntimeClient.lastLoadModelRequest)
+            let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+            #expect(response.ok)
+            #expect(lastLoadRequest.model.modelKind == testCase.expectedModelKind)
+            #expect(lastBenchRequest.taskKind == testCase.expectedTaskKind)
+            #expect(response.ops.benchmarkJob.taskKind == testCase.expectedTaskKind)
+        }
+    }
+
     @Test("execute imports image-to-text benchmark targets as OCR-capable VLM models")
     func executeImportsDirectImageToTextBenchmarkTarget() async throws {
         let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-ocr-report.md").path
@@ -5108,6 +5233,32 @@ struct ControlPlaneServiceTests {
         #expect(unsupportedResponse.ok == false)
         #expect(unsupportedResponse.error.code == "unsupported_task_family")
         #expect(unsupportedResponse.error.message.contains("pipeline_tag=image-classification"))
+
+        let missingPipelineClient = ScriptedModelOperationsWorkerClient()
+        await missingPipelineClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "mlx-community/metadata-light-model",
+                modelName: "metadata-light-model",
+                pipelineTag: "",
+                tags: ["mlx"],
+                siblingFiles: ["config.json"]
+            )
+        )
+        let missingPipelineService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: missingPipelineClient
+            )
+        )
+
+        let missingPipelineResponse = try await missingPipelineService.execute(
+            makeRunBenchRequest(hfRepoID: "mlx-community/metadata-light-model")
+        )
+
+        #expect(missingPipelineResponse.ok == false)
+        #expect(missingPipelineResponse.error.code == "unsupported_task_family")
+        #expect(missingPipelineResponse.error.message.contains("pipeline_tag=."))
 
         let failedClient = ScriptedModelOperationsWorkerClient()
         await failedClient.setHubModelCardError(WorkerClientError.unavailable)

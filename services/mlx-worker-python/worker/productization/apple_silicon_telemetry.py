@@ -279,7 +279,7 @@ class MacOSAppleSiliconSampler:
                 [
                     "/usr/bin/powermetrics",
                     "--samplers",
-                    "cpu_power,gpu_power,thermal",
+                    "cpu_power,gpu_power,ane_power,thermal",
                     "--show-process-energy",
                     "-n",
                     "1",

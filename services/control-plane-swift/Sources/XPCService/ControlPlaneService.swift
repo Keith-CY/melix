@@ -3110,6 +3110,14 @@ public actor ControlPlaneService {
     ) throws -> BenchmarkTaskKind {
         let pipelineTag = card.pipelineTag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch pipelineTag {
+        case "":
+            if let inferredTaskKind = inferredBenchmarkTaskKindForMissingPipelineTag(from: card) {
+                return inferredTaskKind
+            }
+            throw BenchmarkTargetResolutionError(
+                code: "unsupported_task_family",
+                message: "Hub repo \(card.repoID) declares unsupported pipeline_tag=\(card.pipelineTag)."
+            )
         case BenchmarkTaskKind.textGeneration.rawValue:
             return .textGeneration
         case BenchmarkTaskKind.imageToText.rawValue:
@@ -3134,6 +3142,56 @@ public actor ControlPlaneService {
                 message: "Hub repo \(card.repoID) declares unsupported pipeline_tag=\(card.pipelineTag)."
             )
         }
+    }
+
+    private func inferredBenchmarkTaskKindForMissingPipelineTag(
+        from card: Melix_Worker_V1_HubModelCard
+    ) -> BenchmarkTaskKind? {
+        let normalizedTags = normalizedHubTags(for: card)
+        if normalizedTags.contains(BenchmarkTaskKind.textGeneration.rawValue)
+            || normalizedTags.contains("causal-lm")
+            || supportsQwenTextBenchmarkImport(for: card, normalizedTags: normalizedTags) {
+            return .textGeneration
+        }
+        if normalizedTags.contains(BenchmarkTaskKind.imageToText.rawValue) {
+            return .imageToText
+        }
+        if normalizedTags.contains(BenchmarkTaskKind.imageTextToText.rawValue)
+            || normalizedTags.contains("vision-language-model")
+            || normalizedTags.contains("vlm")
+            || normalizedTags.contains("multimodal") {
+            return .imageTextToText
+        }
+        if normalizedTags.contains(BenchmarkTaskKind.textToImage.rawValue) {
+            return .textToImage
+        }
+        if normalizedTags.contains(BenchmarkTaskKind.imageTextToImage.rawValue) {
+            return .imageTextToImage
+        }
+        return nil
+    }
+
+    private func supportsQwenTextBenchmarkImport(
+        for card: Melix_Worker_V1_HubModelCard,
+        normalizedTags: Set<String>
+    ) -> Bool {
+        let identity = ([card.repoID, card.modelName] + card.tags)
+            .joined(separator: " ")
+            .lowercased()
+        let hasQwen35Signal = identity.contains("qwen3.5")
+            || identity.contains("qwen3-5")
+            || identity.contains("qwen3_5")
+            || normalizedTags.contains("qwen3-5")
+            || normalizedTags.contains("qwen3.5")
+        guard hasQwen35Signal else {
+            return false
+        }
+        let siblingFiles = Set(card.siblingFiles.map { $0.lowercased() })
+        let hasTokenizer = siblingFiles.contains("tokenizer.json")
+            || siblingFiles.contains("tokenizer_config.json")
+        let hasWeights = siblingFiles.contains("model.safetensors.index.json")
+            || siblingFiles.contains { $0.hasSuffix(".safetensors") }
+        return hasTokenizer && hasWeights
     }
 
     private func makeImportedBenchmarkModel(
@@ -3216,14 +3274,7 @@ public actor ControlPlaneService {
     private func supportsVisionAnyToAnyBenchmarkImport(
         for card: Melix_Worker_V1_HubModelCard
     ) -> Bool {
-        let normalizedTags = Set(
-            card.tags.map {
-                $0
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased()
-                    .replacingOccurrences(of: "_", with: "-")
-            }
-        )
+        let normalizedTags = normalizedHubTags(for: card)
         guard benchmarkVisionFamilyID(for: card) == "gemma4-v1" else {
             return false
         }
@@ -3233,6 +3284,17 @@ public actor ControlPlaneService {
             || normalizedTags.contains("vlm")
             || normalizedTags.contains("multimodal")
             || normalizedTags.contains("image-text-to-text")
+    }
+
+    private func normalizedHubTags(for card: Melix_Worker_V1_HubModelCard) -> Set<String> {
+        Set(
+            card.tags.map {
+                $0
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                    .replacingOccurrences(of: "_", with: "-")
+            }
+        )
     }
 
     private func shouldDeferVisionExecutionModeInference(
