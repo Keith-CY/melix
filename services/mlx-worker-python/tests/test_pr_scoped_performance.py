@@ -408,8 +408,11 @@ def test_scope_report_selects_evaluation_compare_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/productization/evaluation_compare.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "evaluation-compare-target-lookup-short-circuit"
+    assert scope["selected_count"] == 2
+    assert {probe["id"] for probe in scope["selected_probes"]} == {
+        "evaluation-compare-target-lookup-early-stop",
+        "evaluation-compare-target-lookup-short-circuit",
+    }
 
 
 def test_evaluation_compare_target_lookup_probe_script_emits_metrics(
