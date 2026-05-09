@@ -2282,7 +2282,9 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert rerank_metrics["query_context_builds_mean"] == 1.0
     assert rerank_metrics["document_count"] == 2048.0
     assert rerank_metrics["iteration_count"] == 8.0
-    assert rerank_metrics["tokenize_calls_mean"] == 2049.0
+    assert rerank_metrics["tokenize_calls_mean"] == 65.0
+    assert rerank_metrics["score_calls_mean"] == 64.0
+    assert rerank_metrics["unique_document_count"] == 64.0
     assert evaluation_job_id_metrics["elapsed_ms_mean"] > 0
     assert evaluation_job_id_metrics["per_call_ms_mean"] > 0
     assert evaluation_job_id_metrics["allocation_count"] == 200.0
@@ -2379,7 +2381,9 @@ def test_dispatch_probe_impl_supports_deterministic_rerank_probe() -> None:
     assert metrics["query_context_builds_mean"] == 1.0
     assert metrics["document_count"] == 2048.0
     assert metrics["iteration_count"] == 8.0
-    assert metrics["tokenize_calls_mean"] == 2049.0
+    assert metrics["tokenize_calls_mean"] == 65.0
+    assert metrics["score_calls_mean"] == 64.0
+    assert metrics["unique_document_count"] == 64.0
 
 
 def test_dispatch_probe_impl_supports_benchmark_export_probe() -> None:

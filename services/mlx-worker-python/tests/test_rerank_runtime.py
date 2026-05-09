@@ -396,6 +396,40 @@ def test_score_documents_tokenizes_the_query_once_for_multiple_documents() -> No
     ]
 
 
+def test_score_documents_reuses_scores_for_duplicate_documents() -> None:
+    class TrackingFamilyAdapter(JinaV3RerankFamilyAdapter):
+        def __init__(self) -> None:
+            self.scored_documents: list[str] = []
+
+        def score(self, backend: DeterministicRerankBackend, query: str, document: str, **kwargs: object) -> float:
+            self.scored_documents.append(document)
+            return super().score(backend, query, document, **kwargs)
+
+    runtime = DeterministicRerankRuntime()
+    family = TrackingFamilyAdapter()
+    documents = [
+        "swift runtime is available",
+        "python packaging release",
+        "swift runtime is available",
+        "python packaging release",
+        "control plane routes swift runtime",
+    ]
+
+    scores = runtime.score_documents(
+        {
+            "rerank_backend": DeterministicRerankBackend(),
+            "rerank_family_adapter": family,
+        },
+        "swift runtime",
+        documents,
+    )
+
+    assert len(scores) == len(documents)
+    assert scores[0] == scores[2]
+    assert scores[1] == scores[3]
+    assert family.scored_documents == list(dict.fromkeys(documents))
+
+
 def test_score_documents_builds_query_context_once_for_multiple_documents() -> None:
     class TrackingFamilyAdapter(JinaV3RerankFamilyAdapter):
         def __init__(self) -> None:

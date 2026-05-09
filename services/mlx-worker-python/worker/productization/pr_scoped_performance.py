@@ -994,10 +994,12 @@ def _probe_deterministic_rerank_query_context_reuse(repo_root: Path) -> dict[str
     iteration_count = 8
     sample_count = 5
     query = "swift control plane runtime"
-    documents = [
+    unique_document_count = 64
+    unique_documents = [
         f"swift runtime document {index} control plane" if index % 2 == 0 else f"python worker document {index} packaging"
-        for index in range(document_count)
+        for index in range(unique_document_count)
     ]
+    documents = [unique_documents[index % unique_document_count] for index in range(document_count)]
 
     class CountingBackend(DeterministicRerankBackend):
         def __init__(self) -> None:
@@ -1010,13 +1012,19 @@ def _probe_deterministic_rerank_query_context_reuse(repo_root: Path) -> dict[str
     class TrackingFamily(JinaV3RerankFamilyAdapter):
         def __init__(self) -> None:
             self.query_context_builds = 0
+            self.score_calls = 0
 
         def build_query_context(self, backend: DeterministicRerankBackend, query: str, **kwargs: object):
             self.query_context_builds += 1
             return super().build_query_context(backend, query, **kwargs)
 
+        def score(self, backend: DeterministicRerankBackend, query: str, document: str, **kwargs: object) -> float:
+            self.score_calls += 1
+            return super().score(backend, query, document, **kwargs)
+
     elapsed_samples: list[float] = []
     query_context_build_samples: list[float] = []
+    score_call_samples: list[float] = []
     tokenize_call_samples: list[float] = []
 
     runtime = DeterministicRerankRuntime()
@@ -1037,6 +1045,7 @@ def _probe_deterministic_rerank_query_context_reuse(repo_root: Path) -> dict[str
                 raise ValueError(f"expected {document_count} scores, got {len(scores)}")
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
         query_context_build_samples.append(float(family.query_context_builds) / float(iteration_count))
+        score_call_samples.append(float(family.score_calls) / float(iteration_count))
         tokenize_call_samples.append(float(backend.tokenize_calls) / float(iteration_count))
 
     return {
@@ -1048,7 +1057,9 @@ def _probe_deterministic_rerank_query_context_reuse(repo_root: Path) -> dict[str
             6,
         ),
         "sample_count": float(sample_count),
+        "score_calls_mean": round(sum(score_call_samples) / len(score_call_samples), 6),
         "tokenize_calls_mean": round(sum(tokenize_call_samples) / len(tokenize_call_samples), 6),
+        "unique_document_count": float(unique_document_count),
     }
 
 
