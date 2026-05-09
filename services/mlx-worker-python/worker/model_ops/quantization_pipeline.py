@@ -909,10 +909,15 @@ def _mlx_lm_index_weight_files(bundle_path: Path) -> tuple[str, ...]:
     weight_map = payload.get("weight_map")
     if not isinstance(weight_map, dict):
         return (index_file, "model.safetensors")
-    shard_names = sorted({name for name in weight_map.values() if isinstance(name, str) and name})
-    if not shard_names:
+    first_shard: str | None = None
+    for name in weight_map.values():
+        if not isinstance(name, str) or not name:
+            continue
+        if first_shard is None or name < first_shard:
+            first_shard = name
+    if first_shard is None:
         return (index_file, "model.safetensors")
-    return (index_file, shard_names[0])
+    return (index_file, first_shard)
 
 
 def _not_requested_smoke_evidence(
