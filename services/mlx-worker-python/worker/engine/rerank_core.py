@@ -30,7 +30,7 @@ class RerankCore:
             scores = self._registry.rerank_runtime.score_documents(
                 loaded_model.runtime_model,
                 request.query,
-                list(request.documents),
+                request.documents,
             )
         except Exception as exc:  # pragma: no cover - defensive branch
             return inference_pb2.RerankResponse(

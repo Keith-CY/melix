@@ -136,6 +136,45 @@ def test_rerank_returns_sorted_scores_and_honors_top_k() -> None:
     assert first.items[1].score == second.items[1].score
 
 
+def test_rerank_core_passes_request_documents_without_copying() -> None:
+    class FakeDocuments:
+        def __init__(self, values: tuple[str, ...]) -> None:
+            self.values = values
+            self.iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return iter(self.values)
+
+    class FakeRerankRuntime:
+        def __init__(self) -> None:
+            self.seen_documents = None
+
+        def score_documents(self, loaded_model, query: str, documents):
+            assert loaded_model == {"model_id": "rerank-probe"}
+            assert query == "swift runtime"
+            self.seen_documents = documents
+            return [float(index) for index, _document in enumerate(documents)]
+
+    documents = FakeDocuments(("first", "second", "third"))
+    rerank_runtime = FakeRerankRuntime()
+    registry = Mock()
+    registry.get_loaded_model.return_value = Mock(
+        runtime_kind="rerank",
+        runtime_model={"model_id": "rerank-probe"},
+    )
+    registry.rerank_runtime = rerank_runtime
+
+    response = RerankCore(registry).rerank(
+        Mock(model_handle="model-1", query="swift runtime", documents=documents, top_k=1)
+    )
+
+    assert response.error.code == ""
+    assert [item.index for item in response.items] == [2]
+    assert rerank_runtime.seen_documents is documents
+    assert documents.iterations == 1
+
+
 def test_load_model_exposes_jina_v3_rerank_metadata() -> None:
     runtime = DeterministicRerankRuntime()
 
