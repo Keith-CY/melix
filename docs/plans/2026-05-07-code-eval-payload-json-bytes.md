@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reduce redundant text decoding in the code-evaluation payload hot path by loading sandbox payload JSON directly from bytes before `json.loads(...)`.
+Reduce overhead in the code-evaluation payload hot path by loading sandbox payload JSON directly from bytes and binding the JSON decoder used by repeated payload loads.
 
 ## Linux-only constraint
 
