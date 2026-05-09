@@ -221,7 +221,11 @@ def build_scope_report(
         changed_path_set
     )
     direct_changed_path_set = changed_path_set - _FORCE_ALL_CONTEXT_ONLY_PATHS
-    matched_probe_indexes = _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
+    matched_probe_indexes = (
+        frozenset()
+        if not direct_changed_path_set
+        else _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
+    )
     if force_all:
         selected = probes
     else:
