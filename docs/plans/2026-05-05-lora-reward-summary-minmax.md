@@ -28,3 +28,7 @@ Register `lora-reward-summary-candidate-minmax` in the PR-scoped performance reg
 - Focused LoRA reward summary tests pass.
 - Changed executable line coverage is at least 95%.
 - Local probe shows fewer sort calls and improved or non-regressive elapsed time versus `origin/main`.
+
+## Follow-up total-cache slice
+
+The 2026-05-10 follow-up slice keeps the registered `lora-reward-summary-candidate-minmax` probe and further reduces summary aggregation overhead. `_reward_summary(...)` already maintains running candidate-group variance totals; this slice removes the now-redundant variance list append and uses the existing score list length for reward mean. The summary schema and percentile behavior stay unchanged.
