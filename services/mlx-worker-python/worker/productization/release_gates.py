@@ -1631,30 +1631,36 @@ def _evaluate_section_metrics_with_counts(
     failures: list[str] = []
     missing_count = 0
     failed_threshold_count = 0
+    values_get = values.get
+    failures_append = failures.append
+    numeric_types = (int, float)
     for name, rule in rules.items():
-        value = values.get(name)
-        display_name = f"{prefix}{name}"
+        value = values_get(name)
         if value is None:
-            failures.append(f"{display_name} is missing")
+            failures_append(f"{prefix}{name} is missing")
             missing_count += 1
             continue
-        if not isinstance(value, (int, float)):
-            failures.append(f"{display_name} must be numeric")
+        if not isinstance(value, numeric_types):
+            failures_append(f"{prefix}{name} must be numeric")
             failed_threshold_count += 1
             continue
         numeric = float(value)
         minimum = rule.get("min")
         maximum = rule.get("max")
-        if minimum is not None and numeric < float(minimum):
-            failures.append(
-                f"{display_name}={numeric:.2f} fell below minimum {float(minimum):.2f}"
-            )
-            failed_threshold_count += 1
-        if maximum is not None and numeric > float(maximum):
-            failures.append(
-                f"{display_name}={numeric:.2f} exceeded maximum {float(maximum):.2f}"
-            )
-            failed_threshold_count += 1
+        if minimum is not None:
+            minimum_float = float(minimum)
+            if numeric < minimum_float:
+                failures_append(
+                    f"{prefix}{name}={numeric:.2f} fell below minimum {minimum_float:.2f}"
+                )
+                failed_threshold_count += 1
+        if maximum is not None:
+            maximum_float = float(maximum)
+            if numeric > maximum_float:
+                failures_append(
+                    f"{prefix}{name}={numeric:.2f} exceeded maximum {maximum_float:.2f}"
+                )
+                failed_threshold_count += 1
     return failures, missing_count, failed_threshold_count
 
 
