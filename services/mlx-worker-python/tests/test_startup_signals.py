@@ -97,6 +97,13 @@ def test_compare_versions_ignores_build_metadata_suffix() -> None:
     assert compare_versions("1.2.2", "1.2.3") == -1
 
 
+def test_compare_versions_handles_suffixes_without_padding_lists() -> None:
+    assert normalized_version_parts(" v2.10rc1.0-beta+build ") == [2, 10, 0]
+    assert normalized_version_parts("release") == [0]
+    assert compare_versions("2.10rc1", "2.9.99") == 1
+    assert compare_versions("2.10", "2.10.0.0") == 0
+
+
 def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
