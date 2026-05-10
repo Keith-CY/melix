@@ -26,7 +26,7 @@ from worker.runtime.multimodal_preprocessing import (
     _prepare_image_part,
     prepare_vision_request,
 )
-from worker.runtime.vision_family_adapters import resolve_vision_family_config
+from worker.runtime.vision_family_adapters import ResolvedVisionFamilyConfig, resolve_vision_family_config
 
 
 class PassiveTextBackend:
@@ -156,6 +156,54 @@ def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
         1,
         request.images[0].byte_length // 8,
     )
+
+
+def test_vision_family_prompt_token_count_clamps_media_minimums() -> None:
+    family_config = ResolvedVisionFamilyConfig(
+        family_id="test-vlm",
+        prompt_profile_id="test-profile",
+        tokenization_mode="interleaved",
+        max_images_per_prompt=8,
+        max_videos_per_prompt=1,
+        supports_tool_calls=True,
+        multimodal_adapter_hash="test-adapter",
+        default_prompt_text="Describe the image.",
+        default_video_prompt_text="Describe the video.",
+        image_token_divisor=0,
+        prompt_token_bias=0,
+        video_frame_token_cost=0,
+    )
+    request = PreparedVisionRequest(
+        prompt_text="",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"x",
+                source_kind="inline",
+                reference="inline:tiny.txt",
+                mime_type="text/plain",
+                format="txt",
+                filename="tiny.txt",
+                sha256_hex="b" * 64,
+            )
+        ],
+        videos=[],
+        video_frame_policies=[
+            PreparedVideoFramePolicy(
+                reference="video:empty",
+                sampling_strategy="uniform",
+                requested_frame_budget=1,
+                effective_frame_count=0,
+                clip_start_ms=0,
+                clip_end_ms=0,
+                clip_duration_ms=0,
+            )
+        ],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=1,
+        preprocess_peak_memory_bytes=1,
+    )
+
+    assert family_config.prompt_token_count(request) == 2
 
 
 def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> None:

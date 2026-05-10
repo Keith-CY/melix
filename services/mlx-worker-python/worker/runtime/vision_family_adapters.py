@@ -76,19 +76,28 @@ class ResolvedVisionFamilyConfig:
     def prompt_token_count(self, prepared_request: PreparedVisionRequest) -> int:
         prompt_tokens = _whitespace_token_count(prepared_request.prompt_text)
 
-        image_token_divisor = max(1, self.image_token_divisor)
+        image_token_divisor = self.image_token_divisor
+        if image_token_divisor < 1:
+            image_token_divisor = 1
         image_tokens = 0
         for image in prepared_request.images:
             token_count = len(image.bytes_data) // image_token_divisor
-            image_tokens += token_count if token_count > 1 else 1
+            if token_count <= 1:
+                token_count = 1
+            image_tokens += token_count
 
-        video_frame_token_cost = max(1, self.video_frame_token_cost)
+        video_frame_token_cost = self.video_frame_token_cost
+        if video_frame_token_cost < 1:
+            video_frame_token_cost = 1
         video_tokens = 0
         for policy in prepared_request.video_frame_policies:
             token_count = policy.effective_frame_count * video_frame_token_cost
-            video_tokens += token_count if token_count > 1 else 1
+            if token_count <= 1:
+                token_count = 1
+            video_tokens += token_count
 
-        return max(1, prompt_tokens + image_tokens + video_tokens + self.prompt_token_bias)
+        total_tokens = prompt_tokens + image_tokens + video_tokens + self.prompt_token_bias
+        return total_tokens if total_tokens > 1 else 1
 
 
 @dataclass(frozen=True)
