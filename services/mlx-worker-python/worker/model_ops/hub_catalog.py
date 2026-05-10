@@ -15,6 +15,10 @@ from worker.productization.device_identity import collect_device_identity
 MEMORY_COMFORT_BUDGET_FACTOR = 0.60
 RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
 
+_SIZE_HINT_KB = 1024
+_SIZE_HINT_MB = _SIZE_HINT_KB * 1024
+_SIZE_HINT_GB = _SIZE_HINT_MB * 1024
+
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _QUANTIZATION_ALIASES = (
@@ -624,11 +628,11 @@ def _direct_size_hint_from_text(text: str) -> int:
     value_text, unit_text = parts
     unit = unit_text.lower()
     if unit == "kb":
-        multiplier = 1024
+        multiplier = _SIZE_HINT_KB
     elif unit == "mb":
-        multiplier = 1024 ** 2
+        multiplier = _SIZE_HINT_MB
     elif unit == "gb":
-        multiplier = 1024 ** 3
+        multiplier = _SIZE_HINT_GB
     else:
         return 0
     try:
@@ -648,11 +652,11 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
     value = float(match.group(1))
     unit = match.group(2).lower()
     if unit == "kb":
-        multiplier = 1024
+        multiplier = _SIZE_HINT_KB
     elif unit == "mb":
-        multiplier = 1024 ** 2
+        multiplier = _SIZE_HINT_MB
     else:
-        multiplier = 1024 ** 3
+        multiplier = _SIZE_HINT_GB
     return int(value * multiplier)
 
 
