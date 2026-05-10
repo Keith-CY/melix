@@ -13,7 +13,11 @@ if REPO_ROOT.is_file():
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
-from worker.runtime.multimodal_preprocessing import PreparedVisionRequest  # noqa: E402
+from worker.runtime.multimodal_preprocessing import (  # noqa: E402
+    PreparedImageInput,
+    PreparedVideoFramePolicy,
+    PreparedVisionRequest,
+)
 from worker.runtime.vision_family_adapters import resolve_vision_family_config  # noqa: E402
 
 
@@ -26,22 +30,56 @@ class SplitTrackingPrompt(str):
 
 
 def _build_request(prompt_text: str) -> PreparedVisionRequest:
+    images = [
+        PreparedImageInput(
+            bytes_data=b"x" * (index + 1),
+            source_kind="inline",
+            reference=f"inline:image-{index}",
+            mime_type="image/jpeg",
+            format="jpg",
+            filename=f"image-{index}.jpg",
+            sha256_hex=f"{index:064x}"[-64:],
+        )
+        for index in range(64)
+    ]
+    video_frame_policies = [
+        PreparedVideoFramePolicy(
+            reference=f"video-{index}",
+            sampling_strategy="uniform",
+            requested_frame_budget=index % 8,
+            effective_frame_count=index % 8,
+            clip_start_ms=0,
+            clip_end_ms=(index % 8) * 1000,
+            clip_duration_ms=(index % 8) * 1000,
+        )
+        for index in range(64)
+    ]
     return PreparedVisionRequest(
         prompt_text=prompt_text,
-        images=[],
+        images=images,
         videos=[],
-        video_frame_policies=[],
+        video_frame_policies=video_frame_policies,
         preprocess_latency_ms=0.0,
-        preprocess_input_bytes=0,
+        preprocess_input_bytes=sum(image.byte_length for image in images),
         preprocess_peak_memory_bytes=0,
     )
 
 
+def _expected_media_tokens(family_config) -> int:
+    image_divisor = max(1, family_config.image_token_divisor)
+    image_tokens = sum(max(1, byte_length // image_divisor) for byte_length in range(1, 65))
+    frame_cost = max(1, family_config.video_frame_token_cost)
+    video_tokens = sum(max(1, (index % 8) * frame_cost) for index in range(64))
+    return image_tokens + video_tokens
+
+
 def main() -> None:
     family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
-    prompt = SplitTrackingPrompt(("alpha beta gamma delta\n" * 4096).strip())
+    prompt = SplitTrackingPrompt(("alpha beta gamma delta\n" * 128).strip())
     request = _build_request(prompt)
-    expected_count = len(str(prompt).split()) + family_config.prompt_token_bias
+    expected_count = len(str(prompt).split()) + family_config.prompt_token_bias + _expected_media_tokens(
+        family_config
+    )
     samples = []
     split_call_samples = []
     peak_samples = []

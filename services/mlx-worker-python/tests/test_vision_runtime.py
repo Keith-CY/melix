@@ -17,6 +17,8 @@ from worker.runtime import multimodal_preprocessing
 from worker.runtime.multimodal_fast_paths import fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import (
     MultimodalPreprocessError,
+    PreparedImageInput,
+    PreparedVideoFramePolicy,
     PreparedVisionRequest,
     _bytes_from_image_uri,
     _path_from_uri,
@@ -608,15 +610,61 @@ def test_vision_family_prompt_token_count_matches_split_without_materializing_to
     family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
     request = PreparedVisionRequest(
         prompt_text=prompt_text,
-        images=[],
+        images=[
+            PreparedImageInput(
+                bytes_data=b"x" * 31,
+                source_kind="inline",
+                reference="inline:image-one",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image-one.jpg",
+                sha256_hex="1" * 64,
+            ),
+            PreparedImageInput(
+                bytes_data=b"x",
+                source_kind="inline",
+                reference="inline:image-two",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image-two.jpg",
+                sha256_hex="2" * 64,
+            ),
+        ],
         videos=[],
-        video_frame_policies=[],
+        video_frame_policies=[
+            PreparedVideoFramePolicy(
+                reference="video-one",
+                sampling_strategy="uniform",
+                requested_frame_budget=4,
+                effective_frame_count=4,
+                clip_start_ms=0,
+                clip_end_ms=4000,
+                clip_duration_ms=4000,
+            ),
+            PreparedVideoFramePolicy(
+                reference="video-zero",
+                sampling_strategy="uniform",
+                requested_frame_budget=0,
+                effective_frame_count=0,
+                clip_start_ms=0,
+                clip_end_ms=0,
+                clip_duration_ms=0,
+            ),
+        ],
         preprocess_latency_ms=0.0,
         preprocess_input_bytes=0,
         preprocess_peak_memory_bytes=0,
     )
 
-    assert family_config.prompt_token_count(request) == len(str(prompt_text).split()) + 2
+    expected_prompt_tokens = len(str(prompt_text).split())
+    expected_image_tokens = 1 + 1
+    expected_video_tokens = 12 + 1
+    assert family_config.prompt_token_count(request) == (
+        expected_prompt_tokens
+        + expected_image_tokens
+        + expected_video_tokens
+        + family_config.prompt_token_bias
+    )
 
 
 def test_resolve_vision_family_config_rejects_multi_video_requests_for_single_video_families() -> None:
