@@ -159,13 +159,13 @@ Expected probe coverage by follow-up:
 
 | Follow-Up | Required Measurement Direction |
 |---|---|
-| #638 | model memory estimate latency, fit-check latency, estimate accuracy evidence, unsupported-model diagnostics |
-| #637 | job creation latency, state restore latency, log/artifact listing latency, cancellation latency |
-| #640 | run metadata write latency, report generation latency, report artifact size, comparison row count |
-| #636 | recipe lookup latency, importer latency, registry parse cost, invalid URI diagnostics |
-| #641 | settings read/write latency, discovery payload size, capability listing latency |
-| #642 | doctor runtime, monitor sampling cost, debug bundle size, log collection latency |
-| #639 | schema validation latency, hints load latency, invalid task diagnostics |
+| [#638](https://github.com/Keith-CY/melix/issues/638) | model memory estimate latency, fit-check latency, estimate accuracy evidence, unsupported-model diagnostics |
+| [#637](https://github.com/Keith-CY/melix/issues/637) | job creation latency, state restore latency, log/artifact listing latency, cancellation latency |
+| [#640](https://github.com/Keith-CY/melix/issues/640) | run metadata write latency, report generation latency, report artifact size, comparison row count |
+| [#636](https://github.com/Keith-CY/melix/issues/636) | recipe lookup latency, importer latency, registry parse cost, invalid URI diagnostics |
+| [#641](https://github.com/Keith-CY/melix/issues/641) | settings read/write latency, discovery payload size, capability listing latency |
+| [#642](https://github.com/Keith-CY/melix/issues/642) | doctor runtime, monitor sampling cost, debug bundle size, log collection latency |
+| [#639](https://github.com/Keith-CY/melix/issues/639) | schema validation latency, hints load latency, invalid task diagnostics |
 
 ## Completion Criteria
 
