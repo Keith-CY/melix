@@ -390,8 +390,26 @@ def test_scope_report_selects_startup_signals_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/productization/startup_signals.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "startup-signals-lazy-worker-log-excerpts"
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "startup-signals-lazy-worker-log-excerpts",
+        "startup-signals-version-compare-single-pass",
+    }
+
+
+def test_startup_signals_version_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/startup_signals_version_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["pair_count"] == 12000.0
+    assert metrics["sample_count"] == 7.0
 
 
 def test_scope_report_selects_release_gates_probe() -> None:
@@ -1979,6 +1997,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "stream-assembler-structural-prefix-cache",
         "swift-cli-json-envelope-encoding",
         "startup-signals-lazy-worker-log-excerpts",
+        "startup-signals-version-compare-single-pass",
         "upload-receipt-published-files-scandir",
         "video-preprocessing-uri-byte-length-reuse",
         "download-pipeline-directory-size-single-stat",
