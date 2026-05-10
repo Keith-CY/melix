@@ -79,7 +79,7 @@ Design rationale and architecture decision records:
 External product and architecture scans that have been converted into Melix
 follow-up work:
 
-- [Sparrow and LocalAI Lessons](reference-scans/sparrow-localai-lessons.md) -
+- [Sparrow and LocalAI Lessons](reference-scans/sparrow-localai-lessons.md)
   Reference scan for structured local task workflows, operator UX, and follow-up
   issue priority.
 
