@@ -14,6 +14,7 @@ from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime import multimodal_preprocessing
+from worker.runtime import vision_family_adapters as vision_family_adapters_module
 from worker.runtime.multimodal_fast_paths import fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import (
     MultimodalPreprocessError,
@@ -665,6 +666,30 @@ def test_vision_family_prompt_token_count_matches_split_without_materializing_to
         + expected_video_tokens
         + family_config.prompt_token_bias
     )
+
+
+def test_vision_family_prompt_token_count_reuses_cached_prompt_scan() -> None:
+    vision_family_adapters_module._whitespace_token_count.cache_clear()
+    family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
+    prompt_text = "alpha beta\tgamma\n\nΔelta"
+    request = PreparedVisionRequest(
+        prompt_text=prompt_text,
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+    )
+
+    expected = len(prompt_text.split()) + family_config.prompt_token_bias
+    assert family_config.prompt_token_count(request) == expected
+    assert family_config.prompt_token_count(request) == expected
+
+    cache_info = vision_family_adapters_module._whitespace_token_count.cache_info()
+    assert cache_info.misses == 1
+    assert cache_info.hits == 1
+    vision_family_adapters_module._whitespace_token_count.cache_clear()
 
 
 def test_resolve_vision_family_config_rejects_multi_video_requests_for_single_video_families() -> None:

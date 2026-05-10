@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, replace
+from functools import lru_cache
 
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, rebuild_multimodal_hash
 
@@ -198,6 +199,7 @@ def resolve_vision_family_config(metadata: dict[str, str] | None = None) -> Reso
     return adapter.resolve(metadata)
 
 
+@lru_cache(maxsize=512)
 def _whitespace_token_count(text: str) -> int:
     token_count = 0
     in_token = False
