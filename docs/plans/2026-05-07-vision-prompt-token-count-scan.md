@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reduce memory pressure in vision-family prompt token accounting by replacing `prompt_text.split()` list materialization with a single-pass whitespace token counter.
+Reduce memory pressure in vision-family prompt token accounting by replacing `prompt_text.split()` list materialization with a single-pass whitespace token counter. Follow-up slices may also keep media-token accounting on the same registered path as long as they preserve the no-`split()` prompt invariant and validate the image/video token components in the same probe.
 
 ## Scope
 
@@ -18,7 +18,7 @@ This slice is Python-only and can be verified locally on Linux with focused pyte
 
 ## Performance probe
 
-Register `vision-family-prompt-token-count-scan` in the PR-scoped performance registry. The probe compares repeated prompt-token estimates for a large whitespace-delimited prompt and reports:
+Register `vision-family-prompt-token-count-scan` in the PR-scoped performance registry. The probe compares repeated prompt-token estimates for a whitespace-delimited prompt with representative image inputs and video frame policies, and reports:
 
 - `elapsed_ms_mean` (lower is better)
 - `split_calls_mean` (lower is better; optimized branch should be `0.0`)
