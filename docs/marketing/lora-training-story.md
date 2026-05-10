@@ -101,7 +101,9 @@ The native App exposes the same workflow as the CLI:
 
 - choose a base model
 - choose a local package or Hugging Face dataset
-- choose `LoRA`, `QLoRA`, `DoRA`, preference, or continual-pretraining mode
+- choose `LoRA` or `QLoRA` training mode (see the
+  [LoRA runbook](../runbooks/phase-8-lora-adapter-workflow.md) for the full mode
+  list)
 - set adapter name, target repo, validation split, activation mode, and derived
   model alias
 - train, inspect history, activate, compare, publish, or remove derived models

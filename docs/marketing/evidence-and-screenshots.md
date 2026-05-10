@@ -1,8 +1,7 @@
 # Evidence And Screenshots
 
 This document records the command evidence used by the marketing copy. Captures
-were run from `/Users/ChenYu/Documents/Github/melix` on 2026-05-07 in the
-Asia/Tokyo local environment.
+were run on 2026-05-07.
 
 ## CLI LoRA Smoke
 
@@ -113,6 +112,9 @@ Generated screenshot:
 ```text
 /private/tmp/melix-marketing-window-ui-acceptance/test_window_ui_acceptance_writ0/melix-home/acceptance/phase8/window-ui/2026-04-09T120000Z/window-ui.png
 ```
+
+The `2026-04-09T120000Z` path segment is a fixture-controlled constant set by
+the acceptance runner, not the date this command was executed.
 
 Repository asset copied from that generated screenshot:
 
