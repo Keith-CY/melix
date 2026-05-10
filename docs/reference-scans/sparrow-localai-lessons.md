@@ -23,7 +23,7 @@ paths as evidence pointers, not implementation dependencies.
 
 Sparrow evidence pointers:
 
-- `README.MD`
+- `README.md`
 - `sparrow-ml/llm/api.py`
 - `sparrow-ml/llm/engine.py`
 - `sparrow-ml/llm/pipelines/sparrow_parse/sparrow_parse.py`
