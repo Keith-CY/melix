@@ -63,6 +63,99 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("estimated_resident_bytes=5.28 GB"))
     }
 
+    @Test("estimate import renders a structured Apple Silicon memory fit receipt")
+    func estimateImportRendersStructuredMemoryFitReceipt() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setHubModelCard(
+            makeHubModelCard(
+                repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                localFitStatus: "heavy",
+                localFitReasons: [
+                    "Estimated resident memory exceeds the comfort budget.",
+                    "Quantization metadata was inferred from filename.",
+                ],
+                estimatedArtifactBytes: 22_000_000_000,
+                estimatedResidentBytes: 44_000_000_000,
+                recommendedAction: "Use --allow-memory-risk only when the Mac is otherwise idle."
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .estimateImport(.init(repoID: "mlx-community/Qwen3.6-35B-A3B-4bit", json: true))
+        )
+        let payload = try #require(parseJSONObject(output))
+        let probe = try #require(payload["probe"] as? [String: Any])
+
+        #expect(await client.lastHubModelCardRepoID == "mlx-community/Qwen3.6-35B-A3B-4bit")
+        #expect(payload["schema_version"] as? String == "melix.memory_fit_receipt.v1")
+        #expect(payload["target_kind"] as? String == "import")
+        #expect(payload["repo_id"] as? String == "mlx-community/Qwen3.6-35B-A3B-4bit")
+        #expect(payload["fit_status"] as? String == "heavy")
+        #expect((payload["total_unified_memory_bytes"] as? NSNumber)?.uint64Value ?? 0 > 0)
+        #expect((payload["estimated_active_memory_bytes"] as? NSNumber)?.uint64Value == 44_000_000_000)
+        #expect((payload["estimated_disk_usage_bytes"] as? NSNumber)?.uint64Value == 22_000_000_000)
+        #expect(payload["recommended_action"] as? String == "Use --allow-memory-risk only when the Mac is otherwise idle.")
+        #expect((payload["assumptions"] as? [String])?.isEmpty == false)
+        #expect((payload["unknown_fields"] as? [String])?.contains("parameter_count") == true)
+        #expect(probe["name"] as? String == "cli.memory_fit.estimate_import")
+        #expect((probe["hub_card_elapsed_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+        #expect((probe["receipt_elapsed_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+    }
+
+    @Test("estimate import renders a readable memory fit receipt")
+    func estimateImportRendersReadableMemoryFitReceipt() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setHubModelCard(
+            makeHubModelCard(
+                repoID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+                localFitStatus: "good",
+                localFitReasons: ["Estimated resident memory fits the comfort budget."],
+                estimatedArtifactBytes: 5_000_000_000,
+                estimatedResidentBytes: 9_000_000_000,
+                recommendedAction: "Run import normally."
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .estimateImport(.init(repoID: "mlx-community/Qwen3.5-9B-MLX-4bit"))
+        )
+
+        #expect(output.contains("target_kind=import"))
+        #expect(output.contains("repo_id=mlx-community/Qwen3.5-9B-MLX-4bit"))
+        #expect(output.contains("fit_status=good"))
+        #expect(output.contains("estimated_active_memory_bytes=8.38 GB"))
+        #expect(output.contains("estimated_disk_usage_bytes=4.66 GB"))
+        #expect(output.contains("recommended_action=Run import normally."))
+    }
+
+    @Test("estimate import reports unknown fields when Hub fit evidence is sparse")
+    func estimateImportReportsSparseHubUnknownFields() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setHubModelCard(
+            makeHubModelCard(
+                repoID: "mlx-community/metadata-light-model",
+                localFitStatus: "",
+                localFitReasons: [],
+                estimatedArtifactBytes: 0,
+                estimatedResidentBytes: 0,
+                recommendedAction: ""
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .estimateImport(.init(repoID: "mlx-community/metadata-light-model", json: true))
+        )
+        let payload = try #require(parseJSONObject(output))
+        let unknownFields = try #require(payload["unknown_fields"] as? [String])
+
+        #expect(payload["fit_status"] as? String == "unknown")
+        #expect(unknownFields.contains("estimated_active_memory_bytes"))
+        #expect(unknownFields.contains("estimated_disk_usage_bytes"))
+        #expect(unknownFields.contains("fit_status"))
+        #expect(unknownFields.contains("parameter_count"))
+        #expect(unknownFields.contains("quantization_summary"))
+    }
+
     @Test("model download forwards the expected download operation payload")
     func modelDownloadForwardsExpectedOperationPayload() async throws {
         let client = StubControlPlaneXPCClient()
@@ -6249,6 +6342,116 @@ struct MelixCLIRunnerTests {
         #expect(payload["report_path"] as? String == "/tmp/melix/bench/job-vlm/report.md")
     }
 
+    @Test("bench run memory fit preflight blocks unsafe direct Hugging Face targets")
+    func benchRunMemoryFitPreflightBlocksUnsafeHFRepo() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setHubModelCard(
+            makeHubModelCard(
+                repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                localFitStatus: "blocked",
+                localFitReasons: ["No MLX compatibility signal."],
+                estimatedArtifactBytes: 24_000_000_000,
+                estimatedResidentBytes: 48_000_000_000,
+                recommendedAction: "Choose a smaller quantized model."
+            )
+        )
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .benchRun(
+                    .init(
+                        hfRepoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                        suites: ["smoke"],
+                        preflightFitCheck: true
+                    )
+                )
+            )
+            Issue.record("Expected memory fit preflight to block the benchmark run.")
+        } catch let error as MelixCLIError {
+            guard case .runtime(let message) = error else {
+                Issue.record("Expected runtime error.")
+                return
+            }
+            #expect(message.contains("fit_status=blocked"))
+            #expect(message.contains("--allow-memory-risk"))
+            #expect(message.contains("No MLX compatibility signal."))
+        }
+
+        #expect(await client.lastBenchRequest == nil)
+    }
+
+    @Test("bench run memory fit preflight requires a direct Hugging Face repo target")
+    func benchRunMemoryFitPreflightRequiresHFRepo() async throws {
+        let client = StubControlPlaneXPCClient()
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .benchRun(
+                    .init(
+                        modelID: "melix-dev-text",
+                        suites: ["smoke"],
+                        preflightFitCheck: true
+                    )
+                )
+            )
+            Issue.record("Expected memory fit preflight to reject non-Hub benchmark targets.")
+        } catch let error as MelixCLIError {
+            guard case .runtime(let message) = error else {
+                Issue.record("Expected runtime error.")
+                return
+            }
+            #expect(message == "--preflight-fit-check is currently supported for melix bench run --repo-id targets.")
+        }
+
+        #expect(await client.lastBenchRequest == nil)
+    }
+
+    @Test("bench run memory risk override stores the fit receipt in benchmark parameters")
+    func benchRunMemoryRiskOverrideStoresFitReceiptParameters() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setHubModelCard(
+            makeHubModelCard(
+                repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                localFitStatus: "heavy",
+                localFitReasons: ["Estimated resident memory exceeds the comfort budget."],
+                estimatedArtifactBytes: 22_000_000_000,
+                estimatedResidentBytes: 44_000_000_000,
+                recommendedAction: "Use --allow-memory-risk only when the Mac is otherwise idle."
+            )
+        )
+        await client.setBenchResult(
+            .init(
+                reportPath: "/tmp/melix/bench/job-fit/report.md",
+                reportMarkdown: "# Melix Bench\n",
+                metrics: [:]
+            )
+        )
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .benchRun(
+                .init(
+                    hfRepoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                    suites: ["smoke"],
+                    preflightFitCheck: true,
+                    allowMemoryRisk: true
+                )
+            )
+        )
+        let benchRequest = try #require(await client.lastBenchRequest)
+        let receiptJSON = try #require(benchRequest.parameters["memory_fit_receipt_json"])
+        let receipt = try #require(parseJSONObject(receiptJSON))
+
+        #expect(benchRequest.hfRepoID == "mlx-community/Qwen3.6-35B-A3B-4bit")
+        #expect(benchRequest.parameters["memory_fit_schema_version"] == "melix.memory_fit_receipt.v1")
+        #expect(benchRequest.parameters["memory_fit_target_kind"] == "benchmark")
+        #expect(benchRequest.parameters["memory_fit_status"] == "heavy")
+        #expect(benchRequest.parameters["memory_fit_estimated_active_memory_bytes"] == "44000000000")
+        #expect(benchRequest.parameters["memory_fit_estimated_disk_usage_bytes"] == "22000000000")
+        #expect(benchRequest.parameters["memory_fit_safety_threshold_fraction"] == "0.60")
+        #expect(receipt["target_kind"] as? String == "benchmark")
+        #expect(receipt["fit_status"] as? String == "heavy")
+    }
+
     @Test("bench run returns plain markdown or the report path depending on the response")
     func benchRunReturnsPlainOutput() async throws {
         let client = StubControlPlaneXPCClient()
@@ -7883,6 +8086,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var lastServingDefaultsApplyRequest: ServingDefaultsApplyCall?
     private(set) var lastBenchRequest: ControlPlaneBenchRequest?
     private(set) var lastBenchMatrixRequest: ControlPlaneBenchMatrixRequest?
+    private(set) var lastHubModelCardRepoID: String?
     private(set) var evaluationRequests: [ControlPlaneEvaluationRequest] = []
     private(set) var loadedModelIDs: [String] = []
 
@@ -8162,7 +8366,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func getHubModelCard(repoID: String) async throws -> Melix_Controlplane_V1_HubModelCard {
-        _ = repoID
+        lastHubModelCardRepoID = repoID
         return hubModelCard
     }
 
@@ -8346,6 +8550,34 @@ private func makeModelSummary(
         model.settings.ext["melix.activation_mode"] = activationMode
     }
     return model
+}
+
+private func makeHubModelCard(
+    repoID: String,
+    localFitStatus: String,
+    localFitReasons: [String],
+    estimatedArtifactBytes: UInt64,
+    estimatedResidentBytes: UInt64,
+    recommendedAction: String,
+    pipelineTag: String = "text-generation",
+    mlxCompatible: Bool = true,
+    parameterCount: UInt64 = 0,
+    quantizationSummary: String = ""
+) -> Melix_Controlplane_V1_HubModelCard {
+    var card = Melix_Controlplane_V1_HubModelCard()
+    card.repoID = repoID
+    card.author = repoID.split(separator: "/").first.map(String.init) ?? ""
+    card.modelName = repoID.split(separator: "/").dropFirst().first.map(String.init) ?? repoID
+    card.pipelineTag = pipelineTag
+    card.mlxCompatible = mlxCompatible
+    card.localFitStatus = localFitStatus
+    card.localFitReasons = localFitReasons
+    card.estimatedArtifactBytes = estimatedArtifactBytes
+    card.estimatedResidentBytes = estimatedResidentBytes
+    card.recommendedAction = recommendedAction
+    card.parameterCount = parameterCount
+    card.quantizationSummary = quantizationSummary
+    return card
 }
 
 private func makeModelOperationResult(
