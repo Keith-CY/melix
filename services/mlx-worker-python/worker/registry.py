@@ -361,7 +361,8 @@ class WorkerRegistry:
             loaded_models = [
                 self._loaded_models[handle] for handle in self._sorted_loaded_model_handles_locked()
             ]
-        return [self._loaded_model_summary(loaded) for loaded in loaded_models]
+        build_summary = self._loaded_model_summary
+        return [build_summary(loaded) for loaded in loaded_models]
 
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
         state = RequestState(request_id=request_id, runtime_kind=runtime_kind)
