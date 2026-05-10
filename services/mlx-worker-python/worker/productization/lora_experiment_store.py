@@ -27,7 +27,9 @@ def _iter_lora_run_dirs(train_root: Path) -> tuple[Path, ...]:
     except OSError:
         return ()
 
-    return tuple(train_root / name for name in sorted(run_dir_names))
+    run_dir_names.sort()
+    root_join = train_root.__truediv__
+    return tuple(root_join(name) for name in run_dir_names)
 
 
 class LoraExperimentStore:
