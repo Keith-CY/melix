@@ -4,6 +4,8 @@ import math
 import random
 from statistics import NormalDist
 
+_NORMAL_DIST = NormalDist()
+
 
 def build_paired_statistical_evidence(
     *,
@@ -227,7 +229,7 @@ def _two_sided_normal_z_value(confidence_level: float) -> float:
     bounded_confidence = min(max(float(confidence_level), 0.0), 1.0)
     percentile = 0.5 + (bounded_confidence / 2.0)
     bounded_percentile = min(max(percentile, 1e-12), 1.0 - 1e-12)
-    return NormalDist().inv_cdf(bounded_percentile)
+    return _NORMAL_DIST.inv_cdf(bounded_percentile)
 
 
 def _mean(values: list[float] | tuple[float, ...]) -> float:
