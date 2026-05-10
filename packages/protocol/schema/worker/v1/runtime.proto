@@ -132,6 +132,8 @@ message LoadedModelSummary {
   ModelSpec model = 2;
   ResidencyInfo residency = 3;
   uint64 estimated_resident_bytes = 4;
+  double prompt_tps = 5;
+  double generation_tps = 6;
 }
 
 message DrainRequest {

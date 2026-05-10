@@ -555,6 +555,16 @@ public struct Melix_Worker_V1_LoadedModelSummary: @unchecked Sendable {
     set {_uniqueStorage()._estimatedResidentBytes = newValue}
   }
 
+  public var promptTps: Double {
+    get {_storage._promptTps}
+    set {_uniqueStorage()._promptTps = newValue}
+  }
+
+  public var generationTps: Double {
+    get {_storage._generationTps}
+    set {_uniqueStorage()._generationTps = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1498,13 +1508,15 @@ extension Melix_Worker_V1_ListLoadedModelsResponse: SwiftProtobuf.Message, Swift
 
 extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LoadedModelSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}model\0\u{1}residency\0\u{3}estimated_resident_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}model\0\u{1}residency\0\u{3}estimated_resident_bytes\0\u{3}prompt_tps\0\u{3}generation_tps\0")
 
   fileprivate class _StorageClass {
     var _modelHandle: String = String()
     var _model: Melix_Worker_V1_ModelSpec? = nil
     var _residency: Melix_Worker_V1_ResidencyInfo? = nil
     var _estimatedResidentBytes: UInt64 = 0
+    var _promptTps: Double = 0
+    var _generationTps: Double = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1519,6 +1531,8 @@ extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message, SwiftProtob
       _model = source._model
       _residency = source._residency
       _estimatedResidentBytes = source._estimatedResidentBytes
+      _promptTps = source._promptTps
+      _generationTps = source._generationTps
     }
   }
 
@@ -1541,6 +1555,8 @@ extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message, SwiftProtob
         case 2: try { try decoder.decodeSingularMessageField(value: &_storage._model) }()
         case 3: try { try decoder.decodeSingularMessageField(value: &_storage._residency) }()
         case 4: try { try decoder.decodeSingularUInt64Field(value: &_storage._estimatedResidentBytes) }()
+        case 5: try { try decoder.decodeSingularDoubleField(value: &_storage._promptTps) }()
+        case 6: try { try decoder.decodeSingularDoubleField(value: &_storage._generationTps) }()
         default: break
         }
       }
@@ -1565,6 +1581,12 @@ extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message, SwiftProtob
       if _storage._estimatedResidentBytes != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._estimatedResidentBytes, fieldNumber: 4)
       }
+      if _storage._promptTps.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._promptTps, fieldNumber: 5)
+      }
+      if _storage._generationTps.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._generationTps, fieldNumber: 6)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1578,6 +1600,8 @@ extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message, SwiftProtob
         if _storage._model != rhs_storage._model {return false}
         if _storage._residency != rhs_storage._residency {return false}
         if _storage._estimatedResidentBytes != rhs_storage._estimatedResidentBytes {return false}
+        if _storage._promptTps != rhs_storage._promptTps {return false}
+        if _storage._generationTps != rhs_storage._generationTps {return false}
         return true
       }
       if !storagesAreEqual {return false}

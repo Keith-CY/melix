@@ -28,6 +28,7 @@ Current runbooks:
 - `persistent-sessions.md`
 - `rich-output-sanitization.md`
 - `service-first-reuse.md`
+- `serving-diagnostics-evidence.md`
 - `structured-streaming-reasoning-continuity.md`
 - `phase-7-image-ops.md`
 - `phase-1-local-stack.md`

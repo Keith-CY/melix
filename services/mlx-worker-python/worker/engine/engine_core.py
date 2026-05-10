@@ -117,6 +117,7 @@ class EngineCore:
                     )
                     continue
 
+                self._record_runtime_throughput(loaded_model.handle, runtime_event)
                 finish_reason = runtime_event.finish_reason
                 if finish_reason:
                     last_finish_reason = finish_reason
@@ -378,6 +379,7 @@ class EngineCore:
                     continue
 
                 last_token_event = runtime_event
+                self._record_runtime_throughput(loaded_model.handle, runtime_event)
                 if runtime_event.text:
                     state.append_token(runtime_event.text)
                     yield inference_pb2.ExecuteEvent(
@@ -446,6 +448,15 @@ class EngineCore:
 
     def abort(self, request_id: str) -> bool:
         return self._registry.abort_request(request_id)
+
+    def _record_runtime_throughput(self, model_handle: str, event: RuntimeTokenEvent) -> None:
+        if event.prompt_tps is None and event.generation_tps is None:
+            return
+        self._registry.record_loaded_model_throughput(
+            model_handle,
+            prompt_tps=event.prompt_tps,
+            generation_tps=event.generation_tps,
+        )
 
     @staticmethod
     def _error_event(

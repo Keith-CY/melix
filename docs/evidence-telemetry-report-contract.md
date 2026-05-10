@@ -155,6 +155,65 @@ must be configurable at runtime, and reports must treat aggregate summary probes
 as the source of count and duration metrics while using representative samples
 only for diagnosis.
 
+## Serving Diagnostics Bundles
+
+Opted-in serving debug sessions write stable serving diagnostics bundles under:
+
+```text
+serving-diagnostics/<bundle_id>/
+  manifest.json
+  effective-config.json
+  request-summary.json
+  events.jsonl
+```
+
+The bundle manifest records invocation metadata, model references, request id,
+task kind, model id, runtime kind, acceleration mode, diagnostics mode, and
+relative artifact paths. Debug-mode bundles are not public performance-claim
+artifacts.
+
+The request summary records type-stable request-level diagnostics:
+
+- prompt protocol id
+- prompt digest
+- prompt template digest
+- generation config
+- status
+- finish reason
+- prompt and completion token counts
+- configured prefill chunk size
+- prefill and decode duration
+- `prompt_tps`
+- `generation_tps`
+- `prefill_tokens_per_second`
+- cache hit, miss, restored, and computed token counts
+- memory used, total, and peak bytes
+
+Missing throughput counters serialize as float `0.0`, not `null` and not an
+integer zero, so dashboards and schema consumers remain type-stable.
+
+Lightweight loaded-model status payloads expose the same `prompt_tps` and
+`generation_tps` field names for every loaded model. Missing counters serialize
+as float `0.0`, and status polling must reuse already-computed runtime counters
+rather than starting heavyweight traces or extra token accounting.
+
+Request events are newline-delimited JSON rows. Prefill is a first-class phase
+when a request reaches prefill. Event attributes must remain small and must not
+include full prompts, full responses, credentials, or operator secrets.
+
+Baseline-vs-accelerated comparison artifacts are written as:
+
+```text
+serving-diagnostics/<comparison_id>/baseline-vs-accelerated.json
+```
+
+Comparison artifacts may support performance claims only when the baseline and
+accelerated runs share the same prompt protocol, prompt digest, prompt template
+digest, model id, task kind, and generation config. They must record effective
+temperature, top-p, top-k, greedy-sampler status, acceleration admission,
+fallback reason, tier stability, and phase rows including prefill. Non-greedy
+sampler settings and mismatched prompt protocols are verifier failures.
+
 ## Apple Silicon Telemetry
 
 Melix hardware telemetry is scoped to macOS on Apple Silicon.

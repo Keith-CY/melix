@@ -42,6 +42,7 @@ Step-by-step operating procedures for specific workflows. Use these when you nee
 | [Release Gates](runbooks/phase-8-release-gates.md) | Automated release gate workflow and verification criteria |
 | [Product Acceptance](runbooks/phase-8-product-acceptance.md) | Acceptance evidence and product-level smoke procedures |
 | [Structured Streaming](runbooks/structured-streaming-reasoning-continuity.md) | Streaming and reasoning continuity behavior |
+| [Serving Diagnostics Evidence](runbooks/serving-diagnostics-evidence.md) | Serving diagnostics bundles and baseline-vs-accelerated evidence artifacts |
 | [All Runbooks →](runbooks/README.md) | Full runbook index |
 
 ---

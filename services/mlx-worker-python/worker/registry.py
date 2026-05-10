@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from threading import Event
 from threading import Lock
 import time
@@ -36,6 +37,8 @@ class LoadedModel:
     estimated_resident_bytes: int
     runtime_kind: str
     residency: common_pb2.ResidencyInfo
+    prompt_tps: float = 0.0
+    generation_tps: float = 0.0
 
 
 @dataclass
@@ -375,6 +378,28 @@ class WorkerRegistry:
             ]
         build_summary = self._loaded_model_summary
         return [build_summary(loaded) for loaded in loaded_models]
+
+    def record_loaded_model_throughput(
+        self,
+        handle: str,
+        *,
+        prompt_tps: object | None = None,
+        generation_tps: object | None = None,
+    ) -> None:
+        if prompt_tps is None and generation_tps is None:
+            return
+        prompt_value = self._finite_float_or_none(prompt_tps)
+        generation_value = self._finite_float_or_none(generation_tps)
+        if prompt_value is None and generation_value is None:
+            return
+        with self._lock:
+            loaded = self._loaded_models.get(handle)
+            if loaded is None:
+                return
+            if prompt_value is not None:
+                loaded.prompt_tps = prompt_value
+            if generation_value is not None:
+                loaded.generation_tps = generation_value
 
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
         state = RequestState(request_id=request_id, runtime_kind=runtime_kind)
@@ -726,7 +751,21 @@ class WorkerRegistry:
         summary.model.CopyFrom(loaded.spec)
         summary.residency.CopyFrom(loaded.residency)
         summary.estimated_resident_bytes = loaded.estimated_resident_bytes
+        summary.prompt_tps = float(loaded.prompt_tps)
+        summary.generation_tps = float(loaded.generation_tps)
         return summary
+
+    @staticmethod
+    def _finite_float_or_none(value: object | None) -> float | None:
+        if value is None:
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number):
+            return None
+        return number
 
     def _loaded_residency(
         self,
