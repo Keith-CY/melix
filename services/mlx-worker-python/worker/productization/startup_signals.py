@@ -23,7 +23,6 @@ CRASH_PATTERNS = [
     "abort trap",
 ]
 _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
-_LEADING_VERSION_PART_RE = re.compile(r"(\d+)")
 
 
 @dataclass(frozen=True)
@@ -143,23 +142,34 @@ def compare_versions(left: str, right: str) -> int:
 
 def normalized_version_parts(value: str) -> list[int]:
     cleaned = value.strip()
-    if cleaned.startswith("v"):
-        cleaned = cleaned[1:]
-    plus_index = cleaned.find("+")
-    dash_index = cleaned.find("-")
-    suffix_index = len(cleaned)
-    if plus_index >= 0 and plus_index < suffix_index:
-        suffix_index = plus_index
-    if dash_index >= 0 and dash_index < suffix_index:
-        suffix_index = dash_index
-    cleaned = cleaned[:suffix_index]
+    start_index = 1 if cleaned.startswith("v") else 0
     normalized: list[int] = []
     append_part = normalized.append
-    for part in cleaned.split("."):
-        if not part:
+    current_value = 0
+    digit_seen = False
+    digit_prefix_active = True
+    part_has_chars = False
+
+    for character in cleaned[start_index:]:
+        if character == "+" or character == "-":
+            break
+        if character == ".":
+            if part_has_chars:
+                append_part(current_value if digit_seen else 0)
+            current_value = 0
+            digit_seen = False
+            digit_prefix_active = True
+            part_has_chars = False
             continue
-        digits = _LEADING_VERSION_PART_RE.match(part)
-        append_part(int(digits.group(1)) if digits else 0)
+        part_has_chars = True
+        if digit_prefix_active and character.isdigit():
+            current_value = current_value * 10 + int(character)
+            digit_seen = True
+        else:
+            digit_prefix_active = False
+
+    if part_has_chars:
+        append_part(current_value if digit_seen else 0)
     return normalized or [0]
 
 
