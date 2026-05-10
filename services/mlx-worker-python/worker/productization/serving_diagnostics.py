@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -227,6 +228,7 @@ def write_baseline_accelerated_evidence(
     accelerated: ServingEvidenceRun,
 ) -> dict[str, Path]:
     _validate_comparable_runs(baseline, accelerated)
+    phase_rows = _comparison_phase_rows(baseline, accelerated)
 
     comparison_root = output_root / "serving-diagnostics" / _safe_artifact_id(comparison_id)
     comparison_root.mkdir(parents=True, exist_ok=True)
@@ -241,7 +243,7 @@ def write_baseline_accelerated_evidence(
             "baseline": baseline.to_dict(),
             "accelerated": accelerated.to_dict(),
         },
-        "phase_rows": _comparison_phase_rows(baseline, accelerated),
+        "phase_rows": phase_rows,
     }
     _write_json(comparison_path, payload)
     return {
@@ -305,8 +307,8 @@ def _comparison_phase_rows(
         ("prefill", "prefill_ms"),
         ("decode", "decode_ms"),
     ):
-        baseline_value = float(baseline.metrics.get(metric_name, 0.0))
-        accelerated_value = float(accelerated.metrics.get(metric_name, 0.0))
+        baseline_value = _required_metric_value(baseline, metric_name)
+        accelerated_value = _required_metric_value(accelerated, metric_name)
         rows.append(
             {
                 "phase": phase,
@@ -321,9 +323,27 @@ def _comparison_phase_rows(
     return rows
 
 
+def _required_metric_value(run: ServingEvidenceRun, metric_name: str) -> float:
+    if metric_name not in run.metrics:
+        raise ServingDiagnosticsComparisonError(
+            f"{metric_name} is required for baseline-vs-accelerated evidence"
+        )
+    try:
+        metric_value = float(run.metrics[metric_name])
+    except (TypeError, ValueError) as exc:
+        raise ServingDiagnosticsComparisonError(
+            f"{metric_name} must be a finite number for baseline-vs-accelerated evidence"
+        ) from exc
+    if not math.isfinite(metric_value):
+        raise ServingDiagnosticsComparisonError(
+            f"{metric_name} must be a finite number for baseline-vs-accelerated evidence"
+        )
+    return metric_value
+
+
 def _safe_artifact_id(value: str) -> str:
     stripped = value.strip()
-    if not stripped or "/" in stripped or "\x00" in stripped:
+    if not stripped or stripped in {".", ".."} or "/" in stripped or "\x00" in stripped:
         raise ValueError("artifact id must be non-empty and path-local")
     return stripped
 
@@ -331,7 +351,7 @@ def _safe_artifact_id(value: str) -> str:
 def _stable_json_object(payload: dict[str, object]) -> dict[str, object]:
     return {
         str(key): _stable_json_value(value)
-        for key, value in sorted(payload.items())
+        for key, value in sorted(payload.items(), key=lambda item: str(item[0]))
     }
 
 
@@ -340,9 +360,18 @@ def _stable_json_value(value: object) -> object:
         return _stable_json_object(value)  # type: ignore[arg-type]
     if isinstance(value, (list, tuple)):
         return [_stable_json_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [
+            _stable_json_value(item)
+            for item in sorted(value, key=_stable_json_sort_key)
+        ]
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _stable_json_sort_key(value: object) -> str:
+    return json.dumps(_stable_json_value(value), sort_keys=True, separators=(",", ":"))
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:

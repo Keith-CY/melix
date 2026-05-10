@@ -139,6 +139,78 @@ def test_serving_diagnostics_summary_defaults_throughput_to_float_zero() -> None
     assert isinstance(payload["generation_tps"], float)
 
 
+@pytest.mark.parametrize("artifact_id", (".", "..", "", " nested/path", "bad\x00id"))
+def test_serving_diagnostics_rejects_non_local_artifact_ids(
+    tmp_path: Path,
+    artifact_id: str,
+) -> None:
+    summary = ServingDiagnosticsRequestSummary(
+        request_id="req-local",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
+
+    with pytest.raises(ValueError, match="path-local"):
+        write_serving_diagnostics_bundle(
+            output_root=tmp_path,
+            bundle_id=artifact_id,
+            invocation={},
+            effective_config={},
+            model_refs={},
+            request_summary=summary,
+            events=(),
+            diagnostics_mode="debug",
+        )
+
+
+def test_serving_diagnostics_serializes_sets_as_stable_arrays(tmp_path: Path) -> None:
+    summary = ServingDiagnosticsRequestSummary(
+        request_id="req-set",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
+    event = ServingDiagnosticsEvent(
+        request_id="req-set",
+        phase="decode",
+        event_index=0,
+        status="completed",
+        attributes={"tags": {"zeta", "alpha"}, "frozen": frozenset({3, 1, 2})},
+    )
+
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-set",
+        invocation={"modes": {"accelerated", "baseline"}},
+        effective_config={},
+        model_refs={},
+        request_summary=summary,
+        events=(event,),
+        diagnostics_mode="debug",
+    )
+
+    manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
+    assert manifest["invocation"]["modes"] == ["accelerated", "baseline"]
+    event_payload = json.loads(paths["events"].read_text(encoding="utf-8"))
+    assert event_payload["attributes"]["tags"] == ["alpha", "zeta"]
+    assert event_payload["attributes"]["frozen"] == [1, 2, 3]
+
+
 @pytest.mark.parametrize("value", (0, -1, "0", "bad", None))
 def test_validate_prefill_chunk_size_rejects_invalid_overrides(value: object) -> None:
     with pytest.raises(ValueError, match="prefill_chunk_size"):
@@ -219,6 +291,39 @@ def test_baseline_accelerated_evidence_requires_same_protocol_and_greedy_sampler
                 effective_temperature=0.7,
             ),
         )
+
+
+@pytest.mark.parametrize(
+    ("metrics", "match"),
+    (
+        ({"prefill_ms": 10.0}, "decode_ms"),
+        ({"prefill_ms": 10.0, "decode_ms": float("nan")}, "finite number"),
+        ({"prefill_ms": 10.0, "decode_ms": "bad"}, "finite number"),
+    ),
+)
+def test_baseline_accelerated_evidence_rejects_invalid_phase_metrics(
+    tmp_path: Path,
+    metrics: dict[str, object],
+    match: str,
+) -> None:
+    with pytest.raises(ServingDiagnosticsComparisonError, match=match):
+        write_baseline_accelerated_evidence(
+            output_root=tmp_path,
+            comparison_id="cmp-invalid-metric",
+            baseline=_evidence_run(
+                run_id="baseline",
+                acceleration_mode="baseline",
+                acceleration_admitted=False,
+                metrics=metrics,  # type: ignore[arg-type]
+            ),
+            accelerated=_evidence_run(
+                run_id="accelerated",
+                acceleration_mode="sparse_prefill",
+                acceleration_admitted=True,
+            ),
+        )
+
+    assert not (tmp_path / "serving-diagnostics" / "cmp-invalid-metric").exists()
 
 
 def _evidence_run(

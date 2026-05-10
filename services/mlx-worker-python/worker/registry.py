@@ -751,8 +751,8 @@ class WorkerRegistry:
         summary.model.CopyFrom(loaded.spec)
         summary.residency.CopyFrom(loaded.residency)
         summary.estimated_resident_bytes = loaded.estimated_resident_bytes
-        summary.prompt_tps = float(loaded.prompt_tps)
-        summary.generation_tps = float(loaded.generation_tps)
+        summary.prompt_tps = loaded.prompt_tps
+        summary.generation_tps = loaded.generation_tps
         return summary
 
     @staticmethod

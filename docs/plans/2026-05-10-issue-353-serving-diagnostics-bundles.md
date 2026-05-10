@@ -90,6 +90,8 @@ artifacts and covered by tests rather than a hot-path runtime benchmark:
 - Invalid prefill chunk size overrides fail before artifact/session creation.
 - Baseline-vs-accelerated evidence rejects mismatched prompt protocols and
   non-greedy sampler settings.
+- Baseline-vs-accelerated evidence rejects missing or non-finite phase metrics
+  instead of synthesizing zero-duration values.
 - Baseline-vs-accelerated evidence records effective sampler settings,
   acceleration admission, fallback reason, tier stability, and a prefill phase
   comparison row.
