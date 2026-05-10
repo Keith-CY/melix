@@ -23,6 +23,7 @@ CRASH_PATTERNS = [
     "abort trap",
 ]
 _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
+_LEADING_VERSION_PART_RE = re.compile(r"(\d+)")
 
 
 @dataclass(frozen=True)
@@ -128,13 +129,15 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
 def compare_versions(left: str, right: str) -> int:
     left_parts = normalized_version_parts(left)
     right_parts = normalized_version_parts(right)
-    width = max(len(left_parts), len(right_parts))
-    left_normalized = left_parts + [0] * (width - len(left_parts))
-    right_normalized = right_parts + [0] * (width - len(right_parts))
-    if left_normalized < right_normalized:
-        return -1
-    if left_normalized > right_normalized:
-        return 1
+    left_length = len(left_parts)
+    right_length = len(right_parts)
+    for index in range(max(left_length, right_length)):
+        left_value = left_parts[index] if index < left_length else 0
+        right_value = right_parts[index] if index < right_length else 0
+        if left_value < right_value:
+            return -1
+        if left_value > right_value:
+            return 1
     return 0
 
 
@@ -142,13 +145,21 @@ def normalized_version_parts(value: str) -> list[int]:
     cleaned = value.strip()
     if cleaned.startswith("v"):
         cleaned = cleaned[1:]
-    cleaned = cleaned.split("+", 1)[0]
-    cleaned = cleaned.split("-", 1)[0]
-    parts = [segment for segment in cleaned.split(".") if segment]
+    plus_index = cleaned.find("+")
+    dash_index = cleaned.find("-")
+    suffix_index = len(cleaned)
+    if plus_index >= 0 and plus_index < suffix_index:
+        suffix_index = plus_index
+    if dash_index >= 0 and dash_index < suffix_index:
+        suffix_index = dash_index
+    cleaned = cleaned[:suffix_index]
     normalized: list[int] = []
-    for part in parts:
-        digits = re.match(r"(\d+)", part)
-        normalized.append(int(digits.group(1)) if digits else 0)
+    append_part = normalized.append
+    for part in cleaned.split("."):
+        if not part:
+            continue
+        digits = _LEADING_VERSION_PART_RE.match(part)
+        append_part(int(digits.group(1)) if digits else 0)
     return normalized or [0]
 
 
