@@ -2195,8 +2195,18 @@ def _accepted_event_matching_edges(
     accepted: list[list[bool]],
 ) -> tuple[tuple[tuple[int, float], ...], ...]:
     return tuple(
+        tuple((pred_index, score) for pred_index, _pred_mask, score, _rounded_score in edge_row)
+        for edge_row in _accepted_event_matching_edge_states(scores, accepted)
+    )
+
+
+def _accepted_event_matching_edge_states(
+    scores: list[list[float]],
+    accepted: list[list[bool]],
+) -> tuple[tuple[tuple[int, int, float, float], ...], ...]:
+    return tuple(
         tuple(
-            (pred_index, float(score))
+            (pred_index, 1 << pred_index, float(score), _round_metric(float(score)))
             for pred_index, score in enumerate(score_row)
             if pred_index < len(accepted_row) and accepted_row[pred_index]
         )
@@ -2209,7 +2219,7 @@ def _maximum_weight_event_matching(
     accepted: list[list[bool]],
 ) -> list[tuple[int, int, float]]:
     gold_count = len(scores)
-    accepted_edges = _accepted_event_matching_edges(scores, accepted)
+    accepted_edges = _accepted_event_matching_edge_states(scores, accepted)
     memo: dict[tuple[int, int], tuple[float, tuple[tuple[int, int, float], ...]]] = {}
 
     def better(
@@ -2230,11 +2240,11 @@ def _maximum_weight_event_matching(
             return (0.0, ())
 
         best = solve(gold_index + 1, used_pred_mask)
-        for pred_index, score in accepted_edges[gold_index]:
-            if used_pred_mask & (1 << pred_index):
+        for pred_index, pred_mask, score, rounded_score in accepted_edges[gold_index]:
+            if used_pred_mask & pred_mask:
                 continue
-            next_score, next_pairs = solve(gold_index + 1, used_pred_mask | (1 << pred_index))
-            pair = (gold_index, pred_index, _round_metric(score))
+            next_score, next_pairs = solve(gold_index + 1, used_pred_mask | pred_mask)
+            pair = (gold_index, pred_index, rounded_score)
             candidate = (score + next_score, (pair,) + next_pairs)
             if better(candidate, best):
                 best = candidate
