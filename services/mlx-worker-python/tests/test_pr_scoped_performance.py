@@ -1987,6 +1987,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "model-ops-bundle-artifact-byte-accounting",
         "statistical-evidence-bootstrap-single-sort",
         "statistical-evidence-category-breakdown-single-pass",
+        "text-family-config-copy-elision",
     }
     registry_probe = None
     maintenance_probe = None

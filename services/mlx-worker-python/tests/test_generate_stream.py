@@ -5,7 +5,8 @@ from worker.engine.request_state import RequestState
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
+from worker.runtime import mlx_text_runtime
+from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent
 
 
 class StreamingFakeBackend:
@@ -87,6 +88,32 @@ class ShortPrefixStreamingBackend:
             raw_text="OK<",
             prompt_tokens=3,
             completion_tokens=1,
+            finish_reason="stop",
+        )
+
+
+class MetadataStreamingBackend:
+    runtime_name = "fake-mlx"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 2048
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        _ = cancel_event
+        yield RuntimeTokenEvent(
+            text="Alpha Beta",
+            raw_text="Alpha Beta",
+            token_ids=(301, 302),
+            token_logprobs=(-0.11, -0.22),
+            parser_observation="flush_tokens=2",
+            prompt_tokens=3,
+            completion_tokens=2,
             finish_reason="stop",
         )
 
@@ -536,6 +563,53 @@ def test_generate_stream_flushes_short_visible_prefix_before_marker_hold() -> No
     assert completed.parser_metrics["stream_short_reply_flush_count"] == "1"
 
 
+def test_generate_stream_forwards_token_metadata_and_effective_parser_receipt() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=MetadataStreamingBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-metadata-stream"),
+            model_handle=load_response.model_handle,
+            ext={
+                "melix.reasoning.mode": "enabled",
+                "melix.tool_parser.mode": "qwen",
+            },
+            reasoning=common_pb2.ReasoningConfig(enabled=True, mode_source="request"),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Emit metadata")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+        stream=True,
+        return_usage=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    token = next(event.token_delta for event in events if event.HasField("token_delta"))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+    usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
+
+    assert token.text == "Alpha Beta"
+    assert token.parser_observation == "flush_tokens=2"
+    assert completed.assistant_text == "Alpha Beta"
+    assert completed.parser_metrics["generated_token_count"] == "2"
+    assert completed.parser_metrics["logprob_entry_count"] == "2"
+    assert completed.parser_metrics["stream_interval_delta_flush_count"] == "1"
+    assert '"tool_parser_mode":"qwen"' in completed.parser_metrics["effective_parser_config_json"]
+    assert usage.completion_tokens == 2
+
+
 def test_generate_stream_exports_stop_contract_metrics_and_stops_at_turn_boundary() -> None:
     backend = StopContractStreamingBackend()
     registry = WorkerRegistry(
@@ -639,6 +713,217 @@ def test_generate_applies_chat_template_kwargs_from_execution_metadata() -> None
             },
         )
     ]
+
+
+def test_generate_normalizes_non_leading_system_and_developer_messages_before_template_rendering() -> None:
+    backend = TemplateAwareStreamingBackend()
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-history-normalized"),
+            model_handle=load_response.model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Previous question")],
+            ),
+            common_pb2.ChatMessage(
+                role="assistant",
+                parts=[common_pb2.MessagePart(text="Previous answer")],
+            ),
+            common_pb2.ChatMessage(
+                role="developer",
+                parts=[common_pb2.MessagePart(text="Prefer native tool calls.")],
+            ),
+            common_pb2.ChatMessage(
+                role="system",
+                parts=[common_pb2.MessagePart(text="Keep replies terse.")],
+            ),
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Continue")],
+            ),
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert backend.tokenizer.calls[0][0] == [
+        {"role": "system", "content": "Prefer native tool calls.\n\nKeep replies terse."},
+        {"role": "user", "content": "Previous question"},
+        {"role": "assistant", "content": "Previous answer"},
+        {"role": "user", "content": "Continue"},
+    ]
+    assert request.execution.ext["melix.response_history.normalized_count"] == "2"
+    assert completed.parser_metrics["response_history_normalized_count"] == "2"
+
+
+def test_generate_injects_tool_config_as_native_template_tools_when_absent() -> None:
+    backend = TemplateAwareStreamingBackend()
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-native-tools"),
+            model_handle=load_response.model_handle,
+            tool_config=common_pb2.ToolConfig(
+                tools=[
+                    common_pb2.ToolDefinition(
+                        name="search_docs",
+                        description="Search local docs.",
+                        json_schema='{"type":"object","properties":{"query":{"type":"string"}}}',
+                    )
+                ],
+                parser="qwen",
+            ),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Use the search tool.")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert backend.tokenizer.calls[0][1]["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_docs",
+                "description": "Search local docs.",
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+            },
+        }
+    ]
+    assert request.execution.ext["melix.tool_config.native_template_tools"] == "injected"
+    assert completed.parser_metrics["native_tool_exemplar_injected_count"] == "1"
+
+
+def test_runtime_metadata_helper_defensive_branches_are_stable() -> None:
+    assert mlx_text_runtime._int_tuple(None) == ()
+    assert mlx_text_runtime._int_tuple(["7", "bad", 8]) == (7, 8)
+    assert mlx_text_runtime._int_tuple("9") == (9,)
+    assert mlx_text_runtime._int_tuple("bad") == ()
+
+    assert mlx_text_runtime._float_tuple(None) == ()
+    assert mlx_text_runtime._float_tuple(["-0.5", "bad", 1]) == (-0.5, 1.0)
+    assert mlx_text_runtime._float_tuple("-1.25") == (-1.25,)
+    assert mlx_text_runtime._float_tuple("bad") == ()
+
+    assert mlx_text_runtime._bytes_value(None) is None
+    assert mlx_text_runtime._bytes_value(b"x") == b"x"
+    assert mlx_text_runtime._bytes_value(b"") is None
+    assert mlx_text_runtime._bytes_value(bytearray(b"y")) == b"y"
+    assert mlx_text_runtime._bytes_value(bytearray()) is None
+    assert mlx_text_runtime._bytes_value("z") is None
+
+    assert mlx_text_runtime._first_present(None, 0, "fallback") == 0
+    assert mlx_text_runtime._first_present(None, 0.0, "fallback") == 0.0
+    assert mlx_text_runtime._first_present(None, b"", b"fallback") == b""
+    assert mlx_text_runtime._first_present(None, None) is None
+
+    assert mlx_text_runtime._native_template_tools(None) == []
+    assert mlx_text_runtime._native_template_tools({}) == []
+    assert mlx_text_runtime._native_template_tools({"melix.tool_config.tools_json": "not-json"}) == []
+    assert mlx_text_runtime._native_template_tools({"melix.tool_config.tools_json": "{}"}) == []
+    assert mlx_text_runtime._native_template_tools(
+        {"melix.tool_config.tools_json": '[{"type":"function"}, "ignored"]'}
+    ) == [{"type": "function"}]
+
+
+def test_auto_mlx_backend_extracts_stream_response_token_metadata() -> None:
+    class Response:
+        text = "x"
+        raw_text = "x"
+        token_ids = [0]
+        token_logprobs = [0.0]
+        token_bytes = b"x"
+        parser_observation = "token=42"
+        finish_reason = "stop"
+
+    def load_fn(model_path, **kwargs):
+        _ = model_path
+        _ = kwargs
+        return "model", "tokenizer"
+
+    def sampler_factory(**kwargs):
+        return {"sampler": kwargs}
+
+    def stream_generate_fn(model, tokenizer, prompt, **kwargs):
+        _ = model
+        _ = tokenizer
+        _ = prompt
+        _ = kwargs
+        yield Response()
+
+    backend = AutoMLXBackend(
+        load_fn=load_fn,
+        stream_generate_fn=stream_generate_fn,
+        sampler_factory=sampler_factory,
+    )
+    event = next(
+        iter(
+            backend.generate_tokens(
+                {"model": "model", "tokenizer": "tokenizer"},
+                "prompt",
+                common_pb2.SamplingConfig(max_output_tokens=1),
+                cancel_event=type("Cancel", (), {"is_set": lambda self: False})(),
+            )
+        )
+    )
+
+    assert event.token_ids == (0,)
+    assert event.token_logprobs == (0.0,)
+    assert event.token_bytes == b"x"
+    assert event.parser_observation == "token=42"
+
+
+def test_prepare_native_template_tools_preserves_existing_payload_and_skips_invalid_tools() -> None:
+    existing = inference_pb2.ExecutionMetadata(
+        ext={"melix.tool_config.tools_json": '[{"type":"function"}]'}
+    )
+    EngineCore._prepare_native_template_tools(existing)
+    assert existing.ext["melix.tool_config.tools_json"] == '[{"type":"function"}]'
+
+    invalid = inference_pb2.ExecutionMetadata(
+        tool_config=common_pb2.ToolConfig(
+            tools=[
+                common_pb2.ToolDefinition(name=" ", description="skip blank"),
+                common_pb2.ToolDefinition(name="bad_schema", json_schema="{not-json"),
+            ]
+        )
+    )
+    EngineCore._prepare_native_template_tools(invalid)
+    assert '"name":"bad_schema"' in invalid.ext["melix.tool_config.tools_json"]
+    assert '"parameters":{}' in invalid.ext["melix.tool_config.tools_json"]
 
 
 def test_generate_rejects_non_object_chat_template_kwargs_payloads() -> None:

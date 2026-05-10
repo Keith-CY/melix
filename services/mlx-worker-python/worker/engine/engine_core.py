@@ -42,6 +42,7 @@ class EngineCore:
 
         try:
             template_kwargs = self._chat_template_kwargs(request)
+            self._prepare_native_template_tools(request.execution)
             prompt = runtime.render_prompt(
                 request.messages,
                 loaded_model=loaded_model.runtime_model,
@@ -82,7 +83,14 @@ class EngineCore:
                 if track_usage:
                     last_token_event = runtime_event
                 for delta in assembler.accept(
-                    StreamFragment(text=runtime_event.text, raw_text=runtime_event.raw_text)
+                    StreamFragment(
+                        text=runtime_event.text,
+                        raw_text=runtime_event.raw_text,
+                        token_ids=runtime_event.token_ids,
+                        token_logprobs=runtime_event.token_logprobs,
+                        token_bytes=runtime_event.token_bytes,
+                        parser_observation=runtime_event.parser_observation,
+                    )
                 ):
                     if delta.reasoning_text:
                         yield inference_pb2.ExecuteEvent(
@@ -119,6 +127,7 @@ class EngineCore:
                             token_delta=inference_pb2.TokenDelta(
                                 text=delta.content_text,
                                 raw_text=delta.raw_text,
+                                parser_observation=delta.parser_observation,
                             ),
                         )
 
@@ -154,6 +163,13 @@ class EngineCore:
 
             assembled = assembler.completed()
             parser_metrics = {key: str(value) for key, value in assembled.metrics.items()}
+            parser_metrics["response_history_normalized_count"] = request.execution.ext.get(
+                "melix.response_history.normalized_count",
+                parser_metrics.get("response_history_normalized_count", "0"),
+            )
+            parser_metrics["native_tool_exemplar_injected_count"] = (
+                "1" if request.execution.ext.get("melix.tool_config.native_template_tools") == "injected" else "0"
+            )
             parser_metrics["resolved_stop_token_count"] = str(stop_contract.resolved_stop_token_count)
             parser_metrics["reasoning_flag_source"] = self._reasoning_flag_source(request)
             parser_metrics["turn_boundary_stop_reason"] = turn_boundary_stop_reason or finish_reason
@@ -445,3 +461,37 @@ class EngineCore:
         if not isinstance(parsed, dict):
             raise RuntimeError("melix.chat_template_kwargs.effective_json must decode to an object.")
         return parsed
+
+    @staticmethod
+    def _prepare_native_template_tools(execution: inference_pb2.ExecutionMetadata) -> None:
+        if execution.ext.get("melix.tool_config.tools_json"):
+            return
+        tools: list[dict[str, object]] = []
+        for tool in execution.tool_config.tools:
+            name = tool.name.strip()
+            if not name:
+                continue
+            parameters: object = {}
+            if tool.json_schema.strip():
+                try:
+                    parsed_schema = json.loads(tool.json_schema)
+                except json.JSONDecodeError:
+                    parsed_schema = {}
+                if isinstance(parsed_schema, dict):
+                    parameters = parsed_schema
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": tool.description,
+                        "parameters": parameters,
+                    },
+                }
+            )
+        if tools:
+            execution.ext["melix.tool_config.tools_json"] = json.dumps(
+                tools,
+                separators=(",", ":"),
+                sort_keys=True,
+            )

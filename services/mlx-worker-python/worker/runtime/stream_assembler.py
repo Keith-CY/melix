@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import logging
 
@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 class StreamFragment:
     text: str = ""
     raw_text: str | None = None
+    token_ids: tuple[int, ...] = ()
+    token_logprobs: tuple[float, ...] = ()
+    token_bytes: bytes | None = None
+    parser_observation: str = ""
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,7 @@ class AssemblyDelta:
     reasoning_text: str = ""
     raw_text: str = ""
     tool_call: AssembledToolCall | None = None
+    parser_observation: str = ""
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,7 @@ class RequestStreamAssembler:
             self._request_context_mode_value = "plain"
         self._raw_seen = ""
         self._buffer = ""
+        self._pending_token_bytes = b""
         self._json_started = False
         self._assistant_parts: list[str] = []
         self._reasoning_parts: list[str] = []
@@ -102,24 +108,58 @@ class RequestStreamAssembler:
             "stream_parser_request_context_mode": self._request_context_mode,
             "tool_call_markup_leak_count": 0,
             "reasoning_channel_recovery_count": 0,
+            "generated_token_count": 0,
+            "logprob_entry_count": 0,
+            "token_logprob_mismatch_count": 0,
+            "stream_interval_delta_flush_count": 0,
+            "byte_fallback_merge_count": 0,
+            "byte_fallback_decode_error_count": 0,
+            "empty_thinking_sentinel_count": 0,
+            "reasoning_parser_bypassed_count": 0,
+            "response_history_normalized_count": 0,
+            "effective_parser_config_json": json.dumps(
+                {
+                    "reasoning_enabled": self._reasoning_enabled,
+                    "request_context_mode": self._request_context_mode,
+                    "structured_output_mode": self._structured_output_mode,
+                    "tool_parser_mode": self._tool_parser_mode,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
         }
 
     def accept(self, fragment: StreamFragment) -> list[AssemblyDelta]:
+        token_count = self._record_token_metadata(fragment)
+        byte_delta = self._token_byte_delta(fragment.token_bytes)
         raw = fragment.raw_text if fragment.raw_text is not None else fragment.text
-        if not raw:
+        if byte_delta is not None:
+            if not byte_delta:
+                return []
+            delta = byte_delta
+            self._raw_seen += byte_delta
+        elif raw:
+            delta = self._unseen_delta(raw)
+        else:
             return []
 
-        delta = self._unseen_delta(raw)
         if not delta:
             return []
 
         if self._is_json_only_structured_output:
-            return self._accept_json_structured_output(delta)
-
-        self._buffer += delta
-        return self._drain_buffer(final=False)
+            deltas = self._accept_json_structured_output(delta)
+        else:
+            self._buffer += delta
+            deltas = self._drain_buffer(final=False)
+        if token_count > 1 and deltas:
+            self._metrics["stream_interval_delta_flush_count"] += 1
+        return self._annotate_deltas(deltas, fragment.parser_observation)
 
     def completed(self) -> AssemblyCompletion:
+        if self._pending_token_bytes:
+            self._metrics["byte_fallback_decode_error_count"] += 1
+            self._buffer += self._pending_token_bytes.decode("utf-8", errors="replace")
+            self._pending_token_bytes = b""
         if self._is_json_only_structured_output:
             if not self._json_started:
                 self._metrics["reasoning_leak_count"] += int("<think" in self._buffer)
@@ -175,6 +215,51 @@ class RequestStreamAssembler:
         # the compatibility loss visible through metrics/logs.
         self._raw_seen += raw
         return raw
+
+    def _record_token_metadata(self, fragment: StreamFragment) -> int:
+        token_count = len(fragment.token_ids)
+        logprob_count = len(fragment.token_logprobs)
+        if token_count == 0 and logprob_count > 0:
+            token_count = logprob_count
+        if token_count == 0 and fragment.token_bytes is not None:
+            token_count = 1
+
+        self._metrics["generated_token_count"] += token_count
+        self._metrics["logprob_entry_count"] += logprob_count
+        if fragment.token_ids and fragment.token_logprobs and token_count != logprob_count:
+            self._metrics["token_logprob_mismatch_count"] += 1
+        return token_count
+
+    def _token_byte_delta(self, token_bytes: bytes | None) -> str | None:
+        if token_bytes is None:
+            return None
+        had_pending = bool(self._pending_token_bytes)
+        self._pending_token_bytes += token_bytes
+        try:
+            decoded = self._pending_token_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            if exc.reason == "unexpected end of data":
+                return ""
+            self._metrics["byte_fallback_decode_error_count"] += 1
+            decoded = self._pending_token_bytes.decode("utf-8", errors="replace")
+        if had_pending:
+            self._metrics["byte_fallback_merge_count"] += 1
+        self._pending_token_bytes = b""
+        return decoded
+
+    def _annotate_deltas(
+        self,
+        deltas: list[AssemblyDelta],
+        parser_observation: str,
+    ) -> list[AssemblyDelta]:
+        if not parser_observation:
+            return deltas
+        return [
+            replace(delta, parser_observation=parser_observation)
+            if delta.content_text or delta.reasoning_text or delta.tool_call is not None
+            else delta
+            for delta in deltas
+        ]
 
     def _accept_json_structured_output(self, delta: str) -> list[AssemblyDelta]:
         self._buffer += delta
@@ -236,10 +321,22 @@ class RequestStreamAssembler:
                     if final:
                         self._metrics["malformed_reasoning_count"] += 1
                         self._metrics["reasoning_channel_recovery_count"] += 1
+                        body = self._buffer[len(self._THINK_OPEN) :]
+                        hidden, visible = self._recover_unclosed_reasoning_body(body)
+                        if visible and hidden and self._reasoning_enabled:
+                            self._reasoning_parts.append(hidden)
+                        elif hidden and not self._reasoning_enabled:
+                            self._metrics["suppressed_reasoning_count"] += 1
+                            self._metrics["reasoning_parser_bypassed_count"] += 1
                         self._buffer = ""
+                        if visible:
+                            deltas.append(self._content_delta(visible))
                     break
                 body = self._buffer[len(self._THINK_OPEN) : close_index]
                 self._buffer = self._buffer[close_index + len(self._THINK_CLOSE) :]
+                if body.strip() == "":
+                    self._metrics["empty_thinking_sentinel_count"] += 1
+                    continue
                 # Parse reasoning tags even when reasoning is disabled so
                 # hidden preambles never fall through as public content.
                 if self._reasoning_enabled:
@@ -247,6 +344,7 @@ class RequestStreamAssembler:
                     deltas.append(AssemblyDelta(reasoning_text=body, raw_text=body))
                 else:
                     self._metrics["suppressed_reasoning_count"] += 1
+                    self._metrics["reasoning_parser_bypassed_count"] += 1
                 continue
 
             if tag == self._TOOL_OPEN:
@@ -265,6 +363,20 @@ class RequestStreamAssembler:
 
             break
         return deltas
+
+    def _recover_unclosed_reasoning_body(self, body: str) -> tuple[str, str]:
+        stripped = body.strip()
+        if not stripped:
+            return "", ""
+        for marker in ("\n\n", "\r\n\r\n"):
+            if marker in body:
+                hidden, visible = body.split(marker, 1)
+                return hidden.strip(), visible.strip()
+        for marker in ("\nFinal", "\nAnswer", "\nAssistant", "\nResult"):
+            index = body.find(marker)
+            if index >= 0:
+                return body[:index].strip(), body[index + 1 :].strip()
+        return "", ""
 
     def _next_structural_tag(self) -> tuple[str, int] | None:
         think_index = self._buffer.find(self._THINK_OPEN)
