@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import types
+from unittest.mock import Mock
 
 import pytest
 
@@ -1190,6 +1191,32 @@ def test_mlx_lm_source_and_smoke_file_helpers_cover_edge_cases(tmp_path: Path) -
         empty_weight_map_bundle,
         quantization_backend="mlx_lm_convert",
     ) == ("config.json", "tokenizer.json", "model.safetensors.index.json", "model.safetensors")
+
+
+def test_mlx_lm_index_weight_files_reads_index_as_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "tokenizer.json").write_bytes(b"{}\n")
+    (bundle / "model.safetensors.index.json").write_bytes(
+        json.dumps({"weight_map": {"layer.weight": "model-00001-of-00001.safetensors"}}).encode("utf-8")
+    )
+
+    read_text = Mock(side_effect=AssertionError("index loading should stay on the bytes path"))
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    assert _smoke_required_files_for_backend(
+        bundle,
+        quantization_backend="mlx_lm_convert",
+    ) == (
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00001.safetensors",
+    )
+    read_text.assert_not_called()
 
 
 def test_mlx_lm_bundle_byte_sum_handles_nested_and_unreadable_entries(
