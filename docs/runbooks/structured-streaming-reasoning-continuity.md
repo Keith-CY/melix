@@ -67,6 +67,17 @@ The worker stream assembler reports parser metrics on completed events:
 - `resolved_stop_token_count`
 - `reasoning_flag_source`
 - `turn_boundary_stop_reason`
+- `generated_token_count`
+- `logprob_entry_count`
+- `token_logprob_mismatch_count`
+- `stream_interval_delta_flush_count`
+- `byte_fallback_merge_count`
+- `byte_fallback_decode_error_count`
+- `empty_thinking_sentinel_count`
+- `reasoning_parser_bypassed_count`
+- `response_history_normalized_count`
+- `native_tool_exemplar_injected_count`
+- `effective_parser_config_json`
 
 Expected healthy values:
 
@@ -91,6 +102,23 @@ Expected healthy values:
 - completed stream evidence should report the pre-decode turn-boundary stop
   contract through `resolved_stop_token_count`, `reasoning_flag_source`, and
   `turn_boundary_stop_reason`
+- cumulative multi-token flushes should keep `generated_token_count` equal to
+  `logprob_entry_count`; any mismatch increments `token_logprob_mismatch_count`
+- byte-fallback Unicode fixtures should increment `byte_fallback_merge_count`
+  only when multiple byte fragments are merged into one valid Unicode delta
+- whitespace-only closed thinking blocks should increment
+  `empty_thinking_sentinel_count` and emit neither reasoning metadata nor
+  visible marker text
+- reasoning-disabled requests should increment `reasoning_parser_bypassed_count`
+  for suppressed hidden blocks and still emit normal visible content/tool calls
+- `effective_parser_config_json` should be present on completed events and
+  should include the request-scoped `reasoning_enabled`, `tool_parser_mode`,
+  `structured_output_mode`, and `request_context_mode` values resolved before
+  stream assembly starts
+- requests with typed `ToolConfig.tools` should increment
+  `native_tool_exemplar_injected_count` when those tools are forwarded as
+  tokenizer-native `tools` kwargs and no explicit native `tools` kwargs were
+  already present
 
 ## Turn-Boundary Stop Checks
 
@@ -128,6 +156,20 @@ For a repeated session turn:
 3. The follow-up request should include `melix.reasoning.continuity_key` and `melix.reasoning.continuity_request_id`.
 4. Effective template kwargs should include `melix_reasoning_continuity`.
 5. No worker ext field, public session state, or public assistant content should include the raw hidden reasoning text.
+
+## Response-History Normalization Checks
+
+When previous response replay or endpoint translators produce non-leading
+`system` or `developer` messages, the Python prompt renderer performs a final
+template-safety normalization before `tokenizer.apply_chat_template(...)`:
+
+1. All non-empty `system` and `developer` instructions are merged into one
+   leading `system` message.
+2. User, assistant, tool, and function turns keep their original order.
+3. `melix.response_history.normalized_count` records the number of non-leading
+   instruction messages moved into the leading system block.
+4. Completed parser metrics expose the same value as
+   `response_history_normalized_count`.
 
 ## Verification Commands
 

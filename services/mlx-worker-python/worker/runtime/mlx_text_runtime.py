@@ -22,10 +22,14 @@ class RuntimeUnavailableError(RuntimeError):
     pass
 
 
-@dataclass
+@dataclass(slots=True)
 class RuntimeTokenEvent:
     text: str
     raw_text: str | None = None
+    token_ids: tuple[int, ...] = ()
+    token_logprobs: tuple[float, ...] = ()
+    token_bytes: bytes | None = None
+    parser_observation: str = ""
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     prompt_tps: float | None = None
@@ -47,7 +51,7 @@ class RuntimeTokenEvent:
     dflash_target_hidden_layers: int | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class RuntimeToolCallEvent:
     call_id: str
     tool_name: str
@@ -141,6 +145,7 @@ _TEXT_STOP_SEQUENCE_KEYS = (
     "stop_sequences",
 )
 _STREAM_STOP_KWARG_NAMES = ("stop", "stop_words", "stop_sequences")
+_STOP_CONTRACT_CACHE_FIELD = "_melix.resolved_text_stop_contract_cache"
 
 
 def _split_stop_sequence_value(value: Any) -> list[str]:
@@ -182,6 +187,165 @@ def _tokenizer_eos_token_ids(tokenizer: Any) -> tuple[str, ...]:
     if isinstance(eos_token_id, list | tuple | set):
         return tuple(str(item) for item in eos_token_id if str(item).strip())
     return (str(eos_token_id),) if str(eos_token_id).strip() else ()
+
+
+def _tokenizer_eos_cache_key(tokenizer: Any) -> tuple[str, object]:
+    eos_token = str(getattr(tokenizer, "eos_token", "") or "").strip() if tokenizer is not None else ""
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    if isinstance(eos_token_id, set):
+        eos_id_key: object = tuple(sorted(str(item) for item in eos_token_id if str(item).strip()))
+    elif isinstance(eos_token_id, list | tuple):
+        eos_id_key = tuple(str(item) for item in eos_token_id if str(item).strip())
+    elif eos_token_id is None:
+        eos_id_key = ""
+    else:
+        eos_id_key = str(eos_token_id).strip()
+    return eos_token, eos_id_key
+
+
+def _stop_contract_cache_key(
+    loaded_model: Any,
+    sampling: Any,
+    execution_ext: dict[str, str] | None,
+) -> tuple[object, ...] | None:
+    if execution_ext is not None or not isinstance(loaded_model, dict):
+        return None
+
+    request_stop = tuple(str(item) for item in getattr(sampling, "stop", ()))
+    metadata_values: list[tuple[str, str, str]] = []
+    for source_key in ("model_ext", "metadata", "ext"):
+        metadata = loaded_model.get(source_key)
+        if isinstance(metadata, dict):
+            metadata_values.extend(
+                (source_key, key, str(metadata.get(key, "") or ""))
+                for key in _TEXT_STOP_SEQUENCE_KEYS
+            )
+    metadata_values.extend(
+        ("loaded_model", key, str(loaded_model.get(key, "") or ""))
+        for key in _TEXT_STOP_SEQUENCE_KEYS
+    )
+    return (
+        request_stop,
+        tuple(metadata_values),
+        _tokenizer_eos_cache_key(loaded_model.get("tokenizer")),
+    )
+
+
+def _cached_resolve_text_stop_contract(
+    loaded_model: Any,
+    sampling: Any,
+    execution_ext: dict[str, str] | None,
+) -> ResolvedTextStopContract:
+    cache_key = _stop_contract_cache_key(loaded_model, sampling, execution_ext)
+    if cache_key is None:
+        return resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+
+    cache = loaded_model.get(_STOP_CONTRACT_CACHE_FIELD)
+    if not isinstance(cache, dict):
+        cache = {}
+        loaded_model[_STOP_CONTRACT_CACHE_FIELD] = cache
+    contract = cache.get(cache_key)
+    if contract is None:
+        contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+        cache[cache_key] = contract
+    return contract
+
+
+def _int_tuple(value: Any) -> tuple[int, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, list | tuple | set):
+        result: list[int] = []
+        for item in value:
+            try:
+                result.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return tuple(result)
+    try:
+        return (int(value),)
+    except (TypeError, ValueError):
+        return ()
+
+
+def _float_tuple(value: Any) -> tuple[float, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, list | tuple | set):
+        result: list[float] = []
+        for item in value:
+            try:
+                result.append(float(item))
+            except (TypeError, ValueError):
+                continue
+        return tuple(result)
+    try:
+        return (float(value),)
+    except (TypeError, ValueError):
+        return ()
+
+
+def _bytes_value(value: Any) -> bytes | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value or None
+    if isinstance(value, bytearray):
+        return bytes(value) or None
+    return None
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _normalize_chat_template_messages(
+    chat_messages: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], int]:
+    instruction_parts: list[str] = []
+    normalized_messages: list[dict[str, str]] = []
+    saw_non_instruction = False
+    non_leading_instruction_count = 0
+
+    for message in chat_messages:
+        role = str(message.get("role", "")).strip().lower()
+        content = str(message.get("content", "") or "").strip()
+        if role in {"system", "developer"}:
+            if saw_non_instruction:
+                non_leading_instruction_count += 1
+            if content:
+                instruction_parts.append(content)
+            continue
+        saw_non_instruction = True
+        normalized_messages.append(message)
+
+    if instruction_parts:
+        normalized_messages.insert(
+            0,
+            {
+                "role": "system",
+                "content": "\n\n".join(instruction_parts),
+            },
+        )
+    return normalized_messages, non_leading_instruction_count
+
+
+def _native_template_tools(execution_ext: dict[str, str] | None) -> list[dict[str, Any]]:
+    if execution_ext is None:
+        return []
+    raw_value = str(execution_ext.get("melix.tool_config.tools_json", "") or "").strip()
+    if not raw_value:
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
 
 
 
@@ -489,7 +653,7 @@ class AutoMLXBackend:
                 sampler_kwargs[penalty_name] = float(getattr(sampling, penalty_name, 0.0))
         sampler = self._sampler_factory(**sampler_kwargs)
         max_tokens = int(sampling.max_output_tokens) if int(sampling.max_output_tokens) > 0 else 256
-        stop_contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+        stop_contract = _cached_resolve_text_stop_contract(loaded_model, sampling, execution_ext)
         stream_kwargs: dict[str, Any] = {}
         if stop_contract.sequences and self._stream_stop_kwarg:
             stream_kwargs[self._stream_stop_kwarg] = list(stop_contract.sequences)
@@ -511,6 +675,28 @@ class AutoMLXBackend:
             yield RuntimeTokenEvent(
                 text=text,
                 raw_text=getattr(response, "raw_text", None),
+                token_ids=_int_tuple(
+                    _first_present(
+                        getattr(response, "token_ids", None),
+                        getattr(response, "tokens", None),
+                        getattr(response, "token", None),
+                        getattr(response, "token_id", None),
+                    )
+                ),
+                token_logprobs=_float_tuple(
+                    _first_present(
+                        getattr(response, "token_logprobs", None),
+                        getattr(response, "logprobs", None),
+                        getattr(response, "logprob", None),
+                    )
+                ),
+                token_bytes=_bytes_value(
+                    _first_present(
+                        getattr(response, "token_bytes", None),
+                        getattr(response, "byte_fallback_bytes", None),
+                    )
+                ),
+                parser_observation=str(getattr(response, "parser_observation", "") or ""),
                 prompt_tokens=getattr(response, "prompt_tokens", None),
                 completion_tokens=getattr(response, "generation_tokens", None),
                 prompt_tps=getattr(response, "prompt_tps", None),
@@ -626,12 +812,20 @@ class MLXTextRuntime:
                 if message.name:
                     chat_message["name"] = message.name
                 chat_messages.append(chat_message)
+            chat_messages, normalized_count = _normalize_chat_template_messages(chat_messages)
+            if execution_ext is not None:
+                execution_ext["melix.response_history.normalized_count"] = str(normalized_count)
             resolved_template_kwargs: dict[str, Any] = {
                 "tokenize": False,
                 "add_generation_prompt": True,
             }
             if template_kwargs:
                 resolved_template_kwargs.update(template_kwargs)
+            native_tools = _native_template_tools(execution_ext)
+            if native_tools and "tools" not in resolved_template_kwargs:
+                resolved_template_kwargs["tools"] = native_tools
+                if execution_ext is not None:
+                    execution_ext["melix.tool_config.native_template_tools"] = "injected"
             return tokenizer.apply_chat_template(chat_messages, **resolved_template_kwargs)
 
         chunks: list[str] = []
@@ -736,12 +930,15 @@ class MLXTextRuntime:
                 pending = ""
 
             if visible:
-                yield replace(
-                    event,
-                    text=visible,
-                    raw_text=visible,
-                    finish_reason=None if pending else event.finish_reason,
-                )
+                if not pending and event.raw_text is None:
+                    yield event
+                else:
+                    yield replace(
+                        event,
+                        text=visible,
+                        raw_text=visible,
+                        finish_reason=None if pending else event.finish_reason,
+                    )
             elif event.finish_reason and not pending:
                 yield event
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 
 from worker.runtime import stream_assembler
@@ -628,3 +629,285 @@ def test_request_context_mode_marks_structured_json_and_plain_streams() -> None:
     assert structured.completed().metrics["stream_parser_request_context_mode"] == "structured_json"
     assert structured_with_tools.completed().metrics["stream_parser_request_context_mode"] == "tool_parser"
     assert plain.completed().metrics["stream_parser_request_context_mode"] == "plain"
+
+
+def test_stream_interval_flush_tracks_generated_token_and_logprob_parity() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-stream-interval-metadata",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="Alpha Beta",
+            token_ids=(101, 102),
+            token_logprobs=(-0.1, -0.2),
+            parser_observation="flush_tokens=2",
+        )
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["Alpha Beta"]
+    assert [delta.parser_observation for delta in deltas if delta.content_text] == ["flush_tokens=2"]
+    assert completed.metrics["generated_token_count"] == 2
+    assert completed.metrics["logprob_entry_count"] == 2
+    assert completed.metrics["stream_interval_delta_flush_count"] == 1
+    assert completed.metrics["token_logprob_mismatch_count"] == 0
+
+
+def test_byte_fallback_token_fragments_decode_to_complete_unicode_text() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-byte-fallback",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    first = assembler.accept(
+        StreamFragment(
+            token_bytes=b"\xe6\x9d",
+            token_ids=(201,),
+            token_logprobs=(-0.3,),
+            parser_observation="byte-prefix",
+        )
+    )
+    second = assembler.accept(
+        StreamFragment(
+            token_bytes=b"\xb1",
+            token_ids=(202,),
+            token_logprobs=(-0.4,),
+            parser_observation="byte-complete",
+        )
+    )
+    completed = assembler.completed()
+
+    assert first == []
+    assert [delta.content_text for delta in second if delta.content_text] == ["東"]
+    assert [delta.parser_observation for delta in second if delta.content_text] == ["byte-complete"]
+    assert completed.assistant_text == "東"
+    assert completed.metrics["byte_fallback_merge_count"] == 1
+    assert completed.metrics["generated_token_count"] == 2
+    assert completed.metrics["logprob_entry_count"] == 2
+
+
+def test_empty_thinking_block_is_suppressed_as_thinking_off_sentinel() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-empty-thinking-sentinel",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="<think>\n\t </think>42"))
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == []
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["42"]
+    assert completed.reasoning_text == ""
+    assert completed.assistant_text == "42"
+    assert completed.metrics["empty_thinking_sentinel_count"] == 1
+    assert completed.metrics["reasoning_leak_count"] == 0
+
+
+def test_unclosed_reasoning_channel_recovers_visible_answer_tail_at_eos() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-unclosed-reasoning-visible-tail",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<think>plan step\n\nFinal answer")) == []
+    completed = assembler.completed()
+
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == "Final answer"
+    assert completed.metrics["malformed_reasoning_count"] == 1
+    assert completed.metrics["reasoning_channel_recovery_count"] == 1
+
+
+def test_reasoning_disabled_request_suppresses_hidden_blocks_without_reasoning_metadata() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-disabled-reasoning-bypass",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="<think>hidden</think>visible"))
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == []
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["visible"]
+    assert completed.reasoning_text == ""
+    assert completed.metrics["reasoning_parser_bypassed_count"] == 1
+
+
+def test_effective_parser_config_receipt_is_available_from_completion_metrics() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-effective-parser-config",
+        reasoning_enabled=True,
+        structured_output_mode="json_schema",
+        tool_parser_mode="qwen",
+    )
+
+    config = json.loads(str(assembler.completed().metrics["effective_parser_config_json"]))
+
+    assert config == {
+        "reasoning_enabled": True,
+        "request_context_mode": "tool_parser",
+        "structured_output_mode": "json_schema",
+        "tool_parser_mode": "qwen",
+    }
+
+
+def test_effective_parser_config_receipt_reuses_encoding_for_same_config(monkeypatch) -> None:
+    stream_assembler._cached_effective_parser_config_json.cache_clear()
+    encode_calls = 0
+    original_encode = stream_assembler._COMPACT_SORTED_JSON_ENCODER.encode
+
+    def counting_encode(payload):
+        nonlocal encode_calls
+        encode_calls += 1
+        return original_encode(payload)
+
+    monkeypatch.setattr(stream_assembler._COMPACT_SORTED_JSON_ENCODER, "encode", counting_encode)
+
+    first = RequestStreamAssembler(
+        request_id="req-effective-parser-cache-1",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    second = RequestStreamAssembler(
+        request_id="req-effective-parser-cache-2",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    assert first.completed().metrics["effective_parser_config_json"] == (
+        second.completed().metrics["effective_parser_config_json"]
+    )
+    assert encode_calls == 1
+    stream_assembler._cached_effective_parser_config_json.cache_clear()
+
+
+def test_token_metadata_records_logprob_only_and_mismatch_cases() -> None:
+    logprob_only = RequestStreamAssembler(
+        request_id="req-logprob-only",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    logprob_only.accept(StreamFragment(raw_text="x", token_logprobs=(-0.5,)))
+    logprob_metrics = logprob_only.completed().metrics
+    assert logprob_metrics["generated_token_count"] == 1
+    assert logprob_metrics["logprob_entry_count"] == 1
+
+    mismatch = RequestStreamAssembler(
+        request_id="req-logprob-mismatch",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    mismatch.accept(StreamFragment(raw_text="xy", token_ids=(1, 2), token_logprobs=(-0.5,)))
+    mismatch_metrics = mismatch.completed().metrics
+    assert mismatch_metrics["generated_token_count"] == 2
+    assert mismatch_metrics["logprob_entry_count"] == 1
+    assert mismatch_metrics["token_logprob_mismatch_count"] == 1
+
+
+def test_byte_fallback_defensive_paths_are_observable() -> None:
+    incomplete = RequestStreamAssembler(
+        request_id="req-incomplete-byte",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    assert incomplete.accept(StreamFragment(token_bytes=b"\xe6")) == []
+    incomplete_completed = incomplete.completed()
+    assert incomplete_completed.assistant_text == "\ufffd"
+    assert incomplete_completed.metrics["generated_token_count"] == 1
+    assert incomplete_completed.metrics["byte_fallback_decode_error_count"] == 1
+
+    invalid = RequestStreamAssembler(
+        request_id="req-invalid-byte",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    deltas = invalid.accept(StreamFragment(token_bytes=b"\xff"))
+    invalid_completed = invalid.completed()
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["\ufffd"]
+    assert invalid_completed.metrics["byte_fallback_decode_error_count"] == 1
+
+
+def test_unclosed_reasoning_recovery_handles_disabled_and_marker_paths() -> None:
+    disabled = RequestStreamAssembler(
+        request_id="req-disabled-unclosed-reasoning",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    disabled.accept(StreamFragment(raw_text="<think>hidden\n\nVisible"))
+    disabled_completed = disabled.completed()
+    assert disabled_completed.assistant_text == "Visible"
+    assert disabled_completed.reasoning_text == ""
+    assert disabled_completed.metrics["reasoning_parser_bypassed_count"] == 1
+
+    marker = RequestStreamAssembler(
+        request_id="req-marker-unclosed-reasoning",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    marker.accept(StreamFragment(raw_text="<think>hidden\nAnswer: 42"))
+    marker_completed = marker.completed()
+    assert marker_completed.reasoning_text == "hidden"
+    assert marker_completed.assistant_text == "Answer: 42"
+
+    blank = RequestStreamAssembler(
+        request_id="req-blank-unclosed-reasoning",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    blank.accept(StreamFragment(raw_text="<think>   "))
+    blank_completed = blank.completed()
+    assert blank_completed.assistant_text == ""
+    assert blank_completed.reasoning_text == ""
+
+
+def test_unclosed_reasoning_recovery_preserves_hidden_when_visible_tail_is_empty() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-empty-visible-unclosed-reasoning",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assembler.accept(StreamFragment(raw_text="<think>hidden plan\n\n"))
+    completed = assembler.completed()
+
+    assert completed.reasoning_text == "hidden plan"
+    assert completed.assistant_text == ""
+    assert completed.metrics["reasoning_channel_recovery_count"] == 1
+
+
+def test_unclosed_reasoning_recovery_marker_avoids_plain_phrase_false_positive() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-final-phrase-not-visible-marker",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assembler.accept(StreamFragment(raw_text="<think>hidden\nFinal boss is defeated."))
+    completed = assembler.completed()
+
+    assert completed.reasoning_text == ""
+    assert completed.assistant_text == ""
+    assert completed.metrics["reasoning_channel_recovery_count"] == 1
