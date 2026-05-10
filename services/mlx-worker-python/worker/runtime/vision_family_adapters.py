@@ -79,7 +79,7 @@ class ResolvedVisionFamilyConfig:
         image_token_divisor = max(1, self.image_token_divisor)
         image_tokens = 0
         for image in prepared_request.images:
-            token_count = image.byte_length // image_token_divisor
+            token_count = len(image.bytes_data) // image_token_divisor
             image_tokens += token_count if token_count > 1 else 1
 
         video_frame_token_cost = max(1, self.video_frame_token_cost)
