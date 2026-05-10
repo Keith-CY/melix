@@ -1,5 +1,6 @@
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
+from worker.engine import engine_core as engine_core_module
 from worker.engine.engine_core import EngineCore
 from worker.engine.request_state import RequestState
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
@@ -286,6 +287,28 @@ def test_generate_without_usage_skips_prompt_token_count_fallback() -> None:
     assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
     assert not any(event.HasField("usage_delta") for event in events)
     assert runtime.prompt_token_count_calls == 0
+
+
+def test_generate_reuses_stop_contract_for_empty_execution_ext(monkeypatch) -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+    resolve_calls = 0
+    original_resolve = engine_core_module.resolve_text_stop_contract
+
+    def counting_resolve(loaded_model, sampling, execution_ext=None):
+        nonlocal resolve_calls
+        resolve_calls += 1
+        return original_resolve(loaded_model, sampling, execution_ext)
+
+    monkeypatch.setattr(engine_core_module, "resolve_text_stop_contract", counting_resolve)
+
+    for index in range(2):
+        request = generate_usage_request(model_handle, return_usage=False)
+        request.execution.id.request_id = f"req-stop-contract-cache-{index}"
+        events = list(inference_service.Generate(request, context=None))
+        assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
+
+    assert resolve_calls == 1
 
 
 def test_sampling_with_resolved_stop_reuses_sampling_when_stop_sequences_match() -> None:

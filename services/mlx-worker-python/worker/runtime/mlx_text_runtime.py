@@ -22,7 +22,7 @@ class RuntimeUnavailableError(RuntimeError):
     pass
 
 
-@dataclass
+@dataclass(slots=True)
 class RuntimeTokenEvent:
     text: str
     raw_text: str | None = None
@@ -51,7 +51,7 @@ class RuntimeTokenEvent:
     dflash_target_hidden_layers: int | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class RuntimeToolCallEvent:
     call_id: str
     tool_name: str
@@ -145,6 +145,7 @@ _TEXT_STOP_SEQUENCE_KEYS = (
     "stop_sequences",
 )
 _STREAM_STOP_KWARG_NAMES = ("stop", "stop_words", "stop_sequences")
+_STOP_CONTRACT_CACHE_FIELD = "_melix.resolved_text_stop_contract_cache"
 
 
 def _split_stop_sequence_value(value: Any) -> list[str]:
@@ -186,6 +187,68 @@ def _tokenizer_eos_token_ids(tokenizer: Any) -> tuple[str, ...]:
     if isinstance(eos_token_id, list | tuple | set):
         return tuple(str(item) for item in eos_token_id if str(item).strip())
     return (str(eos_token_id),) if str(eos_token_id).strip() else ()
+
+
+def _tokenizer_eos_cache_key(tokenizer: Any) -> tuple[str, object]:
+    eos_token = str(getattr(tokenizer, "eos_token", "") or "").strip() if tokenizer is not None else ""
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    if isinstance(eos_token_id, set):
+        eos_id_key: object = tuple(sorted(str(item) for item in eos_token_id if str(item).strip()))
+    elif isinstance(eos_token_id, list | tuple):
+        eos_id_key = tuple(str(item) for item in eos_token_id if str(item).strip())
+    elif eos_token_id is None:
+        eos_id_key = ""
+    else:
+        eos_id_key = str(eos_token_id).strip()
+    return eos_token, eos_id_key
+
+
+def _stop_contract_cache_key(
+    loaded_model: Any,
+    sampling: Any,
+    execution_ext: dict[str, str] | None,
+) -> tuple[object, ...] | None:
+    if execution_ext is not None or not isinstance(loaded_model, dict):
+        return None
+
+    request_stop = tuple(str(item) for item in getattr(sampling, "stop", ()))
+    metadata_values: list[tuple[str, str, str]] = []
+    for source_key in ("model_ext", "metadata", "ext"):
+        metadata = loaded_model.get(source_key)
+        if isinstance(metadata, dict):
+            metadata_values.extend(
+                (source_key, key, str(metadata.get(key, "") or ""))
+                for key in _TEXT_STOP_SEQUENCE_KEYS
+            )
+    metadata_values.extend(
+        ("loaded_model", key, str(loaded_model.get(key, "") or ""))
+        for key in _TEXT_STOP_SEQUENCE_KEYS
+    )
+    return (
+        request_stop,
+        tuple(metadata_values),
+        _tokenizer_eos_cache_key(loaded_model.get("tokenizer")),
+    )
+
+
+def _cached_resolve_text_stop_contract(
+    loaded_model: Any,
+    sampling: Any,
+    execution_ext: dict[str, str] | None,
+) -> ResolvedTextStopContract:
+    cache_key = _stop_contract_cache_key(loaded_model, sampling, execution_ext)
+    if cache_key is None:
+        return resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+
+    cache = loaded_model.get(_STOP_CONTRACT_CACHE_FIELD)
+    if not isinstance(cache, dict):
+        cache = {}
+        loaded_model[_STOP_CONTRACT_CACHE_FIELD] = cache
+    contract = cache.get(cache_key)
+    if contract is None:
+        contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+        cache[cache_key] = contract
+    return contract
 
 
 def _int_tuple(value: Any) -> tuple[int, ...]:
@@ -590,7 +653,7 @@ class AutoMLXBackend:
                 sampler_kwargs[penalty_name] = float(getattr(sampling, penalty_name, 0.0))
         sampler = self._sampler_factory(**sampler_kwargs)
         max_tokens = int(sampling.max_output_tokens) if int(sampling.max_output_tokens) > 0 else 256
-        stop_contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+        stop_contract = _cached_resolve_text_stop_contract(loaded_model, sampling, execution_ext)
         stream_kwargs: dict[str, Any] = {}
         if stop_contract.sequences and self._stream_stop_kwarg:
             stream_kwargs[self._stream_stop_kwarg] = list(stop_contract.sequences)
@@ -867,12 +930,15 @@ class MLXTextRuntime:
                 pending = ""
 
             if visible:
-                yield replace(
-                    event,
-                    text=visible,
-                    raw_text=visible,
-                    finish_reason=None if pending else event.finish_reason,
-                )
+                if not pending and event.raw_text is None:
+                    yield event
+                else:
+                    yield replace(
+                        event,
+                        text=visible,
+                        raw_text=visible,
+                        finish_reason=None if pending else event.finish_reason,
+                    )
             elif event.finish_reason and not pending:
                 yield event
 

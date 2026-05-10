@@ -238,14 +238,22 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
 def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_utils.clear_callable_kwarg_signature_cache()
     signature_calls: dict[str, int] = {}
+    stop_contract_calls = 0
     original_signature = runtime_utils.inspect.signature
+    original_resolve_stop_contract = mlx_text_runtime_module.resolve_text_stop_contract
 
     def tracked_signature(callable_obj):
         name = getattr(callable_obj, "__name__", repr(callable_obj))
         signature_calls[name] = signature_calls.get(name, 0) + 1
         return original_signature(callable_obj)
 
+    def tracked_resolve_stop_contract(loaded_model, sampling, execution_ext=None):
+        nonlocal stop_contract_calls
+        stop_contract_calls += 1
+        return original_resolve_stop_contract(loaded_model, sampling, execution_ext)
+
     monkeypatch.setattr(runtime_utils.inspect, "signature", tracked_signature)
+    monkeypatch.setattr(mlx_text_runtime_module, "resolve_text_stop_contract", tracked_resolve_stop_contract)
 
     def fake_load(model_source: str, **kwargs):
         _ = (model_source, kwargs)
@@ -278,6 +286,7 @@ def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.Mon
 
     assert seen_stop_values == [["</turn>", "</s>"], ["</turn>", "</s>"]]
     assert signature_calls.get("fake_stream_generate") == 1
+    assert stop_contract_calls == 1
     runtime_utils.clear_callable_kwarg_signature_cache()
 
 
@@ -574,6 +583,16 @@ def test_stop_sequence_filter_reuses_max_prefix_length(monkeypatch: pytest.Monke
 
     assert calls == 1
     assert "".join(event.text for event in events) == "chunk" * 25
+
+
+def test_stop_sequence_filter_reuses_unmodified_token_events() -> None:
+    runtime = MLXTextRuntime(backend=object())
+    event = RuntimeTokenEvent(text="chunk", prompt_tokens=1, completion_tokens=1)
+
+    events = list(runtime._apply_stop_sequences([event], ("<stop>", "</turn>")))
+
+    assert events == [event]
+    assert events[0] is event
 
 
 def test_stop_sequence_helpers_preserve_earliest_match_and_viable_suffix() -> None:

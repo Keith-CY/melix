@@ -763,6 +763,38 @@ def test_effective_parser_config_receipt_is_available_from_completion_metrics() 
     }
 
 
+def test_effective_parser_config_receipt_reuses_encoding_for_same_config(monkeypatch) -> None:
+    stream_assembler._cached_effective_parser_config_json.cache_clear()
+    encode_calls = 0
+    original_encode = stream_assembler._COMPACT_SORTED_JSON_ENCODER.encode
+
+    def counting_encode(payload):
+        nonlocal encode_calls
+        encode_calls += 1
+        return original_encode(payload)
+
+    monkeypatch.setattr(stream_assembler._COMPACT_SORTED_JSON_ENCODER, "encode", counting_encode)
+
+    first = RequestStreamAssembler(
+        request_id="req-effective-parser-cache-1",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    second = RequestStreamAssembler(
+        request_id="req-effective-parser-cache-2",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    assert first.completed().metrics["effective_parser_config_json"] == (
+        second.completed().metrics["effective_parser_config_json"]
+    )
+    assert encode_calls == 1
+    stream_assembler._cached_effective_parser_config_json.cache_clear()
+
+
 def test_token_metadata_records_logprob_only_and_mismatch_cases() -> None:
     logprob_only = RequestStreamAssembler(
         request_id="req-logprob-only",

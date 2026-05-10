@@ -23,14 +23,42 @@ from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
 from worker.runtime.runtime_utils import callable_accepts_kwarg as _callable_accepts_kwarg
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
 
+_ENGINE_STOP_CONTRACT_CACHE_FIELD = "_melix.engine.resolved_text_stop_contract_cache"
+
+
+def _resolve_generate_stop_contract(
+    loaded_model: object,
+    sampling: common_pb2.SamplingConfig,
+    execution_ext: object,
+):
+    if execution_ext:
+        return resolve_text_stop_contract(loaded_model, sampling, execution_ext)  # type: ignore[arg-type]
+    if not isinstance(loaded_model, dict):
+        return resolve_text_stop_contract(loaded_model, sampling, None)
+
+    cache_key = tuple(str(item) for item in sampling.stop)
+    cache = loaded_model.get(_ENGINE_STOP_CONTRACT_CACHE_FIELD)
+    if not isinstance(cache, dict):
+        cache = {}
+        loaded_model[_ENGINE_STOP_CONTRACT_CACHE_FIELD] = cache
+    contract = cache.get(cache_key)
+    if contract is None:
+        contract = resolve_text_stop_contract(loaded_model, sampling, None)
+        cache[cache_key] = contract
+    return contract
+
 
 class EngineCore:
     def __init__(self, registry: WorkerRegistry) -> None:
         self._registry = registry
 
     def generate(self, request: inference_pb2.GenerateRequest) -> Iterator[inference_pb2.ExecuteEvent]:
-        request_id = request.execution.id.request_id
-        loaded_model = self._registry.get_loaded_model(request.execution.model_handle)
+        execution = request.execution
+        execution_ext = execution.ext
+        sampling = request.sampling
+        reasoning = execution.reasoning
+        request_id = execution.id.request_id
+        loaded_model = self._registry.get_loaded_model(execution.model_handle)
         if loaded_model is None:
             yield self._error_event(request_id, 1, "not_found", "Unknown model handle.")
             return
@@ -39,12 +67,12 @@ class EngineCore:
         state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
         allocate_seq = state.allocate_seq
         assembler = self._stream_assembler(request)
-        stop_contract = resolve_text_stop_contract(
+        stop_contract = _resolve_generate_stop_contract(
             loaded_model.runtime_model,
-            request.sampling,
-            request.execution.ext,
+            sampling,
+            execution_ext,
         )
-        effective_sampling = self._sampling_with_resolved_stop(request.sampling, stop_contract.sequences)
+        effective_sampling = self._sampling_with_resolved_stop(sampling, stop_contract.sequences)
         prompt_tokens_default: int | None = None
         track_usage = bool(request.return_usage)
         completion_token_count = 0
@@ -54,18 +82,19 @@ class EngineCore:
         accept_stream_fragment = assembler.accept
 
         try:
-            template_kwargs = self._chat_template_kwargs(request)
-            self._prepare_native_template_tools(request.execution)
+            template_kwargs = self._chat_template_kwargs(request) if execution_ext else None
+            if execution.tool_config.tools:
+                self._prepare_native_template_tools(execution)
             prompt = runtime.render_prompt(
                 request.messages,
                 loaded_model=loaded_model.runtime_model,
                 template_kwargs=template_kwargs,
-                execution_ext=request.execution.ext,
+                execution_ext=execution_ext,
             )
 
-            generate_kwargs: dict[str, object] = {"execution_ext": request.execution.ext}
+            generate_kwargs: dict[str, object] = {"execution_ext": execution_ext}
             if _callable_accepts_kwarg(runtime.generate_tokens, "acceleration_policy"):
-                generate_kwargs["acceleration_policy"] = request.execution.acceleration
+                generate_kwargs["acceleration_policy"] = execution.acceleration
             for runtime_event in runtime.generate_tokens(
                 loaded_model.runtime_model,
                 prompt,
@@ -95,8 +124,13 @@ class EngineCore:
                         turn_boundary_stop_reason = "stop_sequence"
                 if track_usage:
                     last_token_event = runtime_event
-                for delta in accept_stream_fragment(
-                    StreamFragment(
+                if (
+                    runtime_event.token_ids
+                    or runtime_event.token_logprobs
+                    or runtime_event.token_bytes is not None
+                    or runtime_event.parser_observation
+                ):
+                    stream_fragment = StreamFragment(
                         text=runtime_event.text,
                         raw_text=runtime_event.raw_text,
                         token_ids=runtime_event.token_ids,
@@ -104,7 +138,9 @@ class EngineCore:
                         token_bytes=runtime_event.token_bytes,
                         parser_observation=runtime_event.parser_observation,
                     )
-                ):
+                else:
+                    stream_fragment = StreamFragment(runtime_event.text, runtime_event.raw_text)
+                for delta in accept_stream_fragment(stream_fragment):
                     if delta.reasoning_text:
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
@@ -113,7 +149,7 @@ class EngineCore:
                             reasoning_delta=inference_pb2.ReasoningDelta(
                                 text=delta.reasoning_text,
                                 raw_text=delta.raw_text,
-                                mode_source=request.execution.reasoning.mode_source,
+                                mode_source=reasoning.mode_source,
                             ),
                         )
                     if delta.tool_call is not None:
@@ -176,15 +212,20 @@ class EngineCore:
 
             assembled = assembler.completed()
             parser_metrics = {key: str(value) for key, value in assembled.metrics.items()}
-            parser_metrics["response_history_normalized_count"] = request.execution.ext.get(
+            parser_metrics["response_history_normalized_count"] = execution_ext.get(
                 "melix.response_history.normalized_count",
                 "0",
             )
             parser_metrics["native_tool_exemplar_injected_count"] = (
-                "1" if request.execution.ext.get("melix.tool_config.native_template_tools") == "injected" else "0"
+                "1" if execution_ext.get("melix.tool_config.native_template_tools") == "injected" else "0"
             )
             parser_metrics["resolved_stop_token_count"] = str(stop_contract.resolved_stop_token_count)
-            parser_metrics["reasoning_flag_source"] = self._reasoning_flag_source(request)
+            parser_metrics["reasoning_flag_source"] = (
+                reasoning.mode_source
+                or execution_ext.get("melix.reasoning.mode_source", "")
+                or execution_ext.get("melix.reasoning.source", "")
+                or "unspecified"
+            )
             parser_metrics["turn_boundary_stop_reason"] = turn_boundary_stop_reason or finish_reason
             yield inference_pb2.ExecuteEvent(
                 request_id=request_id,
@@ -195,9 +236,9 @@ class EngineCore:
                     assistant_text=assembled.assistant_text,
                     reasoning_text=assembled.reasoning_text,
                     raw_assistant_text=assembled.raw_text,
-                    reasoning_mode_source=request.execution.reasoning.mode_source,
-                    reasoning_effort=request.execution.reasoning.effort,
-                    reasoning_continuity_preserved=request.execution.reasoning.continuity_rehydrated,
+                    reasoning_mode_source=reasoning.mode_source,
+                    reasoning_effort=reasoning.effort,
+                    reasoning_continuity_preserved=reasoning.continuity_rehydrated,
                     parser_metrics=parser_metrics,
                 ),
             )
@@ -477,7 +518,7 @@ class EngineCore:
 
     @staticmethod
     def _prepare_native_template_tools(execution: inference_pb2.ExecutionMetadata) -> None:
-        if execution.ext.get("melix.tool_config.tools_json"):
+        if execution.ext.get("melix.tool_config.tools_json") or not execution.tool_config.tools:
             return
         tools: list[dict[str, object]] = []
         for tool in execution.tool_config.tools:
