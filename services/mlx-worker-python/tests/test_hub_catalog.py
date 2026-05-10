@@ -635,11 +635,17 @@ def test_size_hint_bytes_falls_back_for_labeled_direct_card_model_size(
     parser.assert_called_once_with("Model size: 7 MB", allow_bare=True)
 
 
-def test_direct_size_hint_parser_covers_units_and_invalid_values() -> None:
+def test_size_hint_parsers_cover_units_and_invalid_values() -> None:
     assert hub_catalog_module._direct_size_hint_from_text("512 kb") == 512 * KB
+    assert hub_catalog_module._direct_size_hint_from_text("1.5 MB") == int(1.5 * MB)
+    assert hub_catalog_module._direct_size_hint_from_text("2 GB") == 2 * GB
     assert hub_catalog_module._direct_size_hint_from_text("512 tb") == 0
     assert hub_catalog_module._direct_size_hint_from_text("not-a-number MB") == 0
     assert hub_catalog_module._direct_size_hint_from_text("model size 512 MB") == 0
+
+    assert _size_hint_from_text("Model size: 512 kb", allow_bare=False) == 512 * KB
+    assert _size_hint_from_text("Model size: 1.5 MB", allow_bare=False) == int(1.5 * MB)
+    assert _size_hint_from_text("Model size: 2 GB", allow_bare=False) == 2 * GB
 
 
 @pytest.mark.parametrize(

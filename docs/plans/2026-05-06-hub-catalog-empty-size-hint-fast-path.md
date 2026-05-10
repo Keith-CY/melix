@@ -1,8 +1,8 @@
-# Hub Catalog Empty Size-Hint Fast Path
+# Hub Catalog Size-Hint Multiplier Constants
 
 ## Goal
 
-Avoid redundant regex work when Hub catalog metadata has no model-size hint text.
+Avoid repeated power-expression evaluation while parsing Hub catalog model-size hints by reusing module-level byte multiplier constants for KB, MB, and GB units.
 
 ## Touched Files
 
@@ -17,18 +17,18 @@ This slice is Python-only and can be verified locally on Linux with focused pyte
 
 Use the existing registered probe:
 
-- `hub-catalog-tag-normalization-single-pass`
+- `hub-catalog-size-hint-regex-precompile`
 
-The probe builds a large synthetic Hub catalog page with empty `cardData`, which exercises the hot no-size-hint path.
+The probe builds synthetic Hub catalog size-hint payloads and exercises both direct `cardData.model_size` parsing and labeled text parsing. The registered probe has focused `test_command`, `coverage_command`, and `probe_command` entries in `infra/perf/pr_scoped_probes.json`.
 
 ## Success Metrics
 
 - Focused Hub catalog tests pass.
 - Changed executable line coverage for touched Python scope is at least 95%.
-- The local base-vs-head probe reports no behavior drift and ideally lower elapsed time for the empty-card workload.
+- The local base-vs-head registered probe reports behavior parity and lower mean elapsed time for the size-hint workload.
 
 ## Implementation Plan
 
-1. Add an early return to `_size_hint_from_text(...)` for empty text before selecting/searching the regex pattern.
-2. Add a focused regression test that proves empty text returns `0` without invoking either compiled regex object.
-3. Run focused pytest, changed-scope coverage, `git diff --check`, and the existing local probe before opening the PR.
+1. Add module-level byte multiplier constants and reuse them in `_direct_size_hint_from_text(...)` and `_size_hint_from_text(...)`.
+2. Extend the focused size-hint parser test to cover KB, fractional MB, and GB through both direct and regex-backed paths.
+3. Run focused pytest, changed-scope coverage, `git diff --check`, and the registered local probe before opening the PR.
