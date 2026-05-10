@@ -1616,11 +1616,13 @@ def _semantic_action_group_score(
 
 @lru_cache(maxsize=32)
 def _semantic_value_groups(value_count: int) -> tuple[tuple[int, ...], ...]:
-    groups: list[tuple[int, ...]] = []
     max_size = min(SEMANTIC_ACTION_GROUP_MAX_SIZE, value_count)
-    for group_size in range(2, max_size + 1):
-        groups.extend(tuple(group) for group in combinations(range(value_count), group_size))
-    return tuple(groups)
+    value_indices = range(value_count)
+    return tuple(
+        group
+        for group_size in range(2, max_size + 1)
+        for group in combinations(value_indices, group_size)
+    )
 
 
 def _maximum_weight_semantic_value_group_matching(
