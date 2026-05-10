@@ -13,6 +13,9 @@ from urllib.request import urlopen
 from worker.runtime.video_preprocessing import PreparedVideoInput, prepare_video_input
 
 
+_LOCAL_IMAGE_PARSE = ParseResult("", "", "", "", "", "")
+
+
 class MultimodalPreprocessError(ValueError):
     pass
 
@@ -46,7 +49,7 @@ class PreparedVideoFramePolicy:
     clip_duration_ms: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ParsedImageReference:
     raw: str
     parsed: ParseResult
@@ -198,12 +201,22 @@ def _cached_image_uri_payload(
 
 def _parse_image_reference(uri: str) -> ParsedImageReference:
     colon_index = uri.find(":")
-    slash_index = uri.find("/")
-    if colon_index == -1 or (slash_index != -1 and slash_index < colon_index):
+    if colon_index == -1:
         path = Path(uri)
         return ParsedImageReference(
             raw=uri,
-            parsed=ParseResult("", "", uri, "", "", ""),
+            parsed=_LOCAL_IMAGE_PARSE,
+            decoded_path=uri,
+            path=path,
+            filename=path.name,
+            format=path.suffix.lstrip("."),
+        )
+    slash_index = uri.find("/")
+    if slash_index != -1 and slash_index < colon_index:
+        path = Path(uri)
+        return ParsedImageReference(
+            raw=uri,
+            parsed=_LOCAL_IMAGE_PARSE,
             decoded_path=uri,
             path=path,
             filename=path.name,
@@ -240,9 +253,13 @@ def _path_from_uri(uri: str | ParsedImageReference) -> Path:
 def _bytes_from_image_uri(uri: str) -> tuple[bytes, str, str, str, str]:
     reference = _parse_image_reference(uri)
     if reference.parsed.scheme in {"", "file"}:
-        path = _path_from_uri(reference)
+        path = reference.path
+        try:
+            bytes_data = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise MultimodalPreprocessError(f"Missing local image input: {reference.raw}") from exc
         return (
-            path.read_bytes(),
+            bytes_data,
             reference.raw,
             "",
             reference.format,
