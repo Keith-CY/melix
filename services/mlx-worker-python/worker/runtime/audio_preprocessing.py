@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil
 from pathlib import Path
 from time import perf_counter
 from urllib.parse import unquote, urlparse
@@ -65,7 +64,7 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
 
     if input_bytes is None:
         input_bytes = len(bytes_data)
-    chunk_count = max(1, ceil(input_bytes / 8))
+    chunk_count = max(1, (input_bytes + 7) // 8)
     duration_seconds = max(0.001, round(input_bytes / 16000.0, 6))
     latency_ms = max(0.0, (perf_counter() - started_at) * 1000.0)
     return PreparedAudioInput(
