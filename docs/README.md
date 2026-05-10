@@ -74,6 +74,17 @@ Design rationale and architecture decision records:
 
 ---
 
+## Reference Scans
+
+External product and architecture scans that have been converted into Melix
+follow-up work:
+
+- [Sparrow and LocalAI Lessons](reference-scans/sparrow-localai-lessons.md)
+  Reference scan for structured local task workflows, operator UX, and follow-up
+  issue priority.
+
+---
+
 ## Examples
 
 - [`examples/pipelines/phase8-acceptance.pipeline.json`](examples/pipelines/phase8-acceptance.pipeline.json) — The v1 typed CLI pipeline format used in the Phase 8 acceptance flow.
