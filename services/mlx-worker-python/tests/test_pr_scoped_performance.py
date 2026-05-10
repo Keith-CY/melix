@@ -4152,6 +4152,7 @@ def test_engine_generate_usage_token_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv("MELIX_ENGINE_GENERATE_USAGE_PROBE_REQUESTS", "3")
+    monkeypatch.setenv("MELIX_ENGINE_GENERATE_FALLBACK_PROBE_REQUESTS", "2")
     monkeypatch.setenv("MELIX_ENGINE_GENERATE_USAGE_PROBE_SAMPLES", "2")
     monkeypatch.setenv("MELIX_ENGINE_GENERATE_USAGE_PROBE_PROMPT_WORDS", "32")
 
@@ -4168,6 +4169,9 @@ def test_engine_generate_usage_token_probe_script_emits_metrics(
     assert metrics["request_state_append_calls_mean"] == 0
     assert metrics["request_state_append_calls_per_request"] == 0
     assert metrics["token_events_mean"] == 3
+    assert metrics["fallback_request_count"] == 2
+    assert metrics["fallback_elapsed_ms_mean"] > 0
+    assert metrics["fallback_peak_bytes_mean"] > 0
 
 
 def test_scope_report_tracks_direct_matches_separately_when_force_all(tmp_path: Path) -> None:

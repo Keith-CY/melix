@@ -3,6 +3,18 @@ from __future__ import annotations
 from collections.abc import Iterator
 import json
 
+
+def _whitespace_token_count(text: str) -> int:
+    token_count = 0
+    in_token = False
+    for character in text:
+        if character.isspace():
+            in_token = False
+        elif not in_token:
+            token_count += 1
+            in_token = True
+    return token_count
+
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.registry import WorkerRegistry
@@ -39,6 +51,7 @@ class EngineCore:
         last_token_event: RuntimeTokenEvent | None = None
         last_finish_reason = ""
         turn_boundary_stop_reason = ""
+        accept_stream_fragment = assembler.accept
 
         try:
             template_kwargs = self._chat_template_kwargs(request)
@@ -82,7 +95,7 @@ class EngineCore:
                         turn_boundary_stop_reason = "stop_sequence"
                 if track_usage:
                     last_token_event = runtime_event
-                for delta in assembler.accept(
+                for delta in accept_stream_fragment(
                     StreamFragment(
                         text=runtime_event.text,
                         raw_text=runtime_event.raw_text,
@@ -140,7 +153,7 @@ class EngineCore:
                         prompt_tokens_default = (
                             runtime.prompt_token_count(prompt)
                             if hasattr(runtime, "prompt_token_count")
-                            else len(prompt.split())
+                            else _whitespace_token_count(prompt)
                         )
                     prompt_tokens = prompt_tokens_default
                 if last_token_event is not None:

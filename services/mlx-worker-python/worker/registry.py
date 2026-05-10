@@ -276,10 +276,22 @@ class WorkerRegistry:
 
     @staticmethod
     def _is_sparse_model_request(model_spec: common_pb2.ModelSpec) -> bool:
-        populated_fields = model_spec.ListFields()
-        if not populated_fields:
-            return True
-        return len(populated_fields) == 1 and populated_fields[0][0].name == "model_id"
+        return not (
+            model_spec.model_path
+            or model_spec.model_kind
+            or model_spec.revision
+            or model_spec.tokenizer_hash
+            or model_spec.quant_profile_id
+            or model_spec.parser_mode
+            or model_spec.reasoning_mode
+            or model_spec.max_context
+            or model_spec.ext
+            or model_spec.capability_class != common_pb2.MODEL_CAPABILITY_CLASS_UNSPECIFIED
+            or model_spec.route_class != common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
+            or model_spec.HasField("settings")
+            or model_spec.features
+            or model_spec.runtime_mode != common_pb2.RUNTIME_MODE_UNSPECIFIED
+        )
 
     def unload_model(self, handle: str) -> bool:
         with self._lock:
@@ -361,7 +373,8 @@ class WorkerRegistry:
             loaded_models = [
                 self._loaded_models[handle] for handle in self._sorted_loaded_model_handles_locked()
             ]
-        return [self._loaded_model_summary(loaded) for loaded in loaded_models]
+        build_summary = self._loaded_model_summary
+        return [build_summary(loaded) for loaded in loaded_models]
 
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
         state = RequestState(request_id=request_id, runtime_kind=runtime_kind)

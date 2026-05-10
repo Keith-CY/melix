@@ -7,6 +7,7 @@ import pytest
 
 from worker.runtime.text_family_adapters import (
     _inferred_expert_count,
+    _split_csv,
     detect_text_family_identity,
     resolve_text_family_config,
 )
@@ -29,6 +30,15 @@ class _CopyCountingConfig(Mapping[str, Any]):
     def keys(self):  # type: ignore[override]
         self.copy_attempts += 1
         return self._payload.keys()
+
+
+def test_split_csv_short_circuits_empty_values_without_split() -> None:
+    class NoSplitEmpty(str):
+        def split(self, *args: object, **kwargs: object) -> list[str]:  # pragma: no cover
+            raise AssertionError("empty CSV values should not allocate split parts")
+
+    assert _split_csv(NoSplitEmpty("")) == []
+    assert _split_csv(" text, qwen ,, tools ") == ["text", "qwen", "tools"]
 
 
 def test_detect_text_family_identity_prefers_explicit_supported_override() -> None:

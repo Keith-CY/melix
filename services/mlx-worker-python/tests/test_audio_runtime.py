@@ -263,6 +263,7 @@ def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     assert prepared.bytes_data == b""
     assert prepared.local_path == str(audio_path)
     assert prepared.preprocess_input_bytes == len(b"zero copy audio")
+    assert prepared.chunk_count == 2
     assert exists_spy.call_count == 0
     assert stat_calls == 1
 

@@ -192,6 +192,35 @@ def test_worker_registry_sparse_model_request_fast_path_preserves_semantics() ->
     assert WorkerRegistry._is_sparse_model_request(full) is False
     assert WorkerRegistry._is_sparse_model_request(with_path) is False
 
+    non_sparse_variants = [
+        common_pb2.ModelSpec(model_id="melix-dev-text", model_kind="text"),
+        common_pb2.ModelSpec(model_id="melix-dev-text", revision="main"),
+        common_pb2.ModelSpec(model_id="melix-dev-text", tokenizer_hash="tok"),
+        common_pb2.ModelSpec(model_id="melix-dev-text", quant_profile_id="q4"),
+        common_pb2.ModelSpec(model_id="melix-dev-text", parser_mode="json"),
+        common_pb2.ModelSpec(model_id="melix-dev-text", reasoning_mode="off"),
+        common_pb2.ModelSpec(model_id="melix-dev-text", max_context=4096),
+        common_pb2.ModelSpec(model_id="melix-dev-text", ext={"k": "v"}),
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text",
+            capability_class=common_pb2.MODEL_CAPABILITY_TEXT,
+        ),
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text",
+            route_class=common_pb2.WORKER_ROUTE_SWIFT_TEXT,
+        ),
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text",
+            settings=common_pb2.ModelSettings(pin_on_load=True),
+        ),
+        common_pb2.ModelSpec(model_id="melix-dev-text", features=["chat"]),
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text",
+            runtime_mode=common_pb2.RUNTIME_MODE_FUSED_DERIVED_MODEL,
+        ),
+    ]
+    assert all(not WorkerRegistry._is_sparse_model_request(variant) for variant in non_sparse_variants)
+
     registry = build_registry()
     loaded = registry.load_model(sparse)
 

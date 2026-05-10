@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, replace
+from functools import lru_cache
 
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, rebuild_multimodal_hash
 
@@ -74,14 +75,19 @@ class ResolvedVisionFamilyConfig:
 
     def prompt_token_count(self, prepared_request: PreparedVisionRequest) -> int:
         prompt_tokens = _whitespace_token_count(prepared_request.prompt_text)
-        image_tokens = sum(
-            max(1, image.byte_length // max(1, self.image_token_divisor))
-            for image in prepared_request.images
-        )
-        video_tokens = sum(
-            max(1, policy.effective_frame_count * max(1, self.video_frame_token_cost))
-            for policy in prepared_request.video_frame_policies
-        )
+
+        image_token_divisor = max(1, self.image_token_divisor)
+        image_tokens = 0
+        for image in prepared_request.images:
+            token_count = image.byte_length // image_token_divisor
+            image_tokens += token_count if token_count > 1 else 1
+
+        video_frame_token_cost = max(1, self.video_frame_token_cost)
+        video_tokens = 0
+        for policy in prepared_request.video_frame_policies:
+            token_count = policy.effective_frame_count * video_frame_token_cost
+            video_tokens += token_count if token_count > 1 else 1
+
         return max(1, prompt_tokens + image_tokens + video_tokens + self.prompt_token_bias)
 
 
@@ -193,6 +199,7 @@ def resolve_vision_family_config(metadata: dict[str, str] | None = None) -> Reso
     return adapter.resolve(metadata)
 
 
+@lru_cache(maxsize=512)
 def _whitespace_token_count(text: str) -> int:
     token_count = 0
     in_token = False
