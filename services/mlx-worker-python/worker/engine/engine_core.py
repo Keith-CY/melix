@@ -178,7 +178,7 @@ class EngineCore:
             parser_metrics = {key: str(value) for key, value in assembled.metrics.items()}
             parser_metrics["response_history_normalized_count"] = request.execution.ext.get(
                 "melix.response_history.normalized_count",
-                parser_metrics.get("response_history_normalized_count", "0"),
+                "0",
             )
             parser_metrics["native_tool_exemplar_injected_count"] = (
                 "1" if request.execution.ext.get("melix.tool_config.native_template_tools") == "injected" else "0"

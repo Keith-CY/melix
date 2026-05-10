@@ -847,3 +847,35 @@ def test_unclosed_reasoning_recovery_handles_disabled_and_marker_paths() -> None
     blank_completed = blank.completed()
     assert blank_completed.assistant_text == ""
     assert blank_completed.reasoning_text == ""
+
+
+def test_unclosed_reasoning_recovery_preserves_hidden_when_visible_tail_is_empty() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-empty-visible-unclosed-reasoning",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assembler.accept(StreamFragment(raw_text="<think>hidden plan\n\n"))
+    completed = assembler.completed()
+
+    assert completed.reasoning_text == "hidden plan"
+    assert completed.assistant_text == ""
+    assert completed.metrics["reasoning_channel_recovery_count"] == 1
+
+
+def test_unclosed_reasoning_recovery_marker_avoids_plain_phrase_false_positive() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-final-phrase-not-visible-marker",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assembler.accept(StreamFragment(raw_text="<think>hidden\nFinal boss is defeated."))
+    completed = assembler.completed()
+
+    assert completed.reasoning_text == ""
+    assert completed.assistant_text == ""
+    assert completed.metrics["reasoning_channel_recovery_count"] == 1

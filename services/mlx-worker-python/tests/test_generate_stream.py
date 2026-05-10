@@ -835,6 +835,7 @@ def test_runtime_metadata_helper_defensive_branches_are_stable() -> None:
 
     assert mlx_text_runtime._float_tuple(None) == ()
     assert mlx_text_runtime._float_tuple(["-0.5", "bad", 1]) == (-0.5, 1.0)
+    assert mlx_text_runtime._float_tuple({"-0.5", "bad"}) == (-0.5,)
     assert mlx_text_runtime._float_tuple("-1.25") == (-1.25,)
     assert mlx_text_runtime._float_tuple("bad") == ()
 

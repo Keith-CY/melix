@@ -208,7 +208,7 @@ def _int_tuple(value: Any) -> tuple[int, ...]:
 def _float_tuple(value: Any) -> tuple[float, ...]:
     if value is None:
         return ()
-    if isinstance(value, list | tuple):
+    if isinstance(value, list | tuple | set):
         result: list[float] = []
         for item in value:
             try:

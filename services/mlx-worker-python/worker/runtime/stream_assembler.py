@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 from dataclasses import dataclass, replace
 import json
 import logging
@@ -53,6 +54,7 @@ class RequestStreamAssembler:
     _TOOL_PREFIXES = tuple("<tool_call>"[:index] for index in range(1, len("<tool_call>")))
     _THINK_PREFIXES_REVERSED = tuple(reversed(_THINK_PREFIXES))
     _TOOL_PREFIXES_REVERSED = tuple(reversed(_TOOL_PREFIXES))
+    _VISIBLE_TAIL_MARKERS = ("\nFinal answer", "\nFinal:", "\nAnswer:", "\nAssistant:", "\nResult:")
 
     def __init__(
         self,
@@ -90,6 +92,7 @@ class RequestStreamAssembler:
         self._raw_seen = ""
         self._buffer = ""
         self._pending_token_bytes = b""
+        self._token_byte_decoder_factory = codecs.getincrementaldecoder("utf-8")
         self._json_started = False
         self._assistant_parts: list[str] = []
         self._reasoning_parts: list[str] = []
@@ -116,7 +119,6 @@ class RequestStreamAssembler:
             "byte_fallback_decode_error_count": 0,
             "empty_thinking_sentinel_count": 0,
             "reasoning_parser_bypassed_count": 0,
-            "response_history_normalized_count": 0,
             "effective_parser_config_json": json.dumps(
                 {
                     "reasoning_enabled": self._reasoning_enabled,
@@ -235,16 +237,24 @@ class RequestStreamAssembler:
             return None
         had_pending = bool(self._pending_token_bytes)
         self._pending_token_bytes += token_bytes
+        decoder = self._token_byte_decoder_factory()
         try:
-            decoded = self._pending_token_bytes.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            if exc.reason == "unexpected end of data":
-                return ""
+            decoded = decoder.decode(self._pending_token_bytes, final=False)
+        except UnicodeDecodeError:
             self._metrics["byte_fallback_decode_error_count"] += 1
             decoded = self._pending_token_bytes.decode("utf-8", errors="replace")
+            self._pending_token_bytes = b""
+            return decoded
+
+        buffered, _ = decoder.getstate()
+        if buffered:
+            self._pending_token_bytes = bytes(buffered)
+            if not decoded:
+                return ""
+        else:
+            self._pending_token_bytes = b""
         if had_pending:
             self._metrics["byte_fallback_merge_count"] += 1
-        self._pending_token_bytes = b""
         return decoded
 
     def _annotate_deltas(
@@ -323,11 +333,12 @@ class RequestStreamAssembler:
                         self._metrics["reasoning_channel_recovery_count"] += 1
                         body = self._buffer[len(self._THINK_OPEN) :]
                         hidden, visible = self._recover_unclosed_reasoning_body(body)
-                        if visible and hidden and self._reasoning_enabled:
-                            self._reasoning_parts.append(hidden)
-                        elif hidden and not self._reasoning_enabled:
-                            self._metrics["suppressed_reasoning_count"] += 1
-                            self._metrics["reasoning_parser_bypassed_count"] += 1
+                        if hidden:
+                            if self._reasoning_enabled:
+                                self._reasoning_parts.append(hidden)
+                            else:
+                                self._metrics["suppressed_reasoning_count"] += 1
+                                self._metrics["reasoning_parser_bypassed_count"] += 1
                         self._buffer = ""
                         if visible:
                             deltas.append(self._content_delta(visible))
@@ -372,7 +383,10 @@ class RequestStreamAssembler:
             if marker in body:
                 hidden, visible = body.split(marker, 1)
                 return hidden.strip(), visible.strip()
-        for marker in ("\nFinal", "\nAnswer", "\nAssistant", "\nResult"):
+        # Conservative English section-label fallback for malformed streams.
+        # Non-English or alternate labels intentionally fall back to no split
+        # rather than leaking hidden reasoning as public assistant content.
+        for marker in self._VISIBLE_TAIL_MARKERS:
             index = body.find(marker)
             if index >= 0:
                 return body[:index].strip(), body[index + 1 :].strip()
