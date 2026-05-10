@@ -1,0 +1,192 @@
+# Serving Diagnostics Evidence
+
+This runbook defines the operator workflow for Melix serving diagnostics bundles
+and baseline-vs-accelerated evidence artifacts.
+
+## When To Use Each Mode
+
+Use a lightweight serving diagnostics bundle when debugging a concrete request:
+
+- unexpected finish reason
+- slow first token
+- decode throughput drop
+- cache restore or fallback ambiguity
+- memory-pressure investigation
+
+Use a baseline-vs-accelerated comparison artifact only when supporting a
+performance claim. Claim-supporting evidence must use the same prompt protocol,
+same prompt digest, same model, same task kind, same generation config, and
+greedy deterministic sampling for both runs.
+
+Do not use debug-only diagnostics bundles as public performance claims. They are
+for reproducing runtime shape and request events, not for leaderboard-style
+comparisons.
+
+## Bundle Layout
+
+Serving diagnostics bundles are written under:
+
+```text
+serving-diagnostics/<bundle_id>/
+  manifest.json
+  effective-config.json
+  request-summary.json
+  events.jsonl
+```
+
+`manifest.json` records:
+
+- schema version
+- bundle id
+- diagnostics mode
+- invocation metadata
+- model references
+- request id
+- task kind
+- model id
+- runtime kind
+- acceleration mode
+- artifact paths
+
+`effective-config.json` records the effective runtime and request config after
+defaults, admission, and runtime-specific resolution.
+
+`request-summary.json` records stable request-level fields:
+
+- request id
+- task kind
+- model id
+- runtime kind
+- acceleration mode
+- prompt protocol id
+- prompt digest
+- prompt template digest
+- generation config
+- status
+- finish reason
+- prompt and completion token counts
+- prefill chunk size
+- prefill and decode duration
+- `prompt_tps`
+- `generation_tps`
+- `prefill_tokens_per_second`
+- cache hit, miss, restored, and computed token counts
+- memory used, total, and peak bytes
+
+`events.jsonl` records phase events. Prefill must appear as a first-class phase
+when a request reaches prefill. Event attributes should stay small and must not
+include full prompts, full responses, credentials, or operator secrets.
+
+## Lightweight Status Diagnostics
+
+`ListLoadedModels` exposes per-loaded-model throughput counters with the same
+field names as request diagnostics:
+
+- `prompt_tps`
+- `generation_tps`
+
+Every loaded model summary must include both fields. When the runtime has not
+reported counters yet, each field serializes as the float value `0.0`. Text and
+multimodal generation runtimes should update these counters from already
+computed runtime events; status polling must not trigger heavyweight tracing or
+extra token accounting.
+
+## Baseline-Vs-Accelerated Evidence
+
+Baseline comparison artifacts are written as:
+
+```text
+serving-diagnostics/<comparison_id>/baseline-vs-accelerated.json
+```
+
+The comparison artifact records:
+
+- prompt protocol id
+- prompt digest
+- model id
+- task kind
+- effective temperature
+- effective top-p
+- effective top-k
+- greedy sampler status
+- acceleration admission status
+- fallback reason
+- tier stability status
+- prefill and decode phase rows
+
+The writer rejects comparisons when the baseline and accelerated runs disagree
+on prompt protocol, prompt digest, prompt template digest, model id, task kind,
+or generation config. It also rejects non-greedy sampler settings because
+deterministic sampling is required before the artifact can support a performance
+claim.
+
+## Prefill Override Validation
+
+Prefill chunk size overrides must be positive integers. Invalid overrides must
+be rejected before starting a diagnostics session so request artifacts do not
+mix runtime failures with malformed operator configuration.
+
+Examples of invalid values:
+
+- `0`
+- negative integers
+- non-integer strings
+- missing values when a prefill override was explicitly requested
+
+## Minimal Python Usage
+
+```python
+from pathlib import Path
+
+from worker.productization.serving_diagnostics import (
+    ServingDiagnosticsEvent,
+    ServingDiagnosticsRequestSummary,
+    write_serving_diagnostics_bundle,
+)
+
+summary = ServingDiagnosticsRequestSummary(
+    request_id="req-1",
+    task_kind="text-generation",
+    model_id="melix-dev-text",
+    runtime_kind="mlx-text",
+    acceleration_mode="baseline",
+    prompt_protocol_id="chat.completions.v1",
+    prompt_digest="sha256:...",
+    prompt_template_digest="sha256:...",
+    generation_config={"temperature": 0.0, "top_p": 1.0, "top_k": 1},
+    status="completed",
+    finish_reason="stop",
+    prefill_chunk_size=128,
+    prefill_ms=12.0,
+    decode_ms=30.0,
+)
+
+write_serving_diagnostics_bundle(
+    output_root=Path(".runtime/evidence"),
+    bundle_id="req-1-debug",
+    invocation={"command": "melix serve --diagnostics req-1-debug"},
+    effective_config={"runtime": {"mode": "baseline"}},
+    model_refs={"model_id": "melix-dev-text"},
+    request_summary=summary,
+    events=(
+        ServingDiagnosticsEvent(
+            request_id="req-1",
+            phase="prefill",
+            event_index=0,
+            status="completed",
+            duration_ms=12.0,
+            attributes={"prefill_chunk_size": 128},
+        ),
+    ),
+    diagnostics_mode="debug",
+)
+```
+
+## Verification
+
+Run the focused diagnostics artifact tests after changing this artifact
+contract:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_serving_diagnostics.py
+```

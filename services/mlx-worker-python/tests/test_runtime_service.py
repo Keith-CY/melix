@@ -145,6 +145,55 @@ def test_load_model_returns_handle_and_lists_model() -> None:
     assert listed.model_handles == [response.model_handle]
 
 
+def test_list_loaded_models_reports_float_throughput_defaults() -> None:
+    service = build_runtime_service()
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
+
+    assert listed.model_handles == [response.model_handle]
+    assert len(listed.loaded_models) == 1
+    assert listed.loaded_models[0].prompt_tps == 0.0
+    assert listed.loaded_models[0].generation_tps == 0.0
+    assert isinstance(listed.loaded_models[0].prompt_tps, float)
+    assert isinstance(listed.loaded_models[0].generation_tps, float)
+
+
+def test_loaded_model_throughput_ignores_missing_invalid_and_unknown_updates() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FakeBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    registry.record_loaded_model_throughput(loaded.handle)
+    registry.record_loaded_model_throughput(
+        loaded.handle,
+        prompt_tps="not-a-number",
+        generation_tps=float("nan"),
+    )
+    registry.record_loaded_model_throughput(
+        "missing-model",
+        prompt_tps=123.0,
+        generation_tps=45.0,
+    )
+    registry.record_loaded_model_throughput(
+        loaded.handle,
+        prompt_tps=None,
+        generation_tps=12.5,
+    )
+
+    summary = registry.list_loaded_model_summaries()[0]
+    assert summary.prompt_tps == 0.0
+    assert summary.generation_tps == 12.5
+
+
 def test_warmup_model_runs_loaded_text_model_and_reports_executor_stats() -> None:
     service = build_runtime_service()
     load_response = service.LoadModel(

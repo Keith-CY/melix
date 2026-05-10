@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
 from worker.engine import engine_core as engine_core_module
@@ -115,6 +117,80 @@ class MetadataStreamingBackend:
             parser_observation="flush_tokens=2",
             prompt_tokens=3,
             completion_tokens=2,
+            finish_reason="stop",
+        )
+
+
+class ThroughputStreamingBackend:
+    runtime_name = "fake-mlx"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        _ = model_spec
+        return 2048
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        _ = cancel_event
+        yield RuntimeTokenEvent(
+            text="fast",
+            prompt_tokens=4,
+            completion_tokens=1,
+            prompt_tps=321.5,
+            generation_tps=42.25,
+            finish_reason="stop",
+        )
+
+
+class DecodeThroughputVLMRuntime:
+    runtime_name = "fake-vlm"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        _ = model_spec
+        return 2048
+
+    def last_probe_snapshot(self):
+        return SimpleNamespace(
+            preprocess_latency_ms=0.0,
+            preprocess_input_bytes=0,
+            preprocess_peak_memory_bytes=0,
+            first_token_latency_ms=0.0,
+        )
+
+    def prefill(self, request_id, loaded_model, messages, execution_ext=None):
+        _ = loaded_model
+        _ = messages
+        _ = execution_ext
+        return SimpleNamespace(
+            decode_handle=f"decode:{request_id}",
+            block_table_id="block-table-1",
+            block_table=common_pb2.BlockTable(),
+            prompt_tokens=9,
+        )
+
+    def has_decode_session(self, decode_handle):
+        _ = decode_handle
+        return True
+
+    def decode_tokens(self, loaded_model, decode_handle, sampling, cancel_event, execution_ext=None):
+        _ = loaded_model
+        _ = decode_handle
+        _ = sampling
+        _ = cancel_event
+        _ = execution_ext
+        yield RuntimeTokenEvent(
+            text="vision",
+            prompt_tokens=9,
+            completion_tokens=1,
+            prompt_tps=88.5,
+            generation_tps=17.25,
             finish_reason="stop",
         )
 
@@ -631,6 +707,100 @@ def test_generate_stream_forwards_token_metadata_and_effective_parser_receipt() 
     assert completed.parser_metrics["stream_interval_delta_flush_count"] == "1"
     assert '"tool_parser_mode":"qwen"' in completed.parser_metrics["effective_parser_config_json"]
     assert usage.completion_tokens == 2
+
+
+def test_generate_stream_updates_loaded_model_status_throughput_fields() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=ThroughputStreamingBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-throughput-status"),
+            model_handle=load_response.model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Emit throughput")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    listed = runtime_service.ListLoadedModels(runtime_pb2.ListLoadedModelsRequest(), context=None)
+
+    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["fast"]
+    assert listed.loaded_models[0].prompt_tps == 321.5
+    assert listed.loaded_models[0].generation_tps == 42.25
+
+
+def test_generate_stream_keeps_loaded_model_status_defaults_without_throughput() -> None:
+    runtime_service, inference_service, model_handle = build_services()
+
+    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=False), context=None))
+    listed = runtime_service.ListLoadedModels(runtime_pb2.ListLoadedModelsRequest(), context=None)
+
+    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["Hello", " world"]
+    assert listed.loaded_models[0].prompt_tps == 0.0
+    assert listed.loaded_models[0].generation_tps == 0.0
+
+
+def test_decode_updates_loaded_model_status_throughput_fields() -> None:
+    registry = WorkerRegistry(
+        vlm_runtime=DecodeThroughputVLMRuntime(),  # type: ignore[arg-type]
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_vlm_model()),
+        context=None,
+    )
+    prefill = inference_service.Prefill(
+        inference_pb2.PrefillRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(request_id="req-vlm-throughput"),
+                model_handle=load_response.model_handle,
+            ),
+            messages=[
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text="Describe the image")],
+                )
+            ],
+            return_decode_handle=True,
+        ),
+        context=None,
+    )
+
+    events = list(
+        inference_service.Decode(
+            inference_pb2.DecodeRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id="req-vlm-throughput"),
+                    model_handle=load_response.model_handle,
+                ),
+                decode_handle=prefill.decode_handle,
+                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+            ),
+            context=None,
+        )
+    )
+    listed = runtime_service.ListLoadedModels(runtime_pb2.ListLoadedModelsRequest(), context=None)
+
+    assert prefill.ok is True
+    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["vision"]
+    assert listed.loaded_models[0].prompt_tps == 88.5
+    assert listed.loaded_models[0].generation_tps == 17.25
 
 
 def test_generate_stream_exports_stop_contract_metrics_and_stops_at_turn_boundary() -> None:
