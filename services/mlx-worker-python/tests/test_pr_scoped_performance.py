@@ -1933,6 +1933,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "code-eval-test-count-nonblank-streaming",
         "deterministic-embedding-duplicate-input-cache",
         "deterministic-embedding-project-digest-allocation",
+        "deterministic-ocr-token-count-scan",
         "deterministic-image-edit-digest-reuse",
         "deterministic-image-output-byte-accounting",
         "deterministic-rerank-query-context-reuse",
@@ -4304,3 +4305,30 @@ def test_vision_family_prompt_token_count_probe_script_emits_metrics(
     assert metrics["token_count"] > 0
     assert metrics["split_calls_mean"] == 0.0
     assert metrics["peak_bytes_mean"] > 0
+
+
+def test_scope_report_selects_deterministic_ocr_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/deterministic_ocr_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "deterministic-ocr-token-count-scan"
+
+
+def test_deterministic_ocr_token_count_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_OCR_TOKEN_COUNT_ITERATIONS", "10")
+    monkeypatch.setenv("MELIX_OCR_TOKEN_COUNT_SAMPLES", "1")
+
+    runpy.run_path(str(REPO_ROOT / "scripts/deterministic_ocr_token_count_probe.py"), run_name="__main__")
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iterations"] == 10.0
+    assert metrics["token_count"] > 0

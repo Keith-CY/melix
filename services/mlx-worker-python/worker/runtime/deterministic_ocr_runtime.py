@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from threading import Event
 
 from worker.runtime.deterministic_delay import sleep_if_configured
@@ -64,7 +65,7 @@ class DeterministicOCRRuntime:
         return prepared
 
     def prompt_token_count(self, prepared_request: PreparedVisionRequest) -> int:
-        prompt_tokens = len(prepared_request.prompt_text.split())
+        prompt_tokens = _whitespace_token_count(prepared_request.prompt_text)
         image_tokens = sum(max(1, image.byte_length // 8) for image in prepared_request.images)
         return max(1, prompt_tokens + image_tokens)
 
@@ -95,7 +96,7 @@ class DeterministicOCRRuntime:
         yield RuntimeTokenEvent(
             text=output_text,
             prompt_tokens=self.prompt_token_count(prepared_request),
-            completion_tokens=max(1, len(output_text.split())),
+            completion_tokens=max(1, _whitespace_token_count(output_text)),
             finish_reason="stop_sequence" if output_text != extracted_text else "stop",
         )
 
@@ -191,3 +192,16 @@ class DeterministicOCRRuntime:
             prompt_hash_hex=prompt_hash_hex,
             multimodal_hash_hex=digest.hexdigest(),
         )
+
+
+@lru_cache(maxsize=512)
+def _whitespace_token_count(text: str) -> int:
+    token_count = 0
+    in_token = False
+    for character in text:
+        if character.isspace():
+            in_token = False
+        elif not in_token:
+            token_count += 1
+            in_token = True
+    return token_count

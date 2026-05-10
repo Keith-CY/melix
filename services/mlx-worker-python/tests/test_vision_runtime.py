@@ -10,7 +10,7 @@ from worker.engine.maintenance_core import MaintenanceCore
 from worker.grpc_server import WorkerCacheService, WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
+from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime, _whitespace_token_count
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime import multimodal_preprocessing
@@ -124,6 +124,38 @@ def test_generate_streams_ocr_text_from_inline_image_bytes() -> None:
     assert model_info.ok is True
     assert model_info.supported_modalities == ["text", "image"]
     assert model_info.supported_tasks == ["ocr", "generate"]
+
+
+def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
+    prompt_text = "  extract\tthe\nreceipt   total  "
+    request = PreparedVisionRequest(
+        prompt_text=prompt_text,
+        images=[
+            PreparedImageInput(
+                bytes_data=b"Receipt Total 42" * 8,
+                source_kind="inline",
+                reference="inline:receipt.txt",
+                mime_type="text/plain",
+                format="txt",
+                filename="receipt.txt",
+                sha256_hex="a" * 64,
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=128,
+        preprocess_peak_memory_bytes=128,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    runtime = DeterministicOCRRuntime()
+
+    assert _whitespace_token_count(prompt_text) == len(prompt_text.split())
+    assert runtime.prompt_token_count(request) == len(prompt_text.split()) + max(
+        1,
+        request.images[0].byte_length // 8,
+    )
 
 
 def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> None:
