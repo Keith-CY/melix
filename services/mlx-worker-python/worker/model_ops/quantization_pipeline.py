@@ -903,7 +903,7 @@ def _smoke_required_files_for_backend(
 def _mlx_lm_index_weight_files(bundle_path: Path) -> tuple[str, ...]:
     index_file = "model.safetensors.index.json"
     try:
-        payload = json.loads((bundle_path / index_file).read_text(encoding="utf-8"))
+        payload = json.loads((bundle_path / index_file).read_bytes())
     except (OSError, json.JSONDecodeError):
         return (index_file, "model.safetensors")
     weight_map = payload.get("weight_map")
