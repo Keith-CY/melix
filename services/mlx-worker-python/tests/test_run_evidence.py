@@ -8,6 +8,7 @@ from worker.productization.run_evidence import (
     RUN_EVIDENCE_SCHEMA_VERSION,
     RunEvidenceArtifact,
     RunEvidenceEnvelope,
+    RunEvidenceModelMemorySummary,
     RunEvidenceMetric,
     RunEvidenceProbe,
     RunEvidenceValidationError,
@@ -37,6 +38,8 @@ def test_run_evidence_roundtrips_completed_failed_cancelled_and_fallback_runs() 
         assert payload["telemetry_summary"]["telemetry_failures"] == [
             "apple_silicon_telemetry_collection_missing"
         ]
+        assert payload["model_memory_summary"]["runtime_model_handle"] == "melix-dev-text::1"
+        assert payload["model_memory_summary"]["runtime_stats_model_resident_bytes"] == 8192
         if status == "fallback":
             assert payload["fallback_summary"]["fallback_count"] == 1
 
@@ -67,6 +70,7 @@ def test_run_evidence_validator_rejects_malformed_required_values() -> None:
             "metrics": {},
             "probe_timeline": [],
             "telemetry_summary": [],
+            "model_memory_summary": [],
             "artifacts": [],
             "failure_summary": [],
             "fallback_summary": [],
@@ -83,6 +87,7 @@ def test_run_evidence_validator_rejects_malformed_required_values() -> None:
     assert "metrics must be a list" in errors
     assert "probe_timeline must be a non-empty list" in errors
     assert "telemetry_summary must be an object" in errors
+    assert "model_memory_summary must be an object" in errors
     assert "artifacts must be a non-empty list" in errors
     assert "failure_summary must be an object" in errors
     assert "fallback_summary must be an object" in errors
@@ -421,6 +426,19 @@ def _evidence(*, status: str) -> RunEvidenceEnvelope:
             ),
         ),
         telemetry_summary=default_telemetry_summary(),
+        model_memory_summary=RunEvidenceModelMemorySummary(
+            runtime_model_handle="melix-dev-text::1",
+            runtime_model_id="melix-dev-text",
+            runtime_kind="text",
+            runtime_name="deterministic-text",
+            loaded_model_estimated_resident_bytes=4096,
+            runtime_stats_resident_bytes=8192,
+            runtime_stats_model_resident_bytes=8192,
+            load_triggered_by_run=True,
+            load_rss_before_bytes=1000,
+            load_rss_after_bytes=5000,
+            load_rss_delta_bytes=4000,
+        ),
         artifacts=(
             RunEvidenceArtifact(
                 kind="result",

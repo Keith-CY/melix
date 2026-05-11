@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import inspect
+import json
 from typing import Any
 
 import pytest
@@ -224,3 +225,102 @@ def test_installed_package_version_caches_missing_lookups(monkeypatch: pytest.Mo
     assert version_calls == 1
 
     runtime_utils.clear_installed_package_version_cache()
+
+
+def test_estimate_model_weight_resident_bytes_uses_indexed_unique_shards(tmp_path) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard_a = bundle / "model-00001-of-00002.safetensors"
+    shard_b = bundle / "model-00002-of-00002.safetensors"
+    shard_a.write_bytes(b"a" * 7)
+    shard_b.write_bytes(b"b" * 11)
+    (bundle / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "layers.0.weight": shard_a.name,
+                    "layers.empty.weight": "",
+                    "layers.1.weight": shard_b.name,
+                    "layers.2.weight": shard_a.name,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (bundle / "tokenizer.json").write_text("{}", encoding="utf-8")
+
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(bundle)) == 18
+
+
+def test_estimate_model_weight_resident_bytes_falls_back_to_top_level_weights(tmp_path) -> None:
+    bundle = tmp_path / "flat-model"
+    bundle.mkdir()
+    (bundle / "model.safetensors.index.json").write_text("{not-json", encoding="utf-8")
+    (bundle / "model.safetensors").write_bytes(b"weights")
+    (bundle / "adapter.npz").write_bytes(b"adapter")
+    (bundle / "README.md").write_text("ignore", encoding="utf-8")
+    nested = bundle / "nested"
+    nested.mkdir()
+    (nested / "ignored.safetensors").write_bytes(b"ignored")
+
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(bundle)) == len(b"weightsadapter")
+
+
+def test_estimate_model_weight_resident_bytes_ignores_malformed_index_and_unreadable_directory(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert runtime_utils.estimate_model_weight_resident_bytes("") == 0
+    missing_weight_map = tmp_path / "missing-weight-map"
+    missing_weight_map.mkdir()
+    (missing_weight_map / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(missing_weight_map)) == 0
+
+    original_is_file = runtime_utils.Path.is_file
+    original_is_dir = runtime_utils.Path.is_dir
+    original_iterdir = runtime_utils.Path.iterdir
+    unreadable_path = tmp_path / "unreadable"
+    unreadable_path.mkdir()
+
+    def fake_is_file(path):
+        if path == unreadable_path:
+            raise OSError("no file check")
+        return original_is_file(path)
+
+    def fake_is_dir(path):
+        if path == missing_weight_map:
+            return True
+        return original_is_dir(path)
+
+    def fake_iterdir(path):
+        if path == missing_weight_map:
+            raise OSError("no list")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(runtime_utils.Path, "is_file", fake_is_file)
+    monkeypatch.setattr(runtime_utils.Path, "is_dir", fake_is_dir)
+    monkeypatch.setattr(runtime_utils.Path, "iterdir", fake_iterdir)
+
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(unreadable_path)) == 0
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(missing_weight_map)) == 0
+
+
+def test_estimate_model_weight_resident_bytes_handles_file_missing_and_stat_errors(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weight_file = tmp_path / "model.safetensors"
+    weight_file.write_bytes(b"abc")
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(weight_file)) == 3
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(tmp_path / "missing")) == 0
+
+    original_stat = runtime_utils.Path.stat
+
+    def fake_stat(path):
+        if path == weight_file:
+            raise OSError("no stat")
+        return original_stat(path)
+
+    monkeypatch.setattr(runtime_utils.Path, "stat", fake_stat)
+
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(weight_file)) == 0

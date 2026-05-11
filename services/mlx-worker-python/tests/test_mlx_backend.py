@@ -1023,14 +1023,19 @@ def test_auto_backend_surfaces_import_failure_during_lazy_runtime_resolution(mon
     assert backend.runtime_name == "mlx-unavailable"
 
 
-def test_auto_backend_reports_zero_resident_bytes_estimate() -> None:
+def test_auto_backend_estimates_resident_bytes_from_model_weights(tmp_path: Path) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_bytes(b"weights")
     backend = AutoMLXBackend(
         load_fn=lambda model_source, **kwargs: (object(), FakeTokenizer()),
         stream_generate_fn=lambda *args, **kwargs: iter(()),
         sampler_factory=lambda **kwargs: "sampler",
     )
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.model_path = str(model_dir)
 
-    assert backend.estimate_resident_bytes(WorkerModelCatalog.dev_text_model()) == 0
+    assert backend.estimate_resident_bytes(model_spec) == len(b"weights")
 
 
 def test_runtime_name_falls_back_when_backend_has_no_runtime_name() -> None:

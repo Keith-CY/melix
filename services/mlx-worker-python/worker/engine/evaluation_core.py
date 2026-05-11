@@ -648,6 +648,7 @@ class EvaluationCore:
                 result=result,
                 samples=sample_records,
                 telemetry_collection=telemetry_collection,
+                model_memory_summary=self._model_memory_summary(loaded_model=loaded_model),
             )
             self._queue_store.transition(
                 queue_root=queue_root,
@@ -1088,6 +1089,7 @@ class EvaluationCore:
                 job=job,
                 result=result,
                 samples=(),
+                model_memory_summary=self._model_memory_summary(loaded_model=loaded_model),
             )
             self._queue_store.transition(
                 queue_root=queue_root,
@@ -1899,6 +1901,33 @@ class EvaluationCore:
         if not model_handle or self._registry is None:
             return None
         return self._registry.get_loaded_model(model_handle)
+
+    def _model_memory_summary(self, *, loaded_model) -> dict[str, object]:
+        if loaded_model is None or self._registry is None:
+            return {}
+        runtime_stats = getattr(self._registry, "runtime_stats", None)
+        stats = runtime_stats() if callable(runtime_stats) else None
+        runtime = getattr(loaded_model, "runtime", None)
+        spec = getattr(loaded_model, "spec", None)
+        return {
+            "runtime_model_handle": str(getattr(loaded_model, "handle", "") or ""),
+            "runtime_model_id": str(getattr(spec, "model_id", "") or ""),
+            "runtime_kind": str(getattr(loaded_model, "runtime_kind", "") or ""),
+            "runtime_name": str(getattr(runtime, "runtime_name", "") or ""),
+            "loaded_model_estimated_resident_bytes": int(
+                getattr(loaded_model, "estimated_resident_bytes", 0) or 0
+            ),
+            "runtime_stats_resident_bytes": int(getattr(stats, "resident_bytes", 0) or 0),
+            "runtime_stats_model_resident_bytes": int(getattr(stats, "model_resident_bytes", 0) or 0),
+            "runtime_stats_cache_resident_bytes": int(getattr(stats, "cache_resident_bytes", 0) or 0),
+            "runtime_stats_kv_cache_bytes": int(getattr(stats, "kv_cache_bytes", 0) or 0),
+            "runtime_stats_memory_headroom_bytes": int(getattr(stats, "memory_headroom_bytes", 0) or 0),
+            "load_triggered_by_run": False,
+            "load_rss_before_bytes": 0,
+            "load_rss_after_bytes": 0,
+            "load_rss_delta_bytes": 0,
+            "measurement_scope": "worker_registry",
+        }
 
     @staticmethod
     def _truthy_parameter(parameters: dict[str, str], key: str) -> bool:

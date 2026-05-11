@@ -12,6 +12,7 @@ from typing import Any
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.runtime_utils import (
     callable_accepts_kwarg as _callable_accepts_kwarg,
+    estimate_model_weight_resident_bytes as _estimate_model_weight_resident_bytes,
     first_declared_kwarg as _first_declared_kwarg,
     installed_package_version as _installed_package_version,
 )
@@ -601,7 +602,7 @@ class AutoMLXBackend:
         }
 
     def estimate_resident_bytes(self, model_spec) -> int:
-        return 0
+        return _estimate_model_weight_resident_bytes(str(getattr(model_spec, "model_path", "") or ""))
 
     def score_response(
         self,

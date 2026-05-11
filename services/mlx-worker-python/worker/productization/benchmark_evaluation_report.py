@@ -229,6 +229,7 @@ _CSV_EXPORT_NAMES = (
     "metrics",
     "probe_phases",
     "telemetry_summary",
+    "model_memory",
     "processes",
     "gate_results",
     "comparison_deltas",
@@ -325,6 +326,10 @@ def build_benchmark_evaluation_report(
         "baseline": _telemetry_summaries("baseline", baseline_evidence),
         "candidate": _telemetry_summaries("candidate", candidate_evidence),
     }
+    model_memory_summary = {
+        "baseline": _model_memory_summaries("baseline", baseline_evidence),
+        "candidate": _model_memory_summaries("candidate", candidate_evidence),
+    }
     process_attribution = {
         "baseline": _process_attribution_summaries("baseline", baseline_evidence),
         "candidate": _process_attribution_summaries("candidate", candidate_evidence),
@@ -376,6 +381,7 @@ def build_benchmark_evaluation_report(
         "probe_summary": probe_summary,
         "probe_timeline_summary": probe_summary,
         "telemetry_summary": telemetry_summary,
+        "model_memory_summary": model_memory_summary,
         "process_attribution": process_attribution,
         "comparison": comparison,
         "reproducibility_warnings": reproducibility_warnings,
@@ -441,6 +447,7 @@ def render_markdown_report(report: dict[str, object]) -> str:
     lines.extend(_render_run_summary_markdown(report.get("runs")))
     lines.extend(_render_gate_summary_markdown(report.get("gate_result")))
     lines.extend(_render_telemetry_summary_markdown(report.get("telemetry_summary")))
+    lines.extend(_render_model_memory_summary_markdown(report.get("model_memory_summary")))
     lines.extend(
         [
             "## Result Metrics",
@@ -743,6 +750,44 @@ def _telemetry_summaries(side: str, evidence_rows: list[dict[str, object]]) -> l
         process_attribution = telemetry.get("process_attribution")
         if isinstance(process_attribution, dict):
             summary["process_attribution"] = dict(process_attribution)
+        summaries.append(summary)
+    return summaries
+
+
+def _model_memory_summaries(side: str, evidence_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for evidence in evidence_rows:
+        memory = evidence.get("model_memory_summary")
+        if not isinstance(memory, dict):
+            continue
+        summary = {
+            "side": side,
+            "run_id": str(evidence.get("run_id") or ""),
+            "run_kind": str(evidence.get("run_kind") or ""),
+            "runtime_model_handle": str(memory.get("runtime_model_handle") or ""),
+            "runtime_model_id": str(memory.get("runtime_model_id") or ""),
+            "runtime_kind": str(memory.get("runtime_kind") or ""),
+            "runtime_name": str(memory.get("runtime_name") or ""),
+            "loaded_model_estimated_resident_bytes": _int_or_none(
+                memory.get("loaded_model_estimated_resident_bytes")
+            ) or 0,
+            "runtime_stats_model_resident_bytes": _int_or_none(
+                memory.get("runtime_stats_model_resident_bytes")
+            ) or 0,
+            "runtime_stats_resident_bytes": _int_or_none(memory.get("runtime_stats_resident_bytes")) or 0,
+            "runtime_stats_cache_resident_bytes": _int_or_none(
+                memory.get("runtime_stats_cache_resident_bytes")
+            ) or 0,
+            "runtime_stats_kv_cache_bytes": _int_or_none(memory.get("runtime_stats_kv_cache_bytes")) or 0,
+            "runtime_stats_memory_headroom_bytes": _int_or_none(
+                memory.get("runtime_stats_memory_headroom_bytes")
+            ) or 0,
+            "load_triggered_by_run": bool(memory.get("load_triggered_by_run")),
+            "load_rss_delta_bytes": _int_or_none(memory.get("load_rss_delta_bytes")) or 0,
+            "load_rss_before_bytes": _int_or_none(memory.get("load_rss_before_bytes")) or 0,
+            "load_rss_after_bytes": _int_or_none(memory.get("load_rss_after_bytes")) or 0,
+            "measurement_scope": str(memory.get("measurement_scope") or "worker_registry"),
+        }
         summaries.append(summary)
     return summaries
 
@@ -1174,6 +1219,30 @@ def _write_report_csv_outputs(report: dict[str, object], csv_paths: dict[str, Pa
         ),
     )
     _write_csv(
+        csv_paths["model_memory"],
+        _model_memory_csv_rows(report),
+        (
+            "side",
+            "run_id",
+            "run_kind",
+            "runtime_model_handle",
+            "runtime_model_id",
+            "runtime_kind",
+            "runtime_name",
+            "loaded_model_estimated_resident_bytes",
+            "runtime_stats_model_resident_bytes",
+            "runtime_stats_resident_bytes",
+            "runtime_stats_cache_resident_bytes",
+            "runtime_stats_kv_cache_bytes",
+            "runtime_stats_memory_headroom_bytes",
+            "load_triggered_by_run",
+            "load_rss_delta_bytes",
+            "load_rss_before_bytes",
+            "load_rss_after_bytes",
+            "measurement_scope",
+        ),
+    )
+    _write_csv(
         csv_paths["processes"],
         _process_csv_rows(report),
         (
@@ -1300,6 +1369,16 @@ def _telemetry_csv_rows(report: dict[str, object]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for side in ("baseline", "candidate"):
         rows.extend(_dict_list(telemetry_summary.get(side)))
+    return rows
+
+
+def _model_memory_csv_rows(report: dict[str, object]) -> list[dict[str, object]]:
+    model_memory_summary = report.get("model_memory_summary")
+    if not isinstance(model_memory_summary, dict):
+        return []
+    rows: list[dict[str, object]] = []
+    for side in ("baseline", "candidate"):
+        rows.extend(_dict_list(model_memory_summary.get(side)))
     return rows
 
 
@@ -1441,6 +1520,43 @@ def _render_telemetry_summary_markdown(telemetry_summary: object) -> list[str]:
             )
     if not has_rows:
         lines.append("| - | - | missing | - | - | - | telemetry_summary_missing |")
+    lines.append("")
+    return lines
+
+
+def _render_model_memory_summary_markdown(model_memory_summary: object) -> list[str]:
+    if not isinstance(model_memory_summary, dict):
+        return []
+    rows = [
+        row
+        for side in ("baseline", "candidate")
+        for row in _dict_list(model_memory_summary.get(side))
+    ]
+    if not rows:
+        return []
+    lines = [
+        "## Model Memory Summary",
+        "",
+        "| Side | Run ID | Model | Runtime | Loaded Model Resident | Registry Model Resident | Load RSS Delta | Scope |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | --- |",
+    ]
+    for row in rows:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_cell(row.get("side", "")),
+                    _markdown_cell(row.get("run_id", "")),
+                    _markdown_cell(row.get("runtime_model_id", "")),
+                    _markdown_cell(row.get("runtime_name") or row.get("runtime_kind", "")),
+                    _markdown_cell(_format_value(row.get("loaded_model_estimated_resident_bytes"))),
+                    _markdown_cell(_format_value(row.get("runtime_stats_model_resident_bytes"))),
+                    _markdown_cell(_format_value(row.get("load_rss_delta_bytes"))),
+                    _markdown_cell(row.get("measurement_scope", "")),
+                ]
+            )
+            + " |"
+        )
     lines.append("")
     return lines
 
@@ -1593,6 +1709,7 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
     _collect_evaluation_sample_probe_metrics(metrics, bundle.get("evaluation_samples", []))
     _collect_run_evidence_probe_metrics(metrics, bundle.get("run_evidence", []))
     _collect_run_evidence_telemetry_metrics(metrics, bundle.get("run_evidence", []))
+    _collect_run_evidence_model_memory_metrics(metrics, bundle.get("run_evidence", []))
     return metrics
 
 
@@ -1853,6 +1970,35 @@ def _collect_run_evidence_telemetry_metrics(metrics: dict[str, object], rows: ob
         metrics[f"telemetry.{run_kind}.{key}_mean"] = total / count
     for run_kind, count in failure_counts.items():
         metrics[f"telemetry.{run_kind}.telemetry_failure_count"] = float(count)
+
+
+def _collect_run_evidence_model_memory_metrics(metrics: dict[str, object], rows: object) -> None:
+    aggregates_by_key: dict[tuple[str, str], _NumericAggregate] = {}
+    for evidence in _dict_rows(rows):
+        run_kind = str(evidence.get("run_kind", "")).strip() or "run"
+        memory = evidence.get("model_memory_summary")
+        if not isinstance(memory, dict):
+            continue
+        for key, raw_value in memory.items():
+            if key in {
+                "runtime_model_handle",
+                "runtime_model_id",
+                "runtime_kind",
+                "runtime_name",
+                "measurement_scope",
+            }:
+                continue
+            value = _float_or_none(raw_value)
+            if value is None:
+                continue
+            aggregate_key = (run_kind, key)
+            aggregates_by_key[aggregate_key] = _update_numeric_aggregate(
+                aggregates_by_key.get(aggregate_key),
+                value,
+            )
+    for (run_kind, key), aggregate in aggregates_by_key.items():
+        total, count = aggregate
+        metrics[f"model_memory.{run_kind}.{key}_mean"] = total / count
 
 
 def _update_numeric_aggregate(

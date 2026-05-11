@@ -8,7 +8,10 @@ import logging
 import math
 import os
 from pathlib import Path
+import resource
 import shutil
+import subprocess
+import sys
 from threading import Event
 import time
 from typing import Any, Iterator, NoReturn
@@ -119,6 +122,22 @@ class ModelOperationManifestResult:
     manifest: dict[str, Any]
     manifest_path: Path
     output_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class BenchmarkLoadedModelResolution:
+    lazy_model_handle: str
+    loaded_model: Any
+    load_rss_before_bytes: int
+    load_rss_after_bytes: int
+
+    @property
+    def load_triggered_by_run(self) -> bool:
+        return bool(self.lazy_model_handle)
+
+    def __iter__(self):
+        yield self.lazy_model_handle
+        yield self.loaded_model
 
 
 def _split_capability_values(raw_value: str) -> list[str]:
@@ -1214,7 +1233,9 @@ class MaintenanceCore:
             self._benchmark_store = BenchmarkStore()
         telemetry_session = self._benchmark_store.start_telemetry_session(run_id=job.job_id)
         try:
-            lazy_model_handle, loaded_model = self._resolve_benchmark_loaded_model(request.model_handle)
+            resolved_model = self._resolve_benchmark_loaded_model(request.model_handle)
+            lazy_model_handle = resolved_model.lazy_model_handle
+            loaded_model = resolved_model.loaded_model
             runtime_evidence = self._runtime_evidence_for_loaded_model(loaded_model)
             parameters.update(runtime_evidence)
             if self._truthy_parameter(parameters, "require_live_model"):
@@ -1318,6 +1339,12 @@ class MaintenanceCore:
                 metrics,
                 task_kind=task_kind,
                 parameters=parameters,
+                model_memory_summary=self._model_memory_summary(
+                    loaded_model=loaded_model,
+                    load_triggered_by_run=resolved_model.load_triggered_by_run,
+                    load_rss_before_bytes=resolved_model.load_rss_before_bytes,
+                    load_rss_after_bytes=resolved_model.load_rss_after_bytes,
+                ),
             )
             report_path.write_text(report_markdown, encoding="utf-8")
             job_record = build_serving_benchmark_job(
@@ -1363,6 +1390,12 @@ class MaintenanceCore:
                 context_rows=text_context_rows,
                 batch_rows=text_batch_rows,
                 telemetry_collection=telemetry_collection,
+                model_memory_summary=self._model_memory_summary(
+                    loaded_model=loaded_model,
+                    load_triggered_by_run=resolved_model.load_triggered_by_run,
+                    load_rss_before_bytes=resolved_model.load_rss_before_bytes,
+                    load_rss_after_bytes=resolved_model.load_rss_after_bytes,
+                ),
             )
             (output_dir / "bench-summary.json").write_text(
                 json.dumps(job_record.to_dict(), indent=2) + "\n",
@@ -1461,7 +1494,9 @@ class MaintenanceCore:
         lazy_model_handle = ""
         loaded_model = None
         try:
-            lazy_model_handle, loaded_model = self._resolve_benchmark_loaded_model(request.model_handle)
+            resolved_model = self._resolve_benchmark_loaded_model(request.model_handle)
+            lazy_model_handle = resolved_model.lazy_model_handle
+            loaded_model = resolved_model.loaded_model
             runtime_evidence = self._runtime_evidence_for_loaded_model(loaded_model)
             matrix_parameters = {**queue_parameters, **runtime_evidence}
             task_kind = self._resolved_benchmark_matrix_task_kind(
@@ -2218,11 +2253,17 @@ class MaintenanceCore:
             ),
         ]
 
-    def _resolve_benchmark_loaded_model(self, model_handle: str):
+    def _resolve_benchmark_loaded_model(self, model_handle: str) -> BenchmarkLoadedModelResolution:
         if model_handle:
             loaded_model = self._registry.get_loaded_model(model_handle)
             if loaded_model is not None:
-                return "", loaded_model
+                rss_bytes = self._current_process_rss_bytes()
+                return BenchmarkLoadedModelResolution(
+                    lazy_model_handle="",
+                    loaded_model=loaded_model,
+                    load_rss_before_bytes=rss_bytes,
+                    load_rss_after_bytes=rss_bytes,
+                )
 
         model_id = model_handle.split("::", 1)[0] if model_handle else "melix-dev-text"
         model_spec = self._registry.model_catalog.get(model_id)
@@ -2232,8 +2273,80 @@ class MaintenanceCore:
                 message="Unknown benchmark model.",
                 details={"model_id": model_id},
             )
+        load_rss_before_bytes = self._current_process_rss_bytes()
         loaded_model = self._registry.load_model(model_spec)
-        return loaded_model.handle, loaded_model
+        load_rss_after_bytes = self._current_process_rss_bytes()
+        return BenchmarkLoadedModelResolution(
+            lazy_model_handle=loaded_model.handle,
+            loaded_model=loaded_model,
+            load_rss_before_bytes=load_rss_before_bytes,
+            load_rss_after_bytes=load_rss_after_bytes,
+        )
+
+    @staticmethod
+    def _current_process_rss_bytes() -> int:
+        statm_path = Path(f"/proc/{os.getpid()}/statm")
+        try:
+            parts = statm_path.read_text(encoding="ascii").split()
+            if len(parts) >= 2:
+                resident_pages = int(parts[1])
+                page_size = int(os.sysconf("SC_PAGE_SIZE"))
+                return max(resident_pages * page_size, 0)
+        except (OSError, ValueError):
+            pass
+        try:
+            output = subprocess.check_output(
+                ["ps", "-o", "rss=", "-p", str(os.getpid())],
+                text=True,
+                timeout=1.0,
+            )
+            rss_kib = int(output.strip().splitlines()[-1])
+            return max(rss_kib * 1024, 0)
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            pass
+        try:
+            rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        except Exception:
+            return 0
+        if rss <= 0:
+            return 0
+        if sys.platform == "darwin":
+            return rss
+        return rss * 1024
+
+    def _model_memory_summary(
+        self,
+        *,
+        loaded_model,
+        load_triggered_by_run: bool = False,
+        load_rss_before_bytes: int = 0,
+        load_rss_after_bytes: int = 0,
+    ) -> dict[str, object]:
+        stats = self._registry.runtime_stats()
+        runtime = getattr(loaded_model, "runtime", None)
+        spec = getattr(loaded_model, "spec", None)
+        return {
+            "runtime_model_handle": str(getattr(loaded_model, "handle", "") or ""),
+            "runtime_model_id": str(getattr(spec, "model_id", "") or ""),
+            "runtime_kind": str(getattr(loaded_model, "runtime_kind", "") or ""),
+            "runtime_name": str(getattr(runtime, "runtime_name", "") or ""),
+            "loaded_model_estimated_resident_bytes": int(
+                getattr(loaded_model, "estimated_resident_bytes", 0) or 0
+            ),
+            "runtime_stats_resident_bytes": int(getattr(stats, "resident_bytes", 0) or 0),
+            "runtime_stats_model_resident_bytes": int(getattr(stats, "model_resident_bytes", 0) or 0),
+            "runtime_stats_cache_resident_bytes": int(getattr(stats, "cache_resident_bytes", 0) or 0),
+            "runtime_stats_kv_cache_bytes": int(getattr(stats, "kv_cache_bytes", 0) or 0),
+            "runtime_stats_memory_headroom_bytes": int(getattr(stats, "memory_headroom_bytes", 0) or 0),
+            "load_triggered_by_run": bool(load_triggered_by_run),
+            "load_rss_before_bytes": max(int(load_rss_before_bytes or 0), 0),
+            "load_rss_after_bytes": max(int(load_rss_after_bytes or 0), 0),
+            "load_rss_delta_bytes": max(
+                int(load_rss_after_bytes or 0) - int(load_rss_before_bytes or 0),
+                0,
+            ) if load_triggered_by_run else 0,
+            "measurement_scope": "worker_registry",
+        }
 
     @staticmethod
     def _truthy_parameter(parameters: dict[str, str], key: str) -> bool:
@@ -3810,8 +3923,10 @@ class MaintenanceCore:
         *,
         task_kind: str,
         parameters: dict[str, str] | None = None,
+        model_memory_summary: dict[str, object] | None = None,
     ) -> str:
         parameters = parameters or {}
+        model_memory_summary = model_memory_summary or {}
         lines = [
             "# Melix Bench",
             "",
@@ -3824,6 +3939,19 @@ class MaintenanceCore:
             f"- runtime_live_model: {parameters.get('runtime_live_model', '')}",
             "",
         ]
+        if model_memory_summary:
+            lines.extend(
+                [
+                    "## Model Memory",
+                    "",
+                    f"- runtime_model_handle: {model_memory_summary.get('runtime_model_handle', '')}",
+                    f"- loaded_model_estimated_resident_bytes: {model_memory_summary.get('loaded_model_estimated_resident_bytes', 0)}",
+                    f"- runtime_stats_model_resident_bytes: {model_memory_summary.get('runtime_stats_model_resident_bytes', 0)}",
+                    f"- load_triggered_by_run: {model_memory_summary.get('load_triggered_by_run', False)}",
+                    f"- load_rss_delta_bytes: {model_memory_summary.get('load_rss_delta_bytes', 0)}",
+                    "",
+                ]
+            )
         for metric in metrics:
             lines.append(f"- {metric.name}: {metric.value:.2f} {metric.unit}")
         return "\n".join(lines) + "\n"
