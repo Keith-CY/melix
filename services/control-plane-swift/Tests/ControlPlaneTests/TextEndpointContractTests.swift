@@ -1540,6 +1540,41 @@ struct TextEndpointContractTests {
         #expect(responses.maxTokens == messages.maxTokens)
     }
 
+    @Test("chat completions default to non-stream while other text endpoints default to stream")
+    func chatCompletionsDefaultToNonStreamWhileOtherTextEndpointsDefaultToStream() throws {
+        let translator = ChatRequestTranslator()
+
+        let chat = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")]
+            )
+        )
+        let completions = try translator.normalize(
+            OpenAICompletionsRequest(
+                model: "melix-dev-text",
+                prompt: "Hello"
+            )
+        )
+        let responses = try translator.normalize(
+            OpenAIResponsesRequest(
+                model: "melix-dev-text",
+                input: .text("Hello")
+            )
+        )
+        let messages = try translator.normalize(
+            MelixMessagesRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")]
+            )
+        )
+
+        #expect(!chat.stream)
+        #expect(completions.stream)
+        #expect(responses.stream)
+        #expect(messages.stream)
+    }
+
     @Test("system and instructions fields align across chat, responses, and messages requests")
     func systemFieldsNormalizeConsistently() throws {
         let translator = ChatRequestTranslator()
@@ -1753,7 +1788,8 @@ struct TextEndpointContractTests {
         )
 
         #expect(translated.requestID == "req-chat-wrapper")
-        #expect(translated.workerRequest.stream)
+        #expect(!translated.stream)
+        #expect(!translated.workerRequest.stream)
         #expect(translated.workerRequest.sampling.temperature == 0.7)
         #expect(translated.workerRequest.sampling.topP == 1.0)
         #expect(translated.workerRequest.sampling.maxOutputTokens == 256)

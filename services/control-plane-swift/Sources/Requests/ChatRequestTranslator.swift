@@ -1652,7 +1652,7 @@ public struct ChatRequestTranslator: Sendable {
             endpoint: endpoint,
             model: model,
             messages: messages,
-            stream: stream ?? true,
+            stream: stream ?? (endpoint != .chatCompletions),
             includeUsage: includeUsage ?? false,
             temperature: temperature,
             topP: topP,

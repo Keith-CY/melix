@@ -490,7 +490,7 @@ Reasoning mode, effort, parser mode, structured-output mode, effective template 
 
 ## Structured Text Streaming
 
-The shipped text HTTP surfaces are stream-first: Chat Completions, Completions, Responses, and Messages normalize into one worker `GenerateRequest` shape. Native Ollama `/api/*` routes and new non-stream behavior are outside this contract.
+The shipped text HTTP surfaces normalize into one worker `GenerateRequest` shape. Chat Completions supports both SSE and buffered JSON response modes, while Completions, Responses, and Messages remain stream-first. Native Ollama `/api/*` routes are outside this contract.
 
 Reasoning policy is resolved once in the Swift request layer. Precedence is:
 
@@ -678,7 +678,7 @@ The control plane protocol is richer than the public HTTP surface, but it must m
 
 | Public API | Control plane intent |
 |---|---|
-| `POST /v1/chat/completions` | parse request, bind session context, dispatch to scheduler |
+| `POST /v1/chat/completions` | parse request, bind session context, dispatch to scheduler, and return either SSE chunks or a buffered `chat.completion` JSON object |
 | `POST /v1/responses` | translate response semantics into internal request plus event stream |
 | `POST /v1/messages` | normalize messages, reasoning, and tool semantics |
 | `POST /v1/embeddings` | dispatch directly to embed-capable workers |
