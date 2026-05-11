@@ -738,8 +738,10 @@ def test_agentic_tool_trace_helpers_cover_optional_field_validation_and_segments
     sample = {
         "trace_id": "trace-helper",
         "question": "What is in the image?",
+        "media_refs": [{"id": "image-helper", "uri": "images/helper.jpg"}],
+        "tools": [{"name": "image_crop"}],
         "turns": [
-            {"role": "user", "content": "Inspect it."},
+            {"role": "user", "content": "Inspect it.", "media_refs": ["image-helper"]},
             {
                 "role": "assistant",
                 "tool_call": {
@@ -757,6 +759,7 @@ def test_agentic_tool_trace_helpers_cover_optional_field_validation_and_segments
         ],
         "final_answer": "SECRET-HINT",
         "expected_answer": "SECRET-HINT",
+        "evidence_ids": ["image-helper"],
         "leakage_terms": ["SECRET-HINT"],
     }
 
@@ -767,9 +770,22 @@ def test_agentic_tool_trace_helpers_cover_optional_field_validation_and_segments
     )
 
     assert normalized["turns"][2]["observation"] == {"text": "SECRET-HINT is visible."}
+    sample["turns"][0]["media_refs"].append("mutated")
+    sample["turns"][1]["tool_call"]["arguments"]["hint"] = "MUTATED-HINT"
+    sample["media_refs"].append({"id": "mutated"})
+    sample["tools"].append({"name": "mutated"})
+    sample["evidence_ids"].append("mutated")
+    assert normalized["turns"][0]["media_refs"] == ["image-helper"]
+    assert normalized["turns"][1]["tool_call"]["arguments"] == {"hint": "SECRET-HINT"}
+    assert normalized["media_refs"] == [{"id": "image-helper", "uri": "images/helper.jpg"}]
+    assert normalized["tools"] == [{"name": "image_crop"}]
+    assert normalized["evidence_ids"] == ["image-helper"]
     assert training_dataset_module._agentic_trace_leakage_terms(normalized) == ["SECRET-HINT"]
     assert training_dataset_module._sample_token_counts(normalized, "agentic_tool_trace")[1] == 1
-    assert "SECRET-HINT is visible." in training_dataset_module._sample_text_segments(normalized)
+    assert "SECRET-HINT is visible." in training_dataset_module._sample_text_segments(
+        normalized,
+        format_name="agentic_tool_trace",
+    )
     assert training_dataset_module._convert_local_rows(
         [sample],
         "agentic_tool_trace",
@@ -798,6 +814,75 @@ def test_agentic_tool_trace_helpers_cover_optional_field_validation_and_segments
             max_characters_per_sample=0,
         )
     assert invalid_media_exc.value.message == "agentic_tool_trace media_refs must be an array."
+
+
+def test_agentic_tool_trace_local_conversion_does_not_inject_optional_defaults() -> None:
+    minimal_sample = {
+        "trace_id": "trace-minimal",
+        "question": "What is visible?",
+        "turns": [{"role": "assistant", "content": "A sign is visible."}],
+        "final_answer": "A sign is visible.",
+    }
+
+    format_name, converted = training_dataset_module._convert_local_rows(
+        [minimal_sample],
+        "agentic_tool_trace",
+    )
+
+    assert format_name == "agentic_tool_trace"
+    assert converted == [minimal_sample]
+
+
+def test_agentic_tool_trace_quality_uses_explicit_format_dispatch_and_content_dedup() -> None:
+    base_trace = {
+        "question": "What is visible?",
+        "turns": [
+            {"role": "user", "content": "Inspect it."},
+            {
+                "role": "assistant",
+                "tool_call": {
+                    "id": "call-1",
+                    "name": "image_crop",
+                    "arguments": {"media_ref": "image-1"},
+                },
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-1",
+                "observation": {"text": "Hidden oracle says SECRET-LABEL."},
+            },
+            {"role": "assistant", "content": "The sign says SECRET-LABEL."},
+        ],
+        "final_answer": "SECRET-LABEL",
+        "expected_answer": "SECRET-LABEL",
+        "leakage_terms": ["SECRET-LABEL"],
+    }
+    first = {"trace_id": "trace-1", **base_trace}
+    second = {"trace_id": "trace-2", **base_trace}
+    collision_shape = {
+        "trace_id": "not-agentic",
+        "turns": [{"role": "assistant", "content": "SECRET-LABEL"}],
+        "text": "fallback text",
+        "leakage_terms": ["SECRET-LABEL"],
+    }
+
+    quality, _ = training_dataset_module._build_quality_and_token_stats(
+        [first, second],
+        "agentic_tool_trace",
+    )
+
+    assert quality["duplicate_count"] == 1
+    assert quality["duplicate_sample_indices"] == [1]
+    assert training_dataset_module._sample_text_segments(collision_shape) == ["fallback text"]
+    assert training_dataset_module._sample_text_segments(
+        collision_shape,
+        format_name="agentic_tool_trace",
+    ) == ["SECRET-LABEL"]
+    assert training_dataset_module._dirty_sample_reasons(collision_shape) == []
+    assert training_dataset_module._dirty_sample_reasons(
+        collision_shape,
+        format_name="agentic_tool_trace",
+    ) == ["leakage_terms"]
 
 
 @pytest.mark.parametrize(
@@ -919,8 +1004,10 @@ def test_agentic_tool_trace_helpers_cover_defensive_non_dict_turn_paths() -> Non
     assert metrics["agentic_trace_count"] == 1
     assert metrics["tool_call_count"] == 1
     assert metrics["tool_observation_count"] == 1
-    assert training_dataset_module._sample_text_segments(sample) == [
-        "trace-defensive",
+    assert training_dataset_module._sample_text_segments(
+        sample,
+        format_name="agentic_tool_trace",
+    ) == [
         "What is visible?",
         "raw observation",
         "image_crop",

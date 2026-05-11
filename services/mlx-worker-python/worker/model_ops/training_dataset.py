@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import heapq
+import copy
 import json
 from itertools import chain
 from contextlib import ExitStack
@@ -924,7 +925,7 @@ def _normalize_agentic_tool_trace_sample(
                         message="agentic_tool_trace assistant tool calls must include id and name.",
                         details={"turn_index": str(turn_index)},
                     )
-                normalized_tool_call = dict(tool_call)
+                normalized_tool_call = copy.deepcopy(tool_call)
                 normalized_tool_call["id"] = call_id
                 normalized_tool_call["name"] = name
                 normalized_turn["tool_call"] = normalized_tool_call
@@ -980,7 +981,7 @@ def _normalize_agentic_tool_trace_sample(
                     message="agentic_tool_trace turn media_refs must be an array.",
                     details={"turn_index": str(turn_index)},
                 )
-            normalized_turn["media_refs"] = media_refs
+            normalized_turn["media_refs"] = list(media_refs)
 
         normalized_turns.append(normalized_turn)
 
@@ -1020,7 +1021,7 @@ def _copy_optional_agentic_trace_fields(
                 if term
             ]
         else:
-            payload[field] = value
+            payload[field] = list(value)
 
     if "expected_answer" in sample:
         payload["expected_answer"] = str(sample.get("expected_answer", "")).strip()
@@ -1550,19 +1551,24 @@ def _convert_local_row(
     if template == "calibration":
         return {"text": row.get("text")}
     if template == "agentic_tool_trace":
-        return {
+        converted = {
             "trace_id": row.get("trace_id"),
             "question": row.get("question"),
-            "media_refs": row.get("media_refs", []),
-            "tools": row.get("tools", []),
             "turns": row.get("turns"),
             "final_answer": row.get("final_answer"),
-            "expected_answer": row.get("expected_answer", ""),
-            "evidence_ids": row.get("evidence_ids", []),
-            "reward": row.get("reward", {}),
-            "fatal_stage": row.get("fatal_stage", ""),
-            "leakage_terms": row.get("leakage_terms", []),
         }
+        for field in (
+            "media_refs",
+            "tools",
+            "expected_answer",
+            "evidence_ids",
+            "reward",
+            "fatal_stage",
+            "leakage_terms",
+        ):
+            if field in row:
+                converted[field] = row[field]
+        return converted
     if template == "alpaca":
         instruction = str(row.get("instruction", "")).strip()
         input_text = str(row.get("input", "")).strip()
@@ -1704,11 +1710,7 @@ def _build_quality_and_token_stats(
     dirty_samples_append = dirty_samples.append
     canonical_sample_digest = _canonical_sample_digest
     prompt_completion_duplicate_key = _prompt_completion_duplicate_key
-    dirty_sample_reasons = (
-        _prompt_completion_dirty_sample_reasons
-        if is_prompt_completion
-        else _dirty_sample_reasons
-    )
+    dirty_sample_reasons = _prompt_completion_dirty_sample_reasons if is_prompt_completion else None
     sample_token_counts = _sample_token_counts
     whitespace_token_count = _whitespace_token_count
     quality_report_sample_limit = _QUALITY_REPORT_SAMPLE_LIMIT
@@ -1717,6 +1719,8 @@ def _build_quality_and_token_stats(
         sample_count += 1
         if is_prompt_completion:
             sample_identity = prompt_completion_duplicate_key(sample)
+        elif format_name == "agentic_tool_trace":
+            sample_identity = _agentic_trace_duplicate_key(sample)
         else:
             sample_identity = canonical_sample_digest(sample)
         if sample_identity in seen:
@@ -1725,7 +1729,11 @@ def _build_quality_and_token_stats(
                 duplicate_indices_append(index)
         else:
             seen.add(sample_identity)
-        reasons = dirty_sample_reasons(sample)
+        reasons = (
+            dirty_sample_reasons(sample)
+            if dirty_sample_reasons is not None
+            else _dirty_sample_reasons(sample, format_name=format_name)
+        )
         if reasons:
             dirty_count += 1
             if len(dirty_samples) < quality_report_sample_limit:
@@ -1965,7 +1973,7 @@ def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int,
         )
 
     if format_name == "agentic_tool_trace":
-        prompt_text = " ".join(_agentic_trace_prompt_segments(sample))
+        prompt_text = " ".join(_agentic_trace_prompt_token_segments(sample))
         return (
             _whitespace_token_count(prompt_text),
             _whitespace_token_count(str(sample.get("final_answer", ""))),
@@ -1974,9 +1982,9 @@ def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int,
     return 0, _whitespace_token_count(str(sample.get("text", "")))
 
 
-def _dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:
+def _dirty_sample_reasons(sample: dict[str, Any], *, format_name: str = "") -> list[str]:
     reasons: list[str] = []
-    for text in _sample_text_segments(sample):
+    for text in _sample_text_segments(sample, format_name=format_name):
         if _contains_problematic_control_characters(text):
             reasons.append("control_characters")
             break
@@ -2002,7 +2010,7 @@ def _dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:
             if prev_content and prev_content == last_content:
                 reasons.append("echo_response")
 
-    if "trace_id" in sample and "turns" in sample:
+    if format_name == "agentic_tool_trace":
         if _agentic_trace_leakage_terms(sample):
             reasons.append("leakage_terms")
 
@@ -2033,8 +2041,8 @@ def _prompt_completion_dirty_sample_reasons(sample: dict[str, Any]) -> list[str]
     return []
 
 
-def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
-    if "trace_id" in sample and "turns" in sample:
+def _sample_text_segments(sample: dict[str, Any], *, format_name: str = "") -> list[str]:
+    if format_name == "agentic_tool_trace":
         return _agentic_trace_text_segments(sample)
     if "messages" in sample:
         messages = sample.get("messages", [])
@@ -2068,7 +2076,6 @@ def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
 
 def _agentic_trace_text_segments(sample: dict[str, Any]) -> list[str]:
     segments: list[str] = [
-        str(sample.get("trace_id", "")),
         str(sample.get("question", "")),
         str(sample.get("final_answer", "")),
         str(sample.get("expected_answer", "")),
@@ -2094,7 +2101,7 @@ def _agentic_trace_text_segments(sample: dict[str, Any]) -> list[str]:
     return [segment for segment in segments if segment]
 
 
-def _agentic_trace_prompt_segments(sample: dict[str, Any]) -> list[str]:
+def _agentic_trace_prompt_token_segments(sample: dict[str, Any]) -> list[str]:
     return _agentic_trace_leakage_scan_segments(sample)
 
 
@@ -2149,6 +2156,12 @@ def _prompt_completion_duplicate_key(sample: dict[str, Any]) -> tuple[str, str] 
         if isinstance(prompt, str) and isinstance(completion, str):
             return prompt, completion
     return _canonical_sample_digest(sample)
+
+
+def _agentic_trace_duplicate_key(sample: dict[str, Any]) -> bytes:
+    return hashlib.sha256(
+        json.dumps(_agentic_trace_text_segments(sample), ensure_ascii=False).encode("utf-8")
+    ).digest()
 
 
 def _canonical_sample_key(sample: dict[str, Any]) -> str:
