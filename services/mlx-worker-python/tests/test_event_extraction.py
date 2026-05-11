@@ -125,6 +125,20 @@ def test_local_event_extraction_disables_thinking_template_kwargs() -> None:
     assert raw_text.startswith("{")
 
 
+def test_parse_response_json_trims_partial_fenced_json_without_line_list() -> None:
+    response = '```json\n{"events": [{"event_type": "delivery"}]}'
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "delivery"}]
+    }
+
+
+def test_parse_response_json_trims_closing_fence_with_trailing_space() -> None:
+    response = '```json\n{"events": []}\n```   '
+
+    assert event_extraction_module._parse_response_json(response) == {"events": []}
+
+
 def test_local_event_extraction_parse_errors_keep_raw_response_for_diagnostics(tmp_path: Path) -> None:
     source = tmp_path / "top200_final.jsonl"
     _write_jsonl(
