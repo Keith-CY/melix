@@ -765,6 +765,96 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/chat/completions forwards OpenAI tools and emits SDK-compatible tool deltas")
+    func postChatCompletionsForwardsOpenAIToolsAndToolDeltas() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeToolCallEvent(
+                requestID: "req-openai-tools",
+                seq: 1,
+                callID: "req-openai-tools-tool-1",
+                toolName: "terminal",
+                argumentsJSONFragment: "{\"command\":\"gh auth status\"}",
+                fragmentIndex: 2
+            ),
+            makeCompletedEvent(
+                requestID: "req-openai-tools",
+                seq: 2,
+                finishReason: "tool_calls",
+                assistantText: ""
+            ),
+        ])
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-openai-tools" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Check gh auth." }
+              ],
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "terminal",
+                    "description": "Run a shell command.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "command": { "type": "string" }
+                      },
+                      "required": ["command"]
+                    }
+                  }
+                }
+              ],
+              "tool_choice": "auto"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let payload = try await collectBody(response.body)
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(request.execution.hasToolConfig)
+        #expect(request.execution.toolConfig.tools.map(\.name) == ["terminal"])
+        #expect(request.execution.toolConfig.parser == "xml")
+        #expect(request.execution.toolConfig.toolChoice == "auto")
+        #expect(request.execution.ext["melix.tool_parser.mode"] == "xml")
+        #expect(request.execution.ext["melix.tool_config.source"] == "openai_chat_tools")
+        #expect(payload.contains("event: message"))
+        #expect(payload.contains("\"object\":\"chat.completion.chunk\""))
+        #expect(payload.contains("\"tool_calls\""))
+        #expect(payload.contains("\"index\":1"))
+        #expect(payload.contains("\"name\":\"terminal\""))
+        #expect(payload.contains("\"arguments\":\"{\\\"command\\\":\\\"gh auth status\\\"}\""))
+        #expect(!payload.contains("event: tool_call"))
+        #expect(metrics.values["http.openai_chat_tools_request_count"] == 1)
+        #expect(metrics.values["http.openai_chat_tools_configured_count"] == 1)
+    }
+
     @Test("POST /v1/chat/completions lazy-loads text-only VLM requests through the Python VLM route")
     func postChatCompletionsLazyLoadsTextOnlyVLMRequestsThroughPythonVLMRoute() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devVLMModel()])

@@ -1738,6 +1738,13 @@ public struct OpenAIHandler: Sendable {
             await metricsStore.increment("http.tool_parser_request_count")
             await metricsStore.increment("http.tool_parser_\(parserMode)_request_count")
         }
+        if translated.workerRequest.execution.ext["melix.tool_config.source"] == "openai_chat_tools" {
+            await metricsStore.increment("http.openai_chat_tools_request_count")
+            if let rawToolCount = translated.workerRequest.execution.ext["melix.tool_config.tool_count"],
+               let toolCount = Double(rawToolCount) {
+                await metricsStore.set(toolCount, forKey: "http.openai_chat_tools_configured_count")
+            }
+        }
         if translated.workerRequest.execution.ext["melix.mcp.source_ids"] != nil {
             await metricsStore.increment("mcp.tool_injection_count")
             let namespaceCount = translated.workerRequest.execution.ext["melix.tool_parser.namespaces"]?

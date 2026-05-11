@@ -304,11 +304,12 @@ public struct TextRequestShaper: Sendable {
             resolvedToolParser = nil
             toolParserSuppressedReason = "structured_output_json_without_tools"
         } else {
-            resolvedToolParser = toolParserRegistry.resolve(
+            let resolvedParser = toolParserRegistry.resolve(
                 requested: request.toolParser,
                 modelDefault: modelToolParser,
                 mcpToolCatalog: mcpToolCatalog
             )
+            resolvedToolParser = resolvedParser ?? Self.openAIToolsParserSelection(for: request)
             toolParserSuppressedReason = nil
         }
         let partialMode = resolvePartialMode(
@@ -359,6 +360,8 @@ public struct TextRequestShaper: Sendable {
             reasoningHistoryStripCount: sanitizedHistory.stripCount,
             structuredOutput: request.structuredOutput,
             toolParser: resolvedToolParser,
+            tools: request.tools,
+            toolChoice: request.toolChoice,
             toolParserSuppressedReason: toolParserSuppressedReason,
             chatTemplate: resolvedChatTemplate,
             ocrPolicy: resolvedOCRPolicy,
@@ -423,6 +426,7 @@ public struct TextRequestShaper: Sendable {
         mcpToolCatalog: MCPToolCatalog
     ) -> Bool {
         guard request.toolParser == nil,
+              request.tools.isEmpty,
               mcpToolCatalog.resolvedNamespaces.isEmpty,
               let structuredOutput = request.structuredOutput,
               structuredOutput.mode == .jsonObject || structuredOutput.mode == .jsonSchema
@@ -430,6 +434,15 @@ public struct TextRequestShaper: Sendable {
             return false
         }
         return true
+    }
+
+    private static func openAIToolsParserSelection(
+        for request: NormalizedTextRequest
+    ) -> ToolParserSelection? {
+        guard !request.tools.isEmpty else {
+            return nil
+        }
+        return ToolParserSelection(mode: .xml, source: "openai_tools")
     }
 
     private func sanitizeReasoningHistory(messages: [NormalizedTextMessage]) -> HistorySanitizationResult {

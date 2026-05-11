@@ -507,7 +507,8 @@ struct SSEStreamWriterTests {
                 seq: 2,
                 callID: "tool-1",
                 toolName: "search",
-                argumentsJSONFragment: "{\"q\":\"melix\"}"
+                argumentsJSONFragment: "{\"q\":\"melix\"}",
+                fragmentIndex: 2
             ))
             continuation.yield(makeCompletedEvent(requestID: "chat-deltas", seq: 3, finishReason: "stop", assistantText: "done"))
             continuation.finish()
@@ -526,8 +527,9 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("event: reasoning"))
         #expect(payload.contains("\"object\":\"chat.completion.reasoning.delta\""))
         #expect(payload.contains("\"reasoning\":\"think\""))
-        #expect(payload.contains("event: tool_call"))
-        #expect(payload.contains("\"object\":\"chat.completion.tool_call.delta\""))
+        #expect(payload.contains("\"object\":\"chat.completion.chunk\""))
+        #expect(payload.contains("\"tool_calls\""))
+        #expect(payload.contains("\"index\":1"))
         #expect(payload.contains("\"name\":\"search\""))
         #expect(payload.contains("\"arguments\":\"{\\\"q\\\":\\\"melix\\\"}\""))
         #expect(payload.contains("\"parser_mode\":\"qwen\""))
@@ -535,7 +537,8 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("\"parser_fallback_mode\":\"xml\""))
         #expect(orderedRanges(in: payload, needles: [
             "event: reasoning",
-            "event: tool_call",
+            "event: message",
+            "\"tool_calls\"",
             "event: message",
             "data: [DONE]",
         ]))
