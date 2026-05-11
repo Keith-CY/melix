@@ -431,8 +431,17 @@ worker-owned tool registry contract. The initial built-in registry lives in the
 Python worker runtime and exports deterministic OpenAI-compatible function
 schemas plus Melix `ToolConfig` metadata for image crop, layout parsing, text
 search, image search, visit, and local compute tools. The registry is a contract
-boundary only: concrete adapters, observation redaction, replay metadata, and
-evaluation routing are layered on top in separate implementation slices.
+boundary only: concrete adapters and evaluation routing are layered on top in
+separate implementation slices.
+
+Tool observations must cross the same worker-owned boundary before they are
+persisted into training traces, benchmark artifacts, or evaluation evidence. The
+observation contract sanitizes nested payload text through configured exact
+redaction terms, enforces UTF-8 byte limits without invalid text, records
+completed/timeout/failed status metadata, and emits deterministic replay
+fingerprints over the sanitized payload plus call identity. Downstream consumers
+must treat the sanitized observation record as the durable source of truth rather
+than re-reading raw adapter output.
 
 ### Quantization
 
