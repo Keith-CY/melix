@@ -2047,6 +2047,61 @@ struct MelixCLIParserTests {
         )
     }
 
+    @Test("parses batch run dry-run foundation options")
+    func parsesBatchRunDryRunFoundationOptions() throws {
+        #expect(MelixCLIParser.usageText.contains("melix batch run --models PATH"))
+
+        let command = try MelixCLIParser.parse([
+            "batch", "run",
+            "--models", "/tmp/models.txt",
+            "--config", "/tmp/melix-batch.yaml",
+            "--run-id", "run-1",
+            "--output-root", "/tmp/downloads",
+            "--temp-root", "/tmp/runtime",
+            "--start-index", "2",
+            "--max-models", "3",
+            "--judge-remote-server-id", "judge",
+            "--judge-model", "gpt-test",
+            "--bench-suite", "smoke",
+            "--bench-context-length", "2048",
+            "--bench-generation-length", "256",
+            "--bench-batch-size", "2",
+            "--bench-repeats", "4",
+            "--bench-sample-size", "5",
+            "--bench-batch-factor", "6",
+            "--eval-suite", "event_extraction",
+            "--eval-dataset-id", "events.v1",
+            "--eval-scoring-mode", "event_extraction_weighted_f1",
+            "--eval-sample-size", "7",
+            "--eval-batch-factor", "8",
+            "--continue-on-failure", "false",
+            "--restart-stack-per-model", "false",
+            "--dry-run",
+            "--json",
+        ])
+
+        guard case .batchRun(let options) = command else {
+            Issue.record("Expected batchRun command")
+            return
+        }
+
+        #expect(options.modelListPath == "/tmp/models.txt")
+        #expect(options.configPath == "/tmp/melix-batch.yaml")
+        #expect(options.runID == "run-1")
+        #expect(options.outputRoot == "/tmp/downloads")
+        #expect(options.tempRoot == "/tmp/runtime")
+        #expect(options.startIndex == 2)
+        #expect(options.maxModels == 3)
+        #expect(options.judgeRemoteServerID == "judge")
+        #expect(options.judgeModelID == "gpt-test")
+        #expect(options.benchContextLength == 2048)
+        #expect(options.evalSampleSize == 7)
+        #expect(options.continueOnFailure == false)
+        #expect(options.restartStackPerModel == false)
+        #expect(options.dryRun)
+        #expect(options.json)
+    }
+
     @Test("parses bench list and export-csv commands")
     func parsesBenchListAndExportCSVCommands() throws {
         let listCommand = try MelixCLIParser.parse([
