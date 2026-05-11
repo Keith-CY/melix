@@ -230,6 +230,31 @@ def test_pipe_tool_call_relaxed_object_arguments_are_parsed() -> None:
     assert calls[0].arguments_json_fragment == '{"command":"gh auth status"}'
 
 
+def test_pipe_tool_call_relaxed_object_arguments_preserve_quoted_commas() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-commas",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                '<|tool_call>call:native_mcp:execute_command{'
+                'command: "printf \\"hello, world\\"", note: \'alpha, beta\', count: 2'
+                "}<tool_call|>"
+            )
+        )
+    )
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+
+    assert len(calls) == 1
+    assert calls[0].arguments_json_fragment == (
+        '{"command":"printf \\"hello, world\\"","count":2,"note":"alpha, beta"}'
+    )
+
+
 def test_pipe_tool_call_marker_wins_when_it_appears_before_legacy_marker() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-pipe-tool-call-first",

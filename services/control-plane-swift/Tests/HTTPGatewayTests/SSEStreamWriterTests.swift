@@ -507,7 +507,8 @@ struct SSEStreamWriterTests {
                 seq: 2,
                 callID: "tool-1",
                 toolName: "search",
-                argumentsJSONFragment: "{\"q\":\"melix\"}"
+                argumentsJSONFragment: "{\"q\":\"melix\"}",
+                fragmentIndex: 2
             ))
             continuation.yield(makeCompletedEvent(requestID: "chat-deltas", seq: 3, finishReason: "stop", assistantText: "done"))
             continuation.finish()
@@ -528,7 +529,7 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("\"reasoning\":\"think\""))
         #expect(payload.contains("\"object\":\"chat.completion.chunk\""))
         #expect(payload.contains("\"tool_calls\""))
-        #expect(payload.contains("\"index\":0"))
+        #expect(payload.contains("\"index\":1"))
         #expect(payload.contains("\"name\":\"search\""))
         #expect(payload.contains("\"arguments\":\"{\\\"q\\\":\\\"melix\\\"}\""))
         #expect(payload.contains("\"parser_mode\":\"qwen\""))

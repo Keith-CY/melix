@@ -63,7 +63,8 @@ func makeToolCallEvent(
     seq: UInt64,
     callID: String,
     toolName: String,
-    argumentsJSONFragment: String
+    argumentsJSONFragment: String,
+    fragmentIndex: UInt32 = 1
 ) -> Melix_Worker_V1_ExecuteEvent {
     var event = Melix_Worker_V1_ExecuteEvent()
     event.requestID = requestID
@@ -73,6 +74,7 @@ func makeToolCallEvent(
     event.toolCallDelta.callID = callID
     event.toolCallDelta.toolName = toolName
     event.toolCallDelta.argumentsJsonFragment = argumentsJSONFragment
+    event.toolCallDelta.fragmentIndex = fragmentIndex
     return event
 }
 

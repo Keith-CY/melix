@@ -437,10 +437,8 @@ class RequestStreamAssembler:
                     self._metrics["reasoning_parser_bypassed_count"] += 1
                 continue
 
-            if tag in {self._TOOL_OPEN, self._PIPE_TOOL_OPEN}:
-                close_tag = (
-                    self._PIPE_TOOL_CLOSE if tag == self._PIPE_TOOL_OPEN else self._TOOL_CLOSE
-                )
+            if tag == self._TOOL_OPEN or tag == self._PIPE_TOOL_OPEN:
+                close_tag = self._PIPE_TOOL_CLOSE if tag == self._PIPE_TOOL_OPEN else self._TOOL_CLOSE
                 close_index = self._buffer.find(close_tag, len(tag))
                 if close_index < 0:
                     if final:
@@ -609,10 +607,12 @@ class RequestStreamAssembler:
         if not content:
             return {}
         values: dict[str, object] = {}
-        for item in content.split(","):
-            if ":" not in item:
+        for item in self._split_relaxed_object_items(content):
+            separator_index = self._relaxed_key_value_separator(item)
+            if separator_index is None:
                 return None
-            key, value = item.split(":", 1)
+            key = item[:separator_index]
+            value = item[separator_index + 1 :]
             normalized_key = key.strip().strip("\"'")
             if not normalized_key:
                 return None
@@ -620,9 +620,53 @@ class RequestStreamAssembler:
         return values
 
     @staticmethod
+    def _split_relaxed_object_items(content: str) -> list[str]:
+        items: list[str] = []
+        start = 0
+        quote: str | None = None
+        escaped = False
+        for index, char in enumerate(content):
+            if quote is not None:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+            if char == '"' or char == "'":
+                quote = char
+                continue
+            if char == ",":
+                items.append(content[start:index].strip())
+                start = index + 1
+        items.append(content[start:].strip())
+        return items
+
+    @staticmethod
+    def _relaxed_key_value_separator(item: str) -> int | None:
+        quote: str | None = None
+        escaped = False
+        for index, char in enumerate(item):
+            if quote is not None:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+            if char == '"' or char == "'":
+                quote = char
+                continue
+            if char == ":":
+                return index
+        return None
+
+    @staticmethod
     def _parse_relaxed_scalar(value: str) -> object:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            return value[1:-1]
+            return RequestStreamAssembler._unescape_relaxed_quoted_string(value[1:-1])
         lowered = value.lower()
         if lowered == "true":
             return True
@@ -636,6 +680,31 @@ class RequestStreamAssembler:
             return int(value)
         except ValueError:
             return value
+
+    @staticmethod
+    def _unescape_relaxed_quoted_string(value: str) -> str:
+        if "\\" not in value:
+            return value
+        decoded: list[str] = []
+        escaped = False
+        escapes = {
+            "n": "\n",
+            "r": "\r",
+            "t": "\t",
+            "b": "\b",
+            "f": "\f",
+        }
+        for char in value:
+            if escaped:
+                decoded.append(escapes.get(char, char))
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            else:
+                decoded.append(char)
+        if escaped:
+            decoded.append("\\")
+        return "".join(decoded)
 
     def _first_json_delimiter(self, text: str) -> int | None:
         object_index = text.find("{")

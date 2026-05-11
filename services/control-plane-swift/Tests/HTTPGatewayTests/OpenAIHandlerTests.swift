@@ -774,7 +774,8 @@ struct OpenAIHandlerTests {
                 seq: 1,
                 callID: "req-openai-tools-tool-1",
                 toolName: "terminal",
-                argumentsJSONFragment: "{\"command\":\"gh auth status\"}"
+                argumentsJSONFragment: "{\"command\":\"gh auth status\"}",
+                fragmentIndex: 2
             ),
             makeCompletedEvent(
                 requestID: "req-openai-tools",
@@ -846,6 +847,7 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("event: message"))
         #expect(payload.contains("\"object\":\"chat.completion.chunk\""))
         #expect(payload.contains("\"tool_calls\""))
+        #expect(payload.contains("\"index\":1"))
         #expect(payload.contains("\"name\":\"terminal\""))
         #expect(payload.contains("\"arguments\":\"{\\\"command\\\":\\\"gh auth status\\\"}\""))
         #expect(!payload.contains("event: tool_call"))

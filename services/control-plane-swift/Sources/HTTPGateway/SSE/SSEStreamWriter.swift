@@ -338,7 +338,7 @@ public struct SSEStreamWriter: Sendable {
                             "delta": [
                                 "tool_calls": [
                                     [
-                                        "index": 0,
+                                        "index": max(0, Int(toolCall.fragmentIndex) - 1),
                                         "id": toolCall.callID,
                                         "type": "function",
                                         "function": [
