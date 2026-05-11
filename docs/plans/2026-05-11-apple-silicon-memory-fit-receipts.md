@@ -38,7 +38,7 @@ implement fallback collectors for other platforms.
 
 Every estimate receipt carries a `probe` object with:
 
-- `name`: `cli.memory_fit.estimate_import`
+- `name`: `cli.memory_fit.<target_kind>`
 - `hub_card_elapsed_ms`
 - `receipt_elapsed_ms`
 

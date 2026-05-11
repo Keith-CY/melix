@@ -85,6 +85,7 @@ struct MelixCLIRunnerTests {
         )
         let payload = try #require(parseJSONObject(output))
         let probe = try #require(payload["probe"] as? [String: Any])
+        let safetyThreshold = try #require(payload["safety_threshold"] as? [String: Any])
 
         #expect(await client.lastHubModelCardRepoID == "mlx-community/Qwen3.6-35B-A3B-4bit")
         #expect(payload["schema_version"] as? String == "melix.memory_fit_receipt.v1")
@@ -97,9 +98,12 @@ struct MelixCLIRunnerTests {
         #expect(payload["recommended_action"] as? String == "Use --allow-memory-risk only when the Mac is otherwise idle.")
         #expect((payload["assumptions"] as? [String])?.isEmpty == false)
         #expect((payload["unknown_fields"] as? [String])?.contains("parameter_count") == true)
-        #expect(probe["name"] as? String == "cli.memory_fit.estimate_import")
+        #expect(probe["name"] as? String == "cli.memory_fit.import")
         #expect((probe["hub_card_elapsed_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
         #expect((probe["receipt_elapsed_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+        #expect((safetyThreshold["safety_threshold_fraction"] as? NSNumber)?.doubleValue == 0.60)
+        #expect((safetyThreshold["safety_threshold_bytes"] as? NSNumber)?.uint64Value ?? 0 > 0)
+        #expect(safetyThreshold["memory_headroom_fraction"] == nil)
     }
 
     @Test("estimate import renders a readable memory fit receipt")
@@ -123,6 +127,8 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("target_kind=import"))
         #expect(output.contains("repo_id=mlx-community/Qwen3.5-9B-MLX-4bit"))
         #expect(output.contains("fit_status=good"))
+        #expect(output.contains("total_unified_memory_bytes="))
+        #expect(output.contains("total_unified_memory_bytes=\(ProcessInfo.processInfo.physicalMemory)") == false)
         #expect(output.contains("estimated_active_memory_bytes=8.38 GB"))
         #expect(output.contains("estimated_disk_usage_bytes=4.66 GB"))
         #expect(output.contains("recommended_action=Run import normally."))
@@ -6373,6 +6379,8 @@ struct MelixCLIRunnerTests {
                 return
             }
             #expect(message.contains("fit_status=blocked"))
+            #expect(message.contains("estimated_active_memory_bytes=44.70 GB"))
+            #expect(message.contains("estimated_disk_usage_bytes=22.35 GB"))
             #expect(message.contains("--allow-memory-risk"))
             #expect(message.contains("No MLX compatibility signal."))
         }
@@ -6450,6 +6458,7 @@ struct MelixCLIRunnerTests {
         #expect(benchRequest.parameters["memory_fit_safety_threshold_fraction"] == "0.60")
         #expect(receipt["target_kind"] as? String == "benchmark")
         #expect(receipt["fit_status"] as? String == "heavy")
+        #expect((receipt["probe"] as? [String: Any])?["name"] as? String == "cli.memory_fit.benchmark")
     }
 
     @Test("bench run returns plain markdown or the report path depending on the response")

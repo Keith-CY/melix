@@ -3825,13 +3825,13 @@ public actor MelixCLIRunner {
         ]
         let receiptElapsedMS = elapsedMilliseconds(since: receiptStart)
         let probe: [String: Any] = [
-            "name": "cli.memory_fit.estimate_import",
+            "name": "cli.memory_fit.\(targetKind)",
             "hub_card_elapsed_ms": NSNumber(value: hubCardElapsedMS),
             "receipt_elapsed_ms": NSNumber(value: receiptElapsedMS),
         ]
         let safetyThreshold: [String: Any] = [
-            "memory_headroom_fraction": NSNumber(value: safetyThresholdFraction),
-            "memory_headroom_bytes": NSNumber(value: safetyThresholdBytes),
+            "safety_threshold_fraction": NSNumber(value: safetyThresholdFraction),
+            "safety_threshold_bytes": NSNumber(value: safetyThresholdBytes),
         ]
         let payload: [String: Any] = [
             "schema_version": Self.memoryFitSchemaVersion,
@@ -3894,12 +3894,12 @@ public actor MelixCLIRunner {
     }
 
     private func enforceMemoryFitPreflight(_ receipt: MemoryFitReceipt, allowMemoryRisk: Bool) throws {
-        guard ["blocked", "heavy"].contains(receipt.fitStatus), allowMemoryRisk == false else {
+        guard ["blocked", "heavy"].contains(receipt.fitStatus), !allowMemoryRisk else {
             return
         }
         let reasons = receipt.reasons.isEmpty ? "No reason was provided." : receipt.reasons.joined(separator: " ")
         throw MelixCLIError.runtime(
-            "Memory fit preflight blocked benchmark for \(receipt.repoID): fit_status=\(receipt.fitStatus), estimated_active_memory_bytes=\(receipt.estimatedActiveMemoryBytes), estimated_disk_usage_bytes=\(receipt.estimatedDiskUsageBytes). Pass --allow-memory-risk to run anyway. Reasons: \(reasons)"
+            "Memory fit preflight blocked benchmark for \(receipt.repoID): fit_status=\(receipt.fitStatus), estimated_active_memory_bytes=\(formatBinaryBytes(receipt.estimatedActiveMemoryBytes)), estimated_disk_usage_bytes=\(formatBinaryBytes(receipt.estimatedDiskUsageBytes)). Pass --allow-memory-risk to run anyway. Reasons: \(reasons)"
         )
     }
 
@@ -6150,7 +6150,7 @@ public actor MelixCLIRunner {
             "target_kind=\(receipt.targetKind)",
             "repo_id=\(receipt.repoID)",
             "fit_status=\(receipt.fitStatus)",
-            "total_unified_memory_bytes=\(receipt.totalUnifiedMemoryBytes)",
+            "total_unified_memory_bytes=\(formatBinaryBytes(receipt.totalUnifiedMemoryBytes))",
             "estimated_active_memory_bytes=\(formatBinaryBytes(receipt.estimatedActiveMemoryBytes))",
             "estimated_disk_usage_bytes=\(formatBinaryBytes(receipt.estimatedDiskUsageBytes))",
             "safety_threshold_fraction=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), receipt.safetyThresholdFraction))",
