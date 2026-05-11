@@ -902,8 +902,29 @@ def _smoke_required_files_for_backend(
 
 def _mlx_lm_index_weight_files(bundle_path: Path) -> tuple[str, ...]:
     index_file = "model.safetensors.index.json"
+    index_path = bundle_path / index_file
     try:
-        payload = json.loads((bundle_path / index_file).read_bytes())
+        index_stat = index_path.stat()
+    except OSError:
+        return (index_file, "model.safetensors")
+    return _mlx_lm_index_weight_files_cached(
+        os.fspath(index_path),
+        index_stat.st_mtime_ns,
+        index_stat.st_size,
+    )
+
+
+@lru_cache(maxsize=128)
+def _mlx_lm_index_weight_files_cached(
+    index_path: str,
+    mtime_ns: int,
+    size_bytes: int,
+) -> tuple[str, ...]:
+    _ = mtime_ns
+    _ = size_bytes
+    index_file = "model.safetensors.index.json"
+    try:
+        payload = json.loads(Path(index_path).read_bytes())
     except (OSError, json.JSONDecodeError):
         return (index_file, "model.safetensors")
     weight_map = payload.get("weight_map")

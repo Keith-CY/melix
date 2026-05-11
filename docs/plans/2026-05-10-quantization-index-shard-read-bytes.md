@@ -1,4 +1,4 @@
-# Quantization Index Shard Byte Read Slice
+# Quantization Index Shard Cached Read Slice
 
 ## Scope
 
@@ -6,7 +6,10 @@ This Python-only performance slice is limited to MLX-LM conversion smoke-file
 selection in `services/mlx-worker-python/worker/model_ops/quantization_pipeline.py`.
 The behavior remains unchanged: when a sharded `model.safetensors.index.json`
 exists, the smoke check returns the index file plus the lexicographically first
-non-empty shard name in the index `weight_map`.
+non-empty shard name in the index `weight_map`. This follow-up keeps the byte
+read path and caches parsed index results by index path, mtime, and size so
+repeated smoke-file checks for an unchanged bundle avoid reparsing the same
+large `weight_map`.
 
 ## Registered performance probe
 
@@ -27,12 +30,16 @@ count, iterations, and sample count.
 
 ## Implementation plan
 
-- Load `model.safetensors.index.json` with `Path.read_bytes()` and pass the bytes
-  directly to `json.loads()` to avoid a separate text decode/string allocation.
+- Keep loading `model.safetensors.index.json` with `Path.read_bytes()` and pass
+  the bytes directly to `json.loads()` to avoid a separate text decode/string
+  allocation.
+- Cache the parsed first-shard tuple behind an `lru_cache` keyed by index path,
+  `st_mtime_ns`, and `st_size`, preserving correctness when the index file is
+  rewritten.
 - Preserve the existing single-pass shard minimum scan and fallback behavior for
   unreadable, malformed, missing, or empty `weight_map` index files.
-- Add focused regression coverage that fails if the index path falls back to
-  `Path.read_text()`.
+- Add focused regression coverage that proves repeated unchanged checks reuse the
+  cached bytes parse and changed index metadata invalidates the cache.
 
 ## Verification plan
 
