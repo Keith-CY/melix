@@ -443,20 +443,38 @@ def _swift_product_binary_candidates(build_root: Path, product_name: str) -> lis
     return candidates
 
 
+def _newest_executable_swift_product_binary(build_root: Path, product_name: str) -> Path | None:
+    newest_candidate: Path | None = None
+    newest_key: tuple[float, int] | None = None
+
+    def consider(candidate: Path) -> None:
+        nonlocal newest_candidate, newest_key
+        if not (candidate.is_file() and os.access(candidate, os.X_OK)):
+            return
+        candidate_key = (candidate.stat().st_mtime, len(candidate.parts))
+        if newest_key is None or candidate_key > newest_key:
+            newest_candidate = candidate
+            newest_key = candidate_key
+
+    consider(build_root / "debug" / product_name)
+    try:
+        entries = os.scandir(build_root)
+    except FileNotFoundError:
+        return newest_candidate
+
+    with entries:
+        for entry in entries:
+            if entry.is_dir(follow_symlinks=False):
+                consider(Path(entry.path) / "debug" / product_name)
+    return newest_candidate
+
+
 def resolve_scoped_swift_product_binary(repo_root: Path, *, scope: str, product_name: str) -> Path:
     layout = swift_root_package.swift_package_layout(repo_root, scope)
     build_root = layout.scratch_path
-    executable_candidates = [
-        candidate
-        for candidate in _swift_product_binary_candidates(build_root, product_name)
-        if candidate.is_file() and os.access(candidate, os.X_OK)
-    ]
-    if executable_candidates:
-        # Prefer architecture-specific SwiftPM outputs over flat debug outputs when mtimes tie.
-        return max(
-            executable_candidates,
-            key=lambda candidate: (candidate.stat().st_mtime, len(candidate.parts)),
-        )
+    resolved = _newest_executable_swift_product_binary(build_root, product_name)
+    if resolved is not None:
+        return resolved
 
     raise AssertionError(
         "Required Swift product binary is missing. "
@@ -467,16 +485,9 @@ def resolve_scoped_swift_product_binary(repo_root: Path, *, scope: str, product_
 
 def resolve_swift_product_binary(repo_root: Path, *, package_path: Path, product_name: str) -> Path:
     build_root = repo_root / package_path / ".build"
-    executable_candidates = [
-        candidate
-        for candidate in _swift_product_binary_candidates(build_root, product_name)
-        if candidate.is_file() and os.access(candidate, os.X_OK)
-    ]
-    if executable_candidates:
-        return max(
-            executable_candidates,
-            key=lambda candidate: (candidate.stat().st_mtime, len(candidate.parts)),
-        )
+    resolved = _newest_executable_swift_product_binary(build_root, product_name)
+    if resolved is not None:
+        return resolved
 
     raise AssertionError(
         "Required Swift product binary is missing. "
