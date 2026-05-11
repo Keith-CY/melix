@@ -160,6 +160,31 @@ enum BatchRunModelListParser {
 }
 
 enum BatchRunConfigLoader {
+    private static let supportedKeys: Set<String> = [
+        "model_list",
+        "run_id",
+        "output_root",
+        "temp_root",
+        "start_index",
+        "max_models",
+        "judge_remote_server_id",
+        "judge_model",
+        "bench_suite",
+        "bench_context_length",
+        "bench_generation_length",
+        "bench_batch_size",
+        "bench_repeats",
+        "bench_sample_size",
+        "bench_batch_factor",
+        "eval_suite",
+        "eval_dataset_id",
+        "eval_scoring_mode",
+        "eval_sample_size",
+        "eval_batch_factor",
+        "continue_on_failure",
+        "restart_stack_per_model",
+    ]
+
     static func load(path: String) throws -> [String: String] {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else {
@@ -186,9 +211,32 @@ enum BatchRunConfigLoader {
             guard key.isEmpty == false else {
                 throw MelixCLIError.usage("Invalid batch config line \(lineNumber); key is empty.")
             }
-            values[key] = value
+            let keyString = String(key)
+            try validateKey(keyString, lineNumber: lineNumber)
+            values[keyString] = value
         }
         return values
+    }
+
+    private static func validateKey(_ key: String, lineNumber: Int) throws {
+        guard supportedKeys.contains(key) else {
+            if embedsRawSecret(key) {
+                throw MelixCLIError.usage(
+                    "Unsupported batch config key '\(key)' at line \(lineNumber). Batch configs must reference stored credentials by id instead of embedding raw secrets."
+                )
+            }
+            throw MelixCLIError.usage(
+                "Unsupported batch config key '\(key)' at line \(lineNumber). Supported keys: \(supportedKeys.sorted().joined(separator: ", "))."
+            )
+        }
+    }
+
+    private static func embedsRawSecret(_ key: String) -> Bool {
+        let lowered = key.lowercased()
+        return lowered.contains("api_key")
+            || lowered.contains("token")
+            || lowered.contains("secret")
+            || lowered.contains("password")
     }
 }
 
