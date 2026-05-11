@@ -483,16 +483,18 @@ struct MelixCLIRunnerTests {
         """.write(to: secretConfig, atomically: true, encoding: .utf8)
 
         let runner = MelixCLIRunner(environment: ["HOME": root.path])
-        await #expect(throws: MelixCLIError.usage(
-            "Unsupported batch config key 'unsupported_field' at line 2. Supported keys: bench_batch_factor, bench_batch_size, bench_context_length, bench_generation_length, bench_repeats, bench_sample_size, bench_suite, continue_on_failure, eval_batch_factor, eval_dataset_id, eval_sample_size, eval_scoring_mode, eval_suite, judge_model, judge_remote_server_id, max_models, model_list, output_root, restart_stack_per_model, run_id, start_index, temp_root."
-        )) {
+        let unknownMessage = try await requireUsageError {
             _ = try await runner.run(.batchRun(.init(modelListPath: "", configPath: unknownConfig.path, dryRun: true)))
         }
-        await #expect(throws: MelixCLIError.usage(
-            "Unsupported batch config key 'judge_api_key' at line 2. Batch configs must reference stored credentials by id instead of embedding raw secrets."
-        )) {
+        #expect(unknownMessage.starts(with: "Unsupported batch config key 'unsupported_field' at line 2."))
+        #expect(unknownMessage.contains("Supported keys:"))
+        #expect(unknownMessage.contains("model_list"))
+        #expect(unknownMessage.contains("judge_remote_server_id"))
+
+        let secretMessage = try await requireUsageError {
             _ = try await runner.run(.batchRun(.init(modelListPath: "", configPath: secretConfig.path, dryRun: true)))
         }
+        #expect(secretMessage == "Unsupported batch config key 'judge_api_key' at line 2. Batch configs must reference stored credentials by id instead of embedding raw secrets.")
     }
 
     @Test("json metric patching preserves user artifact strings that look like the old sentinel")
@@ -8333,6 +8335,23 @@ private final class EnvironmentRecorder: @unchecked Sendable {
 
     func record(_ environment: [String: String]) {
         self.environment = environment
+    }
+}
+
+private func requireUsageError(_ body: () async throws -> Void) async throws -> String {
+    do {
+        try await body()
+        Issue.record("Expected MelixCLIError.usage to be thrown.")
+        return ""
+    } catch let error as MelixCLIError {
+        guard case .usage(let message) = error else {
+            Issue.record("Expected MelixCLIError.usage, got \(error).")
+            return ""
+        }
+        return message
+    } catch {
+        Issue.record("Expected MelixCLIError.usage, got \(error).")
+        return ""
     }
 }
 
