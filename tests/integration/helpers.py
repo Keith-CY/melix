@@ -4,6 +4,7 @@ import json
 import os
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -449,9 +450,13 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
 
     def consider(candidate: Path) -> None:
         nonlocal newest_candidate, newest_key
-        if not (candidate.is_file() and os.access(candidate, os.X_OK)):
+        try:
+            candidate_stat = candidate.stat()
+        except OSError:
             return
-        candidate_key = (candidate.stat().st_mtime, len(candidate.parts))
+        if not (stat.S_ISREG(candidate_stat.st_mode) and (candidate_stat.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))):
+            return
+        candidate_key = (candidate_stat.st_mtime, len(candidate.parts))
         if newest_key is None or candidate_key > newest_key:
             newest_candidate = candidate
             newest_key = candidate_key
@@ -464,7 +469,7 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
 
     with entries:
         for entry in entries:
-            if entry.is_dir(follow_symlinks=False):
+            if entry.name != "debug" and entry.is_dir(follow_symlinks=False):
                 consider(Path(entry.path) / "debug" / product_name)
     return newest_candidate
 
