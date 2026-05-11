@@ -593,6 +593,16 @@ def test_size_hint_bytes_skips_explicit_parser_when_model_marker_absent(
 
     assert hub_catalog_module._size_hint_bytes({"description": "description only 512 MB"}) == 0
     assert hub_catalog_module._size_hint_bytes({"readme": "tokenizer size 12 MB"}) == 0
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "description": "tokenizer weights 512 MB",
+                "readme": "adapter assets 64 MB",
+                "cardData": {"description": "training corpus 12 MB"},
+            }
+        )
+        == 0
+    )
     parser.assert_not_called()
 
 

@@ -618,6 +618,8 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
         for text in (description_text, readme_text, card_description_text)
         if text
     )
+    if not _may_contain_model_marker(text):
+        return 0
     return _size_hint_from_text(text, allow_bare=False)
 
 

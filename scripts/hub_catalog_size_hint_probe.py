@@ -18,14 +18,20 @@ import worker.model_ops.hub_catalog as hub_catalog
 
 def _payload(index: int) -> tuple[dict[str, Any], int]:
     value = 128 + (index % 2048)
-    mode = index % 4
+    mode = index % 5
     if mode == 0:
         return {"cardData": {}}, 0
     if mode == 1:
         return {"cardData": {"model_size": f"{value} MB"}}, value * 1024 * 1024
     if mode == 2:
         return {"cardData": {}, "readme": f"README\nMODEL SIZE | {value} kb\nother metadata"}, value * 1024
-    return {"cardData": {}, "description": f"description only {value} MB"}, 0
+    if mode == 3:
+        return {"cardData": {}, "description": f"description only {value} MB"}, 0
+    return {
+        "cardData": {"description": f"training corpus {value} kb"},
+        "description": f"tokenizer assets {value} MB",
+        "readme": f"adapter notes {value} MB",
+    }, 0
 
 
 def _run_sample(iterations: int) -> tuple[float, int, int, int]:
