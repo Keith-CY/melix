@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+from functools import lru_cache
 from statistics import NormalDist
 
 _NORMAL_DIST = NormalDist()
@@ -225,6 +226,7 @@ def _interval_sign(interval: dict[str, object]) -> int:
     return 0
 
 
+@lru_cache(maxsize=32)
 def _two_sided_normal_z_value(confidence_level: float) -> float:
     bounded_confidence = min(max(float(confidence_level), 0.0), 1.0)
     percentile = 0.5 + (bounded_confidence / 2.0)

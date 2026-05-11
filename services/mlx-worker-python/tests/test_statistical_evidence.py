@@ -81,6 +81,7 @@ def test_build_paired_statistical_evidence_handles_empty_and_singleton_samples()
 
 
 def test_build_paired_statistical_evidence_keeps_full_confidence_intervals_finite() -> None:
+    statistical_evidence_module._two_sided_normal_z_value.cache_clear()
     evidence = build_paired_statistical_evidence(
         paired_outcomes=(1, 0, 1, 1, 0, 1),
         confidence_level=1.0,
@@ -91,6 +92,30 @@ def test_build_paired_statistical_evidence_keeps_full_confidence_intervals_finit
     assert math.isfinite(evidence["analytical"]["lower_bound"])
     assert math.isfinite(evidence["analytical"]["upper_bound"])
     assert evidence["analytical"]["lower_bound"] <= evidence["analytical"]["upper_bound"]
+
+
+def test_two_sided_normal_z_value_reuses_confidence_level_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statistical_evidence_module._two_sided_normal_z_value.cache_clear()
+    calls: list[float] = []
+    original_inv_cdf = statistical_evidence_module._NORMAL_DIST.inv_cdf
+
+    class TrackingNormalDist:
+        def inv_cdf(self, percentile: float) -> float:
+            calls.append(percentile)
+            return original_inv_cdf(percentile)
+
+    monkeypatch.setattr(statistical_evidence_module, "_NORMAL_DIST", TrackingNormalDist())
+
+    first = statistical_evidence_module._two_sided_normal_z_value(0.95)
+    second = statistical_evidence_module._two_sided_normal_z_value(0.95)
+    third = statistical_evidence_module._two_sided_normal_z_value(0.99)
+
+    assert first == second
+    assert third > second
+    assert calls == [0.975, 0.995]
+    statistical_evidence_module._two_sided_normal_z_value.cache_clear()
 
 
 def test_bootstrap_interval_sorts_replicates_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
