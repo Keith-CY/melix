@@ -1219,6 +1219,99 @@ def test_mlx_lm_index_weight_files_reads_index_as_bytes(
     read_text.assert_not_called()
 
 
+def test_mlx_lm_index_weight_files_reuses_cached_index_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "cached-bundle"
+    bundle.mkdir()
+    (bundle / "tokenizer.json").write_bytes(b"{}\n")
+    index_path = bundle / "model.safetensors.index.json"
+    index_path.write_bytes(
+        json.dumps({"weight_map": {"layer.weight": "model-00001-of-00001.safetensors"}}).encode("utf-8")
+    )
+    quantization_pipeline_module._mlx_lm_index_weight_files_cached.cache_clear()
+
+    real_read_bytes = Path.read_bytes
+    read_calls = 0
+
+    def tracked_read_bytes(self: Path) -> bytes:
+        nonlocal read_calls
+        if self == index_path:
+            read_calls += 1
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
+
+    expected = (
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00001.safetensors",
+    )
+    assert _smoke_required_files_for_backend(bundle, quantization_backend="mlx_lm_convert") == expected
+    assert _smoke_required_files_for_backend(bundle, quantization_backend="mlx_lm_convert") == expected
+    assert read_calls == 1
+
+
+def test_mlx_lm_index_weight_files_cache_invalidates_when_index_changes(tmp_path: Path) -> None:
+    bundle = tmp_path / "changing-bundle"
+    bundle.mkdir()
+    index_path = bundle / "model.safetensors.index.json"
+    index_path.write_text(
+        json.dumps({"weight_map": {"layer.weight": "model-00002-of-00002.safetensors"}}) + "\n",
+        encoding="utf-8",
+    )
+    quantization_pipeline_module._mlx_lm_index_weight_files_cached.cache_clear()
+
+    assert _smoke_required_files_for_backend(bundle, quantization_backend="mlx_lm_convert") == (
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors.index.json",
+        "model-00002-of-00002.safetensors",
+    )
+
+    index_path.write_text(
+        json.dumps({"weight_map": {"layer.weight": "model-00001-of-00002.safetensors"}}) + "\n",
+        encoding="utf-8",
+    )
+    current_stat = index_path.stat()
+    os.utime(index_path, ns=(current_stat.st_atime_ns, current_stat.st_mtime_ns + 1_000_000))
+
+    assert _smoke_required_files_for_backend(bundle, quantization_backend="mlx_lm_convert") == (
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00002.safetensors",
+    )
+
+
+def test_mlx_lm_index_weight_files_stat_error_falls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "stat-error-bundle"
+    bundle.mkdir()
+    index_path = bundle / "model.safetensors.index.json"
+    index_path.write_text(
+        json.dumps({"weight_map": {"layer.weight": "model-00001-of-00001.safetensors"}}) + "\n",
+        encoding="utf-8",
+    )
+    real_stat = Path.stat
+
+    def fail_index_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        if self == index_path:
+            raise OSError("stat failed")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fail_index_stat)
+
+    assert quantization_pipeline_module._mlx_lm_index_weight_files(bundle) == (
+        "model.safetensors.index.json",
+        "model.safetensors",
+    )
+
+
 def test_mlx_lm_bundle_byte_sum_handles_nested_and_unreadable_entries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
