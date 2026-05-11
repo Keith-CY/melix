@@ -347,6 +347,7 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
     def RunEvaluation(self, request, context):
         try:
             parameters = dict(request.parameters)
+            self._attach_evaluation_reproducibility_parameters(parameters)
             parameters.setdefault("dataset_id", request.dataset_id)
             if request.task_kind:
                 parameters.setdefault("task_kind", request.task_kind)
@@ -553,6 +554,23 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
 
     def _evaluation_materialization_root(self) -> Path:
         return (self._evaluation_jobs_root / "datasets").resolve()
+
+    @staticmethod
+    def _attach_evaluation_reproducibility_parameters(parameters: dict[str, str]) -> None:
+        hints_path = str(parameters.get("hints_path") or "").strip()
+        if hints_path and not str(parameters.get("hints_format") or "").strip():
+            parameters["hints_format"] = WorkerMaintenanceService._hints_format(Path(hints_path))
+
+    @staticmethod
+    def _hints_format(path: Path) -> str:
+        suffix = path.suffix.lower()
+        if suffix == ".json":
+            return "json"
+        if suffix == ".md":
+            return "markdown"
+        if suffix == ".txt":
+            return "text"
+        return suffix.lstrip(".") or "text"
 
     @staticmethod
     def _evaluation_field_mapping_from_request(request) -> EvaluationFieldMapping:

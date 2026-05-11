@@ -494,6 +494,7 @@ public enum MelixCLICommandCodec {
                 source: options.source,
                 fieldMapping: options.fieldMapping,
                 profile: options.profile,
+                schemaPath: options.parameters["schema_path"],
                 into: &arguments
             )
             appendEvalParameters(options.parameters, into: &arguments)
@@ -714,6 +715,7 @@ public enum MelixCLICommandCodec {
             ("scoring_mode", "--scoring-mode"),
             ("code_exec_policy", "--code-exec-policy"),
             ("remote_provider_extra_body_json", "--remote-extra-body-json"),
+            ("hints_path", "--hints"),
         ]
         for (key, option) in mapping {
             appendOption(option, value: parameters[key], into: &arguments)
@@ -724,6 +726,7 @@ public enum MelixCLICommandCodec {
         source: ControlPlaneEvaluationRequest.Source,
         fieldMapping: ControlPlaneEvaluationRequest.FieldMapping,
         profile: ControlPlaneEvaluationRequest.Profile,
+        schemaPath: String? = nil,
         into arguments: inout [String]
     ) {
         switch source.kind {
@@ -749,7 +752,11 @@ public enum MelixCLICommandCodec {
         if profile.threshold != 0 {
             appendOption("--threshold", value: String(profile.threshold), into: &arguments)
         }
-        appendOption("--output-schema-json", value: profile.outputSchemaJSON, into: &arguments)
+        if let schemaPath, schemaPath.isEmpty == false {
+            appendOption("--schema", value: schemaPath, into: &arguments)
+        } else {
+            appendOption("--output-schema-json", value: profile.outputSchemaJSON, into: &arguments)
+        }
         appendMultiOption("--ignored-path", values: profile.ignoredPaths, into: &arguments)
     }
 

@@ -1605,6 +1605,97 @@ def test_report_renderers_are_stable_and_sticky_comment_is_marked() -> None:
     assert comment.endswith("\n")
 
 
+def test_report_warns_when_evaluation_schema_or_hints_hashes_differ() -> None:
+    baseline = {
+        "evaluation_jobs": [
+            {
+                "job_id": "eval-baseline",
+                "parameters": {
+                    "schema_sha256": "schema-a",
+                    "hints_sha256": "hints-a",
+                },
+            }
+        ]
+    }
+    candidate = {
+        "evaluation_jobs": [
+            {
+                "job_id": "eval-candidate",
+                "parameters": {
+                    "schema_sha256": "schema-b",
+                    "hints_sha256": "hints-b",
+                },
+            }
+        ]
+    }
+
+    report = build_benchmark_evaluation_report(
+        baseline=baseline,
+        candidate=candidate,
+    )
+    markdown = render_markdown_report(report)
+
+    assert report["summary"]["status"] == "warning"
+    assert report["summary"]["warning_count"] == 2
+    assert report["comparison"]["comparison_validity"] == "partial"
+    assert report["reproducibility_warnings"] == [
+        "evaluation_schema_sha256_mismatch:baseline=schema-a;candidate=schema-b",
+        "evaluation_hints_sha256_mismatch:baseline=hints-a;candidate=hints-b",
+    ]
+    assert report["non_blocking_warnings"] == report["reproducibility_warnings"]
+    assert "## Reproducibility Warnings" in markdown
+    assert "evaluation_schema_sha256_mismatch" in markdown
+    assert "evaluation_hints_sha256_mismatch" in markdown
+
+
+def test_report_accepts_matching_reproducibility_hashes_and_run_evidence_metadata() -> None:
+    matching = {
+        "evaluation_jobs": [
+            {
+                "job_id": "eval-a",
+                "parameters": {
+                    "schema_sha256": "schema-a",
+                    "hints_sha256": "hints-a",
+                },
+            }
+        ]
+    }
+    matching_report = build_benchmark_evaluation_report(
+        baseline=matching,
+        candidate=matching,
+    )
+
+    assert matching_report["reproducibility_warnings"] == []
+    assert matching_report["summary"]["warning_count"] == 0
+
+    missing_candidate_report = build_benchmark_evaluation_report(
+        baseline={
+            "evaluation_jobs": [{"job_id": "legacy", "parameters": "legacy"}],
+            "run_evidence": [
+                {"run_id": "bad-domain", "domain_results": {"evaluation": "legacy"}},
+                {
+                    "run_id": "evidence-eval",
+                    "domain_results": {
+                        "evaluation": {
+                            "job": {
+                                "parameters": {
+                                    "schema_sha256": "schema-from-evidence",
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+        },
+        candidate={},
+    )
+
+    assert missing_candidate_report["reproducibility_warnings"] == [
+        "evaluation_schema_sha256_mismatch:baseline=schema-from-evidence;candidate=missing"
+    ]
+    assert missing_candidate_report["summary"]["warning_count"] == 1
+
+
 def test_markdown_cell_escapes_table_control_characters() -> None:
     assert _markdown_cell("model`a|b\nc") == "model\\`a\\|b c"
 

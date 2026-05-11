@@ -2431,6 +2431,94 @@ def test_worker_maintenance_service_run_evaluation_maps_request_task_metadata(
     assert "Return only the final short answer." in backend.prompts[0]
 
 
+def test_worker_maintenance_service_records_cli_supplied_schema_hints_metadata_without_persisting_hints_text(
+    tmp_path: Path,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="math-dev",
+        suite_id="math",
+        samples=({"id": "sample-1", "prompt": "2+2?", "expected": "4"},),
+    )
+    schema_path = Path("/remote/eval/result.schema.json")
+    hints_path = Path("/remote/eval/math-hints.md")
+    hints_text = "Prefer integer answers and keep the response short.\n"
+    backend = ScriptedEvaluationBackend(("Answer: 4",))
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded_model = registry.load_model(
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text",
+            model_path=str(tmp_path / "models" / "melix-dev-text"),
+            model_kind="text",
+            revision="test",
+            tokenizer_hash="tok-test",
+            quant_profile_id="test",
+            parser_mode="text",
+            reasoning_mode="off",
+        )
+    )
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    request = maintenance_pb2.RunEvaluationRequest(
+        model_handle=loaded_model.handle,
+        suite_id="math",
+        dataset_id="math-dev",
+        dataset_root=str(dataset_root),
+        sample_size=1,
+        task_kind="text-generation",
+        parameters={
+            "schema_path": str(schema_path),
+            "schema_sha256": "schema-sha-from-cli",
+            "schema_size_bytes": "49",
+            "hints_path": str(hints_path),
+            "hints_sha256": "hints-sha-from-cli",
+            "hints_size_bytes": str(len(hints_text.encode("utf-8"))),
+            "hints_format": "markdown",
+            "evaluation_hints_text": hints_text.strip(),
+        },
+    )
+
+    response = service.RunEvaluation(request, context=None)
+
+    assert response.ok is True
+    assert "Additional Hints:\nPrefer integer answers" in backend.prompts[0]
+    assert response.job.parameters["schema_path"] == str(schema_path)
+    assert response.job.parameters["schema_sha256"] == "schema-sha-from-cli"
+    assert response.job.parameters["schema_size_bytes"] == "49"
+    assert response.job.parameters["hints_path"] == str(hints_path)
+    assert response.job.parameters["hints_sha256"] == "hints-sha-from-cli"
+    assert response.job.parameters["hints_size_bytes"] == str(len(hints_text.encode("utf-8")))
+    assert response.job.parameters["hints_format"] == "markdown"
+    assert response.job.parameters["hints_prompt_chars"] == str(len(hints_text.strip()))
+    assert "evaluation_hints_text" not in response.job.parameters
+    metrics = {metric.name: metric.value for metric in response.results[0].metrics}
+    assert metrics["eval.math.hints_prompt_chars"] == float(len(hints_text.strip()))
+
+
+def test_worker_maintenance_service_reproducibility_parameters_do_not_require_worker_local_files(
+    tmp_path: Path,
+) -> None:
+    parameters = {
+        "schema_path": "/remote/eval/missing.schema.json",
+        "hints_path": "/remote/eval/missing-hints.md",
+    }
+
+    WorkerMaintenanceService._attach_evaluation_reproducibility_parameters(parameters)
+
+    assert parameters["schema_path"] == "/remote/eval/missing.schema.json"
+    assert "schema_sha256" not in parameters
+    assert parameters["hints_path"] == "/remote/eval/missing-hints.md"
+    assert parameters["hints_format"] == "markdown"
+    assert "hints_sha256" not in parameters
+
+    assert WorkerMaintenanceService._hints_format(tmp_path / "hints.json") == "json"
+    assert WorkerMaintenanceService._hints_format(tmp_path / "hints.md") == "markdown"
+    assert WorkerMaintenanceService._hints_format(tmp_path / "hints.txt") == "text"
+    assert WorkerMaintenanceService._hints_format(tmp_path / "hints") == "text"
+
+
 def test_worker_maintenance_service_run_evaluation_maps_compare_results(
     tmp_path: Path,
 ) -> None:

@@ -266,6 +266,156 @@ def test_score_final_result_rejects_invalid_json_shape_before_scoring() -> None:
     assert score.typed_score == 0.0
 
 
+def test_score_final_result_validates_nested_arrays_and_nullable_fields() -> None:
+    profile = EvaluationProfileDefinition(
+        profile_type="final_result",
+        result_kind="json",
+        extraction_mode="strict_full_response",
+        scoring_mode="json_field_match",
+        threshold=1.0,
+        output_schema={
+            "type": "object",
+            "required": ["answer", "items", "optional_note"],
+            "properties": {
+                "answer": {
+                    "type": "object",
+                    "required": ["value"],
+                    "properties": {
+                        "value": {"type": ["string", "null"]},
+                    },
+                    "additionalProperties": False,
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["label", "score"],
+                        "properties": {
+                            "label": {"type": "string"},
+                            "score": {"type": ["number", "null"]},
+                        },
+                    },
+                },
+                "optional_note": {"type": ["string", "null"]},
+            },
+        },
+    )
+    payload = {
+        "answer": {"value": None},
+        "items": [{"label": "A", "score": 0.5}],
+        "optional_note": None,
+    }
+
+    score = score_final_result(
+        extracted_result=json.dumps(payload),
+        target=json.dumps(payload),
+        profile=profile,
+    )
+    invalid = score_final_result(
+        extracted_result=json.dumps(
+            {
+                "answer": {"value": None, "extra": "unexpected"},
+                "items": [{"label": "A", "score": "high"}],
+                "optional_note": None,
+            }
+        ),
+        target=json.dumps(payload),
+        profile=profile,
+    )
+    invalid_array = score_final_result(
+        extracted_result=json.dumps(
+            {
+                "answer": {"value": None},
+                "items": [{"label": "A", "score": "high"}],
+                "optional_note": None,
+            }
+        ),
+        target=json.dumps(payload),
+        profile=profile,
+    )
+    missing_required = score_final_result(
+        extracted_result=json.dumps({"items": [], "optional_note": None}),
+        target=json.dumps(payload),
+        profile=profile,
+    )
+
+    assert score.validation_status == "validated"
+    assert score.typed_score == 1.0
+    assert invalid.validation_status == "schema_failed"
+    assert invalid.failure_reason == "unexpected_property:$.answer.extra"
+    assert invalid_array.validation_status == "schema_failed"
+    assert invalid_array.failure_reason == "type_mismatch:$.items[0].score"
+    assert missing_required.validation_status == "schema_failed"
+    assert missing_required.failure_reason == "missing_required:$.answer"
+
+
+def test_score_final_result_ignores_optional_schema_properties_without_dict_schemas() -> None:
+    profile = EvaluationProfileDefinition(
+        profile_type="final_result",
+        result_kind="json",
+        extraction_mode="strict_full_response",
+        scoring_mode="json_field_match",
+        threshold=1.0,
+        output_schema={
+            "type": "object",
+            "properties": {
+                "legacy": "string",
+                "missing_optional": {"type": "string"},
+            },
+        },
+    )
+
+    score = score_final_result(
+        extracted_result=json.dumps({"legacy": "ok"}),
+        target=json.dumps({"legacy": "ok"}),
+        profile=profile,
+    )
+
+    assert score.validation_status == "validated"
+
+
+def test_score_final_result_validates_pattern_properties_with_closed_objects() -> None:
+    profile = EvaluationProfileDefinition(
+        profile_type="final_result",
+        result_kind="json",
+        extraction_mode="strict_full_response",
+        scoring_mode="json_field_match",
+        threshold=1.0,
+        output_schema={
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+            },
+            "patternProperties": {
+                "^metric_[0-9]+$": {"type": "number"},
+            },
+            "additionalProperties": False,
+        },
+    )
+
+    score = score_final_result(
+        extracted_result=json.dumps({"label": "ok", "metric_1": 0.5}),
+        target=json.dumps({"label": "ok", "metric_1": 0.5}),
+        profile=profile,
+    )
+    wrong_type = score_final_result(
+        extracted_result=json.dumps({"label": "ok", "metric_2": "high"}),
+        target=json.dumps({"label": "ok", "metric_2": 1.0}),
+        profile=profile,
+    )
+    unexpected = score_final_result(
+        extracted_result=json.dumps({"label": "ok", "note": "extra"}),
+        target=json.dumps({"label": "ok", "note": "extra"}),
+        profile=profile,
+    )
+
+    assert score.validation_status == "validated"
+    assert wrong_type.validation_status == "schema_failed"
+    assert wrong_type.failure_reason == "type_mismatch:$.metric_2"
+    assert unexpected.validation_status == "schema_failed"
+    assert unexpected.failure_reason == "unexpected_property:$.note"
+
+
 def test_score_final_result_aggregates_wide_json_without_losing_ignored_paths() -> None:
     expected = {
         f"field_{index}": {

@@ -5738,6 +5738,8 @@ struct MelixCLIRunnerTests {
                 parameters: [
                     "batch_factor": "2",
                     "few_shot": "1",
+                    "hints_path": "/tmp/melix/eval/math-hints.md",
+                    "schema_path": "/tmp/melix/eval/result.schema.json",
                     "seed": "9",
                     "scoring_mode": "multiple_choice_accuracy",
                     "code_exec_policy": "sandboxed",
@@ -5756,6 +5758,10 @@ struct MelixCLIRunnerTests {
         #expect(command.contains("--batch-factor"))
         #expect(command.contains("2"))
         #expect(command.contains("--few-shot"))
+        #expect(command.contains("--schema"))
+        #expect(command.contains("/tmp/melix/eval/result.schema.json"))
+        #expect(command.contains("--hints"))
+        #expect(command.contains("/tmp/melix/eval/math-hints.md"))
         #expect(command.contains("--seed"))
         #expect(command.contains("--scoring-mode"))
         #expect(command.contains("--code-exec-policy"))
@@ -6875,10 +6881,16 @@ struct MelixCLIRunnerTests {
                     modelID: "melix-dev-text",
                     suites: ["mmlu", "gsm8k"],
                     sampleSize: 8,
+                    profile: .init(
+                        resultKind: "json",
+                        outputSchemaJSON: #"{"type":"object"}"#
+                    ),
                     parameters: [
                         "batch_factor": "2",
                         "dataset_root": "/tmp/mmlu-split-01",
                         "few_shot": "4",
+                        "hints_path": "/tmp/math-hints.md",
+                        "schema_path": "/tmp/result.schema.json",
                         "seed": "7",
                         "scoring_mode": "multiple_choice_accuracy",
                         "code_exec_policy": "sandboxed",
@@ -6897,9 +6909,13 @@ struct MelixCLIRunnerTests {
         #expect(requests[0].parameters["batch_factor"] == "2")
         #expect(requests[0].parameters["dataset_root"] == "/tmp/mmlu-split-01")
         #expect(requests[0].parameters["few_shot"] == "4")
+        #expect(requests[0].parameters["hints_path"] == "/tmp/math-hints.md")
+        #expect(requests[0].parameters["schema_path"] == "/tmp/result.schema.json")
         #expect(requests[0].parameters["seed"] == "7")
         #expect(requests[0].parameters["scoring_mode"] == "multiple_choice_accuracy")
         #expect(requests[0].parameters["code_exec_policy"] == "sandboxed")
+        #expect(requests[0].profile.resultKind == "json")
+        #expect(requests[0].profile.outputSchemaJSON == #"{"type":"object"}"#)
         #expect(requests[1].suiteID == "gsm8k")
         #expect(requests[1].datasetID == "gsm8k.dev.v1")
         let firstRun = try #require(payload.first as? [String: Any])

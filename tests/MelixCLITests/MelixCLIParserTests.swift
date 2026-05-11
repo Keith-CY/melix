@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -9,6 +10,7 @@ struct MelixCLIParserTests {
     @Test("documents eval dataset root in usage text")
     func documentsEvalDatasetRootInUsageText() {
         #expect(MelixCLIParser.usageText.contains("[--dataset-root PATH]"))
+        #expect(MelixCLIParser.usageText.contains("[--schema PATH | --output-schema-json JSON] [--hints PATH]"))
         #expect(MelixCLIParser.usageText.contains("--hf-token passed to model or dataset hub download is saved"))
         #expect(MelixCLIParser.usageText.contains("--hf-dataset-revision overrides a revision embedded in --dataset-ref"))
     }
@@ -596,6 +598,52 @@ struct MelixCLIParserTests {
         #expect(preflightBenchArguments.contains("--preflight-fit-check"))
         #expect(preflightBenchArguments.contains("--allow-memory-risk"))
         #expect(try MelixCLIParser.parse(preflightBenchArguments) == preflightBenchCommand)
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let schemaPath = root.appendingPathComponent("result.schema.json")
+        let hintsPath = root.appendingPathComponent("math-hints.txt")
+        try #"{"type":"object","required":["answer"]}"#.write(to: schemaPath, atomically: true, encoding: .utf8)
+        try "Return the normalized answer.\n".write(to: hintsPath, atomically: true, encoding: .utf8)
+        let evalCommand = MelixCLICommand.evalRun(
+            .init(
+                modelID: "melix-dev-text",
+                suites: ["math"],
+                profile: .init(
+                    resultKind: "json",
+                    outputSchemaJSON: #"{"required":["answer"],"type":"object"}"#
+                ),
+                parameters: [
+                    "schema_path": schemaPath.path,
+                    "hints_path": hintsPath.path,
+                ],
+                json: true
+            )
+        )
+        let evalArguments = try MelixCLICommandCodec.arguments(for: evalCommand)
+        #expect(evalArguments.contains("--schema"))
+        #expect(evalArguments.contains(schemaPath.path))
+        #expect(evalArguments.contains("--hints"))
+        #expect(evalArguments.contains(hintsPath.path))
+        #expect(evalArguments.contains("--output-schema-json") == false)
+        guard case .evalRun(let parsedEvalOptions) = try MelixCLIParser.parse(evalArguments) else {
+            Issue.record("Expected evalRun command from codec arguments")
+            return
+        }
+        #expect(parsedEvalOptions.modelID == "melix-dev-text")
+        #expect(parsedEvalOptions.suites == ["math"])
+        #expect(parsedEvalOptions.profile.resultKind == "json")
+        #expect(parsedEvalOptions.profile.outputSchemaJSON == #"{"required":["answer"],"type":"object"}"#)
+        #expect(parsedEvalOptions.parameters["schema_path"] == schemaPath.path)
+        #expect(parsedEvalOptions.parameters["schema_sha256"] == melixTestSHA256Hex(Data(#"{"type":"object","required":["answer"]}"#.utf8)))
+        #expect(parsedEvalOptions.parameters["schema_size_bytes"] == "39")
+        #expect(parsedEvalOptions.parameters["hints_path"] == hintsPath.path)
+        #expect(parsedEvalOptions.parameters["hints_sha256"] == melixTestSHA256Hex(Data("Return the normalized answer.\n".utf8)))
+        #expect(parsedEvalOptions.parameters["hints_size_bytes"] == "30")
+        #expect(parsedEvalOptions.parameters["hints_format"] == "text")
+        #expect(parsedEvalOptions.parameters["evaluation_hints_text"] == "Return the normalized answer.")
+        #expect(parsedEvalOptions.json)
     }
 
     @Test("command codec exposes stable ids and supported argv mappings")
@@ -2352,6 +2400,67 @@ struct MelixCLIParserTests {
         #expect(options.profile.ignoredPaths == ["metadata.trace_id"])
     }
 
+    @Test("parses eval run schema and hints files as reproducibility metadata")
+    func parsesEvalRunWithSchemaAndHintsFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let schemaPath = root.appendingPathComponent("result.schema.json")
+        let hintsPath = root.appendingPathComponent("math-hints.md")
+        try #"{"type":"object","required":["answer"]}"#.write(to: schemaPath, atomically: true, encoding: .utf8)
+        try "Prefer integer answers.\n".write(to: hintsPath, atomically: true, encoding: .utf8)
+
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--suite", "math",
+            "--schema", schemaPath.path,
+            "--hints", hintsPath.path,
+            "--result-kind", "json",
+        ])
+
+        guard case .evalRun(let options) = command else {
+            Issue.record("Expected evalRun command")
+            return
+        }
+
+        #expect(options.profile.resultKind == "json")
+        #expect(options.profile.outputSchemaJSON == #"{"required":["answer"],"type":"object"}"#)
+        #expect(options.parameters["schema_path"] == schemaPath.path)
+        #expect(options.parameters["schema_sha256"] == melixTestSHA256Hex(Data(#"{"type":"object","required":["answer"]}"#.utf8)))
+        #expect(options.parameters["schema_size_bytes"] == "39")
+        #expect(options.parameters["hints_path"] == hintsPath.path)
+        #expect(options.parameters["hints_sha256"] == melixTestSHA256Hex(Data("Prefer integer answers.\n".utf8)))
+        #expect(options.parameters["hints_size_bytes"] == "24")
+        #expect(options.parameters["hints_format"] == "markdown")
+        #expect(options.parameters["evaluation_hints_text"] == "Prefer integer answers.")
+    }
+
+    @Test("eval run schema file parser surfaces reproducibility input errors")
+    func evalRunSchemaFileParserSurfacesReproducibilityInputErrors() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let invalidJSONPath = root.appendingPathComponent("invalid.schema.json")
+        let arrayJSONPath = root.appendingPathComponent("array.schema.json")
+        try "{".write(to: invalidJSONPath, atomically: true, encoding: .utf8)
+        try #"["answer"]"#.write(to: arrayJSONPath, atomically: true, encoding: .utf8)
+
+        try assertSchemaUsageError(
+            schemaPath: root.appendingPathComponent("missing.schema.json").path,
+            contains: "Failed to read --schema"
+        )
+        try assertSchemaUsageError(
+            schemaPath: invalidJSONPath.path,
+            contains: "--schema must contain valid JSON"
+        )
+        try assertSchemaUsageError(
+            schemaPath: arrayJSONPath.path,
+            contains: "--schema must contain a JSON object."
+        )
+    }
+
     @Test("parses eval run with managed dataset reference")
     func parsesEvalRunWithManagedDatasetReference() throws {
         let command = try MelixCLIParser.parse([
@@ -3005,6 +3114,15 @@ struct MelixCLIParserTests {
         try assertError(for: ["eval"], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["eval", "oops"], equals: .usage(MelixCLIParser.usageText))
         try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--schema", "/tmp/result.schema.json",
+                "--output-schema-json", #"{"type":"object"}"#,
+            ],
+            equals: .usage("--schema and --output-schema-json are mutually exclusive.")
+        )
+        try assertError(
             for: ["eval", "export-summary-csv", "--output", "/tmp/out.csv"],
             equals: .missingRequired("--job-id is required for melix eval export-summary-csv.")
         )
@@ -3078,4 +3196,24 @@ private func assertError(
     } catch let error as MelixCLIError {
         #expect(error == expected)
     }
+}
+
+private func assertSchemaUsageError(schemaPath: String, contains expectedText: String) throws {
+    do {
+        _ = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--schema", schemaPath,
+        ])
+        Issue.record("Expected parser to throw for schema path: \(schemaPath)")
+    } catch let error as MelixCLIError {
+        #expect(error.errorDescription?.contains(expectedText) == true)
+    }
+}
+
+private func melixTestSHA256Hex(_ data: Data) -> String {
+    SHA256.hash(data: data)
+        .map { String(format: "%02x", $0) }
+        .joined()
 }
