@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import tempfile
@@ -558,34 +557,9 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
 
     @staticmethod
     def _attach_evaluation_reproducibility_parameters(parameters: dict[str, str]) -> None:
-        schema_path = str(parameters.get("schema_path") or "").strip()
-        if schema_path:
-            resolved_schema_path = Path(schema_path).expanduser().resolve()
-            if not resolved_schema_path.is_file():
-                raise ValueError(f"evaluation schema file does not exist: {schema_path}")
-            parameters["schema_path"] = str(resolved_schema_path)
-            parameters["schema_sha256"] = WorkerMaintenanceService._sha256_for_path(resolved_schema_path)
-            parameters["schema_size_bytes"] = str(resolved_schema_path.stat().st_size)
-
         hints_path = str(parameters.get("hints_path") or "").strip()
-        if hints_path:
-            resolved_hints_path = Path(hints_path).expanduser().resolve()
-            if not resolved_hints_path.is_file():
-                raise ValueError(f"evaluation hints file does not exist: {hints_path}")
-            hints_text = resolved_hints_path.read_text(encoding="utf-8")
-            parameters["hints_path"] = str(resolved_hints_path)
-            parameters["hints_sha256"] = WorkerMaintenanceService._sha256_for_path(resolved_hints_path)
-            parameters["hints_size_bytes"] = str(resolved_hints_path.stat().st_size)
-            parameters["hints_format"] = WorkerMaintenanceService._hints_format(resolved_hints_path)
-            parameters["evaluation_hints_text"] = hints_text.strip()
-
-    @staticmethod
-    def _sha256_for_path(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            while chunk := handle.read(chunk_size):
-                digest.update(chunk)
-        return digest.hexdigest()
+        if hints_path and not str(parameters.get("hints_format") or "").strip():
+            parameters["hints_format"] = WorkerMaintenanceService._hints_format(Path(hints_path))
 
     @staticmethod
     def _hints_format(path: Path) -> str:

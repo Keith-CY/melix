@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
@@ -3357,10 +3358,21 @@ public enum MelixCLIParser {
             parameters["remote_provider_extra_body_json"] = remoteExtraBodyJSON
         }
         if let schemaPath = values.single["--schema"], schemaPath.isEmpty == false {
-            parameters["schema_path"] = schemaPath
+            let file = try evaluationFileMetadata(path: schemaPath, option: "--schema")
+            parameters["schema_path"] = file.resolvedPath
+            parameters["schema_sha256"] = file.sha256
+            parameters["schema_size_bytes"] = String(file.sizeBytes)
         }
         if let hintsPath = values.single["--hints"], hintsPath.isEmpty == false {
-            parameters["hints_path"] = hintsPath
+            let file = try evaluationFileMetadata(path: hintsPath, option: "--hints")
+            guard let hintsText = String(data: file.data, encoding: .utf8) else {
+                throw MelixCLIError.usage("--hints must contain UTF-8 text.")
+            }
+            parameters["hints_path"] = file.resolvedPath
+            parameters["hints_sha256"] = file.sha256
+            parameters["hints_size_bytes"] = String(file.sizeBytes)
+            parameters["hints_format"] = evaluationHintsFormat(path: file.resolvedPath)
+            parameters["evaluation_hints_text"] = hintsText.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if let datasetRef = values.single["--dataset-ref"], datasetRef.isEmpty == false {
             let parsedRef = try parseDatasetReference(datasetRef)
@@ -3486,6 +3498,52 @@ public enum MelixCLIParser {
         }
         let canonicalData = try JSONSerialization.data(withJSONObject: parsed, options: [.sortedKeys])
         return String(decoding: canonicalData, as: UTF8.self)
+    }
+
+    private struct EvaluationFileMetadata {
+        let resolvedPath: String
+        let data: Data
+        let sha256: String
+        let sizeBytes: Int
+    }
+
+    private static func evaluationFileMetadata(path: String, option: String) throws -> EvaluationFileMetadata {
+        let expandedPath = (path as NSString).expandingTildeInPath
+        let url = URL(fileURLWithPath: expandedPath)
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw MelixCLIError.usage("Failed to read \(option) at \(path): \(error.localizedDescription)")
+        }
+        let resolvedPath = url.resolvingSymlinksInPath().standardizedFileURL.path
+        return EvaluationFileMetadata(
+            resolvedPath: resolvedPath,
+            data: data,
+            sha256: sha256Hex(data),
+            sizeBytes: data.count
+        )
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private static func evaluationHintsFormat(path: String) -> String {
+        switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+        case "json":
+            return "json"
+        case "md":
+            return "markdown"
+        case "txt":
+            return "text"
+        case let suffix where suffix.isEmpty == false:
+            return suffix
+        default:
+            return "text"
+        }
     }
 
     private static func normalizedParameterKey(_ option: String) -> String {

@@ -16,14 +16,19 @@ Make `melix eval run` and `melix eval compare` accept reproducibility inputs tha
 
 ## Design
 
-Use the current `EvaluationProfile.output_schema_json` path for schema content instead of adding a new protocol surface. The CLI reads `--schema`, validates that it is JSON, canonicalizes it with sorted keys, and passes it as `output_schema_json`. `--schema` and `--output-schema-json` are mutually exclusive so the receipt metadata is unambiguous.
+Use the current `EvaluationProfile.output_schema_json` path for schema content instead of adding a new protocol surface. The CLI reads `--schema`, validates that it is JSON, canonicalizes it with sorted keys, computes its SHA-256 and byte size, and passes it as `output_schema_json`. `--schema` and `--output-schema-json` are mutually exclusive so the receipt metadata is unambiguous.
 
 Use evaluation request parameters for reproducibility metadata:
 
 - `schema_path`
+- `schema_sha256`
+- `schema_size_bytes`
 - `hints_path`
+- `hints_sha256`
+- `hints_size_bytes`
+- `hints_format`
 
-The Python worker resolves those paths, computes `schema_sha256`, `schema_size_bytes`, `hints_sha256`, `hints_size_bytes`, and `hints_format`, and keeps those in the persisted evaluation job parameters. The worker passes hints text only in memory to prompt construction.
+The CLI reads `--hints`, computes SHA-256, byte size, and format from the local file, and passes the hints text as transient `evaluation_hints_text`. The Python worker does not read schema or hints paths from its local filesystem; it preserves the CLI-supplied metadata in persisted evaluation job parameters and passes hints text only in memory to prompt construction.
 
 Benchmark/evaluation report generation compares the persisted schema and hints hashes from evaluation jobs and compare jobs. Hash mismatches make the report status `warning`, set comparison validity to `partial`, and render a reproducibility warning in Markdown output.
 
@@ -57,7 +62,7 @@ Success criteria: schema/hints metadata is stable across reruns with unchanged f
 
 1. Add CLI parsing and command-codec support for `--schema` and `--hints` on `eval run` and `eval compare`.
 2. Add worker metadata resolution for schema/hints paths and in-memory hints prompt injection.
-3. Expand JSON schema validation for nested objects, arrays, nullable fields, and additional property checks.
+3. Expand JSON schema validation for nested objects, arrays, nullable fields, `patternProperties`, and additional property checks.
 4. Add report mismatch detection for schema/hints hashes.
 5. Add Swift parser/runner coverage and Python evaluation/report coverage.
 6. Run focused tests, changed-line coverage, diff checks, and PR evidence validation before publishing.

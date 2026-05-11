@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import builtins
-import hashlib
 import json
 from pathlib import Path
 import random
@@ -2432,7 +2431,7 @@ def test_worker_maintenance_service_run_evaluation_maps_request_task_metadata(
     assert "Return only the final short answer." in backend.prompts[0]
 
 
-def test_worker_maintenance_service_records_schema_hints_metadata_without_persisting_hints_text(
+def test_worker_maintenance_service_records_cli_supplied_schema_hints_metadata_without_persisting_hints_text(
     tmp_path: Path,
 ) -> None:
     dataset_root = _write_dataset_package(
@@ -2441,11 +2440,9 @@ def test_worker_maintenance_service_records_schema_hints_metadata_without_persis
         suite_id="math",
         samples=({"id": "sample-1", "prompt": "2+2?", "expected": "4"},),
     )
-    schema_path = tmp_path / "result.schema.json"
-    schema_path.write_text(json.dumps({"type": "object", "required": ["answer"]}) + "\n", encoding="utf-8")
-    hints_path = tmp_path / "math-hints.md"
+    schema_path = Path("/remote/eval/result.schema.json")
+    hints_path = Path("/remote/eval/math-hints.md")
     hints_text = "Prefer integer answers and keep the response short.\n"
-    hints_path.write_text(hints_text, encoding="utf-8")
     backend = ScriptedEvaluationBackend(("Answer: 4",))
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=backend),
@@ -2473,7 +2470,13 @@ def test_worker_maintenance_service_records_schema_hints_metadata_without_persis
         task_kind="text-generation",
         parameters={
             "schema_path": str(schema_path),
+            "schema_sha256": "schema-sha-from-cli",
+            "schema_size_bytes": "49",
             "hints_path": str(hints_path),
+            "hints_sha256": "hints-sha-from-cli",
+            "hints_size_bytes": str(len(hints_text.encode("utf-8"))),
+            "hints_format": "markdown",
+            "evaluation_hints_text": hints_text.strip(),
         },
     )
 
@@ -2481,12 +2484,12 @@ def test_worker_maintenance_service_records_schema_hints_metadata_without_persis
 
     assert response.ok is True
     assert "Additional Hints:\nPrefer integer answers" in backend.prompts[0]
-    assert response.job.parameters["schema_path"] == str(schema_path.resolve())
-    assert response.job.parameters["schema_sha256"] == hashlib.sha256(schema_path.read_bytes()).hexdigest()
-    assert response.job.parameters["schema_size_bytes"] == str(schema_path.stat().st_size)
-    assert response.job.parameters["hints_path"] == str(hints_path.resolve())
-    assert response.job.parameters["hints_sha256"] == hashlib.sha256(hints_path.read_bytes()).hexdigest()
-    assert response.job.parameters["hints_size_bytes"] == str(hints_path.stat().st_size)
+    assert response.job.parameters["schema_path"] == str(schema_path)
+    assert response.job.parameters["schema_sha256"] == "schema-sha-from-cli"
+    assert response.job.parameters["schema_size_bytes"] == "49"
+    assert response.job.parameters["hints_path"] == str(hints_path)
+    assert response.job.parameters["hints_sha256"] == "hints-sha-from-cli"
+    assert response.job.parameters["hints_size_bytes"] == str(len(hints_text.encode("utf-8")))
     assert response.job.parameters["hints_format"] == "markdown"
     assert response.job.parameters["hints_prompt_chars"] == str(len(hints_text.strip()))
     assert "evaluation_hints_text" not in response.job.parameters
@@ -2494,18 +2497,21 @@ def test_worker_maintenance_service_records_schema_hints_metadata_without_persis
     assert metrics["eval.math.hints_prompt_chars"] == float(len(hints_text.strip()))
 
 
-def test_worker_maintenance_service_reproducibility_parameter_errors_and_hint_formats(
+def test_worker_maintenance_service_reproducibility_parameters_do_not_require_worker_local_files(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="evaluation schema file does not exist"):
-        WorkerMaintenanceService._attach_evaluation_reproducibility_parameters(
-            {"schema_path": str(tmp_path / "missing.schema.json")}
-        )
+    parameters = {
+        "schema_path": "/remote/eval/missing.schema.json",
+        "hints_path": "/remote/eval/missing-hints.md",
+    }
 
-    with pytest.raises(ValueError, match="evaluation hints file does not exist"):
-        WorkerMaintenanceService._attach_evaluation_reproducibility_parameters(
-            {"hints_path": str(tmp_path / "missing-hints.md")}
-        )
+    WorkerMaintenanceService._attach_evaluation_reproducibility_parameters(parameters)
+
+    assert parameters["schema_path"] == "/remote/eval/missing.schema.json"
+    assert "schema_sha256" not in parameters
+    assert parameters["hints_path"] == "/remote/eval/missing-hints.md"
+    assert parameters["hints_format"] == "markdown"
+    assert "hints_sha256" not in parameters
 
     assert WorkerMaintenanceService._hints_format(tmp_path / "hints.json") == "json"
     assert WorkerMaintenanceService._hints_format(tmp_path / "hints.md") == "markdown"

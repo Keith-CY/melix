@@ -373,11 +373,25 @@ def _validate_json_schema_at(schema: dict[str, Any], payload: Any, *, path: str)
                 )
                 if validation_error:
                     return validation_error
+        pattern_properties = schema.get("patternProperties", {})
+        if isinstance(pattern_properties, dict):
+            for key, value in payload.items():
+                key_text = str(key)
+                for pattern_schema in _json_schema_pattern_schemas(pattern_properties, key_text):
+                    if not isinstance(pattern_schema, dict):
+                        continue
+                    validation_error = _validate_json_schema_at(
+                        pattern_schema,
+                        value,
+                        path=_json_schema_child_path(path, key_text),
+                    )
+                    if validation_error:
+                        return validation_error
         if schema.get("additionalProperties") is False and isinstance(properties, dict):
             allowed = {str(key) for key in properties.keys()}
             for key in payload.keys():
                 key_text = str(key)
-                if key_text not in allowed:
+                if key_text not in allowed and not _matches_json_schema_pattern(pattern_properties, key_text):
                     return f"unexpected_property:{_json_schema_child_path(path, key_text)}"
         return ""
 
@@ -409,6 +423,23 @@ def _json_schema_child_path(path: str, key: str) -> str:
     if path == "$":
         return f"$.{key}"
     return f"{path}.{key}"
+
+
+def _json_schema_pattern_schemas(pattern_properties: dict[Any, Any], key: str) -> list[Any]:
+    matched: list[Any] = []
+    for pattern, pattern_schema in pattern_properties.items():
+        if not isinstance(pattern, str):
+            continue
+        try:
+            if re.search(pattern, key):
+                matched.append(pattern_schema)
+        except re.error:
+            continue
+    return matched
+
+
+def _matches_json_schema_pattern(pattern_properties: Any, key: str) -> bool:
+    return isinstance(pattern_properties, dict) and bool(_json_schema_pattern_schemas(pattern_properties, key))
 
 
 def _json_typed_score(*, expected: Any, actual: Any, ignored_paths: set[str], path: str = "") -> float:

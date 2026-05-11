@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -635,7 +636,13 @@ struct MelixCLIParserTests {
         #expect(parsedEvalOptions.profile.resultKind == "json")
         #expect(parsedEvalOptions.profile.outputSchemaJSON == #"{"required":["answer"],"type":"object"}"#)
         #expect(parsedEvalOptions.parameters["schema_path"] == schemaPath.path)
+        #expect(parsedEvalOptions.parameters["schema_sha256"] == melixTestSHA256Hex(Data(#"{"type":"object","required":["answer"]}"#.utf8)))
+        #expect(parsedEvalOptions.parameters["schema_size_bytes"] == "39")
         #expect(parsedEvalOptions.parameters["hints_path"] == hintsPath.path)
+        #expect(parsedEvalOptions.parameters["hints_sha256"] == melixTestSHA256Hex(Data("Return the normalized answer.\n".utf8)))
+        #expect(parsedEvalOptions.parameters["hints_size_bytes"] == "30")
+        #expect(parsedEvalOptions.parameters["hints_format"] == "text")
+        #expect(parsedEvalOptions.parameters["evaluation_hints_text"] == "Return the normalized answer.")
         #expect(parsedEvalOptions.json)
     }
 
@@ -2421,7 +2428,13 @@ struct MelixCLIParserTests {
         #expect(options.profile.resultKind == "json")
         #expect(options.profile.outputSchemaJSON == #"{"required":["answer"],"type":"object"}"#)
         #expect(options.parameters["schema_path"] == schemaPath.path)
+        #expect(options.parameters["schema_sha256"] == melixTestSHA256Hex(Data(#"{"type":"object","required":["answer"]}"#.utf8)))
+        #expect(options.parameters["schema_size_bytes"] == "39")
         #expect(options.parameters["hints_path"] == hintsPath.path)
+        #expect(options.parameters["hints_sha256"] == melixTestSHA256Hex(Data("Prefer integer answers.\n".utf8)))
+        #expect(options.parameters["hints_size_bytes"] == "24")
+        #expect(options.parameters["hints_format"] == "markdown")
+        #expect(options.parameters["evaluation_hints_text"] == "Prefer integer answers.")
     }
 
     @Test("eval run schema file parser surfaces reproducibility input errors")
@@ -3197,4 +3210,10 @@ private func assertSchemaUsageError(schemaPath: String, contains expectedText: S
     } catch let error as MelixCLIError {
         #expect(error.errorDescription?.contains(expectedText) == true)
     }
+}
+
+private func melixTestSHA256Hex(_ data: Data) -> String {
+    SHA256.hash(data: data)
+        .map { String(format: "%02x", $0) }
+        .joined()
 }
