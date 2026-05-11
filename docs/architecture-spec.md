@@ -424,6 +424,16 @@ Workers should also expose operational tools as product features:
 
 These flows should be backed by the same runtime metadata model used by the control plane.
 
+### Agentic Tool Runtime
+
+Agentic training replay, online rollout, benchmark, and evaluation must share one
+worker-owned tool registry contract. The initial built-in registry lives in the
+Python worker runtime and exports deterministic OpenAI-compatible function
+schemas plus Melix `ToolConfig` metadata for image crop, layout parsing, text
+search, image search, visit, and local compute tools. The registry is a contract
+boundary only: concrete adapters, observation redaction, replay metadata, and
+evaluation routing are layered on top in separate implementation slices.
+
 ### Quantization
 
 V1 requires:
