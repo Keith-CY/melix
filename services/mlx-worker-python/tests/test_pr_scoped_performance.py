@@ -169,6 +169,36 @@ def test_scope_report_selects_engine_generate_usage_probe() -> None:
     assert _selected_probe_ids(scope) == ["engine-generate-usage-token-elision"]
 
 
+def test_scope_report_selects_integration_swift_binary_resolution_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["tests/integration/helpers.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert _selected_probe_ids(scope) == ["integration-swift-binary-resolution-scandir"]
+
+
+def test_integration_swift_binary_resolution_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_SWIFT_BINARY_RESOLUTION_TRIPLES", "8")
+    monkeypatch.setenv("MELIX_SWIFT_BINARY_RESOLUTION_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/integration_swift_binary_resolution_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["candidate_count"] == 9
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["legacy_elapsed_ms_mean"] >= 0
+    assert "delta_ms_mean" in metrics
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_scope_report_selects_mlx_text_stop_kwarg_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1917,6 +1947,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "hub-catalog-tag-normalization-single-pass",
         "hub-catalog-next-cursor-fast-parse",
         "hub-catalog-size-hint-regex-precompile",
+        "integration-swift-binary-resolution-scandir",
         "benchmark-evaluation-report-running-aggregates",
         "stream-assembler-parser-mode-cache",
         "benchmark-export-run-scan-single-pass",
