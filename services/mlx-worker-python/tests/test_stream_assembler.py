@@ -96,6 +96,62 @@ def test_plain_buffer_without_tag_marker_flushes_without_structural_scans(monkey
     assert completed.metrics["stream_short_reply_flush_count"] == 0
 
 
+def test_token_byte_delta_decodes_complete_ascii_without_incremental_decoder(monkeypatch) -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-token-byte-fast-path",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    decoder_calls = 0
+    original_decoder_factory = stream_assembler._UTF8_INCREMENTAL_DECODER
+
+    def tracked_decoder_factory():
+        nonlocal decoder_calls
+        decoder_calls += 1  # pragma: no cover - this fast-path guard must stay cold
+        return original_decoder_factory()  # pragma: no cover
+
+    monkeypatch.setattr(stream_assembler, "_UTF8_INCREMENTAL_DECODER", tracked_decoder_factory)
+
+    deltas = assembler.accept(StreamFragment(token_bytes=b"hello "))
+    deltas += assembler.accept(StreamFragment(token_bytes=b"world"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas] == ["hello ", "world"]
+    assert completed.assistant_text == "hello world"
+    assert completed.metrics["generated_token_count"] == 2
+    assert completed.metrics["byte_fallback_decode_error_count"] == 0
+    assert decoder_calls == 0
+
+
+def test_token_byte_delta_preserves_split_multibyte_sequence(monkeypatch) -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-token-byte-split-multibyte",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    decoder_calls = 0
+    original_decoder_factory = stream_assembler._UTF8_INCREMENTAL_DECODER
+
+    def tracked_decoder_factory():
+        nonlocal decoder_calls
+        decoder_calls += 1
+        return original_decoder_factory()
+
+    monkeypatch.setattr(stream_assembler, "_UTF8_INCREMENTAL_DECODER", tracked_decoder_factory)
+
+    assert assembler.accept(StreamFragment(token_bytes="€".encode("utf-8")[:1])) == []
+    deltas = assembler.accept(StreamFragment(token_bytes="€".encode("utf-8")[1:]))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas] == ["€"]
+    assert completed.assistant_text == "€"
+    assert completed.metrics["generated_token_count"] == 2
+    assert completed.metrics["byte_fallback_merge_count"] == 1
+    assert decoder_calls == 2
+
+
 def test_plain_buffer_with_marker_still_holds_partial_structural_prefix() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-marker-still-held",

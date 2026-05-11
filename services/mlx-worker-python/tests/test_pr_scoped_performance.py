@@ -140,10 +140,11 @@ def test_scope_report_selects_stream_assembler_probe() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert probe_ids == {
         "stream-assembler-parser-mode-cache",
         "stream-assembler-structural-prefix-cache",
+        "stream-assembler-token-byte-fast-decode",
     }
 
 
@@ -1616,6 +1617,27 @@ def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_stream_assembler_token_bytes_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_EVENTS", "8")
+    monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/stream_assembler_token_bytes_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["token_event_count"] == 8.0
+    assert metrics["generated_token_count_mean"] == 8.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["checksum"] > 0
+
+
 def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1973,6 +1995,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "integration-swift-binary-resolution-scandir",
         "benchmark-evaluation-report-running-aggregates",
         "stream-assembler-parser-mode-cache",
+        "stream-assembler-token-byte-fast-decode",
         "benchmark-export-run-scan-single-pass",
         "benchmark-queue-decoded-record-cache",
         "benchmark-store-matrix-streaming",
