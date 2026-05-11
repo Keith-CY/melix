@@ -19,6 +19,10 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
         "print('hi')",
         "parsed_code_block",
     )
+    assert code_eval_runner.extract_candidate_code("```python\nprint('hi')\n```   \n\t") == (
+        "print('hi')",
+        "parsed_code_block",
+    )
     assert code_eval_runner.extract_candidate_code(
         "first attempt:\n```python\nprint('old')\n```\nfinal answer:\n```python\nprint('new')\n```"
     ) == ("print('new')", "parsed_code_block")
@@ -31,6 +35,9 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
     ) == ("print('complete')", "parsed_code_block")
     assert code_eval_runner.extract_candidate_code(
         "```python\nprint('complete')\n```\n```"
+    ) == ("print('complete')", "parsed_code_block")
+    assert code_eval_runner.extract_candidate_code(
+        "```python\nprint('complete')\n```\nfinal commentary after the answer"
     ) == ("print('complete')", "parsed_code_block")
     blocks = [
         f"draft {index}\n```python\ndef candidate():\n    return {index}\n```"

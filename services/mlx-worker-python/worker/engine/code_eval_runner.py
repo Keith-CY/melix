@@ -47,9 +47,9 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     if closing >= 0:
         opening = normalized.rfind("```", 0, closing)
         if opening >= 0:
-            trailing = normalized[closing + 3 :]
+            trailing_start = closing + 3
             fence_count: int | None = None
-            if trailing.strip():
+            if trailing_start < len(normalized):
                 fence_count = normalized.count("```")
                 if fence_count % 2:
                     closing = opening

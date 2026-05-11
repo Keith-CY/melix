@@ -21,7 +21,8 @@ def _build_response(block_count: int) -> str:
         blocks.append(
             f"analysis chunk {index}\n```python\ndef candidate_{index}():\n    return {index}\n```"
         )
-    return "\n\n".join(blocks)
+    trailing_commentary = "\n".join(f"post answer note {index}" for index in range(block_count))
+    return "\n\n".join(blocks) + "\n" + trailing_commentary
 
 
 def main() -> None:
