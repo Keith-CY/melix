@@ -1,0 +1,309 @@
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from typing import Any
+
+from packages.protocol.python.worker.v1 import common_pb2
+
+
+_COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
+_TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+TOOL_REGISTRY_SCHEMA_VERSION = "melix.agentic_tool_registry.v1"
+BUILTIN_TOOLSET_VERSION = "melix.agentic_tools.builtin.v1"
+DEFAULT_TOOL_PARSER = "qwen"
+DEFAULT_TOOL_PARSER_CONTRACT_VERSION = "melix.tool_parser.qwen.v1"
+BUILTIN_AGENTIC_TOOL_NAMES = (
+    "image_crop",
+    "layout_parse",
+    "text_search",
+    "image_search",
+    "visit",
+    "local_compute",
+)
+
+
+class ToolRegistryError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class ToolArgumentDescriptor:
+    name: str
+    json_type: str
+    description: str
+    required: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ToolRegistryError("Tool argument names must be non-empty.")
+        if not self.json_type.strip():
+            raise ToolRegistryError(f"Tool argument {self.name} must declare a JSON type.")
+        if not self.description.strip():
+            raise ToolRegistryError(f"Tool argument {self.name} must include a description.")
+
+    def json_schema(self) -> dict[str, Any]:
+        return {
+            "type": self.json_type.strip(),
+            "description": self.description.strip(),
+        }
+
+
+@dataclass(frozen=True)
+class ToolDescriptor:
+    name: str
+    description: str
+    tool_kind: str
+    observation_kind: str
+    arguments: tuple[ToolArgumentDescriptor, ...]
+
+    def __post_init__(self) -> None:
+        normalized_name = self.name.strip()
+        if not _TOOL_NAME_RE.fullmatch(normalized_name):
+            raise ToolRegistryError(f"Invalid tool registry name: {self.name}")
+        if not self.description.strip():
+            raise ToolRegistryError(f"Tool {normalized_name} must include a description.")
+        if not self.tool_kind.strip():
+            raise ToolRegistryError(f"Tool {normalized_name} must include a tool kind.")
+        if not self.observation_kind.strip():
+            raise ToolRegistryError(f"Tool {normalized_name} must include an observation kind.")
+        if not self.arguments:
+            raise ToolRegistryError(f"Tool {normalized_name} must define at least one argument.")
+        argument_names: set[str] = set()
+        for argument in self.arguments:
+            if argument.name in argument_names:
+                raise ToolRegistryError(
+                    f"Duplicate argument {argument.name} in tool registry entry {normalized_name}."
+                )
+            argument_names.add(argument.name)
+
+    @property
+    def required_arguments(self) -> tuple[str, ...]:
+        return tuple(argument.name for argument in self.arguments if argument.required)
+
+    def schema_payload(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                argument.name: argument.json_schema()
+                for argument in self.arguments
+            },
+            "required": list(self.required_arguments),
+            "x-melix-tool-kind": self.tool_kind,
+            "x-melix-observation-kind": self.observation_kind,
+        }
+
+    def json_schema(self) -> str:
+        return _COMPACT_SORTED_JSON_ENCODER.encode(self.schema_payload())
+
+    def as_openai_tool(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.schema_payload(),
+            },
+        }
+
+    def as_worker_tool_definition(self) -> common_pb2.ToolDefinition:
+        return common_pb2.ToolDefinition(
+            name=self.name,
+            description=self.description,
+            json_schema=self.json_schema(),
+        )
+
+
+@dataclass(frozen=True)
+class ToolRegistryMetrics:
+    tool_count: int
+    schema_bytes: int
+    required_argument_count: int
+
+
+class ToolRegistry:
+    def __init__(
+        self,
+        tools: list[ToolDescriptor] | tuple[ToolDescriptor, ...],
+        *,
+        schema_version: str = TOOL_REGISTRY_SCHEMA_VERSION,
+        toolset_version: str = BUILTIN_TOOLSET_VERSION,
+        parser: str = DEFAULT_TOOL_PARSER,
+        parser_contract_version: str = DEFAULT_TOOL_PARSER_CONTRACT_VERSION,
+    ) -> None:
+        self._tools = tuple(tools)
+        self._schema_version = schema_version.strip()
+        self._toolset_version = toolset_version.strip()
+        self._parser = parser.strip()
+        self._parser_contract_version = parser_contract_version.strip()
+        self._validate()
+
+    @property
+    def tools(self) -> tuple[ToolDescriptor, ...]:
+        return self._tools
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(tool.name for tool in self._tools)
+
+    def metrics(self) -> ToolRegistryMetrics:
+        return ToolRegistryMetrics(
+            tool_count=len(self._tools),
+            schema_bytes=sum(len(tool.json_schema().encode("utf-8")) for tool in self._tools),
+            required_argument_count=sum(len(tool.required_arguments) for tool in self._tools),
+        )
+
+    def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
+        requested_names = tuple(dict.fromkeys(name.strip() for name in names if name.strip()))
+        known_names = set(self.names())
+        missing_names = [name for name in requested_names if name not in known_names]
+        if missing_names:
+            joined = ", ".join(missing_names)
+            raise ToolRegistryError(f"Unknown tool registry entry requested: {joined}")
+        selected = [tool for tool in self._tools if tool.name in requested_names]
+        return ToolRegistry(
+            selected,
+            schema_version=self._schema_version,
+            toolset_version=self._toolset_version,
+            parser=self._parser,
+            parser_contract_version=self._parser_contract_version,
+        )
+
+    def as_openai_tools(self) -> list[dict[str, Any]]:
+        return [tool.as_openai_tool() for tool in self._tools]
+
+    def as_worker_tool_config(self) -> common_pb2.ToolConfig:
+        return common_pb2.ToolConfig(
+            tools=[tool.as_worker_tool_definition() for tool in self._tools],
+            schema_format="openai-function",
+            schema_version=self._schema_version,
+            toolset_version=self._toolset_version,
+            parser=self._parser,
+            parser_contract_version=self._parser_contract_version,
+        )
+
+    def _validate(self) -> None:
+        if not self._schema_version:
+            raise ToolRegistryError("Tool registry schema_version must be non-empty.")
+        if not self._toolset_version:
+            raise ToolRegistryError("Tool registry toolset_version must be non-empty.")
+        if not self._parser:
+            raise ToolRegistryError("Tool registry parser must be non-empty.")
+        if not self._parser_contract_version:
+            raise ToolRegistryError("Tool registry parser_contract_version must be non-empty.")
+        seen_names: set[str] = set()
+        for tool in self._tools:
+            if tool.name in seen_names:
+                raise ToolRegistryError(f"Duplicate tool registry entry: {tool.name}")
+            seen_names.add(tool.name)
+
+
+def built_in_tool_registry() -> ToolRegistry:
+    return ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
+
+
+def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
+    registry = built_in_tool_registry()
+    if names is not None:
+        registry = registry.select(names)
+    return registry.as_worker_tool_config()
+
+
+def _arg(
+    name: str,
+    json_type: str,
+    description: str,
+    *,
+    required: bool = True,
+) -> ToolArgumentDescriptor:
+    return ToolArgumentDescriptor(
+        name=name,
+        json_type=json_type,
+        description=description,
+        required=required,
+    )
+
+
+_BUILTIN_AGENTIC_TOOLS = (
+    ToolDescriptor(
+        name="image_crop",
+        description="Crop or inspect a bounded region from a referenced image.",
+        tool_kind="vision.image_crop",
+        observation_kind="image_region",
+        arguments=(
+            _arg("media_ref", "string", "Identifier or URI for the source image."),
+            _arg("region", "string", "Crop region as a named area or normalized box."),
+            _arg("purpose", "string", "Reason the crop is needed for the current step.", required=False),
+        ),
+    ),
+    ToolDescriptor(
+        name="layout_parse",
+        description="Extract visual layout elements from an image or document page.",
+        tool_kind="vision.layout_parse",
+        observation_kind="layout_elements",
+        arguments=(
+            _arg("media_ref", "string", "Identifier or URI for the source image or document."),
+            _arg("detail_level", "string", "Requested layout detail such as blocks, lines, or tables.", required=False),
+        ),
+    ),
+    ToolDescriptor(
+        name="text_search",
+        description="Search a local text corpus or fixture-backed index.",
+        tool_kind="retrieval.text_search",
+        observation_kind="search_results",
+        arguments=(
+            _arg("query", "string", "Text query to search for."),
+            _arg("corpus_ref", "string", "Optional local corpus or fixture identifier.", required=False),
+            _arg("max_results", "integer", "Maximum number of search results to return.", required=False),
+        ),
+    ),
+    ToolDescriptor(
+        name="image_search",
+        description="Search local image evidence or fixture-backed image indexes.",
+        tool_kind="retrieval.image_search",
+        observation_kind="image_search_results",
+        arguments=(
+            _arg("query", "string", "Visual or textual query for image search."),
+            _arg("corpus_ref", "string", "Optional image corpus or fixture identifier.", required=False),
+            _arg("max_results", "integer", "Maximum number of image results to return.", required=False),
+        ),
+    ),
+    ToolDescriptor(
+        name="visit",
+        description="Visit a local URL or fixture-backed page and return extracted content.",
+        tool_kind="browser.visit",
+        observation_kind="page_extract",
+        arguments=(
+            _arg("url", "string", "URL or fixture URL to visit."),
+            _arg("extract", "string", "Extraction mode such as text, links, or screenshot.", required=False),
+        ),
+    ),
+    ToolDescriptor(
+        name="local_compute",
+        description="Run deterministic local compute for parsing, arithmetic, or data shaping.",
+        tool_kind="compute.local",
+        observation_kind="compute_result",
+        arguments=(
+            _arg("code", "string", "Small deterministic compute snippet or expression."),
+            _arg("timeout_ms", "integer", "Maximum execution time in milliseconds.", required=False),
+        ),
+    ),
+)
+
+
+__all__ = [
+    "BUILTIN_AGENTIC_TOOL_NAMES",
+    "BUILTIN_TOOLSET_VERSION",
+    "DEFAULT_TOOL_PARSER",
+    "DEFAULT_TOOL_PARSER_CONTRACT_VERSION",
+    "TOOL_REGISTRY_SCHEMA_VERSION",
+    "ToolArgumentDescriptor",
+    "ToolDescriptor",
+    "ToolRegistry",
+    "ToolRegistryError",
+    "ToolRegistryMetrics",
+    "built_in_tool_config",
+    "built_in_tool_registry",
+]
