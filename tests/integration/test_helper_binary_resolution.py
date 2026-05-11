@@ -107,3 +107,37 @@ def test_resolve_swift_product_binary_streams_candidates_without_candidate_list(
     )
 
     assert resolved == preferred
+
+
+def test_resolve_swift_product_binary_stats_each_candidate_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path
+    build_root = repo_root / "services" / "mlx-text-worker-swift" / ".build"
+    flat = build_root / "debug" / "melix-text-worker-swift"
+    preferred = build_root / "arm64-apple-macosx" / "debug" / "melix-text-worker-swift"
+    _write_executable(flat)
+    _write_executable(preferred)
+    os.utime(flat, (1, 1))
+    os.utime(preferred, (2, 2))
+
+    original_stat = Path.stat
+    product_stats = 0
+
+    def counting_stat(self: Path, *args: object, **kwargs: object):
+        nonlocal product_stats
+        if self.name == "melix-text-worker-swift":
+            product_stats += 1
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", counting_stat)
+
+    resolved = helpers.resolve_swift_product_binary(
+        repo_root,
+        package_path=Path("services/mlx-text-worker-swift"),
+        product_name="melix-text-worker-swift",
+    )
+
+    assert resolved == preferred
+    assert product_stats == 2

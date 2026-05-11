@@ -12,7 +12,10 @@ triple directory before executable filtering.
 Replace the fallback glob in `tests/integration/helpers.py` with a shared
 `os.scandir()` candidate enumerator. The direct `.build/debug/<product>` lookup remains
 first, and architecture-specific SwiftPM products are still selected by the existing
-`(mtime, path-depth)` preference.
+`(mtime, path-depth)` preference. Candidate validation should reuse one `Path.stat()`
+result for regular-file filtering and mtime comparison so the resolver does not restat
+executable candidates, and the scan should skip the already-checked top-level `debug`
+directory rather than probing a non-existent nested `debug/debug/<product>` path.
 
 ## Probe
 
