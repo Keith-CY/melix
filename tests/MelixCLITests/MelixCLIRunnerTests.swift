@@ -391,21 +391,29 @@ struct MelixCLIRunnerTests {
     @Test("batch model-list parser rejects invalid lines")
     func batchModelListParserRejectsInvalidLines() throws {
         #expect(throws: MelixCLIError.usage("Empty model index at 2.")) {
-            _ = try BatchRunModelListParser.parse(contents: """
-            mlx-community/Valid-4bit
-              |mlx-community/MissingIndex-4bit
-            """)
+            _ = try BatchRunModelListParser.parse(contents: "mlx-community/Valid-4bit\n  |mlx-community/MissingIndex-4bit\n")
         }
-        #expect(throws: MelixCLIError.usage("Empty repo id at 3.")) {
-            _ = try BatchRunModelListParser.parse(contents: """
-            mlx-community/Valid-4bit
-            # comments do not consume auto indexes
-            42|
-            """)
+        #expect(throws: MelixCLIError.usage("Empty repo id at 2.")) {
+            _ = try BatchRunModelListParser.parse(contents: "mlx-community/Valid-4bit\n42|\n")
         }
         #expect(throws: MelixCLIError.usage("Empty model index at 1.")) {
             _ = try BatchRunModelListParser.parse(contents: "|\n")
         }
+        #expect(throws: MelixCLIError.usage("Empty model index at 1.")) {
+            _ = try BatchRunModelListParser.parse(contents: "|")
+        }
+    }
+
+    @Test("batch model-list parser comments do not consume auto indexes")
+    func batchModelListParserCommentsDoNotConsumeAutoIndexes() throws {
+        let entries = try BatchRunModelListParser.parse(contents: """
+        mlx-community/Alpha-4bit
+        # comment
+        mlx-community/Beta-4bit
+        """)
+        #expect(entries.map(\.index) == ["01", "02"])
+        #expect(entries.map(\.repoID) == ["mlx-community/Alpha-4bit", "mlx-community/Beta-4bit"])
+        #expect(entries.map(\.sourceLine) == [1, 3])
     }
 
     @Test("batch run dry-run supports matching temp and output roots")
