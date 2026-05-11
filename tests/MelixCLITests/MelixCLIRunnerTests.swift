@@ -336,7 +336,7 @@ struct MelixCLIRunnerTests {
         #expect(FileManager.default.fileExists(atPath: copiedConfigPath.path))
         #expect(FileManager.default.fileExists(atPath: copiedManifestPath.path))
 
-        let effectiveConfig = try #require(parseJSONFile(effectiveConfigPath.path))
+        let effectiveConfig = try #require(try parseJSONFile(effectiveConfigPath.path))
         #expect(effectiveConfig["schema_version"] as? String == "melix.batch.effective_config.v1")
         #expect(effectiveConfig["run_id"] as? String == "dry-run-1")
         #expect(effectiveConfig["selected_model_count"] as? Int == 1)
@@ -381,7 +381,7 @@ struct MelixCLIRunnerTests {
             dryRun: true
         )))
 
-        let effectiveConfig = try #require(parseJSONFile(tempRoot.appendingPathComponent("effective-config.json").path))
+        let effectiveConfig = try #require(try parseJSONFile(tempRoot.appendingPathComponent("effective-config.json").path))
         let models = try #require(effectiveConfig["models"] as? [[String: Any]])
         #expect(models.count == 1)
         #expect(models[0]["index"] as? String == "10")
@@ -453,7 +453,7 @@ struct MelixCLIRunnerTests {
         let runner = MelixCLIRunner(environment: ["HOME": root.path])
         _ = try await runner.run(command)
 
-        let effectiveConfig = try #require(parseJSONFile(tempRoot.appendingPathComponent("effective-config.json").path))
+        let effectiveConfig = try #require(try parseJSONFile(tempRoot.appendingPathComponent("effective-config.json").path))
         #expect(effectiveConfig["selected_model_count"] as? Int == 3)
         #expect(effectiveConfig["max_models"] as? Int == 0)
         #expect(effectiveConfig["continue_on_failure"] as? Bool == true)
