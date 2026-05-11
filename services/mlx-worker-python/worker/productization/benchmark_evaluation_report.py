@@ -1998,7 +1998,7 @@ def _collect_run_evidence_model_memory_metrics(metrics: dict[str, object], rows:
             )
     for (run_kind, key), aggregate in aggregates_by_key.items():
         total, count = aggregate
-        metrics[f"model_memory.{run_kind}.{key}_mean"] = total / count
+        metrics[f"model_memory.{run_kind}.{key}_mean"] = total / count if count > 0 else 0.0
 
 
 def _update_numeric_aggregate(
