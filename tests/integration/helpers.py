@@ -454,7 +454,7 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
             candidate_stat = candidate.stat()
         except OSError:
             return
-        if not (stat.S_ISREG(candidate_stat.st_mode) and os.access(candidate, os.X_OK)):
+        if not (stat.S_ISREG(candidate_stat.st_mode) and (candidate_stat.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))):
             return
         candidate_key = (candidate_stat.st_mtime, len(candidate.parts))
         if newest_key is None or candidate_key > newest_key:
