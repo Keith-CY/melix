@@ -414,6 +414,9 @@ class EvaluationCore:
         job_parameters = {"dataset_root": str(dataset_root)}
         if parameters:
             job_parameters.update(parameters)
+        hints_text = str(job_parameters.pop("evaluation_hints_text", "") or "").strip()
+        if hints_text:
+            job_parameters["hints_prompt_chars"] = str(len(hints_text))
         runtime_evidence = EvaluationCore._runtime_evidence_for_loaded_model(loaded_model)
         job_parameters.update(runtime_evidence)
         if EvaluationCore._truthy_parameter(job_parameters, "require_live_model"):
@@ -473,6 +476,7 @@ class EvaluationCore:
                 job_id=job_id,
                 run_root=run_root,
                 job_parameters=job_parameters,
+                hints_text=hints_text,
                 created_at_unix_ms=created_at_unix_ms,
                 resolved_code_exec_policy=resolved_code_exec_policy,
                 resolved_seed=resolved_seed,
@@ -496,6 +500,7 @@ class EvaluationCore:
                 seed=resolved_seed,
                 job_parameters=job_parameters,
                 profile=profile,
+                hints_text=hints_text,
             )
         except BaseException:
             telemetry_session.cancel()
@@ -573,6 +578,9 @@ class EvaluationCore:
             result_metrics[f"eval.{suite_id}.code_exec_fail_count"] = float(code_exec_fail_count)
             result_units[f"eval.{suite_id}.code_exec_pass_count"] = "count"
             result_units[f"eval.{suite_id}.code_exec_fail_count"] = "count"
+        if hints_text:
+            result_metrics[f"eval.{suite_id}.hints_prompt_chars"] = float(len(hints_text))
+            result_units[f"eval.{suite_id}.hints_prompt_chars"] = "chars"
 
         report_path = self._result_path(run_root if self._jobs_root is not None else dataset_root)
         output_dir = str(run_root) if self._jobs_root is not None else str(dataset_root)
@@ -950,6 +958,7 @@ class EvaluationCore:
         job_parameters.pop("eval_prompt_examples_json", None)
         job_parameters.pop("semantic_judge_api_key", None)
         job_parameters.pop("semantic_judge_base_url", None)
+        job_parameters.pop("evaluation_hints_text", None)
         event_dataset_root = parameters.get("event_dataset_root") or parameters.get(
             "evaluation_materialized_dataset_root",
             "",
@@ -1411,6 +1420,7 @@ class EvaluationCore:
         job_id: str,
         run_root: Path,
         job_parameters: dict[str, str],
+        hints_text: str,
         created_at_unix_ms: int,
         resolved_code_exec_policy: str,
         resolved_seed: int,
@@ -1451,6 +1461,7 @@ class EvaluationCore:
                 job_id=job_id,
                 run_root=run_root,
                 job_parameters=job_parameters,
+                hints_text=hints_text,
                 created_at_unix_ms=created_at_unix_ms,
                 resolved_code_exec_policy=resolved_code_exec_policy,
                 resolved_seed=resolved_seed,
@@ -1498,6 +1509,7 @@ class EvaluationCore:
         job_id: str,
         run_root: Path,
         job_parameters: dict[str, str],
+        hints_text: str,
         created_at_unix_ms: int,
         resolved_code_exec_policy: str,
         resolved_seed: int,
@@ -1537,6 +1549,7 @@ class EvaluationCore:
             code_exec_policy=resolved_code_exec_policy,
             seed=resolved_seed,
             job_parameters=job_parameters,
+            hints_text=hints_text,
             request_label=f"base:{resolved_model_id}",
         )
         compare_samples: list[EvaluationCompareSample] = []
@@ -1559,6 +1572,7 @@ class EvaluationCore:
                 code_exec_policy=resolved_code_exec_policy,
                 seed=resolved_seed,
                 job_parameters=job_parameters,
+                hints_text=hints_text,
                 request_label=f"target:{target_model_id}",
             )
             target_compare_samples = build_compare_samples(
@@ -1711,6 +1725,7 @@ class EvaluationCore:
         code_exec_policy: str,
         seed: int,
         job_parameters: dict[str, str],
+        hints_text: str = "",
         request_label: str = "",
     ) -> tuple[EvaluationSample, ...]:
         sample_records_list: list[EvaluationSample] = []
@@ -1732,6 +1747,7 @@ class EvaluationCore:
                     code_exec_policy=code_exec_policy,
                     seed=seed,
                     job_parameters=job_parameters,
+                    hints_text=hints_text,
                     request_label=request_label,
                 )
             )
@@ -2170,6 +2186,7 @@ class EvaluationCore:
         code_exec_policy: str,
         seed: int,
         job_parameters: dict[str, str],
+        hints_text: str = "",
         request_label: str = "",
     ) -> EvaluationSample:
         system_text = EvaluationCore._system_text_for_sample(sample)
@@ -2215,6 +2232,7 @@ class EvaluationCore:
                     few_shot_examples=few_shot_examples,
                     dataset_root=dataset_root,
                     task_kind=task_kind,
+                    hints_text=hints_text,
                 ),
                 expected=target,
                 result_kind=profile.result_kind,
@@ -2503,6 +2521,7 @@ class EvaluationCore:
         few_shot_examples: tuple[dict[str, object], ...] = (),
         dataset_root: Path | None = None,
         task_kind: str = "text-generation",
+        hints_text: str = "",
     ) -> list[common_pb2.ChatMessage]:
         if scoring_mode == "pass_at_1":
             instruction = "Return only executable Python code for the requested solution. Do not include explanations."
@@ -2519,6 +2538,9 @@ class EvaluationCore:
         resolved_system_text = instruction
         if system_text.strip():
             resolved_system_text = f"{instruction}\n\n{system_text.strip()}"
+        normalized_hints_text = hints_text.strip()
+        if normalized_hints_text:
+            resolved_system_text = f"{resolved_system_text}\n\nAdditional Hints:\n{normalized_hints_text}"
         messages = [
             common_pb2.ChatMessage(role="system", parts=[common_pb2.MessagePart(text=resolved_system_text)]),
         ]

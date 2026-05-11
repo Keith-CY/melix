@@ -82,6 +82,10 @@ _MATRIX_SUMMARY_METRIC_KEYS = (
     "failed_count",
 )
 _EVALUATION_SUMMARY_METRIC_KEYS = ("failure_count", "duration_seconds")
+_EVALUATION_REPRODUCIBILITY_KEYS = (
+    ("schema_sha256", "schema"),
+    ("hints_sha256", "hints"),
+)
 _LOWER_IS_BETTER_METRIC_FRAGMENTS = (
     "latency",
     "ttft",
@@ -267,6 +271,10 @@ def build_benchmark_evaluation_report(
 ) -> dict[str, object]:
     baseline_metrics = _collect_metrics(baseline)
     candidate_metrics = _collect_metrics(candidate)
+    reproducibility_warnings = _evaluation_reproducibility_warnings(
+        baseline=baseline,
+        candidate=candidate,
+    )
     metric_names = sorted(set(baseline_metrics) | set(candidate_metrics))
     rows: list[dict[str, object]] = []
     warning_count = 0
@@ -286,6 +294,7 @@ def build_benchmark_evaluation_report(
             missing_count += 1
         elif row_status == "not_comparable":
             not_comparable_count += 1
+    warning_count += len(reproducibility_warnings)
     if warning_count:
         status = "warning"
     elif missing_count:
@@ -330,6 +339,7 @@ def build_benchmark_evaluation_report(
         targets=targets,
         baseline_evidence=baseline_evidence,
         candidate_evidence=candidate_evidence,
+        reproducibility_warnings=reproducibility_warnings,
     )
     gate_result = _gate_result(
         metric_rows=metric_rows,
@@ -368,12 +378,13 @@ def build_benchmark_evaluation_report(
         "telemetry_summary": telemetry_summary,
         "process_attribution": process_attribution,
         "comparison": comparison,
+        "reproducibility_warnings": reproducibility_warnings,
         "gate_result": gate_result,
         "artifacts": _default_artifacts(evidence_rows),
         "known_gaps": known_gaps,
         "instrumentation_gaps": instrumentation_gaps,
         "operator_notes": [],
-        "non_blocking_warnings": list(instrumentation_gaps),
+        "non_blocking_warnings": [*instrumentation_gaps, *reproducibility_warnings],
         "rows": rows,
     }
 
@@ -455,6 +466,7 @@ def render_markdown_report(report: dict[str, object]) -> str:
     probe_summary = report.get("probe_summary")
     if isinstance(probe_summary, dict):
         lines.extend(_render_probe_summary_markdown(probe_summary))
+    lines.extend(_render_reproducibility_warnings_markdown(report))
     lines.extend(_render_known_gaps_markdown(report))
     lines.extend(_render_artifacts_markdown(report.get("artifacts")))
     lines.append("")
@@ -803,12 +815,79 @@ def _report_gaps(
     return known_gaps, instrumentation_gaps
 
 
+def _evaluation_reproducibility_warnings(
+    *,
+    baseline: dict[str, object],
+    candidate: dict[str, object],
+) -> list[str]:
+    baseline_values = _evaluation_reproducibility_values(baseline)
+    candidate_values = _evaluation_reproducibility_values(candidate)
+    warnings: list[str] = []
+    for key, label in _EVALUATION_REPRODUCIBILITY_KEYS:
+        baseline_hashes = baseline_values.get(key, frozenset())
+        candidate_hashes = candidate_values.get(key, frozenset())
+        if not baseline_hashes and not candidate_hashes:
+            continue
+        if baseline_hashes == candidate_hashes:
+            continue
+        warnings.append(
+            f"evaluation_{label}_sha256_mismatch:"
+            f"baseline={_format_reproducibility_hashes(baseline_hashes)};"
+            f"candidate={_format_reproducibility_hashes(candidate_hashes)}"
+        )
+    return warnings
+
+
+def _evaluation_reproducibility_values(
+    bundle: dict[str, object],
+) -> dict[str, frozenset[str]]:
+    values: dict[str, set[str]] = {
+        key: set()
+        for key, _label in _EVALUATION_REPRODUCIBILITY_KEYS
+    }
+    for job in (
+        *_dict_rows(bundle.get("evaluation_jobs", [])),
+        *_dict_rows(bundle.get("evaluation_compare_jobs", [])),
+    ):
+        _collect_evaluation_reproducibility_parameters(values, job.get("parameters"))
+    for evidence in _dict_rows(bundle.get("run_evidence", [])):
+        domain_results = evidence.get("domain_results")
+        if not isinstance(domain_results, dict):
+            continue
+        evaluation_domain = domain_results.get("evaluation")
+        if not isinstance(evaluation_domain, dict):
+            continue
+        job = evaluation_domain.get("job")
+        if isinstance(job, dict):
+            _collect_evaluation_reproducibility_parameters(values, job.get("parameters"))
+    return {key: frozenset(item_values) for key, item_values in values.items()}
+
+
+def _collect_evaluation_reproducibility_parameters(
+    values: dict[str, set[str]],
+    parameters: object,
+) -> None:
+    if not isinstance(parameters, dict):
+        return
+    for key, _label in _EVALUATION_REPRODUCIBILITY_KEYS:
+        value = str(parameters.get(key) or "").strip()
+        if value:
+            values[key].add(value)
+
+
+def _format_reproducibility_hashes(values: frozenset[str]) -> str:
+    if not values:
+        return "missing"
+    return ",".join(sorted(values))
+
+
 def _comparison_section(
     *,
     metric_rows: list[dict[str, object]],
     targets: list[dict[str, object]],
     baseline_evidence: list[dict[str, object]],
     candidate_evidence: list[dict[str, object]],
+    reproducibility_warnings: list[str],
 ) -> dict[str, object]:
     metric_deltas = [_comparison_delta(row) for row in metric_rows]
     probe_deltas = [row for row in metric_deltas if str(row.get("metric") or "").startswith("probe.")]
@@ -825,7 +904,8 @@ def _comparison_section(
         "regressions": [row for row in metric_deltas if row.get("result") == "fail"],
         "improvements": [row for row in metric_deltas if _is_improvement(row)],
         "unchanged": [row for row in metric_deltas if _float_or_none(row.get("delta")) == 0.0],
-        "comparison_validity": "valid" if baseline_evidence and candidate_evidence else "partial",
+        "reproducibility_warnings": list(reproducibility_warnings),
+        "comparison_validity": "valid" if baseline_evidence and candidate_evidence and not reproducibility_warnings else "partial",
     }
 
 
@@ -1361,6 +1441,21 @@ def _render_telemetry_summary_markdown(telemetry_summary: object) -> list[str]:
             )
     if not has_rows:
         lines.append("| - | - | missing | - | - | - | telemetry_summary_missing |")
+    lines.append("")
+    return lines
+
+
+def _render_reproducibility_warnings_markdown(report: dict[str, object]) -> list[str]:
+    warnings = [
+        str(item)
+        for item in report.get("reproducibility_warnings", [])
+        if str(item).strip()
+    ] if isinstance(report.get("reproducibility_warnings"), list) else []
+    if not warnings:
+        return []
+    lines = ["", "## Reproducibility Warnings", ""]
+    for warning in warnings:
+        lines.append(f"- `{_markdown_cell(warning)}`")
     lines.append("")
     return lines
 

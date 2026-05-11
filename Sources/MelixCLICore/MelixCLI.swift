@@ -1587,14 +1587,14 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
       melix eval prompt list [--json]
       melix eval prompt show --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt create --prompt-id ID --title TITLE --system-prompt-file PATH [--json]
       melix eval prompt update --prompt-id ID --system-prompt-file PATH [--json]
       melix eval prompt freeze --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt archive --prompt-id ID [--json]
-      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
+      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
       melix eval compare export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-jsonl --job-id JOB_ID --output PATH [--json]
@@ -3356,6 +3356,12 @@ public enum MelixCLIParser {
         if let remoteExtraBodyJSON = values.single["--remote-extra-body-json"] {
             parameters["remote_provider_extra_body_json"] = remoteExtraBodyJSON
         }
+        if let schemaPath = values.single["--schema"], schemaPath.isEmpty == false {
+            parameters["schema_path"] = schemaPath
+        }
+        if let hintsPath = values.single["--hints"], hintsPath.isEmpty == false {
+            parameters["hints_path"] = hintsPath
+        }
         if let datasetRef = values.single["--dataset-ref"], datasetRef.isEmpty == false {
             let parsedRef = try parseDatasetReference(datasetRef)
             parameters["dataset_ref"] = datasetRef
@@ -3396,13 +3402,14 @@ public enum MelixCLIParser {
             targetPath: values.single["--field-target-path"] ?? "",
             sampleIDPath: values.single["--field-sample-id-path"] ?? ""
         )
+        let outputSchemaJSON = try parseEvaluationOutputSchemaJSON(values)
         let profile = ControlPlaneEvaluationRequest.Profile(
             profileType: values.single["--profile-type"] ?? "final_result",
             resultKind: values.single["--result-kind"] ?? "text",
             extractionMode: values.single["--extraction-mode"] ?? "heuristic_final",
             scoringMode: values.single["--scoring-mode"] ?? "",
             threshold: try parseDoubleValue(values.single["--threshold"], option: "--threshold", defaultValue: 1.0) ?? 1.0,
-            outputSchemaJSON: values.single["--output-schema-json"] ?? "",
+            outputSchemaJSON: outputSchemaJSON,
             ignoredPaths: values.multi["--ignored-path"] ?? []
         )
 
@@ -3445,6 +3452,40 @@ public enum MelixCLIParser {
         }
 
         return (source, fieldMapping, profile)
+    }
+
+    private static func parseEvaluationOutputSchemaJSON(_ values: ParsedArguments) throws -> String {
+        let schemaPath = values.single["--schema"] ?? ""
+        let inlineSchemaJSON = values.single["--output-schema-json"] ?? ""
+        guard schemaPath.isEmpty || inlineSchemaJSON.isEmpty else {
+            throw MelixCLIError.usage("--schema and --output-schema-json are mutually exclusive.")
+        }
+        guard schemaPath.isEmpty == false else {
+            return inlineSchemaJSON
+        }
+        return try canonicalJSONFileObject(path: schemaPath, option: "--schema")
+    }
+
+    private static func canonicalJSONFileObject(path: String, option: String) throws -> String {
+        let expandedPath = (path as NSString).expandingTildeInPath
+        let url = URL(fileURLWithPath: expandedPath)
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw MelixCLIError.usage("Failed to read \(option) at \(path): \(error.localizedDescription)")
+        }
+        let parsed: Any
+        do {
+            parsed = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw MelixCLIError.usage("\(option) must contain valid JSON: \(error.localizedDescription)")
+        }
+        guard parsed is [String: Any] else {
+            throw MelixCLIError.usage("\(option) must contain a JSON object.")
+        }
+        let canonicalData = try JSONSerialization.data(withJSONObject: parsed, options: [.sortedKeys])
+        return String(decoding: canonicalData, as: UTF8.self)
     }
 
     private static func normalizedParameterKey(_ option: String) -> String {
@@ -5351,6 +5392,7 @@ public actor MelixCLIRunner {
             source: options.source,
             fieldMapping: options.fieldMapping,
             profile: options.profile,
+            schemaPath: options.parameters["schema_path"],
             into: &arguments
         )
         appendOption("--batch-factor", value: options.parameters["batch_factor"], into: &arguments)
@@ -5359,6 +5401,7 @@ public actor MelixCLIRunner {
         appendOption("--few-shot", value: options.parameters["few_shot"], into: &arguments)
         appendOption("--scoring-mode", value: options.parameters["scoring_mode"], into: &arguments)
         appendOption("--code-exec-policy", value: options.parameters["code_exec_policy"], into: &arguments)
+        appendOption("--hints", value: options.parameters["hints_path"], into: &arguments)
         arguments.append("--json")
         return arguments
     }
@@ -5367,6 +5410,7 @@ public actor MelixCLIRunner {
         source: ControlPlaneEvaluationRequest.Source,
         fieldMapping: ControlPlaneEvaluationRequest.FieldMapping,
         profile: ControlPlaneEvaluationRequest.Profile,
+        schemaPath: String? = nil,
         into arguments: inout [String]
     ) {
         switch source.kind {
@@ -5390,7 +5434,11 @@ public actor MelixCLIRunner {
         appendOption("--result-kind", value: profile.resultKind, into: &arguments)
         appendOption("--extraction-mode", value: profile.extractionMode, into: &arguments)
         appendOption("--threshold", value: String(profile.threshold), into: &arguments)
-        appendOption("--output-schema-json", value: profile.outputSchemaJSON, into: &arguments)
+        if let schemaPath, schemaPath.isEmpty == false {
+            appendOption("--schema", value: schemaPath, into: &arguments)
+        } else {
+            appendOption("--output-schema-json", value: profile.outputSchemaJSON, into: &arguments)
+        }
         appendMultiOption("--ignored-path", values: profile.ignoredPaths, into: &arguments)
     }
 

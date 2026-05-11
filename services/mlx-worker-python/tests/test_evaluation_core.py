@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import json
 from pathlib import Path
 import random
@@ -2429,6 +2430,87 @@ def test_worker_maintenance_service_run_evaluation_maps_request_task_metadata(
     assert len(backend.prompts) == 1
     assert "capital of france?" in backend.prompts[0]
     assert "Return only the final short answer." in backend.prompts[0]
+
+
+def test_worker_maintenance_service_records_schema_hints_metadata_without_persisting_hints_text(
+    tmp_path: Path,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="math-dev",
+        suite_id="math",
+        samples=({"id": "sample-1", "prompt": "2+2?", "expected": "4"},),
+    )
+    schema_path = tmp_path / "result.schema.json"
+    schema_path.write_text(json.dumps({"type": "object", "required": ["answer"]}) + "\n", encoding="utf-8")
+    hints_path = tmp_path / "math-hints.md"
+    hints_text = "Prefer integer answers and keep the response short.\n"
+    hints_path.write_text(hints_text, encoding="utf-8")
+    backend = ScriptedEvaluationBackend(("Answer: 4",))
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded_model = registry.load_model(
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text",
+            model_path=str(tmp_path / "models" / "melix-dev-text"),
+            model_kind="text",
+            revision="test",
+            tokenizer_hash="tok-test",
+            quant_profile_id="test",
+            parser_mode="text",
+            reasoning_mode="off",
+        )
+    )
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    request = maintenance_pb2.RunEvaluationRequest(
+        model_handle=loaded_model.handle,
+        suite_id="math",
+        dataset_id="math-dev",
+        dataset_root=str(dataset_root),
+        sample_size=1,
+        task_kind="text-generation",
+        parameters={
+            "schema_path": str(schema_path),
+            "hints_path": str(hints_path),
+        },
+    )
+
+    response = service.RunEvaluation(request, context=None)
+
+    assert response.ok is True
+    assert "Additional Hints:\nPrefer integer answers" in backend.prompts[0]
+    assert response.job.parameters["schema_path"] == str(schema_path.resolve())
+    assert response.job.parameters["schema_sha256"] == hashlib.sha256(schema_path.read_bytes()).hexdigest()
+    assert response.job.parameters["schema_size_bytes"] == str(schema_path.stat().st_size)
+    assert response.job.parameters["hints_path"] == str(hints_path.resolve())
+    assert response.job.parameters["hints_sha256"] == hashlib.sha256(hints_path.read_bytes()).hexdigest()
+    assert response.job.parameters["hints_size_bytes"] == str(hints_path.stat().st_size)
+    assert response.job.parameters["hints_format"] == "markdown"
+    assert response.job.parameters["hints_prompt_chars"] == str(len(hints_text.strip()))
+    assert "evaluation_hints_text" not in response.job.parameters
+    metrics = {metric.name: metric.value for metric in response.results[0].metrics}
+    assert metrics["eval.math.hints_prompt_chars"] == float(len(hints_text.strip()))
+
+
+def test_worker_maintenance_service_reproducibility_parameter_errors_and_hint_formats(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="evaluation schema file does not exist"):
+        WorkerMaintenanceService._attach_evaluation_reproducibility_parameters(
+            {"schema_path": str(tmp_path / "missing.schema.json")}
+        )
+
+    with pytest.raises(ValueError, match="evaluation hints file does not exist"):
+        WorkerMaintenanceService._attach_evaluation_reproducibility_parameters(
+            {"hints_path": str(tmp_path / "missing-hints.md")}
+        )
+
+    assert WorkerMaintenanceService._hints_format(tmp_path / "hints.json") == "json"
+    assert WorkerMaintenanceService._hints_format(tmp_path / "hints.md") == "markdown"
+    assert WorkerMaintenanceService._hints_format(tmp_path / "hints.txt") == "text"
+    assert WorkerMaintenanceService._hints_format(tmp_path / "hints") == "text"
 
 
 def test_worker_maintenance_service_run_evaluation_maps_compare_results(

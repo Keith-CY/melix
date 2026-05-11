@@ -344,33 +344,71 @@ def _score_text_result(
 
 
 def _validate_json_schema(schema: dict[str, Any], payload: Any) -> str:
-    expected_type = schema.get("type")
-    if expected_type == "object":
-        if not isinstance(payload, dict):
-            return "root_type_mismatch"
-        for key in schema.get("required", []):
-            if key not in payload:
-                return f"missing_required:{key}"
+    return _validate_json_schema_at(schema, payload, path="$")
+
+
+def _validate_json_schema_at(schema: dict[str, Any], payload: Any, *, path: str) -> str:
+    expected_types = _schema_types(schema.get("type"))
+    if expected_types and not any(_matches_json_type(payload, expected_type) for expected_type in expected_types):
+        return "root_type_mismatch" if path == "$" else f"type_mismatch:{path}"
+
+    if isinstance(payload, dict) and (
+        "object" in expected_types or "properties" in schema or "required" in schema
+    ):
+        required = schema.get("required", [])
+        if isinstance(required, list):
+            for key in required:
+                key_text = str(key)
+                if key_text not in payload:
+                    return f"missing_required:{_json_schema_child_path(path, key_text)}"
         properties = schema.get("properties", {})
         if isinstance(properties, dict):
             for key, value in properties.items():
-                if key in payload:
-                    field_type = value.get("type") if isinstance(value, dict) else None
-                    if field_type and not _matches_json_type(payload[key], field_type):
-                        return f"type_mismatch:{key}"
+                if key not in payload or not isinstance(value, dict):
+                    continue
+                validation_error = _validate_json_schema_at(
+                    value,
+                    payload[key],
+                    path=_json_schema_child_path(path, str(key)),
+                )
+                if validation_error:
+                    return validation_error
+        if schema.get("additionalProperties") is False and isinstance(properties, dict):
+            allowed = {str(key) for key in properties.keys()}
+            for key in payload.keys():
+                key_text = str(key)
+                if key_text not in allowed:
+                    return f"unexpected_property:{_json_schema_child_path(path, key_text)}"
         return ""
-    if expected_type == "array":
-        if not isinstance(payload, list):
-            return "root_type_mismatch"
+
+    if isinstance(payload, list) and ("array" in expected_types or "items" in schema):
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
-            item_type = item_schema.get("type")
-            if item_type:
-                for item in payload:
-                    if not _matches_json_type(item, item_type):
-                        return "item_type_mismatch"
+            for index, item in enumerate(payload):
+                validation_error = _validate_json_schema_at(
+                    item_schema,
+                    item,
+                    path=f"{path}[{index}]",
+                )
+                if validation_error:
+                    return validation_error
         return ""
+
     return ""
+
+
+def _schema_types(raw_type: Any) -> tuple[str, ...]:
+    if isinstance(raw_type, str):
+        return (raw_type,)
+    if isinstance(raw_type, list):
+        return tuple(str(value) for value in raw_type if isinstance(value, str) and value)
+    return ()
+
+
+def _json_schema_child_path(path: str, key: str) -> str:
+    if path == "$":
+        return f"$.{key}"
+    return f"{path}.{key}"
 
 
 def _json_typed_score(*, expected: Any, actual: Any, ignored_paths: set[str], path: str = "") -> float:
