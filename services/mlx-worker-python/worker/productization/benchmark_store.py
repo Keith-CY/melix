@@ -24,6 +24,12 @@ from worker.productization.run_evidence import (
     build_serving_benchmark_run_evidence,
     monotonic_ms,
 )
+from worker.productization.run_records import (
+    attach_run_record_write_probe,
+    build_benchmark_matrix_run_record,
+    build_serving_benchmark_run_record,
+    write_run_record,
+)
 
 
 class BenchmarkStore:
@@ -102,6 +108,24 @@ class BenchmarkStore:
         )
         persisted["evidence"] = evidence_path
 
+        record_started_at_monotonic_ms = monotonic_ms()
+        record_path = jobs_root / "run-record.json"
+        record_paths = {**persisted, "run_record": record_path}
+        record = build_serving_benchmark_run_record(
+            job=job,
+            results=results,
+            artifact_root=jobs_root,
+            artifact_paths=record_paths,
+        )
+        write_run_record(
+            record_path,
+            attach_run_record_write_probe(
+                record,
+                duration_ms=monotonic_ms() - record_started_at_monotonic_ms,
+            ),
+        )
+        persisted["run_record"] = record_path
+
         return persisted
 
     @staticmethod
@@ -159,13 +183,31 @@ class BenchmarkStore:
             fieldnames=_canonical_benchmark_matrix_request_columns(),
         )
 
-        return {
+        persisted = {
             "job": job_path,
             "summary_jsonl": summary_jsonl_path,
             "summary_csv": summary_csv_path,
             "requests_jsonl": requests_jsonl_path,
             "requests_csv": requests_csv_path,
         }
+        record_started_at_monotonic_ms = monotonic_ms()
+        record_path = jobs_root / "run-record.json"
+        record_paths = {**persisted, "run_record": record_path}
+        record = build_benchmark_matrix_run_record(
+            job=job,
+            summary_rows=summary_rows,
+            artifact_root=jobs_root,
+            artifact_paths=record_paths,
+        )
+        write_run_record(
+            record_path,
+            attach_run_record_write_probe(
+                record,
+                duration_ms=monotonic_ms() - record_started_at_monotonic_ms,
+            ),
+        )
+        persisted["run_record"] = record_path
+        return persisted
 
     @staticmethod
     def _write_jsonl_and_csv(

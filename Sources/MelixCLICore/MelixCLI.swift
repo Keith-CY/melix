@@ -1411,6 +1411,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case benchRun(BenchRunOptions)
     case benchList(BenchListOptions)
     case benchExportCSV(BenchExportCSVOptions)
+    case benchReport(RunReportOptions)
     case benchMatrixRun(BenchMatrixRunOptions)
     case benchMatrixList(BenchMatrixListOptions)
     case benchMatrixExportSummaryCSV(BenchExportCSVOptions)
@@ -1430,6 +1431,10 @@ public enum MelixCLICommand: Equatable, Sendable {
     case evalExportSummaryCSV(EvalExportOptions)
     case evalExportSamplesCSV(EvalExportOptions)
     case evalExportSamplesJSONL(EvalExportOptions)
+    case evalReport(RunReportOptions)
+    case runsList(RunsListOptions)
+    case runsShow(RunsShowOptions)
+    case runsExport(RunsExportOptions)
     case pipelineRun(PipelineRunOptions)
 }
 
@@ -1473,6 +1478,9 @@ public enum MelixCLIParser {
     }
 
     public static func requestedOutputFormat(_ arguments: [String]) -> MelixCLIOutputFormat {
+        if commandOwnsFormatOption(arguments) {
+            return .legacy
+        }
         if let format = try? extractOutputFormat(arguments).0 {
             return format
         }
@@ -1517,6 +1525,8 @@ public enum MelixCLIParser {
             return try parseBench(tail)
         case "eval":
             return try parseEval(tail)
+        case "runs":
+            return try parseRuns(tail)
         case "pipeline":
             return try parsePipeline(tail)
         default:
@@ -1584,6 +1594,7 @@ public enum MelixCLIParser {
       melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-split SPLIT] [--prompt-feature NAME] [--text-feature NAME] [--image-feature NAME] [--source-image-feature NAME] [--mask-feature NAME] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--preflight-fit-check] [--allow-memory-risk] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
+      melix bench report --from PATH [--format markdown|json]
       melix bench matrix run (--model-id MODEL_ID | --repo-id HF_REPO) --suite SUITE ... --context-length N ... --generation-length N ... --batch-size N ... --cache-profile MODE ... --reasoning-mode MODE ... --structured-output-mode MODE ... --concurrency N ... [--repeats N] (--requests N | --duration-seconds N) [--allow-large-matrix] [--json]
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
@@ -1603,6 +1614,10 @@ public enum MelixCLIParser {
       melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
+      melix eval report --from PATH [--format markdown|json]
+      melix runs list [--from PATH] [--json]
+      melix runs show RUN_ID [--from PATH] [--json]
+      melix runs export RUN_ID --format json|md [--from PATH] [--output PATH]
       melix pipeline run --file PIPELINE.json [--inputs INPUTS.json] [--receipt-dir PATH] [--trace-id ID] [--resume] [--from-step STEP_ID] [--dry-run] [--format json-v1]
 
     Notes:
@@ -1618,6 +1633,16 @@ public enum MelixCLIParser {
         var index = 0
         while index < arguments.count {
             let token = arguments[index]
+            if token == "--format", Self.commandOwnsFormatOption(arguments) {
+                let valueIndex = index + 1
+                guard valueIndex < arguments.count else {
+                    throw MelixCLIError.missingValue("--format")
+                }
+                stripped.append(token)
+                stripped.append(arguments[valueIndex])
+                index += 2
+                continue
+            }
             guard token == "--format" else {
                 stripped.append(token)
                 index += 1
@@ -1635,6 +1660,17 @@ public enum MelixCLIParser {
             index += 2
         }
         return (format, stripped)
+    }
+
+    private static func commandOwnsFormatOption(_ arguments: [String]) -> Bool {
+        guard arguments.count >= 2 else {
+            return false
+        }
+        let group = arguments[0]
+        let action = arguments[1]
+        return (group == "bench" && action == "report")
+            || (group == "eval" && action == "report")
+            || (group == "runs" && action == "export")
     }
 
     private static func traceID(for command: MelixCLICommand) -> String {
@@ -2918,6 +2954,12 @@ public enum MelixCLIParser {
                     json: values.flags.contains("--json")
                 )
             )
+        case "report":
+            let format = values.single["--format"] ?? "markdown"
+            guard let sourcePath = values.single["--from"], !sourcePath.isEmpty else {
+                throw MelixCLIError.missingRequired("--from is required for melix bench report.")
+            }
+            return .benchReport(RunReportOptions(sourcePath: sourcePath, format: format))
         default:
             throw MelixCLIError.usage(usageText)
         }
@@ -3137,6 +3179,14 @@ public enum MelixCLIParser {
                 multiValueOptions: ["--suite", "--target-model-id"]
             )
             return .evalExportSamplesJSONL(try parseEvalExportOptions(values, command: "melix eval export-samples-jsonl"))
+        case "report":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+                multiValueOptions: ["--suite", "--target-model-id"]
+            )
+            guard let sourcePath = values.single["--from"], !sourcePath.isEmpty else {
+                throw MelixCLIError.missingRequired("--from is required for melix eval report.")
+            }
+            return .evalReport(RunReportOptions(sourcePath: sourcePath, format: values.single["--format"] ?? "markdown"))
         default:
             throw MelixCLIError.usage(usageText)
         }
@@ -3235,6 +3285,61 @@ public enum MelixCLIParser {
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseRuns(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        var optionArguments = Array(arguments.dropFirst())
+        switch action {
+        case "list":
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .runsList(
+                RunsListOptions(
+                    sourcePath: values.single["--from"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "show":
+            let runID = try extractRunID(from: &optionArguments, command: "melix runs show")
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .runsShow(
+                RunsShowOptions(
+                    runID: runID,
+                    sourcePath: values.single["--from"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "export":
+            let runID = try extractRunID(from: &optionArguments, command: "melix runs export")
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            guard let format = values.single["--format"], !format.isEmpty else {
+                throw MelixCLIError.missingRequired("--format is required for melix runs export.")
+            }
+            return .runsExport(
+                RunsExportOptions(
+                    runID: runID,
+                    sourcePath: values.single["--from"] ?? "",
+                    format: format,
+                    outputPath: values.single["--output"] ?? ""
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func extractRunID(from arguments: inout [String], command: String) throws -> String {
+        guard let first = arguments.first, !first.hasPrefix("--") else {
+            throw MelixCLIError.missingRequired("RUN_ID is required for \(command).")
+        }
+        arguments.removeFirst()
+        let runID = first.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !runID.isEmpty else {
+            throw MelixCLIError.missingRequired("RUN_ID is required for \(command).")
+        }
+        return runID
     }
 
     private static func parsePipeline(_ arguments: [String]) throws -> MelixCLICommand {
@@ -5013,6 +5118,8 @@ public actor MelixCLIRunner {
                 )
             }
             return outputURL.path + "\n"
+        case .benchReport(let options):
+            return try renderRunReport(kind: "benchmark", options: options)
         case .benchMatrixRun(let options):
             let result = try await runBenchmarkMatrix(options)
             if options.json {
@@ -5173,6 +5280,32 @@ public actor MelixCLIRunner {
                 rowCount: { bundle in bundle.evaluationSampleRows(jobID: options.jobID).count },
                 contents: { bundle in try bundle.evaluationSamplesJSONL(jobID: options.jobID) }
             )
+        case .evalReport(let options):
+            return try renderRunReport(kind: "evaluation", options: options)
+        case .runsList(let options):
+            let records = try runRecordStore().loadRecords(sourcePath: options.sourcePath)
+            if options.json {
+                return try runRecordJSONString(records.map { $0.summaryPayload() })
+            }
+            return renderRunRecordList(records)
+        case .runsShow(let options):
+            let record = try runRecordStore().findRecord(runID: options.runID, sourcePath: options.sourcePath)
+            if options.json {
+                return try runRecordJSONString(record.payload)
+            }
+            return renderRunRecordMarkdown(record)
+        case .runsExport(let options):
+            let record = try runRecordStore().findRecord(runID: options.runID, sourcePath: options.sourcePath)
+            let output: String
+            switch options.format.lowercased() {
+            case "json":
+                output = try runRecordJSONString(record.payload)
+            case "md", "markdown":
+                output = renderRunRecordMarkdown(record)
+            default:
+                throw MelixCLIError.usage("Invalid value for --format. Expected json or md.")
+            }
+            return try writeRunRecordOutput(output, outputPath: options.outputPath)
         }
     }
 
@@ -5741,6 +5874,22 @@ public actor MelixCLIRunner {
 
     private func evaluationPromptStore() -> EvaluationPromptStore {
         EvaluationPromptStore(melixHome: MelixHome(environment: environment))
+    }
+
+    private func runRecordStore() -> MelixRunRecordStore {
+        MelixRunRecordStore(melixHome: MelixHome(environment: environment))
+    }
+
+    private func renderRunReport(kind: String, options: RunReportOptions) throws -> String {
+        let report = try runRecordStore().report(kind: kind, sourcePath: options.sourcePath)
+        switch options.format.lowercased() {
+        case "markdown", "md":
+            return report.markdown
+        case "json":
+            return try runRecordJSONString(report.payload)
+        default:
+            throw MelixCLIError.usage("Invalid value for --format. Expected markdown or json.")
+        }
     }
 
     private func evaluationPromptSnapshot(promptID: String, revisionID: String) throws -> EvaluationPromptSnapshot {

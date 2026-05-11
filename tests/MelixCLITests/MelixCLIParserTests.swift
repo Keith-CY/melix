@@ -13,6 +13,8 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("[--schema PATH | --output-schema-json JSON] [--hints PATH]"))
         #expect(MelixCLIParser.usageText.contains("--hf-token passed to model or dataset hub download is saved"))
         #expect(MelixCLIParser.usageText.contains("--hf-dataset-revision overrides a revision embedded in --dataset-ref"))
+        #expect(MelixCLIParser.usageText.contains("melix runs list [--from PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix bench report --from PATH [--format markdown|json]"))
     }
 
     @Test("documents and parses remote server direct target commands")
@@ -482,7 +484,30 @@ struct MelixCLIParserTests {
             "doctor",
             "--format", "json-v1",
         ]) == .jsonV1)
+        #expect(MelixCLIParser.requestedOutputFormat([
+            "bench",
+            "report",
+            "--from", "/tmp/bench",
+            "--format", "json",
+        ]) == .legacy)
         #expect(MelixCLIParser.requestedOutputFormat(["doctor"]) == .legacy)
+    }
+
+    @Test("parse invocation lets report commands own their local format option")
+    func parseInvocationLetsReportCommandsOwnTheirLocalFormatOption() throws {
+        let invocation = try MelixCLIParser.parseInvocation([
+            "bench",
+            "report",
+            "--from", "/tmp/bench",
+            "--format", "json",
+        ])
+
+        #expect(invocation.outputFormat == .legacy)
+        #expect(invocation.command == .benchReport(.init(sourcePath: "/tmp/bench", format: "json")))
+
+        #expect(throws: MelixCLIError.missingValue("--format")) {
+            _ = try MelixCLIParser.parseInvocation(["bench", "report", "--format"])
+        }
     }
 
     @Test("command codec round trips typed command arguments")
@@ -706,6 +731,7 @@ struct MelixCLIParserTests {
             (.benchRun(.init(modelID: "model", suites: ["smoke"], contextLengths: [1024], generationLength: 128, batchSizes: [1], repeats: 2, cacheProfile: "cold", reasoningMode: "disabled", structuredOutputMode: "disabled", parameters: ["sample_size": "4", "batch_factor": "1"], json: true)), "bench.run"),
             (.benchList(.init(json: true)), "bench.list"),
             (.benchExportCSV(.init(jobID: "bench-1", outputPath: "/tmp/bench.csv", json: true)), "bench.export-csv"),
+            (.benchReport(.init(sourcePath: "/tmp/bench", format: "json")), "bench.report"),
             (.benchMatrixRun(.init(modelID: "model", taskKind: "text-generation", suites: ["smoke"], contextLengths: [1024], generationLengths: [128], batchSizes: [1], cacheProfiles: ["cold"], reasoningModes: ["disabled"], structuredOutputModes: ["disabled"], concurrencyLevels: [1], repeats: 2, requests: 4, allowLargeMatrix: true, json: true)), "bench.matrix.run"),
             (.benchMatrixList(.init(json: true)), "bench.matrix.list"),
             (.benchMatrixExportSummaryCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix.csv", json: true)), "bench.matrix.export-summary-csv"),
@@ -726,6 +752,10 @@ struct MelixCLIParserTests {
             (.evalExportSummaryCSV(.init(jobID: "eval-1", outputPath: "/tmp/eval.csv", json: true)), "eval.export-summary-csv"),
             (.evalExportSamplesCSV(.init(jobID: "eval-1", outputPath: "/tmp/eval-samples.csv", json: true)), "eval.export-samples-csv"),
             (.evalExportSamplesJSONL(.init(jobID: "eval-1", outputPath: "/tmp/eval-samples.jsonl", json: true)), "eval.export-samples-jsonl"),
+            (.evalReport(.init(sourcePath: "/tmp/eval", format: "markdown")), "eval.report"),
+            (.runsList(.init(sourcePath: "/tmp/runs", json: true)), "runs.list"),
+            (.runsShow(.init(runID: "bench-1", sourcePath: "/tmp/runs", json: true)), "runs.show"),
+            (.runsExport(.init(runID: "bench-1", sourcePath: "/tmp/runs", format: "md", outputPath: "/tmp/run.md")), "runs.export"),
             (.pipelineRun(.init(filePath: "/tmp/pipeline.json", inputsPath: "/tmp/inputs.json", receiptDir: "/tmp/receipts", traceID: "trace", resume: true, fromStepID: "chat", dryRun: true)), "pipeline.run"),
         ]
 
@@ -800,6 +830,19 @@ struct MelixCLIParserTests {
                 #expect(MelixCLICommandCodec.commandID(for: jsonCommand) == MelixCLICommandCodec.commandID(for: command))
                 #expect(try MelixCLICommandCodec.arguments(for: jsonCommand).contains("--json"))
             }
+        }
+
+        let formatOwningCommands: [MelixCLICommand] = [
+            .benchReport(.init(sourcePath: "/tmp/bench", format: "json")),
+            .evalReport(.init(sourcePath: "/tmp/eval", format: "markdown")),
+            .runsList(.init(sourcePath: "/tmp/runs", json: true)),
+            .runsShow(.init(runID: "bench-1", sourcePath: "/tmp/runs", json: true)),
+            .runsExport(.init(runID: "bench-1", sourcePath: "/tmp/runs", format: "md", outputPath: "/tmp/run.md")),
+        ]
+        for command in formatOwningCommands {
+            let arguments = try MelixCLICommandCodec.arguments(for: command)
+            #expect(arguments.isEmpty == false)
+            #expect(try MelixCLIParser.parse(arguments) == command)
         }
 
         let unsupported: [MelixCLICommand] = [
@@ -2018,6 +2061,12 @@ struct MelixCLIParserTests {
             "--output", "/tmp/melix/bench-1.csv",
             "--json",
         ])
+        let reportCommand = try MelixCLIParser.parse([
+            "bench",
+            "report",
+            "--from", "/tmp/melix/bench/runs",
+            "--format", "json",
+        ])
 
         guard case .benchList(let listOptions) = listCommand else {
             Issue.record("Expected benchList command")
@@ -2027,11 +2076,17 @@ struct MelixCLIParserTests {
             Issue.record("Expected benchExportCSV command")
             return
         }
+        guard case .benchReport(let reportOptions) = reportCommand else {
+            Issue.record("Expected benchReport command")
+            return
+        }
 
         #expect(listOptions.json)
         #expect(exportOptions.jobID == "bench-1")
         #expect(exportOptions.outputPath == "/tmp/melix/bench-1.csv")
         #expect(exportOptions.json)
+        #expect(reportOptions.sourcePath == "/tmp/melix/bench/runs")
+        #expect(reportOptions.format == "json")
     }
 
     @Test("parses bench matrix run with canonical sweep and load-budget inputs")
@@ -2747,6 +2802,12 @@ struct MelixCLIParserTests {
             "--output", "/tmp/melix/eval-compare-1-samples.jsonl",
             "--json",
         ])
+        let reportCommand = try MelixCLIParser.parse([
+            "eval",
+            "report",
+            "--from", "/tmp/melix/evaluation/runs",
+            "--format", "markdown",
+        ])
 
         guard case .evalList(let listOptions) = listCommand else {
             Issue.record("Expected evalList command")
@@ -2768,6 +2829,10 @@ struct MelixCLIParserTests {
             Issue.record("Expected evalCompareExportSamplesJSONL command")
             return
         }
+        guard case .evalReport(let reportOptions) = reportCommand else {
+            Issue.record("Expected evalReport command")
+            return
+        }
 
         #expect(listOptions.json)
         #expect(summaryOptions.jobID == "eval-1")
@@ -2782,6 +2847,56 @@ struct MelixCLIParserTests {
         #expect(compareSamplesOptions.jobID == "eval-compare-1")
         #expect(compareSamplesOptions.outputPath == "/tmp/melix/eval-compare-1-samples.jsonl")
         #expect(compareSamplesOptions.json)
+        #expect(reportOptions.sourcePath == "/tmp/melix/evaluation/runs")
+        #expect(reportOptions.format == "markdown")
+    }
+
+    @Test("parses offline run record commands")
+    func parsesOfflineRunRecordCommands() throws {
+        let listCommand = try MelixCLIParser.parse([
+            "runs",
+            "list",
+            "--from", "/tmp/melix/jobs",
+            "--json",
+        ])
+        let showCommand = try MelixCLIParser.parse([
+            "runs",
+            "show",
+            "bench-1",
+            "--from", "/tmp/melix/jobs",
+            "--json",
+        ])
+        let exportCommand = try MelixCLIParser.parse([
+            "runs",
+            "export",
+            "bench-1",
+            "--format", "md",
+            "--from", "/tmp/melix/jobs",
+            "--output", "/tmp/melix/bench-1.md",
+        ])
+
+        guard case .runsList(let listOptions) = listCommand else {
+            Issue.record("Expected runsList command")
+            return
+        }
+        guard case .runsShow(let showOptions) = showCommand else {
+            Issue.record("Expected runsShow command")
+            return
+        }
+        guard case .runsExport(let exportOptions) = exportCommand else {
+            Issue.record("Expected runsExport command")
+            return
+        }
+
+        #expect(listOptions.sourcePath == "/tmp/melix/jobs")
+        #expect(listOptions.json)
+        #expect(showOptions.runID == "bench-1")
+        #expect(showOptions.sourcePath == "/tmp/melix/jobs")
+        #expect(showOptions.json)
+        #expect(exportOptions.runID == "bench-1")
+        #expect(exportOptions.format == "md")
+        #expect(exportOptions.sourcePath == "/tmp/melix/jobs")
+        #expect(exportOptions.outputPath == "/tmp/melix/bench-1.md")
     }
 
     @Test("parses lora activate with explicit alias and adapter path")
@@ -3130,6 +3245,28 @@ struct MelixCLIParserTests {
             for: ["eval", "export-samples-csv", "--job-id", "eval-1"],
             equals: .missingRequired("--output is required for melix eval export-samples-csv.")
         )
+        try assertError(
+            for: ["bench", "report"],
+            equals: .missingRequired("--from is required for melix bench report.")
+        )
+        try assertError(
+            for: ["eval", "report"],
+            equals: .missingRequired("--from is required for melix eval report.")
+        )
+        try assertError(
+            for: ["runs", "show"],
+            equals: .missingRequired("RUN_ID is required for melix runs show.")
+        )
+        try assertError(
+            for: ["runs", "show", " "],
+            equals: .missingRequired("RUN_ID is required for melix runs show.")
+        )
+        try assertError(
+            for: ["runs", "export", "bench-1"],
+            equals: .missingRequired("--format is required for melix runs export.")
+        )
+        try assertError(for: ["runs"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(for: ["runs", "oops"], equals: .usage(MelixCLIParser.usageText))
     }
 
     @Test("surfaces malformed option errors")

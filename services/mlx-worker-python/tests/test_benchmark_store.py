@@ -78,6 +78,7 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
     assert persisted["context_rows_jsonl"] == jobs_root / "bench-context-rows.jsonl"
     assert persisted["telemetry_jsonl"] == jobs_root / "telemetry-samples.jsonl"
     assert persisted["evidence"] == jobs_root / "run-evidence.json"
+    assert persisted["run_record"] == jobs_root / "run-record.json"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == job.to_dict()
     expected_results = {result.suite: result.to_dict() for result in results}
 
@@ -99,6 +100,17 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
     assert evidence["telemetry_summary"]["time_series_path"] == "telemetry-samples.jsonl"
     assert evidence["telemetry_summary"]["average_system_power_w"] == 15.0
     assert evidence["telemetry_summary"]["process_attribution"]["primary_runtime_process"]["pid"] == 102
+    run_record = json.loads(persisted["run_record"].read_text(encoding="utf-8"))
+    assert run_record["schema_version"] == "melix.run_record.v1"
+    assert run_record["run_id"] == "bench-123"
+    assert run_record["run_kind"] == "benchmark"
+    assert run_record["command"]["display"].startswith("melix bench run --model-id melix-dev-text")
+    assert {artifact["kind"] for artifact in run_record["artifacts"]} >= {
+        "evidence",
+        "run_record",
+        "telemetry_jsonl",
+    }
+    assert run_record["probes"][0]["phase"] == "run_record_write"
 
 
 def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
@@ -186,6 +198,7 @@ def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
     assert persisted["summary_csv"] == jobs_root / "bench-matrix-summary.csv"
     assert persisted["requests_jsonl"] == jobs_root / "bench-matrix-requests.jsonl"
     assert persisted["requests_csv"] == jobs_root / "bench-matrix-requests.csv"
+    assert persisted["run_record"] == jobs_root / "run-record.json"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == job.to_dict()
     assert [
         json.loads(line)
@@ -205,6 +218,13 @@ def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
     assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in persisted["requests_csv"].read_text(
         encoding="utf-8"
     )
+    run_record = json.loads(persisted["run_record"].read_text(encoding="utf-8"))
+    assert run_record["schema_version"] == "melix.run_record.v1"
+    assert run_record["run_kind"] == "benchmark_matrix"
+    assert run_record["resources"]["peak_memory_bytes"] == 2_147_483_648
+    assert run_record["metrics"][0]["name"] == "benchmark_matrix.decode_tokens_per_second_mean"
+    assert run_record["known_gaps"] == ["Apple Silicon telemetry artifact was not present for this run."]
+    assert run_record["probes"][0]["phase"] == "run_record_write"
 
 
 def test_persist_benchmark_matrix_serializes_each_row_once_per_persist(tmp_path: Path) -> None:
