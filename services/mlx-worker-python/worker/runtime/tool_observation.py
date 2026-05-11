@@ -36,7 +36,11 @@ class ToolObservationPolicy:
         if self.timeout_ms is not None and self.timeout_ms <= 0:
             raise ToolObservationError("Tool observation timeout_ms must be positive when set.")
         normalized_terms = tuple(
-            dict.fromkeys(term for term in (term.strip() for term in self.redaction_terms) if term)
+            sorted(
+                dict.fromkeys(term for term in (term.strip() for term in self.redaction_terms) if term),
+                key=len,
+                reverse=True,
+            )
         )
         object.__setattr__(self, "redaction_terms", normalized_terms)
         object.__setattr__(self, "replay_seed", self.replay_seed.strip())
