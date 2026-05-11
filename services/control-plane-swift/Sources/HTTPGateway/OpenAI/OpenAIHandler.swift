@@ -577,6 +577,12 @@ public struct OpenAIHandler: Sendable {
                 try translator.normalize(chatRequest)
             }
             let translated = try await translatedRequest(normalized)
+            guard translated.stream else {
+                return try await nonStreamChatCompletionsResponse(
+                    translated: translated,
+                    requestStartedAt: requestStartedAt
+                )
+            }
             return try await streamResponse(
                 translated: translated,
                 shape: .chatCompletions,
@@ -1642,7 +1648,7 @@ public struct OpenAIHandler: Sendable {
     private func translatedRequest(
         _ normalized: NormalizedTextRequest
     ) async throws -> TranslatedChatRequest {
-        guard normalized.stream else {
+        guard normalized.stream || normalized.endpoint == .chatCompletions else {
             throw HTTPRequestHandlingError.streamRequired
         }
         await RegistrySnapshotSync.syncModelsIfAvailable(
@@ -1712,6 +1718,151 @@ public struct OpenAIHandler: Sendable {
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
         return translated
+    }
+
+    private func nonStreamChatCompletionsResponse(
+        translated: TranslatedChatRequest,
+        requestStartedAt: Date
+    ) async throws -> HTTPResponse {
+        var workerRequest = translated.workerRequest
+        workerRequest.stream = true
+        workerRequest.returnUsage = true
+        workerRequest.execution.ext["melix.stream.include_usage"] = "true"
+        let streamingTranslated = TranslatedChatRequest(
+            requestID: translated.requestID,
+            modelID: translated.modelID,
+            workerRequest: workerRequest,
+            stream: true
+        )
+
+        let execution: CoordinatedChatExecution
+        do {
+            execution = try await requestCoordinator.startChatCompletion(
+                streamingTranslated,
+                requestStartedAt: requestStartedAt
+            )
+        } catch let error as RequestCoordinatorError {
+            return jsonResponse(statusCode: error.statusCode, payload: [
+                "error": [
+                    "code": error.errorCode,
+                    "message": error.errorMessage,
+                ],
+            ])
+        }
+
+        do {
+            let aggregate = try await aggregateChatCompletion(
+                stream: execution.stream,
+                startedAt: requestStartedAt
+            )
+            if let workerError = aggregate.error {
+                return workerErrorResponse(workerError)
+            }
+
+            await metricsStore.increment("http.chat_completions_non_stream_request_count")
+            await metricsStore.set(
+                max(Date().timeIntervalSince(requestStartedAt) * 1000, 0.001),
+                forKey: "http.chat_completions_non_stream_latency_ms"
+            )
+            if let usage = aggregate.usage {
+                await metricsStore.set(
+                    Double(usage.completionTokens),
+                    forKey: "http.chat_completions_non_stream_completion_tokens"
+                )
+            }
+
+            let payload = chatCompletionJSONPayload(
+                execution: execution,
+                aggregate: aggregate
+            )
+            return jsonResponse(statusCode: 200, payload: payload)
+        } catch {
+            return workerUnavailableResponse()
+        }
+    }
+
+    private struct NonStreamChatCompletionAggregate {
+        struct Usage {
+            let promptTokens: UInt32
+            let completionTokens: UInt32
+        }
+
+        var assistantText = ""
+        var finishReason = "stop"
+        var usage: Usage?
+        var error: Melix_Worker_V1_ErrorStatus?
+    }
+
+    private func aggregateChatCompletion(
+        stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>,
+        startedAt: Date
+    ) async throws -> NonStreamChatCompletionAggregate {
+        var aggregate = NonStreamChatCompletionAggregate()
+        var tokenText = ""
+        var firstTokenSeen = false
+
+        for try await event in stream {
+            switch event.payload {
+            case .tokenDelta(let delta):
+                if !firstTokenSeen {
+                    firstTokenSeen = true
+                    await metricsStore.set(
+                        max(Date().timeIntervalSince(startedAt) * 1000, 0.001),
+                        forKey: "http.ttfd_ms"
+                    )
+                }
+                tokenText += delta.text
+            case .usageDelta(let usage):
+                aggregate.usage = NonStreamChatCompletionAggregate.Usage(
+                    promptTokens: usage.promptTokens,
+                    completionTokens: usage.completionTokens
+                )
+            case .completed(let completed):
+                aggregate.finishReason = completed.finishReason.isEmpty ? "stop" : completed.finishReason
+                aggregate.assistantText = completed.assistantText.isEmpty ? tokenText : completed.assistantText
+            case .error(let error):
+                aggregate.error = error.error
+            default:
+                continue
+            }
+        }
+
+        if aggregate.assistantText.isEmpty {
+            aggregate.assistantText = tokenText
+        }
+        return aggregate
+    }
+
+    private func chatCompletionJSONPayload(
+        execution: CoordinatedChatExecution,
+        aggregate: NonStreamChatCompletionAggregate
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "id": execution.requestID,
+            "object": "chat.completion",
+            "created": Int(Date().timeIntervalSince1970),
+            "model": execution.modelID,
+            "choices": [
+                [
+                    "index": 0,
+                    "message": [
+                        "role": "assistant",
+                        "content": aggregate.assistantText,
+                    ],
+                    "finish_reason": aggregate.finishReason,
+                ],
+            ],
+        ]
+
+        if let usage = aggregate.usage {
+            payload["usage"] = [
+                "prompt_tokens": Int(usage.promptTokens),
+                "completion_tokens": Int(usage.completionTokens),
+                "total_tokens": Int(usage.promptTokens) + Int(usage.completionTokens),
+            ]
+        }
+
+        return payload
     }
 
     private func recordShapingMetrics(
