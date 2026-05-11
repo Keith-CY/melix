@@ -318,7 +318,7 @@ struct MelixCLIRunnerTests {
             runID: "dry-run-1",
             outputRoot: outputRoot.path,
             tempRoot: tempRoot.path,
-            startIndex: 7,
+            startIndex: 2,
             maxModels: 1,
             dryRun: true
         )))
@@ -354,6 +354,66 @@ struct MelixCLIRunnerTests {
         #expect(manifestEntry["status"] as? String == "planned")
         #expect(manifestEntry["model_index"] as? String == "07")
         #expect(manifestEntry["repo_id"] as? String == "unsloth/Qwen3.6-27B-UD-MLX-4bit")
+    }
+
+    @Test("batch run dry-run start index is positional")
+    func batchRunDryRunStartIndexIsPositional() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try """
+        A|mlx-community/Alpha-4bit
+        10|mlx-community/Ten-4bit
+        20|mlx-community/Twenty-4bit
+        """.write(to: modelList, atomically: true, encoding: .utf8)
+
+        let runner = MelixCLIRunner(environment: ["HOME": root.path])
+        _ = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "dry-run-positional",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            startIndex: 2,
+            maxModels: 1,
+            dryRun: true
+        )))
+
+        let effectiveConfig = try #require(parseJSONFile(tempRoot.appendingPathComponent("effective-config.json").path))
+        let models = try #require(effectiveConfig["models"] as? [[String: Any]])
+        #expect(models.count == 1)
+        #expect(models[0]["index"] as? String == "10")
+        #expect(models[0]["repo_id"] as? String == "mlx-community/Ten-4bit")
+    }
+
+    @Test("batch run dry-run supports matching temp and output roots")
+    func batchRunDryRunSupportsMatchingTempAndOutputRoots() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let runRoot = root.appendingPathComponent("same-root")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try """
+        mlx-community/Qwen3.5-9B-MLX-4bit
+        """.write(to: modelList, atomically: true, encoding: .utf8)
+
+        let runner = MelixCLIRunner(environment: ["HOME": root.path])
+        _ = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "dry-run-same-root",
+            outputRoot: runRoot.path,
+            tempRoot: runRoot.path,
+            dryRun: true
+        )))
+
+        let effectiveConfigPath = runRoot.appendingPathComponent("effective-config.json")
+        let manifestPath = runRoot.appendingPathComponent("manifest.jsonl")
+        #expect(FileManager.default.fileExists(atPath: effectiveConfigPath.path))
+        #expect(FileManager.default.fileExists(atPath: manifestPath.path))
+        let manifest = try String(contentsOf: manifestPath, encoding: .utf8)
+        #expect(manifest.split(separator: "\n").count == 1)
     }
 
     @Test("batch run dry-run explicit CLI defaults override config")

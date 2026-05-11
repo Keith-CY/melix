@@ -35,7 +35,9 @@ the existing sub-issues under #745, #769, #793, #817, and #837.
   entries.
 - Resolve effective configuration from CLI options, config file values,
   environment variables, and Melix defaults.
-- Support subset planning through `--start-index` and `--max-models`.
+- Support subset planning through `--start-index` and `--max-models`, where
+  `--start-index` is a 1-based model-list position independent of display
+  model indexes.
 - Write `effective-config.json` and `manifest.jsonl` to both temporary and
   operator output roots.
 - Print a compact terminal plan summary.

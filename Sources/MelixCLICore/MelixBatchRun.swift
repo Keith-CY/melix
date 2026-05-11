@@ -374,7 +374,8 @@ enum BatchRunPlanner {
         startIndex: Int,
         maxModels: Int
     ) -> [BatchRunModelEntry] {
-        let filtered = models.filter { (Int($0.index) ?? 0) >= startIndex }
+        let start = max(0, startIndex - 1)
+        let filtered = start < models.count ? Array(models[start...]) : []
         guard maxModels > 0 else {
             return filtered
         }
@@ -641,7 +642,12 @@ enum BatchRunArtifacts {
 
 private extension FileManager {
     func copyItemReplacingExisting(at sourceURL: URL, to destinationURL: URL) throws {
-        if fileExists(atPath: destinationURL.path) {
+        let sourcePath = sourceURL.standardizedFileURL.path
+        let destinationPath = destinationURL.standardizedFileURL.path
+        guard sourcePath != destinationPath else {
+            return
+        }
+        if fileExists(atPath: destinationPath) {
             try removeItem(at: destinationURL)
         }
         try copyItem(at: sourceURL, to: destinationURL)

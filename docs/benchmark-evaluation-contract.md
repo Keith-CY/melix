@@ -68,6 +68,11 @@ model entry must include:
 - `repo_id`
 - `source_line`
 
+Subset selection uses 1-based model-list positions, not the model entry's
+display `index` value. `start_index: 2` starts with the second selected line in
+the normalized model list even when explicit display indexes are non-numeric or
+non-contiguous.
+
 ### Effective Configuration
 
 Batch-run planning must resolve one effective configuration before any per-model
