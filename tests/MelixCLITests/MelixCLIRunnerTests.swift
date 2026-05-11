@@ -7815,6 +7815,19 @@ struct MelixCLIRunnerTests {
             makeRunRecordPayloadForTest(runID: "bench-a", runKind: "benchmark", runRoot: benchRunRoot, startedAtUnixMS: 10),
             to: benchRunRoot.appendingPathComponent("run-record.json")
         )
+        let nestedArtifactRoot = benchRunRoot
+            .appendingPathComponent("artifacts", isDirectory: true)
+            .appendingPathComponent("checkpoint", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedArtifactRoot, withIntermediateDirectories: true)
+        try writeJSONObjectForTest(
+            makeRunRecordPayloadForTest(
+                runID: "nested-artifact",
+                runKind: "benchmark",
+                runRoot: nestedArtifactRoot,
+                startedAtUnixMS: 30
+            ),
+            to: nestedArtifactRoot.appendingPathComponent("run-record.json")
+        )
         try writeJSONObjectForTest(
             makeRunRecordPayloadForTest(runID: "eval-a", runKind: "evaluation", runRoot: evalRunRoot, startedAtUnixMS: 10),
             to: evalRunRoot.appendingPathComponent("run-record.json")
@@ -7822,6 +7835,7 @@ struct MelixCLIRunnerTests {
 
         let defaultRecords = try store.loadRecords()
         #expect(defaultRecords.map(\.runID) == ["bench-a", "eval-a"])
+        #expect(defaultRecords.contains { $0.runID == "nested-artifact" } == false)
         #expect(try store.report(kind: "runs", sourcePath: root.path).payload["run_count"] as? Int == 2)
 
         let invalidRoot = root.appendingPathComponent("invalid", isDirectory: true)
@@ -7871,7 +7885,8 @@ struct MelixCLIRunnerTests {
         #expect(directRecord.durationMS == 7)
         #expect(renderRunRecordList([directRecord]).contains("model-a,model-b"))
         #expect(renderRunRecordMarkdown(directRecord).contains("- None."))
-        #expect(renderRunRecordMarkdown(directRecord).contains("No rows."))
+        #expect(renderRunRecordMarkdown(directRecord).contains("- None."))
+        #expect(renderRunRecordMarkdown(directRecord).contains("No rows.") == false)
         #expect(renderReportMarkdown(["report_kind": "runs"]).contains("- None."))
         #expect(try writeRunRecordOutput("inline\n", outputPath: "") == "inline\n")
     }

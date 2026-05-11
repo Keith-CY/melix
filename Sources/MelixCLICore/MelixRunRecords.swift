@@ -48,50 +48,28 @@ public struct RunReportOptions: Equatable, Sendable {
 
 struct MelixRunRecord {
     let payload: [String: Any]
+    private let envelope: MelixRunRecordEnvelope
     let path: String
 
-    var runID: String { stringValue("run_id") }
-    var runKind: String { stringValue("run_kind") }
-    var status: String { stringValue("status") }
-    var startedAtUnixMS: Int { intValue("started_at_unix_ms") }
-    var durationMS: Int { intValue("duration_ms") }
-
-    func stringValue(_ key: String) -> String {
-        payload[key].map { String(describing: $0) } ?? ""
+    init(payload: [String: Any], path: String) {
+        self.payload = payload
+        self.envelope = MelixRunRecordEnvelope(payload: payload)
+        self.path = path
     }
 
-    func intValue(_ key: String) -> Int {
-        if let value = payload[key] as? Int {
-            return value
-        }
-        if let value = payload[key] as? NSNumber {
-            return value.intValue
-        }
-        if let value = payload[key] as? String, let parsed = Int(value) {
-            return parsed
-        }
-        return 0
-    }
+    var runID: String { envelope.runID }
+    var runKind: String { envelope.runKind }
+    var status: String { envelope.status }
+    var startedAtUnixMS: Int { envelope.startedAtUnixMS }
+    var durationMS: Int { envelope.durationMS }
 
-    func dictionary(_ key: String) -> [String: Any] {
-        payload[key] as? [String: Any] ?? [:]
-    }
-
-    func array(_ key: String) -> [[String: Any]] {
-        payload[key] as? [[String: Any]] ?? []
-    }
-
-    var commandDisplay: String {
-        let command = dictionary("command")
-        return command["display"].map { String(describing: $0) } ?? ""
-    }
-
-    var target: [String: Any] { dictionary("target") }
-    var dataset: [String: Any] { dictionary("dataset") }
-    var environment: [String: Any] { dictionary("environment") }
-    var metrics: [[String: Any]] { array("metrics") }
-    var artifacts: [[String: Any]] { array("artifacts") }
-    var knownGaps: [String] { payload["known_gaps"] as? [String] ?? [] }
+    var commandDisplay: String { envelope.command.display }
+    var target: [String: Any] { envelope.target.payload }
+    var dataset: [String: Any] { envelope.dataset.payload }
+    var environment: [String: Any] { envelope.environment.payload }
+    var metrics: [[String: Any]] { envelope.metrics.map(\.payload) }
+    var artifacts: [[String: Any]] { envelope.artifacts.map(\.payload) }
+    var knownGaps: [String] { envelope.knownGaps }
 
     func summaryPayload() -> [String: Any] {
         [
@@ -105,9 +83,163 @@ struct MelixRunRecord {
             "source_repo": stringField(target, "source_repo"),
             "suite_ids": dataset["suite_ids"] ?? [],
             "dataset_id": stringField(dataset, "dataset_id", fallback: stringField(dataset, "dataset_ref")),
-            "artifact_root": stringValue("artifact_root"),
+            "artifact_root": envelope.artifactRoot,
             "record_path": path,
         ]
+    }
+}
+
+private struct MelixRunRecordEnvelope: Decodable {
+    let schemaVersion: String
+    let runID: String
+    let runKind: String
+    let status: String
+    let startedAtUnixMS: Int
+    let durationMS: Int
+    let command: DynamicRecord
+    let target: DynamicRecord
+    let dataset: DynamicRecord
+    let environment: DynamicRecord
+    let metrics: [DynamicRecord]
+    let artifacts: [DynamicRecord]
+    let knownGaps: [String]
+    let artifactRoot: String
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case runID = "run_id"
+        case runKind = "run_kind"
+        case status
+        case startedAtUnixMS = "started_at_unix_ms"
+        case durationMS = "duration_ms"
+        case command
+        case target
+        case dataset
+        case environment
+        case metrics
+        case artifacts
+        case knownGaps = "known_gaps"
+        case artifactRoot = "artifact_root"
+    }
+
+    init(payload: [String: Any]) {
+        self.schemaVersion = stringField(payload, "schema_version")
+        self.runID = stringField(payload, "run_id")
+        self.runKind = stringField(payload, "run_kind")
+        self.status = stringField(payload, "status")
+        self.startedAtUnixMS = intField(payload, "started_at_unix_ms")
+        self.durationMS = intField(payload, "duration_ms")
+        self.command = DynamicRecord(payload: payload["command"] as? [String: Any] ?? [:])
+        self.target = DynamicRecord(payload: payload["target"] as? [String: Any] ?? [:])
+        self.dataset = DynamicRecord(payload: payload["dataset"] as? [String: Any] ?? [:])
+        self.environment = DynamicRecord(payload: payload["environment"] as? [String: Any] ?? [:])
+        self.metrics = (payload["metrics"] as? [[String: Any]] ?? []).map(DynamicRecord.init(payload:))
+        self.artifacts = (payload["artifacts"] as? [[String: Any]] ?? []).map(DynamicRecord.init(payload:))
+        self.knownGaps = payload["known_gaps"] as? [String] ?? []
+        self.artifactRoot = stringField(payload, "artifact_root")
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? ""
+        self.runID = try container.decodeIfPresent(String.self, forKey: .runID) ?? ""
+        self.runKind = try container.decodeIfPresent(String.self, forKey: .runKind) ?? ""
+        self.status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
+        self.startedAtUnixMS = try container.decodeIntStringOrDefault(forKey: .startedAtUnixMS)
+        self.durationMS = try container.decodeIntStringOrDefault(forKey: .durationMS)
+        self.command = try container.decodeIfPresent(DynamicRecord.self, forKey: .command) ?? DynamicRecord(payload: [:])
+        self.target = try container.decodeIfPresent(DynamicRecord.self, forKey: .target) ?? DynamicRecord(payload: [:])
+        self.dataset = try container.decodeIfPresent(DynamicRecord.self, forKey: .dataset) ?? DynamicRecord(payload: [:])
+        self.environment = try container.decodeIfPresent(DynamicRecord.self, forKey: .environment) ?? DynamicRecord(payload: [:])
+        self.metrics = try container.decodeIfPresent([DynamicRecord].self, forKey: .metrics) ?? []
+        self.artifacts = try container.decodeIfPresent([DynamicRecord].self, forKey: .artifacts) ?? []
+        self.knownGaps = try container.decodeIfPresent([String].self, forKey: .knownGaps) ?? []
+        self.artifactRoot = try container.decodeIfPresent(String.self, forKey: .artifactRoot) ?? ""
+    }
+}
+
+private struct DynamicRecord: Decodable {
+    let payload: [String: Any]
+
+    var display: String {
+        stringField(payload, "display")
+    }
+
+    init(payload: [String: Any]) {
+        self.payload = payload
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(DynamicJSONValue.self)
+        self.payload = value.objectValue
+    }
+}
+
+private enum DynamicJSONValue: Decodable {
+    case string(String)
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
+    case array([DynamicJSONValue])
+    case object([String: DynamicJSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Int.self) {
+            self = .int(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .double(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([DynamicJSONValue].self) {
+            self = .array(value)
+        } else {
+            self = .object(try container.decode([String: DynamicJSONValue].self))
+        }
+    }
+
+    var anyValue: Any {
+        switch self {
+        case .string(let value):
+            return value
+        case .int(let value):
+            return value
+        case .double(let value):
+            return value
+        case .bool(let value):
+            return value
+        case .array(let values):
+            return values.map(\.anyValue)
+        case .object(let values):
+            return values.mapValues(\.anyValue)
+        case .null:
+            return NSNull()
+        }
+    }
+
+    var objectValue: [String: Any] {
+        if case .object(let values) = self {
+            return values.mapValues(\.anyValue)
+        }
+        return [:]
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeIntStringOrDefault(forKey key: Key) throws -> Int {
+        if let value = try decodeIfPresent(Int.self, forKey: key) {
+            return value
+        }
+        if let value = try decodeIfPresent(String.self, forKey: key), let parsed = Int(value) {
+            return parsed
+        }
+        return 0
     }
 }
 
@@ -158,26 +290,58 @@ public final class MelixRunRecordStore {
             }
         }
         let scanMS = elapsedMilliseconds(since: scanStart)
-        let renderStart = DispatchTime.now()
         var payload = makeReportPayload(kind: kind, records: records, scanMS: scanMS, markdownRenderMS: 0)
-        _ = renderReportMarkdown(payload)
         payload["report_generation"] = [
             "record_scan_ms": scanMS,
-            "markdown_render_ms": elapsedMilliseconds(since: renderStart),
+            "markdown_render_ms": "__pending__",
         ]
-        let markdown = renderReportMarkdown(payload)
+        let renderStart = DispatchTime.now()
+        let pendingMarkdown = renderReportMarkdown(payload)
+        let markdownRenderMS = elapsedMilliseconds(since: renderStart)
+        payload["report_generation"] = makeReportGenerationPayload(recordScanMS: scanMS, markdownRenderMS: markdownRenderMS)
+        let markdown = pendingMarkdown.replacingOccurrences(
+            of: "markdown_render_ms=__pending__.",
+            with: "markdown_render_ms=\(markdownRenderMS)."
+        )
         return MelixRunReportResult(payload: payload, markdown: markdown)
     }
 
     private func sourceRoots(sourcePath: String) -> [URL] {
         let trimmed = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            return [URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)]
+            return explicitSourceRoots(URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath))
         }
         return [
             melixHome.modelOpsJobsRootURL.appendingPathComponent("bench", isDirectory: true),
             melixHome.evaluationJobsRootURL,
         ]
+    }
+
+    private func explicitSourceRoots(_ url: URL) -> [URL] {
+        uniqueURLs([
+            url,
+            url.appendingPathComponent("jobs", isDirectory: true)
+                .appendingPathComponent("model-ops", isDirectory: true)
+                .appendingPathComponent("bench", isDirectory: true),
+            url.appendingPathComponent("jobs", isDirectory: true)
+                .appendingPathComponent("evaluation", isDirectory: true),
+            url.appendingPathComponent("model-ops", isDirectory: true)
+                .appendingPathComponent("bench", isDirectory: true),
+            url.appendingPathComponent("evaluation", isDirectory: true),
+            url.appendingPathComponent("bench", isDirectory: true),
+        ])
+    }
+
+    private func uniqueURLs(_ urls: [URL]) -> [URL] {
+        var seen: Set<String> = []
+        var result: [URL] = []
+        for url in urls {
+            let path = url.standardizedFileURL.path
+            if seen.insert(path).inserted {
+                result.append(url)
+            }
+        }
+        return result
     }
 
     private func loadRecords(at url: URL) throws -> [MelixRunRecord] {
@@ -192,22 +356,42 @@ public final class MelixRunRecordStore {
         if let rootRecord = try loadRecordFile(url.appendingPathComponent("run-record.json")) {
             records.append(rootRecord)
         }
-        guard let enumerator = fileManager.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return records
-        }
-        for case let candidateURL as URL in enumerator where candidateURL.lastPathComponent == "run-record.json" {
-            if candidateURL.path == url.appendingPathComponent("run-record.json").path {
-                continue
-            }
+        for candidateURL in try shallowRunRecordURLs(at: url) {
             if let record = try loadRecordFile(candidateURL) {
                 records.append(record)
             }
         }
         return records
+    }
+
+    private func shallowRunRecordURLs(at url: URL) throws -> [URL] {
+        let children = try fileManager.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+        var candidates: [URL] = []
+        for child in children where isDirectory(child) {
+            candidates.append(child.appendingPathComponent("run-record.json"))
+            if ["matrix-runs", "runs"].contains(child.lastPathComponent) {
+                let grandchildren = try fileManager.contentsOfDirectory(
+                    at: child,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: [.skipsHiddenFiles]
+                )
+                candidates.append(
+                    contentsOf: grandchildren
+                        .filter(isDirectory)
+                        .map { $0.appendingPathComponent("run-record.json") }
+                )
+            }
+        }
+        return candidates
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        var isDirectory = ObjCBool(false)
+        return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     private func loadRecordFile(_ url: URL) throws -> MelixRunRecord? {
@@ -221,6 +405,7 @@ public final class MelixRunRecordStore {
         else {
             return nil
         }
+        _ = try JSONDecoder().decode(MelixRunRecordEnvelope.self, from: data)
         return MelixRunRecord(payload: payload, path: url.path)
     }
 }
@@ -309,10 +494,7 @@ func makeReportPayload(
         "known_gaps": records.flatMap { record in
             record.knownGaps.map { ["run_id": record.runID, "gap": $0] }
         },
-        "report_generation": [
-            "record_scan_ms": scanMS,
-            "markdown_render_ms": markdownRenderMS,
-        ],
+        "report_generation": makeReportGenerationPayload(recordScanMS: scanMS, markdownRenderMS: markdownRenderMS),
     ]
 }
 
@@ -540,7 +722,7 @@ private func knownGapMarkdownLines(_ gaps: [String]) -> [String] {
 
 private func tableLines(headers: [String], rows: [[String]]) -> [String] {
     guard !rows.isEmpty else {
-        return ["No rows."]
+        return ["- None."]
     }
     let header = "| " + headers.map(markdownTableCell).joined(separator: " | ") + " |"
     let divider = "| " + headers.map { _ in "---" }.joined(separator: " | ") + " |"
@@ -577,6 +759,26 @@ private func stringField(_ payload: [String: Any], _ key: String, fallback: Stri
         return rendered.isEmpty ? fallback : rendered.joined(separator: ",")
     }
     return String(describing: value)
+}
+
+private func intField(_ payload: [String: Any], _ key: String) -> Int {
+    if let value = payload[key] as? Int {
+        return value
+    }
+    if let value = payload[key] as? NSNumber {
+        return value.intValue
+    }
+    if let value = payload[key] as? String, let parsed = Int(value) {
+        return parsed
+    }
+    return 0
+}
+
+private func makeReportGenerationPayload(recordScanMS: Double, markdownRenderMS: Double) -> [String: Any] {
+    [
+        "record_scan_ms": recordScanMS,
+        "markdown_render_ms": markdownRenderMS,
+    ]
 }
 
 private func markdownTableCell(_ value: String) -> String {

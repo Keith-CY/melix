@@ -287,10 +287,10 @@ def _serving_benchmark_argv(*, job: Any, parameters: Mapping[str, object]) -> li
         _append_option(argv, "--suite", suite)
     for context_length in getattr(job, "context_lengths", ()):
         _append_option(argv, "--context-length", context_length)
-    _append_option(argv, "--generation-length", getattr(job, "generation_length", 0))
+    _append_option(argv, "--generation-length", getattr(job, "generation_length", 0), skip_zero=True)
     for batch_size in getattr(job, "batch_sizes", ()):
         _append_option(argv, "--batch-size", batch_size)
-    _append_option(argv, "--repeats", getattr(job, "repeats", 0))
+    _append_option(argv, "--repeats", getattr(job, "repeats", 0), skip_zero=True)
     _append_option(argv, "--cache-profile", getattr(job, "cache_profile", ""))
     _append_option(argv, "--reasoning-mode", getattr(job, "reasoning_mode", ""))
     _append_option(argv, "--structured-output-mode", getattr(job, "structured_output_mode", ""))
@@ -364,11 +364,13 @@ def _append_target(argv: list[str], *, model_id: str, source_repo: str) -> None:
         _append_option(argv, "--repo-id", source_repo)
 
 
-def _append_option(argv: list[str], option: str, value: object) -> None:
+def _append_option(argv: list[str], option: str, value: object, *, skip_zero: bool = False) -> None:
     if value is None:
         return
     string_value = str(value).strip()
-    if not string_value or string_value == "0":
+    if not string_value:
+        return
+    if skip_zero and string_value == "0":
         return
     argv.extend([option, string_value])
 
@@ -608,13 +610,37 @@ def _apple_processor_name() -> str:
 
 @lru_cache(maxsize=1)
 def _melix_identity() -> dict[str, object]:
-    repo_root = Path(__file__).resolve().parents[4]
+    repo_root = _repo_root()
     return {
         "git_commit": _git_output(repo_root, "rev-parse", "HEAD"),
         "git_branch": _git_output(repo_root, "rev-parse", "--abbrev-ref", "HEAD"),
         "dirty_worktree": _git_dirty(repo_root),
         "version": "",
     }
+
+
+def _repo_root(start: Path | None = None) -> Path:
+    start_path = (start or Path(__file__)).resolve()
+    cursor = start_path if start_path.is_dir() else start_path.parent
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cursor,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except Exception:
+        completed = None
+    if completed is not None and completed.returncode == 0:
+        path = completed.stdout.strip()
+        if path:
+            return Path(path)
+    for candidate in (cursor, *cursor.parents):
+        if (candidate / ".git").exists() or (candidate / "AGENTS.md").exists():
+            return candidate
+    return Path(__file__).resolve().parents[4]
 
 
 def _git_output(repo_root: Path, *args: str) -> str:

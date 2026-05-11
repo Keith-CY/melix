@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from worker.productization import run_records
 from worker.productization.run_records import (
     attach_run_record_write_probe,
+    build_evaluation_run_record,
     build_serving_benchmark_run_record,
     write_run_record,
 )
@@ -158,6 +159,49 @@ def test_run_record_builders_cover_reproducibility_fallbacks_and_repo_targets(
     ]
 
 
+def test_evaluation_run_record_keeps_explicit_zero_reproduction_options(
+    tmp_path: Path,
+) -> None:
+    job = SimpleNamespace(
+        job_id="eval-zero",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=0,
+        scoring_mode="exact_match",
+        few_shot=0,
+        seed=0,
+        code_exec_policy="disabled",
+        parameters={},
+        status="completed",
+        created_at_unix_ms=100,
+        updated_at_unix_ms=120,
+    )
+    result = SimpleNamespace(
+        metrics=(),
+        primary_score_name="exact_match",
+        primary_score_value=0.0,
+        scored_sample_count=0,
+        failure_count=0,
+        duration_seconds=0.0,
+    )
+
+    record = build_evaluation_run_record(
+        job=job,
+        result=result,
+        artifact_root=tmp_path,
+        artifact_paths={"telemetry_jsonl": tmp_path / "telemetry.jsonl"},
+    )
+
+    assert record["command"]["display"] == (
+        "melix eval run --model-id melix-dev-text --suite mmlu "
+        "--dataset-id mmlu-dev --sample-size 0 --scoring-mode exact_match "
+        "--few-shot 0 --seed 0 --code-exec-policy disabled"
+    )
+
+
 def test_run_record_helper_fallbacks(monkeypatch) -> None:
     assert run_records._split_parameter_list(("1024", "", "2048")) == ["1024", "2048"]
     assert run_records._split_parameter_list("cold, warm,,") == ["cold", "warm"]
@@ -176,3 +220,19 @@ def test_run_record_helper_fallbacks(monkeypatch) -> None:
     assert run_records._apple_processor_name() == "fallback-processor"
     assert run_records._git_output(Path("/tmp"), "rev-parse", "HEAD") == ""
     assert run_records._git_dirty(Path("/tmp")) is False
+
+
+def test_repo_root_falls_back_to_project_marker_when_git_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    nested = tmp_path / "services" / "mlx-worker-python" / "worker"
+    nested.mkdir(parents=True)
+    (tmp_path / ".git").mkdir()
+
+    def fail_run(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("subprocess unavailable")
+
+    monkeypatch.setattr(run_records.subprocess, "run", fail_run)
+
+    assert run_records._repo_root(start=nested) == tmp_path
