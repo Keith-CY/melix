@@ -158,6 +158,8 @@ public enum MelixCLICommandCodec {
             return "eval.export-samples-jsonl"
         case .evalReport:
             return "eval.report"
+        case .batchRun:
+            return "batch.run"
         case .runsList:
             return "runs.list"
         case .runsShow:
@@ -564,6 +566,47 @@ public enum MelixCLICommandCodec {
             appendOption("--from", value: options.sourcePath, into: &arguments)
             appendOption("--format", value: options.format, into: &arguments)
             json = false
+        case .batchRun(let options):
+            arguments = ["batch", "run"]
+            appendOption("--models", value: options.modelListPath, into: &arguments)
+            appendOption("--config", value: options.configPath, into: &arguments)
+            appendOption("--run-id", value: options.runID, into: &arguments)
+            appendOption("--output-root", value: options.outputRoot, into: &arguments)
+            appendOption("--temp-root", value: options.tempRoot, into: &arguments)
+            appendInt(
+                "--start-index",
+                value: options.startIndex,
+                defaultValue: 1,
+                force: options.explicitOptions.contains("--start-index"),
+                into: &arguments
+            )
+            appendInt(
+                "--max-models",
+                value: options.maxModels,
+                defaultValue: 0,
+                force: options.explicitOptions.contains("--max-models"),
+                into: &arguments
+            )
+            appendOption("--judge-remote-server-id", value: options.judgeRemoteServerID, into: &arguments)
+            appendOption("--judge-model", value: options.judgeModelID, into: &arguments)
+            appendOption("--bench-suite", value: options.benchSuite, into: &arguments)
+            appendUInt32("--bench-context-length", value: options.benchContextLength, defaultValue: 0, force: options.explicitOptions.contains("--bench-context-length"), into: &arguments)
+            appendUInt32("--bench-generation-length", value: options.benchGenerationLength, defaultValue: 0, force: options.explicitOptions.contains("--bench-generation-length"), into: &arguments)
+            appendUInt32("--bench-batch-size", value: options.benchBatchSize, defaultValue: 0, force: options.explicitOptions.contains("--bench-batch-size"), into: &arguments)
+            appendUInt32("--bench-repeats", value: options.benchRepeats, defaultValue: 0, force: options.explicitOptions.contains("--bench-repeats"), into: &arguments)
+            appendUInt32("--bench-sample-size", value: options.benchSampleSize, defaultValue: 0, force: options.explicitOptions.contains("--bench-sample-size"), into: &arguments)
+            appendUInt32("--bench-batch-factor", value: options.benchBatchFactor, defaultValue: 0, force: options.explicitOptions.contains("--bench-batch-factor"), into: &arguments)
+            appendOption("--eval-suite", value: options.evalSuite, into: &arguments)
+            appendOption("--eval-dataset-id", value: options.evalDatasetID, into: &arguments)
+            appendOption("--eval-scoring-mode", value: options.evalScoringMode, into: &arguments)
+            appendUInt32("--eval-sample-size", value: options.evalSampleSize, defaultValue: 0, force: options.explicitOptions.contains("--eval-sample-size"), into: &arguments)
+            appendUInt32("--eval-batch-factor", value: options.evalBatchFactor, defaultValue: 0, force: options.explicitOptions.contains("--eval-batch-factor"), into: &arguments)
+            appendBool("--continue-on-failure", value: options.continueOnFailure, defaultValue: true, force: options.explicitOptions.contains("--continue-on-failure"), into: &arguments)
+            appendBool("--restart-stack-per-model", value: options.restartStackPerModel, defaultValue: true, force: options.explicitOptions.contains("--restart-stack-per-model"), into: &arguments)
+            if options.dryRun {
+                arguments.append("--dry-run")
+            }
+            json = options.json
         case .runsList(let options):
             arguments = ["runs", "list"]
             appendOption("--from", value: options.sourcePath, into: &arguments)
@@ -667,11 +710,32 @@ public enum MelixCLICommandCodec {
         arguments.append(contentsOf: [option, String(value)])
     }
 
+    private static func appendInt(_ option: String, value: Int, defaultValue: Int, force: Bool, into arguments: inout [String]) {
+        guard force || value != defaultValue else {
+            return
+        }
+        arguments.append(contentsOf: [option, String(value)])
+    }
+
     private static func appendPositiveUInt32(_ option: String, value: UInt32, into arguments: inout [String]) {
         guard value > 0 else {
             return
         }
         arguments.append(contentsOf: [option, String(value)])
+    }
+
+    private static func appendUInt32(_ option: String, value: UInt32, defaultValue: UInt32, force: Bool, into arguments: inout [String]) {
+        guard force || value != defaultValue else {
+            return
+        }
+        arguments.append(contentsOf: [option, String(value)])
+    }
+
+    private static func appendBool(_ option: String, value: Bool, defaultValue: Bool, force: Bool, into arguments: inout [String]) {
+        guard force || value != defaultValue else {
+            return
+        }
+        arguments.append(contentsOf: [option, value ? "true" : "false"])
     }
 
     private static func appendMultiOption(_ option: String, values: [String], into arguments: inout [String]) {

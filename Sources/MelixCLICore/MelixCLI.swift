@@ -1432,6 +1432,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case evalExportSamplesCSV(EvalExportOptions)
     case evalExportSamplesJSONL(EvalExportOptions)
     case evalReport(RunReportOptions)
+    case batchRun(BatchRunOptions)
     case runsList(RunsListOptions)
     case runsShow(RunsShowOptions)
     case runsExport(RunsExportOptions)
@@ -1525,6 +1526,8 @@ public enum MelixCLIParser {
             return try parseBench(tail)
         case "eval":
             return try parseEval(tail)
+        case "batch":
+            return try parseBatch(tail)
         case "runs":
             return try parseRuns(tail)
         case "pipeline":
@@ -1615,6 +1618,7 @@ public enum MelixCLIParser {
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
       melix eval report --from PATH [--format markdown|json]
+      melix batch run --models PATH [--config PATH] [--run-id ID] [--output-root PATH] [--temp-root PATH] [--start-index N] [--max-models N] [--judge-remote-server-id ID] [--judge-model MODEL] [--bench-suite SUITE] [--bench-context-length N] [--bench-generation-length N] [--bench-batch-size N] [--bench-repeats N] [--bench-sample-size N] [--bench-batch-factor N] [--eval-suite SUITE] [--eval-dataset-id ID] [--eval-scoring-mode MODE] [--eval-sample-size N] [--eval-batch-factor N] [--continue-on-failure true|false] [--restart-stack-per-model true|false] --dry-run [--json]
       melix runs list [--from PATH] [--json]
       melix runs show RUN_ID [--from PATH] [--json]
       melix runs export RUN_ID --format json|md [--from PATH] [--output PATH]
@@ -3192,6 +3196,59 @@ public enum MelixCLIParser {
         }
     }
 
+    private static func parseBatch(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        switch action {
+        case "run":
+            let explicitOptions = Set(values.single.keys).union(values.flags)
+            let continueOnFailure = try parseRequiredBooleanValue(
+                values.single["--continue-on-failure"],
+                option: "--continue-on-failure",
+                defaultValue: true
+            )
+            let restartStackPerModel = try parseRequiredBooleanValue(
+                values.single["--restart-stack-per-model"],
+                option: "--restart-stack-per-model",
+                defaultValue: true
+            )
+            return .batchRun(
+                BatchRunOptions(
+                    modelListPath: values.single["--models"] ?? "",
+                    configPath: values.single["--config"] ?? "",
+                    runID: values.single["--run-id"] ?? "",
+                    outputRoot: values.single["--output-root"] ?? "",
+                    tempRoot: values.single["--temp-root"] ?? "",
+                    startIndex: try parseIntValue(values.single["--start-index"], option: "--start-index", defaultValue: 1) ?? 1,
+                    maxModels: try parseNonNegativeIntValue(values.single["--max-models"], option: "--max-models", defaultValue: 0),
+                    judgeRemoteServerID: values.single["--judge-remote-server-id"] ?? "",
+                    judgeModelID: values.single["--judge-model"] ?? "",
+                    benchSuite: values.single["--bench-suite"] ?? "",
+                    benchContextLength: try parseUInt32Value(values.single["--bench-context-length"], option: "--bench-context-length") ?? 0,
+                    benchGenerationLength: try parseUInt32Value(values.single["--bench-generation-length"], option: "--bench-generation-length") ?? 0,
+                    benchBatchSize: try parseUInt32Value(values.single["--bench-batch-size"], option: "--bench-batch-size") ?? 0,
+                    benchRepeats: try parseUInt32Value(values.single["--bench-repeats"], option: "--bench-repeats") ?? 0,
+                    benchSampleSize: try parseUInt32Value(values.single["--bench-sample-size"], option: "--bench-sample-size") ?? 0,
+                    benchBatchFactor: try parseUInt32Value(values.single["--bench-batch-factor"], option: "--bench-batch-factor") ?? 0,
+                    evalSuite: values.single["--eval-suite"] ?? "",
+                    evalDatasetID: values.single["--eval-dataset-id"] ?? "",
+                    evalScoringMode: values.single["--eval-scoring-mode"] ?? "",
+                    evalSampleSize: try parseUInt32Value(values.single["--eval-sample-size"], option: "--eval-sample-size") ?? 0,
+                    evalBatchFactor: try parseUInt32Value(values.single["--eval-batch-factor"], option: "--eval-batch-factor") ?? 0,
+                    continueOnFailure: continueOnFailure,
+                    restartStackPerModel: restartStackPerModel,
+                    dryRun: values.flags.contains("--dry-run"),
+                    json: values.flags.contains("--json"),
+                    explicitOptions: explicitOptions
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
     private static func parseEvalRemoteTargets(
         remoteServerIDs: [String],
         remoteModelIDs: [String]
@@ -3718,6 +3775,20 @@ public enum MelixCLIParser {
             _ = option
             return nil
         }
+    }
+
+    private static func parseRequiredBooleanValue(
+        _ value: String?,
+        option: String,
+        defaultValue: Bool
+    ) throws -> Bool {
+        guard let value else {
+            return defaultValue
+        }
+        guard let parsed = parseBooleanValue(value, option: option) else {
+            throw MelixCLIError.usage("Invalid value for \(option). Expected true or false.")
+        }
+        return parsed
     }
 
     private static func parseUInt32List(
@@ -4389,6 +4460,8 @@ public actor MelixCLIRunner {
         switch command {
         case .pipelineRun(let options):
             return try await runPipeline(options)
+        case .batchRun(let options):
+            return try runBatch(options)
         case .doctor(let options):
             let report = try await client.runDoctor()
             if options.json {
@@ -5813,6 +5886,8 @@ public actor MelixCLIRunner {
             return options.remoteServerID.isEmpty
         case .evalRun(let options):
             return Self.effectiveRemoteTargetOptions(for: options).isEmpty
+        case .batchRun:
+            return false
         default:
             return false
         }
@@ -8157,6 +8232,18 @@ public actor MelixCLIRunner {
         encoder.keyEncodingStrategy = .convertToSnakeCase
         let data = try encoder.encode(payload)
         return String(decoding: data, as: UTF8.self) + "\n"
+    }
+
+    private func runBatch(_ options: BatchRunOptions) throws -> String {
+        guard options.dryRun else {
+            throw MelixCLIError.runtime("melix batch run currently supports --dry-run only; execution is tracked in #755 and follow-up issues.")
+        }
+        let plan = try BatchRunPlanner.makePlan(options: options, environment: environment)
+        try BatchRunArtifacts.writeFoundationArtifacts(plan: plan)
+        if options.json {
+            return try prettyJSON(BatchRunArtifacts.effectiveConfigPayload(plan: plan))
+        }
+        return BatchRunArtifacts.renderTextSummary(plan: plan)
     }
 
     private static func defaultEvaluationDatasetID(for suiteID: String) -> String {

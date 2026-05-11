@@ -26,12 +26,119 @@ This contract applies to:
 - the native Window UI
 - control-plane request and response payloads
 - persisted benchmark and evaluation runs
+- combined benchmark and evaluation batch-run planning artifacts
 - export formats used for CSV and JSONL artifacts
 
 This contract does not define:
 
-- one-command combined benchmark plus evaluation runs
 - leaderboard or community-submission APIs
+
+## Combined Batch Run Planning
+
+Melix may expose `melix batch run` as an operator-facing orchestration surface
+for repeated benchmark plus evaluation sweeps over a model list. This surface
+does not replace the canonical `bench` and `eval` product semantics; it plans,
+records, and eventually dispatches those existing product commands for each
+selected model.
+
+The initial supported execution mode is:
+
+- `melix batch run --models <path> --dry-run`
+
+The dry-run mode must not contact Hugging Face, start a Melix runtime stack, or
+submit benchmark or evaluation jobs. It must validate and normalize inputs,
+materialize planning artifacts, and print a compact terminal summary.
+
+### Model List Contract
+
+The model list is a UTF-8 text file. Each non-empty, non-comment line selects
+one model. Melix must preserve duplicate entries because repeated runs may be
+intentional for reliability or variance checks.
+
+Supported line forms are:
+
+- `<hf_repo_id>`
+- `<model_index>|<hf_repo_id>`
+
+For lines without an explicit index, Melix assigns a zero-padded two digit
+index in file order. Explicit indexes are preserved as provided. The normalized
+model entry must include:
+
+- `index`
+- `repo_id`
+- `source_line`
+
+### Effective Configuration
+
+Batch-run planning must resolve one effective configuration before any per-model
+work begins. Resolution precedence is:
+
+1. CLI option
+2. config file value
+3. environment variable
+4. Melix default
+
+The effective configuration artifact must be written as
+`effective-config.json` in both the temporary run directory and the operator
+output directory. It must include at least:
+
+- `schema_version`
+- `run_id`
+- `model_list`
+- `output_root`
+- `temp_root`
+- `start_index`
+- `max_models`
+- `selected_model_count`
+- `total_model_count`
+- `is_subset_run`
+- `dry_run`
+- `continue_on_failure`
+- `restart_stack_per_model`
+- `judge`
+- `benchmark`
+- `evaluation`
+- `models`
+
+### Manifest Planning
+
+Batch-run planning must write `manifest.jsonl` in both the temporary run
+directory and the operator output directory. Each selected model receives one
+JSONL record with `schema_version: melix.batch.manifest_entry.v1`.
+
+The initial dry-run manifest entry status is `planned`. Per-step statuses start
+as `pending` for:
+
+- `hub_check`
+- `benchmark`
+- `evaluation`
+- `exports`
+- `artifact_copy`
+
+Future non-dry-run execution may update model status to:
+
+- `running`
+- `succeeded`
+- `failed`
+- `partial_success`
+- `recovered`
+
+`partial_success` is reserved for models where one product line, such as
+benchmarking or evaluation, completed and produced auditable artifacts while
+another product line failed.
+
+### Terminal Summary
+
+Dry-run terminal output must show:
+
+- `run_id`
+- selected and total model counts
+- subset controls when present
+- temporary and output roots
+- judge server and judge model
+- failure-continuation and per-model stack restart policy
+- effective configuration and manifest paths
+- one compact `PLAN` line per selected model
 
 ## Product Split
 

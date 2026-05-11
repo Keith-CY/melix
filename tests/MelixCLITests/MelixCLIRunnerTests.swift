@@ -297,6 +297,111 @@ struct MelixCLIRunnerTests {
         #expect(MelixCLIJSONMetricPatch.literal(for: -1) == "0.0000000000000000e+00")
     }
 
+    @Test("batch run dry-run writes effective config and manifest artifacts")
+    func batchRunDryRunWritesEffectiveConfigAndManifestArtifacts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try """
+        # preserve comments and duplicates
+        mlx-community/Qwen3.5-9B-MLX-4bit
+        07|unsloth/Qwen3.6-27B-UD-MLX-4bit
+        08|unsloth/Qwen3.6-27B-UD-MLX-4bit
+        """.write(to: modelList, atomically: true, encoding: .utf8)
+
+        let runner = MelixCLIRunner(environment: ["HOME": root.path])
+        let output = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "dry-run-1",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            startIndex: 7,
+            maxModels: 1,
+            dryRun: true
+        )))
+
+        #expect(output.contains("Melix batch run dry-run"))
+        #expect(output.contains("models=1/3"))
+        #expect(output.contains("[1/1] PLAN 07 unsloth/Qwen3.6-27B-UD-MLX-4bit"))
+
+        let effectiveConfigPath = tempRoot.appendingPathComponent("effective-config.json")
+        let manifestPath = tempRoot.appendingPathComponent("manifest.jsonl")
+        let copiedConfigPath = outputRoot.appendingPathComponent("effective-config.json")
+        let copiedManifestPath = outputRoot.appendingPathComponent("manifest.jsonl")
+        #expect(FileManager.default.fileExists(atPath: effectiveConfigPath.path))
+        #expect(FileManager.default.fileExists(atPath: manifestPath.path))
+        #expect(FileManager.default.fileExists(atPath: copiedConfigPath.path))
+        #expect(FileManager.default.fileExists(atPath: copiedManifestPath.path))
+
+        let effectiveConfig = try #require(parseJSONFile(effectiveConfigPath.path))
+        #expect(effectiveConfig["schema_version"] as? String == "melix.batch.effective_config.v1")
+        #expect(effectiveConfig["run_id"] as? String == "dry-run-1")
+        #expect(effectiveConfig["selected_model_count"] as? Int == 1)
+        #expect(effectiveConfig["total_model_count"] as? Int == 3)
+        #expect(effectiveConfig["is_subset_run"] as? Bool == true)
+        let models = try #require(effectiveConfig["models"] as? [[String: Any]])
+        #expect(models.count == 1)
+        #expect(models[0]["index"] as? String == "07")
+        #expect(models[0]["repo_id"] as? String == "unsloth/Qwen3.6-27B-UD-MLX-4bit")
+
+        let manifest = try String(contentsOf: manifestPath, encoding: .utf8)
+        let manifestLines = manifest.split(separator: "\n")
+        #expect(manifestLines.count == 1)
+        let manifestEntry = try #require(parseJSONObject(String(manifestLines[0])))
+        #expect(manifestEntry["status"] as? String == "planned")
+        #expect(manifestEntry["model_index"] as? String == "07")
+        #expect(manifestEntry["repo_id"] as? String == "unsloth/Qwen3.6-27B-UD-MLX-4bit")
+    }
+
+    @Test("batch run dry-run explicit CLI defaults override config")
+    func batchRunDryRunExplicitCLIDefaultsOverrideConfig() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let config = root.appendingPathComponent("batch.yaml")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try """
+        mlx-community/Qwen3.5-9B-MLX-4bit
+        07|unsloth/Qwen3.6-27B-UD-MLX-4bit
+        08|unsloth/Qwen3.6-27B-UD-MLX-4bit
+        """.write(to: modelList, atomically: true, encoding: .utf8)
+        try """
+        max_models: 1
+        continue_on_failure: false
+        restart_stack_per_model: false
+        bench_sample_size: 9
+        """.write(to: config, atomically: true, encoding: .utf8)
+
+        let command = try MelixCLIParser.parse([
+            "batch", "run",
+            "--models", modelList.path,
+            "--config", config.path,
+            "--run-id", "dry-run-precedence",
+            "--output-root", outputRoot.path,
+            "--temp-root", tempRoot.path,
+            "--max-models", "0",
+            "--continue-on-failure", "true",
+            "--restart-stack-per-model", "true",
+            "--bench-sample-size", "1",
+            "--dry-run",
+        ])
+        let runner = MelixCLIRunner(environment: ["HOME": root.path])
+        _ = try await runner.run(command)
+
+        let effectiveConfig = try #require(parseJSONFile(tempRoot.appendingPathComponent("effective-config.json").path))
+        #expect(effectiveConfig["selected_model_count"] as? Int == 3)
+        #expect(effectiveConfig["max_models"] as? Int == 0)
+        #expect(effectiveConfig["continue_on_failure"] as? Bool == true)
+        #expect(effectiveConfig["restart_stack_per_model"] as? Bool == true)
+        let benchmark = try #require(effectiveConfig["benchmark"] as? [String: Any])
+        #expect(benchmark["sample_size"] as? Int == 1)
+    }
+
     @Test("json metric patching preserves user artifact strings that look like the old sentinel")
     func jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel() throws {
         let sentinel = "9.9999999999989997e+99"
