@@ -113,3 +113,34 @@ slices are implemented.
 - Resume missing benchmark or evaluation work from existing manifests.
 - Produce final terminal, Markdown, CSV, JSONL, and downloadable evidence
   bundles.
+
+## Issue 752 Config Schema Slice
+
+The follow-up config-schema slice closes the remaining `melix-batch.yaml`
+contract gap without expanding execution behavior.
+
+### Scope
+
+- Document every supported top-level `key: value` config field in
+  `docs/benchmark-evaluation-contract.md`.
+- Align each field with its CLI override, environment fallback, and default.
+- Define the credential rule: batch configs reference stored credential records
+  such as `judge_remote_server_id`; they never embed API keys or tokens.
+- Reject unsupported config keys so typos do not silently disappear from the
+  effective plan.
+- Reject config keys that look like raw secret carriers, including
+  `*_api_key`, `*_token`, `*_secret`, and `*_password`.
+
+### Metrics And Success Targets
+
+- The documented field set matches the current `BatchRunPlanner` resolver.
+- Secret-bearing values remain represented by stored credential ids rather than
+  raw key material.
+- Unsupported and raw-secret-looking config keys fail before any dry-run
+  artifacts are written.
+
+### Verification
+
+- Targeted Swift runner coverage for unsupported and secret-looking config keys.
+- `git diff --check`.
+- `xcrun swift build --product melix`.

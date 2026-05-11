@@ -105,6 +105,48 @@ output directory. It must include at least:
 - `evaluation`
 - `models`
 
+### Batch Configuration File
+
+`melix batch run --config <path>` accepts a minimal UTF-8 YAML subset for
+operator-authored batch configuration. The supported subset is intentionally
+limited to top-level `key: value` scalar entries; nested objects, lists, anchors,
+and raw secret material are outside the batch-run config contract.
+
+The supported config file keys are:
+
+| Key | CLI Option | Environment Variable | Default | Purpose |
+|---|---|---|---|---|
+| `model_list` | `--models` | `MELIX_BATCH_MODEL_LIST` | required | Path to the UTF-8 model list. |
+| `run_id` | `--run-id` | `MELIX_RUN_ID` | UTC timestamp `yyyyMMdd-HHmmss` | Stable run identifier. |
+| `output_root` | `--output-root` | `MELIX_DOWNLOAD_ROOT` | `~/Downloads/melix-bench-eval-<run_id>` | Operator-visible bundle root. |
+| `temp_root` | `--temp-root` | `MELIX_RUN_TMP_ROOT` | `.runtime/bench-eval-run/<run_id>` | Worktree-local scratch run root. |
+| `start_index` | `--start-index` | `MELIX_START_INDEX` | `1` | 1-based model-list position to start from. |
+| `max_models` | `--max-models` | `MELIX_MAX_MODELS` | `0` | Maximum selected models; `0` means all remaining. |
+| `judge_remote_server_id` | `--judge-remote-server-id` | `MELIX_JUDGE_SERVER_ID` | `owlia-gpt-5-5-judge` | Stored remote-server id for semantic judging. |
+| `judge_model` | `--judge-model` | `MELIX_JUDGE_MODEL` | `gpt-5.5` | Remote model id used by the judge server. |
+| `bench_suite` | `--bench-suite` | `MELIX_BENCH_SUITE` | `smoke` | Benchmark suite id. |
+| `bench_context_length` | `--bench-context-length` | `MELIX_BENCH_CONTEXT_LENGTH` | `1024` | Benchmark prompt context length. |
+| `bench_generation_length` | `--bench-generation-length` | `MELIX_BENCH_GENERATION_LENGTH` | `128` | Benchmark generation length. |
+| `bench_batch_size` | `--bench-batch-size` | `MELIX_BENCH_BATCH_SIZE` | `1` | Benchmark batch size. |
+| `bench_repeats` | `--bench-repeats` | `MELIX_BENCH_REPEATS` | `1` | Benchmark repeat count. |
+| `bench_sample_size` | `--bench-sample-size` | `MELIX_BENCH_SAMPLE_SIZE` | `1` | Benchmark sample limit. |
+| `bench_batch_factor` | `--bench-batch-factor` | `MELIX_BENCH_BATCH_FACTOR` | `1` | Benchmark dataset batch factor. |
+| `eval_suite` | `--eval-suite` | `MELIX_EVAL_SUITE` | `event_extraction` | Evaluation suite id. |
+| `eval_dataset_id` | `--eval-dataset-id` | `MELIX_EVAL_DATASET_ID` | `top200.event-extraction.top20.v1` | Managed evaluation dataset id. |
+| `eval_scoring_mode` | `--eval-scoring-mode` | `MELIX_EVAL_SCORING_MODE` | `event_extraction_weighted_f1` | Evaluation scoring mode. |
+| `eval_sample_size` | `--eval-sample-size` | `MELIX_EVAL_SAMPLE_SIZE` | `20` | Evaluation sample limit. |
+| `eval_batch_factor` | `--eval-batch-factor` | `MELIX_EVAL_BATCH_FACTOR` | `1` | Evaluation batch factor. |
+| `continue_on_failure` | `--continue-on-failure` | `MELIX_CONTINUE_ON_FAILURE` | `true` | Whether one model failure allows the batch to continue. |
+| `restart_stack_per_model` | `--restart-stack-per-model` | `MELIX_RESTART_STACK_PER_MODEL` | `true` | Whether execution restarts the local stack between models. |
+
+Batch configs must reference stored credentials by id, not embed raw credential
+values. For semantic judging, `judge_remote_server_id` identifies a remote
+server already configured through the Melix remote-server store; any API key
+remains in the local secret store and never appears in the batch config,
+terminal summary, effective configuration artifact, or manifest. Config keys
+that look like raw secret fields, such as `*_api_key`, `*_token`, `*_secret`, or
+`*_password`, must be rejected before planning begins.
+
 ### Manifest Planning
 
 Batch-run planning must write `manifest.jsonl` in both the temporary run

@@ -462,6 +462,41 @@ struct MelixCLIRunnerTests {
         #expect(benchmark["sample_size"] as? Int == 1)
     }
 
+    @Test("batch run config rejects unsupported and raw secret keys")
+    func batchRunConfigRejectsUnsupportedAndRawSecretKeys() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+
+        let unknownConfig = root.appendingPathComponent("unknown.yaml")
+        try """
+        model_list: \(modelList.path)
+        unsupported_field: value
+        """.write(to: unknownConfig, atomically: true, encoding: .utf8)
+
+        let secretConfig = root.appendingPathComponent("secret.yaml")
+        try """
+        model_list: \(modelList.path)
+        judge_api_key: sk-live-secret
+        """.write(to: secretConfig, atomically: true, encoding: .utf8)
+
+        let runner = MelixCLIRunner(environment: ["HOME": root.path])
+        let unknownMessage = try await requireUsageError {
+            _ = try await runner.run(.batchRun(.init(modelListPath: "", configPath: unknownConfig.path, dryRun: true)))
+        }
+        #expect(unknownMessage.starts(with: "Unsupported batch config key 'unsupported_field' at line 2."))
+        #expect(unknownMessage.contains("Supported keys:"))
+        #expect(unknownMessage.contains("model_list"))
+        #expect(unknownMessage.contains("judge_remote_server_id"))
+
+        let secretMessage = try await requireUsageError {
+            _ = try await runner.run(.batchRun(.init(modelListPath: "", configPath: secretConfig.path, dryRun: true)))
+        }
+        #expect(secretMessage == "Unsupported batch config key 'judge_api_key' at line 2. Batch configs must reference stored credentials by id instead of embedding raw secrets.")
+    }
+
     @Test("json metric patching preserves user artifact strings that look like the old sentinel")
     func jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel() throws {
         let sentinel = "9.9999999999989997e+99"
@@ -8300,6 +8335,23 @@ private final class EnvironmentRecorder: @unchecked Sendable {
 
     func record(_ environment: [String: String]) {
         self.environment = environment
+    }
+}
+
+private func requireUsageError(_ body: () async throws -> Void) async throws -> String {
+    do {
+        try await body()
+        Issue.record("Expected MelixCLIError.usage to be thrown.")
+        return ""
+    } catch let error as MelixCLIError {
+        guard case .usage(let message) = error else {
+            Issue.record("Expected MelixCLIError.usage, got \(error).")
+            return ""
+        }
+        return message
+    } catch {
+        Issue.record("Expected MelixCLIError.usage, got \(error).")
+        return ""
     }
 }
 
