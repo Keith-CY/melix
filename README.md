@@ -27,7 +27,7 @@ Melix is a complete local AI operations platform built for Apple Silicon Macs. I
 Think of it as a local AI studio: a place where you can load a model, adapt it to your needs, measure its quality, and compare results — all from your own hardware.
 
 <p align="center">
-  <img src="artifacts/lora-marketing-screenshots/2026-04-24-polish/01-tools-training-overview.png" alt="Melix training overview" width="720">
+  <img src="docs/marketing/assets/window-ui-lora-workflow.png" alt="Melix Window UI showing a LoRA-derived local server" width="720">
 </p>
 
 ---
@@ -44,12 +44,6 @@ Think of it as a local AI studio: a place where you can load a model, adapt it t
 | **Evaluation** | Score models against standard suites (MMLU and more) and export the results |
 | **Native macOS App** | A polished menubar and workspace UI that puts all of the above one click away |
 
-<p align="center">
-  <img src="artifacts/lora-marketing-screenshots/2026-04-24-polish/04-diagnostics-benchmark.png" alt="Melix benchmark diagnostics" width="720">
-</p>
-
----
-
 ## Why Melix?
 
 Local AI work tends to scatter across too many tools: one script for serving, another for training, a notebook for evaluation, and a shell history for benchmarks. Melix keeps that entire loop in one place, on one machine.
@@ -58,12 +52,6 @@ Local AI work tends to scatter across too many tools: one script for serving, an
 - **No subscriptions.** Run any compatible model as many times as you like at zero marginal cost.
 - **Repeatable science.** Benchmark and evaluation results are stored in a repository-owned format so comparisons stay honest over time.
 - **Operator-grade UI.** The native macOS workspace is a first-class citizen, not an afterthought.
-
-<p align="center">
-  <img src="artifacts/lora-marketing-screenshots/2026-04-24-polish/03-training-history-activation.png" alt="Melix training history and activation" width="720">
-</p>
-
----
 
 ## Who Is Melix For?
 
@@ -117,6 +105,7 @@ bash scripts/dev_app_up.sh
 | [Phase Roadmap](docs/phase-roadmap.md) | The original phase model and its current completion state |
 | [Contributing](docs/contributing.md) | How to contribute, what to verify, and what a good PR looks like |
 | [Docs Map](docs/README.md) | Full index of specs, runbooks, architecture decisions, and plans |
+| [Marketing & Storytelling Kit](docs/marketing/README.md) | Product overview, LoRA narrative, reusable copy, and screenshot evidence |
 | [Benchmark & LoRA Runbook](docs/runbooks/benchmark-matrix-evaluation-and-lora.md) | Deep-dive operator guide for benchmarking and fine-tuning |
 | [Local Install Runbook](docs/runbooks/phase-8-local-install.md) | Install Melix as a persistent local service |
 | [Packaging Targets](docs/runbooks/platform-packaging-targets.md) | Homebrew, launch agent, and app-bundle delivery options |
