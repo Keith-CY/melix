@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from functools import lru_cache
 import importlib.metadata
 import inspect
+import json
+from pathlib import Path
 from typing import Any
+
+
+_MODEL_WEIGHT_SUFFIXES = (".safetensors", ".npz", ".bin", ".gguf")
 
 
 @dataclass(frozen=True)
@@ -114,3 +119,67 @@ def installed_package_version(package_name: str) -> str:
 
 def clear_installed_package_version_cache() -> None:
     installed_package_version.cache_clear()
+
+
+def estimate_model_weight_resident_bytes(model_path: str) -> int:
+    """Estimate model resident bytes from local weight artifacts."""
+    if not str(model_path or "").strip():
+        return 0
+    root = Path(model_path).expanduser()
+    try:
+        if root.is_file():
+            return _weight_file_size(root)
+        if not root.is_dir():
+            return 0
+    except OSError:
+        return 0
+
+    indexed_size = _indexed_safetensors_shard_bytes(root)
+    if indexed_size > 0:
+        return indexed_size
+    return _top_level_weight_file_bytes(root)
+
+
+def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
+    index_path = model_dir / "model.safetensors.index.json"
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, dict):
+        return 0
+    total = 0
+    seen: set[str] = set()
+    for raw_shard in weight_map.values():
+        shard_name = str(raw_shard or "").strip()
+        if not shard_name or shard_name in seen:
+            continue
+        seen.add(shard_name)
+        shard_path = Path(shard_name)
+        if not shard_path.is_absolute():
+            shard_path = model_dir / shard_path
+        total += _weight_file_size(shard_path)
+    return total
+
+
+def _top_level_weight_file_bytes(model_dir: Path) -> int:
+    total = 0
+    try:
+        entries = tuple(model_dir.iterdir())
+    except OSError:
+        return 0
+    for path in entries:
+        total += _weight_file_size(path)
+    return total
+
+
+def _weight_file_size(path: Path) -> int:
+    if path.suffix.lower() not in _MODEL_WEIGHT_SUFFIXES:
+        return 0
+    try:
+        if not path.is_file():
+            return 0
+        return max(int(path.stat().st_size), 0)
+    except OSError:
+        return 0

@@ -740,6 +740,7 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert run.result.failure_count == 0
     assert run.result.duration_seconds >= 0.0
     assert run.job.job_id == "eval-0001"
+    assert run.persisted_paths["evidence"] == jobs_root / "runs" / "eval-0001" / "run-evidence.json"
     assert run.persisted_paths["job"] == jobs_root / "runs" / "eval-0001" / "evaluation-job.json"
     assert run.persisted_paths["result"] == jobs_root / "runs" / "eval-0001" / "evaluation-result.json"
     assert run.persisted_paths["summary_json"] == jobs_root / "runs" / "eval-0001" / "evaluation-summary.json"
@@ -751,6 +752,10 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
         json.loads(run.persisted_paths["summary_json"].read_text(encoding="utf-8"))["primary_score_name"]
         == "typed_score_mean"
     )
+    evidence_payload = json.loads(run.persisted_paths["evidence"].read_text(encoding="utf-8"))
+    assert evidence_payload["model_memory_summary"]["runtime_model_handle"] == registry.handle
+    assert evidence_payload["model_memory_summary"]["runtime_model_id"] == "persisted-eval-model"
+    assert evidence_payload["model_memory_summary"]["runtime_stats_model_resident_bytes"] == 0
     assert (
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,primary_score_name,"
         "primary_score_value,sample_size,extraction_success_count,validation_success_count,"
@@ -2316,6 +2321,24 @@ def test_evaluation_helpers_cover_timeout_fallback_and_digit_choice_resolution()
 
 def test_loaded_model_lookup_returns_none_without_handle_or_registry() -> None:
     assert EvaluationCore()._loaded_model_for_execution(None) is None
+
+
+def test_evaluation_model_memory_summary_uses_registry_runtime_stats() -> None:
+    backend = ScriptedEvaluationBackend(("A",))
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    runner = EvaluationCore(registry=registry)
+
+    summary = runner._model_memory_summary(loaded_model=loaded)
+
+    assert summary["runtime_model_handle"] == loaded.handle
+    assert summary["runtime_model_id"] == "melix-dev-text"
+    assert summary["loaded_model_estimated_resident_bytes"] == 1024
+    assert summary["runtime_stats_model_resident_bytes"] == 1024
+    assert summary["load_triggered_by_run"] is False
 
 
 def test_release_runtime_memory_returns_when_mlx_is_unavailable(monkeypatch) -> None:

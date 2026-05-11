@@ -59,7 +59,12 @@ from worker.productization.benchmark_store import BenchmarkStore
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.engine.maintenance_core import BenchSample, ImageBenchSample, MaintenanceCore
+from worker.engine.maintenance_core import (
+    BenchSample,
+    BenchmarkLoadedModelResolution,
+    ImageBenchSample,
+    MaintenanceCore,
+)
 from worker.engine import maintenance_core as maintenance_core_module
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime
@@ -4615,10 +4620,17 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
     assert phases[-1] == "artifact_write"
     assert evidence["telemetry_summary"]["collector_status"] == "collected"
     assert evidence["telemetry_summary"]["time_series_path"] == "telemetry-samples.jsonl"
+    assert evidence["model_memory_summary"]["runtime_model_handle"] == loaded.handle
+    assert evidence["model_memory_summary"]["loaded_model_estimated_resident_bytes"] == loaded.estimated_resident_bytes
+    assert evidence["model_memory_summary"]["runtime_stats_model_resident_bytes"] == loaded.estimated_resident_bytes
+    assert evidence["model_memory_summary"]["load_triggered_by_run"] is False
     assert summary["parameters"]["runtime_live_model"] == "true"
     assert summary["parameters"]["runtime_name"] == "fast-benchmark"
     assert summary["parameters"]["runtime_model_handle"] == loaded.handle
     assert "runtime_name: fast-benchmark" in report
+    assert "## Model Memory" in report
+    assert f"runtime_model_handle: {loaded.handle}" in report
+    assert "runtime_stats_model_resident_bytes: 1024" in report
 
 
 def test_run_bench_persists_report_without_reading_report_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5040,6 +5052,73 @@ def test_resolve_benchmark_loaded_model_reuses_existing_handle(tmp_path: Path) -
 
     assert lazy_handle == ""
     assert resolved.handle == loaded.handle
+
+
+def test_current_process_rss_bytes_uses_resource_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "read_text", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("missing proc")))
+    monkeypatch.setattr(
+        maintenance_core_module.subprocess,
+        "check_output",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("ps unavailable")),
+    )
+    monkeypatch.setattr(maintenance_core_module.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        maintenance_core_module.resource,
+        "getrusage",
+        lambda _kind: SimpleNamespace(ru_maxrss=1234),
+    )
+
+    assert MaintenanceCore._current_process_rss_bytes() == 1234
+
+
+def test_current_process_rss_bytes_returns_zero_when_fallback_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "read_text", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("missing proc")))
+    monkeypatch.setattr(
+        maintenance_core_module.subprocess,
+        "check_output",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("ps unavailable")),
+    )
+    monkeypatch.setattr(
+        maintenance_core_module.resource,
+        "getrusage",
+        lambda _kind: (_ for _ in ()).throw(RuntimeError("resource unavailable")),
+    )
+
+    assert MaintenanceCore._current_process_rss_bytes() == 0
+
+
+def test_run_bench_records_lazy_model_load_memory_summary(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
+
+    events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text",
+                suites=["smoke"],
+            ),
+            context=None,
+        )
+    )
+
+    evidence_path = Path(events[-1].completed.evidence_path)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    memory = evidence["model_memory_summary"]
+
+    assert memory["runtime_model_handle"].startswith("melix-dev-text::")
+    assert memory["runtime_model_id"] == "melix-dev-text"
+    assert memory["loaded_model_estimated_resident_bytes"] > 0
+    assert memory["runtime_stats_model_resident_bytes"] >= memory["loaded_model_estimated_resident_bytes"]
+    assert memory["load_triggered_by_run"] is True
+    assert memory["load_rss_after_bytes"] >= 0
+    assert memory["load_rss_delta_bytes"] >= 0
 
 
 def test_resolve_benchmark_loaded_model_raises_typed_error_for_unknown_model(tmp_path: Path) -> None:
@@ -7326,7 +7405,12 @@ def test_bench_events_rejects_unsupported_task_family_after_suite_resolution(tmp
         runtime_model={},
     )
     fake_suite = SimpleNamespace(suite_id="smoke", metadata=lambda: {}, cases=())
-    core._resolve_benchmark_loaded_model = lambda model_handle: ("", fake_loaded_model)  # type: ignore[method-assign]
+    core._resolve_benchmark_loaded_model = lambda model_handle: BenchmarkLoadedModelResolution(  # type: ignore[method-assign]
+        lazy_model_handle="",
+        loaded_model=fake_loaded_model,
+        load_rss_before_bytes=0,
+        load_rss_after_bytes=0,
+    )
     core._benchmark_suite_catalog.resolve_suite = lambda *args, **kwargs: fake_suite  # type: ignore[method-assign]
 
     with pytest.raises(ModelOperationError) as error:

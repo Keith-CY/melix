@@ -197,6 +197,23 @@ def _run_evidence(
             "external_provider_processes": [],
             "process_tree_summary": {"roles": ["primary_runtime", "control_plane", "worker"]},
         }
+    model_memory_summary = {
+        "runtime_model_handle": f"{run_id}-model::1",
+        "runtime_model_id": "mlx-community/test-model",
+        "runtime_kind": "text",
+        "runtime_name": "mlx-text",
+        "loaded_model_estimated_resident_bytes": 4096,
+        "runtime_stats_model_resident_bytes": 4096,
+        "runtime_stats_resident_bytes": 5120,
+        "runtime_stats_cache_resident_bytes": 1024,
+        "runtime_stats_kv_cache_bytes": 0,
+        "runtime_stats_memory_headroom_bytes": 0,
+        "load_triggered_by_run": True,
+        "load_rss_before_bytes": 10000,
+        "load_rss_after_bytes": 15000,
+        "load_rss_delta_bytes": 5000,
+        "measurement_scope": "worker_registry",
+    }
     return {
         "schema_version": "melix.run_evidence.v1",
         "run_id": run_id,
@@ -228,6 +245,7 @@ def _run_evidence(
         "metrics": [{"name": "decode_ms", "value": decode_ms, "unit": "ms"}],
         "probe_timeline": probes,
         "telemetry_summary": telemetry_summary,
+        "model_memory_summary": model_memory_summary,
         "artifacts": [{"kind": "probe_timeline", "path": "probes.jsonl", "role": "diagnostic"}],
         "failure_summary": {"failed": status == "failed"},
         "fallback_summary": {"fallback_count": fallback_count},
@@ -1243,6 +1261,9 @@ def test_report_builder_adds_contract_sections_from_run_evidence() -> None:
     assert report["runs"][0]["trace_id"] == "base-run:trace"
     assert report["targets"][0]["target_model_id"] == "mlx-community/test-model"
     assert report["telemetry_summary"]["candidate"][0]["collector_status"] == "partial"
+    assert report["model_memory_summary"]["candidate"][0]["runtime_model_handle"] == "head-run-model::1"
+    assert report["model_memory_summary"]["candidate"][0]["runtime_stats_model_resident_bytes"] == 4096
+    assert report["model_memory_summary"]["candidate"][0]["load_rss_delta_bytes"] == 5000
     assert report["process_attribution"]["candidate"][0]["primary_runtime_process"]["pid"] == 101
     assert report["comparison"]["comparison_validity"] == "valid"
     assert report["gate_result"]["overall_result"] == "fail"
@@ -1258,7 +1279,45 @@ def test_report_builder_adds_contract_sections_from_run_evidence() -> None:
     assert "## Report Identity" in markdown
     assert "## Gate Summary" in markdown
     assert "## Telemetry Summary" in markdown
+    assert "## Model Memory Summary" in markdown
+    assert "Registry Model Resident" in markdown
     assert "powermetrics_failed:fixture" in markdown
+
+
+def test_model_memory_report_helpers_ignore_missing_or_nonnumeric_values() -> None:
+    assert benchmark_evaluation_report._model_memory_csv_rows({}) == []
+    assert benchmark_evaluation_report._render_model_memory_summary_markdown([]) == []
+
+    report = build_benchmark_evaluation_report(
+        baseline={
+            "run_evidence": [
+                {
+                    **_run_evidence(
+                        run_id="base-run",
+                        run_kind="serving_benchmark",
+                        decode_ms=10.0,
+                        status="completed",
+                    ),
+                    "model_memory_summary": {"runtime_model_handle": "base::1", "bad": "not-a-number"},
+                }
+            ]
+        },
+        candidate={
+            "run_evidence": [
+                {
+                    **_run_evidence(
+                        run_id="head-run",
+                        run_kind="serving_benchmark",
+                        decode_ms=10.0,
+                        status="completed",
+                    ),
+                    "model_memory_summary": {"runtime_model_handle": "head::1", "bad": "not-a-number"},
+                }
+            ]
+        },
+    )
+
+    assert all("model_memory.serving_benchmark.bad_mean" != row["metric"] for row in report["metrics"])
 
 
 def test_report_verifier_rejects_missing_required_sections() -> None:
@@ -1893,6 +1952,10 @@ def test_write_report_outputs_writes_json_and_markdown(tmp_path: Path) -> None:
     assert "average_system_power_w" in outputs["telemetry_summary_csv"].read_text(
         encoding="utf-8"
     )
+    assert "runtime_stats_model_resident_bytes" in outputs["model_memory_csv"].read_text(
+        encoding="utf-8"
+    )
+    assert "## Model Memory Summary" in outputs["markdown"].read_text(encoding="utf-8")
     assert "primary_runtime_process" in outputs["processes_csv"].read_text(encoding="utf-8")
     assert "overall_result" not in outputs["gate_results_csv"].read_text(encoding="utf-8")
     assert "telemetry" in outputs["comparison_deltas_csv"].read_text(encoding="utf-8")

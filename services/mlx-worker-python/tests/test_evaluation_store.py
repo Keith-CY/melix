@@ -176,6 +176,16 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         job=job,
         result=result,
         samples=(sample,),
+        model_memory_summary={
+            "runtime_model_handle": "melix-dev-text::1",
+            "runtime_model_id": "melix-dev-text",
+            "runtime_kind": "text",
+            "runtime_name": "deterministic-text",
+            "loaded_model_estimated_resident_bytes": 4096,
+            "runtime_stats_model_resident_bytes": 4096,
+            "runtime_stats_resident_bytes": 4096,
+            "load_triggered_by_run": False,
+        },
     )
 
     assert persisted["job"] == run_root / "evaluation-job.json"
@@ -205,6 +215,9 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     assert phases[-1] == "artifact_write"
     assert evidence["telemetry_summary"]["collector_status"] == "collected"
     assert evidence["telemetry_summary"]["average_cpu_power_w"] == 7.5
+    assert evidence["model_memory_summary"]["runtime_model_handle"] == "melix-dev-text::1"
+    assert evidence["model_memory_summary"]["runtime_stats_model_resident_bytes"] == 4096
+    assert evidence["model_memory_summary"]["load_triggered_by_run"] is False
     assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,duration_seconds,created_at_unix_ms\n"
     )

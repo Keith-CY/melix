@@ -48,6 +48,7 @@ class BenchmarkStore:
         context_rows: Iterable[dict[str, object]] = (),
         batch_rows: Iterable[dict[str, object]] = (),
         telemetry_collection: Any | None = None,
+        model_memory_summary: dict[str, object] | None = None,
     ) -> dict[str, Path]:
         artifact_write_started_at_monotonic_ms = monotonic_ms()
         jobs_root.mkdir(parents=True, exist_ok=True)
@@ -99,6 +100,7 @@ class BenchmarkStore:
             batch_rows=batch_rows_tuple,
             telemetry_summary=telemetry_collection.summary,
             telemetry_probes=telemetry_collection.probes,
+            model_memory_summary=model_memory_summary,
         )
         evidence_payload = evidence.to_dict()
         assert_valid_run_evidence_payload(evidence_payload)

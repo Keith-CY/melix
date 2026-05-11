@@ -55,6 +55,19 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
         jobs_root=jobs_root,
         job=job,
         results=results,
+        model_memory_summary={
+            "runtime_model_handle": "melix-dev-text::1",
+            "runtime_model_id": "melix-dev-text",
+            "runtime_kind": "text",
+            "runtime_name": "fast-benchmark",
+            "loaded_model_estimated_resident_bytes": 4096,
+            "runtime_stats_model_resident_bytes": 4096,
+            "runtime_stats_resident_bytes": 4096,
+            "load_triggered_by_run": True,
+            "load_rss_before_bytes": 100_000_000,
+            "load_rss_after_bytes": 120_000_000,
+            "load_rss_delta_bytes": 20_000_000,
+        },
         context_rows=(
             {
                 "job_id": "bench-123",
@@ -100,6 +113,10 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
     assert evidence["telemetry_summary"]["time_series_path"] == "telemetry-samples.jsonl"
     assert evidence["telemetry_summary"]["average_system_power_w"] == 15.0
     assert evidence["telemetry_summary"]["process_attribution"]["primary_runtime_process"]["pid"] == 102
+    assert evidence["model_memory_summary"]["runtime_model_handle"] == "melix-dev-text::1"
+    assert evidence["model_memory_summary"]["loaded_model_estimated_resident_bytes"] == 4096
+    assert evidence["model_memory_summary"]["runtime_stats_model_resident_bytes"] == 4096
+    assert evidence["model_memory_summary"]["load_rss_delta_bytes"] == 20_000_000
     run_record = json.loads(persisted["run_record"].read_text(encoding="utf-8"))
     assert run_record["schema_version"] == "melix.run_record.v1"
     assert run_record["run_id"] == "bench-123"

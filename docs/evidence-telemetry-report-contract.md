@@ -77,9 +77,24 @@ Required diagnostic fields:
 - `metrics`
 - `probe_timeline`
 - `telemetry_summary`
+- `model_memory_summary`
 - `artifacts`
 - `failure_summary`
 - `fallback_summary`
+
+`model_memory_summary` is the source of truth for model-level residency in
+benchmark and evaluation reports. It must distinguish:
+
+- `loaded_model_estimated_resident_bytes`: the selected loaded model handle's
+  resident estimate from worker registry accounting.
+- `runtime_stats_model_resident_bytes`: the worker registry's total
+  model-resident bytes for currently loaded models.
+- `load_rss_delta_bytes`: the current worker process RSS increase observed only
+  when the run itself lazily loaded a model.
+
+Apple Silicon host memory, process telemetry peaks, and benchmark
+`peak_memory_bytes` remain separate telemetry or runtime-probe signals and must
+not be presented as model-weight residency.
 
 ## Probe Timeline
 

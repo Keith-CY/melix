@@ -305,6 +305,64 @@ class RunEvidenceTelemetrySummary:
 
 
 @dataclass(frozen=True)
+class RunEvidenceModelMemorySummary:
+    runtime_model_handle: str = ""
+    runtime_model_id: str = ""
+    runtime_kind: str = ""
+    runtime_name: str = ""
+    loaded_model_estimated_resident_bytes: int = 0
+    runtime_stats_resident_bytes: int = 0
+    runtime_stats_model_resident_bytes: int = 0
+    runtime_stats_cache_resident_bytes: int = 0
+    runtime_stats_kv_cache_bytes: int = 0
+    runtime_stats_memory_headroom_bytes: int = 0
+    load_triggered_by_run: bool = False
+    load_rss_before_bytes: int = 0
+    load_rss_after_bytes: int = 0
+    load_rss_delta_bytes: int = 0
+    measurement_scope: str = "worker_registry"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "runtime_model_handle": self.runtime_model_handle,
+            "runtime_model_id": self.runtime_model_id,
+            "runtime_kind": self.runtime_kind,
+            "runtime_name": self.runtime_name,
+            "loaded_model_estimated_resident_bytes": self.loaded_model_estimated_resident_bytes,
+            "runtime_stats_resident_bytes": self.runtime_stats_resident_bytes,
+            "runtime_stats_model_resident_bytes": self.runtime_stats_model_resident_bytes,
+            "runtime_stats_cache_resident_bytes": self.runtime_stats_cache_resident_bytes,
+            "runtime_stats_kv_cache_bytes": self.runtime_stats_kv_cache_bytes,
+            "runtime_stats_memory_headroom_bytes": self.runtime_stats_memory_headroom_bytes,
+            "load_triggered_by_run": self.load_triggered_by_run,
+            "load_rss_before_bytes": self.load_rss_before_bytes,
+            "load_rss_after_bytes": self.load_rss_after_bytes,
+            "load_rss_delta_bytes": self.load_rss_delta_bytes,
+            "measurement_scope": self.measurement_scope,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> RunEvidenceModelMemorySummary:
+        return cls(
+            runtime_model_handle=str(payload.get("runtime_model_handle") or ""),
+            runtime_model_id=str(payload.get("runtime_model_id") or ""),
+            runtime_kind=str(payload.get("runtime_kind") or ""),
+            runtime_name=str(payload.get("runtime_name") or ""),
+            loaded_model_estimated_resident_bytes=_int_value(payload.get("loaded_model_estimated_resident_bytes")),
+            runtime_stats_resident_bytes=_int_value(payload.get("runtime_stats_resident_bytes")),
+            runtime_stats_model_resident_bytes=_int_value(payload.get("runtime_stats_model_resident_bytes")),
+            runtime_stats_cache_resident_bytes=_int_value(payload.get("runtime_stats_cache_resident_bytes")),
+            runtime_stats_kv_cache_bytes=_int_value(payload.get("runtime_stats_kv_cache_bytes")),
+            runtime_stats_memory_headroom_bytes=_int_value(payload.get("runtime_stats_memory_headroom_bytes")),
+            load_triggered_by_run=bool(payload.get("load_triggered_by_run")),
+            load_rss_before_bytes=_int_value(payload.get("load_rss_before_bytes")),
+            load_rss_after_bytes=_int_value(payload.get("load_rss_after_bytes")),
+            load_rss_delta_bytes=_int_value(payload.get("load_rss_delta_bytes")),
+            measurement_scope=str(payload.get("measurement_scope") or "worker_registry"),
+        )
+
+
+@dataclass(frozen=True)
 class RunEvidenceEnvelope:
     run_id: str
     run_kind: str
@@ -322,6 +380,7 @@ class RunEvidenceEnvelope:
     metrics: tuple[RunEvidenceMetric, ...]
     probe_timeline: tuple[RunEvidenceProbe, ...]
     telemetry_summary: RunEvidenceTelemetrySummary
+    model_memory_summary: RunEvidenceModelMemorySummary
     artifacts: tuple[RunEvidenceArtifact, ...]
     melix_commit: str = ""
     git_branch: str = ""
@@ -373,6 +432,7 @@ class RunEvidenceEnvelope:
             "metrics": [metric.to_dict() for metric in self.metrics],
             "probe_timeline": [probe.to_dict() for probe in self.probe_timeline],
             "telemetry_summary": self.telemetry_summary.to_dict(),
+            "model_memory_summary": self.model_memory_summary.to_dict(),
             "artifacts": [artifact.to_dict() for artifact in self.artifacts],
             "failure_summary": dict(self.failure_summary),
             "fallback_summary": dict(self.fallback_summary),
@@ -386,6 +446,7 @@ class RunEvidenceEnvelope:
         probes = payload.get("probe_timeline")
         artifacts = payload.get("artifacts")
         telemetry = payload.get("telemetry_summary")
+        model_memory = payload.get("model_memory_summary")
         return cls(
             schema_version=str(payload.get("schema_version") or ""),
             run_id=str(payload.get("run_id") or ""),
@@ -427,6 +488,9 @@ class RunEvidenceEnvelope:
             telemetry_summary=RunEvidenceTelemetrySummary.from_dict(telemetry)
             if isinstance(telemetry, dict)
             else RunEvidenceTelemetrySummary(collector_status=""),
+            model_memory_summary=RunEvidenceModelMemorySummary.from_dict(model_memory)
+            if isinstance(model_memory, dict)
+            else RunEvidenceModelMemorySummary(),
             artifacts=tuple(
                 RunEvidenceArtifact.from_dict(item)
                 for item in artifacts
@@ -447,6 +511,20 @@ def default_telemetry_summary() -> RunEvidenceTelemetrySummary:
     )
 
 
+def default_model_memory_summary() -> RunEvidenceModelMemorySummary:
+    return RunEvidenceModelMemorySummary()
+
+
+def _model_memory_summary(
+    summary: RunEvidenceModelMemorySummary | dict[str, object] | None,
+) -> RunEvidenceModelMemorySummary:
+    if isinstance(summary, RunEvidenceModelMemorySummary):
+        return summary
+    if isinstance(summary, dict):
+        return RunEvidenceModelMemorySummary.from_dict(summary)
+    return default_model_memory_summary()
+
+
 def build_serving_benchmark_run_evidence(
     *,
     job: Any,
@@ -459,6 +537,7 @@ def build_serving_benchmark_run_evidence(
     batch_rows: Iterable[dict[str, object]] = (),
     telemetry_summary: RunEvidenceTelemetrySummary | None = None,
     telemetry_probes: Iterable[RunEvidenceProbe] = (),
+    model_memory_summary: RunEvidenceModelMemorySummary | dict[str, object] | None = None,
     command: str = "melix bench run",
     repo_root: Path | None = None,
 ) -> RunEvidenceEnvelope:
@@ -557,6 +636,7 @@ def build_serving_benchmark_run_evidence(
         metrics=metrics,
         probe_timeline=probe_timeline,
         telemetry_summary=telemetry_summary or default_telemetry_summary(),
+        model_memory_summary=_model_memory_summary(model_memory_summary),
         artifacts=artifacts,
         failure_summary=_failure_summary(job.status),
         fallback_summary=_fallback_summary(job.parameters),
@@ -581,6 +661,7 @@ def build_evaluation_run_evidence(
     samples: Iterable[Any] = (),
     telemetry_summary: RunEvidenceTelemetrySummary | None = None,
     telemetry_probes: Iterable[RunEvidenceProbe] = (),
+    model_memory_summary: RunEvidenceModelMemorySummary | dict[str, object] | None = None,
     command: str = "melix eval run",
     repo_root: Path | None = None,
 ) -> RunEvidenceEnvelope:
@@ -673,6 +754,7 @@ def build_evaluation_run_evidence(
         metrics=metrics,
         probe_timeline=probe_timeline,
         telemetry_summary=telemetry_summary or default_telemetry_summary(),
+        model_memory_summary=_model_memory_summary(model_memory_summary),
         artifacts=artifacts,
         failure_summary=_failure_summary(job.status, failure_count=result.failure_count),
         fallback_summary=_fallback_summary(job.parameters),
@@ -1306,6 +1388,7 @@ def validate_run_evidence_payload(payload: dict[str, object]) -> list[str]:
         "metrics",
         "probe_timeline",
         "telemetry_summary",
+        "model_memory_summary",
         "artifacts",
         "failure_summary",
         "fallback_summary",
@@ -1331,6 +1414,8 @@ def validate_run_evidence_payload(payload: dict[str, object]) -> list[str]:
         errors.append("probe_timeline must be a non-empty list")
     if not isinstance(payload.get("telemetry_summary"), dict):
         errors.append("telemetry_summary must be an object")
+    if "model_memory_summary" in payload and not isinstance(payload.get("model_memory_summary"), dict):
+        errors.append("model_memory_summary must be an object")
     if not isinstance(payload.get("artifacts"), list) or not payload.get("artifacts"):
         errors.append("artifacts must be a non-empty list")
     if not isinstance(payload.get("failure_summary"), dict):
