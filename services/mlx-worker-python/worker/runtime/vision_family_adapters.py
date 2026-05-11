@@ -82,19 +82,20 @@ class ResolvedVisionFamilyConfig:
         image_tokens = 0
         for image in prepared_request.images:
             token_count = len(image.bytes_data) // image_token_divisor
-            if token_count <= 1:
-                token_count = 1
-            image_tokens += token_count
+            image_tokens += token_count if token_count > 1 else 1
 
         video_frame_token_cost = self.video_frame_token_cost
         if video_frame_token_cost < 1:
             video_frame_token_cost = 1
-        video_tokens = 0
+        video_frame_count = 0
+        empty_video_frame_policies = 0
         for policy in prepared_request.video_frame_policies:
-            token_count = policy.effective_frame_count * video_frame_token_cost
-            if token_count <= 1:
-                token_count = 1
-            video_tokens += token_count
+            effective_frame_count = policy.effective_frame_count
+            if effective_frame_count > 0:
+                video_frame_count += effective_frame_count
+            else:
+                empty_video_frame_policies += 1
+        video_tokens = video_frame_count * video_frame_token_cost + empty_video_frame_policies
 
         total_tokens = prompt_tokens + image_tokens + video_tokens + self.prompt_token_bias
         return total_tokens if total_tokens > 1 else 1
