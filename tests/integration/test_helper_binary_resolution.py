@@ -109,6 +109,33 @@ def test_resolve_swift_product_binary_streams_candidates_without_candidate_list(
     assert resolved == preferred
 
 
+def test_resolve_swift_product_binary_preserves_tie_breaker_without_path_parts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path
+    build_root = repo_root / "services" / "control-plane-swift" / ".build"
+    flat = build_root / "debug" / "melix-control-plane"
+    preferred = build_root / "arm64-apple-macosx" / "debug" / "melix-control-plane"
+    _write_executable(flat)
+    _write_executable(preferred)
+    os.utime(flat, (5, 5))
+    os.utime(preferred, (5, 5))
+
+    def fail_parts(self: Path):
+        raise AssertionError("binary resolution should not allocate Path.parts per candidate")
+
+    monkeypatch.setattr(Path, "parts", property(fail_parts))
+
+    resolved = helpers.resolve_swift_product_binary(
+        repo_root,
+        package_path=Path("services/control-plane-swift"),
+        product_name="melix-control-plane",
+    )
+
+    assert resolved == preferred
+
+
 def test_resolve_swift_product_binary_stats_each_candidate_once(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

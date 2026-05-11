@@ -26,10 +26,10 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" MELIX_SWIFT_BINARY_RESOLUTION_
 ## Implementation Plan
 
 1. Preserve `_swift_product_binary_candidates()` for existing direct callers and regression coverage.
-2. Add a streaming resolver helper that considers the flat debug binary and each architecture-specific debug binary without building an executable candidate list.
-3. Keep the existing newest-mtime tie-breaker and the architecture-specific path preference for equal mtimes.
-4. Extend the focused integration-helper test to prove the public resolver no longer calls the candidate-list helper.
-5. Update the registered probe script so the new measurement exercises the public resolver instead of only the candidate factory.
+2. Keep the streaming resolver path that considers the flat debug binary and each architecture-specific debug binary without building an executable candidate list.
+3. Preserve the existing newest-mtime tie-breaker while replacing per-candidate `Path.parts` allocation with a constant flat/scoped depth rank.
+4. Extend focused integration-helper coverage to prove equal-mtime scoped candidates remain preferred without reading `Path.parts` during resolution.
+5. Measure the registered probe against the legacy glob/list baseline and accept only if elapsed and/or peak memory remain improved.
 
 ## Success Metrics
 
