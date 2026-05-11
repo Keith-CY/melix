@@ -21,6 +21,7 @@ def test_swift_product_binary_candidates_tolerates_missing_build_root(tmp_path: 
     assert helpers._swift_product_binary_candidates(build_root, "melix") == [
         build_root / "debug" / "melix"
     ]
+    assert helpers._newest_executable_swift_product_binary(build_root, "melix") is None
 
 
 def test_resolve_swift_product_binary_uses_scandir_fallback_without_path_glob(
@@ -74,6 +75,35 @@ def test_resolve_scoped_swift_product_binary_uses_scandir_fallback_without_path_
         repo_root,
         scope="cli",
         product_name="melix",
+    )
+
+    assert resolved == preferred
+
+
+def test_resolve_swift_product_binary_streams_candidates_without_candidate_list(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path
+    build_root = repo_root / "services" / "control-plane-swift" / ".build"
+    flat = build_root / "debug" / "melix-control-plane"
+    preferred = build_root / "arm64-apple-macosx" / "debug" / "melix-control-plane"
+    _write_executable(flat)
+    _write_executable(preferred)
+    os.utime(flat, (3, 3))
+    os.utime(preferred, (3, 3))
+
+    def fail_candidate_list(build_root: Path, product_name: str):
+        raise AssertionError("binary resolution should not allocate the candidate list")
+
+    monkeypatch.setattr(helpers, "_swift_product_binary_candidates", fail_candidate_list)
+    with pytest.raises(AssertionError, match="candidate list"):
+        helpers._swift_product_binary_candidates(build_root, "melix-control-plane")
+
+    resolved = helpers.resolve_swift_product_binary(
+        repo_root,
+        package_path=Path("services/control-plane-swift"),
+        product_name="melix-control-plane",
     )
 
     assert resolved == preferred

@@ -38,14 +38,17 @@ def _resolve_from_candidates(candidates: list[Path]) -> Path:
     return max(executable_candidates, key=lambda candidate: (candidate.stat().st_mtime, len(candidate.parts)))
 
 
-def _run_once(build_root: Path, product_name: str, *, legacy: bool) -> tuple[float, int, int]:
+def _run_once(root: Path, build_root: Path, product_name: str, *, legacy: bool) -> tuple[float, int, int]:
     tracemalloc.start()
     started = time.perf_counter()
-    candidate_factory = getattr(helpers, "_swift_product_binary_candidates", _legacy_candidates)
     if legacy:
         resolved = _resolve_from_candidates(_legacy_candidates(build_root, product_name))
     else:
-        resolved = _resolve_from_candidates(candidate_factory(build_root, product_name))
+        resolved = helpers.resolve_swift_product_binary(
+            root,
+            package_path=Path("swift-probe"),
+            product_name=product_name,
+        )
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
@@ -60,7 +63,7 @@ def main() -> None:
     product_name = "melix-probe"
     root = Path(tempfile.mkdtemp(prefix="melix-swift-binary-probe-"))
     try:
-        build_root = root / ".build"
+        build_root = root / "swift-probe" / ".build"
         _write_executable(build_root / "debug" / product_name, 1)
         for index in range(triples):
             triple = build_root / f"triple-{index:05d}" / "debug" / product_name
@@ -71,10 +74,10 @@ def main() -> None:
         old_elapsed: list[float] = []
         old_peaks: list[float] = []
         for _ in range(samples):
-            elapsed, peak, _ = _run_once(build_root, product_name, legacy=True)
+            elapsed, peak, _ = _run_once(root, build_root, product_name, legacy=True)
             old_elapsed.append(elapsed)
             old_peaks.append(float(peak))
-            elapsed, peak, _ = _run_once(build_root, product_name, legacy=False)
+            elapsed, peak, _ = _run_once(root, build_root, product_name, legacy=False)
             new_elapsed.append(elapsed)
             new_peaks.append(float(peak))
 
