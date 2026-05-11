@@ -27,6 +27,7 @@ public struct MelixHome: Equatable, Sendable {
     public let remoteServersFileURL: URL
     public let evaluationPromptsFileURL: URL
     public let loraTrainingJobsFileURL: URL
+    public let runtimeSettingsFileURL: URL
     public let serverSessionAPIKeysFileURL: URL
     public let remoteServerAPIKeysFileURL: URL
     public let huggingFaceTokenFileURL: URL
@@ -51,6 +52,7 @@ public struct MelixHome: Equatable, Sendable {
         self.remoteServersFileURL = configDirectoryURL.appendingPathComponent("remote-servers.json")
         self.evaluationPromptsFileURL = configDirectoryURL.appendingPathComponent("evaluation-prompts.json")
         self.loraTrainingJobsFileURL = stateDirectoryURL.appendingPathComponent("lora-training-jobs.json")
+        self.runtimeSettingsFileURL = rootURL.appendingPathComponent("runtime_settings.json")
         self.serverSessionAPIKeysFileURL = secretsDirectoryURL.appendingPathComponent("server-session-api-keys.json")
         self.remoteServerAPIKeysFileURL = secretsDirectoryURL.appendingPathComponent("remote-server-api-keys.json")
         self.huggingFaceTokenFileURL = secretsDirectoryURL.appendingPathComponent("huggingface-token.json")

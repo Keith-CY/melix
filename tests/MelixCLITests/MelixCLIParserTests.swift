@@ -15,6 +15,80 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("--hf-dataset-revision overrides a revision embedded in --dataset-ref"))
         #expect(MelixCLIParser.usageText.contains("melix runs list [--from PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix bench report --from PATH [--format markdown|json]"))
+        #expect(MelixCLIParser.usageText.contains("melix settings show --json [--override KEY=VALUE ...]"))
+        #expect(MelixCLIParser.usageText.contains("melix info --json"))
+        #expect(MelixCLIParser.usageText.contains("melix capabilities --json [--model-query MODEL]"))
+        #expect(MelixCLIParser.usageText.contains("melix config metadata --json"))
+    }
+
+    @Test("parses runtime settings and machine readable discovery commands")
+    func parsesRuntimeSettingsAndDiscoveryCommands() throws {
+        let cases: [([String], String)] = [
+            (["settings", "show", "--json"], "settings.show"),
+            (["settings", "show", "--json", "--override", "max_concurrent_jobs=8"], "settings.show"),
+            (["settings", "set", "max_concurrent_jobs", "6"], "settings.set"),
+            (["settings", "validate"], "settings.validate"),
+            (["settings", "reset", "max_concurrent_jobs"], "settings.reset"),
+            (["info", "--json"], "info"),
+            (["capabilities", "--json"], "capabilities"),
+            (["capabilities", "--json", "--model-query", "qwen35_9b_mlx_4bit"], "capabilities"),
+            (["instructions", "--json"], "instructions"),
+            (["schema", "--json"], "schema"),
+            (["config", "metadata", "--json"], "config.metadata"),
+        ]
+
+        for (arguments, expectedID) in cases {
+            let command = try MelixCLIParser.parse(arguments)
+            #expect(MelixCLICommandCodec.commandID(for: command) == expectedID)
+            #expect(try MelixCLIParser.parse(MelixCLICommandCodec.arguments(for: command)) == command)
+        }
+
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["settings", "show"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["settings", "set", "max_concurrent_jobs"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["settings", "reset"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["info"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["config", "unknown", "--json"])
+        }
+    }
+
+    @Test("rejects malformed runtime settings and discovery commands")
+    func rejectsMalformedRuntimeSettingsAndDiscoveryCommands() {
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["settings"])
+        }
+        #expect(throws: MelixCLIError.missingValue("--override")) {
+            _ = try MelixCLIParser.parse(["settings", "show", "--json", "--override"])
+        }
+        #expect(throws: MelixCLIError.usage("--override must use KEY=VALUE.")) {
+            _ = try MelixCLIParser.parse(["settings", "show", "--json", "--override", "=8"])
+        }
+        #expect(throws: MelixCLIError.missingValue("--bad")) {
+            _ = try MelixCLIParser.parse(["settings", "set", "max_concurrent_jobs", "--bad"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["settings", "reset", "eval_sample_size", "--bad"])
+        }
+        #expect(throws: MelixCLIError.usage("melix capabilities requires --json.")) {
+            _ = try MelixCLIParser.parse(["capabilities"])
+        }
+        #expect(throws: MelixCLIError.usage("melix instructions requires --json.")) {
+            _ = try MelixCLIParser.parse(["instructions"])
+        }
+        #expect(throws: MelixCLIError.usage("melix schema requires --json.")) {
+            _ = try MelixCLIParser.parse(["schema"])
+        }
+        #expect(throws: MelixCLIError.usage("melix config metadata requires --json.")) {
+            _ = try MelixCLIParser.parse(["config", "metadata"])
+        }
     }
 
     @Test("documents and parses remote server direct target commands")

@@ -273,6 +273,7 @@ public struct OpenAIHandler: Sendable {
     private let gatewayServingDefaultsStore: GatewayServingDefaultsStore
     private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
+    private let environment: [String: String]
     private let imageRequestTimeoutSeconds: UInt32
     private let now: @Sendable () -> Date
     private let decoder: JSONDecoder
@@ -318,6 +319,7 @@ public struct OpenAIHandler: Sendable {
         self.gatewayServingDefaultsStore = gatewayServingDefaultsStore ?? GatewayServingDefaultsStore(environment: environment)
         self.gatewayRuntimeBinding = gatewayRuntimeBinding
         self.persistentAuthSessionStore = persistentAuthSessionStore
+        self.environment = environment
         self.imageRequestTimeoutSeconds = Self.resolveImageRequestTimeoutSeconds(environment: environment)
         self.now = now
         self.decoder = JSONDecoder()
@@ -332,6 +334,14 @@ public struct OpenAIHandler: Sendable {
             return authorizationFailure
         case .success(let authorizationContext):
             switch (request.method, request.path) {
+            case (.get, "/.well-known/melix.json"):
+                return try await handleDiscoveryWellKnown()
+            case (.get, "/api/capabilities"):
+                return try await handleDiscoveryCapabilities()
+            case (.get, "/api/instructions"):
+                return try await handleDiscoveryInstructions()
+            case (.get, "/api/config-metadata"):
+                return try await handleDiscoveryConfigMetadata()
             case (.get, "/v1/models"):
                 return try await handleModels()
             case (.get, "/health"):
@@ -449,6 +459,58 @@ public struct OpenAIHandler: Sendable {
 
         let response = OpenAIModelsResponse(object: "list", data: models)
         return try encodedJSONResponse(response)
+    }
+
+    private func handleDiscoveryWellKnown() async throws -> HTTPResponse {
+        let startedAt = Date()
+        let payload = HTTPRuntimeDiscoveryPayloads(
+            environment: environment,
+            runtimeBinding: gatewayRuntimeBinding
+        ).wellKnownPayload()
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "operator.discovery_well_known_latency_ms"
+        )
+        return jsonResponse(statusCode: 200, payload: payload)
+    }
+
+    private func handleDiscoveryCapabilities() async throws -> HTTPResponse {
+        let startedAt = Date()
+        let payload = HTTPRuntimeDiscoveryPayloads(
+            environment: environment,
+            runtimeBinding: gatewayRuntimeBinding
+        ).capabilitiesPayload(models: await modelCatalog.listModels())
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "operator.discovery_capabilities_latency_ms"
+        )
+        return jsonResponse(statusCode: 200, payload: payload)
+    }
+
+    private func handleDiscoveryInstructions() async throws -> HTTPResponse {
+        let startedAt = Date()
+        let payload = HTTPRuntimeDiscoveryPayloads(
+            environment: environment,
+            runtimeBinding: gatewayRuntimeBinding
+        ).instructionsPayload()
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "operator.discovery_instructions_latency_ms"
+        )
+        return jsonResponse(statusCode: 200, payload: payload)
+    }
+
+    private func handleDiscoveryConfigMetadata() async throws -> HTTPResponse {
+        let startedAt = Date()
+        let payload = HTTPRuntimeDiscoveryPayloads(
+            environment: environment,
+            runtimeBinding: gatewayRuntimeBinding
+        ).configMetadataPayload()
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "operator.discovery_config_metadata_latency_ms"
+        )
+        return jsonResponse(statusCode: 200, payload: payload)
     }
 
     private func handleHealth() async throws -> HTTPResponse {
@@ -2361,7 +2423,11 @@ public struct OpenAIHandler: Sendable {
 
     private func authorizationRoute(for request: HTTPRequest) -> GatewayAuthorizationRoute {
         switch (request.method, request.path) {
-        case (.get, "/health"):
+        case (.get, "/health"),
+             (.get, "/.well-known/melix.json"),
+             (.get, "/api/capabilities"),
+             (.get, "/api/instructions"),
+             (.get, "/api/config-metadata"):
             return .health
         case (.post, "/v1/melix/auth/session"):
             return .createSession

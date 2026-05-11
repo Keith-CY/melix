@@ -4,6 +4,64 @@ import Foundation
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
+public struct SettingsShowOptions: Equatable, Sendable {
+    public let json: Bool
+    public let overrides: [String: String]
+
+    public init(json: Bool = false, overrides: [String: String] = [:]) {
+        self.json = json
+        self.overrides = overrides
+    }
+}
+
+public struct SettingsSetOptions: Equatable, Sendable {
+    public let key: String
+    public let value: String
+    public let json: Bool
+
+    public init(key: String, value: String, json: Bool = false) {
+        self.key = key
+        self.value = value
+        self.json = json
+    }
+}
+
+public struct SettingsValidateOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct SettingsResetOptions: Equatable, Sendable {
+    public let key: String
+    public let json: Bool
+
+    public init(key: String, json: Bool = false) {
+        self.key = key
+        self.json = json
+    }
+}
+
+public struct DiscoveryJSONOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct CapabilitiesOptions: Equatable, Sendable {
+    public let json: Bool
+    public let modelQuery: String
+
+    public init(json: Bool = false, modelQuery: String = "") {
+        self.json = json
+        self.modelQuery = modelQuery
+    }
+}
+
 enum MelixQuantizationAllowedValues {
     static let quantizationModes = ["ptq", "qat"]
     static let sourceArtifactKinds = ["base_model", "merged_adapter", "adapter_export"]
@@ -1413,6 +1471,15 @@ public struct MelixCLIInvocation: Equatable, Sendable {
 }
 
 public enum MelixCLICommand: Equatable, Sendable {
+    case settingsShow(SettingsShowOptions)
+    case settingsSet(SettingsSetOptions)
+    case settingsValidate(SettingsValidateOptions)
+    case settingsReset(SettingsResetOptions)
+    case info(DiscoveryJSONOptions)
+    case capabilities(CapabilitiesOptions)
+    case instructions(DiscoveryJSONOptions)
+    case schema(DiscoveryJSONOptions)
+    case configMetadata(DiscoveryJSONOptions)
     case doctor(DoctorOptions)
     case system(SystemOptions)
     case monitor(MonitorOptions)
@@ -1560,6 +1627,18 @@ public enum MelixCLIParser {
         }
         let tail = Array(arguments.dropFirst())
         switch group {
+        case "settings":
+            return try parseSettings(tail)
+        case "info":
+            return try parseInfo(tail)
+        case "capabilities":
+            return try parseCapabilities(tail)
+        case "instructions":
+            return try parseInstructions(tail)
+        case "schema":
+            return try parseSchema(tail)
+        case "config":
+            return try parseConfig(tail)
         case "doctor":
             return try parseDoctor(tail)
         case "system":
@@ -1609,6 +1688,15 @@ public enum MelixCLIParser {
 
     public static let usageText = """
     Usage:
+      melix settings show --json [--override KEY=VALUE ...]
+      melix settings set KEY VALUE [--json]
+      melix settings validate [--json]
+      melix settings reset KEY [--json]
+      melix info --json
+      melix capabilities --json [--model-query MODEL]
+      melix instructions --json
+      melix schema --json
+      melix config metadata --json
       melix doctor [--json]
       melix system --json
       melix monitor [--from PATH] [--json]
@@ -1762,6 +1850,120 @@ public enum MelixCLIParser {
             return options.traceID
         }
         return ""
+    }
+
+    private static func parseSettings(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(Self.usageText)
+        }
+        let tail = Array(arguments.dropFirst())
+        switch action {
+        case "show":
+            let values = try ArgumentCursor(arguments: tail).parse(multiValueOptions: ["--override"])
+            guard values.flags.contains("--json") else {
+                throw MelixCLIError.usage("melix settings show requires --json.")
+            }
+            var overrides: [String: String] = [:]
+            for rawOverride in values.multi["--override", default: []] {
+                let parts = rawOverride.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                guard parts.count == 2, parts[0].isEmpty == false else {
+                    throw MelixCLIError.usage("--override must use KEY=VALUE.")
+                }
+                overrides[String(parts[0])] = String(parts[1])
+            }
+            return .settingsShow(.init(json: true, overrides: overrides))
+        case "set":
+            var positional: [String] = []
+            var optionArguments: [String] = []
+            var index = 0
+            while index < tail.count {
+                let token = tail[index]
+                if token == "--json" {
+                    optionArguments.append(token)
+                } else if token.hasPrefix("--") {
+                    optionArguments.append(token)
+                    let valueIndex = index + 1
+                    guard valueIndex < tail.count else {
+                        throw MelixCLIError.missingValue(token)
+                    }
+                    optionArguments.append(tail[valueIndex])
+                    index += 1
+                } else {
+                    positional.append(token)
+                }
+                index += 1
+            }
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            guard positional.count == 2 else {
+                throw MelixCLIError.missingRequired("KEY and VALUE are required for melix settings set.")
+            }
+            return .settingsSet(.init(key: positional[0], value: positional[1], json: values.flags.contains("--json")))
+        case "validate":
+            let values = try ArgumentCursor(arguments: tail).parse()
+            return .settingsValidate(.init(json: values.flags.contains("--json")))
+        case "reset":
+            var positional: [String] = []
+            var optionArguments: [String] = []
+            for token in tail {
+                if token == "--json" {
+                    optionArguments.append(token)
+                } else if token.hasPrefix("--") {
+                    throw MelixCLIError.usage(Self.usageText)
+                } else {
+                    positional.append(token)
+                }
+            }
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            guard positional.count == 1 else {
+                throw MelixCLIError.missingRequired("KEY is required for melix settings reset.")
+            }
+            return .settingsReset(.init(key: positional[0], json: values.flags.contains("--json")))
+        default:
+            throw MelixCLIError.usage(Self.usageText)
+        }
+    }
+
+    private static func parseInfo(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard values.flags.contains("--json") else {
+            throw MelixCLIError.usage("melix info requires --json.")
+        }
+        return .info(.init(json: true))
+    }
+
+    private static func parseCapabilities(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard values.flags.contains("--json") else {
+            throw MelixCLIError.usage("melix capabilities requires --json.")
+        }
+        return .capabilities(.init(json: true, modelQuery: values.single["--model-query"] ?? ""))
+    }
+
+    private static func parseInstructions(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard values.flags.contains("--json") else {
+            throw MelixCLIError.usage("melix instructions requires --json.")
+        }
+        return .instructions(.init(json: true))
+    }
+
+    private static func parseSchema(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard values.flags.contains("--json") else {
+            throw MelixCLIError.usage("melix schema requires --json.")
+        }
+        return .schema(.init(json: true))
+    }
+
+    private static func parseConfig(_ arguments: [String]) throws -> MelixCLICommand {
+        guard arguments.first == "metadata" else {
+            throw MelixCLIError.usage(Self.usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        guard values.flags.contains("--json") else {
+            throw MelixCLIError.usage("melix config metadata requires --json.")
+        }
+        return .configMetadata(.init(json: true))
     }
 
     private static func parseDoctor(_ arguments: [String]) throws -> MelixCLICommand {
@@ -4758,6 +4960,50 @@ public actor MelixCLIRunner {
             try await primeConfiguredRegistryRootsIfNeeded()
         }
         switch command {
+        case .settingsShow(let options):
+            let store = MelixRuntimeSettingsStore(
+                melixHome: MelixHome(environment: environment),
+                environment: environment
+            )
+            let payload = try store.effectiveSettings(overrides: options.overrides)
+            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
+        case .settingsSet(let options):
+            let store = MelixRuntimeSettingsStore(
+                melixHome: MelixHome(environment: environment),
+                environment: environment
+            )
+            let payload = try store.set(key: options.key, value: options.value)
+            return options.json ? try prettyJSON(payload) : "Updated \(options.key).\n"
+        case .settingsValidate(let options):
+            let store = MelixRuntimeSettingsStore(
+                melixHome: MelixHome(environment: environment),
+                environment: environment
+            )
+            let payload = store.validate()
+            return options.json ? try prettyJSON(payload) : ((payload["valid"] as? Bool) == true ? "Runtime settings are valid.\n" : "Runtime settings are invalid.\n")
+        case .settingsReset(let options):
+            let store = MelixRuntimeSettingsStore(
+                melixHome: MelixHome(environment: environment),
+                environment: environment
+            )
+            let payload = try store.reset(key: options.key)
+            return options.json ? try prettyJSON(payload) : "Reset \(options.key).\n"
+        case .info(let options):
+            let payload = MelixRuntimeDiscoveryBuilder(environment: environment).infoPayload()
+            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
+        case .capabilities(let options):
+            let payload = MelixRuntimeDiscoveryBuilder(environment: environment)
+                .capabilitiesPayload(modelQuery: options.modelQuery)
+            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
+        case .instructions(let options):
+            let payload = MelixRuntimeDiscoveryBuilder(environment: environment).instructionsPayload()
+            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
+        case .schema(let options):
+            let payload = MelixRuntimeDiscoveryBuilder(environment: environment).schemaPayload()
+            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
+        case .configMetadata(let options):
+            let payload = MelixRuntimeDiscoveryBuilder(environment: environment).configMetadataPayload()
+            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
         case .pipelineRun(let options):
             return try await runPipeline(options)
         case .batchRun(let options):

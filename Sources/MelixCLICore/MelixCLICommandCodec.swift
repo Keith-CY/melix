@@ -4,6 +4,24 @@ import MelixControlPlaneCore
 public enum MelixCLICommandCodec {
     public static func commandID(for command: MelixCLICommand) -> String {
         switch command {
+        case .settingsShow:
+            return "settings.show"
+        case .settingsSet:
+            return "settings.set"
+        case .settingsValidate:
+            return "settings.validate"
+        case .settingsReset:
+            return "settings.reset"
+        case .info:
+            return "info"
+        case .capabilities:
+            return "capabilities"
+        case .instructions:
+            return "instructions"
+        case .schema:
+            return "schema"
+        case .configMetadata:
+            return "config.metadata"
         case .doctor:
             return "doctor"
         case .system:
@@ -194,6 +212,37 @@ public enum MelixCLICommandCodec {
         var arguments: [String]
         let json: Bool
         switch command {
+        case .settingsShow(let options):
+            arguments = ["settings", "show"]
+            for key in options.overrides.keys.sorted() {
+                appendOption("--override", value: "\(key)=\(options.overrides[key] ?? "")", into: &arguments)
+            }
+            json = options.json
+        case .settingsSet(let options):
+            arguments = ["settings", "set", options.key, options.value]
+            json = options.json
+        case .settingsValidate(let options):
+            arguments = ["settings", "validate"]
+            json = options.json
+        case .settingsReset(let options):
+            arguments = ["settings", "reset", options.key]
+            json = options.json
+        case .info(let options):
+            arguments = ["info"]
+            json = options.json
+        case .capabilities(let options):
+            arguments = ["capabilities"]
+            appendOption("--model-query", value: options.modelQuery, into: &arguments)
+            json = options.json
+        case .instructions(let options):
+            arguments = ["instructions"]
+            json = options.json
+        case .schema(let options):
+            arguments = ["schema"]
+            json = options.json
+        case .configMetadata(let options):
+            arguments = ["config", "metadata"]
+            json = options.json
         case .doctor(let options):
             arguments = ["doctor"]
             json = options.json

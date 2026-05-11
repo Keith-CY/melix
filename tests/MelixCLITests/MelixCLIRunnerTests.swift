@@ -324,6 +324,292 @@ struct MelixCLIRunnerTests {
         #expect(metrics["melix.cli.parse_ms"] as? Double == 0.25)
     }
 
+    @Test("settings show resolves precedence and reports source metadata")
+    func settingsShowResolvesPrecedenceAndReportsSourceMetadata() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectRoot.appendingPathComponent(".melix", isDirectory: true), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try writeJSONObjectForTest(
+            [
+                "model_cache_path": "/user/models",
+                "max_concurrent_jobs": 2,
+                "benchmark_repeats": 1,
+            ],
+            to: melixHome.appendingPathComponent("runtime_settings.json")
+        )
+        try writeJSONObjectForTest(
+            [
+                "max_concurrent_jobs": 4,
+                "artifact_path": "/project/artifacts",
+            ],
+            to: projectRoot
+                .appendingPathComponent(".melix", isDirectory: true)
+                .appendingPathComponent("runtime_settings.json")
+        )
+
+        let output = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "PWD": projectRoot.path,
+                "MELIX_MAX_CONCURRENT_JOBS": "6",
+            ]
+        ).run(.settingsShow(.init(json: true, overrides: ["max_concurrent_jobs": "8"])))
+        let payload = try #require(parseJSONObject(output))
+        let settings = try #require(payload["settings"] as? [String: Any])
+        let maxJobs = try #require(settings["max_concurrent_jobs"] as? [String: Any])
+        let artifactPath = try #require(settings["artifact_path"] as? [String: Any])
+        let modelCache = try #require(settings["model_cache_path"] as? [String: Any])
+        let metrics = try #require(payload["metrics"] as? [String: Any])
+
+        #expect(payload["schema_version"] as? String == "melix.runtime_settings.effective.v1")
+        #expect((maxJobs["value"] as? NSNumber)?.intValue == 8)
+        #expect(maxJobs["source"] as? String == "cli_flag")
+        #expect(maxJobs["source_detail"] as? String == "--override max_concurrent_jobs")
+        #expect(artifactPath["value"] as? String == "/project/artifacts")
+        #expect(artifactPath["source"] as? String == "project_settings")
+        #expect(modelCache["value"] as? String == "/user/models")
+        #expect(modelCache["source"] as? String == "user_settings")
+        #expect((metrics["settings_resolve_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+    }
+
+    @Test("settings set validate and reset mutate only the user settings file")
+    func settingsSetValidateAndResetMutateOnlyUserSettingsFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "PWD": projectRoot.path,
+            ]
+        )
+
+        let setOutput = try await runner.run(.settingsSet(.init(key: "eval_sample_size", value: "25", json: true)))
+        let setPayload = try #require(parseJSONObject(setOutput))
+        #expect(setPayload["key"] as? String == "eval_sample_size")
+        #expect((setPayload["value"] as? NSNumber)?.intValue == 25)
+        #expect(setPayload["source"] as? String == "user_settings")
+
+        let validateOutput = try await runner.run(.settingsValidate(.init(json: true)))
+        let validatePayload = try #require(parseJSONObject(validateOutput))
+        let metrics = try #require(validatePayload["metrics"] as? [String: Any])
+        #expect(validatePayload["valid"] as? Bool == true)
+        #expect((metrics["settings_validate_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+
+        let resetOutput = try await runner.run(.settingsReset(.init(key: "eval_sample_size", json: true)))
+        let resetPayload = try #require(parseJSONObject(resetOutput))
+        #expect(resetPayload["removed"] as? Bool == true)
+
+        let showOutput = try await runner.run(.settingsShow(.init(json: true)))
+        let showPayload = try #require(parseJSONObject(showOutput))
+        let settings = try #require(showPayload["settings"] as? [String: Any])
+        let evalSampleSize = try #require(settings["eval_sample_size"] as? [String: Any])
+        #expect(evalSampleSize["source"] as? String == "default")
+    }
+
+    @Test("settings validation reports invalid documents keys and values")
+    func settingsValidationReportsInvalidDocumentsKeysAndValues() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let projectSettingsDir = projectRoot.appendingPathComponent(".melix", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectSettingsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try writeJSONObjectForTest(
+            [
+                "max_concurrent_jobs": "many",
+                "unknown_setting": true,
+            ],
+            to: melixHome.appendingPathComponent("runtime_settings.json")
+        )
+        try Data("[1,2,3]".utf8).write(
+            to: projectSettingsDir.appendingPathComponent("runtime_settings.json")
+        )
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "PWD": projectRoot.path,
+            ]
+        )
+        let output = try await runner.run(.settingsValidate(.init(json: true)))
+        let payload = try #require(parseJSONObject(output))
+        let errors = try #require(payload["errors"] as? [[String: Any]])
+
+        #expect(payload["valid"] as? Bool == false)
+        #expect(errors.contains { $0["key"] as? String == "max_concurrent_jobs" })
+        #expect(errors.contains { $0["key"] as? String == "unknown_setting" })
+        #expect(errors.contains { ($0["message"] as? String)?.contains("invalidDocument") == true })
+    }
+
+    @Test("settings mutation commands reject unknown keys invalid values and malformed stores")
+    func settingsMutationCommandsRejectUnknownKeysInvalidValuesAndMalformedStores() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let environment = [
+            "MELIX_HOME": melixHome.path,
+            "PWD": projectRoot.path,
+        ]
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient(), environment: environment)
+
+        await #expect(throws: MelixRuntimeSettingsError.unknownKey("missing_key")) {
+            _ = try await runner.run(.settingsSet(.init(key: "missing_key", value: "1", json: true)))
+        }
+        await #expect(throws: MelixRuntimeSettingsError.invalidValue(key: "max_concurrent_jobs", expectedType: "int", value: "many")) {
+            _ = try await runner.run(.settingsSet(.init(key: "max_concurrent_jobs", value: "many", json: true)))
+        }
+        await #expect(throws: MelixRuntimeSettingsError.unknownKey("missing_key")) {
+            _ = try await runner.run(.settingsReset(.init(key: "missing_key", json: true)))
+        }
+
+        let settingsPath = melixHome.appendingPathComponent("runtime_settings.json")
+        try Data("[1,2,3]".utf8).write(to: settingsPath)
+        await #expect(throws: MelixRuntimeSettingsError.invalidDocument(path: settingsPath.path)) {
+            _ = try await runner.run(.settingsShow(.init(json: true)))
+        }
+    }
+
+    @Test("info discovery reads local update channel receipts without network")
+    func infoDiscoveryReadsLocalUpdateChannelReceiptsWithoutNetwork() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        let channelPath = root.appendingPathComponent("channel.json")
+        try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try writeJSONObjectForTest(
+            [
+                "latest_known_version": "999.0.0",
+                "update_channel": "nightly",
+            ],
+            to: channelPath
+        )
+
+        let output = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "PWD": projectRoot.path,
+                "MELIX_UPDATE_CHANNEL_PATH": channelPath.path,
+                "MELIX_INSTALL_METHOD": "homebrew",
+            ]
+        ).run(.info(.init(json: true)))
+        let payload = try #require(parseJSONObject(output))
+        let update = try #require(payload["update"] as? [String: Any])
+
+        #expect(update["status"] as? String == "ok")
+        #expect(update["latest_known_version"] as? String == "999.0.0")
+        #expect(update["update_available"] as? Bool == true)
+        #expect(update["update_channel"] as? String == "nightly")
+        #expect(update["install_method"] as? String == "homebrew")
+        #expect(update["suggested_update_command"] as? [String] == [])
+    }
+
+    @Test("discovery commands expose machine readable info capabilities instructions schema and config metadata")
+    func discoveryCommandsExposeMachineReadablePayloads() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "PWD": projectRoot.path,
+                "MELIX_UPDATE_CHANNEL_PATH": root.appendingPathComponent("missing-channel.json").path,
+            ]
+        )
+
+        let info = try #require(parseJSONObject(try await runner.run(.info(.init(json: true)))))
+        let update = try #require(info["update"] as? [String: Any])
+        let localPaths = try #require(info["local_paths"] as? [String: Any])
+        let infoMetrics = try #require(info["metrics"] as? [String: Any])
+        #expect(info["schema_version"] as? String == "melix.discovery.info.v1")
+        #expect(update["installed_version"] as? String != nil)
+        #expect(update["latest_known_version"] as? String == "")
+        #expect(update["install_method"] as? String != nil)
+        #expect(update["suggested_update_command"] as? [String] != nil)
+        #expect(update["status"] as? String == "unavailable")
+        #expect(localPaths["melix_home"] as? String == melixHome.path)
+        #expect((infoMetrics["discovery_build_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+
+        let capabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "qwen35_9b_mlx_4bit")))))
+        let alias = try #require(capabilities["model_alias_discovery"] as? [String: Any])
+        let suggestions = try #require(alias["suggestions"] as? [[String: Any]])
+        #expect(capabilities["schema_version"] as? String == "melix.discovery.capabilities.v1")
+        #expect((capabilities["supported_tasks"] as? [String])?.contains("text-generation") == true)
+        #expect(suggestions.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-4bit" })
+
+        let fullIDCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "mlx-community/Qwen3.5-9B-MLX-4bit")))))
+        let fullIDAlias = try #require(fullIDCapabilities["model_alias_discovery"] as? [String: Any])
+        #expect(fullIDAlias["status"] as? String == "valid_full_model_id")
+        #expect((fullIDAlias["suggestions"] as? [[String: Any]])?.isEmpty == true)
+
+        let localPathCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "/tmp/local-model")))))
+        let localPathAlias = try #require(localPathCapabilities["model_alias_discovery"] as? [String: Any])
+        #expect(localPathAlias["status"] as? String == "local_path_passthrough")
+        #expect((localPathAlias["suggestions"] as? [[String: Any]])?.isEmpty == true)
+
+        for query in ["~/local-model", "./local-model", "../local-model", "file:///tmp/local-model"] {
+            let payload = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: query)))))
+            let alias = try #require(payload["model_alias_discovery"] as? [String: Any])
+            #expect(alias["status"] as? String == "local_path_passthrough")
+        }
+
+        let notRequestedCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true)))))
+        let notRequestedAlias = try #require(notRequestedCapabilities["model_alias_discovery"] as? [String: Any])
+        #expect(notRequestedAlias["status"] as? String == "not_requested")
+
+        let noMatchCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "not a/model id")))))
+        let noMatchAlias = try #require(noMatchCapabilities["model_alias_discovery"] as? [String: Any])
+        #expect(noMatchAlias["status"] as? String == "no_match")
+
+        let qwen8BitCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "qwen35_9b_mlx_8bit")))))
+        let qwen8BitAlias = try #require(qwen8BitCapabilities["model_alias_discovery"] as? [String: Any])
+        let qwen8BitSuggestions = try #require(qwen8BitAlias["suggestions"] as? [[String: Any]])
+        #expect(qwen8BitSuggestions.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-8bit" })
+
+        let qwen26BCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "qwen35_26b_mlx_4bit")))))
+        let qwen26BAlias = try #require(qwen26BCapabilities["model_alias_discovery"] as? [String: Any])
+        let qwen26BSuggestions = try #require(qwen26BAlias["suggestions"] as? [[String: Any]])
+        #expect(qwen26BSuggestions.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-26B-MLX-4bit" })
+
+        let instructions = try #require(parseJSONObject(try await runner.run(.instructions(.init(json: true)))))
+        #expect(instructions["schema_version"] as? String == "melix.discovery.instructions.v1")
+        #expect((instructions["areas"] as? [[String: Any]])?.contains { $0["id"] as? String == "settings" } == true)
+
+        let schema = try #require(parseJSONObject(try await runner.run(.schema(.init(json: true)))))
+        #expect(schema["schema_version"] as? String == "melix.discovery.schema.v1")
+        #expect((schema["schemas"] as? [[String: Any]])?.contains { ($0["path"] as? String)?.contains("packages/protocol/schema") == true } == true)
+
+        let metadata = try #require(parseJSONObject(try await runner.run(.configMetadata(.init(json: true)))))
+        #expect(metadata["schema_version"] as? String == "melix.discovery.config_metadata.v1")
+        #expect((metadata["settings"] as? [[String: Any]])?.contains { $0["key"] as? String == "memory_pressure_threshold" } == true)
+    }
+
     @Test("json metric patching rejects missing placeholders")
     func jsonMetricPatchingRejectsMissingPlaceholders() throws {
         #expect(throws: MelixCLIError.runtime("Failed to encode CLI metrics placeholder.")) {

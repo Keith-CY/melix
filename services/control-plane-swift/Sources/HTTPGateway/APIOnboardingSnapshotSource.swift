@@ -15,7 +15,7 @@ struct APIOnboardingSnapshotSource: Sendable {
             title: "Local Service",
             summary: "Readiness and operational inspection routes for same-host automation.",
             status: .shipped,
-            endpointIDs: ["health", "cache_stats"]
+            endpointIDs: ["health", "well_known", "capabilities", "instructions", "config_metadata", "cache_stats"]
         ),
         SurfaceDefinition(
             id: "openai_compatible",
@@ -67,6 +67,38 @@ struct APIOnboardingSnapshotSource: Sendable {
             method: "GET",
             path: "/v1/cache/stats",
             summary: "Inspect cache usage, tier support, and persisted prefix state.",
+            streaming: false
+        ),
+        EndpointDefinition(
+            id: "well_known",
+            surfaceID: "local_service",
+            method: "GET",
+            path: "/.well-known/melix.json",
+            summary: "Discover local Melix runtime links, features, tasks, and paths.",
+            streaming: false
+        ),
+        EndpointDefinition(
+            id: "capabilities",
+            surfaceID: "local_service",
+            method: "GET",
+            path: "/api/capabilities",
+            summary: "Discover supported tasks, enabled features, model aliases, and visible local models.",
+            streaming: false
+        ),
+        EndpointDefinition(
+            id: "instructions",
+            surfaceID: "local_service",
+            method: "GET",
+            path: "/api/instructions",
+            summary: "Expose machine-readable instructions for settings, discovery, model targets, and updates.",
+            streaming: false
+        ),
+        EndpointDefinition(
+            id: "config_metadata",
+            surfaceID: "local_service",
+            method: "GET",
+            path: "/api/config-metadata",
+            summary: "Expose runtime settings metadata for UI and automation without parsing help text.",
             streaming: false
         ),
         EndpointDefinition(
