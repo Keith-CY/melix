@@ -166,7 +166,7 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
 def _top_level_weight_file_bytes(model_dir: Path) -> int:
     total = 0
     try:
-        entries = tuple(model_dir.iterdir())
+        entries = model_dir.iterdir()
     except OSError:
         return 0
     for path in entries:
