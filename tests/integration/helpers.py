@@ -424,15 +424,31 @@ def swift_package_command(
     )
 
 
+def _swift_product_binary_candidates(build_root: Path, product_name: str) -> list[Path]:
+    candidates = [build_root / "debug" / product_name]
+    try:
+        entries = sorted(
+            (
+                entry
+                for entry in os.scandir(build_root)
+                if entry.is_dir(follow_symlinks=False)
+            ),
+            key=lambda entry: entry.name,
+        )
+    except FileNotFoundError:
+        entries = []
+
+    for entry in entries:
+        candidates.append(Path(entry.path) / "debug" / product_name)
+    return candidates
+
+
 def resolve_scoped_swift_product_binary(repo_root: Path, *, scope: str, product_name: str) -> Path:
     layout = swift_root_package.swift_package_layout(repo_root, scope)
     build_root = layout.scratch_path
-    candidates = [build_root / "debug" / product_name]
-    candidates.extend(sorted(build_root.glob(f"*/debug/{product_name}")))
-
     executable_candidates = [
         candidate
-        for candidate in candidates
+        for candidate in _swift_product_binary_candidates(build_root, product_name)
         if candidate.is_file() and os.access(candidate, os.X_OK)
     ]
     if executable_candidates:
@@ -451,12 +467,9 @@ def resolve_scoped_swift_product_binary(repo_root: Path, *, scope: str, product_
 
 def resolve_swift_product_binary(repo_root: Path, *, package_path: Path, product_name: str) -> Path:
     build_root = repo_root / package_path / ".build"
-    candidates = [build_root / "debug" / product_name]
-    candidates.extend(sorted(build_root.glob(f"*/debug/{product_name}")))
-
     executable_candidates = [
         candidate
-        for candidate in candidates
+        for candidate in _swift_product_binary_candidates(build_root, product_name)
         if candidate.is_file() and os.access(candidate, os.X_OK)
     ]
     if executable_candidates:
