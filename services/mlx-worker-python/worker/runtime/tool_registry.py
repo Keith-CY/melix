@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from packages.protocol.python.worker.v1 import common_pb2
@@ -37,17 +37,21 @@ class ToolArgumentDescriptor:
     required: bool = True
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
-            raise ToolRegistryError("Tool argument names must be non-empty.")
-        if not self.json_type.strip():
+        normalized_name = self.name.strip()
+        if not _TOOL_NAME_RE.fullmatch(normalized_name):
+            raise ToolRegistryError(f"Invalid tool argument name: {self.name}")
+        object.__setattr__(self, "name", normalized_name)
+        object.__setattr__(self, "json_type", self.json_type.strip())
+        object.__setattr__(self, "description", self.description.strip())
+        if not self.json_type:
             raise ToolRegistryError(f"Tool argument {self.name} must declare a JSON type.")
-        if not self.description.strip():
+        if not self.description:
             raise ToolRegistryError(f"Tool argument {self.name} must include a description.")
 
     def json_schema(self) -> dict[str, Any]:
         return {
-            "type": self.json_type.strip(),
-            "description": self.description.strip(),
+            "type": self.json_type,
+            "description": self.description,
         }
 
 
@@ -58,16 +62,21 @@ class ToolDescriptor:
     tool_kind: str
     observation_kind: str
     arguments: tuple[ToolArgumentDescriptor, ...]
+    _cached_schema: str = field(default="", init=False, repr=False)
 
     def __post_init__(self) -> None:
         normalized_name = self.name.strip()
         if not _TOOL_NAME_RE.fullmatch(normalized_name):
             raise ToolRegistryError(f"Invalid tool registry name: {self.name}")
-        if not self.description.strip():
+        object.__setattr__(self, "name", normalized_name)
+        object.__setattr__(self, "description", self.description.strip())
+        object.__setattr__(self, "tool_kind", self.tool_kind.strip())
+        object.__setattr__(self, "observation_kind", self.observation_kind.strip())
+        if not self.description:
             raise ToolRegistryError(f"Tool {normalized_name} must include a description.")
-        if not self.tool_kind.strip():
+        if not self.tool_kind:
             raise ToolRegistryError(f"Tool {normalized_name} must include a tool kind.")
-        if not self.observation_kind.strip():
+        if not self.observation_kind:
             raise ToolRegistryError(f"Tool {normalized_name} must include an observation kind.")
         if not self.arguments:
             raise ToolRegistryError(f"Tool {normalized_name} must define at least one argument.")
@@ -78,6 +87,7 @@ class ToolDescriptor:
                     f"Duplicate argument {argument.name} in tool registry entry {normalized_name}."
                 )
             argument_names.add(argument.name)
+        object.__setattr__(self, "_cached_schema", _COMPACT_SORTED_JSON_ENCODER.encode(self.schema_payload()))
 
     @property
     def required_arguments(self) -> tuple[str, ...]:
@@ -92,12 +102,10 @@ class ToolDescriptor:
                 for argument in self.arguments
             },
             "required": list(self.required_arguments),
-            "x-melix-tool-kind": self.tool_kind,
-            "x-melix-observation-kind": self.observation_kind,
         }
 
     def json_schema(self) -> str:
-        return _COMPACT_SORTED_JSON_ENCODER.encode(self.schema_payload())
+        return self._cached_schema
 
     def as_openai_tool(self) -> dict[str, Any]:
         return {
@@ -107,6 +115,8 @@ class ToolDescriptor:
                 "description": self.description,
                 "parameters": self.schema_payload(),
             },
+            "x-melix-tool-kind": self.tool_kind,
+            "x-melix-observation-kind": self.observation_kind,
         }
 
     def as_worker_tool_definition(self) -> common_pb2.ToolDefinition:
@@ -157,12 +167,13 @@ class ToolRegistry:
 
     def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
         requested_names = tuple(dict.fromkeys(name.strip() for name in names if name.strip()))
-        known_names = set(self.names())
+        tool_by_name = {tool.name: tool for tool in self._tools}
+        known_names = set(tool_by_name)
         missing_names = [name for name in requested_names if name not in known_names]
         if missing_names:
             joined = ", ".join(missing_names)
             raise ToolRegistryError(f"Unknown tool registry entry requested: {joined}")
-        selected = [tool for tool in self._tools if tool.name in requested_names]
+        selected = [tool_by_name[name] for name in requested_names]
         return ToolRegistry(
             selected,
             schema_version=self._schema_version,

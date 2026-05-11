@@ -28,6 +28,8 @@ def test_built_in_agentic_tool_registry_exports_stable_contracts() -> None:
     schemas = registry.as_openai_tools()
     assert [schema["function"]["name"] for schema in schemas] == list(BUILTIN_AGENTIC_TOOL_NAMES)
     assert {schema["type"] for schema in schemas} == {"function"}
+    assert schemas[0]["x-melix-tool-kind"] == "vision.image_crop"
+    assert schemas[0]["x-melix-observation-kind"] == "image_region"
 
 
 def test_built_in_tool_schemas_are_object_contracts_with_required_arguments() -> None:
@@ -39,8 +41,8 @@ def test_built_in_tool_schemas_are_object_contracts_with_required_arguments() ->
         assert parsed["additionalProperties"] is False
         assert parsed["required"]
         assert set(parsed["required"]).issubset(parsed["properties"])
-        assert parsed["x-melix-tool-kind"] == tool.tool_kind
-        assert parsed["x-melix-observation-kind"] == tool.observation_kind
+        assert "x-melix-tool-kind" not in parsed
+        assert "x-melix-observation-kind" not in parsed
 
 
 def test_tool_registry_rejects_duplicate_tool_names() -> None:
@@ -57,12 +59,12 @@ def test_tool_registry_rejects_unknown_requested_names() -> None:
         registry.select(["image_crop", "missing_tool"])
 
 
-def test_tool_registry_selects_tools_in_registry_order() -> None:
+def test_tool_registry_selects_tools_in_requested_order() -> None:
     registry = built_in_tool_registry()
 
     selected = registry.select(["visit", "image_crop", "visit"])
 
-    assert selected.names() == ("image_crop", "visit")
+    assert selected.names() == ("visit", "image_crop")
 
 
 def test_tool_registry_exports_worker_tool_config_metadata() -> None:
@@ -83,8 +85,49 @@ def test_tool_registry_exports_worker_tool_config_metadata() -> None:
 
 
 def test_tool_argument_descriptor_rejects_blank_names() -> None:
-    with pytest.raises(ToolRegistryError, match="Tool argument names must be non-empty"):
+    with pytest.raises(ToolRegistryError, match="Invalid tool argument name"):
         ToolArgumentDescriptor(name=" ", json_type="string", description="Blank")
+
+
+def test_tool_argument_descriptor_normalizes_exported_fields() -> None:
+    argument = ToolArgumentDescriptor(
+        name=" media_ref ",
+        json_type=" string ",
+        description=" Source image. ",
+    )
+
+    assert argument.name == "media_ref"
+    assert argument.json_schema() == {
+        "type": "string",
+        "description": "Source image.",
+    }
+
+
+def test_tool_descriptor_normalizes_exported_fields_and_caches_schema() -> None:
+    tool = ToolDescriptor(
+        name=" image_crop ",
+        description=" Crop image. ",
+        tool_kind=" vision.image_crop ",
+        observation_kind=" image_region ",
+        arguments=(ToolArgumentDescriptor("media_ref", "string", "Source image."),),
+    )
+
+    assert tool.name == "image_crop"
+    assert tool.description == "Crop image."
+    assert tool.tool_kind == "vision.image_crop"
+    assert tool.observation_kind == "image_region"
+    assert tool.json_schema() is tool.json_schema()
+    assert tool.as_openai_tool()["function"]["parameters"] == {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "media_ref": {
+                "type": "string",
+                "description": "Source image.",
+            },
+        },
+        "required": ["media_ref"],
+    }
 
 
 @pytest.mark.parametrize(
@@ -97,6 +140,10 @@ def test_tool_argument_descriptor_rejects_blank_names() -> None:
         (
             {"name": "arg", "json_type": "string", "description": " "},
             "Tool argument arg must include a description.",
+        ),
+        (
+            {"name": "bad-name", "json_type": "string", "description": "Invalid"},
+            "Invalid tool argument name: bad-name",
         ),
     ],
 )
