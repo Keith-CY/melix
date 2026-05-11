@@ -6,7 +6,6 @@ from functools import lru_cache
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -17,7 +16,6 @@ import textwrap
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
 _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
-_NONBLANK_TEST_LINE_RE = re.compile(r"\S[^\r\n]*(?:\r\n?|\n|$)")
 
 
 @dataclass(frozen=True)
@@ -256,7 +254,15 @@ def _count_tests(test_code: str) -> int:
 
 
 def _count_nonblank_test_lines(test_code: str) -> int:
-    return sum(1 for _ in _NONBLANK_TEST_LINE_RE.finditer(test_code))
+    count = 0
+    in_line = False
+    for char in test_code:
+        if char in "\r\n":
+            in_line = False
+        elif not in_line and not char.isspace():
+            count += 1
+            in_line = True
+    return count
 
 
 def _load_payload_file(
