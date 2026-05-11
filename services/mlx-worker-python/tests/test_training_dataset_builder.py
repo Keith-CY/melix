@@ -17,6 +17,10 @@ from worker.model_ops.training_dataset import (
 )
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_TRAINING_FIXTURE_ROOT = _REPO_ROOT / "services" / "mlx-worker-python" / "fixtures" / "training"
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -474,6 +478,546 @@ def test_load_training_dataset_package_supports_alignment_and_calibration_contra
     assert package.format == format_name
     assert package.response_only_supported is False
     assert package.normalized_samples == [expected]
+
+
+def test_load_training_dataset_package_supports_agentic_tool_trace_contract(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "agentic-tool-trace-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "agentic-tool-trace-package",
+                "format": "agentic_tool_trace",
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sample = {
+        "trace_id": "trace-001",
+        "question": "Which label is visible in the image?",
+        "media_refs": [
+            {
+                "id": "image-1",
+                "uri": "images/sign.jpg",
+                "mime_type": "image/jpeg",
+                "sha256": "abc123",
+            }
+        ],
+        "tools": [
+            {
+                "name": "image_crop",
+                "schema_version": "melix.tool.image_crop.v1",
+            }
+        ],
+        "turns": [
+            {
+                "role": "user",
+                "content": "Read the label.",
+                "media_refs": ["image-1"],
+            },
+            {
+                "role": "assistant",
+                "tool_call": {
+                    "id": "call-1",
+                    "name": "image_crop",
+                    "arguments": {"media_ref": "image-1", "region": "center"},
+                },
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-1",
+                "observation": {
+                    "text": "The cropped region contains the label MELIX LABS.",
+                    "evidence_ids": ["image-1"],
+                },
+            },
+            {
+                "role": "assistant",
+                "content": "The label says MELIX LABS.",
+            },
+        ],
+        "final_answer": "MELIX LABS",
+        "expected_answer": "MELIX LABS",
+        "evidence_ids": ["image-1"],
+        "reward": {"final_answer": 1.0, "tool_efficiency": 0.8},
+        "fatal_stage": "",
+    }
+    (package_path / "samples.jsonl").write_text(json.dumps(sample) + "\n", encoding="utf-8")
+
+    package = load_training_dataset_package(str(package_path))
+
+    assert package.format == "agentic_tool_trace"
+    assert package.response_only_supported is False
+    assert package.normalized_samples == [sample]
+
+
+@pytest.mark.parametrize(
+    ("sample", "expected_message"),
+    [
+        (
+            {
+                "trace_id": "empty-turns",
+                "question": "What changed?",
+                "turns": [],
+                "final_answer": "Nothing.",
+            },
+            "agentic_tool_trace samples must include non-empty turns.",
+        ),
+        (
+            {
+                "trace_id": "orphan-observation",
+                "question": "What does the tool see?",
+                "turns": [
+                    {"role": "user", "content": "Inspect it."},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "missing-call",
+                        "observation": {"text": "A sign is visible."},
+                    },
+                    {"role": "assistant", "content": "A sign is visible."},
+                ],
+                "final_answer": "A sign is visible.",
+            },
+            "agentic_tool_trace tool observations must reference a prior assistant tool call.",
+        ),
+    ],
+)
+def test_load_training_dataset_package_rejects_invalid_agentic_tool_traces(
+    tmp_path: Path,
+    sample: dict[str, object],
+    expected_message: str,
+) -> None:
+    package_path = tmp_path / "invalid-agentic-tool-trace-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "invalid-agentic-tool-trace-package",
+                "format": "agentic_tool_trace",
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(json.dumps(sample) + "\n", encoding="utf-8")
+
+    with pytest.raises(ModelOperationError) as exc:
+        load_training_dataset_package(str(package_path))
+
+    assert exc.value.code == "invalid_dataset_package"
+    assert exc.value.message == expected_message
+
+
+def test_build_training_dataset_artifact_reports_agentic_trace_leakage_metrics(
+    tmp_path: Path,
+) -> None:
+    dataset_path = _write_jsonl(
+        tmp_path / "agentic-traces.jsonl",
+        [
+            {
+                "trace_id": "trace-clean",
+                "question": "Which label is visible in image one?",
+                "media_refs": [{"id": "image-1", "uri": "images/one.jpg"}],
+                "tools": [{"name": "image_crop"}],
+                "turns": [
+                    {"role": "user", "content": "Inspect image one."},
+                    {
+                        "role": "assistant",
+                        "tool_call": {
+                            "id": "call-1",
+                            "name": "image_crop",
+                            "arguments": {"media_ref": "image-1"},
+                        },
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-1",
+                        "observation": {"text": "The sign reads MELIX LABS."},
+                    },
+                    {"role": "assistant", "content": "The sign says MELIX LABS."},
+                ],
+                "final_answer": "MELIX LABS",
+                "expected_answer": "MELIX LABS",
+                "evidence_ids": ["image-1"],
+                "reward": {"final_answer": 1.0},
+                "fatal_stage": "",
+            },
+            {
+                "trace_id": "trace-leaky",
+                "question": "Which label is visible in image two?",
+                "turns": [
+                    {"role": "user", "content": "Inspect image two."},
+                    {
+                        "role": "assistant",
+                        "tool_call": {
+                            "id": "call-2",
+                            "name": "image_crop",
+                            "arguments": {"media_ref": "image-2"},
+                        },
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-2",
+                        "observation": {"text": "Hidden oracle says GOLD-SECRET."},
+                    },
+                    {"role": "assistant", "content": "The label says GOLD-SECRET."},
+                ],
+                "final_answer": "GOLD-SECRET",
+                "expected_answer": "GOLD-SECRET",
+                "leakage_terms": ["GOLD-SECRET"],
+                "fatal_stage": "observation_leak",
+            },
+        ],
+    )
+
+    result = build_training_dataset_artifact(
+        {
+            "dataset_uri": str(dataset_path),
+            "template": "auto",
+            "dataset_id": "melix-agentic-trace-demo",
+            "preview_count": "1",
+        },
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "built-agentic-dataset",
+        source_model_id="melix-dev-vlm",
+    )
+
+    payload = result.manifest_payload
+    package = load_training_dataset_package(str(result.package_path))
+
+    assert payload["format"] == "agentic_tool_trace"
+    assert payload["conversion_template"] == "agentic_tool_trace"
+    assert payload["quality"]["agentic_trace_count"] == 2
+    assert payload["quality"]["tool_call_count"] == 2
+    assert payload["quality"]["tool_observation_count"] == 2
+    assert payload["quality"]["fatal_trace_count"] == 1
+    assert payload["quality"]["leakage_count"] == 1
+    assert payload["quality"]["leakage_samples"] == [
+        {"index": 1, "trace_id": "trace-leaky", "terms": ["GOLD-SECRET"]}
+    ]
+    assert payload["quality"]["dirty_samples"] == [
+        {"index": 1, "reasons": ["leakage_terms"]}
+    ]
+    assert payload["token_stats"]["prompt_tokens_max"] > 0
+    assert payload["token_stats"]["completion_tokens_max"] > 0
+    assert package.format == "agentic_tool_trace"
+    assert package.normalized_samples[1]["fatal_stage"] == "observation_leak"
+
+
+def test_agentic_tool_trace_fixture_loads_and_reports_quality_metrics() -> None:
+    fixture_path = _TRAINING_FIXTURE_ROOT / "agentic-tool-trace.dev.v1"
+
+    package = load_training_dataset_package(str(fixture_path))
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        package.normalized_samples,
+        package.format,
+    )
+
+    assert package.dataset_id == "agentic-tool-trace.dev.v1"
+    assert package.format == "agentic_tool_trace"
+    assert package.sample_count == 2
+    assert quality["agentic_trace_count"] == 2
+    assert quality["tool_call_count"] == 2
+    assert quality["tool_observation_count"] == 2
+    assert quality["fatal_trace_count"] == 1
+    assert quality["leakage_count"] == 1
+    assert token_stats["sample_count"] == 2
+    assert token_stats["completion_tokens_max"] > 0
+
+
+def test_agentic_tool_trace_helpers_cover_optional_field_validation_and_segments() -> None:
+    sample = {
+        "trace_id": "trace-helper",
+        "question": "What is in the image?",
+        "media_refs": [{"id": "image-helper", "uri": "images/helper.jpg"}],
+        "tools": [{"name": "image_crop"}],
+        "turns": [
+            {"role": "user", "content": "Inspect it.", "media_refs": ["image-helper"]},
+            {
+                "role": "assistant",
+                "tool_call": {
+                    "id": "call-helper",
+                    "name": "image_crop",
+                    "arguments": {"hint": "SECRET-HINT"},
+                },
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-helper",
+                "observation": "SECRET-HINT is visible.",
+            },
+            {"role": "assistant", "content": "SECRET-HINT is visible."},
+        ],
+        "final_answer": "SECRET-HINT",
+        "expected_answer": "SECRET-HINT",
+        "evidence_ids": ["image-helper"],
+        "leakage_terms": ["SECRET-HINT"],
+    }
+
+    normalized = training_dataset_module._normalize_sample(
+        sample,
+        format_name="agentic_tool_trace",
+        max_characters_per_sample=0,
+    )
+
+    assert normalized["turns"][2]["observation"] == {"text": "SECRET-HINT is visible."}
+    sample["turns"][0]["media_refs"].append("mutated")
+    sample["turns"][1]["tool_call"]["arguments"]["hint"] = "MUTATED-HINT"
+    sample["media_refs"].append({"id": "mutated"})
+    sample["tools"].append({"name": "mutated"})
+    sample["evidence_ids"].append("mutated")
+    assert normalized["turns"][0]["media_refs"] == ["image-helper"]
+    assert normalized["turns"][1]["tool_call"]["arguments"] == {"hint": "SECRET-HINT"}
+    assert normalized["media_refs"] == [{"id": "image-helper", "uri": "images/helper.jpg"}]
+    assert normalized["tools"] == [{"name": "image_crop"}]
+    assert normalized["evidence_ids"] == ["image-helper"]
+    assert training_dataset_module._agentic_trace_leakage_terms(normalized) == ["SECRET-HINT"]
+    assert training_dataset_module._sample_token_counts(normalized, "agentic_tool_trace")[1] == 1
+    assert "SECRET-HINT is visible." in training_dataset_module._sample_text_segments(
+        normalized,
+        format_name="agentic_tool_trace",
+    )
+    assert training_dataset_module._convert_local_rows(
+        [sample],
+        "agentic_tool_trace",
+    )[0] == "agentic_tool_trace"
+    assert training_dataset_module._resolve_local_conversion_template(
+        "agentic_tool_trace",
+        {},
+    ) == "agentic_tool_trace"
+
+    invalid_reward = dict(sample)
+    invalid_reward["reward"] = 1
+    with pytest.raises(ModelOperationError) as invalid_reward_exc:
+        training_dataset_module._normalize_sample(
+            invalid_reward,
+            format_name="agentic_tool_trace",
+            max_characters_per_sample=0,
+        )
+    assert invalid_reward_exc.value.message == "agentic_tool_trace reward must be a JSON object."
+
+    invalid_media = dict(sample)
+    invalid_media["media_refs"] = "image-1"
+    with pytest.raises(ModelOperationError) as invalid_media_exc:
+        training_dataset_module._normalize_sample(
+            invalid_media,
+            format_name="agentic_tool_trace",
+            max_characters_per_sample=0,
+        )
+    assert invalid_media_exc.value.message == "agentic_tool_trace media_refs must be an array."
+
+
+def test_agentic_tool_trace_local_conversion_does_not_inject_optional_defaults() -> None:
+    minimal_sample = {
+        "trace_id": "trace-minimal",
+        "question": "What is visible?",
+        "turns": [{"role": "assistant", "content": "A sign is visible."}],
+        "final_answer": "A sign is visible.",
+    }
+
+    format_name, converted = training_dataset_module._convert_local_rows(
+        [minimal_sample],
+        "agentic_tool_trace",
+    )
+
+    assert format_name == "agentic_tool_trace"
+    assert converted == [minimal_sample]
+
+
+def test_agentic_tool_trace_quality_uses_explicit_format_dispatch_and_content_dedup() -> None:
+    base_trace = {
+        "question": "What is visible?",
+        "turns": [
+            {"role": "user", "content": "Inspect it."},
+            {
+                "role": "assistant",
+                "tool_call": {
+                    "id": "call-1",
+                    "name": "image_crop",
+                    "arguments": {"media_ref": "image-1"},
+                },
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-1",
+                "observation": {"text": "Hidden oracle says SECRET-LABEL."},
+            },
+            {"role": "assistant", "content": "The sign says SECRET-LABEL."},
+        ],
+        "final_answer": "SECRET-LABEL",
+        "expected_answer": "SECRET-LABEL",
+        "leakage_terms": ["SECRET-LABEL"],
+    }
+    first = {"trace_id": "trace-1", **base_trace}
+    second = {"trace_id": "trace-2", **base_trace}
+    collision_shape = {
+        "trace_id": "not-agentic",
+        "turns": [{"role": "assistant", "content": "SECRET-LABEL"}],
+        "text": "fallback text",
+        "leakage_terms": ["SECRET-LABEL"],
+    }
+
+    quality, _ = training_dataset_module._build_quality_and_token_stats(
+        [first, second],
+        "agentic_tool_trace",
+    )
+
+    assert quality["duplicate_count"] == 1
+    assert quality["duplicate_sample_indices"] == [1]
+    assert training_dataset_module._sample_text_segments(collision_shape) == ["fallback text"]
+    assert training_dataset_module._sample_text_segments(
+        collision_shape,
+        format_name="agentic_tool_trace",
+    ) == ["SECRET-LABEL"]
+    assert training_dataset_module._dirty_sample_reasons(collision_shape) == []
+    assert training_dataset_module._dirty_sample_reasons(
+        collision_shape,
+        format_name="agentic_tool_trace",
+    ) == ["leakage_terms"]
+
+
+@pytest.mark.parametrize(
+    ("sample_patch", "expected_message"),
+    [
+        (
+            {"trace_id": ""},
+            "agentic_tool_trace samples must include trace_id, question, and final_answer.",
+        ),
+        (
+            {"turns": ["bad-turn"]},
+            "agentic_tool_trace turns must be JSON objects.",
+        ),
+        (
+            {"turns": [{"role": "robot", "content": "Inspect it."}]},
+            "agentic_tool_trace turns must use supported roles.",
+        ),
+        (
+            {"turns": [{"role": "user", "content": "  "}]},
+            "agentic_tool_trace user and system turns must include content.",
+        ),
+        (
+            {"turns": [{"role": "assistant", "tool_call": {"id": "", "name": "image_crop"}}]},
+            "agentic_tool_trace assistant tool calls must include id and name.",
+        ),
+        (
+            {"turns": [{"role": "assistant"}]},
+            "agentic_tool_trace assistant turns must include content or a tool_call.",
+        ),
+        (
+            {
+                "turns": [
+                    {
+                        "role": "assistant",
+                        "tool_call": {"id": "call-blank", "name": "image_crop"},
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-blank",
+                        "observation": " ",
+                    },
+                ]
+            },
+            "agentic_tool_trace tool observations must be non-empty.",
+        ),
+        (
+            {
+                "turns": [
+                    {
+                        "role": "assistant",
+                        "tool_call": {"id": "call-bad-observation", "name": "image_crop"},
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-bad-observation",
+                        "observation": [],
+                    },
+                ]
+            },
+            "agentic_tool_trace tool observations must be non-empty.",
+        ),
+        (
+            {"turns": [{"role": "user", "content": "Inspect it.", "media_refs": "image-1"}]},
+            "agentic_tool_trace turn media_refs must be an array.",
+        ),
+        (
+            {"turns": [{"role": "user", "content": "Inspect it."}]},
+            "agentic_tool_trace samples must include at least one assistant turn.",
+        ),
+    ],
+)
+def test_agentic_tool_trace_normalization_rejects_schema_violations(
+    sample_patch: dict[str, object],
+    expected_message: str,
+) -> None:
+    base_sample = {
+        "trace_id": "trace-invalid",
+        "question": "What is visible?",
+        "turns": [
+            {"role": "user", "content": "Inspect it."},
+            {"role": "assistant", "content": "A sign is visible."},
+        ],
+        "final_answer": "A sign is visible.",
+    }
+    sample = {**base_sample, **sample_patch}
+
+    with pytest.raises(ModelOperationError) as exc:
+        training_dataset_module._normalize_sample(
+            sample,
+            format_name="agentic_tool_trace",
+            max_characters_per_sample=0,
+        )
+
+    assert exc.value.code == "invalid_dataset_package"
+    assert exc.value.message == expected_message
+
+
+def test_agentic_tool_trace_helpers_cover_defensive_non_dict_turn_paths() -> None:
+    sample = {
+        "trace_id": "trace-defensive",
+        "question": "What is visible?",
+        "turns": [
+            "bad-turn",
+            {"role": "assistant", "tool_call": {"id": "call-1", "name": "image_crop"}},
+            {"role": "tool", "tool_call_id": "call-1", "observation": "raw observation"},
+        ],
+        "final_answer": "raw observation",
+        "leakage_terms": "not-a-list",
+    }
+    metrics = training_dataset_module._new_agentic_trace_quality_metrics()
+
+    training_dataset_module._update_agentic_trace_quality_metrics(
+        metrics,
+        sample,
+        index=0,
+        sample_limit=1,
+    )
+
+    assert metrics["agentic_trace_count"] == 1
+    assert metrics["tool_call_count"] == 1
+    assert metrics["tool_observation_count"] == 1
+    assert training_dataset_module._sample_text_segments(
+        sample,
+        format_name="agentic_tool_trace",
+    ) == [
+        "What is visible?",
+        "raw observation",
+        "image_crop",
+        "raw observation",
+    ]
+    assert training_dataset_module._agentic_trace_leakage_terms(sample) == []
+    assert training_dataset_module._agentic_trace_leakage_scan_segments(sample) == [
+        "What is visible?",
+        "raw observation",
+    ]
 
 
 @pytest.mark.parametrize(

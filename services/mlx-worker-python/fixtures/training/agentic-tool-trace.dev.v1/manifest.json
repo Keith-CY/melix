@@ -1,0 +1,7 @@
+{
+  "schema_version": "melix.training_dataset_package.v1",
+  "dataset_id": "agentic-tool-trace.dev.v1",
+  "format": "agentic_tool_trace",
+  "sample_count": 2,
+  "version": "1"
+}
