@@ -253,6 +253,8 @@ def _payload_dict(value: Any) -> dict[str, Any]:
         return {"text": value}
     if isinstance(value, list) and value:
         return {"items": value}
+    if value is not None and isinstance(value, (bool, int, float)):
+        return {"value": value}
     raise ToolObservationError("Tool observation payload must be non-empty.")
 
 
