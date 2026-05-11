@@ -329,7 +329,7 @@ public struct SSEStreamWriter: Sendable {
             let payload = mergeToolParserMetadata(
                 into: [
                     "id": requestID,
-                    "object": "chat.completion.tool_call.delta",
+                    "object": "chat.completion.chunk",
                     "created": Int(now().timeIntervalSince1970),
                     "model": modelID,
                     "choices": [
@@ -338,6 +338,7 @@ public struct SSEStreamWriter: Sendable {
                             "delta": [
                                 "tool_calls": [
                                     [
+                                        "index": 0,
                                         "id": toolCall.callID,
                                         "type": "function",
                                         "function": [
@@ -354,7 +355,7 @@ public struct SSEStreamWriter: Sendable {
                 toolParser: toolParser
             )
             return frame(
-                event: "tool_call",
+                event: "message",
                 json: payload
             )
         case .heartbeat(let heartbeat):

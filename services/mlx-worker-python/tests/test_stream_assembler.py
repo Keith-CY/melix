@@ -16,6 +16,10 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
         RequestStreamAssembler._TOOL_OPEN[:index]
         for index in range(1, len(RequestStreamAssembler._TOOL_OPEN))
     )
+    pipe_tool_prefixes = tuple(
+        RequestStreamAssembler._PIPE_TOOL_OPEN[:index]
+        for index in range(1, len(RequestStreamAssembler._PIPE_TOOL_OPEN))
+    )
 
     tool_enabled = RequestStreamAssembler(
         request_id="req-prefixes-tools",
@@ -30,10 +34,14 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
         tool_parser_mode="",
     )
 
-    assert tool_enabled._structural_tag_prefixes == think_prefixes + tool_prefixes
+    assert tool_enabled._structural_tag_prefixes == (
+        think_prefixes + tool_prefixes + pipe_tool_prefixes
+    )
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
-    assert tool_enabled._structural_tag_prefixes_reversed == tuple(
-        reversed(think_prefixes + tool_prefixes)
+    assert tool_enabled._structural_tag_prefixes_reversed == (
+        tuple(reversed(pipe_tool_prefixes))
+        + tuple(reversed(tool_prefixes))
+        + tuple(reversed(think_prefixes))
     )
     assert (
         tool_enabled._structural_tag_prefixes_reversed
@@ -172,6 +180,183 @@ def test_plain_buffer_with_marker_still_holds_partial_structural_prefix() -> Non
     assert [delta.tool_call.tool_name for delta in second if delta.tool_call] == ["search"]
     assert completed.assistant_text == "alpha"
     assert completed.metrics["stream_prefix_hold_chars"] == len("<tool_ca")
+
+
+def test_pipe_tool_call_marker_is_parsed_without_public_markup_leak() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                '<|tool_call>call:native_mcp:execute_command{"command":"gh auth status"}'
+                "<tool_call|>"
+            )
+        )
+    )
+    completed = assembler.completed()
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+
+    assert len(calls) == 1
+    assert calls[0].tool_name == "native_mcp:execute_command"
+    assert calls[0].arguments_json_fragment == '{"command":"gh auth status"}'
+    assert completed.assistant_text == ""
+    assert completed.metrics["tool_call_markup_leak_count"] == 0
+
+
+def test_pipe_tool_call_relaxed_object_arguments_are_parsed() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-relaxed",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                '<|tool_call>call:native_mcp:execute_command{command: "gh auth status"}'
+                "<tool_call|>"
+            )
+        )
+    )
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+
+    assert len(calls) == 1
+    assert calls[0].arguments_json_fragment == '{"command":"gh auth status"}'
+
+
+def test_pipe_tool_call_marker_wins_when_it_appears_before_legacy_marker() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-first",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+    assembler._buffer = (
+        '<|tool_call>call:native_mcp:execute_command{"command":"gh auth status"}'
+        "<tool_call|>"
+        '<tool_call>{"name":"search","arguments":{}}</tool_call>'
+    )
+
+    assert assembler._next_structural_tag() == (
+        RequestStreamAssembler._PIPE_TOOL_OPEN,
+        0,
+    )
+
+
+def test_pipe_tool_call_marker_wins_when_it_appears_before_thinking_marker() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-before-think",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+    assembler._buffer = (
+        '<|tool_call>call:native_mcp:execute_command{"command":"gh auth status"}'
+        "<tool_call|><think>later</think>"
+    )
+
+    assert assembler._next_structural_tag() == (
+        RequestStreamAssembler._PIPE_TOOL_OPEN,
+        0,
+    )
+
+
+def test_pipe_tool_call_partial_prefix_is_held() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-prefix",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    first = assembler.accept(StreamFragment(raw_text="alpha<|tool_ca"))
+    second = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                'alpha<|tool_call>call:native_mcp:execute_command{"command":"gh auth status"}'
+                "<tool_call|>"
+            )
+        )
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in first if delta.content_text] == ["alpha"]
+    assert [delta.tool_call.tool_name for delta in second if delta.tool_call] == [
+        "native_mcp:execute_command"
+    ]
+    assert completed.assistant_text == "alpha"
+    assert completed.metrics["stream_prefix_hold_chars"] == len("<|tool_ca")
+
+
+def test_pipe_tool_call_markup_in_public_content_is_counted_as_leak() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-leak",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="visible <|tool_callx"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == [
+        "visible <|tool_callx"
+    ]
+    assert completed.metrics["tool_call_markup_leak_count"] == 1
+
+
+def test_pipe_tool_call_malformed_relaxed_arguments_are_skipped() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-malformed",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                "<|tool_call>call:native_mcp:execute_command{command}"
+                "<tool_call|>"
+            )
+        )
+    )
+    completed = assembler.completed()
+
+    assert [delta.tool_call for delta in deltas if delta.tool_call] == []
+    assert completed.metrics["malformed_tool_fragment_count"] == 1
+    assert completed.metrics["tool_call_markup_leak_count"] == 0
+
+
+def test_relaxed_pipe_tool_call_arguments_parse_scalar_types() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-scalars",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    parsed = assembler._parse_relaxed_object_arguments(
+        "{text: bare, count: 2, ratio: 1.5, enabled: true, disabled: false, empty: null}"
+    )
+
+    assert parsed == {
+        "text": "bare",
+        "count": 2,
+        "ratio": 1.5,
+        "enabled": True,
+        "disabled": False,
+        "empty": None,
+    }
+    assert assembler._parse_relaxed_object_arguments("{}") == {}
+    assert assembler._parse_relaxed_object_arguments("not-an-object") is None
+    assert assembler._parse_relaxed_object_arguments("{: missing}") is None
 
 
 def test_partial_structural_tag_suffix_checks_only_last_marker_candidate() -> None:

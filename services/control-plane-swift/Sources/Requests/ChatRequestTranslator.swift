@@ -95,6 +95,24 @@ public struct NormalizedTextMessage: Sendable, Equatable {
     }
 }
 
+public struct NormalizedToolDefinition: Sendable, Equatable {
+    public let name: String
+    public let description: String
+    public let jsonSchema: String
+
+    public init(
+        name: String,
+        description: String? = nil,
+        jsonSchema: String = "{}"
+    ) {
+        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDescription = description?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.description = trimmedDescription?.isEmpty == false ? trimmedDescription! : ""
+        let trimmedSchema = jsonSchema.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.jsonSchema = trimmedSchema.isEmpty ? "{}" : trimmedSchema
+    }
+}
+
 public struct NormalizedTextRequest: Sendable, Equatable {
     public let endpoint: TextEndpointKind
     public let model: String
@@ -120,6 +138,8 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let thinking: MelixMessagesThinkingConfig?
     public let structuredOutput: StructuredOutputConfiguration?
     public let toolParser: ToolParserSelection?
+    public let tools: [NormalizedToolDefinition]
+    public let toolChoice: String?
     public let chatTemplate: ChatTemplateSelection?
 
     public init(
@@ -147,6 +167,8 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         thinking: MelixMessagesThinkingConfig? = nil,
         structuredOutput: StructuredOutputConfiguration? = nil,
         toolParser: ToolParserSelection? = nil,
+        tools: [NormalizedToolDefinition] = [],
+        toolChoice: String? = nil,
         chatTemplate: ChatTemplateSelection? = nil
     ) {
         self.endpoint = endpoint
@@ -174,6 +196,9 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         self.thinking = thinking
         self.structuredOutput = structuredOutput?.isEnabled == true ? structuredOutput : nil
         self.toolParser = toolParser
+        self.tools = tools.filter { !$0.name.isEmpty }
+        let trimmedToolChoice = toolChoice?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.toolChoice = trimmedToolChoice?.isEmpty == false ? trimmedToolChoice : nil
         self.chatTemplate = chatTemplate
     }
 }
@@ -221,6 +246,8 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let reasoningHistoryStripCount: Int
     public let structuredOutput: StructuredOutputConfiguration?
     public let toolParser: ToolParserSelection?
+    public let tools: [NormalizedToolDefinition]
+    public let toolChoice: String?
     public let toolParserSuppressedReason: String?
     public let chatTemplate: ResolvedChatTemplatePolicy?
     public let ocrPolicy: ResolvedOCRExecutionPolicy?
@@ -266,6 +293,86 @@ public struct OpenAIStreamOptions: Codable, Sendable, Equatable {
 
     public init(includeUsage: Bool? = nil) {
         self.includeUsage = includeUsage
+    }
+}
+
+public enum OpenAIChatToolChoice: Codable, Sendable, Equatable {
+    case mode(String)
+    case structured(StructuredJSONValue)
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let mode = try? container.decode(String.self) {
+            self = .mode(mode)
+            return
+        }
+        self = .structured(try container.decode(StructuredJSONValue.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case let .mode(mode):
+            try container.encode(mode)
+        case let .structured(value):
+            try container.encode(value)
+        }
+    }
+
+    public var normalizedValue: String? {
+        switch self {
+        case let .mode(mode):
+            let trimmed = mode.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case let .structured(value):
+            return try? value.canonicalJSONString()
+        }
+    }
+}
+
+public struct OpenAIChatTool: Codable, Sendable, Equatable {
+    public struct FunctionDefinition: Codable, Sendable, Equatable {
+        public let name: String
+        public let description: String?
+        public let parameters: StructuredJSONValue?
+
+        public init(
+            name: String,
+            description: String? = nil,
+            parameters: StructuredJSONValue? = nil
+        ) {
+            self.name = name
+            self.description = description
+            self.parameters = parameters
+        }
+    }
+
+    public let type: String
+    public let function: FunctionDefinition?
+
+    public init(
+        type: String,
+        function: FunctionDefinition? = nil
+    ) {
+        self.type = type
+        self.function = function
+    }
+
+    public func normalizedDefinition() throws -> NormalizedToolDefinition? {
+        guard type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "function",
+              let function
+        else {
+            return nil
+        }
+        let name = function.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            return nil
+        }
+        return NormalizedToolDefinition(
+            name: name,
+            description: function.description,
+            jsonSchema: try function.parameters?.canonicalJSONString() ?? "{}"
+        )
     }
 }
 
@@ -381,6 +488,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let workflowNodeID: String?
     public let responseFormat: StructuredOutputRequestFormat?
     public let toolParser: ToolParserRequestConfiguration?
+    public let tools: [OpenAIChatTool]?
+    public let toolChoice: OpenAIChatToolChoice?
     public let chatTemplateKwargs: ChatTemplateRequestConfiguration?
 
     enum CodingKeys: String, CodingKey {
@@ -407,6 +516,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case workflowNodeID = "workflow_node_id"
         case responseFormat = "response_format"
         case toolParser = "tool_parser"
+        case tools
+        case toolChoice = "tool_choice"
         case chatTemplateKwargs = "chat_template_kwargs"
     }
 
@@ -433,6 +544,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         workflowNodeID: String? = nil,
         responseFormat: StructuredOutputRequestFormat? = nil,
         toolParser: ToolParserRequestConfiguration? = nil,
+        tools: [OpenAIChatTool]? = nil,
+        toolChoice: OpenAIChatToolChoice? = nil,
         chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil
     ) {
         self.model = model
@@ -457,6 +570,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.workflowNodeID = workflowNodeID
         self.responseFormat = responseFormat
         self.toolParser = toolParser
+        self.tools = tools
+        self.toolChoice = toolChoice
         self.chatTemplateKwargs = chatTemplateKwargs
     }
 
@@ -484,6 +599,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.workflowNodeID = try container.decodeIfPresent(String.self, forKey: .workflowNodeID)
         self.responseFormat = try container.decodeIfPresent(StructuredOutputRequestFormat.self, forKey: .responseFormat)
         self.toolParser = try container.decodeIfPresent(ToolParserRequestConfiguration.self, forKey: .toolParser)
+        self.tools = try container.decodeIfPresent([OpenAIChatTool].self, forKey: .tools)
+        self.toolChoice = try container.decodeIfPresent(OpenAIChatToolChoice.self, forKey: .toolChoice)
         self.chatTemplateKwargs = try container.decodeIfPresent(ChatTemplateRequestConfiguration.self, forKey: .chatTemplateKwargs)
     }
 
@@ -511,6 +628,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         try container.encodeIfPresent(workflowNodeID, forKey: .workflowNodeID)
         try container.encodeIfPresent(responseFormat, forKey: .responseFormat)
         try container.encodeIfPresent(toolParser, forKey: .toolParser)
+        try container.encodeIfPresent(tools, forKey: .tools)
+        try container.encodeIfPresent(toolChoice, forKey: .toolChoice)
         try container.encodeIfPresent(chatTemplateKwargs, forKey: .chatTemplateKwargs)
     }
 
@@ -524,6 +643,16 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         get throws {
             try toolParser?.resolvedSelection()
         }
+    }
+
+    public var normalizedTools: [NormalizedToolDefinition] {
+        get throws {
+            try (tools ?? []).compactMap { try $0.normalizedDefinition() }
+        }
+    }
+
+    public var normalizedToolChoice: String? {
+        toolChoice?.normalizedValue
     }
 
     public var chatTemplateSelection: ChatTemplateSelection? {
@@ -1311,6 +1440,8 @@ public struct ChatRequestTranslator: Sendable {
             reasoningEffort: request.reasoningEffort,
             structuredOutput: try request.structuredOutputConfiguration,
             toolParser: try request.toolParserSelection,
+            tools: try request.normalizedTools,
+            toolChoice: request.normalizedToolChoice,
             chatTemplate: request.chatTemplateSelection
         )
     }
@@ -1352,6 +1483,8 @@ public struct ChatRequestTranslator: Sendable {
             reasoningEffort: request.reasoningEffort,
             structuredOutput: try request.structuredOutputConfiguration,
             toolParser: try request.toolParserSelection,
+            tools: try request.normalizedTools,
+            toolChoice: request.normalizedToolChoice,
             chatTemplate: request.chatTemplateSelection
         )
     }
@@ -1511,6 +1644,8 @@ public struct ChatRequestTranslator: Sendable {
         thinking: MelixMessagesThinkingConfig? = nil,
         structuredOutput: StructuredOutputConfiguration? = nil,
         toolParser: ToolParserSelection? = nil,
+        tools: [NormalizedToolDefinition] = [],
+        toolChoice: String? = nil,
         chatTemplate: ChatTemplateSelection? = nil
     ) -> NormalizedTextRequest {
         NormalizedTextRequest(
@@ -1538,6 +1673,8 @@ public struct ChatRequestTranslator: Sendable {
             thinking: thinking,
             structuredOutput: structuredOutput,
             toolParser: toolParser,
+            tools: tools,
+            toolChoice: toolChoice,
             chatTemplate: chatTemplate
         )
     }
@@ -1683,6 +1820,15 @@ public struct ChatRequestTranslator: Sendable {
                 generateRequest.execution.ext["melix.mcp.source_ids"] = toolParser.mcpSourceIDs.joined(separator: ",")
             }
         }
+        if !shapedRequest.tools.isEmpty {
+            generateRequest.execution.toolConfig = Self.workerToolConfig(
+                tools: shapedRequest.tools,
+                toolChoice: shapedRequest.toolChoice,
+                toolParser: shapedRequest.toolParser
+            )
+            generateRequest.execution.ext["melix.tool_config.source"] = "openai_chat_tools"
+            generateRequest.execution.ext["melix.tool_config.tool_count"] = String(shapedRequest.tools.count)
+        }
         if let toolParserSuppressedReason = shapedRequest.toolParserSuppressedReason {
             generateRequest.execution.ext["melix.tool_parser.suppressed_reason"] = toolParserSuppressedReason
         }
@@ -1817,6 +1963,28 @@ public struct ChatRequestTranslator: Sendable {
             workerRequest: generateRequest,
             stream: generateRequest.stream
         )
+    }
+
+    private static func workerToolConfig(
+        tools: [NormalizedToolDefinition],
+        toolChoice: String?,
+        toolParser: ToolParserSelection?
+    ) -> Melix_Worker_V1_ToolConfig {
+        var config = Melix_Worker_V1_ToolConfig()
+        config.schemaFormat = "openai_chat_tools"
+        config.schemaVersion = "2024-06"
+        config.toolsetVersion = "1"
+        config.parser = toolParser?.mode.rawValue ?? ""
+        config.parserContractVersion = "melix.tool-parser.v1"
+        config.toolChoice = toolChoice ?? ""
+        config.tools = tools.map { tool in
+            var definition = Melix_Worker_V1_ToolDefinition()
+            definition.name = tool.name
+            definition.description_p = tool.description
+            definition.jsonSchema = tool.jsonSchema
+            return definition
+        }
+        return config
     }
 }
 

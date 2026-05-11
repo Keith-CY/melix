@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 import json
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 _UTF8_INCREMENTAL_DECODER = codecs.getincrementaldecoder("utf-8")
@@ -87,11 +88,21 @@ class RequestStreamAssembler:
     _THINK_CLOSE = "</think>"
     _TOOL_OPEN = "<tool_call>"
     _TOOL_CLOSE = "</tool_call>"
+    _PIPE_TOOL_OPEN = "<|tool_call>"
+    _PIPE_TOOL_CLOSE = "<tool_call|>"
     _THINK_PREFIXES = tuple("<think>"[:index] for index in range(1, len("<think>")))
     _TOOL_PREFIXES = tuple("<tool_call>"[:index] for index in range(1, len("<tool_call>")))
+    _PIPE_TOOL_PREFIXES = tuple(
+        "<|tool_call>"[:index] for index in range(1, len("<|tool_call>"))
+    )
     _THINK_PREFIXES_REVERSED = tuple(reversed(_THINK_PREFIXES))
     _TOOL_PREFIXES_REVERSED = tuple(reversed(_TOOL_PREFIXES))
+    _PIPE_TOOL_PREFIXES_REVERSED = tuple(reversed(_PIPE_TOOL_PREFIXES))
     _VISIBLE_TAIL_MARKERS = ("\nFinal answer", "\nFinal:", "\nAnswer:", "\nAssistant:", "\nResult:")
+    _PIPE_CALL_RE = re.compile(
+        r"^\s*call:(?P<name>[A-Za-z0-9_.:-]+)\s*(?P<args>\{.*\})\s*$",
+        re.DOTALL,
+    )
 
     def __init__(
         self,
@@ -116,9 +127,13 @@ class RequestStreamAssembler:
         self._structural_tag_prefixes_reversed_value = self._THINK_PREFIXES_REVERSED
         if self._tool_parsing_enabled_value:
             self._request_context_mode_value = "tool_parser"
-            self._structural_tag_prefixes_value = self._THINK_PREFIXES + self._TOOL_PREFIXES
+            self._structural_tag_prefixes_value = (
+                self._THINK_PREFIXES + self._TOOL_PREFIXES + self._PIPE_TOOL_PREFIXES
+            )
             self._structural_tag_prefixes_reversed_value = (
-                self._TOOL_PREFIXES_REVERSED + self._THINK_PREFIXES_REVERSED
+                self._PIPE_TOOL_PREFIXES_REVERSED
+                + self._TOOL_PREFIXES_REVERSED
+                + self._THINK_PREFIXES_REVERSED
             )
         elif self._is_json_structured_output_value:
             self._request_context_mode_value = "structured_json"
@@ -422,15 +437,18 @@ class RequestStreamAssembler:
                     self._metrics["reasoning_parser_bypassed_count"] += 1
                 continue
 
-            if tag == self._TOOL_OPEN:
-                close_index = self._buffer.find(self._TOOL_CLOSE, len(self._TOOL_OPEN))
+            if tag in {self._TOOL_OPEN, self._PIPE_TOOL_OPEN}:
+                close_tag = (
+                    self._PIPE_TOOL_CLOSE if tag == self._PIPE_TOOL_OPEN else self._TOOL_CLOSE
+                )
+                close_index = self._buffer.find(close_tag, len(tag))
                 if close_index < 0:
                     if final:
                         self._metrics["malformed_tool_fragment_count"] += 1
                         self._buffer = ""
                     break
-                body = self._buffer[len(self._TOOL_OPEN) : close_index]
-                self._buffer = self._buffer[close_index + len(self._TOOL_CLOSE) :]
+                body = self._buffer[len(tag) : close_index]
+                self._buffer = self._buffer[close_index + len(close_tag) :]
                 tool_delta = self._tool_delta(body)
                 if tool_delta is not None:
                     deltas.append(AssemblyDelta(raw_text=body, tool_call=tool_delta))
@@ -462,11 +480,22 @@ class RequestStreamAssembler:
             return None if think_index < 0 else (self._THINK_OPEN, think_index)
 
         tool_index = self._buffer.find(self._TOOL_OPEN)
+        pipe_tool_index = self._buffer.find(self._PIPE_TOOL_OPEN)
         if think_index < 0:
-            return None if tool_index < 0 else (self._TOOL_OPEN, tool_index)
-        if tool_index < 0 or think_index <= tool_index:
-            return (self._THINK_OPEN, think_index)
-        return (self._TOOL_OPEN, tool_index)
+            if tool_index < 0 and pipe_tool_index < 0:
+                return None
+            if tool_index < 0:
+                return (self._PIPE_TOOL_OPEN, pipe_tool_index)
+            if pipe_tool_index < 0 or tool_index <= pipe_tool_index:
+                return (self._TOOL_OPEN, tool_index)
+            return (self._PIPE_TOOL_OPEN, pipe_tool_index)
+
+        candidates = [(self._THINK_OPEN, think_index)]
+        if tool_index >= 0:
+            candidates.append((self._TOOL_OPEN, tool_index))
+        if pipe_tool_index >= 0:
+            candidates.append((self._PIPE_TOOL_OPEN, pipe_tool_index))
+        return min(candidates, key=lambda item: item[1])
 
     def _has_partial_structural_tag_suffix(self) -> bool:
         return bool(self._partial_structural_tag_suffix())
@@ -479,6 +508,9 @@ class RequestStreamAssembler:
         suffix = self._buffer[marker_index:]
         if self._tool_parsing_enabled_value and 0 < len(suffix) < len(self._TOOL_OPEN):
             if self._TOOL_OPEN.startswith(suffix):
+                return suffix
+        if self._tool_parsing_enabled_value and 0 < len(suffix) < len(self._PIPE_TOOL_OPEN):
+            if self._PIPE_TOOL_OPEN.startswith(suffix):
                 return suffix
         if 0 < len(suffix) < len(self._THINK_OPEN) and self._THINK_OPEN.startswith(
             suffix
@@ -493,16 +525,16 @@ class RequestStreamAssembler:
         )
 
     def _content_delta(self, content: str) -> AssemblyDelta:
-        if self._tool_parsing_enabled_value and "<tool_call" in content:
+        if self._tool_parsing_enabled_value and (
+            "<tool_call" in content or "<|tool_call" in content
+        ):
             self._metrics["tool_call_markup_leak_count"] += 1
         self._assistant_parts.append(content)
         return AssemblyDelta(content_text=content, raw_text=content)
 
     def _tool_delta(self, body: str) -> AssembledToolCall | None:
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            self._metrics["malformed_tool_fragment_count"] += 1
+        payload = self._parse_tool_body(body)
+        if payload is None:
             return None
 
         if not isinstance(payload, dict):
@@ -542,6 +574,68 @@ class RequestStreamAssembler:
             fragment_index=self._tool_fragment_index,
             parser_mode=self._tool_parser_mode,
         )
+
+    def _parse_tool_body(self, body: str) -> dict[str, object] | list[object] | None:
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            return self._parse_pipe_tool_body(body)
+
+    def _parse_pipe_tool_body(self, body: str) -> dict[str, object] | None:
+        match = self._PIPE_CALL_RE.match(body)
+        if match is None:
+            self._metrics["malformed_tool_fragment_count"] += 1
+            return None
+        try:
+            arguments = json.loads(match.group("args"))
+        except json.JSONDecodeError:
+            arguments = self._parse_relaxed_object_arguments(match.group("args"))
+            if arguments is None:
+                self._metrics["malformed_tool_fragment_count"] += 1
+                return None
+        if not isinstance(arguments, dict):
+            self._metrics["malformed_tool_fragment_count"] += 1
+            return None
+        return {
+            "name": match.group("name"),
+            "arguments": arguments,
+        }
+
+    def _parse_relaxed_object_arguments(self, text: str) -> dict[str, object] | None:
+        stripped = text.strip()
+        if not (stripped.startswith("{") and stripped.endswith("}")):
+            return None
+        content = stripped[1:-1].strip()
+        if not content:
+            return {}
+        values: dict[str, object] = {}
+        for item in content.split(","):
+            if ":" not in item:
+                return None
+            key, value = item.split(":", 1)
+            normalized_key = key.strip().strip("\"'")
+            if not normalized_key:
+                return None
+            values[normalized_key] = self._parse_relaxed_scalar(value.strip())
+        return values
+
+    @staticmethod
+    def _parse_relaxed_scalar(value: str) -> object:
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            return value[1:-1]
+        lowered = value.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        if lowered == "null":
+            return None
+        try:
+            if any(marker in value for marker in (".", "e", "E")):
+                return float(value)
+            return int(value)
+        except ValueError:
+            return value
 
     def _first_json_delimiter(self, text: str) -> int | None:
         object_index = text.find("{")

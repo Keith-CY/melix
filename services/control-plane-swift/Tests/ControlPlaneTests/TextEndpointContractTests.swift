@@ -50,6 +50,137 @@ struct TextEndpointContractTests {
         #expect(decoded.includeUsage == true)
     }
 
+    @Test("OpenAI chat tools flow into worker ToolConfig and select a parser")
+    func openAIChatToolsFlowIntoWorkerToolConfig() throws {
+        let request = try JSONDecoder().decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "messages": [
+                    { "role": "user", "content": "Check auth." }
+                  ],
+                  "tools": [
+                    {
+                      "type": "function",
+                      "function": {
+                        "name": "terminal",
+                        "description": "Run a shell command.",
+                        "parameters": {
+                          "type": "object",
+                          "properties": {
+                            "command": { "type": "string" }
+                          },
+                          "required": ["command"]
+                        }
+                      }
+                    }
+                  ],
+                  "tool_choice": "auto"
+                }
+                """.utf8
+            )
+        )
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-openai-tools" })
+        let normalized = try translator.normalize(request)
+        let translated = try translator.translate(normalized, modelHandle: "melix-dev-text::swift")
+        let workerRequest = translated.workerRequest
+
+        #expect(normalized.tools.map(\.name) == ["terminal"])
+        #expect(normalized.toolChoice == "auto")
+        #expect(workerRequest.execution.hasToolConfig)
+        #expect(workerRequest.execution.toolConfig.schemaFormat == "openai_chat_tools")
+        #expect(workerRequest.execution.toolConfig.schemaVersion == "2024-06")
+        #expect(workerRequest.execution.toolConfig.parser == "xml")
+        #expect(workerRequest.execution.toolConfig.toolChoice == "auto")
+        #expect(workerRequest.execution.toolConfig.tools.count == 1)
+        #expect(workerRequest.execution.toolConfig.tools[0].name == "terminal")
+        #expect(workerRequest.execution.toolConfig.tools[0].description_p == "Run a shell command.")
+        #expect(workerRequest.execution.toolConfig.tools[0].jsonSchema.contains("\"command\""))
+        #expect(workerRequest.execution.ext["melix.tool_parser.mode"] == "xml")
+        #expect(workerRequest.execution.ext["melix.tool_parser.source"] == "openai_tools")
+        #expect(workerRequest.execution.ext["melix.tool_config.source"] == "openai_chat_tools")
+        #expect(workerRequest.execution.ext["melix.tool_config.tool_count"] == "1")
+    }
+
+    @Test("OpenAI chat tools normalize structured choices and filter invalid entries")
+    func openAIChatToolsNormalizeStructuredChoicesAndFilterInvalidEntries() throws {
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "messages": [
+                    { "role": "user", "content": "Check auth." }
+                  ],
+                  "tools": [
+                    {
+                      "type": "function",
+                      "function": {
+                        "name": " terminal ",
+                        "description": " ",
+                        "parameters": {
+                          "type": "object",
+                          "properties": {
+                            "command": { "type": "string" }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "type": "retrieval",
+                      "function": { "name": "ignored" }
+                    },
+                    {
+                      "type": "function",
+                      "function": { "name": " " }
+                    }
+                  ],
+                  "tool_choice": {
+                    "type": "function",
+                    "function": { "name": "terminal" }
+                  }
+                }
+                """.utf8
+            )
+        )
+
+        #expect(request.normalizedToolChoice == "{\"function\":{\"name\":\"terminal\"},\"type\":\"function\"}")
+        let structuredChoice = try #require(request.toolChoice)
+        let structuredChoiceJSON = String(decoding: try encoder.encode(structuredChoice), as: UTF8.self)
+        #expect(structuredChoiceJSON == "{\"function\":{\"name\":\"terminal\"},\"type\":\"function\"}")
+
+        let modeChoice = OpenAIChatToolChoice.mode(" required ")
+        #expect(modeChoice.normalizedValue == "required")
+        #expect(String(decoding: try encoder.encode(modeChoice), as: UTF8.self) == "\" required \"")
+        #expect(OpenAIChatToolChoice.mode(" ").normalizedValue == nil)
+
+        let normalizedTools = try request.normalizedTools
+        #expect(normalizedTools.count == 1)
+        #expect(normalizedTools[0].name == "terminal")
+        #expect(normalizedTools[0].description == "")
+        #expect(normalizedTools[0].jsonSchema.contains("\"command\""))
+
+        let defaultSchemaTool = OpenAIChatTool(
+            type: "function",
+            function: .init(name: "ping")
+        )
+        let defaultSchemaDefinition = try #require(try defaultSchemaTool.normalizedDefinition())
+        #expect(defaultSchemaDefinition.name == "ping")
+        #expect(defaultSchemaDefinition.jsonSchema == "{}")
+
+        let unsupportedTool = OpenAIChatTool(type: "web_search")
+        #expect(try unsupportedTool.normalizedDefinition() == nil)
+        let blankFunctionTool = OpenAIChatTool(type: "function", function: .init(name: " "))
+        #expect(try blankFunctionTool.normalizedDefinition() == nil)
+    }
+
     @Test("reasoning controls decode across shipped text endpoints")
     func reasoningControlsDecodeAcrossShippedTextEndpoints() throws {
         let decoder = JSONDecoder()
