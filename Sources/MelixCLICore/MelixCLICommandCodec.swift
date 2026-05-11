@@ -6,6 +6,8 @@ public enum MelixCLICommandCodec {
         switch command {
         case .doctor:
             return "doctor"
+        case .estimateImport:
+            return "estimate.import"
         case .convert:
             return "convert"
         case .quantize:
@@ -174,6 +176,9 @@ public enum MelixCLICommandCodec {
         switch command {
         case .doctor(let options):
             arguments = ["doctor"]
+            json = options.json
+        case .estimateImport(let options):
+            arguments = ["estimate", "import", options.repoID]
             json = options.json
         case .convert(let options):
             arguments = ["convert"]
@@ -433,6 +438,12 @@ public enum MelixCLICommandCodec {
             appendOption("--structured-output-mode", value: options.structuredOutputMode, into: &arguments)
             appendOption("--sample-size", value: options.parameters["sample_size"], into: &arguments)
             appendOption("--batch-factor", value: options.parameters["batch_factor"], into: &arguments)
+            if options.preflightFitCheck {
+                arguments.append("--preflight-fit-check")
+            }
+            if options.allowMemoryRisk {
+                arguments.append("--allow-memory-risk")
+            }
             appendOption("--dataset-ref", value: options.parameters["dataset_ref"], into: &arguments)
             appendOption("--hf-dataset-name", value: options.parameters["hf_dataset_name"], into: &arguments)
             appendOption("--hf-dataset-split", value: options.parameters["hf_dataset_split"], into: &arguments)

@@ -582,12 +582,27 @@ struct MelixCLIParserTests {
         #expect(alignmentArguments.contains("--candidate-generation-max-tokens"))
         #expect(alignmentArguments.contains("16"))
         #expect(try MelixCLIParser.parse(alignmentArguments) == alignmentCommand)
+
+        let preflightBenchCommand = MelixCLICommand.benchRun(
+            .init(
+                hfRepoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                suites: ["smoke"],
+                preflightFitCheck: true,
+                allowMemoryRisk: true,
+                json: true
+            )
+        )
+        let preflightBenchArguments = try MelixCLICommandCodec.arguments(for: preflightBenchCommand)
+        #expect(preflightBenchArguments.contains("--preflight-fit-check"))
+        #expect(preflightBenchArguments.contains("--allow-memory-risk"))
+        #expect(try MelixCLIParser.parse(preflightBenchArguments) == preflightBenchCommand)
     }
 
     @Test("command codec exposes stable ids and supported argv mappings")
     func commandCodecExposesStableIDsAndSupportedArgvMappings() throws {
         let allCommands: [(MelixCLICommand, String)] = [
             (.doctor(.init()), "doctor"),
+            (.estimateImport(.init(repoID: "mlx/qwen", json: true)), "estimate.import"),
             (.convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)), "convert"),
             (.quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", localInferenceSmokeMode: "runtime_generate", localInferenceSmokePrompt: "smoke", json: true)), "quantize"),
             (.upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)), "upload"),
@@ -672,6 +687,7 @@ struct MelixCLIParserTests {
 
         let supportedCommands: [MelixCLICommand] = [
             .doctor(.init(json: true)),
+            .estimateImport(.init(repoID: "mlx/qwen", json: true)),
             .convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)),
             .quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", localInferenceSmokeMode: "runtime_generate", localInferenceSmokePrompt: "smoke", json: true)),
             .upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)),
@@ -751,6 +767,69 @@ struct MelixCLIParserTests {
                 #expect(error == .runtime("Command codec does not support \(MelixCLICommandCodec.commandID(for: command))."))
             }
         }
+    }
+
+    @Test("parses estimate import with positional and option repo ids")
+    func parsesEstimateImportCommand() throws {
+        let positionalCommand = try MelixCLIParser.parse([
+            "estimate",
+            "import",
+            "mlx-community/Qwen3.5-9B-MLX-4bit",
+            "--json",
+        ])
+        let optionCommand = try MelixCLIParser.parse([
+            "estimate",
+            "import",
+            "--repo-id", "mlx-community/Qwen3.5-9B-MLX-8bit",
+        ])
+
+        guard case .estimateImport(let positionalOptions) = positionalCommand else {
+            Issue.record("Expected estimateImport command")
+            return
+        }
+        guard case .estimateImport(let optionOptions) = optionCommand else {
+            Issue.record("Expected estimateImport command")
+            return
+        }
+
+        #expect(positionalOptions.repoID == "mlx-community/Qwen3.5-9B-MLX-4bit")
+        #expect(positionalOptions.json)
+        #expect(optionOptions.repoID == "mlx-community/Qwen3.5-9B-MLX-8bit")
+        #expect(optionOptions.json == false)
+    }
+
+    @Test("estimate import rejects missing conflicting and unknown inputs")
+    func estimateImportRejectsInvalidInputs() throws {
+        try assertError(
+            for: [
+                "estimate",
+            ],
+            equals: .usage(MelixCLIParser.usageText)
+        )
+        try assertError(
+            for: [
+                "estimate",
+                "import",
+            ],
+            equals: .missingRequired("HF_REPO or --repo-id is required for melix estimate import.")
+        )
+        try assertError(
+            for: [
+                "estimate",
+                "import",
+                "mlx-community/Qwen3.5-9B-MLX-4bit",
+                "--repo-id", "mlx-community/Qwen3.5-9B-MLX-8bit",
+            ],
+            equals: .usage("melix estimate import accepts only one Hugging Face repo id.")
+        )
+        try assertError(
+            for: [
+                "estimate",
+                "train",
+                "--model", "mlx-community/Qwen3.5-9B-MLX-4bit",
+            ],
+            equals: .usage(MelixCLIParser.usageText)
+        )
     }
 
     @Test("parses server snapshot and pause commands")
@@ -1792,6 +1871,31 @@ struct MelixCLIParserTests {
         #expect(options.modelID.isEmpty)
         #expect(options.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
         #expect(options.suites == ["smoke"])
+        #expect(options.preflightFitCheck == false)
+        #expect(options.allowMemoryRisk == false)
+        #expect(options.json)
+    }
+
+    @Test("parses bench run memory fit preflight flags")
+    func parsesBenchRunMemoryFitPreflightFlags() throws {
+        let command = try MelixCLIParser.parse([
+            "bench",
+            "run",
+            "--repo-id", "mlx-community/Qwen3.6-35B-A3B-4bit",
+            "--suite", "smoke",
+            "--preflight-fit-check",
+            "--allow-memory-risk",
+            "--json",
+        ])
+
+        guard case .benchRun(let options) = command else {
+            Issue.record("Expected benchRun command")
+            return
+        }
+
+        #expect(options.hfRepoID == "mlx-community/Qwen3.6-35B-A3B-4bit")
+        #expect(options.preflightFitCheck)
+        #expect(options.allowMemoryRisk)
         #expect(options.json)
     }
 
