@@ -272,14 +272,105 @@ def _load_payload_file(
     _decode_error=_JSON_DECODE_ERROR,
 ) -> dict[str, object] | None:
     try:
-        payload = _loads(payload_path.read_bytes())
+        payload_bytes = payload_path.read_bytes()
     except OSError:
         return None
+
+    fast_payload = _extract_code_eval_payload_fields(payload_bytes)
+    if fast_payload is not None:
+        return fast_payload
+
+    try:
+        payload = _loads(payload_bytes)
     except _decode_error:
         return None
     if not isinstance(payload, dict):
         return None
     return payload
+
+
+def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
+    stripped = payload_bytes.strip()
+    if not stripped.startswith(b"{") or not stripped.endswith(b"}"):
+        return None
+
+    payload: dict[str, object] = {}
+    for key in (
+        "compile_status",
+        "runtime_status",
+        "timeout_status",
+        "test_status",
+        "failure_detail",
+    ):
+        value = _extract_json_string_field(payload_bytes, key)
+        if value is not None:
+            payload[key] = value
+
+    for key in ("tests_passed", "tests_total"):
+        value = _extract_json_int_field(payload_bytes, key)
+        if value is None:
+            return None
+        payload[key] = value
+
+    required_string_keys = ("runtime_status", "timeout_status", "test_status", "failure_detail")
+    if all(key in payload for key in required_string_keys):
+        return payload
+    return None
+
+
+def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:
+    key_token = json.dumps(key, separators=(",", ":")).encode("utf-8")
+    key_index = payload_bytes.find(key_token)
+    if key_index < 0:
+        return None
+    cursor = key_index + len(key_token)
+    payload_length = len(payload_bytes)
+    while cursor < payload_length and payload_bytes[cursor] in b" \t\r\n":
+        cursor += 1
+    if cursor >= payload_length or payload_bytes[cursor] != ord(":"):
+        return None
+    cursor += 1
+    while cursor < payload_length and payload_bytes[cursor] in b" \t\r\n":
+        cursor += 1
+    if cursor >= payload_length:
+        return None
+    return cursor
+
+
+def _extract_json_string_field(payload_bytes: bytes, key: str) -> str | None:
+    start = _json_field_value_start(payload_bytes, key)
+    if start is None or payload_bytes[start] != ord('"'):
+        return None
+    cursor = start + 1
+    value_start = cursor
+    payload_length = len(payload_bytes)
+    while cursor < payload_length:
+        char = payload_bytes[cursor]
+        if char == ord('"'):
+            return payload_bytes[value_start:cursor].decode("utf-8")
+        if char == ord("\\"):
+            return None
+        cursor += 1
+    return None
+
+
+def _extract_json_int_field(payload_bytes: bytes, key: str) -> int | None:
+    start = _json_field_value_start(payload_bytes, key)
+    if start is None:
+        return None
+    cursor = start
+    payload_length = len(payload_bytes)
+    if cursor < payload_length and payload_bytes[cursor] == ord("-"):
+        cursor += 1
+    digit_start = cursor
+    while cursor < payload_length and ord("0") <= payload_bytes[cursor] <= ord("9"):
+        cursor += 1
+    if cursor == digit_start:
+        return None
+    try:
+        return int(payload_bytes[start:cursor])
+    except ValueError:  # pragma: no cover - digit scan above should prevent this.
+        return None
 
 
 def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:

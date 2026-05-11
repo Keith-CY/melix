@@ -781,6 +781,71 @@ def test_load_payload_file_reads_payload_bytes_without_text_decode() -> None:
         payload_path.read_text()
 
 
+def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_parse() -> None:
+    payload_path = _BytesOnlyPayloadPath(
+        json.dumps(
+            {
+                "compile_status": "compiled",
+                "failure_detail": "",
+                "metadata": {f"case_{index}": "ignored" for index in range(128)},
+                "runtime_status": "ok",
+                "test_status": "passed",
+                "tests_passed": 7,
+                "tests_total": 7,
+                "timeout_status": "ok",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+
+    assert code_eval_runner._load_payload_file(payload_path) == {
+        "compile_status": "compiled",
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 7,
+        "tests_total": 7,
+        "timeout_status": "ok",
+    }
+    assert payload_path.read_bytes_calls == 1
+
+
+def test_load_payload_file_fast_path_falls_back_for_escaped_fields(tmp_path: Path) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_text(
+        json.dumps(
+            {
+                "failure_detail": "line one\\nline two",
+                "runtime_status": "error",
+                "test_status": "failed",
+                "tests_passed": 0,
+                "tests_total": 1,
+                "timeout_status": "ok",
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    assert code_eval_runner._load_payload_file(payload_path) == {
+        "failure_detail": "line one\\nline two",
+        "runtime_status": "error",
+        "test_status": "failed",
+        "tests_passed": 0,
+        "tests_total": 1,
+        "timeout_status": "ok",
+    }
+
+
+def test_payload_fast_path_field_extractors_cover_malformed_edges() -> None:
+    assert code_eval_runner._json_field_value_start(b'{"runtime_status" : "ok"}', "runtime_status") == 20
+    assert code_eval_runner._json_field_value_start(b'{"runtime_status" "ok"}', "runtime_status") is None
+    assert code_eval_runner._json_field_value_start(b'{"runtime_status": ', "runtime_status") is None
+    assert code_eval_runner._extract_json_string_field(b'{"failure_detail":"oops}', "failure_detail") is None
+    assert code_eval_runner._extract_json_int_field(b'{"tests_passed":-7}', "tests_passed") == -7
+    assert code_eval_runner._extract_json_int_field(b'{"tests_total": }', "tests_total") is None
+
+
 def test_code_exec_policy_support_and_output_summary_helpers() -> None:
     assert code_eval_runner.is_code_execution_policy_supported("disabled") is False
     assert "stdout tail: hello" in code_eval_runner._summarize_stdio(
