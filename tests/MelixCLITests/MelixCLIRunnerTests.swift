@@ -388,6 +388,26 @@ struct MelixCLIRunnerTests {
         #expect(models[0]["repo_id"] as? String == "mlx-community/Ten-4bit")
     }
 
+    @Test("batch model-list parser rejects invalid lines")
+    func batchModelListParserRejectsInvalidLines() throws {
+        #expect(throws: MelixCLIError.usage("Empty model index at 2.")) {
+            _ = try BatchRunModelListParser.parse(contents: """
+            mlx-community/Valid-4bit
+              |mlx-community/MissingIndex-4bit
+            """)
+        }
+        #expect(throws: MelixCLIError.usage("Empty repo id at 3.")) {
+            _ = try BatchRunModelListParser.parse(contents: """
+            mlx-community/Valid-4bit
+            # comments do not consume auto indexes
+            42|
+            """)
+        }
+        #expect(throws: MelixCLIError.usage("Empty model index at 1.")) {
+            _ = try BatchRunModelListParser.parse(contents: "|\n")
+        }
+    }
+
     @Test("batch run dry-run supports matching temp and output roots")
     func batchRunDryRunSupportsMatchingTempAndOutputRoots() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
