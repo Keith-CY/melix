@@ -66,7 +66,11 @@ class DeterministicOCRRuntime:
 
     def prompt_token_count(self, prepared_request: PreparedVisionRequest) -> int:
         prompt_tokens = _whitespace_token_count(prepared_request.prompt_text)
-        image_tokens = sum(max(1, image.byte_length // 8) for image in prepared_request.images)
+        images = prepared_request.images
+        if len(images) == 1:
+            image_tokens = max(1, images[0].byte_length // 8)
+        else:
+            image_tokens = sum(max(1, image.byte_length // 8) for image in images)
         return max(1, prompt_tokens + image_tokens)
 
     def generate_tokens(
