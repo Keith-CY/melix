@@ -20,6 +20,12 @@ from worker.productization.run_evidence import (
     build_evaluation_run_evidence,
     monotonic_ms,
 )
+from worker.productization.run_records import (
+    attach_run_record_write_probe,
+    build_evaluation_compare_run_record,
+    build_evaluation_run_record,
+    write_run_record,
+)
 
 
 class EvaluationStore:
@@ -105,6 +111,23 @@ class EvaluationStore:
             encoding="utf-8",
         )
         persisted["evidence"] = evidence_path
+        record_started_at_monotonic_ms = monotonic_ms()
+        record_path = run_root / "run-record.json"
+        record_paths = {**persisted, "run_record": record_path}
+        record = build_evaluation_run_record(
+            job=job,
+            result=result,
+            artifact_root=run_root,
+            artifact_paths=record_paths,
+        )
+        write_run_record(
+            record_path,
+            attach_run_record_write_probe(
+                record,
+                duration_ms=monotonic_ms() - record_started_at_monotonic_ms,
+            ),
+        )
+        persisted["run_record"] = record_path
         return persisted
 
     def persist_compare_result(
@@ -143,13 +166,31 @@ class EvaluationStore:
             encoding="utf-8",
         )
 
-        return {
+        persisted = {
             "job": job_path,
             "summary_json": summary_json_path,
             "summary_csv": summary_csv_path,
             "samples_jsonl": samples_jsonl_path,
             "report_markdown": report_markdown_path,
         }
+        record_started_at_monotonic_ms = monotonic_ms()
+        record_path = run_root / "run-record.json"
+        record_paths = {**persisted, "run_record": record_path}
+        record = build_evaluation_compare_run_record(
+            job=job,
+            summaries=summaries,
+            artifact_root=run_root,
+            artifact_paths=record_paths,
+        )
+        write_run_record(
+            record_path,
+            attach_run_record_write_probe(
+                record,
+                duration_ms=monotonic_ms() - record_started_at_monotonic_ms,
+            ),
+        )
+        persisted["run_record"] = record_path
+        return persisted
 
     @staticmethod
     def _write_jsonl(path: Path, rows: Iterable[object]) -> None:

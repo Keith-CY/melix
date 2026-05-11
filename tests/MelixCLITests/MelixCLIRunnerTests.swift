@@ -7688,6 +7688,209 @@ struct MelixCLIRunnerTests {
         }
     }
 
+    @Test("offline run record commands list show export and report local artifacts")
+    func offlineRunRecordCommandsListShowExportAndReportLocalArtifacts() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-run-records-\(UUID().uuidString)")
+        let sourceRoot = root.appendingPathComponent("records", isDirectory: true)
+        let benchRunRoot = sourceRoot.appendingPathComponent("bench-1", isDirectory: true)
+        let evalRunRoot = sourceRoot.appendingPathComponent("eval-1", isDirectory: true)
+        try FileManager.default.createDirectory(at: benchRunRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: evalRunRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try writeJSONObjectForTest(
+            makeRunRecordPayloadForTest(
+                runID: "bench-1",
+                runKind: "benchmark",
+                runRoot: benchRunRoot,
+                startedAtUnixMS: 200
+            ),
+            to: benchRunRoot.appendingPathComponent("run-record.json")
+        )
+        try writeJSONObjectForTest(
+            makeRunRecordPayloadForTest(
+                runID: "eval-1",
+                runKind: "evaluation",
+                runRoot: evalRunRoot,
+                startedAtUnixMS: 100,
+                metricName: "eval.mmlu.accuracy",
+                metricUnit: "ratio"
+            ),
+            to: evalRunRoot.appendingPathComponent("run-record.json")
+        )
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let listJSON = try await runner.run(.runsList(.init(sourcePath: sourceRoot.path, json: true)))
+        let listPayload = try #require(parseJSONArray(listJSON) as? [[String: Any]])
+        #expect(listPayload.count == 2)
+        #expect(listPayload[0]["run_id"] as? String == "bench-1")
+        #expect(listPayload[1]["run_id"] as? String == "eval-1")
+
+        let listText = try await runner.run(.runsList(.init(sourcePath: sourceRoot.path)))
+        #expect(listText.contains("run_id\trun_kind\tstatus"))
+        #expect(listText.contains("bench-1\tbenchmark\tcompleted"))
+
+        let showMarkdown = try await runner.run(.runsShow(.init(runID: "bench-1", sourcePath: sourceRoot.path)))
+        #expect(showMarkdown.contains("# Melix Run bench-1"))
+        #expect(showMarkdown.contains("## Reproduction Command"))
+        #expect(showMarkdown.contains("melix bench run --model-id melix-dev-text"))
+
+        let showJSON = try await runner.run(.runsShow(.init(runID: "bench-1", sourcePath: sourceRoot.path, json: true)))
+        #expect(parseJSONObject(showJSON)?["run_id"] as? String == "bench-1")
+
+        let fileSourceMarkdown = try await runner.run(
+            .runsShow(
+                .init(
+                    runID: "bench-1",
+                    sourcePath: benchRunRoot.appendingPathComponent("run-record.json").path
+                )
+            )
+        )
+        #expect(fileSourceMarkdown.contains("# Melix Run bench-1"))
+
+        let exportURL = root.appendingPathComponent("exports/bench-1.md")
+        let exportOutput = try await runner.run(
+            .runsExport(.init(runID: "bench-1", sourcePath: sourceRoot.path, format: "md", outputPath: exportURL.path))
+        )
+        #expect(exportOutput == exportURL.path + "\n")
+        #expect(try String(contentsOf: exportURL, encoding: .utf8).contains("# Melix Run bench-1"))
+
+        let exportJSON = try await runner.run(.runsExport(.init(runID: "bench-1", sourcePath: sourceRoot.path, format: "json")))
+        #expect(parseJSONObject(exportJSON)?["run_id"] as? String == "bench-1")
+
+        let benchReportMarkdown = try await runner.run(.benchReport(.init(sourcePath: sourceRoot.path)))
+        #expect(benchReportMarkdown.contains("# Melix Benchmark Report"))
+        #expect(benchReportMarkdown.contains("| bench-1 | benchmark | melix-dev-text |"))
+        #expect(benchReportMarkdown.contains("record_scan_ms="))
+        #expect(benchReportMarkdown.contains("markdown_render_ms="))
+        #expect(benchReportMarkdown.contains("eval-1") == false)
+
+        let evalReportJSON = try await runner.run(.evalReport(.init(sourcePath: sourceRoot.path, format: "json")))
+        let evalReportPayload = try #require(parseJSONObject(evalReportJSON))
+        let generation = try #require(evalReportPayload["report_generation"] as? [String: Any])
+        #expect(evalReportPayload["report_kind"] as? String == "evaluation")
+        #expect(evalReportPayload["run_count"] as? Int == 1)
+        #expect(generation["record_scan_ms"] != nil)
+        #expect(generation["markdown_render_ms"] != nil)
+
+        let emptyList = try await runner.run(.runsList(.init(sourcePath: root.appendingPathComponent("missing").path)))
+        #expect(emptyList == "No run records found.\n")
+
+        do {
+            _ = try await runner.run(.runsExport(.init(runID: "bench-1", sourcePath: sourceRoot.path, format: "txt")))
+            Issue.record("Expected runs export to reject an unsupported format.")
+        } catch let error as MelixCLIError {
+            #expect(error == .usage("Invalid value for --format. Expected json or md."))
+        }
+
+        do {
+            _ = try await runner.run(.benchReport(.init(sourcePath: sourceRoot.path, format: "txt")))
+            Issue.record("Expected bench report to reject an unsupported format.")
+        } catch let error as MelixCLIError {
+            #expect(error == .usage("Invalid value for --format. Expected markdown or json."))
+        }
+    }
+
+    @Test("run record store handles default roots invalid records and render fallbacks")
+    func runRecordStoreHandlesDefaultRootsInvalidRecordsAndRenderFallbacks() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-run-record-store-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": root.path])
+        let store = MelixRunRecordStore(melixHome: melixHome)
+        let benchRunRoot = melixHome.modelOpsJobsRootURL
+            .appendingPathComponent("bench", isDirectory: true)
+            .appendingPathComponent("bench-a", isDirectory: true)
+        let evalRunRoot = melixHome.evaluationJobsRootURL
+            .appendingPathComponent("eval-a", isDirectory: true)
+        try FileManager.default.createDirectory(at: benchRunRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: evalRunRoot, withIntermediateDirectories: true)
+        try writeJSONObjectForTest(
+            makeRunRecordPayloadForTest(runID: "bench-a", runKind: "benchmark", runRoot: benchRunRoot, startedAtUnixMS: 10),
+            to: benchRunRoot.appendingPathComponent("run-record.json")
+        )
+        let nestedArtifactRoot = benchRunRoot
+            .appendingPathComponent("artifacts", isDirectory: true)
+            .appendingPathComponent("checkpoint", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedArtifactRoot, withIntermediateDirectories: true)
+        try writeJSONObjectForTest(
+            makeRunRecordPayloadForTest(
+                runID: "nested-artifact",
+                runKind: "benchmark",
+                runRoot: nestedArtifactRoot,
+                startedAtUnixMS: 30
+            ),
+            to: nestedArtifactRoot.appendingPathComponent("run-record.json")
+        )
+        try writeJSONObjectForTest(
+            makeRunRecordPayloadForTest(runID: "eval-a", runKind: "evaluation", runRoot: evalRunRoot, startedAtUnixMS: 10),
+            to: evalRunRoot.appendingPathComponent("run-record.json")
+        )
+
+        let defaultRecords = try store.loadRecords()
+        #expect(defaultRecords.map(\.runID) == ["bench-a", "eval-a"])
+        #expect(defaultRecords.contains { $0.runID == "nested-artifact" } == false)
+        #expect(try store.report(kind: "runs", sourcePath: root.path).payload["run_count"] as? Int == 2)
+
+        let invalidRoot = root.appendingPathComponent("invalid", isDirectory: true)
+        try FileManager.default.createDirectory(at: invalidRoot, withIntermediateDirectories: true)
+        try writeJSONObjectForTest(
+            ["schema_version": "other", "run_id": "ignored"],
+            to: invalidRoot.appendingPathComponent("run-record.json")
+        )
+        #expect(try store.loadRecords(sourcePath: invalidRoot.path).isEmpty)
+
+        do {
+            _ = try store.findRecord(runID: "missing", sourcePath: root.path)
+            Issue.record("Expected missing run record lookup to fail.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No run record was found for missing."))
+        }
+
+        #expect(MelixRunRecord(payload: [:], path: "").startedAtUnixMS == 0)
+        let directRecord = MelixRunRecord(
+            payload: [
+                "run_id": "direct",
+                "run_kind": "evaluation_compare",
+                "status": "completed",
+                "started_at_unix_ms": NSNumber(value: 42),
+                "duration_ms": "7",
+                "command": ["display": "melix eval compare --base-model-id base"],
+                "environment": ["platform": "Darwin"],
+                "target": [
+                    "base_model_id": "base",
+                    "task_kind": [1, "text-generation"],
+                    "model_id": ["model-a", "model-b"],
+                ],
+                "dataset": [
+                    "suite_ids": ["mmlu", "gsm8k"],
+                    "dataset_ref": "dataset/ref",
+                    "sample_size": ["2"],
+                ],
+                "metrics": [],
+                "artifacts": [],
+                "known_gaps": [],
+                "artifact_root": "",
+            ],
+            path: "/tmp/run-record.json"
+        )
+
+        #expect(directRecord.startedAtUnixMS == 42)
+        #expect(directRecord.durationMS == 7)
+        #expect(renderRunRecordList([directRecord]).contains("model-a,model-b"))
+        #expect(renderRunRecordMarkdown(directRecord).contains("- None."))
+        #expect(renderRunRecordMarkdown(directRecord).contains("- None."))
+        #expect(renderRunRecordMarkdown(directRecord).contains("No rows.") == false)
+        #expect(renderReportMarkdown(["report_kind": "runs"]).contains("- None."))
+        #expect(try writeRunRecordOutput("inline\n", outputPath: "") == "inline\n")
+    }
+
     @Test("stub control-plane client covers auxiliary protocol helpers used by the CLI tests")
     func stubControlPlaneClientCoversAuxiliaryHelpers() async throws {
         let client = StubControlPlaneXPCClient()
@@ -8784,6 +8987,100 @@ private func parseJSONArray(_ text: String) -> [Any]? {
 private func parseJSONFile(_ path: String) throws -> [String: Any]? {
     let data = try Data(contentsOf: URL(fileURLWithPath: path))
     return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+}
+
+private func makeRunRecordPayloadForTest(
+    runID: String,
+    runKind: String,
+    runRoot: URL,
+    startedAtUnixMS: Int,
+    metricName: String = "bench.smoke.ttft_ms",
+    metricUnit: String = "ms"
+) -> [String: Any] {
+    let evaluation = runKind.hasPrefix("evaluation")
+    let suiteID = evaluation ? "mmlu" : "smoke"
+    let datasetID = evaluation ? "mmlu.dev.v1" : "ultrachat.smoke"
+    let command = evaluation
+        ? "melix eval run --model-id melix-dev-text --suite mmlu --dataset-id mmlu.dev.v1 --sample-size 2"
+        : "melix bench run --model-id melix-dev-text --suite smoke --sample-size 2"
+    return [
+        "schema_version": "melix.run_record.v1",
+        "run_id": runID,
+        "run_kind": runKind,
+        "status": "completed",
+        "started_at_unix_ms": startedAtUnixMS,
+        "ended_at_unix_ms": startedAtUnixMS + 50,
+        "duration_ms": 50,
+        "command": [
+            "argv": command.split(separator: " ").map(String.init),
+            "display": command,
+            "redacted": false,
+        ],
+        "melix": [
+            "git_commit": "abcdef",
+            "git_branch": "codex/test",
+            "dirty_worktree": false,
+            "version": "",
+        ],
+        "environment": [
+            "platform": "Darwin",
+            "macos_version": "15.5",
+            "machine": "arm64",
+            "processor": "Apple M4 Max",
+        ],
+        "target": [
+            "model_id": "melix-dev-text",
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "runtime_backend": "mlx",
+        ],
+        "dataset": [
+            "suite_ids": [suiteID],
+            "dataset_id": datasetID,
+            "sample_size": 2,
+            "scoring_mode": evaluation ? "normalized_exact_match" : "",
+        ],
+        "parameters": [
+            "sample_size": "2",
+        ],
+        "reproducibility": [
+            "schema_sha256": "schema-digest",
+        ],
+        "metrics": [
+            [
+                "name": metricName,
+                "value": evaluation ? 0.75 : 24.5,
+                "unit": metricUnit,
+            ],
+        ],
+        "resources": [
+            "peak_memory_bytes": 1024,
+        ],
+        "artifact_root": runRoot.path,
+        "artifacts": [
+            [
+                "kind": evaluation ? "summary_json" : "evidence",
+                "path": runRoot.appendingPathComponent(evaluation ? "evaluation-summary.json" : "run-evidence.json").path,
+                "relative_path": evaluation ? "evaluation-summary.json" : "run-evidence.json",
+            ],
+            [
+                "kind": "run_record",
+                "path": runRoot.appendingPathComponent("run-record.json").path,
+                "relative_path": "run-record.json",
+            ],
+        ],
+        "known_gaps": [
+            "Apple Silicon telemetry artifact was not present for this run.",
+        ],
+        "probes": [
+            [
+                "component": "worker.productization.run_records",
+                "phase": "run_record_write",
+                "duration_ms": 0.1,
+                "status": "completed",
+            ],
+        ],
+    ]
 }
 
 private struct NonMelixPipelineTestError: Error, CustomStringConvertible {

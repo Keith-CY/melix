@@ -186,6 +186,7 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     assert persisted["samples_csv"] == run_root / "evaluation-samples.csv"
     assert persisted["telemetry_jsonl"] == run_root / "telemetry-samples.jsonl"
     assert persisted["evidence"] == run_root / "run-evidence.json"
+    assert persisted["run_record"] == run_root / "run-record.json"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == job.to_dict()
     assert json.loads(persisted["result"].read_text(encoding="utf-8")) == result.to_dict()
     assert json.loads(persisted["summary_json"].read_text(encoding="utf-8"))["scored_sample_count"] == 2
@@ -207,6 +208,15 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,duration_seconds,created_at_unix_ms\n"
     )
+    run_record = json.loads(persisted["run_record"].read_text(encoding="utf-8"))
+    assert run_record["schema_version"] == "melix.run_record.v1"
+    assert run_record["run_id"] == "eval-local"
+    assert run_record["run_kind"] == "evaluation"
+    assert run_record["command"]["display"].startswith("melix eval run --model-id melix-dev-text")
+    assert run_record["evaluation"]["primary_score_name"] == "normalized_exact_match"
+    assert run_record["evaluation"]["pass_count"] == 2
+    assert run_record["metrics"][0] == {"name": "eval.mmlu.accuracy", "value": 1.0, "unit": "ratio"}
+    assert run_record["probes"][0]["phase"] == "run_record_write"
     samples_header = persisted["samples_csv"].read_text(encoding="utf-8").splitlines()[0]
     assert samples_header.startswith(
         "id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
@@ -817,6 +827,7 @@ def test_persist_compare_result_writes_expected_compare_artifact_names_and_paylo
     assert persisted["summary_csv"] == run_root / "evaluation-compare-summary.csv"
     assert persisted["samples_jsonl"] == run_root / "evaluation-compare-samples.jsonl"
     assert persisted["report_markdown"] == run_root / "evaluation-compare-report.md"
+    assert persisted["run_record"] == run_root / "run-record.json"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == compare_job.to_dict()
     summary_payload = json.loads(persisted["summary_json"].read_text(encoding="utf-8"))
     assert summary_payload["job_id"] == "eval-compare-1"
@@ -838,6 +849,14 @@ def test_persist_compare_result_writes_expected_compare_artifact_names_and_paylo
     assert "Bootstrap CI" in report_markdown
     assert "Analytical CI" in report_markdown
     assert "Category Breakdown" in report_markdown
+    run_record = json.loads(persisted["run_record"].read_text(encoding="utf-8"))
+    assert run_record["schema_version"] == "melix.run_record.v1"
+    assert run_record["run_kind"] == "evaluation_compare"
+    assert run_record["target"]["base_model_id"] == "melix-dev-text"
+    assert run_record["evaluation"]["win_count"] == 1
+    assert run_record["evaluation"]["verdicts"] == ["improvement"]
+    assert run_record["known_gaps"] == ["Apple Silicon telemetry artifact was not present for this run."]
+    assert run_record["probes"][0]["phase"] == "run_record_write"
 
 
 def test_persist_compare_result_preserves_code_execution_evidence(tmp_path: Path) -> None:

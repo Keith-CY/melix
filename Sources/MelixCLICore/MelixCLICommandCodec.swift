@@ -116,6 +116,8 @@ public enum MelixCLICommandCodec {
             return "bench.list"
         case .benchExportCSV:
             return "bench.export-csv"
+        case .benchReport:
+            return "bench.report"
         case .benchMatrixRun:
             return "bench.matrix.run"
         case .benchMatrixList:
@@ -154,6 +156,14 @@ public enum MelixCLICommandCodec {
             return "eval.export-samples-csv"
         case .evalExportSamplesJSONL:
             return "eval.export-samples-jsonl"
+        case .evalReport:
+            return "eval.report"
+        case .runsList:
+            return "runs.list"
+        case .runsShow:
+            return "runs.show"
+        case .runsExport:
+            return "runs.export"
         case .pipelineRun:
             return "pipeline.run"
         }
@@ -476,6 +486,11 @@ public enum MelixCLICommandCodec {
             arguments = ["bench", "export-csv"]
             appendExportOptions(options.jobID, options.outputPath, into: &arguments)
             json = options.json
+        case .benchReport(let options):
+            arguments = ["bench", "report"]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            appendOption("--format", value: options.format, into: &arguments)
+            json = false
         case .benchMatrixExportSummaryCSV(let options):
             arguments = ["bench", "matrix", "export-summary-csv"]
             appendExportOptions(options.jobID, options.outputPath, into: &arguments)
@@ -544,6 +559,25 @@ public enum MelixCLICommandCodec {
             arguments = ["eval", "export-samples-jsonl"]
             appendExportOptions(options.jobID, options.outputPath, into: &arguments)
             json = options.json
+        case .evalReport(let options):
+            arguments = ["eval", "report"]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            appendOption("--format", value: options.format, into: &arguments)
+            json = false
+        case .runsList(let options):
+            arguments = ["runs", "list"]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            json = options.json
+        case .runsShow(let options):
+            arguments = ["runs", "show", options.runID]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            json = options.json
+        case .runsExport(let options):
+            arguments = ["runs", "export", options.runID]
+            appendOption("--format", value: options.format, into: &arguments)
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            appendOption("--output", value: options.outputPath, into: &arguments)
+            json = false
         case .pipelineRun(let options):
             arguments = ["pipeline", "run"]
             appendOption("--file", value: options.filePath, into: &arguments)
