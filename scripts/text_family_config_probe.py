@@ -35,6 +35,25 @@ class CopyCountingConfig(Mapping[str, Any]):
         return self._payload.keys()
 
 
+class CopyCountingMetadata(Mapping[str, str]):
+    def __init__(self, payload: Mapping[str, str]) -> None:
+        self._payload = dict(payload)
+        self.copy_attempts = 0
+
+    def __getitem__(self, key: str) -> str:
+        return self._payload[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._payload)
+
+    def __len__(self) -> int:
+        return len(self._payload)
+
+    def keys(self):  # type: ignore[override]
+        self.copy_attempts += 1
+        return self._payload.keys()
+
+
 def _payload() -> dict[str, Any]:
     payload: dict[str, Any] = {f"unused_{index}": index for index in range(2048)}
     payload.update(
@@ -50,9 +69,14 @@ def _payload() -> dict[str, Any]:
     return payload
 
 
-def _run_sample(*, iterations: int) -> tuple[float, int, int]:
+def _run_sample(*, iterations: int) -> tuple[float, int, int, int]:
     config = CopyCountingConfig(_payload())
-    metadata = {"text_family_id": "qwen3moe"}
+    metadata = CopyCountingMetadata(
+        {
+            **{f"unused_metadata_{index}": str(index) for index in range(2048)},
+            "text_family_id": "qwen3moe",
+        }
+    )
     checksum = 0
     tracemalloc.start()
     started = time.perf_counter()
@@ -73,25 +97,33 @@ def _run_sample(*, iterations: int) -> tuple[float, int, int]:
     tracemalloc.stop()
     if checksum != iterations * 130:
         raise AssertionError(f"unexpected checksum: {checksum}")
-    return elapsed_ms, peak_bytes, config.copy_attempts
+    metadata_copy_attempts = metadata.copy_attempts
+    if "text_family_id" not in set(metadata) or len(metadata) != 2049:
+        raise AssertionError("unexpected metadata mapping contents")  # pragma: no cover
+    if dict(metadata)["text_family_id"] != "qwen3moe":
+        raise AssertionError("unexpected metadata mapping value")  # pragma: no cover
+    return elapsed_ms, peak_bytes, config.copy_attempts, metadata_copy_attempts
 
 
 def main() -> None:
     iterations = 10_000
     elapsed: list[float] = []
     peak: list[int] = []
-    copy_calls: list[int] = []
+    config_copy_calls: list[int] = []
+    metadata_copy_calls: list[int] = []
     for _ in range(5):
-        elapsed_ms, peak_bytes, copies = _run_sample(iterations=iterations)
+        elapsed_ms, peak_bytes, config_copies, metadata_copies = _run_sample(iterations=iterations)
         elapsed.append(elapsed_ms)
         peak.append(peak_bytes)
-        copy_calls.append(copies)
+        config_copy_calls.append(config_copies)
+        metadata_copy_calls.append(metadata_copies)
     print(
         json.dumps(
             {
                 "elapsed_ms_mean": statistics.fmean(elapsed),
                 "peak_bytes_mean": statistics.fmean(peak),
-                "config_copy_calls_mean": statistics.fmean(copy_calls),
+                "config_copy_calls_mean": statistics.fmean(config_copy_calls),
+                "metadata_copy_calls_mean": statistics.fmean(metadata_copy_calls),
                 "iterations": iterations,
             },
             sort_keys=True,

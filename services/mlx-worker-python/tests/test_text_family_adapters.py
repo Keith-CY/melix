@@ -32,6 +32,25 @@ class _CopyCountingConfig(Mapping[str, Any]):
         return self._payload.keys()
 
 
+class _CopyCountingMetadata(Mapping[str, str]):
+    def __init__(self, payload: Mapping[str, str]) -> None:
+        self._payload = dict(payload)
+        self.copy_attempts = 0
+
+    def __getitem__(self, key: str) -> str:
+        return self._payload[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._payload)
+
+    def __len__(self) -> int:
+        return len(self._payload)
+
+    def keys(self):  # type: ignore[override]
+        self.copy_attempts += 1
+        return self._payload.keys()
+
+
 def test_split_csv_short_circuits_empty_values_without_split() -> None:
     class NoSplitEmpty(str):
         def split(self, *args: object, **kwargs: object) -> list[str]:  # pragma: no cover
@@ -257,6 +276,33 @@ def test_resolve_text_family_config_prefers_live_config_over_stale_expert_metada
 def test_inferred_expert_count_preserves_config_before_family_default() -> None:
     assert _inferred_expert_count({"num_experts": 4}, default=128) == 4
     assert _inferred_expert_count({}, default=128) == 128
+
+
+def test_resolve_text_family_config_reads_metadata_mapping_without_copying() -> None:
+    metadata = _CopyCountingMetadata(
+        {
+            **{f"unused_{index}": str(index) for index in range(512)},
+            "text_family_id": "qwen3moe",
+            "melix.capability.supported_parsers": "text,qwen",
+            "tool_parser_xml_fallback": "true",
+        }
+    )
+
+    resolved = resolve_text_family_config(
+        metadata,
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe", "num_local_experts": 128},
+        default_route_kind="swift_text",
+    )
+
+    assert resolved.family_id == "qwen3moe"
+    assert resolved.supported_parsers == ("text", "qwen")
+    assert resolved.tool_parser_xml_fallback is True
+    assert metadata.copy_attempts == 0
+    assert list(metadata)[:1] == ["unused_0"]
+    assert len(metadata) == 515
+    assert dict(metadata)["text_family_id"] == "qwen3moe"
+    assert metadata.copy_attempts == 1
 
 
 def test_resolve_text_family_config_reads_config_mapping_without_copying() -> None:

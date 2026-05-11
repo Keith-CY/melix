@@ -2003,6 +2003,7 @@ def test_text_family_config_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["config_copy_calls_mean"] == 0.0
+    assert metrics["metadata_copy_calls_mean"] == 0.0
     assert metrics["iterations"] == 10_000
 
 

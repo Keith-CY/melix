@@ -90,6 +90,7 @@ class ResolvedTextFamilyConfig:
 
 _DEFAULT_TEXT_FAMILY_ID = "llama"
 _EMPTY_CONFIG_PAYLOAD: Mapping[str, Any] = {}
+_EMPTY_METADATA: Mapping[str, str] = {}
 _TEXT_FAMILY_ADAPTERS: dict[str, TextFamilyDescriptor] = {
     "llama": TextFamilyDescriptor(
         family_id="llama",
@@ -232,7 +233,7 @@ def resolve_text_family_config(
     config_payload: Mapping[str, Any] | None = None,
     default_route_kind: str = "swift_text",
 ) -> ResolvedTextFamilyConfig:
-    metadata = dict(metadata or {})
+    metadata = metadata or _EMPTY_METADATA
     detection = detect_text_family_identity(
         model_path=model_path,
         config_payload=config_payload,

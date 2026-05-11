@@ -404,6 +404,12 @@
         "unit": "calls",
         "direction": "lower_is_better",
         "warn_pct": 0.0
+      },
+      {
+        "key": "metadata_copy_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
       }
     ]
   },
