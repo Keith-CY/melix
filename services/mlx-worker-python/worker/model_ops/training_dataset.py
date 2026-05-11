@@ -24,6 +24,7 @@ _SUPPORTED_FORMATS = {
     "prompt_candidate",
     "reward_scored",
     "calibration",
+    "agentic_tool_trace",
 }
 _SUPPORTED_ROLES = {"system", "user", "assistant", "tool"}
 _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
@@ -735,6 +736,12 @@ def _normalize_sample(
             payload["tools"] = sample["tools"]
         return payload
 
+    if format_name == "agentic_tool_trace":
+        return _normalize_agentic_tool_trace_sample(
+            sample,
+            max_characters_per_sample=max_characters_per_sample,
+        )
+
     if format_name == "prompt_completion":
         prompt = str(sample.get("prompt", "")).strip()
         completion = str(sample.get("completion", "")).strip()
@@ -850,6 +857,183 @@ def _normalize_sample(
             message="text_completion samples must include text.",
         )
     return {"text": _truncate_text(text, max_characters_per_sample)}
+
+
+def _normalize_agentic_tool_trace_sample(
+    sample: dict[str, Any],
+    *,
+    max_characters_per_sample: int,
+) -> dict[str, Any]:
+    trace_id = str(sample.get("trace_id", "")).strip()
+    question = str(sample.get("question", "")).strip()
+    final_answer = str(sample.get("final_answer", "")).strip()
+    if not trace_id or not question or not final_answer:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="agentic_tool_trace samples must include trace_id, question, and final_answer.",
+        )
+
+    raw_turns = sample.get("turns")
+    if not isinstance(raw_turns, list) or not raw_turns:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="agentic_tool_trace samples must include non-empty turns.",
+        )
+
+    normalized_turns: list[dict[str, Any]] = []
+    seen_tool_call_ids: set[str] = set()
+    assistant_turn_count = 0
+    for turn_index, raw_turn in enumerate(raw_turns):
+        if not isinstance(raw_turn, dict):
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="agentic_tool_trace turns must be JSON objects.",
+                details={"turn_index": str(turn_index)},
+            )
+        role = str(raw_turn.get("role", "")).strip()
+        if role not in _SUPPORTED_ROLES:
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="agentic_tool_trace turns must use supported roles.",
+                details={"turn_index": str(turn_index)},
+            )
+
+        normalized_turn: dict[str, Any] = {"role": role}
+        if "content" in raw_turn:
+            content = str(raw_turn.get("content", "")).strip()
+            if content:
+                normalized_turn["content"] = _truncate_text(content, max_characters_per_sample)
+
+        if role in {"system", "user"} and not normalized_turn.get("content"):
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="agentic_tool_trace user and system turns must include content.",
+                details={"turn_index": str(turn_index)},
+            )
+
+        if role == "assistant":
+            assistant_turn_count += 1
+            tool_call = raw_turn.get("tool_call")
+            has_tool_call = isinstance(tool_call, dict)
+            if has_tool_call:
+                call_id = str(tool_call.get("id", "")).strip()
+                name = str(tool_call.get("name", "")).strip()
+                if not call_id or not name:
+                    raise ModelOperationError(
+                        code="invalid_dataset_package",
+                        message="agentic_tool_trace assistant tool calls must include id and name.",
+                        details={"turn_index": str(turn_index)},
+                    )
+                normalized_tool_call = dict(tool_call)
+                normalized_tool_call["id"] = call_id
+                normalized_tool_call["name"] = name
+                normalized_turn["tool_call"] = normalized_tool_call
+                seen_tool_call_ids.add(call_id)
+            if not has_tool_call and not normalized_turn.get("content"):
+                raise ModelOperationError(
+                    code="invalid_dataset_package",
+                    message="agentic_tool_trace assistant turns must include content or a tool_call.",
+                    details={"turn_index": str(turn_index)},
+                )
+
+        if role == "tool":
+            tool_call_id = str(raw_turn.get("tool_call_id", "")).strip()
+            if not tool_call_id or tool_call_id not in seen_tool_call_ids:
+                raise ModelOperationError(
+                    code="invalid_dataset_package",
+                    message="agentic_tool_trace tool observations must reference a prior assistant tool call.",
+                    details={"turn_index": str(turn_index)},
+                )
+            observation = raw_turn.get("observation")
+            if isinstance(observation, str):
+                observation_text = observation.strip()
+                if not observation_text:
+                    raise ModelOperationError(
+                        code="invalid_dataset_package",
+                        message="agentic_tool_trace tool observations must be non-empty.",
+                        details={"turn_index": str(turn_index)},
+                    )
+                normalized_observation: dict[str, Any] = {
+                    "text": _truncate_text(observation_text, max_characters_per_sample)
+                }
+            elif isinstance(observation, dict) and observation:
+                normalized_observation = dict(observation)
+                if "text" in normalized_observation:
+                    normalized_observation["text"] = _truncate_text(
+                        str(normalized_observation["text"]).strip(),
+                        max_characters_per_sample,
+                    )
+            else:
+                raise ModelOperationError(
+                    code="invalid_dataset_package",
+                    message="agentic_tool_trace tool observations must be non-empty.",
+                    details={"turn_index": str(turn_index)},
+                )
+            normalized_turn["tool_call_id"] = tool_call_id
+            normalized_turn["observation"] = normalized_observation
+
+        if "media_refs" in raw_turn:
+            media_refs = raw_turn["media_refs"]
+            if not isinstance(media_refs, list):
+                raise ModelOperationError(
+                    code="invalid_dataset_package",
+                    message="agentic_tool_trace turn media_refs must be an array.",
+                    details={"turn_index": str(turn_index)},
+                )
+            normalized_turn["media_refs"] = media_refs
+
+        normalized_turns.append(normalized_turn)
+
+    if assistant_turn_count == 0:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="agentic_tool_trace samples must include at least one assistant turn.",
+        )
+
+    payload: dict[str, Any] = {
+        "trace_id": trace_id,
+        "question": _truncate_text(question, max_characters_per_sample),
+        "turns": normalized_turns,
+        "final_answer": _truncate_text(final_answer, max_characters_per_sample),
+    }
+    _copy_optional_agentic_trace_fields(payload, sample)
+    return payload
+
+
+def _copy_optional_agentic_trace_fields(
+    payload: dict[str, Any],
+    sample: dict[str, Any],
+) -> None:
+    for field in ("media_refs", "tools", "evidence_ids", "leakage_terms"):
+        if field not in sample:
+            continue
+        value = sample[field]
+        if not isinstance(value, list):
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message=f"agentic_tool_trace {field} must be an array.",
+            )
+        if field == "leakage_terms":
+            payload[field] = [
+                term
+                for term in (str(item).strip() for item in value)
+                if term
+            ]
+        else:
+            payload[field] = value
+
+    if "expected_answer" in sample:
+        payload["expected_answer"] = str(sample.get("expected_answer", "")).strip()
+    if "fatal_stage" in sample:
+        payload["fatal_stage"] = str(sample.get("fatal_stage", "")).strip()
+    if "reward" in sample:
+        reward = sample["reward"]
+        if not isinstance(reward, Mapping):
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="agentic_tool_trace reward must be a JSON object.",
+            )
+        payload["reward"] = dict(reward)
 
 
 def _fetch_hf_dataset_server_json(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
@@ -1276,6 +1460,7 @@ def _resolve_local_conversion_template(template: str, sample_row: dict[str, Any]
             "prompt_candidate",
             "reward_scored",
             "calibration",
+            "agentic_tool_trace",
             "alpaca",
             "sharegpt",
         }:
@@ -1287,6 +1472,8 @@ def _resolve_local_conversion_template(template: str, sample_row: dict[str, Any]
 
     if isinstance(sample_row.get("messages"), list):
         return "chat_messages"
+    if "trace_id" in sample_row and "turns" in sample_row and "final_answer" in sample_row:
+        return "agentic_tool_trace"
     if "prompt" in sample_row and "candidates" in sample_row:
         return "prompt_candidate"
     if "prompt" in sample_row and "response" in sample_row and "reward_score" in sample_row:
@@ -1322,6 +1509,8 @@ def _local_conversion_format(template: str) -> str:
         return "reward_scored"
     if template == "calibration":
         return "calibration"
+    if template == "agentic_tool_trace":
+        return "agentic_tool_trace"
     raise ModelOperationError(
         code="invalid_dataset_source",
         message=f"Unsupported dataset conversion template: {template}",
@@ -1360,6 +1549,20 @@ def _convert_local_row(
         }
     if template == "calibration":
         return {"text": row.get("text")}
+    if template == "agentic_tool_trace":
+        return {
+            "trace_id": row.get("trace_id"),
+            "question": row.get("question"),
+            "media_refs": row.get("media_refs", []),
+            "tools": row.get("tools", []),
+            "turns": row.get("turns"),
+            "final_answer": row.get("final_answer"),
+            "expected_answer": row.get("expected_answer", ""),
+            "evidence_ids": row.get("evidence_ids", []),
+            "reward": row.get("reward", {}),
+            "fatal_stage": row.get("fatal_stage", ""),
+            "leakage_terms": row.get("leakage_terms", []),
+        }
     if template == "alpaca":
         instruction = str(row.get("instruction", "")).strip()
         input_text = str(row.get("input", "")).strip()
@@ -1509,6 +1712,7 @@ def _build_quality_and_token_stats(
     sample_token_counts = _sample_token_counts
     whitespace_token_count = _whitespace_token_count
     quality_report_sample_limit = _QUALITY_REPORT_SAMPLE_LIMIT
+    agentic_metrics = _new_agentic_trace_quality_metrics()
     for index, sample in enumerate(samples):
         sample_count += 1
         if is_prompt_completion:
@@ -1526,6 +1730,13 @@ def _build_quality_and_token_stats(
             dirty_count += 1
             if len(dirty_samples) < quality_report_sample_limit:
                 dirty_samples_append({"index": index, "reasons": reasons})
+        if format_name == "agentic_tool_trace":
+            _update_agentic_trace_quality_metrics(
+                agentic_metrics,
+                sample,
+                index=index,
+                sample_limit=quality_report_sample_limit,
+            )
         if is_prompt_completion:
             prompt_count = whitespace_token_count(str(sample.get("prompt", "")))
             completion_count = whitespace_token_count(str(sample.get("completion", "")))
@@ -1539,13 +1750,17 @@ def _build_quality_and_token_stats(
     finalized_completion_summary = _summarize_token_values(completion_tokens, sort_in_place=True)
     finalized_total_summary = _summarize_token_values(total_tokens, sort_in_place=True)
 
+    quality = {
+        "duplicate_count": duplicate_count,
+        "duplicate_sample_indices": duplicate_indices,
+        "dirty_count": dirty_count,
+        "dirty_samples": dirty_samples,
+    }
+    if format_name == "agentic_tool_trace":
+        quality.update(agentic_metrics)
+
     return (
-        {
-            "duplicate_count": duplicate_count,
-            "duplicate_sample_indices": duplicate_indices,
-            "dirty_count": dirty_count,
-            "dirty_samples": dirty_samples,
-        },
+        quality,
         {
             "estimator": "whitespace_v1",
             "sample_count": sample_count,
@@ -1563,6 +1778,50 @@ def _build_quality_and_token_stats(
             "total_tokens_max": finalized_total_summary["max"],
         },
     )
+
+
+def _new_agentic_trace_quality_metrics() -> dict[str, Any]:
+    return {
+        "agentic_trace_count": 0,
+        "tool_call_count": 0,
+        "tool_observation_count": 0,
+        "fatal_trace_count": 0,
+        "leakage_count": 0,
+        "leakage_samples": [],
+    }
+
+
+def _update_agentic_trace_quality_metrics(
+    metrics: dict[str, Any],
+    sample: dict[str, Any],
+    *,
+    index: int,
+    sample_limit: int,
+) -> None:
+    metrics["agentic_trace_count"] += 1
+    if str(sample.get("fatal_stage", "")).strip():
+        metrics["fatal_trace_count"] += 1
+    turns = sample.get("turns", [])
+    if isinstance(turns, list):
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            if isinstance(turn.get("tool_call"), dict):
+                metrics["tool_call_count"] += 1
+            if turn.get("role") == "tool" and "observation" in turn:
+                metrics["tool_observation_count"] += 1
+    leaked_terms = _agentic_trace_leakage_terms(sample)
+    if leaked_terms:
+        metrics["leakage_count"] += 1
+        leakage_samples = metrics["leakage_samples"]
+        if isinstance(leakage_samples, list) and len(leakage_samples) < sample_limit:
+            leakage_samples.append(
+                {
+                    "index": index,
+                    "trace_id": str(sample.get("trace_id", "")),
+                    "terms": leaked_terms,
+                }
+            )
 
 
 def _build_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
@@ -1705,6 +1964,13 @@ def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int,
             _whitespace_token_count(str(sample.get("response", ""))),
         )
 
+    if format_name == "agentic_tool_trace":
+        prompt_text = " ".join(_agentic_trace_prompt_segments(sample))
+        return (
+            _whitespace_token_count(prompt_text),
+            _whitespace_token_count(str(sample.get("final_answer", ""))),
+        )
+
     return 0, _whitespace_token_count(str(sample.get("text", "")))
 
 
@@ -1736,6 +2002,10 @@ def _dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:
             if prev_content and prev_content == last_content:
                 reasons.append("echo_response")
 
+    if "trace_id" in sample and "turns" in sample:
+        if _agentic_trace_leakage_terms(sample):
+            reasons.append("leakage_terms")
+
     unique_reasons: list[str] = []
     for reason in reasons:
         if reason not in unique_reasons:
@@ -1764,6 +2034,8 @@ def _prompt_completion_dirty_sample_reasons(sample: dict[str, Any]) -> list[str]
 
 
 def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
+    if "trace_id" in sample and "turns" in sample:
+        return _agentic_trace_text_segments(sample)
     if "messages" in sample:
         messages = sample.get("messages", [])
         if isinstance(messages, list):
@@ -1792,6 +2064,78 @@ def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
     if "prompt" in sample or "completion" in sample:
         return [str(sample.get("prompt", "")), str(sample.get("completion", ""))]
     return [str(sample.get("text", ""))]
+
+
+def _agentic_trace_text_segments(sample: dict[str, Any]) -> list[str]:
+    segments: list[str] = [
+        str(sample.get("trace_id", "")),
+        str(sample.get("question", "")),
+        str(sample.get("final_answer", "")),
+        str(sample.get("expected_answer", "")),
+        str(sample.get("fatal_stage", "")),
+    ]
+    turns = sample.get("turns")
+    if isinstance(turns, list):
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            segments.append(str(turn.get("content", "")))
+            tool_call = turn.get("tool_call")
+            if isinstance(tool_call, dict):
+                segments.append(str(tool_call.get("name", "")))
+                arguments = tool_call.get("arguments")
+                if arguments is not None:
+                    segments.append(json.dumps(arguments, sort_keys=True, ensure_ascii=False))
+            observation = turn.get("observation")
+            if isinstance(observation, dict):
+                segments.extend(str(value) for value in observation.values())
+            elif observation is not None:
+                segments.append(str(observation))
+    return [segment for segment in segments if segment]
+
+
+def _agentic_trace_prompt_segments(sample: dict[str, Any]) -> list[str]:
+    return _agentic_trace_leakage_scan_segments(sample)
+
+
+def _agentic_trace_leakage_terms(sample: dict[str, Any]) -> list[str]:
+    raw_terms = sample.get("leakage_terms", [])
+    if not isinstance(raw_terms, list):
+        return []
+    terms = [
+        term
+        for term in (str(raw_term).strip() for raw_term in raw_terms)
+        if term
+    ]
+    if not terms:
+        return []
+    searchable_text = "\n".join(_agentic_trace_leakage_scan_segments(sample)).casefold()
+    leaked_terms: list[str] = []
+    for term in terms:
+        if term.casefold() in searchable_text:
+            leaked_terms.append(term)
+    return leaked_terms
+
+
+def _agentic_trace_leakage_scan_segments(sample: dict[str, Any]) -> list[str]:
+    segments: list[str] = [str(sample.get("question", ""))]
+    turns = sample.get("turns")
+    if isinstance(turns, list):
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            segments.append(str(turn.get("content", "")))
+            tool_call = turn.get("tool_call")
+            if isinstance(tool_call, dict):
+                arguments = tool_call.get("arguments")
+                if arguments is not None:
+                    segments.append(json.dumps(arguments, sort_keys=True, ensure_ascii=False))
+            observation = turn.get("observation")
+            if isinstance(observation, dict):
+                segments.extend(str(value) for value in observation.values())
+            elif observation is not None:
+                segments.append(str(observation))
+    return [segment for segment in segments if segment]
 
 
 def _contains_problematic_control_characters(text: str) -> bool:
