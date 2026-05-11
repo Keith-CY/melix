@@ -157,6 +157,33 @@ def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
         request.images[0].byte_length // 8,
     )
 
+    fallback_request = PreparedVisionRequest(
+        prompt_text=prompt_text,
+        images=[
+            request.images[0],
+            PreparedImageInput(
+                bytes_data=b"x",
+                source_kind="inline",
+                reference="inline:second.txt",
+                mime_type="text/plain",
+                format="txt",
+                filename="second.txt",
+                sha256_hex="b" * 64,
+            ),
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=129,
+        preprocess_peak_memory_bytes=129,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    assert runtime.prompt_token_count(fallback_request) == len(prompt_text.split()) + max(
+        1,
+        fallback_request.images[0].byte_length // 8,
+    ) + max(1, fallback_request.images[1].byte_length // 8)
+
 
 def test_vision_family_prompt_token_count_clamps_media_minimums() -> None:
     family_config = ResolvedVisionFamilyConfig(
