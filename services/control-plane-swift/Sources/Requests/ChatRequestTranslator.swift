@@ -107,7 +107,7 @@ public struct NormalizedToolDefinition: Sendable, Equatable {
     ) {
         self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedDescription = description?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.description = trimmedDescription?.isEmpty == false ? trimmedDescription! : ""
+        self.description = trimmedDescription.flatMap { $0.isEmpty ? nil : $0 } ?? ""
         let trimmedSchema = jsonSchema.trimmingCharacters(in: .whitespacesAndNewlines)
         self.jsonSchema = trimmedSchema.isEmpty ? "{}" : trimmedSchema
     }
