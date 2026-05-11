@@ -266,6 +266,48 @@ def test_estimate_model_weight_resident_bytes_falls_back_to_top_level_weights(tm
     assert runtime_utils.estimate_model_weight_resident_bytes(str(bundle)) == len(b"weightsadapter")
 
 
+def test_top_level_weight_file_bytes_streams_iterdir_entries(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "flat-model"
+    bundle.mkdir()
+    first = bundle / "model.safetensors"
+    second = bundle / "adapter.npz"
+    log: list[str] = []
+
+    class TrackedIterator:
+        def __init__(self) -> None:
+            self._entries = iter((first, second))
+
+        def __iter__(self) -> "TrackedIterator":
+            return self
+
+        def __next__(self) -> Path:
+            entry = next(self._entries)
+            log.append(f"next:{entry.name}")
+            return entry
+
+    def fake_iterdir(path: Path) -> TrackedIterator:
+        assert path == bundle
+        return TrackedIterator()
+
+    def fake_weight_file_size(path: Path) -> int:
+        log.append(f"size:{path.name}")
+        return 7 if path == first else 11
+
+    monkeypatch.setattr(runtime_utils.Path, "iterdir", fake_iterdir)
+    monkeypatch.setattr(runtime_utils, "_weight_file_size", fake_weight_file_size)
+
+    assert runtime_utils._top_level_weight_file_bytes(bundle) == 18
+    assert log == [
+        "next:model.safetensors",
+        "size:model.safetensors",
+        "next:adapter.npz",
+        "size:adapter.npz",
+    ]
+
+
 def test_estimate_model_weight_resident_bytes_ignores_malformed_index_and_unreadable_directory(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
