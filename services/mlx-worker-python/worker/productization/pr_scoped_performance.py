@@ -120,6 +120,12 @@ def _parse_probe_registry_payload(payload: object) -> tuple[ProbeDefinition, ...
     if not isinstance(payload, list):
         raise ValueError("probe registry must be a JSON list")
     probes: list[ProbeDefinition] = []
+    append_probe = probes.append
+    metric_definition = MetricDefinition
+    probe_definition = ProbeDefinition
+    str_value = str
+    float_value = float
+    bool_value = bool
     for raw_probe in payload:
         if not isinstance(raw_probe, dict):
             raise ValueError("probe registry entries must be JSON objects")
@@ -127,27 +133,27 @@ def _parse_probe_registry_payload(payload: object) -> tuple[ProbeDefinition, ...
         if not isinstance(raw_metrics, list) or not raw_metrics:
             raise ValueError("probe registry metrics must be a non-empty list")
         metrics = tuple(
-            MetricDefinition(
-                key=str(raw_metric["key"]),
-                unit=str(raw_metric.get("unit", "value")),
-                direction=str(raw_metric["direction"]),
-                warn_pct=float(raw_metric.get("warn_pct", 5.0)),
+            metric_definition(
+                key=str_value(raw_metric["key"]),
+                unit=str_value(raw_metric.get("unit", "value")),
+                direction=str_value(raw_metric["direction"]),
+                warn_pct=float_value(raw_metric.get("warn_pct", 5.0)),
             )
             for raw_metric in raw_metrics
             if isinstance(raw_metric, dict)
         )
-        probes.append(
-            ProbeDefinition(
-                probe_id=str(raw_probe["id"]),
-                name=str(raw_probe["name"]),
-                runner=str(raw_probe.get("runner", "ubuntu-latest")),
-                watch_globs=tuple(str(glob) for glob in raw_probe.get("watch_globs", [])),
-                test_command=str(raw_probe.get("test_command", "")).strip(),
-                coverage_command=str(raw_probe.get("coverage_command", "")).strip(),
-                probe_impl=str(raw_probe["probe_impl"]),
-                probe_command=str(raw_probe.get("probe_command", "")).strip(),
+        append_probe(
+            probe_definition(
+                probe_id=str_value(raw_probe["id"]),
+                name=str_value(raw_probe["name"]),
+                runner=str_value(raw_probe.get("runner", "ubuntu-latest")),
+                watch_globs=tuple(str_value(glob) for glob in raw_probe.get("watch_globs", [])),
+                test_command=str_value(raw_probe.get("test_command", "")).strip(),
+                coverage_command=str_value(raw_probe.get("coverage_command", "")).strip(),
+                probe_impl=str_value(raw_probe["probe_impl"]),
+                probe_command=str_value(raw_probe.get("probe_command", "")).strip(),
                 metrics=metrics,
-                coverage_replays_tests=bool(raw_probe.get("coverage_replays_tests", False)),
+                coverage_replays_tests=bool_value(raw_probe.get("coverage_replays_tests", False)),
             )
         )
     return tuple(probes)
