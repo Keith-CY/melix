@@ -189,6 +189,24 @@ struct BatchRunPreflightCheck: Equatable {
     let status: String
     let detail: String
     let actionable: String
+    let category: String
+    let metadata: [String: String]
+
+    init(
+        name: String,
+        status: String,
+        detail: String,
+        actionable: String,
+        category: String = "general",
+        metadata: [String: String] = [:]
+    ) {
+        self.name = name
+        self.status = status
+        self.detail = detail
+        self.actionable = actionable
+        self.category = category
+        self.metadata = metadata
+    }
 
     var isBlocking: Bool {
         status == "blocked"
@@ -200,6 +218,8 @@ struct BatchRunPreflightCheck: Equatable {
             "status": status,
             "detail": detail,
             "actionable": actionable,
+            "category": category,
+            "metadata": metadata,
         ]
     }
 }

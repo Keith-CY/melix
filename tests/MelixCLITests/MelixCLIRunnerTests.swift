@@ -573,6 +573,13 @@ struct MelixCLIRunnerTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try "#!/usr/bin/env bash\n".write(to: cliPath, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cliPath.path)
+        let controlPlanePath = repoRoot.appendingPathComponent(".build/debug/MelixControlPlaneService")
+        try "#!/usr/bin/env bash\n".write(to: controlPlanePath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: controlPlanePath.path)
+        try FileManager.default.createDirectory(
+            at: repoRoot.appendingPathComponent("services/mlx-worker-python/worker", isDirectory: true),
+            withIntermediateDirectories: true
+        )
         try "{}\n".write(to: fixtureRoot.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
         try "{}\n".write(to: fixtureRoot.appendingPathComponent("samples.jsonl"), atomically: true, encoding: .utf8)
         try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
@@ -625,8 +632,32 @@ struct MelixCLIRunnerTests {
         let runtime = try #require(report["runtime"] as? [String: Any])
         #expect(runtime["melix_home"] as? String == melixHome.path)
         let checks = try #require(report["checks"] as? [[String: Any]])
-        #expect(checks.contains { $0["name"] as? String == "model_repo:01" && $0["status"] as? String == "ready" })
-        #expect(checks.contains { $0["name"] as? String == "cache_state" })
+        let checkByName = Dictionary(uniqueKeysWithValues: checks.compactMap { check -> (String, [String: Any])? in
+            guard let name = check["name"] as? String else {
+                return nil
+            }
+            return (name, check)
+        })
+        let isolatedRuntimeCheck = try #require(checkByName["isolated_runtime_config"])
+        #expect(isolatedRuntimeCheck["status"] as? String == "ready")
+        let isolatedMetadata = try #require(isolatedRuntimeCheck["metadata"] as? [String: Any])
+        #expect(isolatedMetadata["bare_default_ports"] as? String == "11434,12436")
+        let controlPlaneCheck = try #require(checkByName["control_plane"])
+        #expect(controlPlaneCheck["status"] as? String == "ready")
+        #expect((try #require(controlPlaneCheck["metadata"] as? [String: Any]))["requires_executable"] as? String == "true")
+        let modelCheck = try #require(checkByName["model_repo:01"])
+        #expect(modelCheck["status"] as? String == "ready")
+        #expect(modelCheck["category"] as? String == "model_resolution")
+        let modelMetadata = try #require(modelCheck["metadata"] as? [String: Any])
+        #expect(modelMetadata["duplicate_count"] as? String == "1")
+        let cacheCheck = try #require(checkByName["cache_state"])
+        #expect(cacheCheck["category"] as? String == "cache")
+        let datasetCheck = try #require(checkByName["dataset"])
+        #expect(datasetCheck["category"] as? String == "dataset")
+        #expect((try #require(datasetCheck["metadata"] as? [String: Any]))["source"] as? String == "repo_fixture")
+        let judgeCheck = try #require(checkByName["judge"])
+        #expect(judgeCheck["category"] as? String == "judge")
+        #expect((try #require(judgeCheck["metadata"] as? [String: Any]))["model_id"] as? String == "gpt-test")
 
         let effectiveConfig = try #require(try parseJSONFile(tempRoot.appendingPathComponent("effective-config.json").path))
         #expect(effectiveConfig["preflight"] as? Bool == true)
@@ -650,6 +681,13 @@ struct MelixCLIRunnerTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try "#!/usr/bin/env bash\n".write(to: cliPath, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cliPath.path)
+        let controlPlanePath = repoRoot.appendingPathComponent(".build/debug/MelixControlPlaneService")
+        try "#!/usr/bin/env bash\n".write(to: controlPlanePath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: controlPlanePath.path)
+        try FileManager.default.createDirectory(
+            at: repoRoot.appendingPathComponent("services/mlx-worker-python/worker", isDirectory: true),
+            withIntermediateDirectories: true
+        )
         try "{}\n".write(to: fixtureRoot.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
         try "{}\n".write(to: fixtureRoot.appendingPathComponent("samples.jsonl"), atomically: true, encoding: .utf8)
         try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
@@ -659,6 +697,7 @@ struct MelixCLIRunnerTests {
             "MELIX_REPO_ROOT": repoRoot.path,
             "MELIX_HOME": melixHome.path,
             "MELIX_CLI": cliPath.path,
+            "MELIX_HTTP_PORT": "12445",
         ])
         let message = try await requireRuntimeError {
             _ = try await runner.run(.batchRun(.init(
@@ -677,6 +716,80 @@ struct MelixCLIRunnerTests {
         let report = try #require(try parseJSONFile(tempRoot.appendingPathComponent("preflight-report.json").path))
         #expect(report["status"] as? String == "blocked")
         #expect(report["blocker_count"] as? Int == 1)
+        let checks = try #require(report["checks"] as? [[String: Any]])
+        let judgeCheck = try #require(checks.first { $0["name"] as? String == "judge" })
+        #expect(judgeCheck["category"] as? String == "judge")
+        let metadata = try #require(judgeCheck["metadata"] as? [String: Any])
+        #expect(metadata["remote_server_id"] as? String == "missing-judge")
+        #expect(metadata["melix_home"] as? String == melixHome.path)
+    }
+
+    @Test("batch preflight blocks bare default batch port")
+    func batchPreflightBlocksBareDefaultBatchPort() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let repoRoot = root.appendingPathComponent("repo")
+        let cliPath = repoRoot.appendingPathComponent(".build/debug/melix")
+        let fixtureRoot = repoRoot
+            .appendingPathComponent("services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.top20.v1", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home")
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        try FileManager.default.createDirectory(at: cliPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: repoRoot.appendingPathComponent("services/mlx-worker-python/worker", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "#!/usr/bin/env bash\n".write(to: cliPath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cliPath.path)
+        let controlPlanePath = repoRoot.appendingPathComponent(".build/debug/MelixControlPlaneService")
+        try "#!/usr/bin/env bash\n".write(to: controlPlanePath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: controlPlanePath.path)
+        try "{}\n".write(to: fixtureRoot.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+        try "{}\n".write(to: fixtureRoot.appendingPathComponent("samples.jsonl"), atomically: true, encoding: .utf8)
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_REPO_ROOT": repoRoot.path,
+            "MELIX_HOME": melixHome.path,
+            "MELIX_CLI": cliPath.path,
+        ])
+        _ = try await runner.run(.remoteServerAdd(.init(
+            remoteServerID: "judge",
+            title: "Judge",
+            providerPreset: .custom,
+            providerKind: "openai-compatible",
+            baseURL: "https://judge.example/v1",
+            defaultModelID: "gpt-test",
+            apiKey: "sk-test-secret",
+            json: true
+        )))
+
+        let message = try await requireRuntimeError {
+            _ = try await runner.run(.batchRun(.init(
+                modelListPath: modelList.path,
+                runID: "preflight-default-port",
+                outputRoot: outputRoot.path,
+                tempRoot: tempRoot.path,
+                judgeRemoteServerID: "judge",
+                judgeModelID: "gpt-test",
+                preflight: true,
+                dryRun: true
+            )))
+        }
+
+        #expect(message.contains("batch mode must not use the bare default Melix stack"))
+        let report = try #require(try parseJSONFile(tempRoot.appendingPathComponent("preflight-report.json").path))
+        let checks = try #require(report["checks"] as? [[String: Any]])
+        let isolatedRuntimeCheck = try #require(checks.first { $0["name"] as? String == "isolated_runtime_config" })
+        #expect(isolatedRuntimeCheck["status"] as? String == "blocked")
+        let metadata = try #require(isolatedRuntimeCheck["metadata"] as? [String: Any])
+        #expect(metadata["http_port"] as? String == "12436")
+        #expect(metadata["bare_default_ports"] as? String == "11434,12436")
     }
 
     @Test("batch failure classifier separates runtime and model failures")

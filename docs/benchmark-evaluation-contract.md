@@ -221,11 +221,21 @@ records:
 - check rows for CLI artifact, runtime directories, output directories, disk
   capacity, cache state, model repo-id shape, dataset materialization, and
   judge config
+- each check row includes `category` and `metadata` fields so later status,
+  resume, and report renderers can group failures without parsing prose
 
 Judge config preflight confirms that the remote-server record and API key exist
 in the isolated `MELIX_HOME`. Provider reachability remains an execution-time
 check until the per-model execution pipeline in #760 is available to run the
 same command surface as the external runner.
+
+Runtime config preflight blocks bare default stack settings. Batch runs must use
+a named instance, an isolated `MELIX_HOME`, an isolated runtime directory, and a
+non-default HTTP port. The gate treats both the current bare default port
+`12436` and the legacy bare default port `11434` as unsafe for long batch mode.
+
+Stack-product preflight verifies the Melix CLI artifact, the control-plane
+executable, and the Python worker entrypoint before a long run starts.
 
 ### Isolation Policy
 
