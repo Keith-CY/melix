@@ -5,7 +5,7 @@ import re
 import socket
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 
 PORT_CONFLICT_PATTERNS = [
@@ -126,25 +126,36 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
 
 
 def compare_versions(left: str, right: str) -> int:
-    left_parts = normalized_version_parts(left)
-    right_parts = normalized_version_parts(right)
-    left_length = len(left_parts)
-    right_length = len(right_parts)
-    for index in range(max(left_length, right_length)):
-        left_value = left_parts[index] if index < left_length else 0
-        right_value = right_parts[index] if index < right_length else 0
+    left_parts = _iter_normalized_version_parts(left)
+    right_parts = _iter_normalized_version_parts(right)
+    while True:
+        left_done = False
+        right_done = False
+        try:
+            left_value = next(left_parts)
+        except StopIteration:
+            left_done = True
+            left_value = 0
+        try:
+            right_value = next(right_parts)
+        except StopIteration:
+            right_done = True
+            right_value = 0
+        if left_done and right_done:
+            return 0
         if left_value < right_value:
             return -1
         if left_value > right_value:
             return 1
-    return 0
 
 
 def normalized_version_parts(value: str) -> list[int]:
+    return list(_iter_normalized_version_parts(value)) or [0]
+
+
+def _iter_normalized_version_parts(value: str) -> Iterator[int]:
     cleaned = value.strip()
     start_index = 1 if cleaned.startswith("v") else 0
-    normalized: list[int] = []
-    append_part = normalized.append
     current_value = 0
     digit_seen = False
     digit_prefix_active = True
@@ -155,7 +166,7 @@ def normalized_version_parts(value: str) -> list[int]:
             break
         if character == ".":
             if part_has_chars:
-                append_part(current_value if digit_seen else 0)
+                yield current_value if digit_seen else 0
             current_value = 0
             digit_seen = False
             digit_prefix_active = True
@@ -163,14 +174,13 @@ def normalized_version_parts(value: str) -> list[int]:
             continue
         part_has_chars = True
         if digit_prefix_active and character.isdigit():
-            current_value = current_value * 10 + int(character)
+            current_value = current_value * 10 + (ord(character) - 48)
             digit_seen = True
         else:
             digit_prefix_active = False
 
     if part_has_chars:
-        append_part(current_value if digit_seen else 0)
-    return normalized or [0]
+        yield current_value if digit_seen else 0
 
 
 def classify_startup_failure(

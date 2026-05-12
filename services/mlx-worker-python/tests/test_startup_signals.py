@@ -104,6 +104,18 @@ def test_compare_versions_handles_suffixes_without_padding_lists() -> None:
     assert compare_versions("2.10", "2.10.0.0") == 0
 
 
+def test_compare_versions_streams_parts_without_materialized_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_normalized_parts(value: str) -> list[int]:  # pragma: no cover - sentinel
+        raise AssertionError(f"compare_versions materialized parts for {value}")
+
+    monkeypatch.setattr(startup_signals_module, "normalized_version_parts", fail_normalized_parts)
+
+    assert compare_versions("v9.10.1+build", "9.10.0.99") == 1
+    assert compare_versions("2.10", "2.10.0.0") == 0
+
+
 def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
