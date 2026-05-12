@@ -256,6 +256,8 @@ class EvaluationCore:
         registry: Any | None = None,
     ) -> None:
         self._jobs_root = Path(jobs_root).resolve() if jobs_root is not None else None
+        self._runs_root = self._jobs_root / "runs" if self._jobs_root is not None else None
+        self._runs_root_initialized = False
         self._store = store or EvaluationStore(probe_policy=ProbePolicy.evidence())
         self._queue_store = queue_store or BenchmarkQueueStore()
         self._registry = registry
@@ -1871,16 +1873,19 @@ class EvaluationCore:
         return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_") or "dialogue"
 
     def _next_job_id(self) -> str:
-        if self._jobs_root is None:
+        runs_root = self._runs_root
+        if runs_root is None:
             return "eval-local"
-        runs_root = self._jobs_root / "runs"
-        runs_root.mkdir(parents=True, exist_ok=True)
         with self._job_id_lock:
+            if not self._runs_root_initialized:
+                runs_root.mkdir(parents=True, exist_ok=True)
+                self._runs_root_initialized = True
             next_index = self._prime_next_job_index(runs_root)
             while True:
                 job_id = f"eval-{next_index:04d}"
+                run_root = runs_root / job_id
                 try:
-                    (runs_root / job_id).mkdir(parents=False, exist_ok=False)
+                    run_root.mkdir(parents=False, exist_ok=False)
                     self._next_job_index = next_index + 1
                     return job_id
                 except FileExistsError:
@@ -1912,9 +1917,10 @@ class EvaluationCore:
         return self._next_job_index
 
     def _run_root(self, job_id: str) -> Path:
-        if self._jobs_root is None:
+        runs_root = self._runs_root
+        if runs_root is None:
             return Path.cwd()
-        return self._jobs_root / "runs" / job_id
+        return runs_root / job_id
 
     def _loaded_model_for_execution(self, model_handle: str | None):
         if not model_handle or self._registry is None:

@@ -951,6 +951,13 @@ def test_next_job_id_skips_conflicting_cached_index_and_non_directory_entries(tm
     assert (runs_root / "eval-0004").is_dir()
 
 
+def test_run_root_reuses_cached_runs_root(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "runs" / "mmlu"
+    runner = EvaluationCore(jobs_root=jobs_root)
+
+    assert runner._run_root("eval-0042") == jobs_root.resolve() / "runs" / "eval-0042"
+
+
 def test_run_local_suite_marks_offline_execution_as_non_evidence(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
