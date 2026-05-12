@@ -107,6 +107,20 @@ swift run melix server wake --json
 swift run melix server start --json
 ```
 
+- To create or rebind a titled local server session and start it in one command, pass the session
+  title plus the model and listener options:
+
+```bash
+swift run melix server start "Gemma 31B" \
+  --model mlx-community/gemma-4-31b-it-4bit \
+  --port 12434 \
+  --json
+```
+
+- The positional value is the session title. New sessions still receive generated identifiers such as
+  `server-session-1`; later shortcut starts reuse an existing session when its identifier or title
+  matches the supplied value.
+
 - If the restart path fails with a `conflict`, wait for in-flight requests to finish and retry.
   The lifecycle smoke harness already applies a short quiescence retry before recording
   `lifecycle.restart_recovery_ms`.

@@ -666,15 +666,33 @@ public struct ServerSnapshotOptions: Equatable, Sendable {
 
 public struct ServerControlOptions: Equatable, Sendable {
     public let serverSessionID: String
+    public let serverTitle: String
+    public let modelID: String
+    public let host: String
+    public let port: Int
+    public let rateLimitPerMinute: Int
+    public let timeoutSeconds: Int
     public let json: Bool
 
     public init(
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        serverTitle: String = "",
+        modelID: String = "",
+        host: String = "",
+        port: Int = 0,
+        rateLimitPerMinute: Int = 0,
+        timeoutSeconds: Int = 0,
         json: Bool = false
     ) {
         self.serverSessionID = serverSessionID.isEmpty
             ? ServerSessionRuntimeStore.defaultServerSessionID
             : serverSessionID
+        self.serverTitle = serverTitle
+        self.modelID = modelID
+        self.host = host
+        self.port = port
+        self.rateLimitPerMinute = rateLimitPerMinute
+        self.timeoutSeconds = timeoutSeconds
         self.json = json
     }
 }
@@ -1602,7 +1620,7 @@ public enum MelixCLIParser {
       melix server session update --server-session-id ID [--title TITLE] [--model-id MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
       melix server session remove --server-session-id ID [--json]
       melix server session select --server-session-id ID [--json]
-      melix server start [--server-session-id ID] [--json]
+      melix server start [TITLE] [--model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--server-session-id ID] [--json]
       melix server pause [--server-session-id ID] [--json]
       melix server resume [--server-session-id ID] [--json]
       melix server wake [--server-session-id ID] [--json]
@@ -2110,14 +2128,15 @@ public enum MelixCLIParser {
         if action == "session" {
             return try parseServerSession(Array(arguments.dropFirst()))
         }
+        if action == "start" {
+            return try parseServerStart(Array(arguments.dropFirst()))
+        }
         let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
         let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
         let json = values.flags.contains("--json")
         switch action {
         case "snapshot":
             return .serverSnapshot(.init(json: json))
-        case "start":
-            return .serverStart(.init(serverSessionID: serverSessionID, json: json))
         case "pause":
             return .serverPause(.init(serverSessionID: serverSessionID, json: json))
         case "resume":
@@ -2157,6 +2176,39 @@ public enum MelixCLIParser {
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseServerStart(_ arguments: [String]) throws -> MelixCLICommand {
+        let serverTitle: String
+        let optionArguments: [String]
+        if let first = arguments.first, first.hasPrefix("--") == false {
+            serverTitle = first
+            optionArguments = Array(arguments.dropFirst())
+        } else {
+            serverTitle = ""
+            optionArguments = arguments
+        }
+        let values = try ArgumentCursor(arguments: optionArguments).parse()
+        let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
+        let json = values.flags.contains("--json")
+        return .serverStart(.init(
+            serverSessionID: serverSessionID,
+            serverTitle: serverTitle,
+            modelID: values.single["--model"] ?? values.single["--model-id"] ?? "",
+            host: values.single["--host"] ?? "",
+            port: try parseIntValue(values.single["--port"], option: "--port", defaultValue: 0) ?? 0,
+            rateLimitPerMinute: try parseIntValue(
+                values.single["--rate-limit-per-minute"],
+                option: "--rate-limit-per-minute",
+                defaultValue: 0
+            ) ?? 0,
+            timeoutSeconds: try parseIntValue(
+                values.single["--timeout-seconds"],
+                option: "--timeout-seconds",
+                defaultValue: 0
+            ) ?? 0,
+            json: json
+        ))
     }
 
     private static func parseServerSession(_ arguments: [String]) throws -> MelixCLICommand {
@@ -4839,9 +4891,8 @@ public actor MelixCLIRunner {
         case .serverSessionCreate(let options):
             var createdID = ""
             let state = try mutateOperatorState { current in
-                let nextIndex = current.serverSessions.count + 1
                 let created = MelixOperatorServerSessionState(
-                    id: "server-session-\(nextIndex)",
+                    id: nextGeneratedServerSessionID(in: current.serverSessions),
                     title: options.title,
                     modelID: options.modelID,
                     host: options.host,
@@ -4924,8 +4975,9 @@ public actor MelixCLIRunner {
             }
             return renderServerSessions(state)
         case .serverStart(let options):
-            guard let configuredSession = try configuredServerSessionIfAvailable(id: options.serverSessionID) else {
-                let snapshot = try await client.startServerSession(serverSessionID: options.serverSessionID)
+            let targetServerSessionID = try upsertServerSessionForStartIfNeeded(options)
+            guard let configuredSession = try configuredServerSessionIfAvailable(id: targetServerSessionID) else {
+                let snapshot = try await client.startServerSession(serverSessionID: targetServerSessionID)
                 return try renderServerSnapshot(snapshot, json: options.json)
             }
             let serverSnapshot = try await client.serverSnapshot()
@@ -6262,6 +6314,80 @@ public actor MelixCLIRunner {
         } catch {
             throw error
         }
+    }
+
+    private func upsertServerSessionForStartIfNeeded(_ options: ServerControlOptions) throws -> String {
+        let title = options.serverTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelID = options.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = options.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasShortcutConfiguration = title.isEmpty == false
+            || modelID.isEmpty == false
+            || host.isEmpty == false
+            || options.port > 0
+            || options.rateLimitPerMinute > 0
+            || options.timeoutSeconds > 0
+        guard hasShortcutConfiguration else {
+            return options.serverSessionID
+        }
+        guard title.isEmpty == false else {
+            throw MelixCLIError.missingRequired("TITLE is required when passing --model, --host, --port, --rate-limit-per-minute, or --timeout-seconds to melix server start.")
+        }
+        guard modelID.isEmpty == false else {
+            throw MelixCLIError.missingRequired("--model is required when starting a titled server session.")
+        }
+
+        var resolvedID = ""
+        let state = try mutateOperatorState { current in
+            if let index = current.serverSessions.firstIndex(where: { $0.id == title || $0.title == title }) {
+                var session = current.serverSessions[index]
+                session.title = title
+                session.modelID = modelID
+                if host.isEmpty == false {
+                    session.host = host
+                }
+                if options.port > 0 {
+                    session.port = options.port
+                }
+                if options.rateLimitPerMinute > 0 {
+                    session.rateLimitPerMinute = options.rateLimitPerMinute
+                }
+                if options.timeoutSeconds > 0 {
+                    session.timeoutSeconds = options.timeoutSeconds
+                }
+                session.updatedAt = Date()
+                current.serverSessions[index] = session
+                current.selectedServerSessionID = session.id
+                resolvedID = session.id
+            } else {
+                let created = MelixOperatorServerSessionState(
+                    id: nextGeneratedServerSessionID(in: current.serverSessions),
+                    title: title,
+                    modelID: modelID,
+                    host: host.isEmpty ? "127.0.0.1" : host,
+                    port: options.port > 0 ? options.port : 8080,
+                    rateLimitPerMinute: options.rateLimitPerMinute > 0 ? options.rateLimitPerMinute : 120,
+                    timeoutSeconds: options.timeoutSeconds > 0 ? options.timeoutSeconds : 120,
+                    lifecycle: .draft
+                )
+                current.serverSessions.append(created)
+                current.selectedServerSessionID = created.id
+                resolvedID = created.id
+            }
+        }
+        guard resolvedID.isEmpty == false,
+              state.serverSessions.contains(where: { $0.id == resolvedID }) else {
+            throw MelixCLIError.runtime("Server session titled \(title) could not be created.")
+        }
+        return resolvedID
+    }
+
+    private func nextGeneratedServerSessionID(in sessions: [MelixOperatorServerSessionState]) -> String {
+        let existingIDs = Set(sessions.map(\.id))
+        var index = 1
+        while existingIDs.contains("server-session-\(index)") {
+            index += 1
+        }
+        return "server-session-\(index)"
     }
 
     private func markServerSessionUnavailable(

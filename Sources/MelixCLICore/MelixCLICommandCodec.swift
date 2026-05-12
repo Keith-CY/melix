@@ -338,7 +338,16 @@ public enum MelixCLICommandCodec {
             json = options.json
         case .serverStart(let options):
             arguments = ["server", "start"]
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            if options.serverTitle.isEmpty == false {
+                arguments.append(options.serverTitle)
+            } else {
+                appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            }
+            appendOption("--model", value: options.modelID, into: &arguments)
+            appendOption("--host", value: options.host, into: &arguments)
+            appendPositiveInt("--port", value: options.port, into: &arguments)
+            appendPositiveInt("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
+            appendPositiveInt("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
             json = options.json
         case .serverPause(let options):
             arguments = ["server", "pause"]
