@@ -8943,6 +8943,9 @@ public final class RuntimeViewModel {
         }
 
         evaluationHistory = benchmarkExportBundle.evaluationHistoryEntries().map(Self.makeEvaluationHistoryEntryState)
+        if evaluationHistory.contains(where: { $0.jobID == selectedEvaluationHistoryJobID }) == false {
+            selectedEvaluationHistoryJobID = evaluationHistory.first?.jobID ?? ""
+        }
         let selectedHistoryJobID = selectedEvaluationHistoryJobID.isEmpty ? (evaluationHistory.first?.jobID ?? "") : selectedEvaluationHistoryJobID
         if selectedEvaluationHistoryJobID != selectedHistoryJobID {
             selectedEvaluationHistoryJobID = selectedHistoryJobID

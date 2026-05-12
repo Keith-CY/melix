@@ -6651,6 +6651,26 @@ struct RuntimeViewModelTests {
         #expect(metricCard.analyticalCIText.isEmpty)
     }
 
+    @Test("evaluation export recovers stale selected history job after bundle refresh")
+    @MainActor
+    func evaluationExportRecoversStaleSelectedHistoryJobAfterBundleRefresh() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.selectedEvaluationHistoryJobID = "eval-compare-1"
+
+        await viewModel.exportSelectedEvaluationSummaryCSV()
+
+        let summaryExport = try #require(viewModel.lastEvaluationExport)
+        #expect(viewModel.selectedEvaluationHistoryJobID == "eval-newer")
+        #expect(summaryExport.formatTitle == "summary.csv")
+        #expect(summaryExport.rowCount == 1)
+    }
+
     @Test("benchmark matrix evaluation and exports use the shared operator command runner when available")
     @MainActor
     func benchmarkMatrixEvaluationAndExportsUseSharedOperatorCommandRunnerWhenAvailable() async throws {
