@@ -270,6 +270,7 @@ def test_report_evidence_gate_covers_invalid_payload_and_edge_summaries(tmp_path
     assert gate["passed"] is False
     assert gate["release_matrix"][0]["present"] is True
     assert "telemetry_summary_missing" in gate["reports"][0]["telemetry_failures"]
+    assert gate["reports"][0]["evidence_validity_metrics"] == {}
     assert gate["reports"][0]["slowest_probe_phases"] == []
     assert report_evidence_gate_module._probe_phases({"probe_summary": []}) == set()
     assert report_evidence_gate_module._dict_list({"not": "a list"}) == []

@@ -2093,6 +2093,8 @@ def test_registered_probes_expose_focused_commands() -> None:
         "mlx-audio-speech-signature-cache",
         "video-preprocessing-uri-byte-length-reuse",
         "vision-family-prompt-token-count-scan",
+        "probe-policy-noop-overhead",
+        "serving-diagnostics-debug-queue-bounds",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-answer-normalization-fast-path",
         "evaluation-dialogue-diagnostics-top-k",
@@ -2225,6 +2227,101 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert swift_probe.probe_command.startswith("python3 - <<'PY'")
     assert "stdout=sys.stderr" in swift_probe.probe_command
     assert "stderr=sys.stderr" in swift_probe.probe_command
+
+
+def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -> None:
+    registry_payload = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    seen_ids: set[str] = set()
+    for raw_probe in registry_payload:
+        probe_id = raw_probe["id"]
+        assert probe_id not in seen_ids
+        seen_ids.add(probe_id)
+        assert raw_probe.get("watch_globs"), f"{probe_id} must declare changed-file globs"
+        assert raw_probe.get("test_command", "").strip(), f"{probe_id} must declare a focused test command"
+        assert raw_probe.get("coverage_command", "").strip(), f"{probe_id} must declare a coverage command"
+        assert raw_probe.get("probe_command", "").strip() or raw_probe.get("probe_impl") != "command_json"
+        assert raw_probe.get("metrics"), f"{probe_id} must declare metrics"
+        for glob in raw_probe.get("watch_globs", []):
+            assert str(glob).startswith("/") is False
+            assert ".." not in Path(str(glob)).parts
+
+    by_id = {raw_probe["id"]: raw_probe for raw_probe in registry_payload}
+    for probe_id in ("probe-policy-noop-overhead", "serving-diagnostics-debug-queue-bounds"):
+        watch_globs = by_id[probe_id]["watch_globs"]
+        probe_command = by_id[probe_id]["probe_command"]
+        assert "scripts/changed_scope_coverage.py" in watch_globs
+        assert "services/mlx-worker-python/tests/test_pr_scoped_performance.py" in watch_globs
+        assert "../head/$SCRIPT" in probe_command
+        assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in probe_command
+
+    probe_policy_metrics = {
+        metric["key"]: metric for metric in by_id["probe-policy-noop-overhead"]["metrics"]
+    }
+    assert probe_policy_metrics["no_op_recorder_overhead_pct"]["direction"] == "lower_is_better"
+    assert probe_policy_metrics["no_op_policy_check_overhead_pct"]["direction"] == "informational"
+
+
+def test_scope_report_selects_probe_policy_overhead_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/probe_policy_overhead.py"
+        ],
+    )
+
+    assert "probe-policy-noop-overhead" in {probe["id"] for probe in scope["selected_probes"]}
+
+
+def test_scope_report_selects_serving_diagnostics_queue_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/serving_diagnostics.py"
+        ],
+    )
+
+    assert "serving-diagnostics-debug-queue-bounds" in {
+        probe["id"] for probe in scope["selected_probes"]
+    }
+
+
+def test_probe_policy_noop_overhead_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_PROBE_POLICY_OVERHEAD_ITERATIONS", "32")
+    monkeypatch.setenv("MELIX_PROBE_POLICY_OVERHEAD_SAMPLES", "1")
+    monkeypatch.setattr(sys, "argv", ["probe_policy_noop_overhead_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/probe_policy_noop_overhead_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["iteration_count"] == 32.0
+    assert metrics["sample_count"] == 1.0
+    assert "no_op_recorder_overhead_pct" in metrics
+    assert "no_op_policy_check_overhead_pct" in metrics
+
+
+def test_serving_diagnostics_queue_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_SERVING_DIAGNOSTICS_QUEUE_CAPACITY", "4")
+    monkeypatch.setenv("MELIX_SERVING_DIAGNOSTICS_QUEUE_EVENTS", "10")
+    monkeypatch.setenv("MELIX_SERVING_DIAGNOSTICS_QUEUE_SAMPLES", "1")
+    monkeypatch.setattr(sys, "argv", ["serving_diagnostics_queue_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/serving_diagnostics_queue_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["capacity"] == 4.0
+    assert metrics["event_count"] == 10.0
+    assert metrics["retained_count"] == 4.0
+    assert metrics["dropped_count"] == 6.0
 
 
 def test_load_probe_registry_uses_absolute_cache_key_without_resolving(

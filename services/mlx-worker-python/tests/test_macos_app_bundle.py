@@ -4,7 +4,10 @@ import json
 import plistlib
 from pathlib import Path
 
+import pytest
+
 from worker.productization.macos_app_bundle import (
+    _copy_packaged_script,
     archive_macos_app_bundle,
     build_macos_app_bundle_layout,
     render_info_plist,
@@ -351,3 +354,21 @@ def test_archive_macos_app_bundle_creates_zip(tmp_path: Path) -> None:
 
     assert result == archive_path
     assert archive_path.exists() is True
+
+
+def test_packaged_script_copy_rejects_ci_only_probe_scripts(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    scripts_root = repo_root / "scripts"
+    scripts_root.mkdir(parents=True)
+    (scripts_root / "wait_for_worker_ready.py").write_text("print('wait')\n", encoding="utf-8")
+    (scripts_root / "synthetic_probe.py").write_text("print('probe')\n", encoding="utf-8")
+    target_root = tmp_path / "target-scripts"
+    target_root.mkdir()
+
+    _copy_packaged_script(repo_root, target_root, "wait_for_worker_ready.py")
+
+    assert (target_root / "wait_for_worker_ready.py").is_file()
+    with pytest.raises(ValueError, match="CI-only probe script"):
+        _copy_packaged_script(repo_root, target_root, "synthetic_probe.py")
+    with pytest.raises(ValueError, match="CI-only probe script"):
+        _copy_packaged_script(repo_root, target_root, "pr_scoped_performance_run.py")

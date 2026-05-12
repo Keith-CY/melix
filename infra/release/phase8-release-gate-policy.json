@@ -368,6 +368,23 @@
       }
     }
   },
+  "observability": {
+    "evidence.required_artifact_validity_passed": {
+      "min": 1.0
+    },
+    "probe_policy.noop_overhead_threshold_passed": {
+      "min": 1.0
+    },
+    "probe_policy.noop_recorder_overhead_pct": {
+      "max": 5.0
+    },
+    "probe_policy.production_sampler_invocations": {
+      "max": 0.0
+    },
+    "serving_diagnostics.debug_queue_bounded": {
+      "min": 1.0
+    }
+  },
   "training": {
     "adapter_publish_ms": {
       "max": 150.0

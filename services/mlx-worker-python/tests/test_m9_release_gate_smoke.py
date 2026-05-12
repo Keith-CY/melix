@@ -30,6 +30,7 @@ def test_main_prints_passing_smoke_payload(
                 "release_gate.m9_required_probe_count": 23.0,
                 "release_gate.m9_missing_probe_count": 0.0,
                 "release_gate.m9_failed_threshold_count": 0.0,
+                "release_gate.observability_required_artifact_validity_passed": 1.0,
             },
         },
     )
@@ -44,6 +45,7 @@ def test_main_prints_passing_smoke_payload(
 
     assert '"passed": true' in output
     assert '"release_gate.m9_required_probe_count": 23.0' in output
+    assert '"release_gate.observability_required_artifact_validity_passed": 1.0' in output
 
 
 def test_main_returns_nonzero_for_failing_fixture(
@@ -89,3 +91,4 @@ def test_run_smoke_passes_for_passing_fixture() -> None:
     payload = m9_release_gate_smoke.run_smoke(REPO_ROOT, "passing")
 
     assert payload["passed"] is True
+    assert payload["metrics"]["release_gate.observability_required_artifact_validity_passed"] == 1.0

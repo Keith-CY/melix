@@ -22,4 +22,5 @@
 - [ ] Dependency changes include updated lockfiles.
 - [ ] Relevant tests were run.
 - [ ] A metrics report is included, or `N/A` is stated explicitly with the reason.
+- [ ] Observability mode, probe overhead, and any deferred debug or evidence work are recorded, or `N/A` is stated explicitly with the reason.
 - [ ] Deferred work and known gaps are stated explicitly.

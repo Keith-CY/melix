@@ -227,6 +227,9 @@ def _analyze_report(
         else [],
         "telemetry_failures": telemetry_failures,
         "slowest_probe_phases": _slowest_probe_phases(report),
+        "evidence_validity_metrics": gate_result.get("evidence_validity_metrics", {})
+        if isinstance(gate_result.get("evidence_validity_metrics"), dict)
+        else {},
         "release_matrix_roles": _report_matrix_roles(report, matrix),
     }
 

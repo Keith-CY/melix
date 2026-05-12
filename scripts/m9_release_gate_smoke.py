@@ -25,6 +25,7 @@ def run_smoke(repo_root: Path, fixture_mode: str) -> dict[str, object]:
     report = _build_fixture_report(policy, fixture_mode)
     failures = evaluate_release_gate(report, policy)
     m9_summary = dict(report["m9"]["summary"])
+    observability_evidence = dict(report.get("observability", {}).get("evidence", {}))
 
     return {
         "passed": not failures,
@@ -39,6 +40,9 @@ def run_smoke(repo_root: Path, fixture_mode: str) -> dict[str, object]:
             ),
             "release_gate.m9_failed_threshold_count": float(
                 m9_summary.get("failed_threshold_count", 0.0)
+            ),
+            "release_gate.observability_required_artifact_validity_passed": float(
+                observability_evidence.get("required_artifact_validity_passed", 0.0)
             ),
         },
     }
@@ -138,8 +142,8 @@ def _build_fixture_report(
         },
         "evaluation_compare": _build_passing_evaluation_compare_report(),
         "real_workload": _build_passing_real_workload_report(),
-        "lora_path": _build_passing_lora_path_report(),
         "m9": m9,
+        "observability": _build_passing_observability_report(),
         "lora_path": _build_passing_lora_path_report(),
     }
     if fixture_mode == "passing" and m9_failures:
@@ -327,6 +331,25 @@ def _build_passing_lora_path_report() -> dict[str, object]:
             "stages_success_count": float(len(stage_durations_ms)),
             "stages_failure_count": 0.0,
             "full_path_success": 1.0,
+        },
+    }
+
+
+def _build_passing_observability_report() -> dict[str, object]:
+    return {
+        "probe_policy": {
+            "noop_overhead_threshold_passed": 1.0,
+            "noop_recorder_overhead_pct": 0.5,
+            "noop_policy_check_overhead_pct": 0.5,
+            "production_sampler_invocations": 0.0,
+        },
+        "evidence": {
+            "required_artifact_validity_passed": 1.0,
+        },
+        "serving_diagnostics": {
+            "debug_queue_bounded": 1.0,
+            "debug_queue_dropped_event_count": 24.0,
+            "debug_queue_retained_event_count": 8.0,
         },
     }
 

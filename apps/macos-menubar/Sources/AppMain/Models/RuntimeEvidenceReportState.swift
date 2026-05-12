@@ -65,6 +65,12 @@ public struct RuntimeEvidenceReportTelemetryRow: Identifiable, Equatable, Sendab
     public let failureText: String
 }
 
+public struct RuntimeEvidenceReportValidityRow: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let metric: String
+    public let valueText: String
+}
+
 public struct RuntimeEvidenceReportProcessRow: Identifiable, Equatable, Sendable {
     public let id: String
     public let side: String
@@ -93,6 +99,7 @@ public struct RuntimeEvidenceReportState: Equatable, Sendable {
     public let metricRows: [RuntimeEvidenceReportMetricRow]
     public let probeRows: [RuntimeEvidenceReportProbeRow]
     public let telemetryRows: [RuntimeEvidenceReportTelemetryRow]
+    public let evidenceValidityRows: [RuntimeEvidenceReportValidityRow]
     public let processRows: [RuntimeEvidenceReportProcessRow]
     public let artifactRows: [RuntimeEvidenceReportArtifactRow]
     public let csvArtifactRows: [RuntimeEvidenceReportArtifactRow]
@@ -184,6 +191,7 @@ public struct RuntimeEvidenceReportState: Equatable, Sendable {
 
         probeRows = Self.makeProbeRows(payload.probeSummary)
         telemetryRows = Self.makeTelemetryRows(payload.telemetrySummary)
+        evidenceValidityRows = Self.makeEvidenceValidityRows(payload.gateResult)
         processRows = Self.makeProcessRows(payload.processAttribution)
         artifactRows = Self.makeArtifactRows(payload.artifacts)
         csvArtifactRows = artifactRows.filter { $0.detailText == "CSV export" }
@@ -212,12 +220,48 @@ public struct RuntimeEvidenceReportState: Equatable, Sendable {
                 detail: "\(payload.sourceEvidenceIDs.count) evidence IDs"
             ),
             RuntimeEvidenceReportSummaryItem(
+                id: "evidence-validity",
+                title: "Evidence Validity",
+                value: Self.evidenceValidityValue(payload.gateResult),
+                detail: "\(evidenceValidityRows.count) validity metrics"
+            ),
+            RuntimeEvidenceReportSummaryItem(
                 id: "hardware",
                 title: "Hardware Telemetry",
                 value: telemetryRows.isEmpty ? "Missing" : "Available",
                 detail: "\(telemetryRows.filter { $0.failureText.isEmpty == false }.count) telemetry gaps"
             ),
         ]
+    }
+
+    private static func makeEvidenceValidityRows(
+        _ gate: RuntimeEvidenceReportGateResultPayload
+    ) -> [RuntimeEvidenceReportValidityRow] {
+        gate.evidenceValidityMetrics
+            .sorted { $0.key < $1.key }
+            .map { key, value in
+                RuntimeEvidenceReportValidityRow(
+                    id: key,
+                    metric: titleText(key),
+                    valueText: metricValueText(value)
+                )
+            }
+    }
+
+    private static func evidenceValidityValue(
+        _ gate: RuntimeEvidenceReportGateResultPayload
+    ) -> String {
+        let requiredKeys = [
+            "required_evidence_present",
+            "required_probe_phases_present",
+            "required_telemetry_present",
+        ]
+        let metrics = gate.evidenceValidityMetrics
+        guard metrics.isEmpty == false else {
+            return "Missing"
+        }
+        let passed = requiredKeys.allSatisfy { (metrics[$0] ?? 0.0) >= 1.0 }
+        return passed ? "Present" : "Missing"
     }
 
     private static func makeRunRow(
@@ -910,17 +954,49 @@ private struct RuntimeEvidenceReportGateResultPayload: Decodable {
     let overallResult: String
     let blockingFailures: [RuntimeEvidenceReportMetricPayload]
     let informationalResults: [RuntimeEvidenceReportMetricPayload]
+    let evidenceValidityMetrics: [String: Double]
 
     static let empty = RuntimeEvidenceReportGateResultPayload(
         overallResult: "",
         blockingFailures: [],
-        informationalResults: []
+        informationalResults: [],
+        evidenceValidityMetrics: [:]
     )
 
     enum CodingKeys: String, CodingKey {
         case overallResult = "overall_result"
         case blockingFailures = "blocking_failures"
         case informationalResults = "informational_results"
+        case evidenceValidityMetrics = "evidence_validity_metrics"
+    }
+
+    init(
+        overallResult: String,
+        blockingFailures: [RuntimeEvidenceReportMetricPayload],
+        informationalResults: [RuntimeEvidenceReportMetricPayload],
+        evidenceValidityMetrics: [String: Double]
+    ) {
+        self.overallResult = overallResult
+        self.blockingFailures = blockingFailures
+        self.informationalResults = informationalResults
+        self.evidenceValidityMetrics = evidenceValidityMetrics
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        overallResult = try container.decodeIfPresent(String.self, forKey: .overallResult) ?? ""
+        blockingFailures = try container.decodeIfPresent(
+            [RuntimeEvidenceReportMetricPayload].self,
+            forKey: .blockingFailures
+        ) ?? []
+        informationalResults = try container.decodeIfPresent(
+            [RuntimeEvidenceReportMetricPayload].self,
+            forKey: .informationalResults
+        ) ?? []
+        evidenceValidityMetrics = try container.decodeIfPresent(
+            [String: Double].self,
+            forKey: .evidenceValidityMetrics
+        ) ?? [:]
     }
 }
 

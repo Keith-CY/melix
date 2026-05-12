@@ -96,6 +96,15 @@ Apple Silicon host memory, process telemetry peaks, and benchmark
 `peak_memory_bytes` remain separate telemetry or runtime-probe signals and must
 not be presented as model-weight residency.
 
+`telemetry_summary` reports host and process instrumentation status. It may
+include `memory_used_bytes`, `memory_total_bytes`, and
+`peak_process_memory_bytes`; those fields describe the host or process envelope,
+not the resident weight footprint of the selected model. Production health
+counters are likewise separate from evidence telemetry: they may expose already
+computed request counts or throughput counters, but they must not be promoted to
+model residency evidence unless the same value is also present in
+`model_memory_summary`.
+
 ## Probe Timeline
 
 Every material stage records a structured probe. A missing probe is a verifier
@@ -215,6 +224,10 @@ rather than starting heavyweight traces or extra token accounting.
 Request events are newline-delimited JSON rows. Prefill is a first-class phase
 when a request reaches prefill. Event attributes must remain small and must not
 include full prompts, full responses, credentials, or operator secrets.
+Debug event queues are bounded. Queue saturation drops the oldest debug events
+and increments the manifest's `dropped_event_count`; it must not block serving
+request progress. The manifest also records `event_count` for the retained
+events written to `events.jsonl`.
 
 Baseline-vs-accelerated comparison artifacts are written as:
 
@@ -485,6 +498,15 @@ Release-gate and PR-evidence reports include:
 - `required_evidence_present`
 - `required_probe_phases_present`
 - `required_telemetry_present`
+- `evidence_validity_metrics`
+
+`evidence_validity_metrics` contains numeric counters for required evidence
+presence. Current keys include `source_evidence_count`,
+`required_evidence_present`, `required_probe_phases_present`,
+`required_telemetry_present`, `known_gap_count`, and
+`blocking_failure_count`. Missing source evidence, probe timelines, or telemetry
+summaries are blocking failures for evidence-mode reports rather than
+informational downgrades.
 
 ### Artifacts
 

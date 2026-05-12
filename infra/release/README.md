@@ -4,10 +4,10 @@ This directory stores versioned release-gate policy and workflow assets for Meli
 
 Current assets:
 
-- `phase8-release-gate-policy.json`: deterministic release thresholds for install, benchmark, recovery, and training evidence
+- `phase8-release-gate-policy.json`: deterministic release thresholds for install, benchmark, recovery, training, M9, and observability evidence
 - `quantization-release-gate-policy.json`: deterministic thresholds for `q2` through `q8` quantization benchmark evidence
 
-The checked-in `phase8-release-gate-policy.json` also now includes the quantization section so the main release gate can fail closed on quantization regressions.
+The checked-in `phase8-release-gate-policy.json` also now includes quantization and observability sections so the main release gate can fail closed on quantization regressions, missing evidence validity metrics, production telemetry sampler leakage, or unbounded debug diagnostics queues.
 
 Release gate automation is driven by:
 

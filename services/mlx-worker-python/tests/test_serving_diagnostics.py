@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from worker.productization.serving_diagnostics import (
+    BoundedServingDiagnosticsEventQueue,
     ServingDiagnosticsComparisonError,
     ServingDiagnosticsEvent,
     ServingDiagnosticsRequestSummary,
@@ -116,6 +117,58 @@ def test_serving_diagnostics_bundle_writes_stable_layout_and_prefill_fields(
             "attributes": {"cache_hit_tokens": 96, "prefill_chunk_size": 64},
         }
     ]
+
+
+def test_serving_diagnostics_bounded_queue_drops_oldest_without_blocking(
+    tmp_path: Path,
+) -> None:
+    queue = BoundedServingDiagnosticsEventQueue(max_events=2)
+    assert queue.append(
+        ServingDiagnosticsEvent(request_id="req-queue", phase="prefill", event_index=0, status="completed")
+    ) is True
+    assert queue.append(
+        ServingDiagnosticsEvent(request_id="req-queue", phase="decode", event_index=1, status="completed")
+    ) is True
+    assert queue.append(
+        ServingDiagnosticsEvent(request_id="req-queue", phase="decode", event_index=2, status="completed")
+    ) is False
+    snapshot = queue.snapshot()
+    assert snapshot.dropped_count == 1
+    assert [event.event_index for event in snapshot.events] == [1, 2]
+
+    summary = ServingDiagnosticsRequestSummary(
+        request_id="req-queue",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-queue",
+        invocation={},
+        effective_config={},
+        model_refs={},
+        request_summary=summary,
+        events=snapshot,
+        diagnostics_mode="debug",
+    )
+
+    manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
+    assert manifest["public_performance_claim_eligible"] is False
+    assert manifest["event_count"] == 2
+    assert manifest["dropped_event_count"] == 1
+    event_rows = [
+        json.loads(line)
+        for line in paths["events"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["event_index"] for row in event_rows] == [1, 2]
 
 
 def test_serving_diagnostics_summary_defaults_throughput_to_float_zero() -> None:

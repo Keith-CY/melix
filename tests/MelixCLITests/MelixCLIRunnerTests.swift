@@ -8895,6 +8895,31 @@ struct MelixCLIRunnerTests {
         #expect(Bool(true))
     }
 
+    @Test("diagnostics probe policy uses safe defaults unless debug mode is requested")
+    func diagnosticsProbePolicyPayloadUsesSafeDefaults() {
+        let emptyPolicy = MelixDiagnosticsStore.probePolicyPayload(environment: [:])
+        #expect(emptyPolicy["mode"] as? String == "minimal")
+        #expect(emptyPolicy["fallback_applied"] as? Bool == false)
+        #expect(emptyPolicy["detailed_telemetry_enabled"] as? Bool == false)
+        #expect(emptyPolicy["debug_artifacts_enabled"] as? Bool == false)
+
+        let invalidPolicy = MelixDiagnosticsStore.probePolicyPayload(
+            environment: ["MELIX_PROBE_MODE": "unexpected"]
+        )
+        #expect(invalidPolicy["mode"] as? String == "minimal")
+        #expect(invalidPolicy["fallback_applied"] as? Bool == true)
+        #expect(invalidPolicy["detailed_telemetry_enabled"] as? Bool == false)
+        #expect(invalidPolicy["debug_artifacts_enabled"] as? Bool == false)
+
+        let debugPolicy = MelixDiagnosticsStore.probePolicyPayload(
+            environment: ["MELIX_PROBE_MODE": "debug"]
+        )
+        #expect(debugPolicy["mode"] as? String == "debug")
+        #expect(debugPolicy["fallback_applied"] as? Bool == false)
+        #expect(debugPolicy["detailed_telemetry_enabled"] as? Bool == true)
+        #expect(debugPolicy["debug_artifacts_enabled"] as? Bool == true)
+    }
+
     @Test("lora list fails when the server snapshot has no models")
     func loraListFailsWhenServerSnapshotIsEmpty() async throws {
         let client = StubControlPlaneXPCClient()
@@ -8959,6 +8984,7 @@ struct MelixCLIRunnerTests {
                 "MELIX_HOME": root.path,
                 "MELIX_API_KEY": "sk-secret-env",
                 "MELIX_LOGS_DIR": root.appendingPathComponent("logs").path,
+                "MELIX_PROBE_MODE": "debug",
             ]
         )
 
@@ -9096,6 +9122,11 @@ struct MelixCLIRunnerTests {
         let bundleEnv = try String(contentsOf: bundleOutputRoot.appendingPathComponent("redacted-env.json"), encoding: .utf8)
         let bundleCommand = try String(contentsOf: bundleOutputRoot.appendingPathComponent("command.txt"), encoding: .utf8)
         let bundleConfig = try String(contentsOf: bundleOutputRoot.appendingPathComponent("effective-config.json"), encoding: .utf8)
+        let bundleManifestData = try Data(contentsOf: bundleOutputRoot.appendingPathComponent("manifest.json"))
+        let bundleManifest = try #require(
+            JSONSerialization.jsonObject(with: bundleManifestData) as? [String: Any]
+        )
+        let probePolicy = try #require(bundleManifest["probe_policy"] as? [String: Any])
         #expect(bundleLogs.contains("sk-secret-log") == false)
         #expect(bundleEnv.contains("sk-secret-env") == false)
         #expect(bundleCommand.contains("hidden-prompt-token") == false)
@@ -9103,6 +9134,10 @@ struct MelixCLIRunnerTests {
         #expect(bundleConfig.contains("sk-secret-header") == false)
         #expect(bundleConfig.contains("sk-secret-path") == false)
         #expect(bundleEnv.contains("<redacted:"))
+        #expect(probePolicy["mode"] as? String == "debug")
+        #expect(bundleManifest["debug_artifact_policy"] as? String == "explicit_cli_command")
+        #expect(bundleManifest["debug_jsonl_enabled"] as? Bool == true)
+        #expect(bundleManifest["debug_jsonl_event_limit"] as? Int == 256)
 
         let emptyList = try await runner.run(.runsList(.init(sourcePath: root.appendingPathComponent("missing").path)))
         #expect(emptyList == "No run records found.\n")
