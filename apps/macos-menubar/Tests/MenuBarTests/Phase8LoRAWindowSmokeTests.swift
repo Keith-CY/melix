@@ -133,6 +133,7 @@ struct Phase8LoRAWindowSmokeTests {
             foundation: viewModel.desktopFoundationState
         )
         await diagnosticsSection.runEvaluationCompare()
+        viewModel.selectEvaluationHistory(jobID: "eval-newer")
         await viewModel.exportSelectedEvaluationSummaryCSV()
         await trainingSection.removeDerivedModel()
 
@@ -350,7 +351,7 @@ private func phase8LoRAWindowCompareResult(
     derivedModelID: String
 ) -> ControlPlaneEvaluationResult {
     var job = Melix_Controlplane_V1_EvaluationJobSummary()
-    job.jobID = "eval-compare-1"
+    job.jobID = "eval-newer"
     job.modelID = baseModelID
     job.taskKind = "text-generation"
     job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
@@ -359,7 +360,7 @@ private func phase8LoRAWindowCompareResult(
     job.sampleSize = 6
     job.scoringMode = "multiple_choice_accuracy"
     job.status = "completed"
-    job.outputDir = "/tmp/melix/evaluation/runs/eval-compare-1"
+    job.outputDir = "/tmp/melix/evaluation/runs/eval-newer"
     job.createdAtUnixMs = 1_712_400_000_000
     job.updatedAtUnixMs = 1_712_400_001_000
 
@@ -369,12 +370,12 @@ private func phase8LoRAWindowCompareResult(
     metric.unit = "ratio"
 
     var result = Melix_Controlplane_V1_EvaluationResultSummary()
-    result.jobID = "eval-compare-1"
+    result.jobID = "eval-newer"
     result.suiteID = "mmlu:\(derivedModelID)"
     result.datasetID = "mmlu.dev.v1"
     result.sampleSize = 6
     result.metrics = [metric]
-    result.reportPath = "/tmp/melix/evaluation/runs/eval-compare-1/\(derivedModelID)-result.json"
+    result.reportPath = "/tmp/melix/evaluation/runs/eval-newer/\(derivedModelID)-result.json"
     return ControlPlaneEvaluationResult(job: job, results: [result])
 }
 
