@@ -29,7 +29,12 @@ from worker.model_ops.lora_training_pipeline import (
     _resolve_adapter_scope_metadata,
     _validated_resume_path,
 )
+from worker.model_ops.multimodal_lora_contracts import (
+    audit_adapter_checkpoint,
+    finite_masked_softmax,
+)
 from worker.model_ops.mlx_lm_runner import MLXLMRunner
+from worker.model_ops.mlx_lm_runner import TrainingMetrics, TrainingRequest, TrainingResult
 from worker.model_ops.training_dataset import HFDatasetReference, load_training_dataset_package, materialize_hf_training_dataset_package
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent, RuntimeUnavailableError
 
@@ -142,6 +147,290 @@ def test_lora_training_pipeline_uses_component_scope_metadata_for_gemma4_vlm(tmp
     assert result.manifest["component_model_type"] == "gemma4_text"
     assert result.manifest["component_family"] == "gemma"
     assert result.manifest["component_model_path"] == str(component_model_dir)
+    assert result.manifest["multimodal_lora_nan_guard_triggered"] is False
+    assert result.manifest["unexpected_frozen_param_count"] == 0
+    assert result.manifest["adapter_checkpoint_bytes"] == result.manifest["adapter_artifact_bytes"]
+    assert result.manifest["training.multimodal_lora_nan_guard_triggered"] is False
+    assert result.manifest["training.unexpected_frozen_param_count"] == 0
+    assert result.manifest["training.adapter_checkpoint_bytes"] == result.manifest["adapter_checkpoint_bytes"]
+    freeze_audit = result.manifest["adapter_freeze_audit"]
+    assert freeze_audit["unexpected_serialized_param_count"] == 0
+    assert freeze_audit["unexpected_trainable_param_count"] == 0
+    assert freeze_audit["adapter_checkpoint_size_within_target"] is True
+
+
+def test_multimodal_lora_finite_mask_handles_fully_padded_vision_rows() -> None:
+    scores = [
+        [[0.2, 0.1, -0.4], [1.0, -1.0, 0.0]],
+        [[0.0, 0.0, 0.0], [0.5, 0.25, -0.5]],
+    ]
+    visible_mask = [
+        [[True, True, False], [False, False, False]],
+        [[True, False, False], [False, True, False]],
+    ]
+
+    probabilities, mask = finite_masked_softmax(scores, visible_mask, dtype="float16")
+
+    assert mask.nan_guard_triggered is True
+    assert mask.all_masked_row_count == 1
+    assert mask.finite_floor == -1.0e4
+    assert all(value != float("-inf") for batch in mask.additive_mask for row in batch for value in row)
+    assert probabilities[0][1] == [0.0, 0.0, 0.0]
+    for batch in probabilities:
+        for row in batch:
+            assert all(value == value for value in row)
+            assert all(value not in {float("inf"), float("-inf")} for value in row)
+
+
+def test_multimodal_lora_finite_mask_handles_empty_visible_rows() -> None:
+    probabilities, mask = finite_masked_softmax([[1.0, 2.0]], [[]], dtype="float32")
+
+    assert mask.additive_mask == [[]]
+    assert probabilities == [[]]
+
+
+def test_multimodal_lora_training_receipt_records_triggered_nan_guard(tmp_path: Path) -> None:
+    class NanGuardRunner(DeterministicLoRARunner):
+        def train_native(self, request: TrainingRequest) -> TrainingResult:
+            result = super().train_native(request)
+            return TrainingResult(
+                weights_path=result.weights_path,
+                adapter_config_path=result.adapter_config_path,
+                execution_backend=result.execution_backend,
+                metrics=TrainingMetrics(
+                    **{
+                        **result.metrics.__dict__,
+                        "multimodal_lora_nan_guard_triggered": True,
+                    }
+                ),
+            )
+
+    component_model_dir = tmp_path / "gemma4-vlm-mixed"
+    component_model_dir.mkdir()
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-mixed-modality",
+        manifest_payload={
+            "schema_version": "melix.training_dataset_package.v1",
+            "dataset_id": "mixed-modality-padded-images",
+            "format": "chat_messages",
+            "sample_count": 2,
+            "version": "1",
+            "modalities": ["text", "image"],
+            "image_shapes": [[256, 384], [384, 256]],
+        },
+        sample_lines=[
+            json.dumps(
+                {
+                    "messages": [
+                        {"role": "user", "content": "Describe the non-square image."},
+                        {"role": "assistant", "content": "The image is non-square."},
+                    ],
+                    "media_refs": [{"id": "image-a", "uri": "images/a.png", "width": 256, "height": 384}],
+                }
+            ),
+            json.dumps(
+                {
+                    "messages": [
+                        {"role": "user", "content": "Describe the padded image."},
+                        {"role": "assistant", "content": "The image includes padded regions."},
+                    ],
+                    "media_refs": [{"id": "image-b", "uri": "images/b.png", "width": 384, "height": 256}],
+                }
+            ),
+        ],
+    )
+
+    result = LoRATrainingPipeline(runner=NanGuardRunner()).run(
+        job_id="train-gemma4-vlm-nan-guard",
+        request_ext={
+            "operation": "train_lora",
+            "adapter_name": "gemma4-padded-image-adapter",
+            "dataset_uri": str(dataset_dir),
+        },
+        source_model=_gemma4_vlm_model(model_path=str(component_model_dir)),
+        output_dir=tmp_path / "output-nan-guard",
+        jobs_root=tmp_path / "jobs-nan-guard",
+    )
+
+    assert result.manifest["dataset_id"] == "mixed-modality-padded-images"
+    assert result.manifest["multimodal_lora_nan_guard_triggered"] is True
+    assert result.manifest["training.multimodal_lora_nan_guard_triggered"] is True
+    assert result.manifest["unexpected_frozen_param_count"] == 0
+    assert result.manifest["adapter_checkpoint_bytes"] > 0
+
+
+def test_adapter_freeze_audit_rejects_serialized_vision_tower_weights(tmp_path: Path) -> None:
+    weights_path = tmp_path / "adapters.safetensors"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "model.layers.0.self_attn.q_proj.lora_a.weight": {
+                "dtype": "F16",
+                "shape": [2, 4],
+                "data_offsets": [0, 16],
+            },
+            "vision_tower.encoder.layers.0.weight": {
+                "dtype": "F16",
+                "shape": [8, 8],
+                "data_offsets": [16, 144],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["model.layers.0.self_attn.q_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+    )
+
+    assert audit.adapter_checkpoint_bytes == weights_path.stat().st_size
+    assert audit.unexpected_frozen_param_count == 64
+    assert audit.unexpected_serialized_param_count == 64
+    assert audit.serialized_param_count_by_component["vision_encoder"] == 64
+    assert audit.unexpected_serialized_parameters == ("vision_tower.encoder.layers.0.weight",)
+
+    class LeakyRunner(DeterministicLoRARunner):
+        def train_native(self, request):  # noqa: ANN001
+            result = super().train_native(request)
+            _write_safetensors_header(
+                result.weights_path,
+                {
+                    "model.layers.1.self_attn.q_proj.lora_a.weight": {
+                        "dtype": "F16",
+                        "shape": [2, 4],
+                        "data_offsets": [0, 16],
+                    },
+                    "vision_tower.encoder.layers.0.weight": {
+                        "dtype": "F16",
+                        "shape": [8, 8],
+                        "data_offsets": [16, 144],
+                    },
+                },
+            )
+            return result
+
+    component_model_dir = tmp_path / "gemma4-vlm"
+    component_model_dir.mkdir()
+    dataset_dir = _write_dataset_package(tmp_path / "dataset-leaky")
+
+    with pytest.raises(ModelOperationError) as exc:
+        LoRATrainingPipeline(runner=LeakyRunner()).run(
+            job_id="train-gemma4-vlm-leaky",
+            request_ext={
+                "operation": "train_lora",
+                "adapter_name": "gemma4-leaky-adapter",
+                "dataset_uri": str(dataset_dir),
+                "target_modules": "q_proj",
+                "num_layers": "1",
+            },
+            source_model=_gemma4_vlm_model(model_path=str(component_model_dir)),
+            output_dir=tmp_path / "output-leaky",
+            jobs_root=tmp_path / "jobs-leaky",
+        )
+
+    assert exc.value.code == "adapter_freeze_audit_failed"
+    assert exc.value.details["unexpected_serialized_param_count"] == "64"
+    assert "vision_tower.encoder.layers.0.weight" in exc.value.details["unexpected_serialized_parameters"]
+
+
+def test_adapter_freeze_audit_deduplicates_live_and_serialized_leaks(tmp_path: Path) -> None:
+    weights_path = tmp_path / "duplicate-leak.safetensors"
+    leaked_name = "vision_tower.encoder.layers.0.weight"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "model.layers.0.self_attn.q_proj.lora_a.weight": {
+                "dtype": "F16",
+                "shape": [2, 4],
+                "data_offsets": [0, 16],
+            },
+            leaked_name: {
+                "dtype": "F16",
+                "shape": [8, 8],
+                "data_offsets": [16, 144],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["model.layers.0.self_attn.q_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+        live_audit={
+            "unexpected_trainable_param_count": 64,
+            "unexpected_trainable_parameters": [leaked_name],
+            "unexpected_trainable_param_counts": {leaked_name: 64},
+            "trainable_param_count_by_component": {"vision_encoder": 64},
+        },
+    )
+
+    assert audit.unexpected_serialized_param_count == 64
+    assert audit.unexpected_trainable_param_count == 64
+    assert audit.unexpected_frozen_param_count == 64
+    assert audit.unexpected_serialized_param_counts == {leaked_name: 64}
+    assert audit.unexpected_trainable_param_counts == {leaked_name: 64}
+
+
+def test_adapter_freeze_audit_rejects_full_base_weights_under_allowed_target(tmp_path: Path) -> None:
+    weights_path = tmp_path / "base-weight-leak.safetensors"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "model.layers.0.self_attn.q_proj.lora_a.weight": {
+                "dtype": "F16",
+                "shape": [2, 4],
+                "data_offsets": [0, 16],
+            },
+            "model.layers.0.self_attn.q_proj.weight": {
+                "dtype": "F16",
+                "shape": [4, 4],
+                "data_offsets": [16, 48],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["model.layers.0.self_attn.q_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+    )
+
+    assert audit.unexpected_serialized_param_count == 16
+    assert audit.unexpected_serialized_parameters == ("model.layers.0.self_attn.q_proj.weight",)
+    assert audit.serialized_param_count_by_component["text_backbone"] == 24
+
+
+def test_adapter_freeze_audit_ignores_invalid_large_safetensors_header(tmp_path: Path) -> None:
+    weights_path = tmp_path / "oversized-header.safetensors"
+    weights_path.write_bytes((9 * 1024 * 1024).to_bytes(8, "little"))
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["model.layers.0.self_attn.q_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+    )
+
+    assert audit.adapter_checkpoint_bytes == 8
+    assert audit.unexpected_frozen_param_count == 0
+    assert audit.unexpected_serialized_param_count == 0
+    assert audit.serialized_param_count_by_component == {}
+
+
+def _write_safetensors_header(path: Path, tensors: dict[str, dict[str, object]]) -> None:
+    header = json.dumps(tensors, separators=(",", ":")).encode("utf-8")
+    tensor_bytes = max(
+        (
+            int(metadata["data_offsets"][1])
+            for metadata in tensors.values()
+            if isinstance(metadata.get("data_offsets"), list)
+        ),
+        default=0,
+    )
+    path.write_bytes(len(header).to_bytes(8, "little") + header + (b"\0" * tensor_bytes))
 
 
 def test_checkpoint_summary_uses_scandir_stack_without_os_walk(
