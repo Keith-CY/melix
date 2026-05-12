@@ -333,7 +333,8 @@ is not build-ready for training or evaluation.
 
 ## Execution Steps
 
-1. Validate request fields and reject unsupported output or column types.
+1. Validate request fields and reject unsupported output, duplicate column names,
+   or unsupported column types.
 2. Resolve `job_id` from `request.job_id` or a deterministic dataset id plus
    timestamp fallback, then create an isolated staging root under
    `jobs_root/synthetic-data/<job_id>/`.
@@ -349,17 +350,17 @@ is not build-ready for training or evaluation.
    `DatasetCreationResults.export(..., format="jsonl")`, and capture profiling
    and task-trace summary metadata.
 9. Convert generated rows to the selected Melix package shape.
-10. Write manifest, samples, validation split, previews, token or field stats,
-    quality counters, and DataDesigner provenance.
+10. Write manifest, samples, deterministic hash-based validation split, previews,
+    token or field stats, quality counters, and DataDesigner provenance.
 
 ## Performance Probes And Metrics
 
 First implementation slice should report these timings in the manifest and
-progress events:
+progress events where the step applies:
 
 - `datadesigner_config_build_ms`
 - `datadesigner_generate_ms`
-- `datadesigner_export_ms`
+- `datadesigner_export_ms` for create mode JSONL export
 - `melix_normalize_ms`
 - `melix_package_write_ms`
 

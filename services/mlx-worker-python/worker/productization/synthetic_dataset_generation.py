@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+import hashlib
 import importlib
 import json
 import os
@@ -310,12 +311,21 @@ def _validate_request(request: SyntheticDatasetRequest) -> None:
             code="invalid_synthetic_dataset_request",
             message="At least one synthetic column is required.",
         )
+    column_names: set[str] = set()
     for column in request.columns:
-        if not column.name.strip():
+        column_name = column.name.strip()
+        if not column_name:
             raise ModelOperationError(
                 code="invalid_synthetic_dataset_request",
                 message="Synthetic column name is required.",
             )
+        if column_name in column_names:
+            raise ModelOperationError(
+                code="invalid_synthetic_dataset_request",
+                message="Synthetic column names must be unique.",
+                details={"column_name": column_name},
+            )
+        column_names.add(column_name)
         if column.column_type not in _SUPPORTED_COLUMN_TYPES:
             raise ModelOperationError(
                 code="unsupported_synthetic_column",
@@ -402,8 +412,6 @@ def _build_datadesigner_config(
     if request.seed_source is not None:
         seed_source = _stage_seed_source(request.seed_source, seed_root=seed_root, api=api)
         builder.with_seed_dataset(seed_source)
-    if hasattr(builder, "artifact_path"):
-        setattr(builder, "artifact_path", artifact_path)
     return builder
 
 
@@ -424,7 +432,6 @@ def _run_preview(
         )
         preview_result = designer.preview(builder, num_records=request.num_records)
     timing["datadesigner_generate_ms"] = _elapsed_ms(generate_started)
-    timing["datadesigner_export_ms"] = 0.0
     return _rows_from_preview_result(preview_result, limit=request.num_records)
 
 
@@ -519,7 +526,7 @@ def _write_training_package(
             "version": "synthetic",
             "build_ready": request.mode == "create",
             "preview_only": request.mode == "preview",
-            "validation_strategy": "deterministic_ratio" if validation_rows else "none",
+            "validation_strategy": "deterministic_hash_ratio" if validation_rows else "none",
             "validation_ratio": request.validation_ratio,
             "preview_count": request.preview_count,
             "preview_samples": train_rows[: request.preview_count],
@@ -555,7 +562,7 @@ def _write_evaluation_package(
     config_path: Path,
     timing: dict[str, float],
 ) -> SyntheticDatasetPackageResult:
-    _validate_evaluation_targets(rows, result_kind=request.output_format)
+    serialized_rows = _parse_and_validate_evaluation_targets(rows, result_kind=request.output_format)
     package_write_started = time.perf_counter()
     manifest_path = package_path / "manifest.json"
     samples_path = package_path / "samples.jsonl"
@@ -572,10 +579,10 @@ def _write_evaluation_package(
         target_path="target",
         sample_id_path="sample_id",
     )
-    _write_jsonl_rows(samples_path, _iter_serialized_samples(rows, field_mapping))
+    _write_jsonl_rows(samples_path, _iter_serialized_samples(serialized_rows, field_mapping))
     manifest_payload = _base_manifest(
         request,
-        rows=rows,
+        rows=serialized_rows,
         generated_jsonl_path=generated_jsonl_path,
         artifact_path=artifact_path,
         config_path=config_path,
@@ -587,7 +594,7 @@ def _write_evaluation_package(
             "dataset_id": request.dataset_id,
             "suite_id": request.dataset_id,
             "version": "synthetic",
-            "sample_count": len(rows),
+            "sample_count": len(serialized_rows),
             "split": "validation",
             "task_kind": "text-generation",
             "input_modalities": ["text"],
@@ -619,7 +626,7 @@ def _write_evaluation_package(
         data_designer_artifact_path=artifact_path,
         config_path=config_path,
         manifest_payload=manifest_payload,
-        row_count=len(rows),
+        row_count=len(serialized_rows),
         validation_row_count=0,
         output_kind=request.output_kind,
         preview_only=request.mode == "preview",
@@ -790,8 +797,14 @@ def _normalize_synthetic_training_row(row: dict[str, Any], output_format: str) -
         ) from exc
 
 
-def _validate_evaluation_targets(rows: list[dict[str, Any]], *, result_kind: str) -> None:
+def _parse_and_validate_evaluation_targets(
+    rows: list[dict[str, Any]],
+    *,
+    result_kind: str,
+) -> list[dict[str, Any]]:
+    parsed_rows: list[dict[str, Any]] = []
     for index, row in enumerate(rows, start=1):
+        parsed_row = dict(row)
         target = row.get("target")
         if result_kind == "json":
             if isinstance(target, str):
@@ -809,7 +822,7 @@ def _validate_evaluation_targets(rows: list[dict[str, Any]], *, result_kind: str
                     message="Synthetic final-result JSON target must be an object or array.",
                     details={"row": str(index)},
                 )
-            row["target"] = target
+            parsed_row["target"] = target
         elif result_kind == "text":
             if str(target or "").strip() == "":
                 raise ModelOperationError(
@@ -817,6 +830,8 @@ def _validate_evaluation_targets(rows: list[dict[str, Any]], *, result_kind: str
                     message="Synthetic final-result text target must be non-empty.",
                     details={"row": str(index)},
                 )
+        parsed_rows.append(parsed_row)
+    return parsed_rows
 
 
 def _split_validation(
@@ -827,8 +842,25 @@ def _split_validation(
         return rows, []
     validation_count = int(round(len(rows) * validation_ratio))
     validation_count = min(max(validation_count, 1), len(rows) - 1)
-    split_at = len(rows) - validation_count
-    return rows[:split_at], rows[split_at:]
+    validation_indices = {
+        index
+        for _, index in sorted(
+            (_canonical_row_hash(row), index) for index, row in enumerate(rows)
+        )[:validation_count]
+    }
+    train_rows: list[dict[str, Any]] = []
+    validation_rows: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if index in validation_indices:
+            validation_rows.append(row)
+        else:
+            train_rows.append(row)
+    return train_rows, validation_rows
+
+
+def _canonical_row_hash(row: dict[str, Any]) -> str:
+    encoded = json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _stage_seed_source(seed_source: SyntheticSeedSource, *, seed_root: Path, api: _DataDesignerAPI) -> Any:
@@ -844,9 +876,14 @@ def _stage_seed_source(seed_source: SyntheticSeedSource, *, seed_root: Path, api
         staged_path = seed_root / source_path.name
         if source_path.is_dir():
             if staged_path.exists():
-                shutil.rmtree(staged_path)
+                if staged_path.is_dir():
+                    shutil.rmtree(staged_path)
+                else:
+                    staged_path.unlink()
             shutil.copytree(source_path, staged_path)
         else:
+            if staged_path.is_dir():
+                shutil.rmtree(staged_path)
             shutil.copy2(source_path, staged_path)
     elif seed_source.source_kind == "training_package":
         staged_path = seed_root / "training-package-seed.jsonl"
@@ -954,6 +991,7 @@ def _rows_from_preview_result(preview_result: Any, *, limit: int) -> list[dict[s
     raise ModelOperationError(
         code="invalid_datadesigner_preview",
         message="DataDesigner preview did not return JSON-object rows.",
+        details={"preview_result_type": type(preview_result).__name__},
     )
 
 
@@ -983,12 +1021,8 @@ def _iter_jsonl_rows(path: Path, *, error_code: str) -> Iterable[dict[str, Any]]
 def _write_jsonl_rows(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
-        wrote_any = False
         for row in rows:
-            wrote_any = True
             handle.write(json.dumps(row))
-            handle.write("\n")
-        if not wrote_any:
             handle.write("\n")
 
 
@@ -1074,7 +1108,7 @@ def _datadesigner_column_type(data_designer_column_type: Any, column_type: str) 
 
 
 @contextmanager
-def _data_designer_telemetry(disable: bool) -> Iterable[None]:
+def _data_designer_telemetry(disable: bool) -> Iterator[None]:
     previous = os.environ.get(_TELEMETRY_ENV_VAR)
     if disable:
         os.environ[_TELEMETRY_ENV_VAR] = "false"

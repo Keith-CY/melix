@@ -21,6 +21,19 @@ from worker.productization.synthetic_dataset_generation import (
 )
 
 
+@dataclass
+class _FakeDesignerState:
+    rows: list[dict[str, Any]]
+    instances: list["_FakeDataDesigner"] | None = None
+
+    def __post_init__(self) -> None:
+        if self.instances is None:
+            self.instances = []
+
+
+_fake_state = _FakeDesignerState(rows=[])
+
+
 @dataclass(frozen=True)
 class _FakeModelProvider:
     name: str
@@ -143,19 +156,19 @@ def _fake_get_column_config_from_kwargs(
 
 
 class _FakeDataDesigner:
-    instances: list[_FakeDataDesigner] = []
-    rows: list[dict[str, Any]] = []
+    state = _fake_state
 
     def __init__(self, *, model_providers: list[_FakeModelProvider], artifact_path: str) -> None:
         self.model_providers = model_providers
         self.artifact_path = artifact_path
+        self.rows = list(type(self).state.rows)
         self.preview_calls: list[tuple[_FakeBuilder, int]] = []
         self.create_calls: list[tuple[_FakeBuilder, int, str, bool]] = []
-        _FakeDataDesigner.instances.append(self)
+        type(self).state.instances.append(self)
 
     def preview(self, builder: _FakeBuilder, *, num_records: int) -> list[dict[str, Any]]:
         self.preview_calls.append((builder, num_records))
-        return _FakeDataDesigner.rows[:num_records]
+        return self.rows[:num_records]
 
     def create(
         self,
@@ -166,13 +179,13 @@ class _FakeDataDesigner:
         resume: bool,
     ) -> _FakeCreationResult:
         self.create_calls.append((builder, num_records, dataset_name, resume))
-        return _FakeCreationResult(_FakeDataDesigner.rows[:num_records])
+        return _FakeCreationResult(self.rows[:num_records])
 
 
 @pytest.fixture(autouse=True)
 def _fake_datadesigner_modules(monkeypatch: pytest.MonkeyPatch) -> None:
-    _FakeDataDesigner.instances = []
-    _FakeDataDesigner.rows = [
+    _fake_state.instances = []
+    _fake_state.rows = [
         {"prompt": "p1", "completion": "c1"},
         {"prompt": "p2", "completion": "c2"},
         {"prompt": "p3", "completion": "c3"},
@@ -264,12 +277,12 @@ def test_create_training_package_writes_melix_contract_and_redacts_secrets(
     assert result.validation_row_count == 1
     assert result.preview_only is False
     assert (tmp_path / "out" / "samples.jsonl").read_text(encoding="utf-8") == (
-        '{"prompt": "p1", "completion": "c1"}\n'
         '{"prompt": "p2", "completion": "c2"}\n'
         '{"prompt": "p3", "completion": "c3"}\n'
+        '{"prompt": "p4", "completion": "c4"}\n'
     )
     assert (tmp_path / "out" / "valid.jsonl").read_text(encoding="utf-8") == (
-        '{"prompt": "p4", "completion": "c4"}\n'
+        '{"prompt": "p1", "completion": "c1"}\n'
     )
 
     manifest = json.loads((tmp_path / "out" / "manifest.json").read_text(encoding="utf-8"))
@@ -279,6 +292,7 @@ def test_create_training_package_writes_melix_contract_and_redacts_secrets(
     assert manifest["format"] == "prompt_completion"
     assert manifest["sample_count"] == 3
     assert manifest["validation_sample_count"] == 1
+    assert manifest["validation_strategy"] == "deterministic_hash_ratio"
     assert manifest["build_ready"] is True
     assert manifest["datadesigner"]["provider"]["api_key"] == "[REDACTED]"
     assert manifest["datadesigner"]["provider"]["extra_headers"]["Authorization"] == "[REDACTED]"
@@ -298,8 +312,8 @@ def test_create_training_package_writes_melix_contract_and_redacts_secrets(
     config = json.loads((tmp_path / "out" / "data_designer" / "config.json").read_text(encoding="utf-8"))
     assert config["api_key"] == "[REDACTED]"
     assert config["Authorization"] == "[REDACTED]"
-    assert _FakeDataDesigner.instances[0].model_providers[0].api_key == "secret-key"
-    assert _FakeDataDesigner.instances[0].create_calls[0][3] is False
+    assert _fake_state.instances[0].model_providers[0].api_key == "secret-key"
+    assert _fake_state.instances[0].create_calls[0][3] is False
     assert progress_events[0][0] == "load_datadesigner"
     assert progress_events[-1] == ("complete", 1.0)
     assert synthetic_module.os.environ["NEMO_TELEMETRY_ENABLED"] == "true"
@@ -316,6 +330,23 @@ def test_create_training_package_removes_stale_valid_jsonl_without_validation(tm
     )
 
     assert not (tmp_path / "out" / "valid.jsonl").exists()
+
+
+def test_training_validation_split_uses_stable_hash_instead_of_tail_rows(tmp_path: Path) -> None:
+    generate_synthetic_dataset_package(
+        _request(validation_ratio=0.5),
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "out",
+    )
+
+    assert (tmp_path / "out" / "samples.jsonl").read_text(encoding="utf-8") == (
+        '{"prompt": "p3", "completion": "c3"}\n'
+        '{"prompt": "p4", "completion": "c4"}\n'
+    )
+    assert (tmp_path / "out" / "valid.jsonl").read_text(encoding="utf-8") == (
+        '{"prompt": "p1", "completion": "c1"}\n'
+        '{"prompt": "p2", "completion": "c2"}\n'
+    )
 
 
 def test_preview_raw_jsonl_writes_inspection_manifest_without_build_ready_package(tmp_path: Path) -> None:
@@ -340,14 +371,16 @@ def test_preview_raw_jsonl_writes_inspection_manifest_without_build_ready_packag
     assert manifest["build_ready"] is False
     assert manifest["preview_only"] is True
     assert manifest["sample_count"] == 2
-    assert _FakeDataDesigner.instances[0].preview_calls[0][1] == 2
+    assert "datadesigner_export_ms" not in manifest["timing"]
+    assert _fake_state.instances[0].preview_calls[0][1] == 2
 
 
 def test_create_evaluation_final_result_package_validates_json_targets(tmp_path: Path) -> None:
-    _FakeDataDesigner.rows = [
+    source_rows = [
         {"sample_id": "one", "system": "sys", "input": "extract", "target": {"label": "a"}},
         {"sample_id": "two", "system": "", "input": "extract b", "target": '{"label":"b"}'},
     ]
+    _fake_state.rows = source_rows
 
     result = generate_synthetic_dataset_package(
         _request(
@@ -369,10 +402,11 @@ def test_create_evaluation_final_result_package_validates_json_targets(tmp_path:
         '{"id": "one", "system": "sys", "input": {"text": "extract"}, "target": {"label": "a"}}\n'
         '{"id": "two", "system": "", "input": {"text": "extract b"}, "target": {"label": "b"}}\n'
     )
+    assert source_rows[1]["target"] == '{"label":"b"}'
 
 
 def test_create_evaluation_text_package_and_resume_mode(tmp_path: Path) -> None:
-    _FakeDataDesigner.rows = [
+    _fake_state.rows = [
         {"sample_id": "one", "system": "", "input": "classify", "target": "positive"},
     ]
 
@@ -392,7 +426,7 @@ def test_create_evaluation_text_package_and_resume_mode(tmp_path: Path) -> None:
     manifest = json.loads((tmp_path / "eval" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["result_kind"] == "text"
     assert manifest["datadesigner"]["telemetry_disabled"] is False
-    assert _FakeDataDesigner.instances[0].create_calls[0][3] is True
+    assert _fake_state.instances[0].create_calls[0][3] is True
 
 
 def test_create_raw_jsonl_inspection_from_create_mode(tmp_path: Path) -> None:
@@ -410,7 +444,7 @@ def test_create_raw_jsonl_inspection_from_create_mode(tmp_path: Path) -> None:
 
 
 def test_invalid_evaluation_json_target_fails_before_package_write(tmp_path: Path) -> None:
-    _FakeDataDesigner.rows = [
+    _fake_state.rows = [
         {"sample_id": "one", "system": "", "input": "extract", "target": "not json"},
     ]
 
@@ -430,7 +464,7 @@ def test_invalid_evaluation_json_target_fails_before_package_write(tmp_path: Pat
 
 
 def test_invalid_evaluation_json_target_type_fails_before_package_write(tmp_path: Path) -> None:
-    _FakeDataDesigner.rows = [
+    _fake_state.rows = [
         {"sample_id": "one", "system": "", "input": "extract", "target": 42},
     ]
 
@@ -449,7 +483,7 @@ def test_invalid_evaluation_json_target_type_fails_before_package_write(tmp_path
 
 
 def test_invalid_evaluation_text_target_is_rejected(tmp_path: Path) -> None:
-    _FakeDataDesigner.rows = [
+    _fake_state.rows = [
         {"sample_id": "one", "system": "", "input": "classify", "target": ""},
     ]
 
@@ -468,7 +502,7 @@ def test_invalid_evaluation_text_target_is_rejected(tmp_path: Path) -> None:
 
 
 def test_invalid_training_row_is_reported_as_synthetic_output_error(tmp_path: Path) -> None:
-    _FakeDataDesigner.rows = [{"prompt": "", "completion": "answer"}]
+    _fake_state.rows = [{"prompt": "", "completion": "answer"}]
 
     with pytest.raises(ModelOperationError) as error:
         generate_synthetic_dataset_package(
@@ -546,7 +580,7 @@ def test_stages_training_package_seed_rows(tmp_path: Path) -> None:
         '{"prompt": "seed-p", "completion": "seed-c"}\n'
         '{"prompt": "seed-v", "completion": "seed-vc"}\n'
     )
-    assert str(_FakeDataDesigner.instances[0].create_calls[0][0].seed_source) == str(staged)
+    assert str(_fake_state.instances[0].create_calls[0][0].seed_source) == str(staged)
 
 
 def test_stages_evaluation_package_seed_rows(tmp_path: Path) -> None:
@@ -617,6 +651,78 @@ def test_stages_local_seed_file_and_directory(tmp_path: Path) -> None:
         output_dir=tmp_path / "out-dir-second",
     )
     assert (tmp_path / "jobs-dir" / "synthetic-data" / "job-1" / "seed" / "snapshot" / "extra.jsonl").is_file()
+
+
+def test_replaces_stale_seed_file_when_source_changes_to_directory(tmp_path: Path) -> None:
+    source_file = tmp_path / "seed"
+    source_file.write_text('{"topic": "file"}\n', encoding="utf-8")
+    jobs_root = tmp_path / "jobs"
+
+    generate_synthetic_dataset_package(
+        _request(
+            seed_source=SyntheticSeedSource(
+                source_kind="local_jsonl",
+                source_path=source_file,
+            )
+        ),
+        jobs_root=jobs_root,
+        output_dir=tmp_path / "out-file",
+    )
+    staged_path = jobs_root / "synthetic-data" / "job-1" / "seed" / "seed"
+    assert staged_path.is_file()
+
+    source_file.unlink()
+    source_file.mkdir()
+    (source_file / "rows.jsonl").write_text('{"topic": "dir"}\n', encoding="utf-8")
+    generate_synthetic_dataset_package(
+        _request(
+            seed_source=SyntheticSeedSource(
+                source_kind="managed_hf_snapshot",
+                source_path=source_file,
+            )
+        ),
+        jobs_root=jobs_root,
+        output_dir=tmp_path / "out-dir",
+    )
+
+    assert (staged_path / "rows.jsonl").is_file()
+
+
+def test_replaces_stale_seed_directory_when_source_changes_to_file(tmp_path: Path) -> None:
+    source_dir = tmp_path / "seed"
+    source_dir.mkdir()
+    (source_dir / "rows.jsonl").write_text('{"topic": "dir"}\n', encoding="utf-8")
+    jobs_root = tmp_path / "jobs"
+
+    generate_synthetic_dataset_package(
+        _request(
+            seed_source=SyntheticSeedSource(
+                source_kind="managed_hf_snapshot",
+                source_path=source_dir,
+            )
+        ),
+        jobs_root=jobs_root,
+        output_dir=tmp_path / "out-dir",
+    )
+    staged_path = jobs_root / "synthetic-data" / "job-1" / "seed" / "seed"
+    assert (staged_path / "rows.jsonl").is_file()
+
+    source_dir.rename(tmp_path / "old-seed")
+    source_file = tmp_path / "seed"
+    source_file.write_text('{"topic": "file"}\n', encoding="utf-8")
+    generate_synthetic_dataset_package(
+        _request(
+            seed_source=SyntheticSeedSource(
+                source_kind="local_jsonl",
+                source_path=source_file,
+            )
+        ),
+        jobs_root=jobs_root,
+        output_dir=tmp_path / "out-file",
+    )
+
+    assert staged_path.is_file()
+    assert staged_path.read_text(encoding="utf-8") == '{"topic": "file"}\n'
 
 
 def test_missing_seed_source_fails(tmp_path: Path) -> None:
@@ -701,6 +807,14 @@ def test_missing_seed_package_samples_are_rejected(tmp_path: Path) -> None:
             (SyntheticColumnSpec(name="", column_type="llm_text"),),
             "invalid_synthetic_dataset_request",
         ),
+        (
+            "columns",
+            (
+                SyntheticColumnSpec(name="prompt", column_type="llm_text"),
+                SyntheticColumnSpec(name=" prompt ", column_type="expression"),
+            ),
+            "invalid_synthetic_dataset_request",
+        ),
         ("validation_ratio", 1.0, "invalid_synthetic_dataset_request"),
         ("preview_count", 0, "invalid_synthetic_dataset_request"),
     ],
@@ -719,6 +833,23 @@ def test_request_validation_errors(
         )
 
     assert error.value.code == expected_code
+
+
+def test_duplicate_column_validation_reports_column_name(tmp_path: Path) -> None:
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(
+                columns=(
+                    SyntheticColumnSpec(name="prompt", column_type="llm_text"),
+                    SyntheticColumnSpec(name="prompt", column_type="expression"),
+                )
+            ),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "out",
+        )
+
+    assert error.value.code == "invalid_synthetic_dataset_request"
+    assert error.value.details["column_name"] == "prompt"
 
 
 def test_raw_jsonl_requires_jsonl_output_format(tmp_path: Path) -> None:
@@ -761,7 +892,7 @@ def test_uses_fallback_column_api_when_config_factory_is_unavailable(
         output_dir=tmp_path / "out",
     )
 
-    builder = _FakeDataDesigner.instances[0].create_calls[0][0]
+    builder = _fake_state.instances[0].create_calls[0][0]
     assert builder.columns[0].name == "prompt"
 
 
@@ -830,6 +961,16 @@ def test_invalid_preview_shape_is_reported(tmp_path: Path) -> None:
         )
 
     assert error.value.code == "invalid_datadesigner_preview"
+    assert error.value.details["preview_result_type"] == "object"
+
+
+def test_empty_jsonl_writer_creates_empty_file(tmp_path: Path) -> None:
+    output = tmp_path / "empty.jsonl"
+
+    synthetic_module._write_jsonl_rows(output, [])
+
+    assert output.is_file()
+    assert output.read_text(encoding="utf-8") == ""
 
 
 def test_config_write_failure_is_reported(tmp_path: Path) -> None:
@@ -942,7 +1083,7 @@ def test_column_type_falls_back_to_string_when_enum_name_is_unavailable(
         output_dir=tmp_path / "out",
     )
 
-    builder = _FakeDataDesigner.instances[0].create_calls[0][0]
+    builder = _fake_state.instances[0].create_calls[0][0]
     assert builder.columns[0].column_type == "llm_text"
 
 
@@ -965,4 +1106,4 @@ def test_local_seed_source_can_fallback_to_plain_path_when_local_seed_class_miss
         output_dir=tmp_path / "out",
     )
 
-    assert isinstance(_FakeDataDesigner.instances[0].create_calls[0][0].seed_source, str)
+    assert isinstance(_fake_state.instances[0].create_calls[0][0].seed_source, str)
