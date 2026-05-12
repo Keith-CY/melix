@@ -80,7 +80,9 @@ struct Phase8LoRAWindowSmokeTests {
             )
         )
         await runnerClient.configureExportResult(
-            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+            ControlPlaneExportResult(
+                exportBundleJSON: phase8LoRAWindowExportBundleJSON(derivedModelID: derivedModelID)
+            )
         )
 
         let operatorStore = MelixOperatorSessionStore(
@@ -374,6 +376,12 @@ private func phase8LoRAWindowCompareResult(
     result.metrics = [metric]
     result.reportPath = "/tmp/melix/evaluation/runs/eval-compare-1/\(derivedModelID)-result.json"
     return ControlPlaneEvaluationResult(job: job, results: [result])
+}
+
+private func phase8LoRAWindowExportBundleJSON(derivedModelID: String) -> String {
+    makeBenchmarkExportBundleJSON()
+        .replacingOccurrences(of: "eval-newer", with: "eval-compare-1")
+        .replacingOccurrences(of: "melix-dev-text-lora", with: derivedModelID)
 }
 
 @MainActor
