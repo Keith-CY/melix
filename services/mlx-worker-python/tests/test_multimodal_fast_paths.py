@@ -13,6 +13,7 @@ from worker.runtime.multimodal_fast_paths import (
     MultimodalFastPathController,
     _preprocessing_fingerprint,
     _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED,
+    _signature_pairs_repr,
     fast_path_probe_signature,
 )
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
@@ -451,6 +452,13 @@ def test_fast_path_probe_signature_reuses_pre_sorted_top_level_keys() -> None:
         "(('model_id', 'melix-dev-vlm'), ('quant_profile_id', 'q8'), "
         "('revision', 'main'), ('tokenizer_hash', 'tok'))"
     )
+
+def test_fast_path_probe_signature_serializes_pairs_like_tuple_repr() -> None:
+    pairs = [("vision_family_id", "gemma4-v1"), ("quoted", "value'with\\nnewline")]
+
+    assert _signature_pairs_repr([]) == repr(())
+    assert _signature_pairs_repr(pairs[:1]) == repr(tuple(pairs[:1]))
+    assert _signature_pairs_repr(pairs) == repr(tuple(pairs))
 
 
 def test_fast_path_probe_signature_probes_fixed_metadata_keys_without_scanning_nested_items() -> None:
