@@ -201,7 +201,7 @@ class DeterministicVLMRuntime:
             prepared_request=prepared_request,
             prompt_tokens=prompt_tokens,
             response_text=response_text,
-            completion_tokens=max(1, len(response_text.split())),
+            completion_tokens=max(1, _whitespace_token_count(response_text)),
             tool_call_event=tool_call_event,
             cache_identity=cache_identity,
             scope_id=scope_id,
@@ -336,7 +336,7 @@ class DeterministicVLMRuntime:
             yield RuntimeTokenEvent(
                 text=response,
                 prompt_tokens=self.prompt_token_count(prepared_request, loaded_model=loaded_model),
-                completion_tokens=max(1, len(response.split())),
+                completion_tokens=max(1, _whitespace_token_count(response)),
                 finish_reason="stop",
             )
         finally:
@@ -717,3 +717,15 @@ class DeterministicVLMRuntime:
             cache_identity=cache_identity,
             scope_id=scope_id,
         )
+
+
+def _whitespace_token_count(text: str) -> int:
+    token_count = 0
+    in_token = False
+    for character in text:
+        if character.isspace():
+            in_token = False
+        elif not in_token:
+            token_count += 1
+            in_token = True
+    return token_count
