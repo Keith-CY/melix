@@ -875,6 +875,13 @@ def _normalize_agentic_tool_trace_sample(
         )
 
     raw_turns = sample.get("turns")
+    replay_evidence: dict[str, Any] = {}
+    if (not isinstance(raw_turns, list) or not raw_turns) and _has_agentic_tool_replay_calls(sample):
+        raw_turns, replay_evidence = _agentic_trace_replay_turns(
+            sample,
+            question=question,
+            final_answer=final_answer,
+        )
     if not isinstance(raw_turns, list) or not raw_turns:
         raise ModelOperationError(
             code="invalid_dataset_package",
@@ -998,7 +1005,49 @@ def _normalize_agentic_tool_trace_sample(
         "final_answer": _truncate_text(final_answer, max_characters_per_sample),
     }
     _copy_optional_agentic_trace_fields(payload, sample)
+    payload.update(replay_evidence)
     return payload
+
+
+def _has_agentic_tool_replay_calls(sample: dict[str, Any]) -> bool:
+    tool_calls = sample.get("tool_calls")
+    return isinstance(tool_calls, list) and bool(tool_calls)
+
+
+def _agentic_trace_replay_turns(
+    sample: dict[str, Any],
+    *,
+    question: str,
+    final_answer: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    from worker.runtime.agentic_tools import AgenticToolRuntimeError, execute_agentic_tool_calls
+
+    fixture_context = sample.get("tool_fixture_context") or sample.get("tool_context") or {}
+    if not isinstance(fixture_context, dict):
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="agentic_tool_trace tool_fixture_context must be a JSON object.",
+        )
+    try:
+        tool_run = execute_agentic_tool_calls(
+            sample.get("tool_calls"),
+            fixture_context=dict(fixture_context),
+        )
+    except AgenticToolRuntimeError as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message=f"agentic_tool_trace replay failed: {exc}",
+        ) from exc
+
+    turns: list[dict[str, Any]] = [{"role": "user", "content": question}]
+    turns.extend(dict(turn) for turn in tool_run.trace_turns)
+    turns.append({"role": "assistant", "content": final_answer})
+    return turns, {
+        "agentic_tool_registry": tool_run.registry_receipt,
+        "agentic_tool_calls": [dict(call) for call in tool_run.tool_calls],
+        "agentic_tool_observations": [dict(observation) for observation in tool_run.observations],
+        "agentic_tool_metrics": dict(tool_run.metrics),
+    }
 
 
 def _copy_optional_agentic_trace_fields(
@@ -1035,6 +1084,26 @@ def _copy_optional_agentic_trace_fields(
                 message="agentic_tool_trace reward must be a JSON object.",
             )
         payload["reward"] = dict(reward)
+    for field in ("agentic_tool_calls", "agentic_tool_observations"):
+        if field not in sample:
+            continue
+        value = sample[field]
+        if not isinstance(value, list):
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message=f"agentic_tool_trace {field} must be an array.",
+            )
+        payload[field] = [copy.deepcopy(item) for item in value]
+    for field in ("agentic_tool_registry", "agentic_tool_metrics"):
+        if field not in sample:
+            continue
+        value = sample[field]
+        if not isinstance(value, Mapping):
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message=f"agentic_tool_trace {field} must be a JSON object.",
+            )
+        payload[field] = dict(value)
 
 
 def _fetch_hf_dataset_server_json(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
@@ -1473,7 +1542,9 @@ def _resolve_local_conversion_template(template: str, sample_row: dict[str, Any]
 
     if isinstance(sample_row.get("messages"), list):
         return "chat_messages"
-    if "trace_id" in sample_row and "turns" in sample_row and "final_answer" in sample_row:
+    if "trace_id" in sample_row and "final_answer" in sample_row and (
+        "turns" in sample_row or "tool_calls" in sample_row
+    ):
         return "agentic_tool_trace"
     if "prompt" in sample_row and "candidates" in sample_row:
         return "prompt_candidate"
@@ -1560,6 +1631,13 @@ def _convert_local_row(
         for field in (
             "media_refs",
             "tools",
+            "tool_calls",
+            "tool_fixture_context",
+            "tool_context",
+            "agentic_tool_registry",
+            "agentic_tool_calls",
+            "agentic_tool_observations",
+            "agentic_tool_metrics",
             "expected_answer",
             "evidence_ids",
             "reward",

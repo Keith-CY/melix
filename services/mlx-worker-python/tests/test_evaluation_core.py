@@ -789,6 +789,67 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert queue_payload["completed_at_unix_ms"] > 0
 
 
+def test_run_local_suite_persists_agentic_tool_evidence(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="agentic-dev",
+        suite_id="mmlu",
+        samples=(
+            {
+                "id": "agentic-1",
+                "prompt": "What is visible?",
+                "expected": "MELIX",
+                "tool_calls": [
+                    {
+                        "id": "crop-1",
+                        "name": "image_crop",
+                        "arguments": {"media_ref": "img-1", "region": "sign"},
+                    },
+                    {
+                        "id": "compute-1",
+                        "name": "local_compute",
+                        "arguments": {"code": "2 + 2"},
+                    },
+                ],
+                "tool_fixture_context": {
+                    "crops": {"img-1#sign": {"text": "MELIX"}},
+                },
+            },
+        ),
+    )
+    jobs_root = tmp_path / "runs" / "agentic"
+    backend = ScriptedEvaluationBackend(("Answer: MELIX",))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="agentic-eval-model")
+    runner = EvaluationCore(jobs_root=jobs_root, registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="agentic-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        few_shot=0,
+        seed=7,
+        scoring_mode="exact_match",
+        code_exec_policy="disabled",
+    )
+
+    metrics = {metric.name: metric.value for metric in run.result.metrics}
+    persisted_samples = [
+        json.loads(line)
+        for line in run.persisted_paths["samples_jsonl"].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert run.samples[0].agentic_tool_metrics["agentic_tool.call_count"] == 2.0
+    assert run.samples[0].agentic_tool_observations[0]["payload"]["text"] == "MELIX"
+    assert metrics["eval.mmlu.agentic_tool.call_count"] == 2.0
+    assert metrics["eval.mmlu.agentic_tool.completed_count"] == 2.0
+    assert persisted_samples[0]["agentic_tool_calls"][0]["name"] == "image_crop"
+    assert persisted_samples[0]["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
+
+
 @pytest.mark.parametrize(
     ("name", "expected_index"),
     [
@@ -888,6 +949,13 @@ def test_next_job_id_skips_conflicting_cached_index_and_non_directory_entries(tm
     assert runner._next_job_id() == "eval-0004"
     assert runner._next_job_index == 5
     assert (runs_root / "eval-0004").is_dir()
+
+
+def test_run_root_reuses_cached_runs_root(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "runs" / "mmlu"
+    runner = EvaluationCore(jobs_root=jobs_root)
+
+    assert runner._run_root("eval-0042") == jobs_root.resolve() / "runs" / "eval-0042"
 
 
 def test_run_local_suite_marks_offline_execution_as_non_evidence(tmp_path: Path) -> None:
@@ -2299,6 +2367,10 @@ def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.Mo
 
     assert EvaluationCore._normalized_answer("  Final Answer: Paris. ") == "final answer: paris"
     assert EvaluationCore._normalized_answer("`New   York`") == "new york"
+    assert EvaluationCore._normalized_answer("   ") == ""
+    assert EvaluationCore._normalized_answer("``") == ""
+    assert EvaluationCore._normalized_answer("'quoted'") == "quoted"
+    assert EvaluationCore._normalized_answer("''") == ""
     assert EvaluationCore._normalized_answer("9.0") == "9"
     assert EvaluationCore._normalized_answer("b") == "B"
     assert EvaluationCore._normalized_answer("Option C is correct") == "option c is correct"

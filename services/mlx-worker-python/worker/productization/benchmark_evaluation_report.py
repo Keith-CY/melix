@@ -72,6 +72,14 @@ _EVALUATION_SAMPLE_PROBE_KEYS = (
     "raw_response_chars",
     "extracted_result_chars",
 )
+_AGENTIC_TOOL_METRIC_KEYS = (
+    "agentic_tool.call_count",
+    "agentic_tool.observation_count",
+    "agentic_tool.completed_count",
+    "agentic_tool.timeout_count",
+    "agentic_tool.failed_count",
+    "agentic_tool.observation_emitted_bytes",
+)
 _MATRIX_SUMMARY_METRIC_KEYS = (
     "request_latency_mean_ms",
     "request_latency_p95_ms",
@@ -1855,6 +1863,23 @@ def _collect_benchmark_probe_metrics(
                     key=key,
                     value=value,
                 )
+        raw_tool_metrics = row.get("agentic_tool_metrics")
+        if isinstance(raw_tool_metrics, dict):
+            if not label:
+                label = _benchmark_probe_label(
+                    row,
+                    label_cache=label_cache,
+                    matrix_label_cache=matrix_label_cache,
+                )
+            for key in _AGENTIC_TOOL_METRIC_KEYS:
+                value = _float_or_none(raw_tool_metrics.get(key))
+                if value is not None:
+                    _update_probe_aggregate_pairs(
+                        aggregate_pairs,
+                        label=label,
+                        key=key,
+                        value=value,
+                    )
     metrics.update(_finalize_probe_aggregates(aggregate_pairs, prefix=prefix))
 
 
@@ -1888,6 +1913,16 @@ def _collect_evaluation_sample_probe_metrics(
             failure_stage_counts[(suite_id, failure_stage)] = (
                 failure_stage_counts.get((suite_id, failure_stage), 0) + 1
             )
+        raw_tool_metrics = row.get("agentic_tool_metrics")
+        if isinstance(raw_tool_metrics, dict):
+            for key in _AGENTIC_TOOL_METRIC_KEYS:
+                value = _float_or_none(raw_tool_metrics.get(key))
+                if value is not None:
+                    aggregate_key = (suite_id, key)
+                    aggregates_by_suite_and_key[aggregate_key] = _update_numeric_aggregate(
+                        aggregates_by_suite_and_key.get(aggregate_key),
+                        value,
+                    )
     for (suite_id, key), aggregate in aggregates_by_suite_and_key.items():
         total, count = aggregate
         metrics[f"eval.sample.{suite_id}.{key}_mean"] = total / count

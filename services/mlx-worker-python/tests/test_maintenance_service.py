@@ -5506,7 +5506,10 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     assert core._shape_benchmark_prompt("one two three", context_length=8) == (
         "one two three one two three one two"
     )
-    assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
+    shaped_repeated_prompt = core._shape_benchmark_prompt("one two", context_length=6)
+    assert shaped_repeated_prompt == "one two one two one two"
+    assert shaped_repeated_prompt.split() == ["one", "two", "one", "two", "one", "two"]
+    assert shaped_repeated_prompt.split(" ", 1) == ["one", "two one two one two"]
     assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
     assert MaintenanceCore._shape_benchmark_prompt.cache_info().hits == 1
     MaintenanceCore._shape_benchmark_prompt.cache_clear()
@@ -5530,6 +5533,21 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     )
     assert len(context_rows) == 3
     assert shape_calls == [(suite.cases[0].prompt, 8)]
+
+    agentic_case = SimpleNamespace(
+        tool_calls=[
+            {"id": "visit-1", "name": "visit", "arguments": {"url": "fixture://bench"}}
+        ],
+        tool_fixture_context={
+            "pages": {"fixture://bench": {"text": "Benchmark page."}},
+        },
+    )
+    agentic_tool_run = core._agentic_tool_run_for_benchmark_case(agentic_case)
+    assert agentic_tool_run.metrics["agentic_tool.call_count"] == 1.0
+    agentic_kwargs = core._agentic_tool_kwargs(agentic_tool_run)
+    assert agentic_kwargs["agentic_tool_calls"][0]["name"] == "visit"
+    assert agentic_kwargs["agentic_tool_observations"][0]["payload"]["text"] == "Benchmark page."
+    assert core._agentic_tool_run_for_benchmark_case(SimpleNamespace(tool_calls=[])) is None
 
     with pytest.raises(ModelOperationError):
         core._measure_text_bench_sample(

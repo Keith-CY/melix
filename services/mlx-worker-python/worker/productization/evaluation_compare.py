@@ -176,23 +176,30 @@ def resolve_compare_target_models(
         raise ValueError("Evaluation compare requires a live registry with loaded target models.")
     if not target_model_ids:
         return {}
-    requested_targets = {model_id for model_id in target_model_ids if model_id}
+    requested_targets: list[str] = []
+    remaining_targets: set[str] = set()
+    for model_id in target_model_ids:
+        if not model_id or model_id in remaining_targets:
+            continue
+        requested_targets.append(model_id)
+        remaining_targets.add(model_id)
     loaded_models_by_id: dict[str, Any] = {}
-    remaining_targets = set(target_model_ids)
     for handle in registry.list_loaded_models():
         loaded_model = registry.get_loaded_model(handle)
         if loaded_model is None:
             continue
         model_id = str(getattr(getattr(loaded_model, "spec", None), "model_id", "")).strip()
-        if model_id and model_id in remaining_targets:
+        if model_id in remaining_targets:
             loaded_models_by_id[model_id] = loaded_model
             remaining_targets.remove(model_id)
             if not remaining_targets:
                 break
-    unknown_targets = [model_id for model_id in target_model_ids if model_id not in loaded_models_by_id]
+    unknown_targets = [
+        model_id for model_id in requested_targets if model_id not in loaded_models_by_id
+    ]
     if unknown_targets:
         raise ValueError(f"Unknown comparison target model IDs: {', '.join(unknown_targets)}")
-    return {model_id: loaded_models_by_id[model_id] for model_id in target_model_ids}
+    return {model_id: loaded_models_by_id[model_id] for model_id in requested_targets}
 
 
 def resolve_compare_target_adapters(

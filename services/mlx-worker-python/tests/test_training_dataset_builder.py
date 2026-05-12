@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -557,6 +558,156 @@ def test_load_training_dataset_package_supports_agentic_tool_trace_contract(
     assert package.normalized_samples == [sample]
 
 
+def test_load_training_dataset_package_replays_agentic_tool_calls_with_shared_runtime(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "agentic-tool-replay-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "agentic-tool-replay-package",
+                "format": "agentic_tool_trace",
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sample = {
+        "trace_id": "trace-replay-001",
+        "question": "Read the support page before answering.",
+        "tool_calls": [
+            {
+                "id": "visit-1",
+                "name": "visit",
+                "arguments": {"url": "fixture://support"},
+            }
+        ],
+        "tool_fixture_context": {
+            "pages": {
+                "fixture://support": {
+                    "title": "Support",
+                    "text": "The documented answer is MELIX LABS.",
+                }
+            }
+        },
+        "final_answer": "MELIX LABS",
+        "expected_answer": "MELIX LABS",
+    }
+    (package_path / "samples.jsonl").write_text(json.dumps(sample) + "\n", encoding="utf-8")
+
+    package = load_training_dataset_package(str(package_path))
+    normalized = package.normalized_samples[0]
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        package.normalized_samples,
+        package.format,
+    )
+
+    assert package.format == "agentic_tool_trace"
+    assert normalized["turns"][0] == {
+        "role": "user",
+        "content": "Read the support page before answering.",
+    }
+    assert normalized["turns"][1]["tool_call"]["name"] == "visit"
+    assert normalized["turns"][2]["observation"]["schema_version"] == "melix.agentic_tool_observation.v1"
+    assert normalized["turns"][2]["observation"]["payload"]["text"] == "The documented answer is MELIX LABS."
+    assert normalized["turns"][3] == {"role": "assistant", "content": "MELIX LABS"}
+    assert normalized["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
+    assert normalized["agentic_tool_calls"][0]["name"] == "visit"
+    assert normalized["agentic_tool_observations"][0]["payload"]["title"] == "Support"
+    assert normalized["agentic_tool_metrics"]["agentic_tool.call_count"] == 1.0
+    assert quality["tool_call_count"] == 1
+    assert quality["tool_observation_count"] == 1
+    assert token_stats["sample_count"] == 1
+
+
+def test_prompt_completion_quality_stats_do_not_import_agentic_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "worker.runtime.agentic_tools", None)
+
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        [
+            {"prompt": "alpha", "completion": "beta"},
+            {"prompt": "alpha", "completion": "beta"},
+        ],
+        "prompt_completion",
+    )
+
+    assert token_stats["sample_count"] == 2
+    assert quality["duplicate_count"] == 1
+    assert quality["dirty_count"] == 0
+
+
+def test_agentic_tool_trace_replay_covers_context_validation_and_preserved_evidence() -> None:
+    with pytest.raises(ModelOperationError) as invalid_context_exc:
+        training_dataset_module._normalize_sample(
+            {
+                "trace_id": "trace-invalid-context",
+                "question": "Use a tool.",
+                "tool_calls": [{"id": "call-1", "name": "visit", "arguments": {"url": "fixture://doc"}}],
+                "tool_fixture_context": "not-a-dict",
+                "final_answer": "Done.",
+            },
+            format_name="agentic_tool_trace",
+            max_characters_per_sample=0,
+        )
+    assert invalid_context_exc.value.message == "agentic_tool_trace tool_fixture_context must be a JSON object."
+
+    with pytest.raises(ModelOperationError) as replay_exc:
+        training_dataset_module._normalize_sample(
+            {
+                "trace_id": "trace-invalid-tool",
+                "question": "Use a tool.",
+                "tool_calls": [{"id": "call-1", "name": "missing_tool", "arguments": {}}],
+                "final_answer": "Done.",
+            },
+            format_name="agentic_tool_trace",
+            max_characters_per_sample=0,
+        )
+    assert replay_exc.value.message.startswith("agentic_tool_trace replay failed:")
+
+    preserved = training_dataset_module._normalize_sample(
+        {
+            "trace_id": "trace-preserved-evidence",
+            "question": "What is recorded?",
+            "turns": [{"role": "assistant", "content": "Recorded."}],
+            "final_answer": "Recorded.",
+            "agentic_tool_registry": {"toolset_version": "demo"},
+            "agentic_tool_calls": [{"id": "call-1", "name": "visit", "arguments": {}}],
+            "agentic_tool_observations": [{"status": "completed"}],
+            "agentic_tool_metrics": {"agentic_tool.call_count": 1.0},
+        },
+        format_name="agentic_tool_trace",
+        max_characters_per_sample=0,
+    )
+    assert preserved["agentic_tool_registry"] == {"toolset_version": "demo"}
+    assert preserved["agentic_tool_calls"][0]["name"] == "visit"
+    assert preserved["agentic_tool_observations"][0]["status"] == "completed"
+    assert preserved["agentic_tool_metrics"]["agentic_tool.call_count"] == 1.0
+
+    invalid_evidence = {
+        "trace_id": "trace-invalid-evidence",
+        "question": "What is recorded?",
+        "turns": [{"role": "assistant", "content": "Recorded."}],
+        "final_answer": "Recorded.",
+    }
+    for field, value, message in (
+        ("agentic_tool_calls", {}, "agentic_tool_trace agentic_tool_calls must be an array."),
+        ("agentic_tool_registry", [], "agentic_tool_trace agentic_tool_registry must be a JSON object."),
+    ):
+        with pytest.raises(ModelOperationError) as evidence_exc:
+            training_dataset_module._normalize_sample(
+                {**invalid_evidence, field: value},
+                format_name="agentic_tool_trace",
+                max_characters_per_sample=0,
+            )
+        assert evidence_exc.value.message == message
+
+
 @pytest.mark.parametrize(
     ("sample", "expected_message"),
     [
@@ -793,6 +944,14 @@ def test_agentic_tool_trace_helpers_cover_optional_field_validation_and_segments
     assert training_dataset_module._resolve_local_conversion_template(
         "agentic_tool_trace",
         {},
+    ) == "agentic_tool_trace"
+    assert training_dataset_module._resolve_local_conversion_template(
+        "auto",
+        {
+            "trace_id": "trace-auto",
+            "tool_calls": [{"name": "visit"}],
+            "final_answer": "Done.",
+        },
     ) == "agentic_tool_trace"
 
     invalid_reward = dict(sample)
