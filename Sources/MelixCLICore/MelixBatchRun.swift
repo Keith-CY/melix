@@ -24,6 +24,7 @@ public struct BatchRunOptions: Equatable, Sendable {
     public let evalBatchFactor: UInt32
     public let continueOnFailure: Bool
     public let restartStackPerModel: Bool
+    public let preflight: Bool
     public let dryRun: Bool
     public let json: Bool
     public let explicitOptions: Set<String>
@@ -52,6 +53,7 @@ public struct BatchRunOptions: Equatable, Sendable {
         evalBatchFactor: UInt32 = 0,
         continueOnFailure: Bool = true,
         restartStackPerModel: Bool = true,
+        preflight: Bool = false,
         dryRun: Bool = false,
         json: Bool = false,
         explicitOptions: Set<String> = []
@@ -79,6 +81,7 @@ public struct BatchRunOptions: Equatable, Sendable {
         self.evalBatchFactor = evalBatchFactor
         self.continueOnFailure = continueOnFailure
         self.restartStackPerModel = restartStackPerModel
+        self.preflight = preflight
         self.dryRun = dryRun
         self.json = json
         self.explicitOptions = explicitOptions
@@ -92,11 +95,17 @@ struct BatchRunModelEntry: Equatable {
 }
 
 struct BatchRunEffectiveConfig: Equatable {
+    let repoRoot: String
     let runID: String
     let modelListPath: String
     let configPath: String
     let outputRoot: String
     let tempRoot: String
+    let melixHome: String
+    let runtimeDir: String
+    let httpPort: String
+    let serviceInstanceName: String
+    let cliPath: String
     let startIndex: Int
     let maxModels: Int
     let judgeRemoteServerID: String
@@ -115,6 +124,7 @@ struct BatchRunEffectiveConfig: Equatable {
     let evalBatchFactor: UInt32
     let continueOnFailure: Bool
     let restartStackPerModel: Bool
+    let preflight: Bool
     let dryRun: Bool
     let isSubsetRun: Bool
 }
@@ -125,6 +135,213 @@ struct BatchRunPlan: Equatable {
     let selectedModels: [BatchRunModelEntry]
     let manifestPath: String
     let effectiveConfigPath: String
+    let preflightReportPath: String
+}
+
+struct BatchRunPreflightCheck: Equatable {
+    let name: String
+    let status: String
+    let detail: String
+    let actionable: String
+
+    var isBlocking: Bool {
+        status == "blocked"
+    }
+
+    func payload() -> [String: Any] {
+        [
+            "name": name,
+            "status": status,
+            "detail": detail,
+            "actionable": actionable,
+        ]
+    }
+}
+
+struct BatchRunPreflightReport: Equatable {
+    let schemaVersion: String
+    let status: String
+    let checks: [BatchRunPreflightCheck]
+
+    var blockers: [BatchRunPreflightCheck] {
+        checks.filter(\.isBlocking)
+    }
+
+    func payload(plan: BatchRunPlan) -> [String: Any] {
+        [
+            "schema_version": schemaVersion,
+            "run_id": plan.config.runID,
+            "status": status,
+            "blocker_count": blockers.count,
+            "model_count": plan.selectedModels.count,
+            "runtime": [
+                "repo_root": plan.config.repoRoot,
+                "melix_home": plan.config.melixHome,
+                "runtime_dir": plan.config.runtimeDir,
+                "http_port": plan.config.httpPort,
+                "service_instance_name": plan.config.serviceInstanceName,
+                "melix_cli": plan.config.cliPath,
+            ],
+            "judge": [
+                "remote_server_id": plan.config.judgeRemoteServerID,
+                "model": plan.config.judgeModelID,
+            ],
+            "models": plan.selectedModels.map { model in
+                [
+                    "index": model.index,
+                    "repo_id": model.repoID,
+                    "source_line": model.sourceLine,
+                ]
+            },
+            "checks": checks.map { $0.payload() },
+        ]
+    }
+}
+
+enum BatchRunFailureRecoverability: String, Equatable {
+    case retrySameModel = "retry_same_model"
+    case cleanRestartAndRetry = "clean_restart_and_retry"
+    case operatorActionRequired = "operator_action_required"
+    case notRecoverable = "not_recoverable"
+    case unknown = "unknown"
+}
+
+struct BatchRunFailureClassification: Equatable {
+    let category: String
+    let recoverability: BatchRunFailureRecoverability
+    let reason: String
+
+    func payload() -> [String: Any] {
+        [
+            "failure_category": category,
+            "recoverability": recoverability.rawValue,
+            "reason": reason,
+        ]
+    }
+}
+
+enum BatchRunFailureClassifier {
+    static let unknown = BatchRunFailureClassification(
+        category: "unknown_failure",
+        recoverability: .unknown,
+        reason: "No known batch runtime failure signature matched."
+    )
+
+    static func classify(stdout: String = "", stderr: String = "", metadata: [String: String] = [:]) -> BatchRunFailureClassification {
+        let searchable = [stdout, stderr] + metadata.map { "\($0.key)=\($0.value)" }
+        guard searchable.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            return unknown
+        }
+
+        if containsAny(searchable, needles: [
+            "kiogpucommandbuffercallbackerroroutofmemory",
+            "metal oom",
+            "outofmemory",
+            "out of memory",
+            "mpsndarray error",
+        ]) {
+            return .init(
+                category: "metal_oom",
+                recoverability: .cleanRestartAndRetry,
+                reason: "Metal or unified-memory exhaustion requires a clean runtime before the next model."
+            )
+        }
+        if containsAny(searchable, needles: [
+            "socket closed",
+            "connection refused",
+            "failed to connect to all addresses",
+            "python-worker.sock",
+            "swift-text-worker.sock",
+        ]) {
+            return .init(
+                category: "worker_connectivity",
+                recoverability: .cleanRestartAndRetry,
+                reason: "Worker connectivity was lost; restart the local stack before continuing."
+            )
+        }
+        if containsAny(searchable, needles: [
+            "requestfailed(code: \"unavailable\"",
+            "worker_unavailable",
+            "server unavailable",
+            "unavailable: worker",
+        ]) {
+            return .init(
+                category: "runtime_unavailable",
+                recoverability: .cleanRestartAndRetry,
+                reason: "The control plane reported an unavailable runtime."
+            )
+        }
+        if containsAny(searchable, needles: [
+            "remote server",
+            "semantic judge",
+            "judge",
+            "401",
+            "403",
+            "rate limit",
+            "unauthorized",
+        ]) {
+            return .init(
+                category: "judge_failure",
+                recoverability: .operatorActionRequired,
+                reason: "Semantic judge configuration or provider access failed."
+            )
+        }
+        if containsAny(searchable, needles: [
+            "repo id",
+            "repo_id",
+            "repository not found",
+            "model not found",
+            "target resolution",
+            "no loaded benchmark target",
+        ]) {
+            return .init(
+                category: "target_resolution",
+                recoverability: .operatorActionRequired,
+                reason: "The model target could not be resolved before execution."
+            )
+        }
+        if containsAny(searchable, needles: [
+            "load_model",
+            "load model",
+            "failed to load",
+            "model load",
+            "processor_asset_preflight",
+        ]) {
+            return .init(
+                category: "model_load",
+                recoverability: .operatorActionRequired,
+                reason: "Model load failed after target resolution."
+            )
+        }
+        if containsAny(searchable, needles: [
+            "export-csv",
+            "export summary",
+            "export samples",
+            "artifact copy",
+            "copy raw",
+            "permission denied",
+            "no such file or directory",
+        ]) {
+            return .init(
+                category: "artifact_export",
+                recoverability: .retrySameModel,
+                reason: "The model work may have completed, but artifact export or copy failed."
+            )
+        }
+        return unknown
+    }
+
+    static func runtimeFailureRequiresCleanStack(_ classification: BatchRunFailureClassification) -> Bool {
+        classification.recoverability == .cleanRestartAndRetry
+    }
+
+    private static func containsAny(_ haystacks: [String], needles: [String]) -> Bool {
+        haystacks.contains { haystack in
+            needles.contains { needle in
+                haystack.range(of: needle, options: [.caseInsensitive]) != nil
+            }
+        }
+    }
 }
 
 enum BatchRunModelListParser {
@@ -134,7 +351,7 @@ enum BatchRunModelListParser {
         for (offset, rawLine) in contents.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let lineNumber = offset + 1
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard line.isEmpty == false, line.hasPrefix("#") == false else {
+            guard !line.isEmpty, !line.hasPrefix("#") else {
                 continue
             }
             let index: String
@@ -146,10 +363,10 @@ enum BatchRunModelListParser {
                 index = String(format: "%02d", autoIndex)
                 repoID = line
             }
-            guard index.isEmpty == false else {
+            guard !index.isEmpty else {
                 throw MelixCLIError.usage("Empty model index at \(lineNumber).")
             }
-            guard repoID.isEmpty == false else {
+            guard !repoID.isEmpty else {
                 throw MelixCLIError.usage("Empty repo id at \(lineNumber).")
             }
             entries.append(BatchRunModelEntry(index: index, repoID: repoID, sourceLine: lineNumber))
@@ -177,12 +394,18 @@ enum BatchRunConfigLoader {
         "judge_model",
         "judge_remote_server_id",
         "max_models",
+        "melix_cli",
+        "melix_home",
         "model_list",
         "output_root",
+        "preflight",
         "restart_stack_per_model",
+        "runtime_dir",
         "run_id",
+        "service_instance_name",
         "start_index",
         "temp_root",
+        "http_port",
     ]
     private static let secretKeySubstrings = ["api_key", "token", "secret", "password"]
 
@@ -287,12 +510,40 @@ enum BatchRunPlanner {
             defaultValue: 0,
             option: "--max-models"
         )
+        let repoRoot = nonEmpty(environment["MELIX_REPO_ROOT"], FileManager.default.currentDirectoryPath)
+        let serviceInstanceName = nonEmpty(environment["MELIX_SERVICE_INSTANCE_NAME"], "bench-eval-batch")
+        let melixHome = nonEmpty(
+            configValues["melix_home"],
+            environment["MELIX_HOME"],
+            "\(repoRoot)/.runtime/home-\(serviceInstanceName)"
+        )
+        let runtimeDir = nonEmpty(
+            configValues["runtime_dir"],
+            environment["MELIX_RUNTIME_DIR"],
+            "\(repoRoot)/.runtime/sidecars/\(serviceInstanceName)"
+        )
+        let httpPort = nonEmpty(
+            configValues["http_port"],
+            environment["MELIX_HTTP_PORT"],
+            "12436"
+        )
+        let cliPath = nonEmpty(
+            configValues["melix_cli"],
+            environment["MELIX_CLI"],
+            "\(repoRoot)/.build/debug/melix"
+        )
         let config = BatchRunEffectiveConfig(
+            repoRoot: repoRoot,
             runID: runID,
             modelListPath: modelListPath,
             configPath: options.configPath,
             outputRoot: outputRoot,
             tempRoot: tempRoot,
+            melixHome: melixHome,
+            runtimeDir: runtimeDir,
+            httpPort: httpPort,
+            serviceInstanceName: serviceInstanceName,
+            cliPath: cliPath,
             startIndex: max(1, startIndex),
             maxModels: max(0, maxModels),
             judgeRemoteServerID: nonEmpty(
@@ -401,6 +652,14 @@ enum BatchRunPlanner {
                 defaultValue: true,
                 option: "--restart-stack-per-model"
             ),
+            preflight: try boolValue(
+                explicit: options.preflight,
+                explicitWasProvided: options.preflight || options.explicitOptions.contains("--preflight"),
+                configValue: configValues["preflight"],
+                environmentValue: environment["MELIX_BATCH_PREFLIGHT"],
+                defaultValue: false,
+                option: "--preflight"
+            ),
             dryRun: options.dryRun,
             isSubsetRun: max(1, startIndex) > 1 || max(0, maxModels) > 0
         )
@@ -411,7 +670,8 @@ enum BatchRunPlanner {
             models: models,
             selectedModels: selected,
             manifestPath: URL(fileURLWithPath: tempRoot).appendingPathComponent("manifest.jsonl").path,
-            effectiveConfigPath: URL(fileURLWithPath: tempRoot).appendingPathComponent("effective-config.json").path
+            effectiveConfigPath: URL(fileURLWithPath: tempRoot).appendingPathComponent("effective-config.json").path,
+            preflightReportPath: URL(fileURLWithPath: tempRoot).appendingPathComponent("preflight-report.json").path
         )
     }
 
@@ -551,23 +811,44 @@ enum BatchRunArtifacts {
         )
     }
 
+    static func writePreflightReport(_ report: BatchRunPreflightReport, plan: BatchRunPlan) throws {
+        let outputRoot = URL(fileURLWithPath: plan.config.outputRoot)
+        try jsonData(report.payload(plan: plan)).write(
+            to: URL(fileURLWithPath: plan.preflightReportPath),
+            options: .atomic
+        )
+        try FileManager.default.copyItemReplacingExisting(
+            at: URL(fileURLWithPath: plan.preflightReportPath),
+            to: outputRoot.appendingPathComponent("preflight-report.json")
+        )
+    }
+
     static func effectiveConfigPayload(plan: BatchRunPlan) -> [String: Any] {
         let config = plan.config
         return [
             "schema_version": "melix.batch.effective_config.v1",
+            "repo_root": config.repoRoot,
             "run_id": config.runID,
             "model_list": config.modelListPath,
             "config_path": config.configPath,
             "output_root": config.outputRoot,
             "temp_root": config.tempRoot,
+            "melix_home": config.melixHome,
+            "runtime_dir": config.runtimeDir,
+            "http_port": config.httpPort,
+            "service_instance_name": config.serviceInstanceName,
+            "melix_cli": config.cliPath,
             "start_index": config.startIndex,
             "max_models": config.maxModels,
             "selected_model_count": plan.selectedModels.count,
             "total_model_count": plan.models.count,
             "is_subset_run": config.isSubsetRun,
             "dry_run": config.dryRun,
+            "preflight": config.preflight,
             "continue_on_failure": config.continueOnFailure,
             "restart_stack_per_model": config.restartStackPerModel,
+            "isolation_policy": isolationPolicyPayload(config: config),
+            "preflight_report": config.preflight ? plan.preflightReportPath : "",
             "judge": [
                 "remote_server_id": config.judgeRemoteServerID,
                 "model": config.judgeModelID,
@@ -606,12 +887,17 @@ enum BatchRunArtifacts {
                 "status": "planned",
                 "model_dir": modelDir,
                 "steps": [
+                    "preflight": stepPayload(),
+                    "runtime_prepare": stepPayload(),
+                    "model_unload": stepPayload(),
                     "hub_check": stepPayload(),
                     "benchmark": stepPayload(),
                     "evaluation": stepPayload(),
                     "exports": stepPayload(),
                     "artifact_copy": stepPayload(),
                 ],
+                "failure_category": "",
+                "recoverability": "",
             ]
             return String(decoding: try compactJSONData(payload), as: UTF8.self)
         }.joined(separator: "\n") + "\n"
@@ -625,15 +911,36 @@ enum BatchRunArtifacts {
         if plan.config.isSubsetRun {
             lines.append("subset=start_index:\(plan.config.startIndex),max_models:\(plan.config.maxModels)")
         }
+        lines.append("repo_root=\(plan.config.repoRoot)")
         lines.append("temp_root=\(plan.config.tempRoot)")
         lines.append("output_root=\(plan.config.outputRoot)")
+        lines.append("melix_home=\(plan.config.melixHome)")
+        lines.append("runtime_dir=\(plan.config.runtimeDir)")
+        lines.append("http_port=\(plan.config.httpPort)")
         lines.append("judge=\(plan.config.judgeRemoteServerID)/\(plan.config.judgeModelID)")
+        lines.append("preflight=\(plan.config.preflight)")
         lines.append("restart_stack_per_model=\(plan.config.restartStackPerModel)")
         lines.append("continue_on_failure=\(plan.config.continueOnFailure)")
+        lines.append("isolation=best_effort_unload:true,force_clean_after_runtime_failure:true")
         lines.append("effective_config=\(plan.effectiveConfigPath)")
         lines.append("manifest=\(plan.manifestPath)")
+        if plan.config.preflight {
+            lines.append("preflight_report=\(plan.preflightReportPath)")
+        }
         for (offset, model) in plan.selectedModels.enumerated() {
             lines.append("[\(offset + 1)/\(plan.selectedModels.count)] PLAN \(model.index) \(model.repoID)")
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    static func renderPreflightTextSummary(plan: BatchRunPlan, report: BatchRunPreflightReport) -> String {
+        var lines = renderTextSummary(plan: plan)
+            .trimmingCharacters(in: .newlines)
+            .components(separatedBy: "\n")
+        lines.append("preflight_status=\(report.status)")
+        lines.append("preflight_blockers=\(report.blockers.count)")
+        for check in report.checks {
+            lines.append("CHECK \(check.name) \(check.status) - \(check.detail)")
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -655,6 +962,18 @@ enum BatchRunArtifacts {
             "stderr_path": "",
             "artifact_path": "",
             "failure_category": "",
+            "recoverability": "",
+        ]
+    }
+
+    private static func isolationPolicyPayload(config: BatchRunEffectiveConfig) -> [String: Any] {
+        [
+            "schema_version": "melix.batch.isolation_policy.v1",
+            "best_effort_unload_previous_model": true,
+            "best_effort_unload_after_model": true,
+            "restart_stack_per_model": config.restartStackPerModel,
+            "force_clean_stack_after_runtime_failure": true,
+            "cleanup_failures_preserve_artifacts": true,
         ]
     }
 
