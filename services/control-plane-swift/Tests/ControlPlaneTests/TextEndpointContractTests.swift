@@ -402,7 +402,7 @@ struct TextEndpointContractTests {
         let assistant = try #require(translated.workerRequest.messages.first)
 
         #expect(assistant.role == "assistant")
-        #expect(assistant.parts.first?.text == "Visible follow-up.")
+        #expect(assistant.parts.first?.text == "\nVisible follow-up.")
         #expect(translated.workerRequest.execution.ext["melix.tool_call_history_strip_count"] == "2")
         #expect(translated.workerRequest.execution.ext["melix.reasoning.history_strip_count"] == "1")
         #expect(
