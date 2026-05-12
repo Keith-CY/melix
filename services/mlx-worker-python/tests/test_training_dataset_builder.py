@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -621,6 +622,24 @@ def test_load_training_dataset_package_replays_agentic_tool_calls_with_shared_ru
     assert quality["tool_call_count"] == 1
     assert quality["tool_observation_count"] == 1
     assert token_stats["sample_count"] == 1
+
+
+def test_prompt_completion_quality_stats_do_not_import_agentic_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "worker.runtime.agentic_tools", None)
+
+    quality, token_stats = training_dataset_module._build_quality_and_token_stats(
+        [
+            {"prompt": "alpha", "completion": "beta"},
+            {"prompt": "alpha", "completion": "beta"},
+        ],
+        "prompt_completion",
+    )
+
+    assert token_stats["sample_count"] == 2
+    assert quality["duplicate_count"] == 1
+    assert quality["dirty_count"] == 0
 
 
 def test_agentic_tool_trace_replay_covers_context_validation_and_preserved_evidence() -> None:

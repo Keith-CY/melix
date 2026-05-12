@@ -16,7 +16,6 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from worker.model_ops.errors import ModelOperationError
-from worker.runtime.agentic_tools import AgenticToolRuntimeError, execute_agentic_tool_calls
 
 _SUPPORTED_FORMATS = {
     "chat_messages",
@@ -1021,6 +1020,8 @@ def _agentic_trace_replay_turns(
     question: str,
     final_answer: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    from worker.runtime.agentic_tools import AgenticToolRuntimeError, execute_agentic_tool_calls
+
     fixture_context = sample.get("tool_fixture_context") or sample.get("tool_context") or {}
     if not isinstance(fixture_context, dict):
         raise ModelOperationError(
