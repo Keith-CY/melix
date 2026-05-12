@@ -46,6 +46,34 @@ public struct RunReportOptions: Equatable, Sendable {
     }
 }
 
+public struct LogsOptions: Equatable, Sendable {
+    public let jobID: String
+    public let sourcePath: String
+    public let follow: Bool
+    public let json: Bool
+
+    public init(jobID: String, sourcePath: String = "", follow: Bool = false, json: Bool = false) {
+        self.jobID = jobID
+        self.sourcePath = sourcePath
+        self.follow = follow
+        self.json = json
+    }
+}
+
+public struct DebugBundleOptions: Equatable, Sendable {
+    public let runID: String
+    public let sourcePath: String
+    public let outputPath: String
+    public let json: Bool
+
+    public init(runID: String, sourcePath: String = "", outputPath: String = "", json: Bool = false) {
+        self.runID = runID
+        self.sourcePath = sourcePath
+        self.outputPath = outputPath
+        self.json = json
+    }
+}
+
 struct MelixRunRecord {
     let payload: [String: Any]
     private let envelope: MelixRunRecordEnvelope
@@ -70,6 +98,7 @@ struct MelixRunRecord {
     var metrics: [[String: Any]] { envelope.metrics.map(\.payload) }
     var artifacts: [[String: Any]] { envelope.artifacts.map(\.payload) }
     var knownGaps: [String] { envelope.knownGaps }
+    var artifactRoot: String { envelope.artifactRoot }
 
     func summaryPayload() -> [String: Any] {
         [
@@ -744,7 +773,7 @@ private func suiteLabel(_ value: Any?) -> String {
     return rendered.isEmpty ? "-" : rendered
 }
 
-private func stringField(_ payload: [String: Any], _ key: String, fallback: String = "") -> String {
+func stringField(_ payload: [String: Any], _ key: String, fallback: String = "") -> String {
     guard let value = payload[key] else {
         return fallback
     }
