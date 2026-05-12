@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
@@ -8466,7 +8467,8 @@ public actor MelixCLIRunner {
             name: "repo_root",
             path: config.repoRoot,
             blockedDetail: "Melix repository root does not exist: \(config.repoRoot).",
-            readyDetail: "Melix repository root exists."
+            readyDetail: "Melix repository root exists.",
+            category: "runtime_config"
         ))
         checks.append(executableCheck(
             name: "cli",
@@ -8474,6 +8476,8 @@ public actor MelixCLIRunner {
             blockedDetail: "Melix CLI build artifact is missing or not executable: \(config.cliPath). Build with xcrun swift build --product melix or set MELIX_CLI.",
             readyDetail: "Melix CLI build artifact is executable."
         ))
+        checks.append(contentsOf: stackProductChecks(config: config))
+        checks.append(isolatedRuntimeConfigCheck(config: config))
         checks.append(portCheck(config.httpPort))
         checks.append(directoryWritableCheck(name: "melix_home", path: config.melixHome))
         checks.append(directoryWritableCheck(name: "runtime_dir", path: config.runtimeDir))
@@ -8501,13 +8505,28 @@ public actor MelixCLIRunner {
         name: String,
         path: String,
         blockedDetail: String,
-        readyDetail: String
+        readyDetail: String,
+        category: String = "filesystem"
     ) -> BatchRunPreflightCheck {
         var isDirectory = ObjCBool(false)
         if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
-            return .init(name: name, status: "ready", detail: readyDetail, actionable: "")
+            return .init(
+                name: name,
+                status: "ready",
+                detail: readyDetail,
+                actionable: "",
+                category: category,
+                metadata: ["path": path]
+            )
         }
-        return .init(name: name, status: "blocked", detail: blockedDetail, actionable: "Create the directory or provide the correct path.")
+        return .init(
+            name: name,
+            status: "blocked",
+            detail: blockedDetail,
+            actionable: "Create the directory or provide the correct path.",
+            category: category,
+            metadata: ["path": path]
+        )
     }
 
     private func directoryWritableCheck(name: String, path: String) -> BatchRunPreflightCheck {
@@ -8520,10 +8539,19 @@ public actor MelixCLIRunner {
                     name: name,
                     status: status,
                     detail: "\(name) exists at \(path).",
-                    actionable: status == "ready" ? "" : "Fix permissions or choose a writable directory."
+                    actionable: status == "ready" ? "" : "Fix permissions or choose a writable directory.",
+                    category: "runtime_config",
+                    metadata: ["path": path]
                 )
             }
-            return .init(name: name, status: "blocked", detail: "\(name) is not a directory: \(path).", actionable: "Choose a directory path.")
+            return .init(
+                name: name,
+                status: "blocked",
+                detail: "\(name) is not a directory: \(path).",
+                actionable: "Choose a directory path.",
+                category: "runtime_config",
+                metadata: ["path": path]
+            )
         }
 
         var ancestor = url.deletingLastPathComponent()
@@ -8535,7 +8563,9 @@ public actor MelixCLIRunner {
                         name: name,
                         status: "blocked",
                         detail: "\(name) cannot be created because an ancestor is not a directory: \(ancestor.path).",
-                        actionable: "Choose a path under an existing writable directory."
+                        actionable: "Choose a path under an existing writable directory.",
+                        category: "runtime_config",
+                        metadata: ["path": path, "ancestor": ancestor.path]
                     )
                 }
                 let status = FileManager.default.isWritableFile(atPath: ancestor.path) ? "ready" : "blocked"
@@ -8543,7 +8573,9 @@ public actor MelixCLIRunner {
                     name: name,
                     status: status,
                     detail: "\(name) does not exist yet; nearest existing directory is \(ancestor.path).",
-                    actionable: status == "ready" ? "The batch runner will create this directory when it writes artifacts." : "Fix ancestor permissions or choose a writable directory."
+                    actionable: status == "ready" ? "The batch runner will create this directory when it writes artifacts." : "Fix ancestor permissions or choose a writable directory.",
+                    category: "runtime_config",
+                    metadata: ["path": path, "ancestor": ancestor.path]
                 )
             }
             let next = ancestor.deletingLastPathComponent()
@@ -8556,7 +8588,9 @@ public actor MelixCLIRunner {
             name: name,
             status: "blocked",
             detail: "\(name) does not exist and no parent directory could be found for \(path).",
-            actionable: "Create the parent directory or choose a path under an existing writable directory."
+            actionable: "Create the parent directory or choose a path under an existing writable directory.",
+            category: "runtime_config",
+            metadata: ["path": path]
         )
     }
 
@@ -8567,21 +8601,167 @@ public actor MelixCLIRunner {
         readyDetail: String
     ) -> BatchRunPreflightCheck {
         if FileManager.default.isExecutableFile(atPath: path) {
-            return .init(name: name, status: "ready", detail: readyDetail, actionable: "")
+            return .init(
+                name: name,
+                status: "ready",
+                detail: readyDetail,
+                actionable: "",
+                category: "runtime_products",
+                metadata: ["path": path]
+            )
         }
-        return .init(name: name, status: "blocked", detail: blockedDetail, actionable: "Build or point to the executable before launching a sweep.")
+        return .init(
+            name: name,
+            status: "blocked",
+            detail: blockedDetail,
+            actionable: "Build or point to the executable before launching a sweep.",
+            category: "runtime_products",
+            metadata: ["path": path]
+        )
+    }
+
+    private func stackProductChecks(config: BatchRunEffectiveConfig) -> [BatchRunPreflightCheck] {
+        let repoRoot = URL(fileURLWithPath: config.repoRoot)
+        let products = [
+            ("control_plane", ".build/debug/MelixControlPlaneService", true),
+            ("python_worker_entrypoint", "services/mlx-worker-python/worker", false),
+        ]
+        return products.map { name, relativePath, requiresExecutable in
+            let path = repoRoot.appendingPathComponent(relativePath).path
+            var isDirectory = ObjCBool(false)
+            let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            let isUsable = exists && (!requiresExecutable || FileManager.default.isExecutableFile(atPath: path))
+            if isUsable {
+                return .init(
+                    name: name,
+                    status: "ready",
+                    detail: "Required stack product \(relativePath) is present.",
+                    actionable: "",
+                    category: "runtime_products",
+                    metadata: [
+                        "path": path,
+                        "requires_executable": String(requiresExecutable),
+                    ]
+                )
+            }
+            return .init(
+                name: name,
+                status: "warning",
+                detail: "Required stack product \(relativePath) is not present yet.",
+                actionable: "Build runtime prerequisites before execution, for example with make bootstrap or xcrun swift build --product melix.",
+                category: "runtime_products",
+                metadata: [
+                    "path": path,
+                    "exists": String(exists),
+                    "requires_executable": String(requiresExecutable),
+                ]
+            )
+        }
+    }
+
+    private func isolatedRuntimeConfigCheck(config: BatchRunEffectiveConfig) -> BatchRunPreflightCheck {
+        let defaultRuntimeDir = URL(fileURLWithPath: config.repoRoot)
+            .appendingPathComponent(".runtime/sidecars/\(config.serviceInstanceName)", isDirectory: true)
+            .path
+        let defaultHome = URL(fileURLWithPath: config.repoRoot)
+            .appendingPathComponent(".runtime/home-\(config.serviceInstanceName)", isDirectory: true)
+            .path
+        var blockers: [String] = []
+        if config.serviceInstanceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            blockers.append("service instance name is empty")
+        }
+        let bareDefaultPorts = Set(["11434", "12436"])
+        if config.serviceInstanceName == "default" || bareDefaultPorts.contains(config.httpPort) {
+            blockers.append("batch mode must not use the bare default Melix stack")
+        }
+        if config.runtimeDir == config.repoRoot || config.runtimeDir == "." || config.runtimeDir == "/" {
+            blockers.append("runtime dir is not isolated")
+        }
+        if config.melixHome == FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".melix", isDirectory: true)
+            .path
+        {
+            blockers.append("MELIX_HOME points at shared operator state")
+        }
+        let metadata = [
+            "service_instance_name": config.serviceInstanceName,
+            "http_port": config.httpPort,
+            "bare_default_ports": bareDefaultPorts.sorted().joined(separator: ","),
+            "runtime_dir": config.runtimeDir,
+            "melix_home": config.melixHome,
+            "default_runtime_dir": defaultRuntimeDir,
+            "default_melix_home": defaultHome,
+        ]
+        if blockers.isEmpty {
+            return .init(
+                name: "isolated_runtime_config",
+                status: "ready",
+                detail: "Batch runtime config uses named instance \(config.serviceInstanceName), port \(config.httpPort), isolated runtime dir, and isolated MELIX_HOME.",
+                actionable: "",
+                category: "runtime_config",
+                metadata: metadata
+            )
+        }
+        return .init(
+            name: "isolated_runtime_config",
+            status: "blocked",
+            detail: blockers.joined(separator: "; "),
+            actionable: "Use a named batch instance, non-default HTTP port, worktree-local runtime dir, and worktree-local MELIX_HOME.",
+            category: "runtime_config",
+            metadata: metadata
+        )
     }
 
     private func portCheck(_ value: String) -> BatchRunPreflightCheck {
-        guard let port = Int(value), (1...65535).contains(port) else {
+        guard let port = Int(value), (1024...65535).contains(port) else {
             return .init(
                 name: "http_port",
                 status: "blocked",
                 detail: "Invalid MELIX_HTTP_PORT value: \(value).",
-                actionable: "Use a TCP port between 1 and 65535."
+                actionable: "Use a TCP port between 1024 and 65535.",
+                category: "runtime_config",
+                metadata: ["http_port": value]
             )
         }
-        return .init(name: "http_port", status: "ready", detail: "HTTP port \(port) is valid.", actionable: "")
+        if isTCPPortListening(port) {
+            return .init(
+                name: "http_port",
+                status: "blocked",
+                detail: "HTTP port \(port) is already in use.",
+                actionable: "Choose an unused MELIX_HTTP_PORT for this batch instance.",
+                category: "runtime_config",
+                metadata: ["http_port": value]
+            )
+        }
+        return .init(
+            name: "http_port",
+            status: "ready",
+            detail: "HTTP port \(port) is valid and no listener is currently detected.",
+            actionable: "",
+            category: "runtime_config",
+            metadata: ["http_port": value]
+        )
+    }
+
+    private func isTCPPortListening(_ port: Int) -> Bool {
+        let socketFD = socket(AF_INET, SOCK_STREAM, 0)
+        guard socketFD >= 0 else {
+            return false
+        }
+        defer { close(socketFD) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(port).bigEndian
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                Darwin.connect(socketFD, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return result == 0
     }
 
     private func diskCheck(path: String, fileManager: FileManager) -> BatchRunPreflightCheck {
@@ -8608,22 +8788,37 @@ public actor MelixCLIRunner {
                 available = nil
             }
             guard let available, available > 0 else {
-                return .init(
-                    name: "disk",
-                    status: "warning",
-                    detail: "Could not determine available disk capacity near \(path).",
-                    actionable: "Confirm there is enough free disk before a long sweep."
-                )
-            }
+            return .init(
+                name: "disk",
+                status: "warning",
+                detail: "Could not determine available disk capacity near \(path).",
+                actionable: "Confirm there is enough free disk before a long sweep.",
+                category: "resource",
+                metadata: ["path": path]
+            )
+        }
             let availableBytes = UInt64(max(0, available))
             let detail = "Available capacity near \(path): \(formatBinaryBytes(availableBytes))."
-            return .init(name: "disk", status: "ready", detail: detail, actionable: "")
+            return .init(
+                name: "disk",
+                status: "ready",
+                detail: detail,
+                actionable: "",
+                category: "resource",
+                metadata: [
+                    "path": path,
+                    "available_bytes": String(availableBytes),
+                    "available_gib": String(format: "%.2f", Double(availableBytes) / 1_073_741_824.0),
+                ]
+            )
         } catch {
             return .init(
                 name: "disk",
                 status: "warning",
                 detail: "Could not read available disk capacity near \(path): \(error.localizedDescription)",
-                actionable: "Confirm there is enough free disk before a long sweep."
+                actionable: "Confirm there is enough free disk before a long sweep.",
+                category: "resource",
+                metadata: ["path": path]
             )
         }
     }
@@ -8642,24 +8837,49 @@ public actor MelixCLIRunner {
         let actionable = status == "ready"
             ? ""
             : "Confirm required models and datasets can be downloaded or materialized before a long sweep."
-        return .init(name: "cache_state", status: status, detail: detail, actionable: actionable)
+        return .init(
+            name: "cache_state",
+            status: status,
+            detail: detail,
+            actionable: actionable,
+            category: "cache",
+            metadata: [
+                "model_cache": modelCacheRoot.path,
+                "model_cache_exists": String(modelCacheExists),
+                "dataset_cache": datasetCacheRoot.path,
+                "dataset_cache_exists": String(datasetCacheExists),
+            ]
+        )
     }
 
     private func preflightModelChecks(plan: BatchRunPlan) -> [BatchRunPreflightCheck] {
-        plan.selectedModels.map { model in
+        let duplicateCounts = Dictionary(grouping: plan.models, by: \.repoID)
+            .mapValues(\.count)
+        return plan.selectedModels.map { model -> BatchRunPreflightCheck in
             if model.repoID.contains("/") {
                 return .init(
                     name: "model_repo:\(model.index)",
                     status: "ready",
                     detail: "\(model.repoID) has a Hugging Face repo-shaped id.",
-                    actionable: ""
+                    actionable: "",
+                    category: "model_resolution",
+                    metadata: [
+                        "repo_id": model.repoID,
+                        "source_line": String(model.sourceLine),
+                        "duplicate_count": String(duplicateCounts[model.repoID, default: 1]),
+                    ]
                 )
             }
             return .init(
                 name: "model_repo:\(model.index)",
                 status: "blocked",
                 detail: "\(model.repoID) is not a Hugging Face repo id.",
-                actionable: "Use owner/repo model ids in the model list."
+                actionable: "Use owner/repo model ids in the model list.",
+                category: "model_resolution",
+                metadata: [
+                    "repo_id": model.repoID,
+                    "source_line": String(model.sourceLine),
+                ]
             )
         }
     }
@@ -8671,7 +8891,9 @@ public actor MelixCLIRunner {
                 name: "dataset",
                 status: "blocked",
                 detail: "Evaluation dataset id is empty.",
-                actionable: "Set --eval-dataset-id or eval_dataset_id."
+                actionable: "Set --eval-dataset-id or eval_dataset_id.",
+                category: "dataset",
+                metadata: ["dataset_id": datasetID]
             )
         }
         let repoRootFixture = URL(fileURLWithPath: config.repoRoot)
@@ -8684,7 +8906,13 @@ public actor MelixCLIRunner {
                 name: "dataset",
                 status: "ready",
                 detail: "Fixture dataset \(datasetID) is packaged at \(repoRootFixture.path).",
-                actionable: ""
+                actionable: "",
+                category: "dataset",
+                metadata: [
+                    "dataset_id": datasetID,
+                    "fixture_path": repoRootFixture.path,
+                    "source": "repo_fixture",
+                ]
             )
         }
 
@@ -8695,14 +8923,26 @@ public actor MelixCLIRunner {
                 name: "dataset",
                 status: "warning",
                 detail: "Dataset \(datasetID) was not found in repo fixtures; managed dataset cache exists at \(managedRoot.path).",
-                actionable: "Confirm the dataset is materialized before a long sweep."
+                actionable: "Confirm the dataset is materialized before a long sweep.",
+                category: "dataset",
+                metadata: [
+                    "dataset_id": datasetID,
+                    "managed_cache": managedRoot.path,
+                    "source": "managed_cache",
+                ]
             )
         }
         return .init(
             name: "dataset",
             status: "blocked",
             detail: "Dataset \(datasetID) was not found in repo fixtures or managed dataset cache.",
-            actionable: "Download or package the evaluation dataset before running the sweep."
+            actionable: "Download or package the evaluation dataset before running the sweep.",
+            category: "dataset",
+            metadata: [
+                "dataset_id": datasetID,
+                "fixture_path": repoRootFixture.path,
+                "managed_cache": managedRoot.path,
+            ]
         )
     }
 
@@ -8713,7 +8953,9 @@ public actor MelixCLIRunner {
                 name: "judge",
                 status: "blocked",
                 detail: "Semantic judge remote-server id is empty.",
-                actionable: "Set --judge-remote-server-id or judge_remote_server_id."
+                actionable: "Set --judge-remote-server-id or judge_remote_server_id.",
+                category: "judge",
+                metadata: ["remote_server_id": judgeID]
             )
         }
         let melixHome = isolatedMelixHome(config: config)
@@ -8722,7 +8964,12 @@ public actor MelixCLIRunner {
                 name: "judge",
                 status: "blocked",
                 detail: "Remote server \(judgeID) was not found in MELIX_HOME=\(config.melixHome).",
-                actionable: "Configure the judge with melix remote-server add before launching a long run."
+                actionable: "Configure the judge with melix remote-server add before launching a long run.",
+                category: "judge",
+                metadata: [
+                    "remote_server_id": judgeID,
+                    "melix_home": config.melixHome,
+                ]
             )
         }
         let apiKey = try RemoteServerAPIKeyStore(melixHome: melixHome)
@@ -8734,7 +8981,9 @@ public actor MelixCLIRunner {
                 name: "judge",
                 status: "blocked",
                 detail: "Remote server \(judgeID) has no API key configured.",
-                actionable: "Store the judge API key with melix remote-server add/update."
+                actionable: "Store the judge API key with melix remote-server add/update.",
+                category: "judge",
+                metadata: ["remote_server_id": judgeID]
             )
         }
         let modelID = config.judgeModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -8745,14 +8994,22 @@ public actor MelixCLIRunner {
                 name: "judge",
                 status: "blocked",
                 detail: "Remote server \(judgeID) has no judge model configured.",
-                actionable: "Set --judge-model or configure a default remote model."
+                actionable: "Set --judge-model or configure a default remote model.",
+                category: "judge",
+                metadata: ["remote_server_id": judgeID]
             )
         }
         return .init(
             name: "judge",
             status: "ready",
             detail: "Remote server \(judgeID) is configured for model \(modelID).",
-            actionable: ""
+            actionable: "",
+            category: "judge",
+            metadata: [
+                "remote_server_id": judgeID,
+                "model_id": modelID,
+                "provider_kind": server.providerKind,
+            ]
         )
     }
 
@@ -8767,7 +9024,8 @@ public actor MelixCLIRunner {
                 name: name,
                 status: "blocked",
                 detail: "\(name) preflight check failed: \(error.localizedDescription)",
-                actionable: "Fix the reported configuration or state and rerun preflight."
+                actionable: "Fix the reported configuration or state and rerun preflight.",
+                category: "preflight_exception"
             )
         }
     }

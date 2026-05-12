@@ -14,6 +14,10 @@ separate per-model execution work tracked by #760.
   operator output root.
 - Block before long-run execution when required health prerequisites are
   missing.
+- Enrich preflight rows with stable categories and metadata for later CLI,
+  report, status, and resume consumers.
+- Block bare default stack usage, including current port `12436` and legacy
+  port `11434`, so long batch plans use an isolated named instance.
 - Add stable failure categories and recoverability values for future manifest
   updates and reports.
 - Persist the default isolation policy in `effective-config.json`.
@@ -29,6 +33,8 @@ separate per-model execution work tracked by #760.
 
 - Parser coverage for `--preflight`.
 - Runner coverage for ready and blocked preflight reports.
+- Runner coverage for preflight metadata, runtime-product checks, judge
+  metadata, dataset source metadata, and bare-default-port blocking.
 - Classifier coverage for worker connectivity, runtime unavailable, Metal OOM,
   target resolution, model load, judge failure, artifact export, and unknown
   failures.
