@@ -225,6 +225,64 @@ def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     assert rows == [{"prompt": "first", "answer": "a"}]
 
 
+def test_dataset_catalog_json_row_reader_limit_uses_incremental_decode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    json_path = tmp_path / "preview.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {"prompt": "first", "answer": "a"},
+                    {"prompt": "second", "answer": "b"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        catalog.json,
+        "loads",
+        lambda _payload: (_ for _ in ()).throw(
+            AssertionError("limited canonical JSON previews should not fully decode")
+        ),
+    )
+
+    assert catalog._read_rows_from_file(json_path, limit=1) == [
+        {"prompt": "first", "answer": "a"}
+    ]
+
+
+def test_dataset_catalog_limited_json_text_helper_edges() -> None:
+    assert catalog._limited_rows_from_json_text("[]", limit=0) == []
+    assert catalog._limited_rows_from_json_text("{}", limit=1) is None
+    assert catalog._limited_rows_from_json_text("  []", limit=1) == []
+    assert catalog._limited_rows_from_json_text("[", limit=1) is None
+    assert catalog._limited_rows_from_json_text("[invalid", limit=1) is None
+    assert catalog._limited_rows_from_json_text("[1]", limit=1) == []
+    assert catalog._limited_rows_from_json_text("[1 x", limit=1) is None
+    assert catalog._limited_rows_from_json_text(
+        '[{"prompt":"first"}, {"prompt":"second"}]', limit=2
+    ) == [{"prompt": "first"}, {"prompt": "second"}]
+    assert catalog._limited_rows_from_json_text(
+        '{"data" : [{"prompt":"first"}]}', limit=1
+    ) == [{"prompt": "first"}]
+    assert catalog._json_text_first_array_start("") is None
+    assert catalog._json_text_first_array_start("1") is None
+    assert catalog._json_text_first_array_start('{"rows" []}') is None
+    assert catalog._json_text_first_array_start('{"rows" }') is None
+    assert catalog._json_text_first_array_start('{  }') is None
+    assert catalog._json_text_first_array_start('{invalid') is None
+    assert catalog._json_text_first_array_start('{1: 2}') is None
+    assert catalog._json_text_first_array_start('{"metadata": bad}') is None
+    assert catalog._json_text_first_array_start('{"metadata": 1 , "rows": []}') is not None
+    assert catalog._json_text_first_array_start('{"metadata": 1 x}') is None
+    assert catalog._json_text_first_array_start("{") is None
+    assert catalog._json_text_first_array_start('{"items": []}') is None
+
+
 class _FakeColumnarBatch:
     def __init__(self, rows: list[object]) -> None:
         self._rows = rows
