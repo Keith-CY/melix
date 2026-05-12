@@ -85,6 +85,12 @@ def test_evaluation_failure_stage_disables_score_threshold_when_zero() -> None:
     )
 
 
+def test_evaluation_core_defaults_to_evidence_probe_policy(tmp_path: Path) -> None:
+    runner = EvaluationCore(jobs_root=tmp_path / "runs")
+
+    assert type(runner._store._telemetry_collector).__name__ == "AppleSiliconTelemetryCollector"
+
+
 def test_evaluation_failure_stage_reports_validation_and_positive_threshold_scoring() -> None:
     assert (
         EvaluationCore._evaluation_failure_stage(

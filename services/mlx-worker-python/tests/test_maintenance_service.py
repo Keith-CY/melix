@@ -4633,6 +4633,33 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
     assert "runtime_stats_model_resident_bytes: 1024" in report
 
 
+def test_bench_events_defaults_to_evidence_probe_policy(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    core = MaintenanceCore(
+        registry,
+        jobs_root=tmp_path / "model-ops",
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+        ),
+    )
+
+    list(
+        core.bench_events(
+            maintenance_pb2.RunBenchRequest(
+                model_handle=loaded.handle,
+                suites=["smoke"],
+                parameters={"require_live_model": "true"},
+            )
+        )
+    )
+
+    assert type(core._benchmark_store._telemetry_collector).__name__ == "AppleSiliconTelemetryCollector"
+
+
 def test_run_bench_persists_report_without_reading_report_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),

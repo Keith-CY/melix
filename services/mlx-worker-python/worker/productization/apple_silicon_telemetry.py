@@ -108,6 +108,48 @@ class AppleSiliconTelemetryCollection:
     artifact_path: Path
 
 
+class NoOpAppleSiliconTelemetryCollector:
+    def __init__(self, *, reason: str = "probe_mode_minimal") -> None:
+        self._reason = reason or "probe_mode_minimal"
+
+    def start_session(self, *, run_id: str) -> NoOpAppleSiliconTelemetrySession:
+        return NoOpAppleSiliconTelemetrySession(run_id=run_id, reason=self._reason)
+
+    def collect_completed_run(
+        self,
+        *,
+        artifact_root: Path,
+        run_id: str,
+        output_token_count: int = 0,
+    ) -> AppleSiliconTelemetryCollection:
+        return _finalize_no_op_collection(
+            artifact_root=artifact_root,
+            run_id=run_id,
+            reason=self._reason,
+        )
+
+
+class NoOpAppleSiliconTelemetrySession:
+    def __init__(self, *, run_id: str, reason: str) -> None:
+        self._run_id = run_id
+        self._reason = reason
+
+    def finish(
+        self,
+        *,
+        artifact_root: Path,
+        output_token_count: int = 0,
+    ) -> AppleSiliconTelemetryCollection:
+        return _finalize_no_op_collection(
+            artifact_root=artifact_root,
+            run_id=self._run_id,
+            reason=self._reason,
+        )
+
+    def cancel(self) -> None:
+        return None
+
+
 class AppleSiliconTelemetryCollector:
     def __init__(
         self,
@@ -509,6 +551,79 @@ def _finalize_collection(
         samples=samples,
         probes=probes,
         artifact_path=artifact_path,
+    )
+
+
+def _finalize_no_op_collection(
+    *,
+    artifact_root: Path,
+    run_id: str,
+    reason: str,
+) -> AppleSiliconTelemetryCollection:
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_root / "telemetry-samples.jsonl"
+    _write_no_op_jsonl(artifact_path, reason=reason)
+    summary = RunEvidenceTelemetrySummary(
+        collector_status="disabled",
+        telemetry_failures=(reason,),
+        time_series_path=artifact_path.name,
+        sample_count=0,
+        process_attribution=summarize_process_attribution(()),
+    )
+    probes = telemetry_probes_for_disabled(
+        run_id=run_id,
+        summary=summary,
+        reason=reason,
+    )
+    return AppleSiliconTelemetryCollection(
+        summary=summary,
+        samples=(),
+        probes=probes,
+        artifact_path=artifact_path,
+    )
+
+
+def _write_no_op_jsonl(path: Path, *, reason: str) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": APPLE_SILICON_TELEMETRY_SAMPLE_SCHEMA_VERSION,
+                "timestamp_unix_ms": int(time.time() * 1000),
+                "sample_kind": "telemetry_disabled",
+                "collector_status": "disabled",
+                "reason": reason,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def telemetry_probes_for_disabled(
+    *,
+    run_id: str,
+    summary: RunEvidenceTelemetrySummary,
+    reason: str,
+) -> tuple[RunEvidenceProbe, ...]:
+    started_at = int(time.monotonic() * 1000)
+    attributes = {
+        "collector_status": summary.collector_status,
+        "sample_count": 0,
+        "time_series_path": summary.time_series_path,
+        "reason": reason,
+    }
+    return tuple(
+        _telemetry_probe(
+            run_id=run_id,
+            phase=phase,
+            started_at_monotonic_ms=started_at,
+            duration_ms=0.001,
+            status="skipped",
+            error_code="",
+            attributes=attributes,
+        )
+        for phase in ("hardware_sample", "process_sample", "power_sample")
     )
 
 

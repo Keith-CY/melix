@@ -6,7 +6,10 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from worker.productization.apple_silicon_telemetry import AppleSiliconTelemetryCollector
+from worker.productization.apple_silicon_telemetry import (
+    AppleSiliconTelemetryCollector,
+    NoOpAppleSiliconTelemetryCollector,
+)
 from worker.productization.benchmark_export import (
     _canonical_benchmark_matrix_request_columns,
     _canonical_benchmark_matrix_summary_columns,
@@ -19,6 +22,7 @@ from worker.productization.benchmark_schemas import (
     ServingBenchmarkJob,
     ServingBenchmarkResult,
 )
+from worker.productization.probe_policy import ProbePolicy
 from worker.productization.run_evidence import (
     assert_valid_run_evidence_payload,
     build_serving_benchmark_run_evidence,
@@ -33,11 +37,25 @@ from worker.productization.run_records import (
 
 
 class BenchmarkStore:
-    def __init__(self, *, telemetry_collector: Any | None = None) -> None:
-        self._telemetry_collector = telemetry_collector or AppleSiliconTelemetryCollector()
+    def __init__(
+        self,
+        *,
+        telemetry_collector: Any | None = None,
+        probe_policy: ProbePolicy | None = None,
+    ) -> None:
+        self._probe_policy = probe_policy or ProbePolicy.from_env()
+        self._telemetry_collector = telemetry_collector or self._default_telemetry_collector(
+            self._probe_policy
+        )
 
     def start_telemetry_session(self, *, run_id: str):
         return self._telemetry_collector.start_session(run_id=run_id)
+
+    @staticmethod
+    def _default_telemetry_collector(policy: ProbePolicy) -> Any:
+        if policy.telemetry_enabled:
+            return AppleSiliconTelemetryCollector()
+        return NoOpAppleSiliconTelemetryCollector(reason=policy.no_op_reason)
 
     def persist_serving_benchmark(
         self,

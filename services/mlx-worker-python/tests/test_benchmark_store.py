@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
+
+import pytest
 
 from worker.productization.benchmark_schemas import (
     build_benchmark_matrix_job,
@@ -11,6 +14,7 @@ from worker.productization.benchmark_schemas import (
     build_serving_benchmark_results,
 )
 from worker.productization.benchmark_store import BenchmarkStore
+from worker.productization.probe_policy import ProbeMode, ProbePolicy
 from telemetry_fixtures import fixture_telemetry_collector
 
 
@@ -128,6 +132,54 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
         "telemetry_jsonl",
     }
     assert run_record["probes"][0]["phase"] == "run_record_write"
+
+
+def test_persist_serving_benchmark_defaults_to_no_op_telemetry(tmp_path: Path) -> None:
+    store = BenchmarkStore(probe_policy=ProbePolicy(mode=ProbeMode.MINIMAL))
+    jobs_root = tmp_path / "bench"
+    job = build_serving_benchmark_job(
+        job_id="bench-no-op",
+        model_id="melix-dev-text",
+        suites=("smoke",),
+        parameters={},
+        status="completed",
+        output_dir=str(jobs_root),
+    )
+    results = build_serving_benchmark_results(
+        job_id="bench-no-op",
+        metrics={},
+        units={},
+        report_path=str(jobs_root / "bench-report.md"),
+        report_markdown="# Melix Bench\n",
+    )
+
+    persisted = store.persist_serving_benchmark(
+        jobs_root=jobs_root,
+        job=job,
+        results=results,
+    )
+
+    evidence = json.loads(persisted["evidence"].read_text(encoding="utf-8"))
+    assert persisted["telemetry_jsonl"] == jobs_root / "telemetry-samples.jsonl"
+    assert evidence["telemetry_summary"]["collector_status"] == "disabled"
+    assert evidence["telemetry_summary"]["sample_count"] == 0
+    assert evidence["telemetry_summary"]["time_series_path"] == "telemetry-samples.jsonl"
+    telemetry_rows = [
+        json.loads(line)
+        for line in persisted["telemetry_jsonl"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert telemetry_rows[0]["sample_kind"] == "telemetry_disabled"
+    assert telemetry_rows[0]["reason"] == "probe_mode_minimal"
+    telemetry_probes = [
+        probe for probe in evidence["probe_timeline"] if probe["component"] == "telemetry"
+    ]
+    assert {probe["status"] for probe in telemetry_probes} == {"skipped"}
+
+
+def test_benchmark_store_evidence_policy_uses_full_collector() -> None:
+    store = BenchmarkStore(probe_policy=ProbePolicy(mode=ProbeMode.EVIDENCE))
+
+    assert type(store._telemetry_collector).__name__ == "AppleSiliconTelemetryCollector"
 
 
 def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
@@ -348,3 +400,67 @@ def test_persist_benchmark_matrix_preserves_empty_jsonl_artifacts(tmp_path: Path
 
     assert persisted["summary_jsonl"].read_text(encoding="utf-8") == ""
     assert persisted["requests_jsonl"].read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.parametrize("probe_mode", ("off", "minimal", "definitely-not-a-mode", ""))
+def test_persist_serving_benchmark_default_policy_skips_heavy_telemetry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe_mode: str,
+) -> None:
+    pytest.importorskip(
+        "worker.productization.probe_policy",
+        reason="probe policy foundation is expected from the main implementation",
+    )
+    monkeypatch.setenv("MELIX_PROBE_MODE", probe_mode)
+
+    def fail_heavy_sample(*args: object, **kwargs: object) -> None:
+        raise AssertionError("production-safe probe policy must not call the heavy telemetry sampler")
+
+    def fail_sleep(*args: object, **kwargs: object) -> None:
+        raise AssertionError("production-safe probe policy must not sleep during persist")
+
+    def fail_thread_start(self: threading.Thread) -> None:
+        raise AssertionError("production-safe probe policy must not start a telemetry thread")
+
+    monkeypatch.setattr(
+        "worker.productization.apple_silicon_telemetry.MacOSAppleSiliconSampler.sample",
+        fail_heavy_sample,
+    )
+    monkeypatch.setattr("worker.productization.apple_silicon_telemetry.time.sleep", fail_sleep)
+    monkeypatch.setattr(threading.Thread, "start", fail_thread_start)
+
+    jobs_root = tmp_path / "bench"
+    job = build_serving_benchmark_job(
+        job_id=f"bench-policy-{probe_mode or 'empty'}",
+        model_id="melix-dev-text",
+        suites=("smoke",),
+        parameters={},
+        status="completed",
+        output_dir=str(jobs_root),
+    )
+    results = build_serving_benchmark_results(
+        job_id=job.job_id,
+        metrics={"bench.smoke.ttft_ms": 24.45},
+        units={"bench.smoke.ttft_ms": "ms"},
+        report_path=str(jobs_root / "bench-report.md"),
+        report_markdown="# Melix Bench\n",
+    )
+
+    persisted = BenchmarkStore().persist_serving_benchmark(
+        jobs_root=jobs_root,
+        job=job,
+        results=results,
+    )
+
+    evidence = json.loads(persisted["evidence"].read_text(encoding="utf-8"))
+    assert evidence["schema_version"] == "melix.run_evidence.v1"
+    assert evidence["run_id"] == job.job_id
+    assert evidence["telemetry_summary"]["collector_status"] == "disabled"
+    assert evidence["telemetry_summary"]["sample_count"] == 0
+    assert persisted["telemetry_jsonl"] == jobs_root / "telemetry-samples.jsonl"
+    telemetry_rows = [
+        json.loads(line)
+        for line in persisted["telemetry_jsonl"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert telemetry_rows[0]["sample_kind"] == "telemetry_disabled"

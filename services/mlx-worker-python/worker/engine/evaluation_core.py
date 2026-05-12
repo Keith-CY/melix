@@ -75,6 +75,7 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_sample_record,
 )
 from worker.productization.evaluation_store import EvaluationStore
+from worker.productization.probe_policy import ProbePolicy
 
 
 _SUITE_SCORE_MODES = {
@@ -246,7 +247,7 @@ class EvaluationCore:
         registry: Any | None = None,
     ) -> None:
         self._jobs_root = Path(jobs_root).resolve() if jobs_root is not None else None
-        self._store = store or EvaluationStore()
+        self._store = store or EvaluationStore(probe_policy=ProbePolicy.evidence())
         self._queue_store = queue_store or BenchmarkQueueStore()
         self._registry = registry
         self._job_id_lock = threading.Lock()
@@ -2107,17 +2108,19 @@ class EvaluationCore:
     def _sample_probe_means(samples: Any, field_names: tuple[str, ...]) -> dict[str, float]:
         if not field_names:
             return {}
-        totals = {field_name: 0.0 for field_name in field_names}
+        totals = [0.0] * len(field_names)
         sample_count = 0
         for sample in samples:
             sample_count += 1
-            for field_name in field_names:
-                totals[field_name] += float(getattr(sample, field_name, 0.0) or 0.0)
+            for index, field_name in enumerate(field_names):
+                value = getattr(sample, field_name, 0.0)
+                if value:
+                    totals[index] += float(value)
         if sample_count == 0:
             return {field_name: 0.0 for field_name in field_names}
         return {
-            field_name: round(total / sample_count, 4)
-            for field_name, total in totals.items()
+            field_name: round(totals[index] / sample_count, 4)
+            for index, field_name in enumerate(field_names)
         }
 
     @staticmethod
