@@ -10,6 +10,7 @@ import re
 import shutil
 import tempfile
 from collections.abc import Iterable, Iterator
+from functools import lru_cache
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -306,9 +307,9 @@ def _score_json_result(
     target: str,
     profile: EvaluationProfileDefinition,
 ) -> ScoringOutcome:
-    parsed_target = json.loads(target)
+    parsed_target = _loads_json_payload(target)
     try:
-        parsed_result = json.loads(extracted_result)
+        parsed_result = _loads_json_payload(extracted_result)
     except json.JSONDecodeError:
         return ScoringOutcome(typed_score=0.0, validation_status="parse_failed", failure_reason="invalid_json")
 
@@ -322,6 +323,11 @@ def _score_json_result(
         ignored_paths=_DEFAULT_IGNORED_PATHS | set(profile.ignored_paths),
     )
     return ScoringOutcome(typed_score=round(score, 4), validation_status="validated")
+
+
+@lru_cache(maxsize=128)
+def _loads_json_payload(payload: str) -> Any:
+    return json.loads(payload)
 
 
 def _score_text_result(
