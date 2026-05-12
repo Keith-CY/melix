@@ -679,6 +679,31 @@ struct MelixCLIParserTests {
         #expect(preflightBenchArguments.contains("--allow-memory-risk"))
         #expect(try MelixCLIParser.parse(preflightBenchArguments) == preflightBenchCommand)
 
+        let titledServerStartCommand = MelixCLICommand.serverStart(
+            .init(
+                serverTitle: "Gemma 31B",
+                modelID: "mlx-community/gemma-4-31b-it-4bit",
+                host: "127.0.0.1",
+                port: 12434,
+                rateLimitPerMinute: 60,
+                timeoutSeconds: 240,
+                json: true
+            )
+        )
+        let titledServerStartArguments = try MelixCLICommandCodec.arguments(for: titledServerStartCommand)
+        #expect(titledServerStartArguments == [
+            "server",
+            "start",
+            "Gemma 31B",
+            "--model", "mlx-community/gemma-4-31b-it-4bit",
+            "--host", "127.0.0.1",
+            "--port", "12434",
+            "--rate-limit-per-minute", "60",
+            "--timeout-seconds", "240",
+            "--json",
+        ])
+        #expect(try MelixCLIParser.parse(titledServerStartArguments) == titledServerStartCommand)
+
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -758,6 +783,7 @@ struct MelixCLIParserTests {
             (.serverSessionRemove(.init(serverSessionID: "server-session-1", json: true)), "server.session.remove"),
             (.serverSessionSelect(.init(serverSessionID: "server-session-1", json: true)), "server.session.select"),
             (.serverStart(.init(serverSessionID: "server-session-1", json: true)), "server.start"),
+            (.serverStart(.init(serverTitle: "Gemma 31B", modelID: "mlx-community/gemma-4-31b-it-4bit", host: "127.0.0.1", port: 12434, json: true)), "server.start"),
             (.serverPause(.init(serverSessionID: "server-session-1", json: true)), "server.pause"),
             (.serverResume(.init(serverSessionID: "server-session-1", json: true)), "server.resume"),
             (.serverWake(.init(serverSessionID: "server-session-1", json: true)), "server.wake"),
@@ -1306,6 +1332,17 @@ struct MelixCLIParserTests {
             "--server-session-id", "server-session-2",
             "--json",
         ])
+        let titledStartCommand = try MelixCLIParser.parse([
+            "server",
+            "start",
+            "Gemma 31B",
+            "--model", "mlx-community/gemma-4-31b-it-4bit",
+            "--host", "127.0.0.1",
+            "--port", "12434",
+            "--rate-limit-per-minute", "60",
+            "--timeout-seconds", "240",
+            "--json",
+        ])
         let resumeCommand = try MelixCLIParser.parse([
             "server",
             "resume",
@@ -1326,6 +1363,10 @@ struct MelixCLIParserTests {
             Issue.record("Expected serverStart command")
             return
         }
+        guard case .serverStart(let titledStartOptions) = titledStartCommand else {
+            Issue.record("Expected titled serverStart command")
+            return
+        }
         guard case .serverResume(let resumeOptions) = resumeCommand else {
             Issue.record("Expected serverResume command")
             return
@@ -1341,6 +1382,14 @@ struct MelixCLIParserTests {
 
         #expect(startOptions.serverSessionID == "server-session-2")
         #expect(startOptions.json)
+        #expect(titledStartOptions.serverSessionID == "server-session-1")
+        #expect(titledStartOptions.serverTitle == "Gemma 31B")
+        #expect(titledStartOptions.modelID == "mlx-community/gemma-4-31b-it-4bit")
+        #expect(titledStartOptions.host == "127.0.0.1")
+        #expect(titledStartOptions.port == 12434)
+        #expect(titledStartOptions.rateLimitPerMinute == 60)
+        #expect(titledStartOptions.timeoutSeconds == 240)
+        #expect(titledStartOptions.json)
         #expect(resumeOptions.serverSessionID == "server-session-3")
         #expect(!resumeOptions.json)
         #expect(wakeOptions.serverSessionID == "server-session-4")
