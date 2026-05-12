@@ -282,37 +282,52 @@ def _load_payload_file(
     return payload
 
 
+_CODE_EVAL_PAYLOAD_STRING_KEYS = (
+    "compile_status",
+    "runtime_status",
+    "timeout_status",
+    "test_status",
+    "failure_detail",
+)
+_CODE_EVAL_PAYLOAD_INT_KEYS = ("tests_passed", "tests_total")
+_REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS = (
+    "runtime_status",
+    "timeout_status",
+    "test_status",
+    "failure_detail",
+)
+_CODE_EVAL_PAYLOAD_KEY_TOKENS = {
+    key: json.dumps(key, separators=(",", ":")).encode("utf-8")
+    for key in (*_CODE_EVAL_PAYLOAD_STRING_KEYS, *_CODE_EVAL_PAYLOAD_INT_KEYS)
+}
+
+
 def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
     stripped = payload_bytes.strip()
     if not stripped.startswith(b"{") or not stripped.endswith(b"}"):
         return None
 
     payload: dict[str, object] = {}
-    for key in (
-        "compile_status",
-        "runtime_status",
-        "timeout_status",
-        "test_status",
-        "failure_detail",
-    ):
+    for key in _CODE_EVAL_PAYLOAD_STRING_KEYS:
         value = _extract_json_string_field(payload_bytes, key)
         if value is not None:
             payload[key] = value
 
-    for key in ("tests_passed", "tests_total"):
+    for key in _CODE_EVAL_PAYLOAD_INT_KEYS:
         value = _extract_json_int_field(payload_bytes, key)
         if value is None:
             return None
         payload[key] = value
 
-    required_string_keys = ("runtime_status", "timeout_status", "test_status", "failure_detail")
-    if all(key in payload for key in required_string_keys):
+    if all(key in payload for key in _REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS):
         return payload
     return None
 
 
 def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:
-    key_token = json.dumps(key, separators=(",", ":")).encode("utf-8")
+    key_token = _CODE_EVAL_PAYLOAD_KEY_TOKENS.get(key)
+    if key_token is None:
+        key_token = json.dumps(key, separators=(",", ":")).encode("utf-8")
     key_index = payload_bytes.find(key_token)
     if key_index < 0:
         return None
