@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reduce transient list allocation in final-result JSON typed scoring by replacing recursive per-node `scores = [...]` materialization with running `total`/`count` aggregation.
+Reduce transient list allocation in final-result JSON typed scoring by replacing recursive per-node `scores = [...]` materialization with running `total`/`count` aggregation. A follow-up slice reuses a small bounded parsed-JSON cache for repeated `score_final_result(...)` calls over identical target/extracted payload strings, avoiding duplicate `json.loads(...)` work without changing scoring semantics.
 
 ## Scope
 
@@ -24,6 +24,7 @@ Register a dedicated PR-scoped performance probe:
 
 - Probe ID: `evaluation-final-result-json-typed-score-aggregate`
 - Workload: repeatedly score a wide JSON payload through `score_final_result(...)` with ignored paths preserved.
+- Current slice: verifies the bounded parsed-payload cache is exercised for repeated identical target/extracted payload strings before measuring the same registered workload.
 - Metrics:
   - `elapsed_ms_mean` (lower is better)
   - `peak_bytes_mean` (lower is better)
@@ -41,5 +42,5 @@ Register a dedicated PR-scoped performance probe:
 
 - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_evaluation_final_result.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_final_result_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_evaluation_json_typed_score_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands`
 - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest -q ... && coverage json ... && python3 scripts/changed_scope_coverage.py ...`
-- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python scripts/evaluation_json_typed_score_probe.py`
-- `python scripts/pr_scoped_performance_run.py --probe-id evaluation-final-result-json-typed-score-aggregate --output /tmp/evaluation-json-typed-score-probe.json`
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/evaluation_json_typed_score_probe.py`
+- `python3 scripts/pr_scoped_performance_run.py --probe-id evaluation-final-result-json-typed-score-aggregate --output /tmp/evaluation-json-typed-score-probe.json`

@@ -243,6 +243,38 @@ def test_score_final_result_validates_json_schema_and_ignores_default_paths() ->
     assert score.typed_score == 1.0
 
 
+def test_score_final_result_reuses_cached_parsed_json_payloads(monkeypatch: pytest.MonkeyPatch) -> None:
+    evaluation_final_result_module._loads_json_payload.cache_clear()
+    original_loads = json.loads
+    load_calls = 0
+
+    def counted_loads(payload: str, *args: object, **kwargs: object) -> object:
+        nonlocal load_calls
+        load_calls += 1
+        return original_loads(payload, *args, **kwargs)
+
+    monkeypatch.setattr(evaluation_final_result_module.json, "loads", counted_loads)
+    target = '{"answer":{"label":"A","score":1}}'
+    extracted = '{"answer":{"score":1,"label":"A"}}'
+    profile = EvaluationProfileDefinition(
+        profile_type="final_result",
+        result_kind="json",
+        extraction_mode="strict_full_response",
+        scoring_mode="json_field_match",
+        threshold=1.0,
+    )
+
+    first = score_final_result(extracted_result=extracted, target=target, profile=profile)
+    second = score_final_result(extracted_result=extracted, target=target, profile=profile)
+
+    assert first == second == evaluation_final_result_module.ScoringOutcome(
+        typed_score=1.0,
+        validation_status="validated",
+    )
+    assert load_calls == 2
+    evaluation_final_result_module._loads_json_payload.cache_clear()
+
+
 def test_score_final_result_rejects_invalid_json_shape_before_scoring() -> None:
     score = score_final_result(
         extracted_result=json.dumps([{"label": "A"}]),
