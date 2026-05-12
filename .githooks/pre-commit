@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+force_flag="${MELIX_PRE_COMMIT_FORCE:-}"
+if [[ "$force_flag" != "1" && "$force_flag" != "true" && "$force_flag" != "TRUE" && "$force_flag" != "yes" && "$force_flag" != "YES" && "$force_flag" != "on" && "$force_flag" != "ON" ]]; then
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    printf '[pre-commit] skipped: host is not macOS\n'
+    exit 0
+  fi
+
+  mem_bytes="$(sysctl -n hw.memsize 2>/dev/null || true)"
+  if [[ "$mem_bytes" =~ ^[0-9]+$ ]] && (( mem_bytes < 137438953472 )); then
+    printf '[pre-commit] skipped: macOS host memory is below 128 GiB\n'
+    exit 0
+  fi
+fi
+
+exec uv run --frozen --project services/mlx-worker-python --extra mlx python scripts/pre_commit_gate.py

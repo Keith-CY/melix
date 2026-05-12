@@ -184,6 +184,8 @@ state from `.runtime`.
 - Do not claim completion without running the relevant verification commands and reporting the result.
 - Before any commit, ensure measured automated test coverage for the repository scope touched by the change is at least 95 percent. If coverage is not currently measurable for that scope, add or update the coverage command before committing.
 - Before any commit or handoff, include a metrics report for the changed scope. If the change is documentation-only or the path is not yet measurable, include an explicit `N/A` metrics report with the reason.
+- Before committing on a macOS host with at least 128 GiB of physical memory, the versioned pre-commit hook under `.githooks/pre-commit` must run the full local test gate (`make swift-test`, `make py-test`, and `make integration-test`) and build the scoped performance report. Install the hook with `make git-hooks-install`; `make bootstrap` also installs it.
+- If the pre-commit performance report shows a regression, analyze the report before proceeding. If the regression is an intentional and acceptable tradeoff, commit only with `MELIX_PRE_COMMIT_ALLOW_PERF_REGRESSION=1` and a non-empty `MELIX_PRE_COMMIT_PERF_REGRESSION_REASON`, then record that rationale in the PR or handoff. Otherwise, fix the regression and rerun the hook before committing.
 
 ## Pull Request Evidence Rules
 

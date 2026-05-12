@@ -88,7 +88,7 @@ SWIFT_TEST_SHARD_TARGETS := \
 	swift-test-control-worker \
 	swift-test-menubar
 
-.PHONY: bootstrap proto proto-check swift-build-integration-prereqs swift-test $(SWIFT_TEST_SHARD_TARGETS) py-test integration-test package-smoke swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
+.PHONY: bootstrap git-hooks-install proto proto-check swift-build-integration-prereqs swift-test $(SWIFT_TEST_SHARD_TARGETS) py-test integration-test package-smoke swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
 
 PHASE1_METRICS_ARGS ?=
 PHASE2_METRICS_ARGS ?=
@@ -99,9 +99,17 @@ PHASE8_INSTALL_SMOKE_ARGS ?=
 PHASE8_RELEASE_GATE_ARGS ?=
 PHASE8_METRICS_ARGS ?=
 
-bootstrap:
+bootstrap: git-hooks-install
 	mkdir -p "$(UV_CACHE_DIR)" "$(SWIFT_HOME)" "$(CLANG_MODULE_CACHE_PATH)"
 	UV_CACHE_DIR="$(UV_CACHE_DIR)" uv sync --project services/mlx-worker-python --extra mlx
+
+git-hooks-install:
+	@if git rev-parse --git-dir >/dev/null 2>&1; then \
+		git config core.hooksPath .githooks && \
+		echo "Configured git hooks path: .githooks"; \
+	else \
+		echo "Skipping git hook install outside a git worktree"; \
+	fi
 
 proto:
 	./scripts/proto_gen.sh
