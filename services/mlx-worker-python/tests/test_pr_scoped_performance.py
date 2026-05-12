@@ -799,6 +799,19 @@ def test_scope_report_selects_deterministic_vlm_completion_probe() -> None:
     ]
 
 
+def test_scope_report_selects_shared_token_counting_probes() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/token_counting.py"],
+    )
+
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "deterministic-ocr-token-count-scan",
+        "deterministic-vlm-completion-token-scan",
+        "vision-family-prompt-token-count-scan",
+    ]
+
+
 def test_scope_report_selects_model_registry_catalog_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,

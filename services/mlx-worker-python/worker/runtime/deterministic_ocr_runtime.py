@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, replace
-from functools import lru_cache
 from threading import Event
 
 from worker.runtime.deterministic_delay import sleep_if_configured
@@ -12,6 +11,7 @@ from worker.runtime.multimodal_preprocessing import (
     PreparedVisionRequest,
     prepare_vision_request,
 )
+from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
 
 
 @dataclass(frozen=True)
@@ -196,16 +196,3 @@ class DeterministicOCRRuntime:
             prompt_hash_hex=prompt_hash_hex,
             multimodal_hash_hex=digest.hexdigest(),
         )
-
-
-@lru_cache(maxsize=512)
-def _whitespace_token_count(text: str) -> int:
-    token_count = 0
-    in_token = False
-    for character in text:
-        if character.isspace():
-            in_token = False
-        elif not in_token:
-            token_count += 1
-            in_token = True
-    return token_count

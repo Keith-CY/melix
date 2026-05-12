@@ -10,11 +10,8 @@ from worker.engine.maintenance_core import MaintenanceCore
 from worker.grpc_server import WorkerCacheService, WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime, _whitespace_token_count
-from worker.runtime.deterministic_vlm_runtime import (
-    DeterministicVLMRuntime,
-    _whitespace_token_count as vlm_whitespace_token_count,
-)
+from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
+from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime import multimodal_preprocessing
 from worker.runtime import vision_family_adapters as vision_family_adapters_module
@@ -29,6 +26,7 @@ from worker.runtime.multimodal_preprocessing import (
     _prepare_image_part,
     prepare_vision_request,
 )
+from worker.runtime.token_counting import whitespace_token_count
 from worker.runtime.vision_family_adapters import ResolvedVisionFamilyConfig, resolve_vision_family_config
 
 
@@ -154,7 +152,7 @@ def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
     )
     runtime = DeterministicOCRRuntime()
 
-    assert _whitespace_token_count(prompt_text) == len(prompt_text.split())
+    assert whitespace_token_count(prompt_text) == len(prompt_text.split())
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + max(
         1,
         request.images[0].byte_length // 8,
@@ -245,7 +243,7 @@ def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest
         )
     )
 
-    assert vlm_whitespace_token_count(response_text) == len(str(response_text).split())
+    assert whitespace_token_count(response_text) == len(str(response_text).split())
     assert prefill_session.completion_tokens == 4
     assert token_events[-1].completion_tokens == 4
     assert SplitTrackingText.split_calls == 0

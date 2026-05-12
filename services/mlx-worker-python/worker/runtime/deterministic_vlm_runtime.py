@@ -13,6 +13,7 @@ from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEv
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
 from worker.runtime.temp_media_lifecycle import TempMediaSession
+from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 
@@ -717,15 +718,3 @@ class DeterministicVLMRuntime:
             cache_identity=cache_identity,
             scope_id=scope_id,
         )
-
-
-def _whitespace_token_count(text: str) -> int:
-    token_count = 0
-    in_token = False
-    for character in text:
-        if character.isspace():
-            in_token = False
-        elif not in_token:
-            token_count += 1
-            in_token = True
-    return token_count
