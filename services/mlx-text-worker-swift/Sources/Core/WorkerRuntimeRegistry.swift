@@ -121,8 +121,12 @@ actor WorkerRuntimeRegistry {
         self.modelCatalog = modelCatalog
         self.runtime = runtime
         self.cacheStore = cacheStore ?? HotCacheStore(
-            diskStore: DiskCacheStore(rootPath: configuration.cacheRootPath),
+            diskStore: DiskCacheStore(
+                rootPath: configuration.cacheRootPath,
+                runtimeCacheFingerprint: configuration.runtimeCacheFingerprint
+            ),
             cacheRootPath: configuration.cacheRootPath,
+            runtimeCacheFingerprint: configuration.runtimeCacheFingerprint,
             initialCacheBlocks: configuration.initialCacheBlocks
         )
         self.loadedModels = [:]
@@ -443,6 +447,7 @@ actor WorkerRuntimeRegistry {
                 )
 
                 let cacheSnapshot = await cacheStore.snapshot()
+                let cacheStats = cacheStatsWithRuntimeContext(cacheSnapshot.stats)
                 let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
                 return WorkerPrefillResult(
                     decodeHandle: decodeHandle,
@@ -453,7 +458,7 @@ actor WorkerRuntimeRegistry {
                     appliedAcceleration: runtimePrefill.appliedAcceleration,
                     acceleratedPrefillGainPct: runtimePrefill.acceleratedPrefillGainPct,
                     activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
-                    cacheStats: cacheSnapshot.stats,
+                    cacheStats: cacheStats,
                     hotPrefixCount: cacheSnapshot.hotPrefixes.count,
                     restorePlan: restorePlan,
                     cacheHitTaxonomy: cacheHitTaxonomy
@@ -505,6 +510,7 @@ actor WorkerRuntimeRegistry {
         }
 
         let cacheSnapshot = await cacheStore.snapshot()
+        let cacheStats = cacheStatsWithRuntimeContext(cacheSnapshot.stats)
         let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
 
         return WorkerPrefillResult(
@@ -516,7 +522,7 @@ actor WorkerRuntimeRegistry {
             appliedAcceleration: result.appliedAcceleration,
             acceleratedPrefillGainPct: result.acceleratedPrefillGainPct,
             activeKVQuantizationRatio: result.activeKVQuantizationRatio,
-            cacheStats: cacheSnapshot.stats,
+            cacheStats: cacheStats,
             hotPrefixCount: cacheSnapshot.hotPrefixes.count,
             restorePlan: nil,
             cacheHitTaxonomy: cacheHitTaxonomy
@@ -699,8 +705,11 @@ actor WorkerRuntimeRegistry {
     }
 
     func runtimeStats() async -> Melix_Worker_V1_RuntimeStats {
-        let cacheStats = await cacheStore.stats()
         let modelResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
+        let cacheStats = cacheStatsWithRuntimeContext(
+            await cacheStore.stats(),
+            modelResidentBytes: modelResidentBytes
+        )
         let cacheResidentBytes = cacheStats.l1Bytes
         let kvCacheBytes: UInt64 = 0
         var stats = Melix_Worker_V1_RuntimeStats()
@@ -733,8 +742,11 @@ actor WorkerRuntimeRegistry {
 
     func cacheStatsResponse() async -> Melix_Worker_V1_GetCacheStatsResponse {
         var response = Melix_Worker_V1_GetCacheStatsResponse()
-        response.stats = await cacheStore.stats()
-        response.snapshot = await cacheStore.snapshot()
+        var snapshot = await cacheStore.snapshot()
+        let stats = cacheStatsWithRuntimeContext(snapshot.stats)
+        snapshot.stats = stats
+        response.stats = stats
+        response.snapshot = snapshot
         return response
     }
 
@@ -949,6 +961,35 @@ actor WorkerRuntimeRegistry {
                 requiredBytes: requiredBytes
             )
         }
+    }
+
+    private func cacheStatsWithRuntimeContext(
+        _ cacheStats: Melix_Worker_V1_CacheStats,
+        modelResidentBytes: UInt64? = nil
+    ) -> Melix_Worker_V1_CacheStats {
+        var stats = cacheStats
+        let resolvedModelResidentBytes = modelResidentBytes
+            ?? loadedModels.values.reduce(UInt64(0)) { $0 + $1.estimatedResidentBytes }
+        let activeMemoryBytes = resolvedModelResidentBytes &+ stats.l1Bytes
+        stats.runtimeCacheFingerprint = configuration.runtimeCacheFingerprint
+        stats.activeMemoryBytes = activeMemoryBytes
+        stats.maxWorkingSetBytes = configuration.processMemoryBudgetBytes
+        stats.effectiveCacheBudgetBytes = effectiveCacheBudgetBytes(
+            modelResidentBytes: resolvedModelResidentBytes
+        )
+        return stats
+    }
+
+    private func effectiveCacheBudgetBytes(modelResidentBytes: UInt64) -> UInt64 {
+        guard configuration.memoryEnforcementEnabled,
+              configuration.processMemoryBudgetBytes > 0 else {
+            return 0
+        }
+        let protectedBytes = modelResidentBytes &+ configuration.prefillMemoryHeadroomBytes
+        guard configuration.processMemoryBudgetBytes > protectedBytes else {
+            return 0
+        }
+        return configuration.processMemoryBudgetBytes - protectedBytes
     }
 
     private func estimatedPrefillResidentBytes(forPromptTokens promptTokens: Int) -> UInt64 {

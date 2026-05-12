@@ -446,6 +446,26 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
             "swift_text.cache_hybrid_mode_active",
             value: activeMode == .hybrid ? 1 : 0
         )
+        metrics.set(
+            "swift_text.runtime_cache_fingerprint_code",
+            value: runtimeCacheFingerprintMetricValue(response.stats.runtimeCacheFingerprint)
+        )
+        metrics.set(
+            "swift_text.cache_namespace_mismatch_count",
+            value: Int(clamping: response.stats.cacheNamespaceMismatchCount)
+        )
+        metrics.set(
+            "swift_text.active_memory_bytes",
+            value: Int(clamping: response.stats.activeMemoryBytes)
+        )
+        metrics.set(
+            "swift_text.max_working_set_bytes",
+            value: Int(clamping: response.stats.maxWorkingSetBytes)
+        )
+        metrics.set(
+            "swift_text.effective_cache_budget_bytes",
+            value: Int(clamping: response.stats.effectiveCacheBudgetBytes)
+        )
         return response
     }
 
@@ -686,6 +706,11 @@ final class MaintenanceRPCService: Melix_Worker_V1_MaintenanceService.SimpleServ
 
 private func saveRestoreErrorCode(for error: WorkerRuntimeRegistryError) -> String {
     error.saveRestoreErrorCode
+}
+
+private func runtimeCacheFingerprintMetricValue(_ fingerprint: String) -> Int {
+    let prefix = fingerprint.prefix(8)
+    return Int(prefix, radix: 16) ?? 0
 }
 
 private func makeUnimplementedStatus(_ message: String) -> Melix_Worker_V1_ErrorStatus {

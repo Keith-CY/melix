@@ -6015,6 +6015,31 @@ public struct Melix_Controlplane_V1_CacheSummary: @unchecked Sendable {
     set {_uniqueStorage()._supportsBoundarySnapshots = newValue}
   }
 
+  public var runtimeCacheFingerprint: String {
+    get {_storage._runtimeCacheFingerprint}
+    set {_uniqueStorage()._runtimeCacheFingerprint = newValue}
+  }
+
+  public var cacheNamespaceMismatchCount: UInt64 {
+    get {_storage._cacheNamespaceMismatchCount}
+    set {_uniqueStorage()._cacheNamespaceMismatchCount = newValue}
+  }
+
+  public var activeMemoryBytes: UInt64 {
+    get {_storage._activeMemoryBytes}
+    set {_uniqueStorage()._activeMemoryBytes = newValue}
+  }
+
+  public var maxWorkingSetBytes: UInt64 {
+    get {_storage._maxWorkingSetBytes}
+    set {_uniqueStorage()._maxWorkingSetBytes = newValue}
+  }
+
+  public var effectiveCacheBudgetBytes: UInt64 {
+    get {_storage._effectiveCacheBudgetBytes}
+    set {_uniqueStorage()._effectiveCacheBudgetBytes = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -16046,7 +16071,7 @@ extension Melix_Controlplane_V1_QueueLaneSummary: SwiftProtobuf.Message, SwiftPr
 
 extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}pinned_prefix_hit_rate\0\u{3}checkpoint_count\0\u{3}hot_keys\0\u{3}block_count\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0\u{3}hot_prefixes\0\u{3}recent_snapshots\0\u{3}active_mode\0\u{3}cache_root\0\u{3}initial_cache_blocks\0\u{3}supported_modes\0\u{3}experimental_modes\0\u{3}supports_prefix_cache\0\u{3}supports_paged_cache\0\u{3}supports_disk_cache\0\u{3}supports_boundary_snapshots\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}pinned_prefix_hit_rate\0\u{3}checkpoint_count\0\u{3}hot_keys\0\u{3}block_count\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0\u{3}hot_prefixes\0\u{3}recent_snapshots\0\u{3}active_mode\0\u{3}cache_root\0\u{3}initial_cache_blocks\0\u{3}supported_modes\0\u{3}experimental_modes\0\u{3}supports_prefix_cache\0\u{3}supports_paged_cache\0\u{3}supports_disk_cache\0\u{3}supports_boundary_snapshots\0\u{3}runtime_cache_fingerprint\0\u{3}cache_namespace_mismatch_count\0\u{3}active_memory_bytes\0\u{3}max_working_set_bytes\0\u{3}effective_cache_budget_bytes\0")
 
   fileprivate class _StorageClass {
     var _l1Bytes: UInt64 = 0
@@ -16072,6 +16097,11 @@ extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtob
     var _supportsPagedCache: Bool = false
     var _supportsDiskCache: Bool = false
     var _supportsBoundarySnapshots: Bool = false
+    var _runtimeCacheFingerprint: String = String()
+    var _cacheNamespaceMismatchCount: UInt64 = 0
+    var _activeMemoryBytes: UInt64 = 0
+    var _maxWorkingSetBytes: UInt64 = 0
+    var _effectiveCacheBudgetBytes: UInt64 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -16105,6 +16135,11 @@ extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtob
       _supportsPagedCache = source._supportsPagedCache
       _supportsDiskCache = source._supportsDiskCache
       _supportsBoundarySnapshots = source._supportsBoundarySnapshots
+      _runtimeCacheFingerprint = source._runtimeCacheFingerprint
+      _cacheNamespaceMismatchCount = source._cacheNamespaceMismatchCount
+      _activeMemoryBytes = source._activeMemoryBytes
+      _maxWorkingSetBytes = source._maxWorkingSetBytes
+      _effectiveCacheBudgetBytes = source._effectiveCacheBudgetBytes
     }
   }
 
@@ -16146,6 +16181,11 @@ extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtob
         case 21: try { try decoder.decodeSingularBoolField(value: &_storage._supportsPagedCache) }()
         case 22: try { try decoder.decodeSingularBoolField(value: &_storage._supportsDiskCache) }()
         case 23: try { try decoder.decodeSingularBoolField(value: &_storage._supportsBoundarySnapshots) }()
+        case 24: try { try decoder.decodeSingularStringField(value: &_storage._runtimeCacheFingerprint) }()
+        case 25: try { try decoder.decodeSingularUInt64Field(value: &_storage._cacheNamespaceMismatchCount) }()
+        case 26: try { try decoder.decodeSingularUInt64Field(value: &_storage._activeMemoryBytes) }()
+        case 27: try { try decoder.decodeSingularUInt64Field(value: &_storage._maxWorkingSetBytes) }()
+        case 28: try { try decoder.decodeSingularUInt64Field(value: &_storage._effectiveCacheBudgetBytes) }()
         default: break
         }
       }
@@ -16223,6 +16263,21 @@ extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtob
       if _storage._supportsBoundarySnapshots != false {
         try visitor.visitSingularBoolField(value: _storage._supportsBoundarySnapshots, fieldNumber: 23)
       }
+      if !_storage._runtimeCacheFingerprint.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._runtimeCacheFingerprint, fieldNumber: 24)
+      }
+      if _storage._cacheNamespaceMismatchCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._cacheNamespaceMismatchCount, fieldNumber: 25)
+      }
+      if _storage._activeMemoryBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._activeMemoryBytes, fieldNumber: 26)
+      }
+      if _storage._maxWorkingSetBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._maxWorkingSetBytes, fieldNumber: 27)
+      }
+      if _storage._effectiveCacheBudgetBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._effectiveCacheBudgetBytes, fieldNumber: 28)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -16255,6 +16310,11 @@ extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtob
         if _storage._supportsPagedCache != rhs_storage._supportsPagedCache {return false}
         if _storage._supportsDiskCache != rhs_storage._supportsDiskCache {return false}
         if _storage._supportsBoundarySnapshots != rhs_storage._supportsBoundarySnapshots {return false}
+        if _storage._runtimeCacheFingerprint != rhs_storage._runtimeCacheFingerprint {return false}
+        if _storage._cacheNamespaceMismatchCount != rhs_storage._cacheNamespaceMismatchCount {return false}
+        if _storage._activeMemoryBytes != rhs_storage._activeMemoryBytes {return false}
+        if _storage._maxWorkingSetBytes != rhs_storage._maxWorkingSetBytes {return false}
+        if _storage._effectiveCacheBudgetBytes != rhs_storage._effectiveCacheBudgetBytes {return false}
         return true
       }
       if !storagesAreEqual {return false}

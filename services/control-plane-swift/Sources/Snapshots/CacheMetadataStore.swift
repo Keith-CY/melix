@@ -64,6 +64,11 @@ public actor CacheMetadataStore {
         summary.supportsPagedCache = false
         summary.supportsDiskCache = false
         summary.supportsBoundarySnapshots = false
+        summary.runtimeCacheFingerprint = ""
+        summary.cacheNamespaceMismatchCount = 0
+        summary.activeMemoryBytes = 0
+        summary.maxWorkingSetBytes = 0
+        summary.effectiveCacheBudgetBytes = 0
         return summary
     }
 }

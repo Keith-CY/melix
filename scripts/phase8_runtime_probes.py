@@ -226,6 +226,7 @@ def collect_cache_recovery_benchmark_evidence(repo_root: Path) -> dict[str, Any]
     hot_tier = _collect_hot_tier_recovery_evidence(repo_root)
     cold_tier = _collect_cold_tier_recovery_evidence(repo_root)
     partial_restore = _collect_partial_restore_recovery_evidence(repo_root)
+    runtime_cache_fingerprint = _collect_runtime_cache_fingerprint_evidence(repo_root)
 
     metrics = {
         "bench.recovery.restart_to_ready_ms": round(float(restart["restart_to_ready_ms"]), 2),
@@ -271,6 +272,27 @@ def collect_cache_recovery_benchmark_evidence(repo_root: Path) -> dict[str, Any]
         "bench.cache_hit_taxonomy.reconstruction_failure_count": float(
             partial_restore.get("cache_hit_taxonomy", {}).get("reconstruction_failure_count", 0.0)
         ),
+        "bench.cache_runtime_fingerprint.namespace_mismatch_count": round(
+            float(runtime_cache_fingerprint["namespace_mismatch_count"]), 2
+        ),
+        "bench.cache_runtime_fingerprint.namespace_mismatch": round(
+            float(runtime_cache_fingerprint["cache_namespace_mismatch"]), 2
+        ),
+        "bench.cache_runtime_fingerprint.fingerprint_present": round(
+            float(runtime_cache_fingerprint["fingerprint_present"]), 2
+        ),
+        "bench.cache_runtime_fingerprint.fingerprint_code": round(
+            float(runtime_cache_fingerprint["runtime_cache_fingerprint_code"]), 2
+        ),
+        "bench.cache_runtime_fingerprint.active_memory_bytes": round(
+            float(runtime_cache_fingerprint["active_memory_bytes"]), 2
+        ),
+        "bench.cache_runtime_fingerprint.max_working_set_bytes": round(
+            float(runtime_cache_fingerprint["max_working_set_bytes"]), 2
+        ),
+        "bench.cache_runtime_fingerprint.effective_cache_budget_bytes": round(
+            float(runtime_cache_fingerprint["effective_cache_budget_bytes"]), 2
+        ),
     }
 
     return {
@@ -279,6 +301,7 @@ def collect_cache_recovery_benchmark_evidence(repo_root: Path) -> dict[str, Any]
         "hot_tier": hot_tier,
         "cold_tier": cold_tier,
         "partial_restore": partial_restore,
+        "runtime_cache_fingerprint": runtime_cache_fingerprint,
     }
 
 
@@ -451,6 +474,114 @@ def _collect_cold_tier_recovery_evidence(repo_root: Path) -> dict[str, float]:
                 ),
                 "l2_restore_queue_depth": round(
                     float(metrics.get("swift_text.cache_l2_restore_queue_depth", 0.0)),
+                    2,
+                ),
+            }
+        finally:
+            second_stack.stop()
+
+
+def _collect_runtime_cache_fingerprint_evidence(repo_root: Path) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="melix-cache-fingerprint-bench-") as cache_root_str:
+        cache_root = Path(cache_root_str)
+        session_id = "phase8-runtime-cache-fingerprint"
+        prompt = "reuse this prompt only when the runtime cache fingerprint still matches"
+        base_environment = {
+            "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "67108864",
+            "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "1048576",
+        }
+
+        first_stack = LiveMelixStack(
+            repo_root,
+            swift_cache_root=cache_root,
+            environment_overrides={
+                **base_environment,
+                "MELIX_SWIFT_TEXT_WORKER_RUNTIME_CACHE_FINGERPRINT": "11111111",
+            },
+        )
+        first_stack.start()
+        try:
+            initial = stream_chat_completion(
+                first_stack,
+                {
+                    "model": "melix-dev-text",
+                    "stream": True,
+                    "session_id": session_id,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            if initial["status"] != 200:
+                raise SystemExit(f"runtime-cache fingerprint warmup failed: {initial}")
+        finally:
+            first_stack.stop()
+
+        second_stack = LiveMelixStack(
+            repo_root,
+            swift_cache_root=cache_root,
+            environment_overrides={
+                **base_environment,
+                "MELIX_SWIFT_TEXT_WORKER_RUNTIME_CACHE_FINGERPRINT": "22222222",
+            },
+        )
+        second_stack.start()
+        try:
+            restored = stream_chat_completion(
+                second_stack,
+                {
+                    "model": "melix-dev-text",
+                    "stream": True,
+                    "session_id": session_id,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            if restored["status"] != 200:
+                raise SystemExit(f"runtime-cache fingerprint recovery failed: {restored}")
+
+            cache_response = get_cache_stats(second_stack.swift_socket_path)
+            stats = cache_response.stats
+            values = read_metrics_export(second_stack.swift_text_worker_metrics_path).get("values", {})
+
+            namespace_mismatch_count = float(
+                values.get(
+                    "swift_text.cache_namespace_mismatch_count",
+                    getattr(stats, "cache_namespace_mismatch_count", 0.0),
+                )
+            )
+            runtime_cache_fingerprint = str(getattr(stats, "runtime_cache_fingerprint", ""))
+
+            return {
+                "runtime_cache_fingerprint": runtime_cache_fingerprint,
+                "namespace_mismatch_count": round(namespace_mismatch_count, 2),
+                "cache_namespace_mismatch": 1.0 if namespace_mismatch_count > 0 else 0.0,
+                "fingerprint_present": 1.0 if runtime_cache_fingerprint else 0.0,
+                "runtime_cache_fingerprint_code": round(
+                    float(values.get("swift_text.runtime_cache_fingerprint_code", 0.0)), 2
+                ),
+                "active_memory_bytes": round(
+                    float(
+                        values.get(
+                            "swift_text.active_memory_bytes",
+                            getattr(stats, "active_memory_bytes", 0.0),
+                        )
+                    ),
+                    2,
+                ),
+                "max_working_set_bytes": round(
+                    float(
+                        values.get(
+                            "swift_text.max_working_set_bytes",
+                            getattr(stats, "max_working_set_bytes", 0.0),
+                        )
+                    ),
+                    2,
+                ),
+                "effective_cache_budget_bytes": round(
+                    float(
+                        values.get(
+                            "swift_text.effective_cache_budget_bytes",
+                            getattr(stats, "effective_cache_budget_bytes", 0.0),
+                        )
+                    ),
                     2,
                 ),
             }

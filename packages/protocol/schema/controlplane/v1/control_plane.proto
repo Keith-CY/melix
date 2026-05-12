@@ -1354,6 +1354,11 @@ message CacheSummary {
   bool supports_paged_cache = 21;
   bool supports_disk_cache = 22;
   bool supports_boundary_snapshots = 23;
+  string runtime_cache_fingerprint = 24;
+  uint64 cache_namespace_mismatch_count = 25;
+  uint64 active_memory_bytes = 26;
+  uint64 max_working_set_bytes = 27;
+  uint64 effective_cache_budget_bytes = 28;
 }
 
 enum CacheMode {
