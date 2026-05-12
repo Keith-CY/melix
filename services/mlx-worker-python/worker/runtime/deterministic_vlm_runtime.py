@@ -13,6 +13,7 @@ from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEv
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
 from worker.runtime.temp_media_lifecycle import TempMediaSession
+from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 
@@ -201,7 +202,7 @@ class DeterministicVLMRuntime:
             prepared_request=prepared_request,
             prompt_tokens=prompt_tokens,
             response_text=response_text,
-            completion_tokens=max(1, len(response_text.split())),
+            completion_tokens=max(1, _whitespace_token_count(response_text)),
             tool_call_event=tool_call_event,
             cache_identity=cache_identity,
             scope_id=scope_id,
@@ -336,7 +337,7 @@ class DeterministicVLMRuntime:
             yield RuntimeTokenEvent(
                 text=response,
                 prompt_tokens=self.prompt_token_count(prepared_request, loaded_model=loaded_model),
-                completion_tokens=max(1, len(response.split())),
+                completion_tokens=max(1, _whitespace_token_count(response)),
                 finish_reason="stop",
             )
         finally:

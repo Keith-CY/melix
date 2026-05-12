@@ -10,7 +10,7 @@ from worker.engine.maintenance_core import MaintenanceCore
 from worker.grpc_server import WorkerCacheService, WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime, _whitespace_token_count
+from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime import multimodal_preprocessing
@@ -26,6 +26,7 @@ from worker.runtime.multimodal_preprocessing import (
     _prepare_image_part,
     prepare_vision_request,
 )
+from worker.runtime.token_counting import whitespace_token_count
 from worker.runtime.vision_family_adapters import ResolvedVisionFamilyConfig, resolve_vision_family_config
 
 
@@ -151,7 +152,7 @@ def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
     )
     runtime = DeterministicOCRRuntime()
 
-    assert _whitespace_token_count(prompt_text) == len(prompt_text.split())
+    assert whitespace_token_count(prompt_text) == len(prompt_text.split())
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + max(
         1,
         request.images[0].byte_length // 8,
@@ -183,6 +184,69 @@ def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
         1,
         fallback_request.images[0].byte_length // 8,
     ) + max(1, fallback_request.images[1].byte_length // 8)
+
+
+def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    class SplitTrackingText(str):
+        split_calls = 0
+
+        def split(self, *args: object, **kwargs: object) -> list[str]:
+            type(self).split_calls += 1
+            return super().split(*args, **kwargs)
+
+    response_text = SplitTrackingText("alpha beta\tgamma\n  delta")
+    request = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    runtime = DeterministicVLMRuntime()
+    monkeypatch.setattr(
+        DeterministicVLMRuntime,
+        "_response_text",
+        staticmethod(lambda prepared_request: response_text),
+    )
+
+    prefill_session = runtime.prefill(
+        "vlm-completion-count",
+        {},
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe the image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"synthetic image bytes",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            mime_type="image/png",
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="image.png",
+                        ),
+                    ),
+                ],
+            )
+        ],
+    )
+    token_events = list(
+        runtime.generate_tokens(
+            {},
+            request,
+            sampling=None,
+            cancel_event=Event(),
+        )
+    )
+
+    assert whitespace_token_count(response_text) == len(str(response_text).split())
+    assert prefill_session.completion_tokens == 4
+    assert token_events[-1].completion_tokens == 4
+    assert SplitTrackingText.split_calls == 0
 
 
 def test_vision_family_prompt_token_count_clamps_media_minimums() -> None:

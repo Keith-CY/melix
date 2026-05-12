@@ -499,6 +499,23 @@ def test_evaluation_answer_normalization_probe_command_emits_metrics() -> None:
     assert metrics["normalization_checksum"] > 0
 
 
+def test_evaluation_compare_target_lookup_early_stop_probe_batches_tiny_lookup() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-compare-target-lookup-early-stop"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["get_loaded_model_calls_mean"] == 12.0
+    assert metrics["loaded_handle_count"] == 40000.0
+    assert metrics["iteration_count"] == 400.0
+    assert metrics["sample_count"] == 7.0
+    assert metrics["checksum"] == 5600.0
+
+
 def test_scope_report_selects_code_eval_stdio_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -767,6 +784,31 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
     assert [probe["id"] for probe in scope["selected_probes"]] == [
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
+    ]
+
+
+def test_scope_report_selects_deterministic_vlm_completion_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/deterministic_vlm_runtime.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "deterministic-vlm-completion-token-scan"
+    ]
+
+
+def test_scope_report_selects_shared_token_counting_probes() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/token_counting.py"],
+    )
+
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "deterministic-ocr-token-count-scan",
+        "deterministic-vlm-completion-token-scan",
+        "vision-family-prompt-token-count-scan",
     ]
 
 
@@ -2036,6 +2078,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-embedding-duplicate-input-cache",
         "deterministic-embedding-project-digest-allocation",
         "deterministic-ocr-token-count-scan",
+        "deterministic-vlm-completion-token-scan",
         "deterministic-image-edit-digest-reuse",
         "deterministic-image-output-byte-accounting",
         "deterministic-rerank-query-context-reuse",
@@ -4435,3 +4478,41 @@ def test_deterministic_ocr_token_count_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["iterations"] == 10.0
     assert metrics["token_count"] > 0
+
+
+def test_deterministic_vlm_completion_token_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DETERMINISTIC_VLM_COMPLETION_PROBE_ITERATIONS", "10")
+    monkeypatch.setenv("MELIX_DETERMINISTIC_VLM_COMPLETION_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/deterministic_vlm_completion_token_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["split_calls_mean"] == 0.0
+    assert metrics["peak_bytes_mean"] > 0
+    assert metrics["samples"] == 1
+    assert metrics["iterations"] == 10
+    assert metrics["completion_tokens"] > 0
+
+    from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
+    from worker.runtime.multimodal_preprocessing import PreparedVisionRequest
+
+    restored_request = PreparedVisionRequest(
+        prompt_text="Describe the restored image.",
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    assert "Prompt: Describe the restored image." in DeterministicVLMRuntime()._response_text(
+        restored_request
+    )
