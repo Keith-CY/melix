@@ -182,6 +182,13 @@ def test_multimodal_lora_finite_mask_handles_fully_padded_vision_rows() -> None:
             assert all(value not in {float("inf"), float("-inf")} for value in row)
 
 
+def test_multimodal_lora_finite_mask_handles_empty_visible_rows() -> None:
+    probabilities, mask = finite_masked_softmax([[1.0, 2.0]], [[]], dtype="float32")
+
+    assert mask.additive_mask == [[]]
+    assert probabilities == [[]]
+
+
 def test_multimodal_lora_training_receipt_records_triggered_nan_guard(tmp_path: Path) -> None:
     class NanGuardRunner(DeterministicLoRARunner):
         def train_native(self, request: TrainingRequest) -> TrainingResult:
@@ -327,6 +334,45 @@ def test_adapter_freeze_audit_rejects_serialized_vision_tower_weights(tmp_path: 
     assert "vision_tower.encoder.layers.0.weight" in exc.value.details["unexpected_serialized_parameters"]
 
 
+def test_adapter_freeze_audit_deduplicates_live_and_serialized_leaks(tmp_path: Path) -> None:
+    weights_path = tmp_path / "duplicate-leak.safetensors"
+    leaked_name = "vision_tower.encoder.layers.0.weight"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "model.layers.0.self_attn.q_proj.lora_a.weight": {
+                "dtype": "F16",
+                "shape": [2, 4],
+                "data_offsets": [0, 16],
+            },
+            leaked_name: {
+                "dtype": "F16",
+                "shape": [8, 8],
+                "data_offsets": [16, 144],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["model.layers.0.self_attn.q_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+        live_audit={
+            "unexpected_trainable_param_count": 64,
+            "unexpected_trainable_parameters": [leaked_name],
+            "unexpected_trainable_param_counts": {leaked_name: 64},
+            "trainable_param_count_by_component": {"vision_encoder": 64},
+        },
+    )
+
+    assert audit.unexpected_serialized_param_count == 64
+    assert audit.unexpected_trainable_param_count == 64
+    assert audit.unexpected_frozen_param_count == 64
+    assert audit.unexpected_serialized_param_counts == {leaked_name: 64}
+    assert audit.unexpected_trainable_param_counts == {leaked_name: 64}
+
+
 def test_adapter_freeze_audit_rejects_full_base_weights_under_allowed_target(tmp_path: Path) -> None:
     weights_path = tmp_path / "base-weight-leak.safetensors"
     _write_safetensors_header(
@@ -355,6 +401,23 @@ def test_adapter_freeze_audit_rejects_full_base_weights_under_allowed_target(tmp
     assert audit.unexpected_serialized_param_count == 16
     assert audit.unexpected_serialized_parameters == ("model.layers.0.self_attn.q_proj.weight",)
     assert audit.serialized_param_count_by_component["text_backbone"] == 24
+
+
+def test_adapter_freeze_audit_ignores_invalid_large_safetensors_header(tmp_path: Path) -> None:
+    weights_path = tmp_path / "oversized-header.safetensors"
+    weights_path.write_bytes((9 * 1024 * 1024).to_bytes(8, "little"))
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["model.layers.0.self_attn.q_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+    )
+
+    assert audit.adapter_checkpoint_bytes == 8
+    assert audit.unexpected_frozen_param_count == 0
+    assert audit.unexpected_serialized_param_count == 0
+    assert audit.serialized_param_count_by_component == {}
 
 
 def _write_safetensors_header(path: Path, tensors: dict[str, dict[str, object]]) -> None:

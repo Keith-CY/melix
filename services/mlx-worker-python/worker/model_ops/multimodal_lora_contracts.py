@@ -61,7 +61,8 @@ _TRAINABLE_ADAPTER_TOKENS = (
     "lora_b",
     "magnitude",
 )
-_MAX_SAFETENSORS_HEADER_BYTES = 64 * 1024 * 1024
+_MAX_SAFETENSORS_HEADER_BYTES = 8 * 1024 * 1024
+_SAFETENSORS_HEADER_READ_CHUNK_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,8 @@ class AdapterFreezeAudit:
     unexpected_serialized_parameters: tuple[str, ...]
     unexpected_trainable_parameters: tuple[str, ...]
     multimodal_lora_nan_guard_triggered: bool = False
+    unexpected_serialized_param_counts: dict[str, int] | None = None
+    unexpected_trainable_param_counts: dict[str, int] | None = None
 
 
 def dtype_safe_finite_mask_floor(dtype: object = None) -> float:
@@ -149,7 +152,7 @@ def finite_masked_softmax(
             visible_row = [bool(item) for item in visible_node]
             if not any(visible_row):
                 return [0.0 for _ in scored_row]
-            row_max = max(scored_row)
+            row_max = max(scored_row) if scored_row else 0.0
             exps = [
                 math.exp(value - row_max) if visible else 0.0
                 for value, visible in zip(scored_row, visible_row)
@@ -182,6 +185,7 @@ def audit_trainable_module_tree(
     allowed_fragments = _normalized_target_fragments(allowed_target_modules)
     trainable_counts: dict[str, int] = {}
     unexpected_names: list[str] = []
+    unexpected_counts: dict[str, int] = {}
     unexpected_count = 0
     for name, parameter in _iter_trainable_parameters(model):
         count = _parameter_count(parameter)
@@ -189,6 +193,7 @@ def audit_trainable_module_tree(
         trainable_counts[component] = trainable_counts.get(component, 0) + count
         if _is_unexpected_adapter_parameter(name, allowed_fragments):
             unexpected_names.append(name)
+            unexpected_counts[name] = unexpected_counts.get(name, 0) + count
             unexpected_count += count
 
     return AdapterFreezeAudit(
@@ -203,6 +208,7 @@ def audit_trainable_module_tree(
         trainable_param_count_by_component=trainable_counts,
         unexpected_serialized_parameters=(),
         unexpected_trainable_parameters=tuple(unexpected_names),
+        unexpected_trainable_param_counts=unexpected_counts,
     )
 
 
@@ -222,6 +228,7 @@ def audit_adapter_checkpoint(
     tensors = _read_safetensors_header(weights_path)
     serialized_counts: dict[str, int] = {}
     unexpected_serialized_names: list[str] = []
+    unexpected_serialized_counts: dict[str, int] = {}
     unexpected_serialized_count = 0
     unexpected_serialized_bytes = 0
     total_tensor_bytes = 0
@@ -233,21 +240,25 @@ def audit_adapter_checkpoint(
         serialized_counts[component] = serialized_counts.get(component, 0) + count
         if _is_unexpected_adapter_parameter(name, allowed_fragments):
             unexpected_serialized_names.append(name)
+            unexpected_serialized_counts[name] = unexpected_serialized_counts.get(name, 0) + count
             unexpected_serialized_count += count
             unexpected_serialized_bytes += tensor_bytes
 
     unexpected_trainable_count = 0
     unexpected_trainable_names: tuple[str, ...] = ()
+    unexpected_trainable_counts: dict[str, int] = {}
     trainable_counts: Mapping[str, int] = {}
     if isinstance(live_audit, AdapterFreezeAudit):
         unexpected_trainable_count = live_audit.unexpected_trainable_param_count
         unexpected_trainable_names = live_audit.unexpected_trainable_parameters
+        unexpected_trainable_counts = dict(live_audit.unexpected_trainable_param_counts or {})
         trainable_counts = live_audit.trainable_param_count_by_component
     elif isinstance(live_audit, Mapping):
         unexpected_trainable_count = _int_mapping_value(live_audit, "unexpected_trainable_param_count")
         unexpected_names = live_audit.get("unexpected_trainable_parameters", ())
         if isinstance(unexpected_names, Sequence) and not isinstance(unexpected_names, (str, bytes, bytearray)):
             unexpected_trainable_names = tuple(str(item) for item in unexpected_names)
+        unexpected_trainable_counts = _int_dict(live_audit.get("unexpected_trainable_param_counts", {}))
         raw_counts = live_audit.get("trainable_param_count_by_component", {})
         if isinstance(raw_counts, Mapping):
             trainable_counts = {str(key): int(value) for key, value in raw_counts.items()}
@@ -257,7 +268,12 @@ def audit_adapter_checkpoint(
     elif total_tensor_bytes > 0:
         expected_checkpoint_bytes = checkpoint_bytes
     size_ratio = 1.0 if expected_checkpoint_bytes <= 0 else checkpoint_bytes / expected_checkpoint_bytes
-    unexpected_total_count = unexpected_serialized_count + unexpected_trainable_count
+    unexpected_total_count = _combined_unexpected_param_count(
+        serialized_counts=unexpected_serialized_counts,
+        trainable_counts=unexpected_trainable_counts,
+        serialized_total=unexpected_serialized_count,
+        trainable_total=unexpected_trainable_count,
+    )
     return AdapterFreezeAudit(
         adapter_checkpoint_bytes=checkpoint_bytes,
         expected_lora_checkpoint_bytes=expected_checkpoint_bytes,
@@ -271,6 +287,8 @@ def audit_adapter_checkpoint(
         unexpected_serialized_parameters=tuple(unexpected_serialized_names),
         unexpected_trainable_parameters=unexpected_trainable_names,
         multimodal_lora_nan_guard_triggered=multimodal_lora_nan_guard_triggered,
+        unexpected_serialized_param_counts=unexpected_serialized_counts,
+        unexpected_trainable_param_counts=unexpected_trainable_counts,
     )
 
 
@@ -305,6 +323,8 @@ def audit_manifest_fields(audit: AdapterFreezeAudit) -> dict[str, Any]:
             "serialized_param_count_by_component": audit.serialized_param_count_by_component,
             "unexpected_trainable_parameters": list(audit.unexpected_trainable_parameters),
             "unexpected_serialized_parameters": list(audit.unexpected_serialized_parameters),
+            "unexpected_trainable_param_counts": dict(audit.unexpected_trainable_param_counts or {}),
+            "unexpected_serialized_param_counts": dict(audit.unexpected_serialized_param_counts or {}),
             "expected_lora_checkpoint_bytes": audit.expected_lora_checkpoint_bytes,
             "adapter_checkpoint_size_ratio": audit.adapter_checkpoint_size_ratio,
             "adapter_checkpoint_size_within_target": audit.adapter_checkpoint_size_within_target,
@@ -416,18 +436,52 @@ def _parameter_count(parameter: Any) -> int:
         return 1
 
 
+def _combined_unexpected_param_count(
+    *,
+    serialized_counts: Mapping[str, int],
+    trainable_counts: Mapping[str, int],
+    serialized_total: int,
+    trainable_total: int,
+) -> int:
+    if serialized_counts or trainable_counts:
+        names = set(serialized_counts) | set(trainable_counts)
+        return sum(
+            max(
+                int(serialized_counts.get(name, 0)),
+                int(trainable_counts.get(name, 0)),
+            )
+            for name in names
+        )
+    if serialized_total > 0 and trainable_total > 0:
+        return max(serialized_total, trainable_total)
+    return serialized_total + trainable_total
+
+
 def _read_safetensors_header(path: Path) -> dict[str, dict[str, Any]]:
     if not path.is_file():
         return {}
     try:
+        file_size = path.stat().st_size
         with path.open("rb") as handle:
             raw_size = handle.read(8)
             if len(raw_size) != 8:
                 return {}
             header_size = struct.unpack("<Q", raw_size)[0]
-            if header_size <= 0 or header_size > _MAX_SAFETENSORS_HEADER_BYTES:
+            if (
+                header_size <= 0
+                or header_size > _MAX_SAFETENSORS_HEADER_BYTES
+                or header_size > max(0, file_size - 8)
+            ):
                 return {}
-            header = json.loads(handle.read(header_size).decode("utf-8"))
+            remaining = header_size
+            chunks = bytearray()
+            while remaining > 0:
+                chunk = handle.read(min(_SAFETENSORS_HEADER_READ_CHUNK_BYTES, remaining))
+                if not chunk:
+                    return {}
+                chunks.extend(chunk)
+                remaining -= len(chunk)
+            header = json.loads(chunks.decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, struct.error):
         return {}
     if not isinstance(header, dict):
@@ -469,3 +523,17 @@ def _int_mapping_value(payload: Mapping[str, Any], key: str) -> int:
         return int(payload.get(key, 0) or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _int_dict(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    converted: dict[str, int] = {}
+    for key, raw_count in value.items():
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            continue
+        if count >= 0:
+            converted[str(key)] = count
+    return converted
