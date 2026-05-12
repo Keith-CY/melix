@@ -12,7 +12,7 @@ struct HTTPRuntimeDiscoveryPayloads {
     func wellKnownPayload() -> [String: Any] {
         [
             "schema_version": MelixRuntimeDiscoveryContracts.infoSchemaVersion,
-            "version": "0.0.0-dev",
+            "version": MelixRuntimeDiscoveryContracts.installedVersion(repoRootPath: repoRootPath()),
             "features": MelixRuntimeDiscoveryContracts.enabledFeatures,
             "supported_tasks": MelixRuntimeDiscoveryContracts.supportedTasks,
             "links": MelixRuntimeDiscoveryContracts.discoveryLinks(),
@@ -51,6 +51,26 @@ struct HTTPRuntimeDiscoveryPayloads {
             "logs": layout.logsDirectoryURL.path,
             "runtime": layout.runtimeDirectoryURL.path,
         ]
+    }
+
+    private func repoRootPath() -> String {
+        if let explicit = environment["MELIX_REPO_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           explicit.isEmpty == false
+        {
+            return explicit
+        }
+        var url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        for _ in 0..<8 {
+            if FileManager.default.fileExists(atPath: url.appendingPathComponent("pyproject.toml").path) {
+                return url.path
+            }
+            let parent = url.deletingLastPathComponent()
+            guard parent.path != url.path else {
+                break
+            }
+            url = parent
+        }
+        return FileManager.default.currentDirectoryPath
     }
 
     private func modelPayload(_ model: Melix_Controlplane_V1_ModelSummary) -> [String: Any] {

@@ -1875,23 +1875,14 @@ public enum MelixCLIParser {
         case "set":
             var positional: [String] = []
             var optionArguments: [String] = []
-            var index = 0
-            while index < tail.count {
-                let token = tail[index]
+            for token in tail {
                 if token == "--json" {
                     optionArguments.append(token)
                 } else if token.hasPrefix("--") {
-                    optionArguments.append(token)
-                    let valueIndex = index + 1
-                    guard valueIndex < tail.count else {
-                        throw MelixCLIError.missingValue(token)
-                    }
-                    optionArguments.append(tail[valueIndex])
-                    index += 1
+                    throw MelixCLIError.usage(Self.usageText)
                 } else {
                     positional.append(token)
                 }
-                index += 1
             }
             let values = try ArgumentCursor(arguments: optionArguments).parse()
             guard positional.count == 2 else {
@@ -4966,7 +4957,7 @@ public actor MelixCLIRunner {
                 environment: environment
             )
             let payload = try store.effectiveSettings(overrides: options.overrides)
-            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
+            return try prettyJSON(payload)
         case .settingsSet(let options):
             let store = MelixRuntimeSettingsStore(
                 melixHome: MelixHome(environment: environment),
@@ -4988,22 +4979,22 @@ public actor MelixCLIRunner {
             )
             let payload = try store.reset(key: options.key)
             return options.json ? try prettyJSON(payload) : "Reset \(options.key).\n"
-        case .info(let options):
+        case .info:
             let payload = MelixRuntimeDiscoveryBuilder(environment: environment).infoPayload()
-            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
+            return try prettyJSON(payload)
         case .capabilities(let options):
             let payload = MelixRuntimeDiscoveryBuilder(environment: environment)
                 .capabilitiesPayload(modelQuery: options.modelQuery)
-            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
-        case .instructions(let options):
+            return try prettyJSON(payload)
+        case .instructions:
             let payload = MelixRuntimeDiscoveryBuilder(environment: environment).instructionsPayload()
-            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
-        case .schema(let options):
+            return try prettyJSON(payload)
+        case .schema:
             let payload = MelixRuntimeDiscoveryBuilder(environment: environment).schemaPayload()
-            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
-        case .configMetadata(let options):
+            return try prettyJSON(payload)
+        case .configMetadata:
             let payload = MelixRuntimeDiscoveryBuilder(environment: environment).configMetadataPayload()
-            return options.json ? try prettyJSON(payload) : try prettyJSON(payload)
+            return try prettyJSON(payload)
         case .pipelineRun(let options):
             return try await runPipeline(options)
         case .batchRun(let options):

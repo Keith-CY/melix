@@ -250,6 +250,25 @@ public enum MelixRuntimeDiscoveryContracts {
         ]
     }
 
+    public static func installedVersion(repoRootPath: String) -> String {
+        let pyprojectURL = URL(fileURLWithPath: repoRootPath)
+            .appendingPathComponent("pyproject.toml")
+        guard let text = try? String(contentsOf: pyprojectURL, encoding: .utf8) else {
+            return "0.0.0-dev"
+        }
+        for line in text.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = trimmed.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2,
+                  parts[0].trimmingCharacters(in: .whitespacesAndNewlines) == "version"
+            else {
+                continue
+            }
+            return parts[1].trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+        }
+        return "0.0.0-dev"
+    }
+
     public static func modelAliasDiscoveryPayload(query rawQuery: String) -> [String: Any] {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard query.isEmpty == false else {

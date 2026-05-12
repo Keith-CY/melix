@@ -6718,6 +6718,18 @@ struct OpenAIHandlerTests {
     @Test("GET discovery endpoints expose machine readable local runtime contracts")
     func getDiscoveryEndpointsExposeMachineReadableLocalRuntimeContracts() async throws {
         let metricsStore = MetricsStore()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-discovery-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data(
+            """
+            [project]
+            version-control = "ignored"
+            version = "7.8.9"
+            """.utf8
+        ).write(to: root.appendingPathComponent("pyproject.toml"))
+        defer { try? FileManager.default.removeItem(at: root) }
+
         var qwen = warmModel()
         qwen.modelID = "mlx-community/Qwen3.5-9B-MLX-4bit"
         qwen.kind = "text"
@@ -6733,6 +6745,7 @@ struct OpenAIHandlerTests {
             environment: [
                 "MELIX_HOME": "/tmp/melix-discovery-home",
                 "MELIX_HTTP_PORT": "12434",
+                "MELIX_REPO_ROOT": root.path,
             ]
         )
 
@@ -6744,6 +6757,7 @@ struct OpenAIHandlerTests {
         let features = try #require(wellKnown["features"] as? [String])
         #expect(wellKnownResponse.statusCode == 200)
         #expect(wellKnown["schema_version"] as? String == "melix.discovery.info.v1")
+        #expect(wellKnown["version"] as? String == "7.8.9")
         #expect(links["capabilities"] as? String == "/api/capabilities")
         #expect(features.contains("runtime_settings"))
 

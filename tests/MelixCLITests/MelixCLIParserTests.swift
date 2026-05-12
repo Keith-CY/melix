@@ -71,8 +71,11 @@ struct MelixCLIParserTests {
         #expect(throws: MelixCLIError.usage("--override must use KEY=VALUE.")) {
             _ = try MelixCLIParser.parse(["settings", "show", "--json", "--override", "=8"])
         }
-        #expect(throws: MelixCLIError.missingValue("--bad")) {
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
             _ = try MelixCLIParser.parse(["settings", "set", "max_concurrent_jobs", "--bad"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["settings", "set", "max_concurrent_jobs", "--jsno", "6"])
         }
         #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
             _ = try MelixCLIParser.parse(["settings", "reset", "eval_sample_size", "--bad"])

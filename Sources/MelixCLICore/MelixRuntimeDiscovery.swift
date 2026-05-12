@@ -169,11 +169,16 @@ struct MelixRuntimeSettingsStore {
     }
 
     private func projectRootURL() -> URL {
-        let rawPath = environment["PWD"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if rawPath.isEmpty == false {
-            return URL(fileURLWithPath: (rawPath as NSString).expandingTildeInPath, isDirectory: true)
+        URL(fileURLWithPath: projectRootPath(), isDirectory: true)
+    }
+
+    private func projectRootPath() -> String {
+        if let explicit = environment["MELIX_PROJECT_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           explicit.isEmpty == false
+        {
+            return (explicit as NSString).expandingTildeInPath
         }
-        return URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+        return fileManager.currentDirectoryPath
     }
 
     private func loadSettingsDocument(at url: URL) throws -> [String: Any] {
@@ -204,6 +209,10 @@ struct MelixRuntimeSettingsStore {
         switch definition.valueType {
         case "int":
             if let number = rawValue as? NSNumber {
+                let doubleValue = number.doubleValue
+                guard doubleValue.isFinite, doubleValue.rounded(.towardZero) == doubleValue else {
+                    break
+                }
                 return NSNumber(value: number.intValue)
             }
             if let value = rawValue as? Int {
@@ -289,11 +298,20 @@ struct MelixRuntimeDiscoveryBuilder {
         MelixRuntimeDiscoveryContracts.configMetadataPayload(layout: layout)
     }
 
+    private func projectRootPath() -> String {
+        if let explicit = environment["MELIX_PROJECT_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           explicit.isEmpty == false
+        {
+            return (explicit as NSString).expandingTildeInPath
+        }
+        return FileManager.default.currentDirectoryPath
+    }
+
     private func localPathsPayload() -> [String: Any] {
         [
             "melix_home": melixHome.rootURL.path,
             "runtime_settings": melixHome.runtimeSettingsFileURL.path,
-            "project_settings": URL(fileURLWithPath: environment["PWD"] ?? FileManager.default.currentDirectoryPath)
+            "project_settings": URL(fileURLWithPath: projectRootPath())
                 .appendingPathComponent(".melix", isDirectory: true)
                 .appendingPathComponent("runtime_settings.json")
                 .path,
@@ -343,21 +361,7 @@ struct MelixRuntimeDiscoveryBuilder {
     }
 
     private func installedVersion() -> String {
-        let root = repoRootPath()
-        let pyprojectURL = URL(fileURLWithPath: root).appendingPathComponent("pyproject.toml")
-        if let text = try? String(contentsOf: pyprojectURL, encoding: .utf8) {
-            for line in text.split(separator: "\n") {
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard trimmed.hasPrefix("version") else {
-                    continue
-                }
-                let parts = trimmed.split(separator: "=", maxSplits: 1)
-                if parts.count == 2 {
-                    return parts[1].trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
-                }
-            }
-        }
-        return "0.0.0-dev"
+        MelixRuntimeDiscoveryContracts.installedVersion(repoRootPath: repoRootPath())
     }
 
     private func installMethod() -> String {
@@ -380,7 +384,6 @@ struct MelixRuntimeDiscoveryBuilder {
             return explicit
         }
         let candidates = [
-            environment["PWD"] ?? "",
             FileManager.default.currentDirectoryPath,
         ]
         for candidate in candidates where candidate.isEmpty == false {

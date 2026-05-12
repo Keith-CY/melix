@@ -462,52 +462,52 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func handleDiscoveryWellKnown() async throws -> HTTPResponse {
-        let startedAt = Date()
+        let startedAt = DispatchTime.now()
         let payload = HTTPRuntimeDiscoveryPayloads(
             environment: environment,
             runtimeBinding: gatewayRuntimeBinding
         ).wellKnownPayload()
         await metricsStore.set(
-            Date().timeIntervalSince(startedAt) * 1000,
+            elapsedMilliseconds(since: startedAt),
             forKey: "operator.discovery_well_known_latency_ms"
         )
         return jsonResponse(statusCode: 200, payload: payload)
     }
 
     private func handleDiscoveryCapabilities() async throws -> HTTPResponse {
-        let startedAt = Date()
+        let startedAt = DispatchTime.now()
         let payload = HTTPRuntimeDiscoveryPayloads(
             environment: environment,
             runtimeBinding: gatewayRuntimeBinding
         ).capabilitiesPayload(models: await modelCatalog.listModels())
         await metricsStore.set(
-            Date().timeIntervalSince(startedAt) * 1000,
+            elapsedMilliseconds(since: startedAt),
             forKey: "operator.discovery_capabilities_latency_ms"
         )
         return jsonResponse(statusCode: 200, payload: payload)
     }
 
     private func handleDiscoveryInstructions() async throws -> HTTPResponse {
-        let startedAt = Date()
+        let startedAt = DispatchTime.now()
         let payload = HTTPRuntimeDiscoveryPayloads(
             environment: environment,
             runtimeBinding: gatewayRuntimeBinding
         ).instructionsPayload()
         await metricsStore.set(
-            Date().timeIntervalSince(startedAt) * 1000,
+            elapsedMilliseconds(since: startedAt),
             forKey: "operator.discovery_instructions_latency_ms"
         )
         return jsonResponse(statusCode: 200, payload: payload)
     }
 
     private func handleDiscoveryConfigMetadata() async throws -> HTTPResponse {
-        let startedAt = Date()
+        let startedAt = DispatchTime.now()
         let payload = HTTPRuntimeDiscoveryPayloads(
             environment: environment,
             runtimeBinding: gatewayRuntimeBinding
         ).configMetadataPayload()
         await metricsStore.set(
-            Date().timeIntervalSince(startedAt) * 1000,
+            elapsedMilliseconds(since: startedAt),
             forKey: "operator.discovery_config_metadata_latency_ms"
         )
         return jsonResponse(statusCode: 200, payload: payload)
@@ -4001,4 +4001,10 @@ private extension RequestCoordinatorError {
             return "The worker cannot accept requests."
         }
     }
+}
+
+private func elapsedMilliseconds(since start: DispatchTime) -> Double {
+    let end = DispatchTime.now()
+    let nanos = end.uptimeNanoseconds - start.uptimeNanoseconds
+    return Double(nanos) / 1_000_000
 }

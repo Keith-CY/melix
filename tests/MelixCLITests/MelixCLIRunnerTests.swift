@@ -355,7 +355,7 @@ struct MelixCLIRunnerTests {
             client: StubControlPlaneXPCClient(),
             environment: [
                 "MELIX_HOME": melixHome.path,
-                "PWD": projectRoot.path,
+                "MELIX_PROJECT_ROOT": projectRoot.path,
                 "MELIX_MAX_CONCURRENT_JOBS": "6",
             ]
         ).run(.settingsShow(.init(json: true, overrides: ["max_concurrent_jobs": "8"])))
@@ -390,7 +390,7 @@ struct MelixCLIRunnerTests {
             client: StubControlPlaneXPCClient(),
             environment: [
                 "MELIX_HOME": melixHome.path,
-                "PWD": projectRoot.path,
+                "MELIX_PROJECT_ROOT": projectRoot.path,
             ]
         )
 
@@ -442,7 +442,7 @@ struct MelixCLIRunnerTests {
             client: StubControlPlaneXPCClient(),
             environment: [
                 "MELIX_HOME": melixHome.path,
-                "PWD": projectRoot.path,
+                "MELIX_PROJECT_ROOT": projectRoot.path,
             ]
         )
         let output = try await runner.run(.settingsValidate(.init(json: true)))
@@ -466,7 +466,7 @@ struct MelixCLIRunnerTests {
 
         let environment = [
             "MELIX_HOME": melixHome.path,
-            "PWD": projectRoot.path,
+            "MELIX_PROJECT_ROOT": projectRoot.path,
         ]
         let runner = MelixCLIRunner(client: StubControlPlaneXPCClient(), environment: environment)
 
@@ -475,6 +475,9 @@ struct MelixCLIRunnerTests {
         }
         await #expect(throws: MelixRuntimeSettingsError.invalidValue(key: "max_concurrent_jobs", expectedType: "int", value: "many")) {
             _ = try await runner.run(.settingsSet(.init(key: "max_concurrent_jobs", value: "many", json: true)))
+        }
+        await #expect(throws: MelixRuntimeSettingsError.invalidValue(key: "max_concurrent_jobs", expectedType: "int", value: "2.5")) {
+            _ = try await runner.run(.settingsSet(.init(key: "max_concurrent_jobs", value: "2.5", json: true)))
         }
         await #expect(throws: MelixRuntimeSettingsError.unknownKey("missing_key")) {
             _ = try await runner.run(.settingsReset(.init(key: "missing_key", json: true)))
@@ -509,7 +512,7 @@ struct MelixCLIRunnerTests {
             client: StubControlPlaneXPCClient(),
             environment: [
                 "MELIX_HOME": melixHome.path,
-                "PWD": projectRoot.path,
+                "MELIX_PROJECT_ROOT": projectRoot.path,
                 "MELIX_UPDATE_CHANNEL_PATH": channelPath.path,
                 "MELIX_INSTALL_METHOD": "homebrew",
             ]
@@ -538,7 +541,7 @@ struct MelixCLIRunnerTests {
             client: StubControlPlaneXPCClient(),
             environment: [
                 "MELIX_HOME": melixHome.path,
-                "PWD": projectRoot.path,
+                "MELIX_PROJECT_ROOT": projectRoot.path,
                 "MELIX_UPDATE_CHANNEL_PATH": root.appendingPathComponent("missing-channel.json").path,
             ]
         )
@@ -554,6 +557,11 @@ struct MelixCLIRunnerTests {
         #expect(update["suggested_update_command"] as? [String] != nil)
         #expect(update["status"] as? String == "unavailable")
         #expect(localPaths["melix_home"] as? String == melixHome.path)
+        let projectSettingsPath = projectRoot
+            .appendingPathComponent(".melix", isDirectory: true)
+            .appendingPathComponent("runtime_settings.json")
+            .path
+        #expect(localPaths["project_settings"] as? String == projectSettingsPath)
         #expect((infoMetrics["discovery_build_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
 
         let capabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "qwen35_9b_mlx_4bit")))))
