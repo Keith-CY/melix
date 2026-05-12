@@ -3,7 +3,10 @@ from __future__ import annotations
 import csv
 import io
 import json
+import threading
 from pathlib import Path
+
+import pytest
 
 from worker.productization.evaluation_schemas import (
     EvaluationCompareTargetLineage,
@@ -20,6 +23,7 @@ from worker.productization.benchmark_export import (
     collect_evaluation_artifacts,
 )
 from worker.productization.evaluation_store import EvaluationStore
+from worker.productization.probe_policy import ProbeMode, ProbePolicy
 from telemetry_fixtures import fixture_telemetry_collector
 
 
@@ -253,6 +257,60 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         "sample_render_ms,inference_ms,extraction_ms,validation_ms,scoring_ms,raw_response_chars,extracted_result_chars,failure_stage"
         in export_samples_header
     )
+
+
+def test_persist_result_defaults_to_no_op_telemetry(tmp_path: Path) -> None:
+    store = EvaluationStore(probe_policy=ProbePolicy(mode=ProbeMode.MINIMAL))
+    jobs_root = tmp_path / "evaluation"
+    run_root = jobs_root / "runs" / "eval-no-op"
+    job = build_evaluation_job_record(
+        job_id="eval-no-op",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=0,
+        scoring_mode="deterministic_accuracy",
+        parameters={},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=101,
+        updated_at_unix_ms=202,
+    )
+    result = build_evaluation_result_record(
+        job_id="eval-no-op",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=0,
+        primary_score_name="normalized_exact_match",
+        primary_score_value=0.0,
+        extraction_success_count=0,
+        validation_success_count=0,
+        scored_sample_count=0,
+        failure_count=0,
+        duration_seconds=0.0,
+        metrics={},
+        report_path=str(run_root / "evaluation-result.json"),
+        units={},
+    )
+
+    persisted = store.persist_result(jobs_root=jobs_root, job=job, result=result)
+
+    evidence = json.loads(persisted["evidence"].read_text(encoding="utf-8"))
+    assert persisted["telemetry_jsonl"] == run_root / "telemetry-samples.jsonl"
+    assert evidence["telemetry_summary"]["collector_status"] == "disabled"
+    assert evidence["telemetry_summary"]["sample_count"] == 0
+    telemetry_probes = [
+        probe for probe in evidence["probe_timeline"] if probe["component"] == "telemetry"
+    ]
+    assert {probe["status"] for probe in telemetry_probes} == {"skipped"}
+
+
+def test_evaluation_store_evidence_policy_uses_full_collector() -> None:
+    store = EvaluationStore(probe_policy=ProbePolicy(mode=ProbeMode.EVIDENCE))
+
+    assert type(store._telemetry_collector).__name__ == "AppleSiliconTelemetryCollector"
 
 
 def test_persist_result_streams_samples_csv_without_calling_samples_csv_builder(
@@ -1174,3 +1232,87 @@ def test_compare_summary_csv_carries_adapter_columns_per_target(tmp_path: Path) 
     assert header.endswith("target_adapter_manifest_path,target_adapter_set_hash")
     assert registered_row.endswith(",,")  # both adapter columns empty
     assert adapter_row.endswith(",/tmp/melix-adapters/bee.adapter.json,beefface12345678")
+
+
+@pytest.mark.parametrize("probe_mode", ("off", "minimal", "definitely-not-a-mode", ""))
+def test_persist_result_default_policy_skips_heavy_telemetry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe_mode: str,
+) -> None:
+    pytest.importorskip(
+        "worker.productization.probe_policy",
+        reason="probe policy foundation is expected from the main implementation",
+    )
+    monkeypatch.setenv("MELIX_PROBE_MODE", probe_mode)
+
+    def fail_heavy_sample(*args: object, **kwargs: object) -> None:
+        raise AssertionError("production-safe probe policy must not call the heavy telemetry sampler")
+
+    def fail_sleep(*args: object, **kwargs: object) -> None:
+        raise AssertionError("production-safe probe policy must not sleep during persist")
+
+    def fail_thread_start(self: threading.Thread) -> None:
+        raise AssertionError("production-safe probe policy must not start a telemetry thread")
+
+    monkeypatch.setattr(
+        "worker.productization.apple_silicon_telemetry.MacOSAppleSiliconSampler.sample",
+        fail_heavy_sample,
+    )
+    monkeypatch.setattr("worker.productization.apple_silicon_telemetry.time.sleep", fail_sleep)
+    monkeypatch.setattr(threading.Thread, "start", fail_thread_start)
+
+    jobs_root = tmp_path / "evaluation"
+    run_root = jobs_root / "runs" / f"eval-policy-{probe_mode or 'empty'}"
+    job = build_evaluation_job_record(
+        job_id=f"eval-policy-{probe_mode or 'empty'}",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=1,
+        scoring_mode="deterministic_accuracy",
+        few_shot=0,
+        seed=7,
+        code_exec_policy="sandboxed",
+        parameters={"dataset_root": str(tmp_path / "datasets" / "mmlu-dev")},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=101,
+        updated_at_unix_ms=202,
+    )
+    result = build_evaluation_result_record(
+        job_id=job.job_id,
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=1,
+        primary_score_name="normalized_exact_match",
+        primary_score_value=1.0,
+        extraction_success_count=1,
+        validation_success_count=1,
+        scored_sample_count=1,
+        failure_count=0,
+        duration_seconds=0.25,
+        metrics={"eval.mmlu.accuracy": 1.0},
+        report_path=str(run_root / "evaluation-result.json"),
+        units={"eval.mmlu.accuracy": "ratio"},
+    )
+
+    persisted = EvaluationStore().persist_result(
+        jobs_root=jobs_root,
+        job=job,
+        result=result,
+    )
+
+    evidence = json.loads(persisted["evidence"].read_text(encoding="utf-8"))
+    assert evidence["schema_version"] == "melix.run_evidence.v1"
+    assert evidence["run_id"] == job.job_id
+    assert evidence["telemetry_summary"]["collector_status"] == "disabled"
+    assert evidence["telemetry_summary"]["sample_count"] == 0
+    assert persisted["telemetry_jsonl"] == run_root / "telemetry-samples.jsonl"
+    telemetry_rows = [
+        json.loads(line)
+        for line in persisted["telemetry_jsonl"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert telemetry_rows[0]["sample_kind"] == "telemetry_disabled"

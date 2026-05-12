@@ -75,6 +75,7 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_sample_record,
 )
 from worker.productization.evaluation_store import EvaluationStore
+from worker.productization.probe_policy import ProbePolicy
 
 
 _SUITE_SCORE_MODES = {
@@ -246,7 +247,7 @@ class EvaluationCore:
         registry: Any | None = None,
     ) -> None:
         self._jobs_root = Path(jobs_root).resolve() if jobs_root is not None else None
-        self._store = store or EvaluationStore()
+        self._store = store or EvaluationStore(probe_policy=ProbePolicy.evidence())
         self._queue_store = queue_store or BenchmarkQueueStore()
         self._registry = registry
         self._job_id_lock = threading.Lock()

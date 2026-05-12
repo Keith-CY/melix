@@ -17,6 +17,7 @@ from worker.productization.apple_silicon_telemetry import (
     AppleSiliconTelemetrySample,
     AppleSiliconTelemetryUnsupportedError,
     MacOSAppleSiliconSampler,
+    NoOpAppleSiliconTelemetryCollector,
     summarize_process_attribution,
     summarize_samples,
 )
@@ -121,6 +122,51 @@ def test_collector_writes_apple_silicon_summary_and_time_series(tmp_path: Path) 
         "power_sample",
     ]
     assert {probe.status for probe in collection.probes} == {"completed"}
+
+
+def test_no_op_collector_writes_disabled_summary_without_sampling(tmp_path: Path) -> None:
+    collector = NoOpAppleSiliconTelemetryCollector(reason="probe_mode_minimal")
+
+    collection = collector.collect_completed_run(artifact_root=tmp_path, run_id="bench-1")
+    rows = [
+        json.loads(line)
+        for line in collection.artifact_path.read_text(encoding="utf-8").splitlines()
+    ]
+    summary = collection.summary.to_dict()
+
+    assert collection.artifact_path == tmp_path / "telemetry-samples.jsonl"
+    assert rows == [
+        {
+            "schema_version": "melix.apple_silicon_telemetry_sample.v1",
+            "collector_status": "disabled",
+            "reason": "probe_mode_minimal",
+            "sample_kind": "telemetry_disabled",
+            "timestamp_unix_ms": rows[0]["timestamp_unix_ms"],
+        }
+    ]
+    assert summary["collector_status"] == "disabled"
+    assert summary["time_series_path"] == "telemetry-samples.jsonl"
+    assert summary["sample_count"] == 0
+    assert summary["telemetry_failures"] == ["probe_mode_minimal"]
+    assert [probe.phase for probe in collection.probes] == [
+        "hardware_sample",
+        "process_sample",
+        "power_sample",
+    ]
+    assert {probe.status for probe in collection.probes} == {"skipped"}
+    assert {probe.attributes["reason"] for probe in collection.probes} == {"probe_mode_minimal"}
+
+
+def test_no_op_session_finish_writes_disabled_summary(tmp_path: Path) -> None:
+    session = NoOpAppleSiliconTelemetryCollector(reason="probe_mode_off").start_session(
+        run_id="eval-1"
+    )
+
+    collection = session.finish(artifact_root=tmp_path)
+
+    assert collection.summary.collector_status == "disabled"
+    assert collection.summary.time_series_path == "telemetry-samples.jsonl"
+    assert collection.samples == ()
 
 
 def test_collector_records_failures_without_synthesizing_zero_telemetry(tmp_path: Path) -> None:

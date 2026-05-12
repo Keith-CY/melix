@@ -1189,6 +1189,7 @@ class MaintenanceCore:
             build_serving_benchmark_results,
         )
         from worker.productization.benchmark_store import BenchmarkStore
+        from worker.productization.probe_policy import ProbePolicy
 
         suites = list(request.suites) or ["smoke"]
         raw_parameters = getattr(request, "parameters", None)
@@ -1230,7 +1231,7 @@ class MaintenanceCore:
         lazy_model_handle = ""
         loaded_model = None
         if self._benchmark_store is None:
-            self._benchmark_store = BenchmarkStore()
+            self._benchmark_store = BenchmarkStore(probe_policy=ProbePolicy.evidence())
         telemetry_session = self._benchmark_store.start_telemetry_session(run_id=job.job_id)
         try:
             resolved_model = self._resolve_benchmark_loaded_model(request.model_handle)
