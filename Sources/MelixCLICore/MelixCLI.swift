@@ -8249,7 +8249,7 @@ public actor MelixCLIRunner {
         if plan.config.preflight {
             let report = try await buildBatchPreflightReport(plan: plan)
             try BatchRunArtifacts.writePreflightReport(report, plan: plan)
-            if report.blockers.isEmpty == false {
+            if !report.blockers.isEmpty {
                 let blockerList = report.blockers.map { "\($0.name): \($0.detail)" }.joined(separator: "; ")
                 throw MelixCLIError.runtime(
                     "Batch preflight blocked run \(plan.config.runID) before execution. \(blockerList)"
@@ -8286,15 +8286,19 @@ public actor MelixCLIRunner {
             readyDetail: "Melix CLI build artifact is executable."
         ))
         checks.append(portCheck(config.httpPort))
-        checks.append(directoryCreatableCheck(name: "melix_home", path: config.melixHome))
-        checks.append(directoryCreatableCheck(name: "runtime_dir", path: config.runtimeDir))
-        checks.append(directoryCreatableCheck(name: "temp_root", path: config.tempRoot))
-        checks.append(directoryCreatableCheck(name: "output_root", path: config.outputRoot))
+        checks.append(directoryWritableCheck(name: "melix_home", path: config.melixHome))
+        checks.append(directoryWritableCheck(name: "runtime_dir", path: config.runtimeDir))
+        checks.append(directoryWritableCheck(name: "temp_root", path: config.tempRoot))
+        checks.append(directoryWritableCheck(name: "output_root", path: config.outputRoot))
         checks.append(diskCheck(path: config.outputRoot, fileManager: fileManager))
         checks.append(preflightCacheCheck(config: config))
         checks.append(contentsOf: preflightModelChecks(plan: plan))
-        checks.append(try preflightDatasetCheck(config: config))
-        checks.append(try preflightJudgeCheck(config: config))
+        checks.append(preflightCheck(name: "dataset") {
+            try preflightDatasetCheck(config: config)
+        })
+        checks.append(preflightCheck(name: "judge") {
+            try preflightJudgeCheck(config: config)
+        })
 
         let status = checks.contains(where: \.isBlocking) ? "blocked" : "ready"
         return BatchRunPreflightReport(
@@ -8317,23 +8321,54 @@ public actor MelixCLIRunner {
         return .init(name: name, status: "blocked", detail: blockedDetail, actionable: "Create the directory or provide the correct path.")
     }
 
-    private func directoryCreatableCheck(name: String, path: String) -> BatchRunPreflightCheck {
+    private func directoryWritableCheck(name: String, path: String) -> BatchRunPreflightCheck {
         let url = URL(fileURLWithPath: path)
-        do {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            var isDirectory = ObjCBool(false)
-            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
-                return .init(name: name, status: "ready", detail: "\(name) is available at \(path).", actionable: "")
+        var isDirectory = ObjCBool(false)
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
+            if isDirectory.boolValue {
+                let status = FileManager.default.isWritableFile(atPath: url.path) ? "ready" : "blocked"
+                return .init(
+                    name: name,
+                    status: status,
+                    detail: "\(name) exists at \(path).",
+                    actionable: status == "ready" ? "" : "Fix permissions or choose a writable directory."
+                )
             }
             return .init(name: name, status: "blocked", detail: "\(name) is not a directory: \(path).", actionable: "Choose a directory path.")
-        } catch {
-            return .init(
-                name: name,
-                status: "blocked",
-                detail: "\(name) cannot be created at \(path): \(error.localizedDescription)",
-                actionable: "Fix permissions or choose a writable directory."
-            )
         }
+
+        var ancestor = url.deletingLastPathComponent()
+        while true {
+            var ancestorIsDirectory = ObjCBool(false)
+            if FileManager.default.fileExists(atPath: ancestor.path, isDirectory: &ancestorIsDirectory) {
+                if !ancestorIsDirectory.boolValue {
+                    return .init(
+                        name: name,
+                        status: "blocked",
+                        detail: "\(name) cannot be created because an ancestor is not a directory: \(ancestor.path).",
+                        actionable: "Choose a path under an existing writable directory."
+                    )
+                }
+                let status = FileManager.default.isWritableFile(atPath: ancestor.path) ? "ready" : "blocked"
+                return .init(
+                    name: name,
+                    status: status,
+                    detail: "\(name) does not exist yet; nearest existing directory is \(ancestor.path).",
+                    actionable: status == "ready" ? "The batch runner will create this directory when it writes artifacts." : "Fix ancestor permissions or choose a writable directory."
+                )
+            }
+            let next = ancestor.deletingLastPathComponent()
+            guard next.path != ancestor.path else {
+                break
+            }
+            ancestor = next
+        }
+        return .init(
+            name: name,
+            status: "blocked",
+            detail: "\(name) does not exist and no parent directory could be found for \(path).",
+            actionable: "Create the parent directory or choose a path under an existing writable directory."
+        )
     }
 
     private func executableCheck(
@@ -8377,17 +8412,9 @@ public actor MelixCLIRunner {
             {
                 available = Int64(volumeCapacity)
             } else if let fileSystemAttributes = try? fileManager.attributesOfFileSystem(forPath: url.path),
-                      let fileSystemAvailable = fileSystemAttributes[.systemFreeSize]
+                      let fileSystemAvailable = fileSystemAttributes[.systemFreeSize] as? NSNumber
             {
-                if let number = fileSystemAvailable as? NSNumber {
-                    available = number.int64Value
-                } else if let integer = fileSystemAvailable as? Int {
-                    available = Int64(integer)
-                } else if let int64 = fileSystemAvailable as? Int64 {
-                    available = int64
-                } else {
-                    available = nil
-                }
+                available = fileSystemAvailable.int64Value
             } else {
                 available = nil
             }
@@ -8450,7 +8477,7 @@ public actor MelixCLIRunner {
 
     private func preflightDatasetCheck(config: BatchRunEffectiveConfig) throws -> BatchRunPreflightCheck {
         let datasetID = config.evalDatasetID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard datasetID.isEmpty == false else {
+        guard !datasetID.isEmpty else {
             return .init(
                 name: "dataset",
                 status: "blocked",
@@ -8492,7 +8519,7 @@ public actor MelixCLIRunner {
 
     private func preflightJudgeCheck(config: BatchRunEffectiveConfig) throws -> BatchRunPreflightCheck {
         let judgeID = config.judgeRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard judgeID.isEmpty == false else {
+        guard !judgeID.isEmpty else {
             return .init(
                 name: "judge",
                 status: "blocked",
@@ -8513,7 +8540,7 @@ public actor MelixCLIRunner {
             .loadAPIKey(remoteServerID: server.id)?
             .apiKey
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard apiKey.isEmpty == false else {
+        guard !apiKey.isEmpty else {
             return .init(
                 name: "judge",
                 status: "blocked",
@@ -8524,7 +8551,7 @@ public actor MelixCLIRunner {
         let modelID = config.judgeModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? server.defaultModelID
             : config.judgeModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard modelID.isEmpty == false else {
+        guard !modelID.isEmpty else {
             return .init(
                 name: "judge",
                 status: "blocked",
@@ -8538,6 +8565,22 @@ public actor MelixCLIRunner {
             detail: "Remote server \(judgeID) is configured for model \(modelID).",
             actionable: ""
         )
+    }
+
+    private func preflightCheck(
+        name: String,
+        _ run: () throws -> BatchRunPreflightCheck
+    ) -> BatchRunPreflightCheck {
+        do {
+            return try run()
+        } catch {
+            return .init(
+                name: name,
+                status: "blocked",
+                detail: "\(name) preflight check failed: \(error.localizedDescription)",
+                actionable: "Fix the reported configuration or state and rerun preflight."
+            )
+        }
     }
 
     private func isolatedMelixHome(config: BatchRunEffectiveConfig) -> MelixHome {

@@ -228,14 +228,12 @@ enum BatchRunFailureClassifier {
     )
 
     static func classify(stdout: String = "", stderr: String = "", metadata: [String: String] = [:]) -> BatchRunFailureClassification {
-        let searchable = ([stdout, stderr] + metadata.map { "\($0.key)=\($0.value)" })
-            .joined(separator: "\n")
-            .lowercased()
-        guard searchable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+        let searchable = [stdout, stderr] + metadata.map { "\($0.key)=\($0.value)" }
+        guard searchable.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             return unknown
         }
 
-        if containsAny(searchable, [
+        if containsAny(searchable, needles: [
             "kiogpucommandbuffercallbackerroroutofmemory",
             "metal oom",
             "outofmemory",
@@ -248,7 +246,7 @@ enum BatchRunFailureClassifier {
                 reason: "Metal or unified-memory exhaustion requires a clean runtime before the next model."
             )
         }
-        if containsAny(searchable, [
+        if containsAny(searchable, needles: [
             "socket closed",
             "connection refused",
             "failed to connect to all addresses",
@@ -261,7 +259,7 @@ enum BatchRunFailureClassifier {
                 reason: "Worker connectivity was lost; restart the local stack before continuing."
             )
         }
-        if containsAny(searchable, [
+        if containsAny(searchable, needles: [
             "requestfailed(code: \"unavailable\"",
             "worker_unavailable",
             "server unavailable",
@@ -273,7 +271,7 @@ enum BatchRunFailureClassifier {
                 reason: "The control plane reported an unavailable runtime."
             )
         }
-        if containsAny(searchable, [
+        if containsAny(searchable, needles: [
             "remote server",
             "semantic judge",
             "judge",
@@ -288,7 +286,7 @@ enum BatchRunFailureClassifier {
                 reason: "Semantic judge configuration or provider access failed."
             )
         }
-        if containsAny(searchable, [
+        if containsAny(searchable, needles: [
             "repo id",
             "repo_id",
             "repository not found",
@@ -302,7 +300,7 @@ enum BatchRunFailureClassifier {
                 reason: "The model target could not be resolved before execution."
             )
         }
-        if containsAny(searchable, [
+        if containsAny(searchable, needles: [
             "load_model",
             "load model",
             "failed to load",
@@ -315,7 +313,7 @@ enum BatchRunFailureClassifier {
                 reason: "Model load failed after target resolution."
             )
         }
-        if containsAny(searchable, [
+        if containsAny(searchable, needles: [
             "export-csv",
             "export summary",
             "export samples",
@@ -337,8 +335,12 @@ enum BatchRunFailureClassifier {
         classification.recoverability == .cleanRestartAndRetry
     }
 
-    private static func containsAny(_ text: String, _ needles: [String]) -> Bool {
-        needles.contains { text.contains($0) }
+    private static func containsAny(_ haystacks: [String], needles: [String]) -> Bool {
+        haystacks.contains { haystack in
+            needles.contains { needle in
+                haystack.range(of: needle, options: [.caseInsensitive]) != nil
+            }
+        }
     }
 }
 
@@ -349,7 +351,7 @@ enum BatchRunModelListParser {
         for (offset, rawLine) in contents.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let lineNumber = offset + 1
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard line.isEmpty == false, line.hasPrefix("#") == false else {
+            guard !line.isEmpty, !line.hasPrefix("#") else {
                 continue
             }
             let index: String
@@ -361,10 +363,10 @@ enum BatchRunModelListParser {
                 index = String(format: "%02d", autoIndex)
                 repoID = line
             }
-            guard index.isEmpty == false else {
+            guard !index.isEmpty else {
                 throw MelixCLIError.usage("Empty model index at \(lineNumber).")
             }
-            guard repoID.isEmpty == false else {
+            guard !repoID.isEmpty else {
                 throw MelixCLIError.usage("Empty repo id at \(lineNumber).")
             }
             entries.append(BatchRunModelEntry(index: index, repoID: repoID, sourceLine: lineNumber))
