@@ -1761,6 +1761,9 @@ def test_path_from_uri_preserves_direct_helper_behavior(tmp_path: Path) -> None:
     image_path.write_bytes(b"direct image bytes")
 
     assert _path_from_uri(str(image_path)) == image_path
+    assert _path_from_uri(image_path.as_uri()) == image_path
+    with pytest.raises(MultimodalPreprocessError, match="Unsupported image URI scheme: ftp"):
+        _path_from_uri("ftp://example.com/cat.png")
 
 
 def test_bytes_from_local_image_uri_reuses_single_parsed_uri(
