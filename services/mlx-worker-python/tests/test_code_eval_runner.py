@@ -810,6 +810,40 @@ def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_par
     assert payload_path.read_bytes_calls == 1
 
 
+def test_load_payload_file_fast_path_reuses_precomputed_key_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload_path = _BytesOnlyPayloadPath(
+        json.dumps(
+            {
+                "compile_status": "compiled",
+                "failure_detail": "",
+                "runtime_status": "ok",
+                "test_status": "passed",
+                "tests_passed": 2,
+                "tests_total": 2,
+                "timeout_status": "ok",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+
+    def fail_json_dumps(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("known code-eval payload keys should use cached tokens")
+
+    monkeypatch.setattr(code_eval_runner.json, "dumps", fail_json_dumps)
+
+    assert code_eval_runner._load_payload_file(payload_path) == {
+        "compile_status": "compiled",
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 2,
+        "tests_total": 2,
+        "timeout_status": "ok",
+    }
+    with pytest.raises(AssertionError, match="known code-eval payload keys"):
+        code_eval_runner._json_field_value_start(b'{"other":1}', "other")
+
+
 def test_load_payload_file_fast_path_falls_back_for_escaped_fields(tmp_path: Path) -> None:
     payload_path = tmp_path / "payload.json"
     payload_path.write_text(
