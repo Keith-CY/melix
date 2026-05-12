@@ -6715,6 +6715,167 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"python_speech\":false"))
     }
 
+    @Test("GET discovery endpoints expose machine readable local runtime contracts")
+    func getDiscoveryEndpointsExposeMachineReadableLocalRuntimeContracts() async throws {
+        let metricsStore = MetricsStore()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-discovery-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data(
+            """
+            [project]
+            version-control = "ignored"
+            version = "7.8.9"
+            """.utf8
+        ).write(to: root.appendingPathComponent("pyproject.toml"))
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var qwen = warmModel()
+        qwen.modelID = "mlx-community/Qwen3.5-9B-MLX-4bit"
+        qwen.kind = "text"
+        qwen.settings.ext["melix.hf_repo_id"] = "mlx-community/Qwen3.5-9B-MLX-4bit"
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [qwen, warmEmbeddingModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_434),
+            environment: [
+                "MELIX_HOME": "/tmp/melix-discovery-home",
+                "MELIX_HTTP_PORT": "12434",
+                "MELIX_REPO_ROOT": root.path,
+            ]
+        )
+
+        let wellKnownResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/.well-known/melix.json", headers: [:], body: Data())
+        )
+        let wellKnown = try await jsonPayload(from: wellKnownResponse.body)
+        let links = try #require(wellKnown["links"] as? [String: Any])
+        let features = try #require(wellKnown["features"] as? [String])
+        #expect(wellKnownResponse.statusCode == 200)
+        #expect(wellKnown["schema_version"] as? String == "melix.discovery.info.v1")
+        #expect(wellKnown["version"] as? String == "7.8.9")
+        #expect(links["capabilities"] as? String == "/api/capabilities")
+        #expect(features.contains("runtime_settings"))
+
+        let capabilitiesResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/api/capabilities", headers: [:], body: Data())
+        )
+        let capabilities = try await jsonPayload(from: capabilitiesResponse.body)
+        let models = try #require(capabilities["models"] as? [[String: Any]])
+        #expect(capabilitiesResponse.statusCode == 200)
+        #expect(capabilities["schema_version"] as? String == "melix.discovery.capabilities.v1")
+        #expect((capabilities["supported_tasks"] as? [String])?.contains("text-generation") == true)
+        #expect(models.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-4bit" })
+
+        let instructionsResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/api/instructions", headers: [:], body: Data())
+        )
+        let instructions = try await jsonPayload(from: instructionsResponse.body)
+        #expect(instructionsResponse.statusCode == 200)
+        #expect(instructions["schema_version"] as? String == "melix.discovery.instructions.v1")
+        #expect((instructions["areas"] as? [[String: Any]])?.contains { $0["id"] as? String == "settings" } == true)
+
+        let metadataResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/api/config-metadata", headers: [:], body: Data())
+        )
+        let metadata = try await jsonPayload(from: metadataResponse.body)
+        #expect(metadataResponse.statusCode == 200)
+        #expect(metadata["schema_version"] as? String == "melix.discovery.config_metadata.v1")
+        #expect((metadata["settings"] as? [[String: Any]])?.contains { $0["key"] as? String == "max_concurrent_jobs" } == true)
+        #expect(await metricsStore.value(forKey: "operator.discovery_well_known_latency_ms") >= 0)
+        #expect(await metricsStore.value(forKey: "operator.discovery_capabilities_latency_ms") >= 0)
+        #expect(await metricsStore.value(forKey: "operator.discovery_instructions_latency_ms") >= 0)
+        #expect(await metricsStore.value(forKey: "operator.discovery_config_metadata_latency_ms") >= 0)
+    }
+
+    @Test("runtime discovery contracts expose stable aliases links metadata and onboarding endpoints")
+    func runtimeDiscoveryContractsExposeStableAliasesLinksMetadataAndOnboardingEndpoints() throws {
+        let layout = MelixPathLayout(environment: ["MELIX_HOME": "/tmp/melix-contract-home"])
+        let metadata = MelixRuntimeDiscoveryContracts.runtimeSettingsMetadata(layout: layout)
+        let links = MelixRuntimeDiscoveryContracts.discoveryLinks(baseURL: "/v1/melix/")
+        let instructions = MelixRuntimeDiscoveryContracts.instructionsPayload()
+        let schema = MelixRuntimeDiscoveryContracts.schemaPayload(repoRootPath: "/tmp/melix-repo")
+        let configMetadata = MelixRuntimeDiscoveryContracts.configMetadataPayload(layout: layout)
+        let onboarding = APIOnboardingSnapshotSource().summary()
+
+        #expect(metadata.count == MelixRuntimeDiscoveryContracts.runtimeSettingDefinitions.count)
+        #expect(metadata.contains { $0["key"] as? String == "auto_cleanup_policy" && $0["default"] as? String == "manual" })
+        #expect(metadata.contains { ($0["default"] as? String)?.contains("/tmp/melix-contract-home/models/default-managed") == true })
+        #expect(links["well_known"] == "/v1/melix/.well-known/melix.json")
+        #expect(links["config_metadata"] == "/v1/melix/api/config-metadata")
+        #expect((instructions["areas"] as? [[String: Any]])?.contains { $0["id"] as? String == "updates" } == true)
+        #expect((schema["schemas"] as? [[String: Any]])?.contains { $0["id"] as? String == "plans" } == true)
+        #expect(configMetadata["schema_version"] as? String == "melix.discovery.config_metadata.v1")
+
+        let blankAlias = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: "  ")
+        #expect(blankAlias["status"] as? String == "not_requested")
+        for query in ["/tmp/model", "~/model", "./model", "../model", "file:///tmp/model"] {
+            let alias = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: query)
+            #expect(alias["status"] as? String == "local_path_passthrough")
+            #expect((alias["suggestions"] as? [[String: Any]])?.isEmpty == true)
+        }
+        let fullModelID = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: "owner/model")
+        #expect(fullModelID["status"] as? String == "valid_full_model_id")
+        let noMatch = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: "owner/model with space")
+        #expect(noMatch["status"] as? String == "no_match")
+        let qwen8Bit = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: "qwen35_9b_mlx_8bit")
+        #expect((qwen8Bit["suggestions"] as? [[String: Any]])?.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-8bit" } == true)
+        let qwen26B = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: "qwen35_26b_mlx_4bit")
+        #expect((qwen26B["suggestions"] as? [[String: Any]])?.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-26B-MLX-4bit" } == true)
+
+        let localService = try #require(onboarding.surfaces.first { $0.surfaceID == "local_service" })
+        #expect(localService.endpointIds.contains("well_known"))
+        #expect(localService.endpointIds.contains("capabilities"))
+        #expect(localService.endpointIds.contains("instructions"))
+        #expect(localService.endpointIds.contains("config_metadata"))
+        let endpointIDs = Set(onboarding.endpoints.map(\.endpointID))
+        #expect(endpointIDs.isSuperset(of: ["well_known", "capabilities", "instructions", "config_metadata"]))
+    }
+
+    @Test("GET capabilities discovery renders all model residency states")
+    func getCapabilitiesDiscoveryRendersAllModelResidencyStates() async throws {
+        let stateCases: [(String, Melix_Controlplane_V1_ModelState, String)] = [
+            ("melix-warm", .modelWarm, "warm"),
+            ("melix-pinned", .modelPinned, "pinned"),
+            ("melix-unloaded", .modelUnloaded, "unloaded"),
+            ("melix-loading", .modelLoading, "loading"),
+            ("melix-discovered", .modelDiscovered, "discovered"),
+            ("melix-failed", .modelFailed, "failed"),
+            ("melix-evicting", .modelEvicting, "evicting"),
+            ("melix-unknown", .UNRECOGNIZED(99), "unknown"),
+        ]
+        let models = stateCases.map { modelID, state, _ in
+            var model = ModelCatalog.devTextModel()
+            model.modelID = modelID
+            model.state = state
+            return model
+        }
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: models),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/api/capabilities", headers: [:], body: Data())
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let discoveredModels = try #require(payload["models"] as? [[String: Any]])
+
+        #expect(response.statusCode == 200)
+        for (modelID, _, discoveryState) in stateCases {
+            #expect(discoveredModels.contains { model in
+                model["model_id"] as? String == modelID && model["state"] as? String == discoveryState
+            })
+        }
+    }
+
     @Test("POST /v1/embeddings returns 503 when the embedding worker throws")
     func postEmbeddingsReturns503WhenTheEmbeddingWorkerThrows() async throws {
         let embeddingClient = ScriptedPhaseFiveWorkerClient()

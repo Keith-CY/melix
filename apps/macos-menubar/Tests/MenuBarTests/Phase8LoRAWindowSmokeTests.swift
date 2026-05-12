@@ -15,6 +15,7 @@ struct Phase8LoRAWindowSmokeTests {
     func phase8LoRAWindowSmokeEmitsCanonicalAcceptanceEvidence() async throws {
         let baseModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
         let derivedModelID = "melix-qwen35-acceptance"
+        let evaluationJobID = "phase8-eval-\(UUID().uuidString)"
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-phase8-lora-window-smoke-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -76,12 +77,16 @@ struct Phase8LoRAWindowSmokeTests {
         await runnerClient.configureEvaluationResponse(
             phase8LoRAWindowCompareResult(
                 baseModelID: baseModelID,
-                derivedModelID: derivedModelID
+                derivedModelID: derivedModelID,
+                jobID: evaluationJobID
             )
         )
         await runnerClient.configureExportResult(
             ControlPlaneExportResult(
-                exportBundleJSON: phase8LoRAWindowExportBundleJSON(derivedModelID: derivedModelID)
+                exportBundleJSON: phase8LoRAWindowExportBundleJSON(
+                    derivedModelID: derivedModelID,
+                    evaluationJobID: evaluationJobID
+                )
             )
         )
 
@@ -133,6 +138,7 @@ struct Phase8LoRAWindowSmokeTests {
             foundation: viewModel.desktopFoundationState
         )
         await diagnosticsSection.runEvaluationCompare()
+        viewModel.selectEvaluationHistory(jobID: evaluationJobID)
         await viewModel.exportSelectedEvaluationSummaryCSV()
         await trainingSection.removeDerivedModel()
 
@@ -347,10 +353,11 @@ private func phase8LoRAWindowRegistryManifest(
 
 private func phase8LoRAWindowCompareResult(
     baseModelID: String,
-    derivedModelID: String
+    derivedModelID: String,
+    jobID: String
 ) -> ControlPlaneEvaluationResult {
     var job = Melix_Controlplane_V1_EvaluationJobSummary()
-    job.jobID = "eval-compare-1"
+    job.jobID = jobID
     job.modelID = baseModelID
     job.taskKind = "text-generation"
     job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
@@ -359,7 +366,7 @@ private func phase8LoRAWindowCompareResult(
     job.sampleSize = 6
     job.scoringMode = "multiple_choice_accuracy"
     job.status = "completed"
-    job.outputDir = "/tmp/melix/evaluation/runs/eval-compare-1"
+    job.outputDir = "/tmp/melix/evaluation/runs/\(jobID)"
     job.createdAtUnixMs = 1_712_400_000_000
     job.updatedAtUnixMs = 1_712_400_001_000
 
@@ -369,18 +376,21 @@ private func phase8LoRAWindowCompareResult(
     metric.unit = "ratio"
 
     var result = Melix_Controlplane_V1_EvaluationResultSummary()
-    result.jobID = "eval-compare-1"
+    result.jobID = jobID
     result.suiteID = "mmlu:\(derivedModelID)"
     result.datasetID = "mmlu.dev.v1"
     result.sampleSize = 6
     result.metrics = [metric]
-    result.reportPath = "/tmp/melix/evaluation/runs/eval-compare-1/\(derivedModelID)-result.json"
+    result.reportPath = "/tmp/melix/evaluation/runs/\(jobID)/\(derivedModelID)-result.json"
     return ControlPlaneEvaluationResult(job: job, results: [result])
 }
 
-private func phase8LoRAWindowExportBundleJSON(derivedModelID: String) -> String {
+private func phase8LoRAWindowExportBundleJSON(
+    derivedModelID: String,
+    evaluationJobID: String
+) -> String {
     makeBenchmarkExportBundleJSON()
-        .replacingOccurrences(of: "eval-newer", with: "eval-compare-1")
+        .replacingOccurrences(of: "eval-newer", with: evaluationJobID)
         .replacingOccurrences(of: "melix-dev-text-lora", with: derivedModelID)
 }
 
