@@ -1,6 +1,7 @@
 import Foundation
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
+import OSLog
 
 public struct RichOutputSanitizationResult: Equatable, Sendable {
     public let text: String
@@ -254,6 +255,7 @@ private enum GatewayAuthorizationResolution {
 public struct OpenAIHandler: Sendable {
     private static let defaultSpeechStreamIntervalMs: UInt32 = 20
     private static let maxSpeechStreamIntervalMs: UInt32 = 1_000
+    private static let logger = Logger(subsystem: "Melix.ControlPlane", category: "OpenAIHandler")
 
     private let modelCatalog: ModelCatalog
     private let requestCoordinator: RequestCoordinator
@@ -272,6 +274,7 @@ public struct OpenAIHandler: Sendable {
     private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
     private let imageRequestTimeoutSeconds: UInt32
+    private let now: @Sendable () -> Date
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
 
@@ -293,6 +296,7 @@ public struct OpenAIHandler: Sendable {
         gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
         gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
         persistentAuthSessionStore: PersistentAuthSessionStore? = nil,
+        now: @escaping @Sendable () -> Date = Date.init,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.modelCatalog = modelCatalog
@@ -315,6 +319,7 @@ public struct OpenAIHandler: Sendable {
         self.gatewayRuntimeBinding = gatewayRuntimeBinding
         self.persistentAuthSessionStore = persistentAuthSessionStore
         self.imageRequestTimeoutSeconds = Self.resolveImageRequestTimeoutSeconds(environment: environment)
+        self.now = now
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.sortedKeys]
@@ -560,7 +565,7 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
-        let requestStartedAt = Date()
+        let requestStartedAt = now()
         do {
             let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
             if let resumeRequestID = chatRequest.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1728,6 +1733,7 @@ public struct OpenAIHandler: Sendable {
         workerRequest.stream = true
         workerRequest.returnUsage = true
         workerRequest.execution.ext["melix.stream.include_usage"] = "true"
+        workerRequest.execution.ext["melix.http.response_mode"] = "chat_completions_non_stream"
         let streamingTranslated = TranslatedChatRequest(
             requestID: translated.requestID,
             modelID: translated.modelID,
@@ -1752,8 +1758,7 @@ public struct OpenAIHandler: Sendable {
 
         do {
             let aggregate = try await aggregateChatCompletion(
-                stream: execution.stream,
-                startedAt: requestStartedAt
+                stream: execution.stream
             )
             if let workerError = aggregate.error {
                 return workerErrorResponse(workerError)
@@ -1773,10 +1778,14 @@ public struct OpenAIHandler: Sendable {
 
             let payload = chatCompletionJSONPayload(
                 execution: execution,
-                aggregate: aggregate
+                aggregate: aggregate,
+                requestStartedAt: requestStartedAt
             )
             return jsonResponse(statusCode: 200, payload: payload)
         } catch {
+            Self.logger.error(
+                "Non-stream chat completion aggregation failed requestID=\(execution.requestID, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
             return workerUnavailableResponse()
         }
     }
@@ -1794,25 +1803,18 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func aggregateChatCompletion(
-        stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>,
-        startedAt: Date
+        stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
     ) async throws -> NonStreamChatCompletionAggregate {
         var aggregate = NonStreamChatCompletionAggregate()
         var tokenText = ""
-        var firstTokenSeen = false
 
         for try await event in stream {
             switch event.payload {
             case .tokenDelta(let delta):
-                if !firstTokenSeen {
-                    firstTokenSeen = true
-                    await metricsStore.set(
-                        max(Date().timeIntervalSince(startedAt) * 1000, 0.001),
-                        forKey: "http.ttfd_ms"
-                    )
-                }
                 tokenText += delta.text
             case .usageDelta(let usage):
+                // Worker usage events report final cumulative counts, so the
+                // latest event is authoritative if a runtime emits more than one.
                 aggregate.usage = NonStreamChatCompletionAggregate.Usage(
                     promptTokens: usage.promptTokens,
                     completionTokens: usage.completionTokens
@@ -1836,12 +1838,13 @@ public struct OpenAIHandler: Sendable {
 
     private func chatCompletionJSONPayload(
         execution: CoordinatedChatExecution,
-        aggregate: NonStreamChatCompletionAggregate
+        aggregate: NonStreamChatCompletionAggregate,
+        requestStartedAt: Date
     ) -> [String: Any] {
         var payload: [String: Any] = [
             "id": execution.requestID,
             "object": "chat.completion",
-            "created": Int(Date().timeIntervalSince1970),
+            "created": Int(requestStartedAt.timeIntervalSince1970),
             "model": execution.modelID,
             "choices": [
                 [

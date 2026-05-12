@@ -868,6 +868,8 @@ public actor RequestCoordinator {
             executionHubs[requestID] = hub
             let metricsStore = self.metricsStore
             let now = self.now
+            let isBufferedChatCompletionsResponse =
+                request.workerRequest.execution.ext["melix.http.response_mode"] == "chat_completions_non_stream"
             let structuredOutputConfiguration = StructuredOutputConfiguration(
                 executionExt: request.workerRequest.execution.ext
             )
@@ -930,14 +932,19 @@ public actor RequestCoordinator {
                                 firstDeltaRecorded = true
                                 let ttftMs = now().timeIntervalSince(dispatchStartedAt) * 1000
                                 let followupTTFTMs = now().timeIntervalSince(requestMetricStartedAt) * 1000
+                                let ttftMetricKey = isBufferedChatCompletionsResponse
+                                    ? "http.chat_completions_non_stream_time_to_first_token_ms"
+                                    : "http.ttfd_ms"
                                 await metricsStore.set(
                                     ttftMs,
-                                    forKey: "http.ttfd_ms"
+                                    forKey: ttftMetricKey
                                 )
-                                await self.recordTTFTMetrics(
-                                    requestID: requestID,
-                                    ttftMs: followupTTFTMs
-                                )
+                                if !isBufferedChatCompletionsResponse {
+                                    await self.recordTTFTMetrics(
+                                        requestID: requestID,
+                                        ttftMs: followupTTFTMs
+                                    )
+                                }
                             }
                             switch outputEvent.payload {
                             case .reasoningDelta:

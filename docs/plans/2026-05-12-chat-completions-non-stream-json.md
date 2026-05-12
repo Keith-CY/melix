@@ -36,6 +36,8 @@ The worker still emits an ordered stream of `ExecuteEvent` messages. The HTTP
 gateway adds a chat-completions-only response path that consumes that stream,
 aggregates text deltas, records usage deltas, and uses the terminal completion
 event as the authoritative finish reason and assistant text when available.
+When multiple worker usage events are observed, the latest event is treated as
+the authoritative cumulative token accounting snapshot.
 
 The JSON response shape is:
 
@@ -69,13 +71,22 @@ zero-token accounting.
 If the worker emits an error event while the gateway is buffering a non-stream
 chat completion, that error terminates aggregation immediately. The gateway
 returns the mapped worker error response and ignores any later stream events.
+Thrown stream aggregation failures are logged before the gateway returns the
+existing worker-unavailable JSON error response.
+
+### Compatibility Note
+
+This slice intentionally aligns `POST /v1/chat/completions` with the OpenAI
+default: omitting `stream` returns buffered JSON instead of SSE. Existing
+clients that depend on streaming must send `"stream": true`.
 
 ## Metrics
 
 The HTTP gateway records:
 
 - `http.chat_completions_non_stream_request_count`
-- `http.chat_completions_non_stream_latency_ms`
+- `http.chat_completions_non_stream_latency_ms` as the latest scalar latency sample
+- `http.chat_completions_non_stream_time_to_first_token_ms` as the latest internal first-token timing sample
 - `http.chat_completions_non_stream_completion_tokens` as a cumulative counter
 
 Success means the explicit and default non-stream tests exercise the new JSON

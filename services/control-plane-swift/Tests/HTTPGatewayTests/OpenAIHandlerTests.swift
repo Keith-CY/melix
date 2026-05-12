@@ -1039,7 +1039,8 @@ struct OpenAIHandlerTests {
             modelCatalog: catalog,
             requestCoordinator: coordinator,
             metricsStore: metricsStore,
-            translator: ChatRequestTranslator(requestIDGenerator: { "req-json" })
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-json" }),
+            now: { Date(timeIntervalSince1970: 1_778_520_000) }
         )
 
         let body = try #require(
@@ -1076,6 +1077,7 @@ struct OpenAIHandlerTests {
         #expect(response.headers["content-type"] == "application/json")
         #expect(payload["id"] as? String == "req-json")
         #expect(payload["object"] as? String == "chat.completion")
+        #expect(payload["created"] as? Int == 1_778_520_000)
         #expect(payload["model"] as? String == "melix-dev-text")
         #expect(message["role"] as? String == "assistant")
         #expect(message["content"] as? String == "Hello")
@@ -1088,6 +1090,8 @@ struct OpenAIHandlerTests {
         #expect(request.execution.ext["melix.stream.include_usage"] == "true")
         #expect(metrics.values["http.chat_completions_non_stream_request_count", default: 0] == 1)
         #expect(metrics.values["http.chat_completions_non_stream_latency_ms", default: 0] > 0)
+        #expect(metrics.values["http.chat_completions_non_stream_time_to_first_token_ms", default: 0] > 0)
+        #expect(metrics.values["http.ttfd_ms", default: 0] == 0)
         #expect(metrics.values["http.chat_completions_non_stream_completion_tokens", default: 0] == 2)
     }
 
@@ -1132,6 +1136,58 @@ struct OpenAIHandlerTests {
         let metrics = await metricsStore.snapshot()
         #expect(metrics.values["http.chat_completions_non_stream_request_count", default: 0] == 2)
         #expect(metrics.values["http.chat_completions_non_stream_completion_tokens", default: 0] == 4)
+    }
+
+    @Test("POST /v1/chat/completions uses latest cumulative non-stream usage")
+    func postChatCompletionsUsesLatestCumulativeNonStreamUsage() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let metricsStore = MetricsStore()
+        let workerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "req-json-usage", seq: 1, text: "Hello"),
+            makeUsageEvent(requestID: "req-json-usage", seq: 2, promptTokens: 1, completionTokens: 1),
+            makeUsageEvent(requestID: "req-json-usage", seq: 3, promptTokens: 3, completionTokens: 5),
+            makeCompletedEvent(requestID: "req-json-usage", seq: 4, finishReason: "stop", assistantText: "Hello"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-json-usage" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Usage" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let usage = try #require(payload["usage"] as? [String: Any])
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(usage["prompt_tokens"] as? Int == 3)
+        #expect(usage["completion_tokens"] as? Int == 5)
+        #expect(usage["total_tokens"] as? Int == 8)
+        #expect(metrics.values["http.chat_completions_non_stream_completion_tokens", default: 0] == 5)
     }
 
     @Test("POST /v1/chat/completions stops non-stream aggregation on worker error")
@@ -1182,6 +1238,57 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 400)
         #expect(error["code"] as? String == "invalid_argument")
         #expect(error["message"] as? String == "bad request")
+        #expect(metrics.values["http.chat_completions_non_stream_request_count", default: 0] == 0)
+        #expect(metrics.values["http.chat_completions_non_stream_completion_tokens", default: 0] == 0)
+    }
+
+    @Test("POST /v1/chat/completions maps non-stream aggregation failures to worker unavailable")
+    func postChatCompletionsMapsNonStreamAggregationFailuresToWorkerUnavailable() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let metricsStore = MetricsStore()
+        let workerClient = ScriptedWorkerClient(
+            events: [
+                makeTokenEvent(requestID: "req-json-throw", seq: 1, text: "partial"),
+            ],
+            streamFailure: OpenAIHandlerTestError(description: "stream exploded")
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-json-throw" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Fail" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 503)
+        #expect(error["code"] as? String == "worker_unavailable")
         #expect(metrics.values["http.chat_completions_non_stream_request_count", default: 0] == 0)
         #expect(metrics.values["http.chat_completions_non_stream_completion_tokens", default: 0] == 0)
     }
@@ -7401,6 +7508,7 @@ private func makeRegistrySnapshotManifestJSON(
 
 private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWorkerClientProtocol {
     private let events: [Melix_Worker_V1_ExecuteEvent]
+    private let streamFailure: Error?
     private let loadModelHandle: String
     private let loadModelEstimatedResidentBytes: UInt64
     private let runtimeResidentBytes: UInt64
@@ -7414,6 +7522,7 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
 
     init(
         events: [Melix_Worker_V1_ExecuteEvent],
+        streamFailure: Error? = nil,
         loadModelHandle: String = "melix-dev-text::swift",
         loadModelEstimatedResidentBytes: UInt64 = 0,
         runtimeResidentBytes: UInt64 = 0,
@@ -7424,6 +7533,7 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse? = nil
     ) {
         self.events = events
+        self.streamFailure = streamFailure
         self.loadModelHandle = loadModelHandle
         self.loadModelEstimatedResidentBytes = loadModelEstimatedResidentBytes
         self.runtimeResidentBytes = runtimeResidentBytes
@@ -7443,11 +7553,12 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
         lastGenerateRequest = request
         let events = self.events
+        let streamFailure = self.streamFailure
         return AsyncThrowingStream { continuation in
             for event in events {
                 continuation.yield(event)
             }
-            continuation.finish()
+            continuation.finish(throwing: streamFailure)
         }
     }
 
