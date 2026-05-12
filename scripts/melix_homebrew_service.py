@@ -31,7 +31,7 @@ def main() -> int:
     parser.add_argument("--repo-root", default=os.environ.get("MELIX_REPO_ROOT", str(REPO_ROOT)))
     parser.add_argument("--bin-dir", default=os.environ.get("MELIX_HOMEBREW_BIN_DIR", str(Path(sys.argv[0]).resolve().parent)))
     parser.add_argument("--home-dir", default=str(Path.home()))
-    parser.add_argument("--http-port", type=int, default=11434)
+    parser.add_argument("--http-port", type=int, default=12436)
     parser.add_argument("--service-instance-name", default=DEFAULT_HOMEBREW_SERVICE_INSTANCE_NAME)
     parser.add_argument("--swift-backend-mode", default="swift")
     parser.add_argument("--python-backend-mode", default="auto")

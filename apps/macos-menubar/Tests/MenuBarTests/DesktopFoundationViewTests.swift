@@ -432,7 +432,7 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("18,080"))
         #expect(renderedTexts.contains("240"))
         #expect(renderedTexts.contains("90"))
-        #expect(viewModel.selectedServerSession?.effectiveBaseURL == "http://127.0.0.1:11434/v1")
+        #expect(viewModel.selectedServerSession?.effectiveBaseURL == "http://127.0.0.1:12436/v1")
         #expect(viewModel.selectedServerSession?.gatewayConfigRequiresRestart == true)
         #expect(viewModel.selectedServerSession?.gatewayConfigSourceText == "Operator Override")
         #expect(viewModel.selectedServerSession?.servingDefaults.streamIntervalTokens == 3)
@@ -2283,7 +2283,7 @@ struct DesktopFoundationViewTests {
         let ollamaGroup = try #require(groupByID["ollama_compatibility"])
 
         #expect(groups.count == 3)
-        #expect(openAIGroup.snippets.contains { $0.body.contains("http://127.0.0.1:11434/v1") })
+        #expect(openAIGroup.snippets.contains { $0.body.contains("http://127.0.0.1:12436/v1") })
         #expect(openAIGroup.snippets.contains { $0.body.contains("<desktop-agent>") })
         #expect(openAIGroup.snippets.contains { $0.body.contains("\"stream\":true") || $0.body.contains("\"stream\": True") || $0.body.contains("stream: true") })
         #expect(openAIGroup.snippets.contains { $0.body.contains("client.responses.stream") || $0.body.contains("response.iter_lines()") || $0.body.contains("TextDecoderStream") })

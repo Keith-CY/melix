@@ -1,6 +1,7 @@
 import AppKit
 import Charts
 import MelixCLICore
+import MelixControlPlaneCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -1473,7 +1474,7 @@ private struct DesktopServerSessionEditor: View {
                                 TextField(
                                     "Host",
                                     text: Binding(
-                                        get: { viewModel.selectedServerSession?.host ?? "127.0.0.1" },
+                                        get: { viewModel.selectedServerSession?.host ?? MelixGatewayDefaults.host },
                                         set: { viewModel.updateSelectedServerSessionHost($0) }
                                     )
                                 )
@@ -1482,7 +1483,7 @@ private struct DesktopServerSessionEditor: View {
                                 TextField(
                                     "Port",
                                     value: Binding(
-                                        get: { viewModel.selectedServerSession?.port ?? 8080 },
+                                        get: { viewModel.selectedServerSession?.port ?? MelixGatewayDefaults.port },
                                         set: { viewModel.updateSelectedServerSessionPort($0) }
                                     ),
                                     format: .number

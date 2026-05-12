@@ -37,7 +37,7 @@ This boots the default real backend path. Use a deterministic override only when
 3. Confirm the control plane is serving the warm dev model.
 
 ```bash
-curl -sS http://127.0.0.1:11434/v1/models
+curl -sS http://127.0.0.1:12436/v1/models
 ```
 
 4. Capture the Phase 2 metrics report for the running stack.

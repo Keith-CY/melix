@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneCore
 
 public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendable {
     case chat = "Chat"
@@ -180,8 +181,8 @@ public struct DesktopRuntimeEndpointState: Equatable, Sendable {
         serverSessionID: "",
         serverTitle: "No Server",
         modelID: "",
-        requestedBaseURL: "http://127.0.0.1:8080/v1",
-        effectiveBaseURL: "http://127.0.0.1:8080/v1",
+        requestedBaseURL: "http://127.0.0.1:12436/v1",
+        effectiveBaseURL: "http://127.0.0.1:12436/v1",
         sharedAccessSummaryText: "No server session selected."
     )
 }
@@ -511,8 +512,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         id: String,
         title: String,
         modelID: String,
-        host: String = "127.0.0.1",
-        port: Int = 8080,
+        host: String = MelixGatewayDefaults.host,
+        port: Int = MelixGatewayDefaults.port,
         effectiveHost: String? = nil,
         effectivePort: Int? = nil,
         gatewayConfigSourceText: String = "Built-in Defaults",
@@ -690,8 +691,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         id = try container.decode(String.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
         modelID = try container.decode(String.self, forKey: .modelID)
-        host = try container.decodeIfPresent(String.self, forKey: .host) ?? "127.0.0.1"
-        port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 8080
+        host = try container.decodeIfPresent(String.self, forKey: .host) ?? MelixGatewayDefaults.host
+        port = try container.decodeIfPresent(Int.self, forKey: .port) ?? MelixGatewayDefaults.port
         effectiveHost = try container.decodeIfPresent(String.self, forKey: .effectiveHost) ?? host
         effectivePort = try container.decodeIfPresent(Int.self, forKey: .effectivePort) ?? port
         gatewayConfigSourceText = try container.decodeIfPresent(String.self, forKey: .gatewayConfigSourceText)

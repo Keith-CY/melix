@@ -71,7 +71,7 @@ def build_local_product_layout(
     home_dir: str | Path | None = None,
     *,
     launch_agents_dir: str | Path | None = None,
-    http_port: int = 11434,
+    http_port: int = 12436,
     service_instance_name: str = "",
     prefer_available_http_port: bool = False,
     product_version: str = "",

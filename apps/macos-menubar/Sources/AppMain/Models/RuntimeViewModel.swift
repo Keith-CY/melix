@@ -1903,8 +1903,8 @@ public final class RuntimeViewModel {
     public var selectedServerCreationKind: RuntimeServerCreationKind = .localServer
     public var newLocalServerTitleDraft = ""
     public var newLocalServerModelID = ""
-    public var newLocalServerHostDraft = "127.0.0.1"
-    public var newLocalServerPortDraft = 8080
+    public var newLocalServerHostDraft = MelixGatewayDefaults.host
+    public var newLocalServerPortDraft = MelixGatewayDefaults.port
     public var remoteServerIDDraft = "sub2api"
     public var remoteServerTitleDraft = "sub2api"
     public var remoteServerProviderPresetDraft: RemoteServerProviderPreset = .custom
@@ -3598,9 +3598,9 @@ public final class RuntimeViewModel {
             ? defaultTitle
             : titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = hostOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "127.0.0.1"
+            ? MelixGatewayDefaults.host
             : hostOverride.trimmingCharacters(in: .whitespacesAndNewlines)
-        let port = max(1, portOverride ?? (8080 + max(0, serverSessions.count)))
+        let port = max(1, portOverride ?? Self.defaultLocalServerPort(sessionOffset: serverSessions.count))
         if let commandWorkflowRunner {
             Task {
                 do {
@@ -8251,7 +8251,7 @@ public final class RuntimeViewModel {
                     textModels.first { $0.modelID == projection.servedModelID }
                 } ?? firstTextModel,
                 title: "Primary Server",
-                port: projectedConfig?.port ?? 8080,
+                port: projectedConfig?.port ?? MelixGatewayDefaults.port,
                 serverSessionID: seededServerSessionID,
                 modelIDOverride: projectedServedModelID?.isEmpty == false ? projectedServedModelID : nil
             )
@@ -8321,11 +8321,15 @@ public final class RuntimeViewModel {
             newLocalServerModelID = serverModelOptions.first?.modelID ?? ""
         }
         if newLocalServerHostDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            newLocalServerHostDraft = "127.0.0.1"
+            newLocalServerHostDraft = MelixGatewayDefaults.host
         }
         if newLocalServerPortDraft <= 0 {
-            newLocalServerPortDraft = 8080 + max(0, serverSessions.count)
+            newLocalServerPortDraft = Self.defaultLocalServerPort(sessionOffset: serverSessions.count)
         }
+    }
+
+    private static func defaultLocalServerPort(sessionOffset: Int) -> Int {
+        MelixGatewayDefaults.port + max(0, sessionOffset)
     }
 
     private func refreshServerTargetSelection() {

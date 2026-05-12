@@ -2161,9 +2161,9 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.agentIntegrationExports.map(\.target) == AgentIntegrationExportTarget.allCases)
         #expect(selectedExport.target == .openAICompatible)
-        #expect(selectedExport.baseURL == "http://127.0.0.1:8080/v1")
+        #expect(selectedExport.baseURL == "http://127.0.0.1:12436/v1")
         #expect(selectedExport.modelID == "melix-dev-text")
-        #expect(selectedExport.shellSnippet.contains("curl http://127.0.0.1:8080/v1/responses"))
+        #expect(selectedExport.shellSnippet.contains("curl http://127.0.0.1:12436/v1/responses"))
         #expect(metricValues["integration.export_generation_ms"] != nil)
         #expect(metricValues["integration.export_target_count"] == Double(AgentIntegrationExportTarget.allCases.count))
     }
@@ -2471,7 +2471,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.chatSessions.count == 2)
         #expect(seededServer.title == "Primary Server")
         #expect(seededServer.modelID == "melix-dev-text")
-        #expect(seededServer.port == 8080)
+        #expect(seededServer.port == 12436)
         #expect(seededChat.serverSessionID == "")
 
         viewModel.bindSelectedChatSessionToServer(serverSessionID: seededServer.id)
@@ -2716,7 +2716,7 @@ struct RuntimeViewModelTests {
         let listener = makeGatewayConfigListener(
             serverSessionID: "server-session-1",
             requestedHost: "127.0.0.1",
-            requestedPort: 8080,
+            requestedPort: 12436,
             effectiveHost: "127.0.0.1",
             effectivePort: 12434,
             servedModelID: "melix-selected-text",
@@ -2740,7 +2740,7 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.primaryModel?.modelID == "melix-selected-text")
         #expect(viewModel.desktopRuntimeEndpointState.effectiveBaseURL == "http://127.0.0.1:12434/v1")
-        #expect(viewModel.desktopRuntimeEndpointState.requestedBaseURL == "http://127.0.0.1:8080/v1")
+        #expect(viewModel.desktopRuntimeEndpointState.requestedBaseURL == "http://127.0.0.1:12436/v1")
         #expect(viewModel.agentIntegrationExports.isEmpty == false)
         #expect(viewModel.agentIntegrationExports.allSatisfy { $0.baseURL == "http://127.0.0.1:12434/v1" })
         #expect(viewModel.agentIntegrationExports.allSatisfy { $0.modelID == "melix-selected-text" })
@@ -2776,7 +2776,7 @@ struct RuntimeViewModelTests {
         let listener = makeGatewayConfigListener(
             serverSessionID: restoredServerSession.id,
             requestedHost: "127.0.0.1",
-            requestedPort: 8080,
+            requestedPort: 12436,
             effectiveHost: "127.0.0.1",
             effectivePort: 11_434,
             servedModelID: staleGatewayModelID,
@@ -2803,7 +2803,7 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.selectedServerSession?.modelID == selectedModelID)
         #expect(viewModel.primaryModel?.modelID == selectedModelID)
-        #expect(viewModel.desktopRuntimeEndpointState.effectiveBaseURL == "http://127.0.0.1:11434/v1")
+        #expect(viewModel.desktopRuntimeEndpointState.effectiveBaseURL == "http://127.0.0.1:12436/v1")
 
         try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Use the restored server model"
@@ -2823,7 +2823,7 @@ struct RuntimeViewModelTests {
         let listener = makeGatewayConfigListener(
             serverSessionID: "server-session-1",
             requestedHost: "127.0.0.1",
-            requestedPort: 8080,
+            requestedPort: 12436,
             effectiveHost: "127.0.0.1",
             effectivePort: 8080,
             servedModelID: selectedModelID,
@@ -3891,8 +3891,8 @@ struct RuntimeViewModelTests {
                 ),
                 startupDiagnosticResponse: ProductStartupFailureDiagnostic(
                     classification: "host_port_conflict",
-                    userMessage: "Startup failed: port 11434 is already in use. Check /tmp/control-plane.stderr.log and restart Melix.",
-                    detail: "Ready probe: http://127.0.0.1:11434/v1/models"
+                    userMessage: "Startup failed: port 12436 is already in use. Check /tmp/control-plane.stderr.log and restart Melix.",
+                    detail: "Ready probe: http://127.0.0.1:12436/v1/models"
                 )
             )
         )
@@ -3908,7 +3908,7 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.productUpdateSummary == "Update available: 0.2.0")
         #expect(viewModel.productUpdateDetail == "Current 0.1.0 on stable")
-        #expect(viewModel.lastError == "Startup failed: port 11434 is already in use. Check /tmp/control-plane.stderr.log and restart Melix.")
+        #expect(viewModel.lastError == "Startup failed: port 12436 is already in use. Check /tmp/control-plane.stderr.log and restart Melix.")
         #expect(viewModel.desktopBannerState?.title == "Operator Attention Required")
         #expect(viewModel.desktopSignalStates.contains { $0.title == "Update available: 0.2.0" && $0.isDismissible })
         #expect(hasUpdateRow)
