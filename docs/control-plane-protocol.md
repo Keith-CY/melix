@@ -678,7 +678,7 @@ The control plane protocol is richer than the public HTTP surface, but it must m
 
 | Public API | Control plane intent |
 |---|---|
-| `POST /v1/chat/completions` | parse request, bind session context, dispatch to scheduler |
+| `POST /v1/chat/completions` | parse request, bind session context, dispatch to scheduler, and return either SSE chunks or a buffered `chat.completion` JSON object |
 | `POST /v1/responses` | translate response semantics into internal request plus event stream |
 | `POST /v1/messages` | normalize messages, reasoning, and tool semantics |
 | `POST /v1/embeddings` | dispatch directly to embed-capable workers |
