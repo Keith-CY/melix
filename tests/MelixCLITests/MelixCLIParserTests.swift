@@ -756,6 +756,9 @@ struct MelixCLIParserTests {
         let allCommands: [(MelixCLICommand, String)] = [
             (.doctor(.init()), "doctor"),
             (.estimateImport(.init(repoID: "mlx/qwen", json: true)), "estimate.import"),
+            (.estimateImport(.init(repoID: "mlx/qwen", targetKind: "benchmark", json: true)), "estimate.benchmark"),
+            (.estimateImport(.init(repoID: "mlx/qwen", targetKind: "eval", json: true)), "estimate.eval"),
+            (.estimateImport(.init(repoID: "mlx/qwen", targetKind: "train", json: true)), "estimate.train"),
             (.convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)), "convert"),
             (.quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", localInferenceSmokeMode: "runtime_generate", localInferenceSmokePrompt: "smoke", json: true)), "quantize"),
             (.upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)), "upload"),
@@ -797,7 +800,7 @@ struct MelixCLIParserTests {
             (.chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
             (.chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
             (.loraList(.init(modelID: "model", json: true)), "lora.list"),
-            (.loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)), "lora.train"),
+            (.loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], preflightFitCheck: true, allowMemoryRisk: true, json: true)), "lora.train"),
             (.alignmentTrain(.init(modelID: "model", datasetURI: "/tmp/preference.jsonl", adapterName: "aligned", algorithm: "dpo", json: true)), "alignment.train"),
             (.loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl", json: true)), "lora.dataset.inspect"),
             (.loraDatasetBuild(.init(modelID: "model", datasetURI: "/tmp/data.jsonl", outputDir: "/tmp/out", json: true)), "lora.dataset.build"),
@@ -817,7 +820,7 @@ struct MelixCLIParserTests {
             (.benchMatrixList(.init(json: true)), "bench.matrix.list"),
             (.benchMatrixExportSummaryCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix.csv", json: true)), "bench.matrix.export-summary-csv"),
             (.benchMatrixExportRequestsCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix-requests.csv", json: true)), "bench.matrix.export-requests-csv"),
-            (.evalRun(.init(modelID: "model", suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, source: .localCSV(path: "/tmp/eval.csv"), fieldMapping: .init(systemPath: "system", inputTextPath: "input", targetPath: "target", sampleIDPath: "id"), profile: .init(profileType: "final_result", resultKind: "text", extractionMode: "heuristic_final", threshold: 0.75, outputSchemaJSON: "{\"type\":\"string\"}", ignoredPaths: ["meta"]), parameters: ["batch_factor": "1"], json: true)), "eval.run"),
+            (.evalRun(.init(hfRepoID: "model/repo", suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, source: .localCSV(path: "/tmp/eval.csv"), fieldMapping: .init(systemPath: "system", inputTextPath: "input", targetPath: "target", sampleIDPath: "id"), profile: .init(profileType: "final_result", resultKind: "text", extractionMode: "heuristic_final", threshold: 0.75, outputSchemaJSON: "{\"type\":\"string\"}", ignoredPaths: ["meta"]), parameters: ["batch_factor": "1"], preflightFitCheck: true, allowMemoryRisk: true, json: true)), "eval.run"),
             (.evalRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", suites: ["event_extraction"], datasetID: "top200", sampleSize: 3, source: .localJSONL(path: "/tmp/top200.jsonl"), fieldMapping: .init(inputTextPath: "dialogue", targetPath: "events", sampleIDPath: "dialogue_id"), profile: .init(scoringMode: "event_extraction_weighted_f1"), evalPromptID: "event-prod", evalPromptRevisionID: "rev-1", json: true)), "eval.run"),
             (.evalPromptList(.init(json: true)), "eval.prompt.list"),
             (.evalPromptShow(.init(promptID: "event-prod", revisionID: "rev-1", json: true)), "eval.prompt.show"),
@@ -847,6 +850,9 @@ struct MelixCLIParserTests {
         let supportedCommands: [MelixCLICommand] = [
             .doctor(.init(json: true)),
             .estimateImport(.init(repoID: "mlx/qwen", json: true)),
+            .estimateImport(.init(repoID: "mlx/qwen", targetKind: "benchmark", json: true)),
+            .estimateImport(.init(repoID: "mlx/qwen", targetKind: "eval", json: true)),
+            .estimateImport(.init(repoID: "mlx/qwen", targetKind: "train", json: true)),
             .convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)),
             .quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", localInferenceSmokeMode: "runtime_generate", localInferenceSmokePrompt: "smoke", json: true)),
             .upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)),
@@ -970,6 +976,35 @@ struct MelixCLIParserTests {
         #expect(optionOptions.json == false)
     }
 
+    @Test("parses estimate benchmark eval and train receipts")
+    func parsesEstimateRunTargetReceipts() throws {
+        let cases: [(String, String, [String], String, String)] = [
+            ("benchmark", "benchmark", ["--context-length", "4096"], "context_length", "4096"),
+            ("eval", "eval", ["--context", "event dialog", "--dataset", "top200"], "dataset", "top200"),
+            ("train", "train", ["--model", "mlx-community/Qwen3.5-9B-MLX-4bit", "--dataset", "alpaca", "--lora", "adapter"], "lora", "adapter"),
+        ]
+        for (action, targetKind, extraArguments, inputKey, inputValue) in cases {
+            let command = try MelixCLIParser.parse([
+                "estimate",
+                action,
+                action == "train" ? "" : "--repo-id", action == "train" ? "" : "mlx-community/Qwen3.5-9B-MLX-4bit",
+            ].filter { $0.isEmpty == false } + extraArguments + [
+                "--json",
+            ])
+            guard case .estimateImport(let options) = command else {
+                Issue.record("Expected estimateImport command for \(action)")
+                continue
+            }
+
+            #expect(options.repoID == "mlx-community/Qwen3.5-9B-MLX-4bit")
+            #expect(options.targetKind == targetKind)
+            #expect(options.targetInputs[inputKey] == inputValue)
+            #expect(options.json)
+            #expect(MelixCLICommandCodec.commandID(for: command) == "estimate.\(targetKind)")
+            #expect(try MelixCLIParser.parse(MelixCLICommandCodec.arguments(for: command)) == command)
+        }
+    }
+
     @Test("estimate import rejects missing conflicting and unknown inputs")
     func estimateImportRejectsInvalidInputs() throws {
         try assertError(
@@ -997,10 +1032,11 @@ struct MelixCLIParserTests {
         try assertError(
             for: [
                 "estimate",
-                "train",
-                "--model", "mlx-community/Qwen3.5-9B-MLX-4bit",
+                "eval",
+                "--repo-id", "mlx-community/Qwen3.5-9B-MLX-4bit",
+                "--model", "mlx-community/Qwen3.5-9B-MLX-8bit",
             ],
-            equals: .usage(MelixCLIParser.usageText)
+            equals: .usage("melix estimate eval accepts only one Hugging Face repo id.")
         )
     }
 
@@ -1483,6 +1519,8 @@ struct MelixCLIParserTests {
             "--max-seq-length", "4096",
             "--response-only",
             "--gradient-checkpointing",
+            "--preflight-fit-check",
+            "--allow-memory-risk",
             "--json",
         ])
 
@@ -1511,6 +1549,8 @@ struct MelixCLIParserTests {
         #expect(options.parameters["max_seq_length"] == "4096")
         #expect(options.parameters["response_only"] == "true")
         #expect(options.parameters["gradient_checkpointing"] == "true")
+        #expect(options.preflightFitCheck)
+        #expect(options.allowMemoryRisk)
         #expect(options.json)
     }
 
@@ -2525,6 +2565,8 @@ struct MelixCLIParserTests {
             "--batch-factor", "2",
             "--seed", "7",
             "--few-shot", "4",
+            "--preflight-fit-check",
+            "--allow-memory-risk",
             "--json",
         ])
 
@@ -2542,6 +2584,8 @@ struct MelixCLIParserTests {
         #expect(options.parameters["batch_factor"] == "2")
         #expect(options.parameters["seed"] == "7")
         #expect(options.parameters["few_shot"] == "4")
+        #expect(options.preflightFitCheck)
+        #expect(options.allowMemoryRisk)
         #expect(options.json)
     }
 

@@ -14,8 +14,8 @@ public enum MelixCLICommandCodec {
             return "logs"
         case .debugBundle:
             return "debug.bundle"
-        case .estimateImport:
-            return "estimate.import"
+        case .estimateImport(let options):
+            return "estimate.\(options.targetKind)"
         case .convert:
             return "convert"
         case .quantize:
@@ -217,7 +217,13 @@ public enum MelixCLICommandCodec {
             appendOption("--output", value: options.outputPath, into: &arguments)
             json = options.json
         case .estimateImport(let options):
-            arguments = ["estimate", "import", options.repoID]
+            arguments = ["estimate", options.targetKind, options.repoID]
+            appendOption("--context", value: options.targetInputs["context"], into: &arguments)
+            appendOption("--context-length", value: options.targetInputs["context_length"], into: &arguments)
+            appendOption("--dataset", value: options.targetInputs["dataset"], into: &arguments)
+            appendOption("--lora", value: options.targetInputs["lora"], into: &arguments)
+            appendOption("--batch-size", value: options.targetInputs["batch_size"], into: &arguments)
+            appendOption("--sample-size", value: options.targetInputs["sample_size"], into: &arguments)
             json = options.json
         case .convert(let options):
             arguments = ["convert"]
@@ -417,6 +423,12 @@ public enum MelixCLICommandCodec {
             appendOption("--target-repo", value: options.targetRepo, into: &arguments)
             appendOption("--training-mode", value: options.trainingMode, into: &arguments)
             appendTrainingParameters(options.parameters, into: &arguments)
+            if options.preflightFitCheck {
+                arguments.append("--preflight-fit-check")
+            }
+            if options.allowMemoryRisk {
+                arguments.append("--allow-memory-risk")
+            }
             json = options.json
         case .alignmentTrain(let options):
             arguments = ["alignment", "train"]
@@ -556,6 +568,12 @@ public enum MelixCLICommandCodec {
             appendOption("--semantic-judge-remote-server-id", value: options.semanticJudgeRemoteServerID, into: &arguments)
             appendOption("--semantic-judge-model", value: options.semanticJudgeModelID, into: &arguments)
             appendPositiveUInt32("--remote-parallelism", value: options.remoteParallelism, into: &arguments)
+            if options.preflightFitCheck {
+                arguments.append("--preflight-fit-check")
+            }
+            if options.allowMemoryRisk {
+                arguments.append("--allow-memory-risk")
+            }
             json = options.json
         case .evalPromptList(let options):
             arguments = ["eval", "prompt", "list"]

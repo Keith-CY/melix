@@ -32,6 +32,8 @@ public struct LoraTrainOptions: Equatable, Sendable {
     public let targetRepo: String
     public let trainingMode: String
     public let parameters: [String: String]
+    public let preflightFitCheck: Bool
+    public let allowMemoryRisk: Bool
     public let json: Bool
 
     public init(
@@ -42,6 +44,8 @@ public struct LoraTrainOptions: Equatable, Sendable {
         targetRepo: String = "",
         trainingMode: String = "",
         parameters: [String: String] = [:],
+        preflightFitCheck: Bool = false,
+        allowMemoryRisk: Bool = false,
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -51,6 +55,8 @@ public struct LoraTrainOptions: Equatable, Sendable {
         self.targetRepo = targetRepo
         self.trainingMode = trainingMode
         self.parameters = parameters
+        self.preflightFitCheck = preflightFitCheck
+        self.allowMemoryRisk = allowMemoryRisk
         self.json = json
     }
 }
@@ -287,10 +293,19 @@ public struct LoraResumeOptions: Equatable, Sendable {
 
 public struct EstimateImportOptions: Equatable, Sendable {
     public let repoID: String
+    public let targetKind: String
+    public let targetInputs: [String: String]
     public let json: Bool
 
-    public init(repoID: String, json: Bool = false) {
+    public init(
+        repoID: String,
+        targetKind: String = "import",
+        targetInputs: [String: String] = [:],
+        json: Bool = false
+    ) {
         self.repoID = repoID
+        self.targetKind = targetKind
+        self.targetInputs = targetInputs
         self.json = json
     }
 }
@@ -455,6 +470,8 @@ public struct EvalRunOptions: Equatable, Sendable {
     public let semanticJudgeRemoteServerID: String
     public let semanticJudgeModelID: String
     public let remoteParallelism: UInt32
+    public let preflightFitCheck: Bool
+    public let allowMemoryRisk: Bool
     public let json: Bool
 
     public init(
@@ -475,6 +492,8 @@ public struct EvalRunOptions: Equatable, Sendable {
         semanticJudgeRemoteServerID: String = "",
         semanticJudgeModelID: String = "",
         remoteParallelism: UInt32 = 0,
+        preflightFitCheck: Bool = false,
+        allowMemoryRisk: Bool = false,
         json: Bool = false
     ) {
         let normalizedRemoteTargets = remoteTargets
@@ -512,6 +531,8 @@ public struct EvalRunOptions: Equatable, Sendable {
         self.semanticJudgeRemoteServerID = semanticJudgeRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.semanticJudgeModelID = semanticJudgeModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.remoteParallelism = remoteParallelism
+        self.preflightFitCheck = preflightFitCheck
+        self.allowMemoryRisk = allowMemoryRisk
         self.json = json
     }
 }
@@ -1594,6 +1615,12 @@ public enum MelixCLIParser {
       melix debug bundle RUN_OR_JOB_ID [--from PATH] [--output PATH] [--json]
       melix estimate import HF_REPO [--json]
       melix estimate import --repo-id HF_REPO [--json]
+      melix estimate benchmark HF_REPO [--context-length N] [--batch-size N] [--json]
+      melix estimate benchmark --repo-id HF_REPO [--context-length N] [--batch-size N] [--json]
+      melix estimate eval HF_REPO [--context TEXT] [--context-length N] [--dataset URI] [--sample-size N] [--json]
+      melix estimate eval --repo-id HF_REPO [--context TEXT] [--context-length N] [--dataset URI] [--sample-size N] [--json]
+      melix estimate train HF_REPO [--dataset URI] [--lora NAME_OR_PATH] [--batch-size N] [--json]
+      melix estimate train --model HF_REPO [--dataset URI] [--lora NAME_OR_PATH] [--batch-size N] [--json]
       melix convert --model-id MODEL_ID [--output-dir PATH] [--target-format FORMAT] [--json]
       melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--quantization-mode (ptq|qat)] [--source-artifact-kind (base_model|merged_adapter|adapter_export)] [--source-artifact-path PATH] [--quantization-backend (manifest_only|mlx_lm_convert)] [--mlx-lm-q-bits N] [--mlx-lm-q-group-size N] [--mlx-lm-q-mode (affine|mxfp4|nvfp4|mxfp8)] [--calibration-dataset-uri PATH] [--quality-delta N] [--latency-delta N] [--local-inference-smoke-mode (structural|runtime_generate)] [--local-inference-smoke-prompt TEXT] [--json]
       melix upload --model-id MODEL_ID --target-repo REPO [--output-dir PATH] [--artifact-path PATH] [--artifact-kind KIND] [--artifact-manifest-path PATH] [--publish-backend BACKEND] [--local-publish-root PATH] [--json]
@@ -1633,7 +1660,7 @@ public enum MelixCLIParser {
       melix remote-server test --remote-server-id ID [--model MODEL] [--json]
       melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
-      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
+      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--preflight-fit-check] [--allow-memory-risk] [--json]
       melix alignment train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --algorithm dpo|orpo|cpo|grpo|rlhf [--target-repo REPO] [--source-adapter-path PATH] [--grpo-candidate-count N] [--candidate-generation-mode scored_trace|runtime_generate] [--candidate-scoring-mode dataset_score|seed_overlap_proxy|reward_model] [--candidate-generation-max-tokens N] [--reference-model-path PATH] [--reward-model-manifest-path PATH] [--kl-penalty N] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--json]
         note: --source-adapter-path is the upstream/base LoRA adapter to carry into GRPO/RLHF output; it is not checkpoint resumption.
       melix lora dataset inspect --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
@@ -1654,7 +1681,7 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--preflight-fit-check] [--allow-memory-risk] [--json]
       melix eval prompt list [--json]
       melix eval prompt show --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt create --prompt-id ID --title TITLE --system-prompt-file PATH [--json]
@@ -1792,7 +1819,7 @@ public enum MelixCLIParser {
             throw MelixCLIError.usage(Self.usageText)
         }
         switch action {
-        case "import":
+        case "import", "benchmark", "eval", "train":
             var optionArguments = Array(arguments.dropFirst())
             var repoID = ""
             if let positionalRepoID = optionArguments.first, positionalRepoID.hasPrefix("--") == false {
@@ -1802,18 +1829,50 @@ public enum MelixCLIParser {
             let values = try ArgumentCursor(arguments: optionArguments).parse()
             if let optionRepoID = values.single["--repo-id"], optionRepoID.isEmpty == false {
                 if repoID.isEmpty == false, repoID != optionRepoID {
-                    throw MelixCLIError.usage("melix estimate import accepts only one Hugging Face repo id.")
+                    throw MelixCLIError.usage("melix estimate \(action) accepts only one Hugging Face repo id.")
                 }
                 repoID = optionRepoID
             }
+            if let modelRepoID = values.single["--model"], modelRepoID.isEmpty == false {
+                if repoID.isEmpty == false, repoID != modelRepoID {
+                    throw MelixCLIError.usage("melix estimate \(action) accepts only one Hugging Face repo id.")
+                }
+                repoID = modelRepoID
+            }
             repoID = repoID.trimmingCharacters(in: .whitespacesAndNewlines)
             guard repoID.isEmpty == false else {
-                throw MelixCLIError.missingRequired("HF_REPO or --repo-id is required for melix estimate import.")
+                throw MelixCLIError.missingRequired("HF_REPO or --repo-id is required for melix estimate \(action).")
             }
-            return .estimateImport(.init(repoID: repoID, json: values.flags.contains("--json")))
+            return .estimateImport(.init(
+                repoID: repoID,
+                targetKind: normalizedEstimateTargetKind(action),
+                targetInputs: estimateTargetInputs(values),
+                json: values.flags.contains("--json")
+            ))
         default:
             throw MelixCLIError.usage(Self.usageText)
         }
+    }
+
+    private static func normalizedEstimateTargetKind(_ action: String) -> String {
+        action
+    }
+
+    private static func estimateTargetInputs(_ values: ParsedArguments) -> [String: String] {
+        var inputs: [String: String] = [:]
+        for option in [
+            "--context",
+            "--context-length",
+            "--dataset",
+            "--lora",
+            "--batch-size",
+            "--sample-size",
+        ] {
+            if let value = values.single[option], value.isEmpty == false {
+                inputs[normalizedParameterKey(option)] = value
+            }
+        }
+        return inputs
     }
 
     private static func parseConvert(_ arguments: [String]) throws -> MelixCLICommand {
@@ -2732,6 +2791,8 @@ public enum MelixCLIParser {
                     targetRepo: values.single["--target-repo"] ?? "",
                     trainingMode: trainingMode,
                     parameters: parameters,
+                    preflightFitCheck: values.flags.contains("--preflight-fit-check"),
+                    allowMemoryRisk: values.flags.contains("--allow-memory-risk"),
                     json: values.flags.contains("--json")
                 )
             )
@@ -3288,6 +3349,8 @@ public enum MelixCLIParser {
                     semanticJudgeRemoteServerID: semanticJudgeRemoteServerID,
                     semanticJudgeModelID: semanticJudgeModelID,
                     remoteParallelism: UInt32(values.single["--remote-parallelism"] ?? "") ?? 0,
+                    preflightFitCheck: values.flags.contains("--preflight-fit-check"),
+                    allowMemoryRisk: values.flags.contains("--allow-memory-risk"),
                     json: values.flags.contains("--json")
                 )
             )
@@ -4120,6 +4183,7 @@ public actor MelixCLIRunner {
     private static let defaultSpeculativeNumDraftTokens = 4
     private static let memoryFitSafetyThresholdFraction = 0.60
     private static let memoryFitSchemaVersion = "melix.memory_fit_receipt.v1"
+    private static let diskFitSafetyMultiplier = 1.10
 
     private let client: any ControlPlaneXPCClient
     private let operatorSessionStore: any MelixOperatorSessionStoring
@@ -4217,7 +4281,8 @@ public actor MelixCLIRunner {
 
     private func makeMemoryFitReceipt(
         repoID: String,
-        targetKind: String
+        targetKind: String,
+        targetInputs: [String: String] = [:]
     ) async throws -> MemoryFitReceipt {
         let hubCardStart = DispatchTime.now()
         let card = try await getHubModelCard(repoID: repoID)
@@ -4230,13 +4295,13 @@ public actor MelixCLIRunner {
         let totalUnifiedMemoryBytes = ProcessInfo.processInfo.physicalMemory
         let safetyThresholdFraction = Self.memoryFitSafetyThresholdFraction
         let safetyThresholdBytes = UInt64(Double(totalUnifiedMemoryBytes) * safetyThresholdFraction)
-        let unknownFields = memoryFitUnknownFields(card)
-        let assumptions = [
-            "ProcessInfo.physicalMemory is treated as Apple Silicon total unified memory.",
-            "estimated_active_memory_bytes reuses Hub estimated_resident_bytes.",
-            "estimated_disk_usage_bytes reuses Hub estimated_artifact_bytes.",
-            "fit_status and recommended_action reuse the model-ops Hub local-fit policy.",
-        ]
+        let availableDiskBytes = availableDiskCapacityBytes(near: MelixHome(environment: environment).managedModelRootURL)
+        let diskFitStatus = memoryFitDiskStatus(
+            estimatedDiskUsageBytes: card.estimatedArtifactBytes,
+            availableDiskBytes: availableDiskBytes
+        )
+        let unknownFields = orderedUnique(memoryFitUnknownFields(card) + memoryFitRunUnknownFields(for: targetKind))
+        let assumptions = memoryFitAssumptions(targetKind: targetKind)
         let receiptElapsedMS = elapsedMilliseconds(since: receiptStart)
         let probe: [String: Any] = [
             "name": "cli.memory_fit.\(targetKind)",
@@ -4259,9 +4324,12 @@ public actor MelixCLIRunner {
             "total_unified_memory_bytes": NSNumber(value: totalUnifiedMemoryBytes),
             "estimated_active_memory_bytes": NSNumber(value: card.estimatedResidentBytes),
             "estimated_disk_usage_bytes": NSNumber(value: card.estimatedArtifactBytes),
+            "available_disk_bytes": NSNumber(value: availableDiskBytes),
+            "disk_fit_status": diskFitStatus,
             "safety_threshold": safetyThreshold,
             "assumptions": assumptions,
             "unknown_fields": unknownFields,
+            "target_inputs": targetInputs,
             "parameter_count": NSNumber(value: card.parameterCount),
             "quantization_summary": card.quantizationSummary,
             "probe": probe,
@@ -4276,10 +4344,72 @@ public actor MelixCLIRunner {
             totalUnifiedMemoryBytes: totalUnifiedMemoryBytes,
             estimatedActiveMemoryBytes: card.estimatedResidentBytes,
             estimatedDiskUsageBytes: card.estimatedArtifactBytes,
+            availableDiskBytes: availableDiskBytes,
+            diskFitStatus: diskFitStatus,
             safetyThresholdFraction: safetyThresholdFraction,
             unknownFields: unknownFields,
             assumptions: assumptions
         )
+    }
+
+    private func availableDiskCapacityBytes(near url: URL) -> UInt64 {
+        let fileManager = FileManager.default
+        var probeURL = url
+        while fileManager.fileExists(atPath: probeURL.path) == false {
+            let parentURL = probeURL.deletingLastPathComponent()
+            if parentURL.path == probeURL.path {
+                probeURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                break
+            }
+            probeURL = parentURL
+        }
+        if let values = try? probeURL.resourceValues(forKeys: [
+            .volumeAvailableCapacityForImportantUsageKey,
+            .volumeAvailableCapacityKey,
+        ]) {
+            if let importantCapacity = values.volumeAvailableCapacityForImportantUsage, importantCapacity > 0 {
+                return UInt64(importantCapacity)
+            }
+            if let volumeCapacity = values.volumeAvailableCapacity, volumeCapacity > 0 {
+                return UInt64(volumeCapacity)
+            }
+        }
+        if let attributes = try? fileManager.attributesOfFileSystem(forPath: probeURL.path),
+           let systemFreeSize = attributes[.systemFreeSize] as? NSNumber,
+           systemFreeSize.int64Value > 0
+        {
+            return UInt64(systemFreeSize.int64Value)
+        }
+        return 0
+    }
+
+    private func memoryFitDiskStatus(estimatedDiskUsageBytes: UInt64, availableDiskBytes: UInt64) -> String {
+        guard estimatedDiskUsageBytes > 0, availableDiskBytes > 0 else {
+            return "unknown"
+        }
+        return Double(availableDiskBytes) >= Double(estimatedDiskUsageBytes) * Self.diskFitSafetyMultiplier
+            ? "good"
+            : "blocked"
+    }
+
+    private func memoryFitAssumptions(targetKind: String) -> [String] {
+        var assumptions = [
+            "ProcessInfo.physicalMemory is treated as Apple Silicon total unified memory.",
+            "estimated_active_memory_bytes reuses Hub estimated_resident_bytes.",
+            "estimated_disk_usage_bytes reuses Hub estimated_artifact_bytes.",
+            "fit_status and recommended_action reuse the model-ops Hub local-fit policy.",
+        ]
+        switch targetKind {
+        case "benchmark":
+            assumptions.append("Benchmark KV-cache and activation overhead are not separately modeled yet.")
+        case "eval":
+            assumptions.append("Evaluation context, KV-cache, dataset-cache, and judge overhead are not separately modeled yet.")
+        case "train":
+            assumptions.append("Training optimizer state, LoRA adapter memory, activations, and dataset-cache overhead are not separately modeled yet.")
+        default:
+            break
+        }
+        return assumptions
     }
 
     private func memoryFitUnknownFields(_ card: Melix_Controlplane_V1_HubModelCard) -> [String] {
@@ -4302,18 +4432,44 @@ public actor MelixCLIRunner {
         return fields
     }
 
+    private func memoryFitRunUnknownFields(for targetKind: String) -> [String] {
+        switch targetKind {
+        case "benchmark":
+            return ["kv_cache_bytes", "activation_bytes"]
+        case "eval":
+            return ["kv_cache_bytes", "activation_bytes", "dataset_cache_bytes", "judge_memory_bytes"]
+        case "train":
+            return ["optimizer_state_bytes", "lora_adapter_bytes", "activation_bytes", "dataset_cache_bytes"]
+        default:
+            return []
+        }
+    }
+
+    private func orderedUnique(_ values: [String]) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for value in values where seen.insert(value).inserted {
+            result.append(value)
+        }
+        return result
+    }
+
     private func normalizedFitStatus(_ status: String) -> String {
         let trimmed = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed.isEmpty ? "unknown" : trimmed
     }
 
-    private func enforceMemoryFitPreflight(_ receipt: MemoryFitReceipt, allowMemoryRisk: Bool) throws {
+    private func enforceMemoryFitPreflight(
+        _ receipt: MemoryFitReceipt,
+        allowMemoryRisk: Bool,
+        commandName: String
+    ) throws {
         guard ["blocked", "heavy"].contains(receipt.fitStatus), !allowMemoryRisk else {
             return
         }
         let reasons = receipt.reasons.isEmpty ? "No reason was provided." : receipt.reasons.joined(separator: " ")
         throw MelixCLIError.runtime(
-            "Memory fit preflight blocked benchmark for \(receipt.repoID): fit_status=\(receipt.fitStatus), estimated_active_memory_bytes=\(formatBinaryBytes(receipt.estimatedActiveMemoryBytes)), estimated_disk_usage_bytes=\(formatBinaryBytes(receipt.estimatedDiskUsageBytes)). Pass --allow-memory-risk to run anyway. Reasons: \(reasons)"
+            "Memory fit preflight blocked \(commandName) for \(receipt.repoID): fit_status=\(receipt.fitStatus), estimated_active_memory_bytes=\(formatBinaryBytes(receipt.estimatedActiveMemoryBytes)), estimated_disk_usage_bytes=\(formatBinaryBytes(receipt.estimatedDiskUsageBytes)). Pass --allow-memory-risk to run anyway. Reasons: \(reasons)"
         )
     }
 
@@ -4488,7 +4644,11 @@ public actor MelixCLIRunner {
                 throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix bench run --repo-id targets.")
             }
             let receipt = try await makeMemoryFitReceipt(repoID: options.hfRepoID, targetKind: "benchmark")
-            try enforceMemoryFitPreflight(receipt, allowMemoryRisk: options.allowMemoryRisk)
+            try enforceMemoryFitPreflight(
+                receipt,
+                allowMemoryRisk: options.allowMemoryRisk,
+                commandName: "benchmark"
+            )
             parameters.merge(try receipt.benchmarkParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
         }
         if !options.modelID.isEmpty {
@@ -4638,7 +4798,11 @@ public actor MelixCLIRunner {
             }
             return result.bundleRoot.path + "\n"
         case .estimateImport(let options):
-            let receipt = try await makeMemoryFitReceipt(repoID: options.repoID, targetKind: "import")
+            let receipt = try await makeMemoryFitReceipt(
+                repoID: options.repoID,
+                targetKind: options.targetKind,
+                targetInputs: options.targetInputs
+            )
             return options.json ? try prettyJSON(receipt.payload) : renderMemoryFitReceipt(receipt)
         case .convert(let options):
             let result = try await performModelOperation(
@@ -5188,6 +5352,18 @@ public actor MelixCLIRunner {
             return renderRegistrySnapshot(result.manifestJson)
         case .loraTrain(let options):
             var ext = options.parameters
+            if options.preflightFitCheck {
+                guard options.modelID.trimmingCharacters(in: .whitespacesAndNewlines).contains("/") else {
+                    throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix lora train --model-id Hugging Face repo targets.")
+                }
+                let receipt = try await makeMemoryFitReceipt(repoID: options.modelID, targetKind: "train")
+                try enforceMemoryFitPreflight(
+                    receipt,
+                    allowMemoryRisk: options.allowMemoryRisk,
+                    commandName: "training"
+                )
+                ext.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
+            }
             ext["adapter_name"] = options.adapterName
             ext["dataset_source_kind"] = options.datasetSourceKind
             if !options.datasetURI.isEmpty {
@@ -6733,6 +6909,8 @@ public actor MelixCLIRunner {
             "total_unified_memory_bytes=\(formatBinaryBytes(receipt.totalUnifiedMemoryBytes))",
             "estimated_active_memory_bytes=\(formatBinaryBytes(receipt.estimatedActiveMemoryBytes))",
             "estimated_disk_usage_bytes=\(formatBinaryBytes(receipt.estimatedDiskUsageBytes))",
+            "available_disk_bytes=\(formatBinaryBytes(receipt.availableDiskBytes))",
+            "disk_fit_status=\(receipt.diskFitStatus)",
             "safety_threshold_fraction=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), receipt.safetyThresholdFraction))",
             "recommended_action=\(receipt.recommendedAction)",
             "reasons=\(receipt.reasons.joined(separator: " | "))",
@@ -7883,7 +8061,42 @@ public actor MelixCLIRunner {
         options: EvalRunOptions,
         suites: [String]
     ) async throws -> [ControlPlaneEvaluationResult] {
-        let remoteTargetOptions = Self.effectiveRemoteTargetOptions(for: options)
+        var baseParameters = options.parameters
+        if options.preflightFitCheck {
+            guard options.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix eval run --repo-id targets.")
+            }
+            let receipt = try await makeMemoryFitReceipt(repoID: options.hfRepoID, targetKind: "eval")
+            try enforceMemoryFitPreflight(
+                receipt,
+                allowMemoryRisk: options.allowMemoryRisk,
+                commandName: "evaluation"
+            )
+            baseParameters.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
+        }
+        let effectiveOptions = EvalRunOptions(
+            modelID: options.modelID,
+            hfRepoID: options.hfRepoID,
+            remoteServerID: options.remoteServerID,
+            remoteModelID: options.remoteModelID,
+            remoteTargets: options.remoteTargets,
+            suites: options.suites,
+            datasetID: options.datasetID,
+            sampleSize: options.sampleSize,
+            source: options.source,
+            fieldMapping: options.fieldMapping,
+            profile: options.profile,
+            parameters: baseParameters,
+            evalPromptID: options.evalPromptID,
+            evalPromptRevisionID: options.evalPromptRevisionID,
+            semanticJudgeRemoteServerID: options.semanticJudgeRemoteServerID,
+            semanticJudgeModelID: options.semanticJudgeModelID,
+            remoteParallelism: options.remoteParallelism,
+            preflightFitCheck: options.preflightFitCheck,
+            allowMemoryRisk: options.allowMemoryRisk,
+            json: options.json
+        )
+        let remoteTargetOptions = Self.effectiveRemoteTargetOptions(for: effectiveOptions)
         let resolvedRemoteTargets: [ControlPlaneEvaluationRequest.RemoteTarget?] = try remoteTargetOptions.isEmpty
             ? [nil]
             : remoteTargetOptions.map {
@@ -7894,25 +8107,25 @@ public actor MelixCLIRunner {
             }
         var suiteParameters: [String: [String: String]] = [:]
         for suiteID in suites {
-            suiteParameters[suiteID] = try evaluationParameters(options: options, suiteID: suiteID)
+            suiteParameters[suiteID] = try evaluationParameters(options: effectiveOptions, suiteID: suiteID)
         }
 
         var plannedRequests: [PlannedEvaluationRequest] = []
         for remoteTarget in resolvedRemoteTargets {
             for suiteID in suites {
-                let usesCustomSource = options.source.kind != .builtinPackage
-                let parameters = suiteParameters[suiteID] ?? options.parameters
+                let usesCustomSource = effectiveOptions.source.kind != .builtinPackage
+                let parameters = suiteParameters[suiteID] ?? effectiveOptions.parameters
                 let request = ControlPlaneEvaluationRequest(
-                    modelID: options.modelID,
-                    hfRepoID: options.hfRepoID,
+                    modelID: effectiveOptions.modelID,
+                    hfRepoID: effectiveOptions.hfRepoID,
                     suiteID: suiteID,
                     datasetID: usesCustomSource
-                        ? options.datasetID
-                        : (options.datasetID.isEmpty ? Self.defaultEvaluationDatasetID(for: suiteID) : options.datasetID),
-                    sampleSize: options.sampleSize,
-                    source: options.source,
-                    fieldMapping: options.fieldMapping,
-                    profile: options.profile,
+                        ? effectiveOptions.datasetID
+                        : (effectiveOptions.datasetID.isEmpty ? Self.defaultEvaluationDatasetID(for: suiteID) : effectiveOptions.datasetID),
+                    sampleSize: effectiveOptions.sampleSize,
+                    source: effectiveOptions.source,
+                    fieldMapping: effectiveOptions.fieldMapping,
+                    profile: effectiveOptions.profile,
                     parameters: parameters,
                     remoteTarget: remoteTarget
                 )
@@ -7930,7 +8143,7 @@ public actor MelixCLIRunner {
             return collected
         }
 
-        let requestedParallelism = Int(options.remoteParallelism)
+        let requestedParallelism = Int(effectiveOptions.remoteParallelism)
         let maxParallelism = requestedParallelism > 0 ? requestedParallelism : plannedRequests.count
         return try await runEvaluationRequestsConcurrently(
             plannedRequests,
@@ -8923,11 +9136,17 @@ private struct MemoryFitReceipt {
     let totalUnifiedMemoryBytes: UInt64
     let estimatedActiveMemoryBytes: UInt64
     let estimatedDiskUsageBytes: UInt64
+    let availableDiskBytes: UInt64
+    let diskFitStatus: String
     let safetyThresholdFraction: Double
     let unknownFields: [String]
     let assumptions: [String]
 
     func benchmarkParameters(schemaVersion: String) throws -> [String: String] {
+        try runParameters(schemaVersion: schemaVersion)
+    }
+
+    func runParameters(schemaVersion: String) throws -> [String: String] {
         [
             "memory_fit_schema_version": schemaVersion,
             "memory_fit_target_kind": targetKind,
@@ -8935,6 +9154,8 @@ private struct MemoryFitReceipt {
             "memory_fit_status": fitStatus,
             "memory_fit_estimated_active_memory_bytes": String(estimatedActiveMemoryBytes),
             "memory_fit_estimated_disk_usage_bytes": String(estimatedDiskUsageBytes),
+            "memory_fit_available_disk_bytes": String(availableDiskBytes),
+            "memory_fit_disk_status": diskFitStatus,
             "memory_fit_total_unified_memory_bytes": String(totalUnifiedMemoryBytes),
             "memory_fit_safety_threshold_fraction": String(
                 format: "%.2f",
