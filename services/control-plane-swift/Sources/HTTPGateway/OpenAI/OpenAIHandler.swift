@@ -1765,9 +1765,9 @@ public struct OpenAIHandler: Sendable {
                 forKey: "http.chat_completions_non_stream_latency_ms"
             )
             if let usage = aggregate.usage {
-                await metricsStore.set(
-                    Double(usage.completionTokens),
-                    forKey: "http.chat_completions_non_stream_completion_tokens"
+                await metricsStore.increment(
+                    "http.chat_completions_non_stream_completion_tokens",
+                    by: Double(usage.completionTokens)
                 )
             }
 
@@ -1822,6 +1822,7 @@ public struct OpenAIHandler: Sendable {
                 aggregate.assistantText = completed.assistantText.isEmpty ? tokenText : completed.assistantText
             case .error(let error):
                 aggregate.error = error.error
+                return aggregate
             default:
                 continue
             }

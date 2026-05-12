@@ -1091,6 +1091,101 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["http.chat_completions_non_stream_completion_tokens", default: 0] == 2)
     }
 
+    @Test("POST /v1/chat/completions accumulates non-stream completion token metrics")
+    func postChatCompletionsAccumulatesNonStreamCompletionTokenMetrics() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let metricsStore = MetricsStore()
+        let workerClient = ScriptedWorkerClient(events: [
+            makeUsageEvent(requestID: "req-json-metrics", seq: 1, promptTokens: 1, completionTokens: 2),
+            makeCompletedEvent(requestID: "req-json-metrics", seq: 2, finishReason: "stop", assistantText: "Hello"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-json-metrics" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        _ = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: ["content-type": "application/json"], body: body)
+        )
+        _ = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: ["content-type": "application/json"], body: body)
+        )
+
+        let metrics = await metricsStore.snapshot()
+        #expect(metrics.values["http.chat_completions_non_stream_request_count", default: 0] == 2)
+        #expect(metrics.values["http.chat_completions_non_stream_completion_tokens", default: 0] == 4)
+    }
+
+    @Test("POST /v1/chat/completions stops non-stream aggregation on worker error")
+    func postChatCompletionsStopsNonStreamAggregationOnWorkerError() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "req-json-error", seq: 1, text: "partial"),
+            makeErrorEvent(requestID: "req-json-error", seq: 2, code: "invalid_argument", message: "bad request"),
+            makeUsageEvent(requestID: "req-json-error", seq: 3, promptTokens: 10, completionTokens: 20),
+            makeCompletedEvent(requestID: "req-json-error", seq: 4, finishReason: "stop", assistantText: "must not win"),
+        ])
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry(),
+                metricsStore: metricsStore
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-json-error" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Bad request" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+        let metrics = await metricsStore.snapshot()
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "invalid_argument")
+        #expect(error["message"] as? String == "bad request")
+        #expect(metrics.values["http.chat_completions_non_stream_request_count", default: 0] == 0)
+        #expect(metrics.values["http.chat_completions_non_stream_completion_tokens", default: 0] == 0)
+    }
+
     @Test("POST /v1/chat/completions defaults to non-stream JSON when stream is omitted")
     func postChatCompletionsDefaultsToNonStreamJSONWhenStreamIsOmitted() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
