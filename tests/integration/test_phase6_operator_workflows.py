@@ -542,7 +542,8 @@ def test_multimodal_chat_streams_tool_calls_with_shared_parser_selection(tmp_pat
         )
 
         assert status == 200
-        assert b"event: tool_call" in payload
+        assert b"event: message" in payload
+        assert b"tool_calls" in payload
         assert b"\"parser_mode\":\"qwen\"" in payload
         assert b"\"parser_namespaces\":[\"tools.vision\"]" in payload
         assert b"\"parser_fallback_mode\":\"xml\"" in payload
@@ -587,7 +588,8 @@ def test_multimodal_chat_uses_model_default_parser_selection_for_llava_family(tm
         )
 
         assert status == 200
-        assert b"event: tool_call" in payload
+        assert b"event: message" in payload
+        assert b"tool_calls" in payload
         assert b"\"parser_mode\":\"qwen\"" in payload
         assert b"\"parser_namespaces\":[\"tools.vision\"]" in payload
         assert b"\"parser_fallback_mode\":\"xml\"" in payload
@@ -775,7 +777,8 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
                 "request_latency_ms": tool_elapsed_ms,
                 "tool_call_success": (
                     tool_status == 200
-                    and b"event: tool_call" in tool_payload
+                    and b"event: message" in tool_payload
+                    and b"tool_calls" in tool_payload
                     and b"\"name\":\"tools.vision\"" in tool_payload
                 ),
             },
