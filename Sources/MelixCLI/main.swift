@@ -12,7 +12,7 @@ struct MelixCLIExecutable {
             let output = try await MelixCLIRunner().run(parsedInvocation)
             FileHandle.standardOutput.write(Data(output.utf8))
         } catch {
-            let traceID = invocation?.traceID.isEmpty == false ? invocation?.traceID ?? "" : UUID().uuidString
+            let traceID = (invocation?.traceID).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
             let commandID = invocation.map { MelixCLICommandCodec.commandID(for: $0.command) } ?? "unknown"
             let debugBundlePath = Self.writeEarlyFailureDebugBundle(
                 commandID: commandID,

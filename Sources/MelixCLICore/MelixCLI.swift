@@ -6849,7 +6849,7 @@ public actor MelixCLIRunner {
             "- Logs: \(melixHome["logs"] ?? "")",
             "",
         ]
-        return lines.joined(separator: "\n")
+        return lines.joined(separator: "\n") + "\n"
     }
 
     private func renderMonitorPayload(_ payload: [String: Any]) -> String {
