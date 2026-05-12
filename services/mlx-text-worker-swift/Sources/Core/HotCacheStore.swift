@@ -78,6 +78,7 @@ private struct StoredHotBlockOwnership: Sendable {
 actor HotCacheStore {
     private let diskStore: DiskCacheStore
     private let cacheRootPath: String
+    private let runtimeCacheFingerprint: String
     private let initialCacheBlocks: UInt32
     private var activeMode: Melix_Worker_V1_CacheMode
     private var prefixesByID: [String: StoredHotPrefix] = [:]
@@ -96,10 +97,12 @@ actor HotCacheStore {
     init(
         diskStore: DiskCacheStore = DiskCacheStore(rootPath: ".runtime/swift-text-worker-cache"),
         cacheRootPath: String = ".runtime/swift-text-worker-cache",
+        runtimeCacheFingerprint: String = "dev",
         initialCacheBlocks: UInt32 = 0
     ) {
         self.diskStore = diskStore
         self.cacheRootPath = cacheRootPath
+        self.runtimeCacheFingerprint = runtimeCacheFingerprint
         self.initialCacheBlocks = initialCacheBlocks
         self.activeMode = .tiered
     }
@@ -489,6 +492,8 @@ actor HotCacheStore {
         stats.supportsPagedCache = true
         stats.supportsDiskCache = false
         stats.supportsBoundarySnapshots = false
+        stats.runtimeCacheFingerprint = runtimeCacheFingerprint
+        stats.cacheNamespaceMismatchCount = diskSummary.namespaceMismatchCount
         return stats
     }
 

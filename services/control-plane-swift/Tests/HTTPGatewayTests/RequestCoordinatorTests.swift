@@ -1600,6 +1600,11 @@ struct RequestCoordinatorTests {
         cacheStats.stats.supportsPagedCache = true
         cacheStats.stats.supportsDiskCache = true
         cacheStats.stats.supportsBoundarySnapshots = true
+        cacheStats.stats.runtimeCacheFingerprint = "runtime-cache-hot"
+        cacheStats.stats.cacheNamespaceMismatchCount = 1
+        cacheStats.stats.activeMemoryBytes = 8_192
+        cacheStats.stats.maxWorkingSetBytes = 32_768
+        cacheStats.stats.effectiveCacheBudgetBytes = 24_576
         var scope = Melix_Worker_V1_CacheScope()
         scope.modelID = "melix-dev-text"
         scope.multimodalAdapterHash = "image-hash-hot"
@@ -1694,6 +1699,11 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["cache.hit_rate"] == 50)
         #expect(metrics.values["cache.l2_restore_hit_rate"] == 100)
         #expect(metrics.values["cache.active_mode"] == 3)
+        #expect(metrics.values["cache.namespace_mismatch_count"] == 1)
+        #expect(metrics.values["scheduler.active_memory_bytes"] == 8_192)
+        #expect(metrics.values["scheduler.max_working_set_bytes"] == 32_768)
+        #expect(metrics.values["scheduler.effective_cache_budget_bytes"] == 24_576)
+        #expect(metrics.values["scheduler.cache_namespace_mismatch"] == 1)
         #expect(metrics.values["scheduler.cache_pressure"] == 0.25)
         #expect(cacheSummary.l1Bytes == 2_048)
         #expect(cacheSummary.l2Bytes == 4_096)
@@ -1706,6 +1716,11 @@ struct RequestCoordinatorTests {
         #expect(cacheSummary.supportsPagedCache)
         #expect(cacheSummary.supportsDiskCache)
         #expect(cacheSummary.supportsBoundarySnapshots)
+        #expect(cacheSummary.runtimeCacheFingerprint == "runtime-cache-hot")
+        #expect(cacheSummary.cacheNamespaceMismatchCount == 1)
+        #expect(cacheSummary.activeMemoryBytes == 8_192)
+        #expect(cacheSummary.maxWorkingSetBytes == 32_768)
+        #expect(cacheSummary.effectiveCacheBudgetBytes == 24_576)
         #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.fingerprintHash == Data("fingerprint-hot".utf8))
         #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.scope.multimodalAdapterHash == "image-hash-hot")
         #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.scope.scopeID == "scope-hot")
@@ -2367,9 +2382,13 @@ struct RequestCoordinatorTests {
     @Test("stream failures propagate and release request tracking")
     func streamFailuresPropagateAndReleaseRequestTracking() async throws {
         let workerClient = ThrowingStreamWorkerClient()
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
-            abortRegistry: AbortRegistry()
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
         )
 
         let execution = try await coordinator.startChatCompletion(
@@ -2386,6 +2405,11 @@ struct RequestCoordinatorTests {
 
         let cancelled = try await coordinator.cancel(requestID: "req-stream-error")
         #expect(!cancelled)
+        let progress = try #require(await schedulerReadModel.progressSnapshot(for: "req-stream-error"))
+        let metrics = await metricsStore.snapshot()
+        #expect(progress.phase == .requestFailed)
+        #expect(metrics.values["scheduler.active_requests"] == 0)
+        #expect(metrics.values["requests.inflight"] == 0)
     }
 
     @Test("generate unavailability is surfaced without fallback")

@@ -28,6 +28,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.socketPath, "/var/run/melix/swift-text-worker.sock")
         XCTAssertEqual(configuration.backendMode, "swift")
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/dev")
+        XCTAssertFalse(configuration.runtimeCacheFingerprint.isEmpty)
         XCTAssertEqual(configuration.cacheRootPath, ".runtime/swift-text-worker-cache")
         XCTAssertFalse(configuration.memoryEnforcementDisabled)
         XCTAssertEqual(configuration.processMemoryBudgetBytes, 0)
@@ -44,6 +45,7 @@ final class WorkerScaffoldTests: XCTestCase {
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift-text-worker.sock",
             "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "swift-experimental",
             "MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION": "melix-swift-text-worker/test",
+            "MELIX_SWIFT_TEXT_WORKER_RUNTIME_CACHE_FINGERPRINT": "runtime-fingerprint-test",
             "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": "/tmp/melix-swift-text-worker-metrics.json",
             "MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": "/tmp/melix-swift-text-worker-cache",
             "MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT": "true",
@@ -59,6 +61,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.socketPath, "/tmp/melix-swift-text-worker.sock")
         XCTAssertEqual(configuration.backendMode, "swift-experimental")
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/test")
+        XCTAssertEqual(configuration.runtimeCacheFingerprint, "runtime-fingerprint-test")
         XCTAssertEqual(configuration.metricsExportPath, "/tmp/melix-swift-text-worker-metrics.json")
         XCTAssertEqual(configuration.cacheRootPath, "/tmp/melix-swift-text-worker-cache")
         XCTAssertTrue(configuration.memoryEnforcementDisabled)
@@ -6223,6 +6226,60 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testDiskCacheStoreRejectsPersistedEntriesFromStaleRuntimeFingerprint() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let sourceStore = DiskCacheStore(
+                rootPath: cacheRoot.path,
+                runtimeCacheFingerprint: "runtime-cache-a"
+            )
+            let scope = makeCacheScope(scopeID: "scope-stale-runtime", modelID: "model-stale-runtime")
+            let cacheKey = makeCacheKey(
+                scopeID: scope.scopeID,
+                prefixSeed: "stale-prefix",
+                fingerprintSeed: "stale-fingerprint"
+            )
+            let prefix = makePrefixRef(prefixID: "prefix-stale-runtime", scope: scope, cacheKey: cacheKey)
+            let blockTable = makeBlockTable(
+                scopeID: scope.scopeID,
+                cacheKey: cacheKey,
+                blockIDs: ["stale-block"],
+                bytes: [128]
+            )
+
+            await sourceStore.persistPrefix(
+                prefix: prefix,
+                blockTableID: "table-stale-runtime",
+                blockTable: blockTable,
+                quantizedBytes: 64
+            )
+            await sourceStore.saveSnapshot(
+                snapshot: makeSnapshotRef(snapshotID: "snapshot-stale-runtime"),
+                model: makeModelSpec(modelID: "model-stale-runtime"),
+                messages: [makeUserMessage("stale runtime cache entry")],
+                resumeHint: "resume-stale-runtime",
+                acceleration: makeAccelerationPolicy(mode: .baseline),
+                promptTokens: 4,
+                blockTableID: "table-stale-runtime",
+                blockTable: blockTable,
+                prefix: nil
+            )
+
+            let staleRuntimeStore = DiskCacheStore(
+                rootPath: cacheRoot.path,
+                runtimeCacheFingerprint: "runtime-cache-b"
+            )
+            let summary = await staleRuntimeStore.summary()
+            let restore = await staleRuntimeStore.restorePrefix(cacheKey: cacheKey)
+            let snapshot = await staleRuntimeStore.restoreSnapshot(snapshotID: "snapshot-stale-runtime")
+
+            XCTAssertNil(restore)
+            XCTAssertNil(snapshot)
+            XCTAssertEqual(summary.l2Bytes, 0)
+            XCTAssertEqual(summary.snapshotCount, 0)
+            XCTAssertEqual(summary.namespaceMismatchCount, 2)
+        }
+    }
+
     func testHotCacheStoreTracksPagedOwnershipAndPurgesItWithPrefixEntries() async throws {
         try await withTemporaryCacheRoot { cacheRoot in
             let store = HotCacheStore(
@@ -6867,6 +6924,94 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(snapshot.hotPrefixes.count, 1)
             XCTAssertEqual(snapshot.hotPrefixes.first?.prefixID, "prefix-cold-promote")
             XCTAssertEqual(snapshot.hotPrefixes.first?.tier, "l1")
+        }
+    }
+
+    func testWorkerCacheStatsExposeRuntimeFingerprintAndMemoryBudgetDiagnostics() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let services = makeServices(
+                environment: [
+                    "MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path,
+                    "MELIX_SWIFT_TEXT_WORKER_RUNTIME_CACHE_FINGERPRINT": "runtime-cache-test",
+                    "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "20000",
+                    "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "1000",
+                ],
+                backend: FakeRuntimeBackend(residentBytesHint: 4_096)
+            )
+
+            let loaded = try await services.registry.loadModel(makeModelSpec(modelID: "model-cache-budget"))
+            _ = try await services.registry.prefill(
+                requestID: "req-cache-budget",
+                modelHandle: loaded.handle,
+                messages: [makeUserMessage("cache budget diagnostics")],
+                prefillStepSize: 16,
+                returnDecodeHandle: true,
+                resumeHint: "",
+                acceleration: makeAccelerationPolicy(mode: .baseline),
+                shouldAbort: { false }
+            )
+
+            let response = await services.registry.cacheStatsResponse()
+
+            XCTAssertEqual(response.stats.runtimeCacheFingerprint, "runtime-cache-test")
+            XCTAssertEqual(response.snapshot.stats.runtimeCacheFingerprint, "runtime-cache-test")
+            XCTAssertEqual(response.stats.activeMemoryBytes, 4_096 + response.stats.l1Bytes)
+            XCTAssertEqual(response.stats.maxWorkingSetBytes, 20_000)
+            XCTAssertEqual(response.stats.effectiveCacheBudgetBytes, 14_904)
+        }
+    }
+
+    func testCacheStatsRPCEmitsRuntimeFingerprintAndNamespaceMismatchMetrics() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let staleStore = DiskCacheStore(
+                rootPath: cacheRoot.path,
+                runtimeCacheFingerprint: "runtime-cache-old"
+            )
+            let scope = makeCacheScope(scopeID: "scope-rpc-stale", modelID: "model-rpc-stale")
+            let cacheKey = makeCacheKey(
+                scopeID: scope.scopeID,
+                prefixSeed: "rpc-stale-prefix",
+                fingerprintSeed: "rpc-stale-fingerprint"
+            )
+            let prefix = makePrefixRef(prefixID: "prefix-rpc-stale", scope: scope, cacheKey: cacheKey)
+            let blockTable = makeBlockTable(
+                scopeID: scope.scopeID,
+                cacheKey: cacheKey,
+                blockIDs: ["rpc-stale-block"],
+                bytes: [128]
+            )
+            await staleStore.persistPrefix(
+                prefix: prefix,
+                blockTableID: "table-rpc-stale",
+                blockTable: blockTable,
+                quantizedBytes: 64
+            )
+
+            let services = makeServices(
+                environment: [
+                    "MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path,
+                    "MELIX_SWIFT_TEXT_WORKER_RUNTIME_CACHE_FINGERPRINT": "runtime-cache-new",
+                    "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "4096",
+                ]
+            )
+            let response = try await withTestServerContextRPCCancellationHandle { handle in
+                try await services.cache.getCacheStats(
+                    request: Melix_Worker_V1_GetCacheStatsRequest(),
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.GetCacheStats.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+            let counters = services.metrics.counters
+
+            XCTAssertEqual(response.stats.runtimeCacheFingerprint, "runtime-cache-new")
+            XCTAssertEqual(response.stats.cacheNamespaceMismatchCount, 1)
+            XCTAssertEqual(counters["swift_text.cache_namespace_mismatch_count"], 1)
+            XCTAssertEqual(counters["swift_text.max_working_set_bytes"], 4_096)
+            XCTAssertEqual(counters["swift_text.runtime_cache_fingerprint_code"], 0)
         }
     }
 

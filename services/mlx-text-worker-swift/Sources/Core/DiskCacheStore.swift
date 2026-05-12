@@ -17,6 +17,7 @@ struct DiskCacheSummary: Sendable {
     let writeBackQueueDepth: UInt64
     let restoreQueueDepth: UInt64
     let writeBackCount: UInt64
+    let namespaceMismatchCount: UInt64
     let snapshots: [Melix_Worker_V1_SnapshotRef]
     let scopes: [DiskCacheScopeSummary]
 }
@@ -48,6 +49,7 @@ struct DiskCacheOwnershipSnapshot: Sendable {
 }
 
 private struct PersistedPrefixEnvelope: Codable {
+    let runtimeCacheFingerprint: String?
     let prefixID: String
     let prefixData: Data
     let blockTableID: String
@@ -57,6 +59,7 @@ private struct PersistedPrefixEnvelope: Codable {
 }
 
 private struct PersistedSnapshotEnvelope: Codable {
+    let runtimeCacheFingerprint: String?
     let snapshotID: String
     let snapshotData: Data
     let modelData: Data
@@ -92,6 +95,7 @@ actor DiskCacheStore {
     private let rootURL: URL
     private let prefixesURL: URL
     private let snapshotsURL: URL
+    private let runtimeCacheFingerprint: String
 
     private var prefixesByID: [String: StoredL2PrefixRecord]
     private var prefixIDByKey: [String: String]
@@ -103,20 +107,24 @@ actor DiskCacheStore {
     private var pendingWriteBackOperations: UInt64
     private var pendingRestoreOperations: UInt64
     private var completedWriteBackCount: UInt64
+    private var namespaceMismatchCount: UInt64
 
     init(
         rootPath: String,
+        runtimeCacheFingerprint: String = "dev",
         fileManager: FileManager = .default
     ) {
         self.fileManager = fileManager
         self.rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
         self.prefixesURL = rootURL.appendingPathComponent("prefixes", isDirectory: true)
         self.snapshotsURL = rootURL.appendingPathComponent("snapshots", isDirectory: true)
+        self.runtimeCacheFingerprint = runtimeCacheFingerprint
 
         let loaded = Self.loadState(
             fileManager: fileManager,
             prefixesURL: prefixesURL,
-            snapshotsURL: snapshotsURL
+            snapshotsURL: snapshotsURL,
+            runtimeCacheFingerprint: runtimeCacheFingerprint
         )
         self.prefixesByID = loaded.prefixes
         self.prefixIDByKey = Dictionary(
@@ -132,6 +140,7 @@ actor DiskCacheStore {
         self.pendingWriteBackOperations = 0
         self.pendingRestoreOperations = 0
         self.completedWriteBackCount = 0
+        self.namespaceMismatchCount = loaded.namespaceMismatchCount
 
         Self.ensureDirectory(fileManager: fileManager, url: prefixesURL)
         Self.ensureDirectory(fileManager: fileManager, url: snapshotsURL)
@@ -312,6 +321,7 @@ actor DiskCacheStore {
             writeBackQueueDepth: tierMetrics.writeBackQueueDepth,
             restoreQueueDepth: tierMetrics.restoreQueueDepth,
             writeBackCount: tierMetrics.writeBackCount,
+            namespaceMismatchCount: namespaceMismatchCount,
             snapshots: snapshotsByID.values.map(\.snapshot).sorted { $0.snapshotID < $1.snapshotID },
             scopes: scopeSummaries
         )
@@ -407,6 +417,7 @@ actor DiskCacheStore {
 
     private func writePrefixRecord(_ record: StoredL2PrefixRecord) {
         guard let envelope = try? PersistedPrefixEnvelope(
+            runtimeCacheFingerprint: runtimeCacheFingerprint,
             prefixID: record.prefix.prefixID,
             prefixData: record.prefix.serializedData(),
             blockTableID: record.blockTableID,
@@ -425,6 +436,7 @@ actor DiskCacheStore {
 
     private func writeSnapshotRecord(_ record: StoredBoundarySnapshotRecord) {
         guard let envelope = try? PersistedSnapshotEnvelope(
+            runtimeCacheFingerprint: runtimeCacheFingerprint,
             snapshotID: record.snapshot.snapshotID,
             snapshotData: record.snapshot.serializedData(),
             modelData: record.model.serializedData(),
@@ -455,22 +467,32 @@ actor DiskCacheStore {
     private static func loadState(
         fileManager: FileManager,
         prefixesURL: URL,
-        snapshotsURL: URL
+        snapshotsURL: URL,
+        runtimeCacheFingerprint: String
     ) -> (
         prefixes: [String: StoredL2PrefixRecord],
-        snapshots: [String: StoredBoundarySnapshotRecord]
+        snapshots: [String: StoredBoundarySnapshotRecord],
+        namespaceMismatchCount: UInt64
     ) {
         ensureDirectory(fileManager: fileManager, url: prefixesURL)
         ensureDirectory(fileManager: fileManager, url: snapshotsURL)
 
         var prefixes: [String: StoredL2PrefixRecord] = [:]
         var snapshots: [String: StoredBoundarySnapshotRecord] = [:]
+        var namespaceMismatchCount: UInt64 = 0
 
         if let contents = try? fileManager.contentsOfDirectory(at: prefixesURL, includingPropertiesForKeys: nil) {
             for fileURL in contents where fileURL.pathExtension == "json" {
                 guard let data = try? Data(contentsOf: fileURL),
-                      let envelope = try? JSONDecoder().decode(PersistedPrefixEnvelope.self, from: data),
-                      let prefix = try? Melix_Worker_V1_PrefixRef(serializedBytes: envelope.prefixData),
+                      let envelope = try? JSONDecoder().decode(PersistedPrefixEnvelope.self, from: data) else {
+                    continue
+                }
+                guard envelope.runtimeCacheFingerprint == runtimeCacheFingerprint else {
+                    namespaceMismatchCount += 1
+                    try? fileManager.removeItem(at: fileURL)
+                    continue
+                }
+                guard let prefix = try? Melix_Worker_V1_PrefixRef(serializedBytes: envelope.prefixData),
                       let blockTable = try? Melix_Worker_V1_BlockTable(serializedBytes: envelope.blockTableData) else {
                     continue
                 }
@@ -487,8 +509,15 @@ actor DiskCacheStore {
         if let contents = try? fileManager.contentsOfDirectory(at: snapshotsURL, includingPropertiesForKeys: nil) {
             for fileURL in contents where fileURL.pathExtension == "json" {
                 guard let data = try? Data(contentsOf: fileURL),
-                      let envelope = try? JSONDecoder().decode(PersistedSnapshotEnvelope.self, from: data),
-                      let snapshot = try? Melix_Worker_V1_SnapshotRef(serializedBytes: envelope.snapshotData),
+                      let envelope = try? JSONDecoder().decode(PersistedSnapshotEnvelope.self, from: data) else {
+                    continue
+                }
+                guard envelope.runtimeCacheFingerprint == runtimeCacheFingerprint else {
+                    namespaceMismatchCount += 1
+                    try? fileManager.removeItem(at: fileURL)
+                    continue
+                }
+                guard let snapshot = try? Melix_Worker_V1_SnapshotRef(serializedBytes: envelope.snapshotData),
                       let model = try? Melix_Worker_V1_ModelSpec(serializedBytes: envelope.modelData),
                       let acceleration = try? Melix_Worker_V1_AccelerationPolicy(serializedBytes: envelope.accelerationData),
                       let blockTable = try? Melix_Worker_V1_BlockTable(serializedBytes: envelope.blockTableData) else {
@@ -509,7 +538,7 @@ actor DiskCacheStore {
             }
         }
 
-        return (prefixes, snapshots)
+        return (prefixes, snapshots, namespaceMismatchCount)
     }
 
     private static func ensureDirectory(

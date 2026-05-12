@@ -752,6 +752,20 @@ def test_collect_cache_recovery_benchmark_evidence_combines_restart_hot_cold_and
             "restore_ratio_pct": 81.82,
         },
     )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "_collect_runtime_cache_fingerprint_evidence",
+        lambda repo_root: {
+            "runtime_cache_fingerprint": "22222222",
+            "namespace_mismatch_count": 2.0,
+            "cache_namespace_mismatch": 1.0,
+            "fingerprint_present": 1.0,
+            "runtime_cache_fingerprint_code": 572662306.0,
+            "active_memory_bytes": 4096.0,
+            "max_working_set_bytes": 67108864.0,
+            "effective_cache_budget_bytes": 66060288.0,
+        },
+    )
 
     report = phase8_runtime_probes.collect_cache_recovery_benchmark_evidence(tmp_path)
 
@@ -759,10 +773,14 @@ def test_collect_cache_recovery_benchmark_evidence_combines_restart_hot_cold_and
     assert report["hot_tier"]["followup_ttft_delta_ms"] == 12.5
     assert report["cold_tier"]["l2_hit_rate"] == 100.0
     assert report["partial_restore"]["restore_ratio_pct"] == 81.82
+    assert report["runtime_cache_fingerprint"]["namespace_mismatch_count"] == 2.0
     assert report["metrics"]["bench.recovery.restart_to_ready_ms"] == 450.0
     assert report["metrics"]["bench.recovery.hot_followup_ttft_delta_ms"] == 12.5
     assert report["metrics"]["bench.recovery.cold_l2_hit_rate"] == 100.0
     assert report["metrics"]["bench.recovery.partial_restore_ratio_pct"] == 81.82
+    assert report["metrics"]["bench.cache_runtime_fingerprint.namespace_mismatch_count"] == 2.0
+    assert report["metrics"]["bench.cache_runtime_fingerprint.active_memory_bytes"] == 4096.0
+    assert report["metrics"]["bench.cache_runtime_fingerprint.max_working_set_bytes"] == 67108864.0
 
 
 def test_collect_hot_tier_recovery_evidence_reports_followup_metrics(
@@ -896,6 +914,87 @@ def test_collect_cold_tier_recovery_evidence_reports_l2_metrics(
         "l2_hit_rate": 100.0,
         "l2_writeback_queue_depth": 0.0,
         "l2_restore_queue_depth": 0.0,
+    }
+
+
+def test_collect_runtime_cache_fingerprint_evidence_reports_namespace_and_budget_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStack:
+        environments: list[dict[str, str]] = []
+
+        def __init__(
+            self,
+            repo_root: Path,
+            *,
+            swift_cache_root: Path | None = None,
+            environment_overrides: dict[str, str] | None = None,
+        ) -> None:
+            self.swift_cache_root = swift_cache_root
+            self.environment_overrides = dict(environment_overrides or {})
+            self.swift_socket_path = tmp_path / "swift.sock"
+            self.swift_text_worker_metrics_path = tmp_path / "swift-metrics.json"
+            FakeStack.environments.append(self.environment_overrides)
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    calls = iter(
+        [
+            {"status": 200, "body": "data: [DONE]"},
+            {"status": 200, "body": "data: [DONE]"},
+        ]
+    )
+    monkeypatch.setattr(phase8_runtime_probes, "LiveMelixStack", FakeStack)
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "stream_chat_completion",
+        lambda stack, payload: next(calls),
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "get_cache_stats",
+        lambda socket_path: SimpleNamespace(
+            stats=SimpleNamespace(
+                runtime_cache_fingerprint="22222222",
+                cache_namespace_mismatch_count=2.0,
+                active_memory_bytes=4096.0,
+                max_working_set_bytes=67108864.0,
+                effective_cache_budget_bytes=66060288.0,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        phase8_runtime_probes,
+        "read_metrics_export",
+        lambda path: {
+            "values": {
+                "swift_text.runtime_cache_fingerprint_code": 572662306.0,
+                "swift_text.cache_namespace_mismatch_count": 2.0,
+                "swift_text.active_memory_bytes": 4096.0,
+                "swift_text.max_working_set_bytes": 67108864.0,
+                "swift_text.effective_cache_budget_bytes": 66060288.0,
+            }
+        },
+    )
+
+    report = phase8_runtime_probes._collect_runtime_cache_fingerprint_evidence(tmp_path)
+
+    assert FakeStack.environments[0]["MELIX_SWIFT_TEXT_WORKER_RUNTIME_CACHE_FINGERPRINT"] == "11111111"
+    assert FakeStack.environments[1]["MELIX_SWIFT_TEXT_WORKER_RUNTIME_CACHE_FINGERPRINT"] == "22222222"
+    assert report == {
+        "runtime_cache_fingerprint": "22222222",
+        "namespace_mismatch_count": 2.0,
+        "cache_namespace_mismatch": 1.0,
+        "fingerprint_present": 1.0,
+        "runtime_cache_fingerprint_code": 572662306.0,
+        "active_memory_bytes": 4096.0,
+        "max_working_set_bytes": 67108864.0,
+        "effective_cache_budget_bytes": 66060288.0,
     }
 
 
@@ -1415,7 +1514,17 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
         "build_release_gate_report",
         lambda repo_root, policy, recovery, runtime_core: {
             "install": {"checks": {"manifest_exists": True, "environment_script_exists": True, "all_plists_exist": True}},
-            "benchmarks": {"report_exists": True, "metrics": {}},
+            "benchmarks": {
+                "report_exists": True,
+                "metrics": {},
+                "recovery_metrics": {
+                    "bench.cache_runtime_fingerprint.fingerprint_present": 1.0,
+                    "bench.cache_runtime_fingerprint.namespace_mismatch_count": 2.0,
+                    "bench.cache_runtime_fingerprint.active_memory_bytes": 4096.0,
+                    "bench.cache_runtime_fingerprint.max_working_set_bytes": 67108864.0,
+                    "bench.cache_runtime_fingerprint.effective_cache_budget_bytes": 66060288.0,
+                },
+            },
             "training": {"training_duration_ms": 1420.0, "adapter_publish_ms": 118.0},
             "recovery": recovery,
             "runtime_core": runtime_core,
@@ -1504,6 +1613,11 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     assert metrics["runtime.multi_model_request_success_rate"] == 100.0
     assert metrics["runtime.prefill_memory_guard_rejection_count"] == 1.0
     assert metrics["runtime.prefill_memory_guard_success_rate"] == 100.0
+    assert metrics["cache_recovery.runtime_fingerprint_present"] == 1.0
+    assert metrics["cache_recovery.namespace_mismatch_count"] == 2.0
+    assert metrics["cache_recovery.active_memory_bytes"] == 4096.0
+    assert metrics["cache_recovery.max_working_set_bytes"] == 67108864.0
+    assert metrics["cache_recovery.effective_cache_budget_bytes"] == 66060288.0
     assert metrics["release_gate.m9_required_probe_count"] == 23.0
     assert metrics["release_gate.m9_missing_probe_count"] == 0.0
     assert metrics["release_gate.m9_failed_threshold_count"] == 0.0

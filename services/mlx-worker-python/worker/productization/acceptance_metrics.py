@@ -566,6 +566,26 @@ def build_phase8_metrics_report(
             float(cache_recovery_metrics.get("bench.recovery.partial_restore_ratio_pct", 0.0)),
             2,
         ),
+        "cache_recovery.runtime_fingerprint_present": round(
+            float(cache_recovery_metrics.get("bench.cache_runtime_fingerprint.fingerprint_present", 0.0)),
+            2,
+        ),
+        "cache_recovery.namespace_mismatch_count": round(
+            float(cache_recovery_metrics.get("bench.cache_runtime_fingerprint.namespace_mismatch_count", 0.0)),
+            2,
+        ),
+        "cache_recovery.active_memory_bytes": round(
+            float(cache_recovery_metrics.get("bench.cache_runtime_fingerprint.active_memory_bytes", 0.0)),
+            2,
+        ),
+        "cache_recovery.max_working_set_bytes": round(
+            float(cache_recovery_metrics.get("bench.cache_runtime_fingerprint.max_working_set_bytes", 0.0)),
+            2,
+        ),
+        "cache_recovery.effective_cache_budget_bytes": round(
+            float(cache_recovery_metrics.get("bench.cache_runtime_fingerprint.effective_cache_budget_bytes", 0.0)),
+            2,
+        ),
         "release_gate.real_workload.pass_count": round(
             float(real_workload_summary.get("pass_count", 0.0)),
             2,

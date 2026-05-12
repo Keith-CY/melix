@@ -990,8 +990,8 @@ public actor RequestCoordinator {
                         routeKind: plan.routeKind
                     )
                     await hub.emitLifecycle(.terminalFailure(code: "transport_error", message: error.localizedDescription))
-                    await hub.finish(throwing: error)
                     await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
+                    await hub.finish(throwing: error)
                 }
             }
 
@@ -2335,6 +2335,26 @@ public actor RequestCoordinator {
         await metricsStore.set(cacheStats.stats.l1HitRate * 100, forKey: "cache.hit_rate")
         await metricsStore.set(cacheStats.stats.l2RestoreHitRate * 100, forKey: "cache.l2_restore_hit_rate")
         await metricsStore.set(cacheStats.stats.compressionRatio * 100, forKey: "cache.compression_ratio")
+        await metricsStore.set(
+            Double(cacheStats.stats.cacheNamespaceMismatchCount),
+            forKey: "cache.namespace_mismatch_count"
+        )
+        await metricsStore.set(
+            Double(cacheStats.stats.activeMemoryBytes),
+            forKey: "scheduler.active_memory_bytes"
+        )
+        await metricsStore.set(
+            Double(cacheStats.stats.maxWorkingSetBytes),
+            forKey: "scheduler.max_working_set_bytes"
+        )
+        await metricsStore.set(
+            Double(cacheStats.stats.effectiveCacheBudgetBytes),
+            forKey: "scheduler.effective_cache_budget_bytes"
+        )
+        await metricsStore.set(
+            cacheStats.stats.cacheNamespaceMismatchCount > 0 ? 1 : 0,
+            forKey: "scheduler.cache_namespace_mismatch"
+        )
         let activeCacheMode = makeControlPlaneCacheMode(from: cacheStats.stats.activeMode)
         await metricsStore.set(cacheModeMetricValue(activeCacheMode), forKey: "cache.active_mode")
         let residentBytes = max(Double(runtimeStats.memoryEvidence.residentBytes), 1)
@@ -2555,6 +2575,11 @@ private func controlPlaneCacheSummary(
     summary.supportsPagedCache = workerStats.supportsPagedCache
     summary.supportsDiskCache = workerStats.supportsDiskCache
     summary.supportsBoundarySnapshots = workerStats.supportsBoundarySnapshots
+    summary.runtimeCacheFingerprint = workerStats.runtimeCacheFingerprint
+    summary.cacheNamespaceMismatchCount = workerStats.cacheNamespaceMismatchCount
+    summary.activeMemoryBytes = workerStats.activeMemoryBytes
+    summary.maxWorkingSetBytes = workerStats.maxWorkingSetBytes
+    summary.effectiveCacheBudgetBytes = workerStats.effectiveCacheBudgetBytes
     return summary
 }
 
