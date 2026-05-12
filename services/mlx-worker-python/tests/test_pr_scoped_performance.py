@@ -499,6 +499,23 @@ def test_evaluation_answer_normalization_probe_command_emits_metrics() -> None:
     assert metrics["normalization_checksum"] > 0
 
 
+def test_evaluation_compare_target_lookup_early_stop_probe_batches_tiny_lookup() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-compare-target-lookup-early-stop"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["get_loaded_model_calls_mean"] == 12.0
+    assert metrics["loaded_handle_count"] == 40000.0
+    assert metrics["iteration_count"] == 400.0
+    assert metrics["sample_count"] == 7.0
+    assert metrics["checksum"] == 5600.0
+
+
 def test_scope_report_selects_code_eval_stdio_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
