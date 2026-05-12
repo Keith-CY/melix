@@ -70,6 +70,7 @@ Rules:
 - Keep short_reason concise and do not include secrets, URLs, or prompt text.
 """
 SEMANTIC_JUDGE_PROMPT_HASH = f"sha256:{sha256(SEMANTIC_JUDGE_SYSTEM_PROMPT.encode('utf-8')).hexdigest()}"
+_JSON_DECODER = json.JSONDecoder()
 
 EVENT_EXTRACTION_LEGACY_SYSTEM_PROMPT = """Extract established events and future plans from a dialogue.
 
@@ -2807,12 +2808,13 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
     if stripped.startswith("```"):
         newline_index = stripped.find("\n")
         if newline_index >= 0:
-            body = stripped[newline_index + 1 :]
-            if body.endswith("```"):
-                body = body[:-3]
-            else:
-                body = body.rstrip()
-            stripped = body.strip()
+            parsed, end_index = _JSON_DECODER.raw_decode(stripped, newline_index + 1)
+            trailing = stripped[end_index:].strip()
+            if trailing and trailing != "```":
+                raise json.JSONDecodeError("Extra data", stripped, end_index)
+            if not isinstance(parsed, dict):
+                raise ValueError("LLM response must be a JSON object")
+            return parsed
     parsed = json.loads(stripped)
     if not isinstance(parsed, dict):
         raise ValueError("LLM response must be a JSON object")
