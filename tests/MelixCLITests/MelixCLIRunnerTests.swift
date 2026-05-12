@@ -188,6 +188,9 @@ struct MelixCLIRunnerTests {
     @Test("doctor command renders markdown and structured json payloads")
     func doctorCommandRendersMarkdownAndStructuredJSONPayloads() async throws {
         let client = StubControlPlaneXPCClient()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-doctor-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
         await client.setDoctorReport(
             makeDoctorReport(
                 markdown: "# Melix Doctor\n\n- worker_state: idle\n",
@@ -199,14 +202,23 @@ struct MelixCLIRunnerTests {
         )
 
         let textOutput = try await MelixCLIRunner(client: client).run(.doctor(.init()))
-        let jsonOutput = try await MelixCLIRunner(client: client).run(.doctor(.init(json: true)))
+        let jsonOutput = try await MelixCLIRunner(
+            client: client,
+            environment: [
+                "MELIX_HOME": root.path,
+                "MELIX_API_KEY": "sk-secret-doctor",
+            ]
+        ).run(.doctor(.init(json: true)))
         let payload = try #require(parseJSONObject(jsonOutput))
         let findings = try #require(payload["findings"] as? [[String: Any]])
 
         #expect(textOutput.contains("# Melix Doctor"))
         #expect(payload["markdown"] as? String == "# Melix Doctor\n\n- worker_state: idle\n")
         #expect(payload["health_status"] as? String == "healthy")
-        #expect(findings.count == 1)
+        #expect(payload["diagnostics_consent_state"] as? String == "local_only")
+        #expect(payload["redaction_schema_version"] as? String == MelixDiagnosticsRedaction.schemaVersion)
+        #expect((payload["redacted_field_count"] as? Int ?? 0) >= 1)
+        #expect(findings.count >= 1)
         #expect(findings[0]["code"] as? String == "cache_warning")
         #expect(findings[0]["severity"] as? String == "warning")
     }
@@ -7932,7 +7944,14 @@ struct MelixCLIRunnerTests {
                 runID: "bench-1",
                 runKind: "benchmark",
                 runRoot: benchRunRoot,
-                startedAtUnixMS: 200
+                startedAtUnixMS: 200,
+                command: "melix bench run --model-id melix-dev-text --suite smoke --local-inference-smoke-prompt hidden-prompt-token",
+                parameters: [
+                    "sample_size": "2",
+                    "prompt": "hidden-prompt-token",
+                    "authorization_header": "Authorization: Bearer sk-secret-header",
+                    "artifact_path": "/Users/alice/.melix/secrets/sk-secret-path/model",
+                ]
             ),
             to: benchRunRoot.appendingPathComponent("run-record.json")
         )
@@ -7947,10 +7966,18 @@ struct MelixCLIRunnerTests {
             ),
             to: evalRunRoot.appendingPathComponent("run-record.json")
         )
+        try "Authorization: Bearer sk-secret-log\nbenchmark failed after import\n"
+            .write(to: benchRunRoot.appendingPathComponent("logs.txt"), atomically: true, encoding: .utf8)
+        try "active line 1\n"
+            .write(to: evalRunRoot.appendingPathComponent("logs.txt"), atomically: true, encoding: .utf8)
 
         let runner = MelixCLIRunner(
             client: StubControlPlaneXPCClient(),
-            environment: ["MELIX_HOME": root.path]
+            environment: [
+                "MELIX_HOME": root.path,
+                "MELIX_API_KEY": "sk-secret-env",
+                "MELIX_LOGS_DIR": root.appendingPathComponent("logs").path,
+            ]
         )
 
         let listJSON = try await runner.run(.runsList(.init(sourcePath: sourceRoot.path, json: true)))
@@ -8005,6 +8032,95 @@ struct MelixCLIRunnerTests {
         #expect(evalReportPayload["run_count"] as? Int == 1)
         #expect(generation["record_scan_ms"] != nil)
         #expect(generation["markdown_render_ms"] != nil)
+
+        let systemJSON = try await runner.run(.system(.init(json: true)))
+        let systemPayload = try #require(parseJSONObject(systemJSON))
+        #expect(systemPayload["diagnostics_consent_state"] as? String == "local_only")
+        #expect(systemPayload["redaction_schema_version"] as? String == MelixDiagnosticsRedaction.schemaVersion)
+        #expect((systemPayload["redacted_field_count"] as? Int ?? 0) >= 1)
+
+        let monitorJSON = try await runner.run(.monitor(.init(sourcePath: sourceRoot.path, json: true)))
+        let monitorPayload = try #require(parseJSONObject(monitorJSON))
+        let recentRuns = try #require(monitorPayload["recent_runs"] as? [[String: Any]])
+        #expect(monitorPayload["run_count"] as? Int == 2)
+        #expect(recentRuns.first?["run_id"] as? String == "bench-1")
+
+        let logsText = try await runner.run(.logs(.init(jobID: "bench-1", sourcePath: sourceRoot.path, follow: true)))
+        #expect(logsText.contains("benchmark failed after import"))
+        #expect(logsText.contains("sk-secret-log") == false)
+        #expect(logsText.contains("<redacted>"))
+
+        let logsJSON = try await runner.run(.logs(.init(jobID: "bench-1", sourcePath: sourceRoot.path, follow: true, json: true)))
+        let logsPayload = try #require(parseJSONObject(logsJSON))
+        #expect(logsPayload["follow_requested"] as? Bool == true)
+        #expect(logsPayload["active_follow_supported"] as? Bool == false)
+        #expect((logsPayload["content"] as? String)?.contains("sk-secret-log") == false)
+
+        try writeJSONObjectForTest(
+            makeRunRecordPayloadForTest(
+                runID: "eval-1",
+                runKind: "evaluation",
+                runRoot: evalRunRoot,
+                startedAtUnixMS: 100,
+                status: "running",
+                metricName: "eval.mmlu.accuracy",
+                metricUnit: "ratio"
+            ),
+            to: evalRunRoot.appendingPathComponent("run-record.json")
+        )
+        Task.detached {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if let handle = try? FileHandle(forWritingTo: evalRunRoot.appendingPathComponent("logs.txt")) {
+                try? handle.seekToEnd()
+                try? handle.write(contentsOf: Data("active line 2\n".utf8))
+                try? handle.close()
+            }
+        }
+        let activeLogsJSON = try await runner.run(.logs(.init(jobID: "eval-1", sourcePath: sourceRoot.path, follow: true, json: true)))
+        let activeLogsPayload = try #require(parseJSONObject(activeLogsJSON))
+        #expect(activeLogsPayload["follow_requested"] as? Bool == true)
+        #expect(activeLogsPayload["active_follow_supported"] as? Bool == true)
+        #expect((activeLogsPayload["content"] as? String)?.contains("active line 2") == true)
+
+        let bundleOutputRoot = root.appendingPathComponent("debug-output/bench-1", isDirectory: true)
+        let bundleJSON = try await runner.run(
+            .debugBundle(
+                .init(
+                    runID: "bench-1",
+                    sourcePath: sourceRoot.path,
+                    outputPath: bundleOutputRoot.path,
+                    json: true
+                )
+            )
+        )
+        let bundlePayload = try #require(parseJSONObject(bundleJSON))
+        #expect(bundlePayload["bundle_path"] as? String == bundleOutputRoot.path)
+        #expect(bundlePayload["diagnostics_consent_state"] as? String == "local_only")
+        for filename in [
+            "command.txt",
+            "redacted-env.json",
+            "effective-config.json",
+            "system.json",
+            "capability-receipts.json",
+            "memory-estimate.json",
+            "logs.txt",
+            "metrics.json",
+            "error.json",
+            "manifest.json",
+        ] {
+            #expect(FileManager.default.fileExists(atPath: bundleOutputRoot.appendingPathComponent(filename).path))
+        }
+        let bundleLogs = try String(contentsOf: bundleOutputRoot.appendingPathComponent("logs.txt"), encoding: .utf8)
+        let bundleEnv = try String(contentsOf: bundleOutputRoot.appendingPathComponent("redacted-env.json"), encoding: .utf8)
+        let bundleCommand = try String(contentsOf: bundleOutputRoot.appendingPathComponent("command.txt"), encoding: .utf8)
+        let bundleConfig = try String(contentsOf: bundleOutputRoot.appendingPathComponent("effective-config.json"), encoding: .utf8)
+        #expect(bundleLogs.contains("sk-secret-log") == false)
+        #expect(bundleEnv.contains("sk-secret-env") == false)
+        #expect(bundleCommand.contains("hidden-prompt-token") == false)
+        #expect(bundleConfig.contains("hidden-prompt-token") == false)
+        #expect(bundleConfig.contains("sk-secret-header") == false)
+        #expect(bundleConfig.contains("sk-secret-path") == false)
+        #expect(bundleEnv.contains("<redacted:"))
 
         let emptyList = try await runner.run(.runsList(.init(sourcePath: root.appendingPathComponent("missing").path)))
         #expect(emptyList == "No run records found.\n")
@@ -9239,20 +9355,26 @@ private func makeRunRecordPayloadForTest(
     runKind: String,
     runRoot: URL,
     startedAtUnixMS: Int,
+    status: String = "completed",
+    command: String? = nil,
+    parameters: [String: Any] = [
+        "sample_size": "2",
+    ],
     metricName: String = "bench.smoke.ttft_ms",
     metricUnit: String = "ms"
 ) -> [String: Any] {
     let evaluation = runKind.hasPrefix("evaluation")
     let suiteID = evaluation ? "mmlu" : "smoke"
     let datasetID = evaluation ? "mmlu.dev.v1" : "ultrachat.smoke"
-    let command = evaluation
+    let defaultCommand = evaluation
         ? "melix eval run --model-id melix-dev-text --suite mmlu --dataset-id mmlu.dev.v1 --sample-size 2"
         : "melix bench run --model-id melix-dev-text --suite smoke --sample-size 2"
+    let command = command ?? defaultCommand
     return [
         "schema_version": "melix.run_record.v1",
         "run_id": runID,
         "run_kind": runKind,
-        "status": "completed",
+        "status": status,
         "started_at_unix_ms": startedAtUnixMS,
         "ended_at_unix_ms": startedAtUnixMS + 50,
         "duration_ms": 50,
@@ -9285,9 +9407,7 @@ private func makeRunRecordPayloadForTest(
             "sample_size": 2,
             "scoring_mode": evaluation ? "normalized_exact_match" : "",
         ],
-        "parameters": [
-            "sample_size": "2",
-        ],
+        "parameters": parameters,
         "reproducibility": [
             "schema_sha256": "schema-digest",
         ],

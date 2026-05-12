@@ -6,6 +6,14 @@ public enum MelixCLICommandCodec {
         switch command {
         case .doctor:
             return "doctor"
+        case .system:
+            return "system"
+        case .monitor:
+            return "monitor"
+        case .logs:
+            return "logs"
+        case .debugBundle:
+            return "debug.bundle"
         case .estimateImport:
             return "estimate.import"
         case .convert:
@@ -188,6 +196,25 @@ public enum MelixCLICommandCodec {
         switch command {
         case .doctor(let options):
             arguments = ["doctor"]
+            json = options.json
+        case .system(let options):
+            arguments = ["system"]
+            json = options.json
+        case .monitor(let options):
+            arguments = ["monitor"]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            json = options.json
+        case .logs(let options):
+            arguments = ["logs", options.jobID]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            if options.follow {
+                arguments.append("--follow")
+            }
+            json = options.json
+        case .debugBundle(let options):
+            arguments = ["debug", "bundle", options.runID]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            appendOption("--output", value: options.outputPath, into: &arguments)
             json = options.json
         case .estimateImport(let options):
             arguments = ["estimate", "import", options.repoID]
