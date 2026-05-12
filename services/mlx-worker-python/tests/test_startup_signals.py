@@ -116,6 +116,18 @@ def test_compare_versions_streams_parts_without_materialized_normalization(
     assert compare_versions("2.10", "2.10.0.0") == 0
 
 
+def test_compare_versions_does_not_allocate_streaming_part_generators(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_iter_parts(value: str):  # pragma: no cover - sentinel
+        raise AssertionError(f"compare_versions allocated part iterator for {value}")
+
+    monkeypatch.setattr(startup_signals_module, "_iter_normalized_version_parts", fail_iter_parts)
+
+    assert compare_versions("v1..2.0+build", "1.2") == 0
+    assert compare_versions("3.0-alpha", "2.99.99") == 1
+
+
 def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

@@ -126,21 +126,13 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
 
 
 def compare_versions(left: str, right: str) -> int:
-    left_parts = _iter_normalized_version_parts(left)
-    right_parts = _iter_normalized_version_parts(right)
+    left_cleaned = left.strip()
+    right_cleaned = right.strip()
+    left_index = 1 if left_cleaned.startswith("v") else 0
+    right_index = 1 if right_cleaned.startswith("v") else 0
     while True:
-        left_done = False
-        right_done = False
-        try:
-            left_value = next(left_parts)
-        except StopIteration:
-            left_done = True
-            left_value = 0
-        try:
-            right_value = next(right_parts)
-        except StopIteration:
-            right_done = True
-            right_value = 0
+        left_value, left_index, left_done = _next_normalized_version_part(left_cleaned, left_index)
+        right_value, right_index, right_done = _next_normalized_version_part(right_cleaned, right_index)
         if left_done and right_done:
             return 0
         if left_value < right_value:
@@ -151,6 +143,34 @@ def compare_versions(left: str, right: str) -> int:
 
 def normalized_version_parts(value: str) -> list[int]:
     return list(_iter_normalized_version_parts(value)) or [0]
+
+
+def _next_normalized_version_part(value: str, index: int) -> tuple[int, int, bool]:
+    current_value = 0
+    digit_seen = False
+    digit_prefix_active = True
+    part_has_chars = False
+    value_length = len(value)
+
+    while index < value_length:
+        character = value[index]
+        index += 1
+        if character == "+" or character == "-":
+            break
+        if character == ".":
+            if part_has_chars:
+                return current_value if digit_seen else 0, index, False
+            continue
+        part_has_chars = True
+        if digit_prefix_active and character.isdigit():
+            current_value = current_value * 10 + (ord(character) - 48)
+            digit_seen = True
+        else:
+            digit_prefix_active = False
+
+    if part_has_chars:
+        return current_value if digit_seen else 0, index, False
+    return 0, index, True
 
 
 def _iter_normalized_version_parts(value: str) -> Iterator[int]:
