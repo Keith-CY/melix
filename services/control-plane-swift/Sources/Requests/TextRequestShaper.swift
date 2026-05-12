@@ -543,8 +543,7 @@ public struct TextRequestShaper: Sendable {
                 return count == 0 ? (text, 0) : ("", count)
             }
             guard remaining[markerStart...].hasPrefix(openMarker) else {
-                let visibleText = remaining.drop(while: { $0.isWhitespace })
-                return count == 0 ? (text, 0) : (String(visibleText), count)
+                return count == 0 ? (text, 0) : (String(remaining), count)
             }
 
             let bodyStart = remaining.index(markerStart, offsetBy: openMarker.count)
