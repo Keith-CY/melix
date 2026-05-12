@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.metadata
 import inspect
 import json
+import os
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -272,40 +274,60 @@ def test_top_level_weight_file_bytes_streams_iterdir_entries(
 ) -> None:
     bundle = tmp_path / "flat-model"
     bundle.mkdir()
-    first = bundle / "model.safetensors"
-    second = bundle / "adapter.npz"
+    (bundle / "model.safetensors").write_bytes(b"weights")
+    (bundle / "adapter.npz").write_bytes(b"adapter-bytes")
+    (bundle / "README.md").write_text("ignore", encoding="utf-8")
     log: list[str] = []
+    original_scandir = runtime_utils.os.scandir
 
-    class TrackedIterator:
-        def __init__(self) -> None:
-            self._entries = iter((first, second))
+    def fail_iterdir(self: Path):  # pragma: no cover - must stay uncalled for this regression
+        raise AssertionError("top-level weight scan should avoid Path.iterdir allocations")
 
-        def __iter__(self) -> "TrackedIterator":
-            return self
+    def tracked_scandir(path: str | os.PathLike[str]) -> os.ScandirIterator[str]:
+        assert Path(path) == bundle
+        log.append("scandir")
+        return original_scandir(path)
 
-        def __next__(self) -> Path:
-            entry = next(self._entries)
-            log.append(f"next:{entry.name}")
-            return entry
+    monkeypatch.setattr(runtime_utils.Path, "iterdir", fail_iterdir)
+    monkeypatch.setattr(runtime_utils.os, "scandir", tracked_scandir)
 
-    def fake_iterdir(path: Path) -> TrackedIterator:
-        assert path == bundle
-        return TrackedIterator()
+    assert runtime_utils._top_level_weight_file_bytes(bundle) == len(b"weightsadapter-bytes")
+    assert log == ["scandir"]
 
-    def fake_weight_file_size(path: Path) -> int:
-        log.append(f"size:{path.name}")
-        return 7 if path == first else 11
 
-    monkeypatch.setattr(runtime_utils.Path, "iterdir", fake_iterdir)
-    monkeypatch.setattr(runtime_utils, "_weight_file_size", fake_weight_file_size)
+def test_top_level_weight_file_bytes_handles_direntry_non_files_and_errors() -> None:
+    class FakeStat:
+        st_size = 13
 
-    assert runtime_utils._top_level_weight_file_bytes(bundle) == 18
-    assert log == [
-        "next:model.safetensors",
-        "size:model.safetensors",
-        "next:adapter.npz",
-        "size:adapter.npz",
-    ]
+    class FakeEntry:
+        def __init__(
+            self,
+            name: str,
+            *,
+            is_file: bool = True,
+            is_file_raises: bool = False,
+            stat_raises: bool = False,
+        ) -> None:
+            self.name = name
+            self._is_file = is_file
+            self._is_file_raises = is_file_raises
+            self._stat_raises = stat_raises
+
+        def is_file(self) -> bool:
+            if self._is_file_raises:
+                raise OSError("entry unavailable")
+            return self._is_file
+
+        def stat(self) -> FakeStat:
+            if self._stat_raises:
+                raise OSError("stat unavailable")
+            return FakeStat()
+
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry("README.md")) == 0
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry("nested.safetensors", is_file=False)) == 0
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry("broken.safetensors", is_file_raises=True)) == 0
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry("missing.safetensors", stat_raises=True)) == 0
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry("model.safetensors")) == 13
 
 
 def test_estimate_model_weight_resident_bytes_ignores_malformed_index_and_unreadable_directory(
@@ -320,7 +342,7 @@ def test_estimate_model_weight_resident_bytes_ignores_malformed_index_and_unread
 
     original_is_file = runtime_utils.Path.is_file
     original_is_dir = runtime_utils.Path.is_dir
-    original_iterdir = runtime_utils.Path.iterdir
+    original_scandir = runtime_utils.os.scandir
     unreadable_path = tmp_path / "unreadable"
     unreadable_path.mkdir()
 
@@ -334,17 +356,18 @@ def test_estimate_model_weight_resident_bytes_ignores_malformed_index_and_unread
             return True
         return original_is_dir(path)
 
-    def fake_iterdir(path):
-        if path == missing_weight_map:
+    def fake_scandir(path):
+        if Path(path) == missing_weight_map:
             raise OSError("no list")
-        return original_iterdir(path)
+        return original_scandir(path)
 
     monkeypatch.setattr(runtime_utils.Path, "is_file", fake_is_file)
     monkeypatch.setattr(runtime_utils.Path, "is_dir", fake_is_dir)
-    monkeypatch.setattr(runtime_utils.Path, "iterdir", fake_iterdir)
+    monkeypatch.setattr(runtime_utils.os, "scandir", fake_scandir)
 
     assert runtime_utils.estimate_model_weight_resident_bytes(str(unreadable_path)) == 0
     assert runtime_utils.estimate_model_weight_resident_bytes(str(missing_weight_map)) == 0
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(tmp_path)) == 0
 
 
 def test_estimate_model_weight_resident_bytes_handles_file_missing_and_stat_errors(
