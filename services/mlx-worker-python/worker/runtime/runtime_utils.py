@@ -5,6 +5,7 @@ from functools import lru_cache
 import importlib.metadata
 import inspect
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -166,12 +167,24 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
 def _top_level_weight_file_bytes(model_dir: Path) -> int:
     total = 0
     try:
-        entries = model_dir.iterdir()
+        entries = os.scandir(model_dir)
     except OSError:
         return 0
-    for path in entries:
-        total += _weight_file_size(path)
+    with entries:
+        for entry in entries:
+            total += _weight_dir_entry_file_size(entry)
     return total
+
+
+def _weight_dir_entry_file_size(entry: os.DirEntry[str]) -> int:
+    if os.path.splitext(entry.name)[1].lower() not in _MODEL_WEIGHT_SUFFIXES:
+        return 0
+    try:
+        if not entry.is_file():
+            return 0
+        return max(int(entry.stat().st_size), 0)
+    except OSError:
+        return 0
 
 
 def _weight_file_size(path: Path) -> int:
