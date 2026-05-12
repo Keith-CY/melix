@@ -100,7 +100,7 @@ class RequestStreamAssembler:
     _PIPE_TOOL_PREFIXES_REVERSED = tuple(reversed(_PIPE_TOOL_PREFIXES))
     _VISIBLE_TAIL_MARKERS = ("\nFinal answer", "\nFinal:", "\nAnswer:", "\nAssistant:", "\nResult:")
     _PIPE_CALL_RE = re.compile(
-        r"^\s*call:(?P<name>[A-Za-z0-9_.:-]+)\s*(?P<args>\{.*\})\s*$",
+        r"^\s*call:(?P<name>[A-Za-z0-9_.:/-]+)\s*(?P<args>\{.*\}|\(\))\s*$",
         re.DOTALL,
     )
 
@@ -110,11 +110,22 @@ class RequestStreamAssembler:
         reasoning_enabled: bool,
         structured_output_mode: str = "",
         tool_parser_mode: str = "",
+        allowed_tool_names: tuple[str, ...] = (),
     ) -> None:
         self._request_id = request_id
         self._reasoning_enabled = reasoning_enabled
         self._structured_output_mode = structured_output_mode.strip().lower()
         self._tool_parser_mode = tool_parser_mode.strip().lower()
+        self._allowed_tool_names = tuple(
+            dict.fromkeys(name.strip() for name in allowed_tool_names if name.strip())
+        )
+        self._allowed_tool_name_set = set(self._allowed_tool_names)
+        self._allowed_tool_names_by_casefold = {
+            name.casefold(): name for name in self._allowed_tool_names
+        }
+        self._allowed_tool_names_by_prefix = tuple(
+            sorted(self._allowed_tool_names, key=len, reverse=True)
+        )
         self._tool_parsing_enabled_value = bool(self._tool_parser_mode)
         self._is_json_structured_output_value = self._structured_output_mode in {
             "json_object",
@@ -170,6 +181,8 @@ class RequestStreamAssembler:
             "byte_fallback_decode_error_count": 0,
             "empty_thinking_sentinel_count": 0,
             "reasoning_parser_bypassed_count": 0,
+            "tool_call_name_normalized_count": 0,
+            "unknown_tool_delta_count": 0,
         }
 
     def accept(self, fragment: StreamFragment) -> list[AssemblyDelta]:
@@ -542,6 +555,13 @@ class RequestStreamAssembler:
         if not name:
             self._metrics["malformed_tool_fragment_count"] += 1
             return None
+        resolved_name = self._resolve_tool_name(name)
+        if resolved_name is None:
+            self._metrics["unknown_tool_delta_count"] += 1
+            return None
+        if resolved_name != name:
+            self._metrics["tool_call_name_normalized_count"] += 1
+            name = resolved_name
 
         arguments = payload.get("arguments", {})
         call_id = str(payload.get("id") or payload.get("call_id") or "").strip()
@@ -584,6 +604,11 @@ class RequestStreamAssembler:
         if match is None:
             self._metrics["malformed_tool_fragment_count"] += 1
             return None
+        if match.group("args") == "()":
+            return {
+                "name": match.group("name"),
+                "arguments": {},
+            }
         try:
             arguments = json.loads(match.group("args"))
         except json.JSONDecodeError:
@@ -598,6 +623,27 @@ class RequestStreamAssembler:
             "name": match.group("name"),
             "arguments": arguments,
         }
+
+    def _resolve_tool_name(self, name: str) -> str | None:
+        if not self._allowed_tool_names:
+            return name
+        if name in self._allowed_tool_name_set:
+            return name
+        declared = self._allowed_tool_names_by_casefold.get(name.casefold())
+        if declared is not None:
+            return declared
+        for declared in self._allowed_tool_names_by_prefix:
+            if self._is_action_qualified_tool_name(name, declared):
+                return declared
+        return None
+
+    @staticmethod
+    def _is_action_qualified_tool_name(name: str, declared: str) -> bool:
+        if len(name) <= len(declared):
+            return False
+        if not name.casefold().startswith(declared.casefold()):
+            return False
+        return name[len(declared)] in {".", ":", "/"}
 
     def _parse_relaxed_object_arguments(self, text: str) -> dict[str, object] | None:
         stripped = text.strip()

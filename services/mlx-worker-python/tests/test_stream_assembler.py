@@ -230,6 +230,90 @@ def test_pipe_tool_call_relaxed_object_arguments_are_parsed() -> None:
     assert calls[0].arguments_json_fragment == '{"command":"gh auth status"}'
 
 
+def test_pipe_tool_call_empty_parentheses_arguments_are_parsed() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-empty-parens",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="<|tool_call>call:github_auth:github_auth_check()<tool_call|>"
+        )
+    )
+    completed = assembler.completed()
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+
+    assert len(calls) == 1
+    assert calls[0].tool_name == "github_auth:github_auth_check"
+    assert calls[0].arguments_json_fragment == "{}"
+    assert completed.assistant_text == ""
+    assert completed.metrics["tool_call_markup_leak_count"] == 0
+
+
+def test_action_qualified_tool_name_is_normalized_to_declared_openai_tool() -> None:
+    cases = (
+        (
+            "terminal.execute",
+            '<|tool_call>call:terminal.execute{"command":"pwd"}<tool_call|>',
+            "terminal",
+            '{"command":"pwd"}',
+        ),
+        (
+            "terminal:run_command",
+            '<|tool_call>call:terminal:run_command{"command":"gh auth status"}<tool_call|>',
+            "terminal",
+            '{"command":"gh auth status"}',
+        ),
+        (
+            "process/start",
+            '<|tool_call>call:process/start{"command":"npm test"}<tool_call|>',
+            "process",
+            '{"command":"npm test"}',
+        ),
+    )
+
+    for request_id, raw_text, expected_name, expected_arguments in cases:
+        assembler = RequestStreamAssembler(
+            request_id=request_id,
+            reasoning_enabled=False,
+            structured_output_mode="",
+            tool_parser_mode="xml",
+            allowed_tool_names=("terminal", "process"),
+        )
+        deltas = assembler.accept(StreamFragment(raw_text=raw_text))
+        completed = assembler.completed()
+        calls = [delta.tool_call for delta in deltas if delta.tool_call]
+
+        assert len(calls) == 1
+        assert calls[0].tool_name == expected_name
+        assert calls[0].arguments_json_fragment == expected_arguments
+        assert completed.metrics["tool_call_name_normalized_count"] == 1
+        assert completed.metrics["unknown_tool_delta_count"] == 0
+
+
+def test_unknown_tool_name_is_suppressed_when_openai_tools_are_declared() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-unknown-tool",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("terminal",),
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(raw_text="<|tool_call>call:github_auth:github_auth_check()<tool_call|>")
+    )
+    completed = assembler.completed()
+
+    assert [delta.tool_call for delta in deltas if delta.tool_call] == []
+    assert completed.assistant_text == ""
+    assert completed.metrics["unknown_tool_delta_count"] == 1
+    assert completed.metrics["tool_call_markup_leak_count"] == 0
+
+
 def test_pipe_tool_call_relaxed_object_arguments_preserve_quoted_commas() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-pipe-tool-call-commas",

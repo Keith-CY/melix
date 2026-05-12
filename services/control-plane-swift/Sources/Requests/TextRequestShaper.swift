@@ -123,6 +123,7 @@ public struct TextRequestShaper: Sendable {
     private struct HistorySanitizationResult: Sendable {
         let messages: [NormalizedTextMessage]
         let stripCount: Int
+        let toolCallStripCount: Int
     }
 
     private struct PresetDefaults: Sendable {
@@ -358,6 +359,7 @@ public struct TextRequestShaper: Sendable {
             reasoningAutoDetectModelFamily: resolvedThinking.autoDetectModelFamily,
             reasoningContinuityRehydrated: resolvedThinking.continuityRehydrated,
             reasoningHistoryStripCount: sanitizedHistory.stripCount,
+            rawToolCallHistoryStripCount: sanitizedHistory.toolCallStripCount,
             structuredOutput: request.structuredOutput,
             toolParser: resolvedToolParser,
             tools: request.tools,
@@ -447,6 +449,7 @@ public struct TextRequestShaper: Sendable {
 
     private func sanitizeReasoningHistory(messages: [NormalizedTextMessage]) -> HistorySanitizationResult {
         var stripCount = 0
+        var toolCallStripCount = 0
         let sanitizedMessages = messages.map { message in
             guard message.role == "assistant" else {
                 return message
@@ -459,10 +462,11 @@ public struct TextRequestShaper: Sendable {
                     continue
                 }
 
-                let stripped = Self.stripLeadingHiddenThoughtBlocks(from: originalText)
-                if stripped.count > 0 {
+                let stripped = Self.stripLeadingHistoryArtifacts(from: originalText)
+                if stripped.reasoningCount > 0 || stripped.toolCallCount > 0 {
                     parts[index].text = stripped.text
-                    stripCount += stripped.count
+                    stripCount += stripped.reasoningCount
+                    toolCallStripCount += stripped.toolCallCount
                 }
             }
 
@@ -474,7 +478,37 @@ public struct TextRequestShaper: Sendable {
             )
         }
 
-        return HistorySanitizationResult(messages: sanitizedMessages, stripCount: stripCount)
+        return HistorySanitizationResult(
+            messages: sanitizedMessages,
+            stripCount: stripCount,
+            toolCallStripCount: toolCallStripCount
+        )
+    }
+
+    private static func stripLeadingHistoryArtifacts(
+        from text: String
+    ) -> (text: String, reasoningCount: Int, toolCallCount: Int) {
+        var current = text
+        var reasoningCount = 0
+        var toolCallCount = 0
+
+        while true {
+            let strippedThoughts = stripLeadingHiddenThoughtBlocks(from: current)
+            if strippedThoughts.count > 0 {
+                current = strippedThoughts.text
+                reasoningCount += strippedThoughts.count
+                continue
+            }
+
+            let strippedToolCalls = stripLeadingRawToolCallBlocks(from: current)
+            if strippedToolCalls.count > 0 {
+                current = strippedToolCalls.text
+                toolCallCount += strippedToolCalls.count
+                continue
+            }
+
+            return (current, reasoningCount, toolCallCount)
+        }
     }
 
     private static func stripLeadingHiddenThoughtBlocks(from text: String) -> (text: String, count: Int) {
@@ -489,6 +523,32 @@ public struct TextRequestShaper: Sendable {
 
             let bodyStart = remaining.index(tagStart, offsetBy: "<think>".count)
             guard let closeRange = remaining[bodyStart...].range(of: "</think>") else {
+                return count == 0 ? (text, 0) : (String(remaining), count)
+            }
+
+            count += 1
+            remaining = remaining[closeRange.upperBound...]
+        }
+    }
+
+    private static func stripLeadingRawToolCallBlocks(from text: String) -> (text: String, count: Int) {
+        let openMarker = "<|tool_call>"
+        let closeMarker = "<tool_call|>"
+        var remaining = text[...]
+        var count = 0
+
+        while true {
+            let markerStart = remaining.drop(while: { $0.isWhitespace }).startIndex
+            guard markerStart < remaining.endIndex else {
+                return count == 0 ? (text, 0) : ("", count)
+            }
+            guard remaining[markerStart...].hasPrefix(openMarker) else {
+                let visibleText = remaining.drop(while: { $0.isWhitespace })
+                return count == 0 ? (text, 0) : (String(visibleText), count)
+            }
+
+            let bodyStart = remaining.index(markerStart, offsetBy: openMarker.count)
+            guard let closeRange = remaining[bodyStart...].range(of: closeMarker) else {
                 return count == 0 ? (text, 0) : (String(remaining), count)
             }
 

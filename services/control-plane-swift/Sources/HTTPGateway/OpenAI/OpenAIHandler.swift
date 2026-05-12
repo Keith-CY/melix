@@ -1981,6 +1981,11 @@ public struct OpenAIHandler: Sendable {
            stripCount > 0 {
             await metricsStore.increment("http.reasoning_history_strip_count", by: stripCount)
         }
+        if let rawToolCallStripCount = translated.workerRequest.execution.ext["melix.tool_call_history_strip_count"],
+           let toolCallStripCount = Double(rawToolCallStripCount),
+           toolCallStripCount > 0 {
+            await metricsStore.increment("http.tool_call_history_strip_count", by: toolCallStripCount)
+        }
     }
 
     private func streamResponse(
