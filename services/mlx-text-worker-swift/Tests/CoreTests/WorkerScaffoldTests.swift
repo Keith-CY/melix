@@ -996,30 +996,32 @@ final class WorkerScaffoldTests: XCTestCase {
 
     func testVendoredModelContainerSerialAccessCompactsQueuedWaiters() async throws {
         try await withTemporaryDefaultMetallib {
-            let container = makeLiveSwiftMLXModelContainer(promptTokens: [1, 2, 3])
-            let gate = WorkerScaffoldAsyncGate()
+            try await Device.withDefaultDevice(.cpu) {
+                let container = makeLiveSwiftMLXModelContainer(promptTokens: [1, 2, 3])
+                let gate = WorkerScaffoldAsyncGate()
 
-            let holder = Task {
-                await container.perform { _ in
-                    await gate.enterAndWait()
-                    return ()
+                let holder = Task {
+                    await container.perform { _ in
+                        await gate.enterAndWait()
+                        return ()
+                    }
                 }
-            }
-            await gate.waitUntilEntered()
+                await gate.waitUntilEntered()
 
-            let waiters = (0 ..< 40).map { _ in
-                Task {
-                    await container.decode(tokens: [1])
+                let waiters = (0 ..< 40).map { _ in
+                    Task {
+                        await container.decode(tokens: [1])
+                    }
                 }
-            }
 
-            try await Task.sleep(nanoseconds: 50_000_000)
-            await gate.open()
-            await holder.value
+                try await Task.sleep(nanoseconds: 50_000_000)
+                await gate.open()
+                await holder.value
 
-            for waiter in waiters {
-                let decoded = await waiter.value
-                XCTAssertEqual(decoded, "tok1")
+                for waiter in waiters {
+                    let decoded = await waiter.value
+                    XCTAssertEqual(decoded, "tok1")
+                }
             }
         }
     }
