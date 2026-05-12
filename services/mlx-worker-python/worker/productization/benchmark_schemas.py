@@ -132,9 +132,13 @@ class ServingBenchmarkContextRow:
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
+    agentic_tool_registry: dict[str, object] | None = None
+    agentic_tool_calls: tuple[dict[str, object], ...] = ()
+    agentic_tool_observations: tuple[dict[str, object], ...] = ()
+    agentic_tool_metrics: dict[str, float] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "model_id": self.model_id,
@@ -179,6 +183,14 @@ class ServingBenchmarkContextRow:
             "dflash_rollback_count": self.dflash_rollback_count,
             "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
         }
+        _append_agentic_tool_evidence(
+            payload,
+            registry=self.agentic_tool_registry,
+            calls=self.agentic_tool_calls,
+            observations=self.agentic_tool_observations,
+            metrics=self.agentic_tool_metrics,
+        )
+        return payload
 
 
 @dataclass(frozen=True)
@@ -226,9 +238,13 @@ class ServingBenchmarkBatchRow:
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
+    agentic_tool_registry: dict[str, object] | None = None
+    agentic_tool_calls: tuple[dict[str, object], ...] = ()
+    agentic_tool_observations: tuple[dict[str, object], ...] = ()
+    agentic_tool_metrics: dict[str, float] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "model_id": self.model_id,
@@ -273,6 +289,14 @@ class ServingBenchmarkBatchRow:
             "dflash_rollback_count": self.dflash_rollback_count,
             "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
         }
+        _append_agentic_tool_evidence(
+            payload,
+            registry=self.agentic_tool_registry,
+            calls=self.agentic_tool_calls,
+            observations=self.agentic_tool_observations,
+            metrics=self.agentic_tool_metrics,
+        )
+        return payload
 
 
 @dataclass(frozen=True)
@@ -453,9 +477,13 @@ class BenchmarkMatrixRequestRow:
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
+    agentic_tool_registry: dict[str, object] | None = None
+    agentic_tool_calls: tuple[dict[str, object], ...] = ()
+    agentic_tool_observations: tuple[dict[str, object], ...] = ()
+    agentic_tool_metrics: dict[str, float] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "job_id": self.job_id,
             "cell_id": self.cell_id,
             "task_kind": self.task_kind,
@@ -503,6 +531,14 @@ class BenchmarkMatrixRequestRow:
             "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
             "created_at_unix_ms": self.created_at_unix_ms,
         }
+        _append_agentic_tool_evidence(
+            payload,
+            registry=self.agentic_tool_registry,
+            calls=self.agentic_tool_calls,
+            observations=self.agentic_tool_observations,
+            metrics=self.agentic_tool_metrics,
+        )
+        return payload
 
 
 def build_serving_benchmark_job(
@@ -551,6 +587,24 @@ def build_serving_benchmark_job(
         updated_at_unix_ms=updated_at_unix_ms,
         suite_metadata=dict(suite_metadata or {}),
     )
+
+
+def _append_agentic_tool_evidence(
+    payload: dict[str, object],
+    *,
+    registry: dict[str, object] | None,
+    calls: tuple[dict[str, object], ...],
+    observations: tuple[dict[str, object], ...],
+    metrics: dict[str, float] | None,
+) -> None:
+    if registry:
+        payload["agentic_tool_registry"] = dict(registry)
+    if calls:
+        payload["agentic_tool_calls"] = [dict(call) for call in calls]
+    if observations:
+        payload["agentic_tool_observations"] = [dict(observation) for observation in observations]
+    if metrics:
+        payload["agentic_tool_metrics"] = dict(metrics)
 
 
 def build_benchmark_matrix_job(
@@ -707,6 +761,10 @@ def build_benchmark_matrix_request_row(
     dflash_block_size: int = 0,
     dflash_rollback_count: int = 0,
     dflash_target_hidden_layers: int = 0,
+    agentic_tool_registry: dict[str, object] | None = None,
+    agentic_tool_calls: tuple[dict[str, object], ...] = (),
+    agentic_tool_observations: tuple[dict[str, object], ...] = (),
+    agentic_tool_metrics: dict[str, float] | None = None,
 ) -> BenchmarkMatrixRequestRow:
     return BenchmarkMatrixRequestRow(
         job_id=job_id,
@@ -755,6 +813,10 @@ def build_benchmark_matrix_request_row(
         dflash_block_size=dflash_block_size,
         dflash_rollback_count=dflash_rollback_count,
         dflash_target_hidden_layers=dflash_target_hidden_layers,
+        agentic_tool_registry=dict(agentic_tool_registry or {}),
+        agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
+        agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
+        agentic_tool_metrics=dict(agentic_tool_metrics or {}),
     )
 
 
@@ -802,6 +864,10 @@ def build_serving_benchmark_context_row(
     dflash_block_size: int = 0,
     dflash_rollback_count: int = 0,
     dflash_target_hidden_layers: int = 0,
+    agentic_tool_registry: dict[str, object] | None = None,
+    agentic_tool_calls: tuple[dict[str, object], ...] = (),
+    agentic_tool_observations: tuple[dict[str, object], ...] = (),
+    agentic_tool_metrics: dict[str, float] | None = None,
 ) -> ServingBenchmarkContextRow:
     return ServingBenchmarkContextRow(
         schema_version="melix.serving_benchmark_context_row.v1",
@@ -847,6 +913,10 @@ def build_serving_benchmark_context_row(
         dflash_block_size=dflash_block_size,
         dflash_rollback_count=dflash_rollback_count,
         dflash_target_hidden_layers=dflash_target_hidden_layers,
+        agentic_tool_registry=dict(agentic_tool_registry or {}),
+        agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
+        agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
+        agentic_tool_metrics=dict(agentic_tool_metrics or {}),
     )
 
 
@@ -894,6 +964,10 @@ def build_serving_benchmark_batch_row(
     dflash_block_size: int = 0,
     dflash_rollback_count: int = 0,
     dflash_target_hidden_layers: int = 0,
+    agentic_tool_registry: dict[str, object] | None = None,
+    agentic_tool_calls: tuple[dict[str, object], ...] = (),
+    agentic_tool_observations: tuple[dict[str, object], ...] = (),
+    agentic_tool_metrics: dict[str, float] | None = None,
 ) -> ServingBenchmarkBatchRow:
     return ServingBenchmarkBatchRow(
         schema_version="melix.serving_benchmark_batch_row.v1",
@@ -939,6 +1013,10 @@ def build_serving_benchmark_batch_row(
         dflash_block_size=dflash_block_size,
         dflash_rollback_count=dflash_rollback_count,
         dflash_target_hidden_layers=dflash_target_hidden_layers,
+        agentic_tool_registry=dict(agentic_tool_registry or {}),
+        agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
+        agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
+        agentic_tool_metrics=dict(agentic_tool_metrics or {}),
     )
 
 

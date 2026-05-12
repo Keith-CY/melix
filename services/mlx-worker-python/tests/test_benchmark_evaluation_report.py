@@ -774,6 +774,78 @@ def test_evaluation_sample_collector_finalizes_mean_metrics_directly(
     assert metrics == {"eval.sample.smoke.sample_render_ms_mean": 4.0}
 
 
+def test_evaluation_sample_collector_aggregates_agentic_tool_metrics() -> None:
+    metrics: dict[str, object] = {}
+
+    _collect_evaluation_sample_probe_metrics(
+        metrics,
+        [
+            {
+                "suite_id": "agentic",
+                "agentic_tool_metrics": {
+                    "agentic_tool.call_count": 2.0,
+                    "agentic_tool.completed_count": 2.0,
+                    "agentic_tool.observation_emitted_bytes": 40.0,
+                },
+            },
+            {
+                "suite_id": "agentic",
+                "agentic_tool_metrics": {
+                    "agentic_tool.call_count": 4.0,
+                    "agentic_tool.completed_count": 3.0,
+                    "agentic_tool.failed_count": 1.0,
+                    "agentic_tool.observation_emitted_bytes": 80.0,
+                },
+            },
+        ],
+    )
+
+    assert metrics["eval.sample.agentic.agentic_tool.call_count_mean"] == 3.0
+    assert metrics["eval.sample.agentic.agentic_tool.completed_count_mean"] == 2.5
+    assert metrics["eval.sample.agentic.agentic_tool.failed_count_mean"] == 1.0
+    assert metrics["eval.sample.agentic.agentic_tool.observation_emitted_bytes_mean"] == 60.0
+
+
+def test_benchmark_probe_collector_aggregates_agentic_tool_metrics() -> None:
+    metrics: dict[str, object] = {}
+
+    _collect_benchmark_probe_metrics(
+        metrics,
+        [
+            {
+                "suite_id": "agentic",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "agentic_tool_metrics": {
+                    "agentic_tool.call_count": 1.0,
+                    "agentic_tool.completed_count": 1.0,
+                    "agentic_tool.observation_emitted_bytes": 20.0,
+                },
+            },
+            {
+                "suite_id": "agentic",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "agentic_tool_metrics": {
+                    "agentic_tool.call_count": 3.0,
+                    "agentic_tool.completed_count": 2.0,
+                    "agentic_tool.failed_count": 1.0,
+                    "agentic_tool.observation_emitted_bytes": 40.0,
+                },
+            },
+        ],
+        prefix="bench.context",
+    )
+
+    label = "agentic.ctx64.gen16.b1"
+    assert metrics[f"bench.context.{label}.agentic_tool.call_count_mean"] == 2.0
+    assert metrics[f"bench.context.{label}.agentic_tool.completed_count_mean"] == 1.5
+    assert metrics[f"bench.context.{label}.agentic_tool.failed_count_mean"] == 1.0
+    assert metrics[f"bench.context.{label}.agentic_tool.observation_emitted_bytes_mean"] == 30.0
+
+
 def test_probe_collectors_use_expected_sparse_row_scan_strategy() -> None:
     class NoContainsDict(dict[str, object]):
         def __contains__(self, key: object) -> bool:

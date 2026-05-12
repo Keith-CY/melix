@@ -85,8 +85,8 @@ The v1 Melix built-in tool names are:
 | `image_crop` | `vision.image_crop` | `image_region` | crop or inspect a bounded region from a referenced image |
 | `layout_parse` | `vision.layout_parse` | `layout_elements` | extract document, page, OCR, or visual layout elements |
 | `text_search` | `retrieval.text_search` | `search_results` | search fixture-backed textual evidence |
-| `image_search` | `retrieval.image_search` | `image_results` | search fixture-backed image evidence |
-| `visit` | `retrieval.visit` | `page_extract` | fetch or read a fixture-backed page/document |
+| `image_search` | `retrieval.image_search` | `image_search_results` | search fixture-backed image evidence |
+| `visit` | `browser.visit` | `page_extract` | fetch or read a fixture-backed page/document |
 | `local_compute` | `compute.local` | `compute_result` | run deterministic local computation over supplied values |
 
 Additional tools may be added only by extending the registry contract, tests,

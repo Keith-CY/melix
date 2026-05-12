@@ -12,6 +12,7 @@ from typing import Any
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
+from worker.runtime.agentic_tools import execute_agentic_tool_calls
 
 
 @dataclass(frozen=True)
@@ -365,6 +366,7 @@ def _grpo_policy_updates(
                 }
             )
         scores = [candidate["score"] for candidate in scored_candidates]
+        tool_run = _agentic_tool_run_for_sample(sample)
         reward_values.extend(scores)
         selected = max(scored_candidates, key=lambda candidate: candidate["score"])
         group_margins.append(max(scores) - min(scores))
@@ -387,6 +389,7 @@ def _grpo_policy_updates(
                 "scored_candidates": scored_candidates,
             }
         )
+        _attach_agentic_tool_run(trace_rows[-1], tool_run)
         if reward_scorer is not None:
             trace_rows[-1]["reward_scoring_backend"] = reward_scorer.runtime_name
             trace_rows[-1]["reward_model_id"] = reward_scorer.reward_model_id
@@ -444,6 +447,7 @@ def _grpo_runtime_policy_updates(
             else _scored_seed_candidates(sample, sample_index=sample_index)
         )
         generated_candidates: list[dict[str, Any]] = []
+        tool_run = _agentic_tool_run_for_sample(sample)
         for candidate_index in range(candidate_count):
             generation_prompt = _runtime_generation_prompt(
                 prompt,
@@ -503,6 +507,7 @@ def _grpo_runtime_policy_updates(
                 "generated_candidates": generated_candidates,
             }
         )
+        _attach_agentic_tool_run(trace_rows[-1], tool_run)
         if reward_scorer is not None:
             trace_rows[-1]["reward_scoring_backend"] = reward_scorer.runtime_name
             trace_rows[-1]["reward_model_id"] = reward_scorer.reward_model_id
@@ -560,6 +565,7 @@ def _rlhf_policy_updates(
         else:
             reward = float(sample["reward_score"])
         reward_values.append(reward)
+        tool_run = _agentic_tool_run_for_sample(sample)
         row = {
             "sample_index": sample_index,
             "alignment_algorithm": "rlhf",
@@ -569,6 +575,7 @@ def _rlhf_policy_updates(
             "selected_response": response,
             "selected_reward": reward,
         }
+        _attach_agentic_tool_run(row, tool_run)
         if "reward_score" in sample and candidate_scoring_mode == "reward_model":
             row["dataset_reward_score"] = float(sample["reward_score"])
         if reward_scorer is not None:
@@ -590,6 +597,29 @@ def _rlhf_policy_updates(
         candidate_scoring_mode=candidate_scoring_mode,
         reward_scoring_backend=reward_scorer.runtime_name if reward_scorer is not None else "",
     )
+
+
+def _agentic_tool_run_for_sample(sample: dict[str, Any]):
+    tool_calls = sample.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return None
+    fixture_context = sample.get("tool_fixture_context") or sample.get("tool_context")
+    return execute_agentic_tool_calls(
+        tool_calls,
+        fixture_context=fixture_context if isinstance(fixture_context, dict) else {},
+    )
+
+
+def _attach_agentic_tool_run(row: dict[str, Any], tool_run: Any | None) -> None:
+    if tool_run is None:
+        return
+    row["agentic_tool_registry"] = tool_run.registry_receipt
+    row["agentic_tool_calls"] = [dict(call) for call in tool_run.tool_calls]
+    row["agentic_tool_observations"] = [
+        dict(observation) for observation in tool_run.observations
+    ]
+    row["agentic_tool_metrics"] = dict(tool_run.metrics)
+    row["turns"] = [dict(turn) for turn in tool_run.trace_turns]
 
 
 def _resolve_reward_model_scorer(

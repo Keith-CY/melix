@@ -76,6 +76,7 @@ from worker.productization.evaluation_schemas import (
 )
 from worker.productization.evaluation_store import EvaluationStore
 from worker.productization.probe_policy import ProbePolicy
+from worker.runtime.agentic_tools import execute_agentic_tool_calls
 
 
 _SUITE_SCORE_MODES = {
@@ -120,6 +121,14 @@ _SAMPLE_PROBE_MEAN_FIELDS = (
     ("scoring_ms_mean", "scoring_ms"),
     ("raw_response_chars_mean", "raw_response_chars"),
     ("extracted_result_chars_mean", "extracted_result_chars"),
+)
+_AGENTIC_TOOL_METRIC_NAMES = (
+    "agentic_tool.call_count",
+    "agentic_tool.observation_count",
+    "agentic_tool.completed_count",
+    "agentic_tool.timeout_count",
+    "agentic_tool.failed_count",
+    "agentic_tool.observation_emitted_bytes",
 )
 
 
@@ -535,6 +544,7 @@ class EvaluationCore:
             sample_records,
             tuple(field_name for _, field_name in _SAMPLE_PROBE_MEAN_FIELDS),
         )
+        agentic_tool_metrics = self._agentic_tool_metric_totals(sample_records)
         result_metrics = {
             f"eval.{suite_id}.typed_score_mean": typed_score_mean,
             f"eval.{suite_id}.threshold_pass_rate": threshold_pass_rate,
@@ -548,6 +558,10 @@ class EvaluationCore:
             **{
                 f"eval.{suite_id}.{metric_name}": sample_probe_means[field_name]
                 for metric_name, field_name in _SAMPLE_PROBE_MEAN_FIELDS
+            },
+            **{
+                f"eval.{suite_id}.{metric_name}": value
+                for metric_name, value in agentic_tool_metrics.items()
             },
         }
         result_units = {
@@ -568,6 +582,10 @@ class EvaluationCore:
             f"eval.{suite_id}.raw_response_chars_mean": "chars",
             f"eval.{suite_id}.extracted_result_chars_mean": "chars",
         }
+        for metric_name in agentic_tool_metrics:
+            result_units[f"eval.{suite_id}.{metric_name}"] = (
+                "bytes" if metric_name.endswith("_bytes") else "count"
+            )
         if suite_id in _CODE_EVAL_SUITES:
             code_exec_pass_count = sum(
                 1
@@ -2240,6 +2258,25 @@ class EvaluationCore:
         raw_response = ""
         sample_render_ms = 0.0
         inference_ms = 0.0
+        agentic_tool_registry: dict[str, object] = {}
+        agentic_tool_calls: tuple[dict[str, object], ...] = ()
+        agentic_tool_observations: tuple[dict[str, object], ...] = ()
+        agentic_tool_metrics: dict[str, float] = {}
+        raw_tool_calls = sample.get("tool_calls")
+        if isinstance(raw_tool_calls, list) and raw_tool_calls:
+            tool_run = execute_agentic_tool_calls(
+                raw_tool_calls,
+                fixture_context=EvaluationCore._sample_tool_fixture_context(
+                    sample=sample,
+                    dataset_root=dataset_root,
+                ),
+            )
+            agentic_tool_registry = tool_run.registry_receipt
+            agentic_tool_calls = tuple(dict(call) for call in tool_run.tool_calls)
+            agentic_tool_observations = tuple(
+                dict(observation) for observation in tool_run.observations
+            )
+            agentic_tool_metrics = dict(tool_run.metrics)
         code_language = ""
         code_entry_point = ""
         code_compile_status = ""
@@ -2308,6 +2345,10 @@ class EvaluationCore:
                 raw_response_chars=len(raw_response),
                 extracted_result_chars=0,
                 failure_stage="inference",
+                agentic_tool_registry=agentic_tool_registry,
+                agentic_tool_calls=agentic_tool_calls,
+                agentic_tool_observations=agentic_tool_observations,
+                agentic_tool_metrics=agentic_tool_metrics,
             )
         extracted_result = ""
         extraction_status = ""
@@ -2440,7 +2481,31 @@ class EvaluationCore:
             raw_response_chars=len(raw_response),
             extracted_result_chars=len(extracted_result),
             failure_stage=failure_stage,
+            agentic_tool_registry=agentic_tool_registry,
+            agentic_tool_calls=agentic_tool_calls,
+            agentic_tool_observations=agentic_tool_observations,
+            agentic_tool_metrics=agentic_tool_metrics,
         )
+
+    @staticmethod
+    def _sample_tool_fixture_context(
+        *,
+        sample: dict[str, object],
+        dataset_root: Path,
+    ) -> dict[str, object]:
+        raw_context = sample.get("tool_fixture_context") or sample.get("tool_context")
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        context.setdefault("dataset_root", str(dataset_root))
+        return context
+
+    @staticmethod
+    def _agentic_tool_metric_totals(samples: tuple[EvaluationSample, ...]) -> dict[str, float]:
+        totals = {name: 0.0 for name in _AGENTIC_TOOL_METRIC_NAMES}
+        for sample in samples:
+            sample_metrics = sample.agentic_tool_metrics or {}
+            for name in _AGENTIC_TOOL_METRIC_NAMES:
+                totals[name] += float(sample_metrics.get(name, 0.0) or 0.0)
+        return {name: round(value, 4) for name, value in totals.items() if value}
 
     @staticmethod
     def _sample_label(sample: dict[str, object], key_root: str) -> str:

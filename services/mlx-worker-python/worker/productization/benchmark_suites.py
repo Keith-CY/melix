@@ -44,6 +44,8 @@ class BenchmarkCase:
     image_uris: tuple[str, ...] = ()
     source_image_uri: str = ""
     mask_uri: str = ""
+    tool_calls: tuple[dict[str, Any], ...] = ()
+    tool_fixture_context: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -527,10 +529,18 @@ def _suite_cases(
     batch_factor: int,
 ) -> list[BenchmarkCase]:
     if definition.task_kind == "text-generation":
-        prompts = _text_prompts(definition, rows)
+        text_cases = _text_cases(definition, rows)
         return [
-            BenchmarkCase(prompt=prompt)
-            for prompt in _batched_text_prompts(prompts, sample_size=sample_size, batch_factor=batch_factor)
+            BenchmarkCase(
+                prompt=case["prompt"],
+                tool_calls=tuple(dict(call) for call in case["tool_calls"]),
+                tool_fixture_context=dict(case["tool_fixture_context"]),
+            )
+            for case in _batched_text_cases(
+                text_cases,
+                sample_size=sample_size,
+                batch_factor=batch_factor,
+            )
         ]
 
     if definition.task_kind == "text-to-image":
@@ -582,8 +592,13 @@ def _suite_cases(
 
 
 def _text_prompts(definition: BenchmarkSuiteDefinition, rows: list[dict[str, Any]]) -> list[str]:
-    prompts: list[str] = []
+    return [case["prompt"] for case in _text_cases(definition, rows)]
+
+
+def _text_cases(definition: BenchmarkSuiteDefinition, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
     for row in rows:
+        prompt = ""
         if definition.prompt_feature == "messages":
             messages = row.get("messages")
             if isinstance(messages, list):
@@ -593,21 +608,22 @@ def _text_prompts(definition: BenchmarkSuiteDefinition, rows: list[dict[str, Any
                     if isinstance(message, dict) and str(message.get("role", "")).strip() != "assistant"
                 ]
                 prompt = "\n".join(part for part in prompt_parts if part)
-                if prompt:
-                    prompts.append(prompt)
-                    continue
-        prompt = _string_value(row.get(definition.prompt_feature)) if definition.prompt_feature else ""
+        if not prompt and definition.prompt_feature:
+            prompt = _string_value(row.get(definition.prompt_feature))
+        if not prompt and definition.text_feature:
+            prompt = _string_value(row.get(definition.text_feature))
         if prompt:
-            prompts.append(prompt)
-            continue
-        text_value = _string_value(row.get(definition.text_feature)) if definition.text_feature else ""
-        if text_value:
-            prompts.append(text_value)
-            continue
-    if prompts:
-        return prompts
+            cases.append(
+                {
+                    "prompt": prompt,
+                    "tool_calls": _tool_calls_from_row(row),
+                    "tool_fixture_context": _tool_fixture_context_from_row(row),
+                }
+            )
+    if cases:
+        return cases
     if definition.default_prompt:
-        return [definition.default_prompt]
+        return [{"prompt": definition.default_prompt, "tool_calls": (), "tool_fixture_context": {}}]
     raise ModelOperationError(
         code="invalid_benchmark_suite",
         message="Benchmark suite materialization did not produce any text prompts.",
@@ -615,19 +631,44 @@ def _text_prompts(definition: BenchmarkSuiteDefinition, rows: list[dict[str, Any
     )
 
 
-def _batched_text_prompts(
-    prompts: list[str],
+def _tool_calls_from_row(row: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    tool_calls = row.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return ()
+    return tuple(dict(call) for call in tool_calls if isinstance(call, dict))
+
+
+def _tool_fixture_context_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    raw_context = row.get("tool_fixture_context") or row.get("tool_context")
+    return dict(raw_context) if isinstance(raw_context, dict) else {}
+
+
+def _batched_text_cases(
+    cases: list[dict[str, Any]],
     *,
     sample_size: int,
     batch_factor: int,
-) -> list[str]:
-    batches: list[str] = []
+) -> list[dict[str, Any]]:
+    batches: list[dict[str, Any]] = []
     for batch_index in range(sample_size):
-        parts: list[str] = []
+        prompts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        tool_fixture_context: dict[str, Any] = {}
         for offset in range(batch_factor):
-            prompt_index = ((batch_index * batch_factor) + offset) % len(prompts)
-            parts.append(prompts[prompt_index])
-        batches.append("\n\n".join(parts))
+            case_index = ((batch_index * batch_factor) + offset) % len(cases)
+            case = cases[case_index]
+            prompts.append(str(case["prompt"]))
+            tool_calls.extend(dict(call) for call in case["tool_calls"])
+            raw_context = case.get("tool_fixture_context", {})
+            if isinstance(raw_context, dict):
+                tool_fixture_context.update(raw_context)
+        batches.append(
+            {
+                "prompt": "\n\n".join(prompts),
+                "tool_calls": tuple(tool_calls),
+                "tool_fixture_context": tool_fixture_context,
+            }
+        )
     return batches
 
 

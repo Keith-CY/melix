@@ -40,6 +40,7 @@ from worker.model_ops.upload_receipt_pipeline import UploadReceiptPipeline
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog, ResolvedBenchmarkSuite
 from worker.registry import WorkerRegistry
+from worker.runtime.agentic_tools import execute_agentic_tool_calls
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest
 
 _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
@@ -1550,7 +1551,9 @@ class MaintenanceCore:
                                                     if cases
                                                     else None
                                                 )
+                                                tool_run = None
                                                 try:
+                                                    tool_run = self._agentic_tool_run_for_benchmark_case(case)
                                                     sample = self._measure_benchmark_matrix_sample(
                                                         loaded_model=loaded_model,
                                                         suite=resolved_suite,
@@ -1611,6 +1614,7 @@ class MaintenanceCore:
                                                         dflash_block_size=sample.dflash_block_size,
                                                         dflash_rollback_count=sample.dflash_rollback_count,
                                                         dflash_target_hidden_layers=sample.dflash_target_hidden_layers,
+                                                        **self._agentic_tool_kwargs(tool_run),
                                                     )
                                                 except Exception as exc:
                                                     row = build_benchmark_matrix_request_row(
@@ -1639,6 +1643,7 @@ class MaintenanceCore:
                                                         dataset_materialize_ms=dataset_materialize_ms,
                                                         runtime_kind=getattr(loaded_model, "runtime_kind", ""),
                                                         error_stage=self._benchmark_error_stage(exc),
+                                                        **self._agentic_tool_kwargs(tool_run),
                                                     )
                                                 cell_rows.append(row)
                                                 request_rows.append(row)
@@ -2603,6 +2608,7 @@ class MaintenanceCore:
                     dflash_rollback_count=sample.dflash_rollback_count,
                     dflash_target_hidden_layers=sample.dflash_target_hidden_layers,
                 )
+
             raise ModelOperationError(
                 code="unsupported_task_family",
                 message=f"Unsupported benchmark matrix task kind: {task_kind}",
@@ -2639,6 +2645,7 @@ class MaintenanceCore:
 
         for case in suite.cases:
             case_prompt = case.prompt or suite.title
+            tool_run = self._agentic_tool_run_for_benchmark_case(case)
             for context_length in context_lengths:
                 shaped_prompt = self._shape_benchmark_prompt(case_prompt, context_length=context_length)
                 for repeat_index in range(repeats):
@@ -2702,6 +2709,7 @@ class MaintenanceCore:
                             dflash_block_size=sample.dflash_block_size,
                             dflash_rollback_count=sample.dflash_rollback_count,
                             dflash_target_hidden_layers=sample.dflash_target_hidden_layers,
+                            **self._agentic_tool_kwargs(tool_run),
                         ).to_dict()
                     )
                     for batch_size in batch_sizes:
@@ -2722,6 +2730,7 @@ class MaintenanceCore:
                                 repeat_index=repeat_index,
                                 job_id=job_id,
                                 task_kind=task_kind,
+                                tool_run=tool_run,
                             )
                         )
 
@@ -3031,6 +3040,30 @@ class MaintenanceCore:
             dflash_rollback_count=dflash_rollback_count,
             dflash_target_hidden_layers=dflash_target_hidden_layers,
         )
+
+    @staticmethod
+    def _agentic_tool_run_for_benchmark_case(case: Any | None):
+        tool_calls = getattr(case, "tool_calls", ()) if case is not None else ()
+        if not isinstance(tool_calls, (list, tuple)) or not tool_calls:
+            return None
+        fixture_context = getattr(case, "tool_fixture_context", {}) or {}
+        return execute_agentic_tool_calls(
+            list(tool_calls),
+            fixture_context=fixture_context if isinstance(fixture_context, dict) else {},
+        )
+
+    @staticmethod
+    def _agentic_tool_kwargs(tool_run: Any | None) -> dict[str, object]:
+        if tool_run is None:
+            return {}
+        return {
+            "agentic_tool_registry": tool_run.registry_receipt,
+            "agentic_tool_calls": tuple(dict(call) for call in tool_run.tool_calls),
+            "agentic_tool_observations": tuple(
+                dict(observation) for observation in tool_run.observations
+            ),
+            "agentic_tool_metrics": dict(tool_run.metrics),
+        }
 
     @staticmethod
     def _benchmark_error_stage(exc: Exception, default_stage: str = "runtime") -> str:
@@ -3770,6 +3803,7 @@ class MaintenanceCore:
         repeat_index: int,
         job_id: str,
         task_kind: str,
+        tool_run: Any | None = None,
     ) -> dict[str, object]:
         from worker.productization.benchmark_schemas import build_serving_benchmark_batch_row
 
@@ -3816,6 +3850,7 @@ class MaintenanceCore:
             dflash_block_size=sample.dflash_block_size,
             dflash_rollback_count=sample.dflash_rollback_count,
             dflash_target_hidden_layers=sample.dflash_target_hidden_layers,
+            **MaintenanceCore._agentic_tool_kwargs(tool_run),
         ).to_dict()
 
     def _image_metrics_for_suite(

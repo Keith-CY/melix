@@ -304,6 +304,66 @@ def test_benchmark_rows_preserve_phase_probe_fields() -> None:
     assert request_row["dflash_rollback_count"] == 1
 
 
+def test_benchmark_rows_preserve_agentic_tool_evidence() -> None:
+    tool_kwargs = {
+        "agentic_tool_registry": {"toolset_version": "melix.agentic_tools.builtin.v1"},
+        "agentic_tool_calls": ({"id": "call-1", "name": "visit", "arguments": {"url": "fixture://page"}},),
+        "agentic_tool_observations": ({"status": "completed", "payload": {"text": "Visited."}},),
+        "agentic_tool_metrics": {"agentic_tool.call_count": 1.0},
+    }
+    context_row = build_serving_benchmark_context_row(
+        job_id="bench-123",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suite="agentic",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        repeat_index=0,
+        prefill_tokens_per_second=24.5,
+        decode_tokens_per_second=51.25,
+        ttft_ms=11.2,
+        request_latency_ms=42.8,
+        peak_memory_bytes=4096.0,
+        speedup_vs_batch_1=1.0,
+        cache_profile="cold",
+        reasoning_mode="",
+        structured_output_mode="",
+        **tool_kwargs,
+    ).to_dict()
+    request_row = build_benchmark_matrix_request_row(
+        job_id="bench-matrix-1",
+        cell_id="cell-1",
+        task_kind="text-generation",
+        suite_id="agentic",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        cache_profile="cold",
+        reasoning_mode="",
+        structured_output_mode="",
+        concurrency_level=1,
+        repeat_index=0,
+        request_index=0,
+        ttft_ms=11.2,
+        request_latency_ms=42.8,
+        prefill_tokens_per_second=24.5,
+        decode_tokens_per_second=51.25,
+        queue_wait_ms=0.0,
+        peak_memory_bytes=4096,
+        status="completed",
+        error_code="",
+        created_at_unix_ms=101,
+        **tool_kwargs,
+    ).to_dict()
+
+    assert context_row["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
+    assert context_row["agentic_tool_calls"][0]["name"] == "visit"
+    assert request_row["agentic_tool_observations"][0]["payload"]["text"] == "Visited."
+    assert request_row["agentic_tool_metrics"]["agentic_tool.call_count"] == 1.0
+
+
 def test_build_serving_benchmark_results_groups_metrics_by_suite() -> None:
     results = build_serving_benchmark_results(
         job_id="bench-123",

@@ -878,6 +878,7 @@ def _canonical_benchmark_row_columns() -> list[str]:
         "dflash_block_size",
         "dflash_rollback_count",
         "dflash_target_hidden_layers",
+        "agentic_tool_metrics",
     ]
 
 
@@ -1057,10 +1058,13 @@ def _canonical_benchmark_matrix_request_columns() -> list[str]:
         "dflash_rollback_count",
         "dflash_target_hidden_layers",
         "created_at_unix_ms",
+        "agentic_tool_metrics",
     ]
 
 
 def _csv_value(value: object) -> str:
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True)
     if isinstance(value, list):
         return ",".join(str(item) for item in value)
     if isinstance(value, tuple):

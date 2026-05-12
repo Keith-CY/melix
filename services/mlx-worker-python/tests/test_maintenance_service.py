@@ -5531,6 +5531,21 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     assert len(context_rows) == 3
     assert shape_calls == [(suite.cases[0].prompt, 8)]
 
+    agentic_case = SimpleNamespace(
+        tool_calls=[
+            {"id": "visit-1", "name": "visit", "arguments": {"url": "fixture://bench"}}
+        ],
+        tool_fixture_context={
+            "pages": {"fixture://bench": {"text": "Benchmark page."}},
+        },
+    )
+    agentic_tool_run = core._agentic_tool_run_for_benchmark_case(agentic_case)
+    assert agentic_tool_run.metrics["agentic_tool.call_count"] == 1.0
+    agentic_kwargs = core._agentic_tool_kwargs(agentic_tool_run)
+    assert agentic_kwargs["agentic_tool_calls"][0]["name"] == "visit"
+    assert agentic_kwargs["agentic_tool_observations"][0]["payload"]["text"] == "Benchmark page."
+    assert core._agentic_tool_run_for_benchmark_case(SimpleNamespace(tool_calls=[])) is None
+
     with pytest.raises(ModelOperationError):
         core._measure_text_bench_sample(
             loaded_model=core._registry.load_model(WorkerModelCatalog.dev_text_model()),

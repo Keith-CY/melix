@@ -789,6 +789,67 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert queue_payload["completed_at_unix_ms"] > 0
 
 
+def test_run_local_suite_persists_agentic_tool_evidence(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="agentic-dev",
+        suite_id="mmlu",
+        samples=(
+            {
+                "id": "agentic-1",
+                "prompt": "What is visible?",
+                "expected": "MELIX",
+                "tool_calls": [
+                    {
+                        "id": "crop-1",
+                        "name": "image_crop",
+                        "arguments": {"media_ref": "img-1", "region": "sign"},
+                    },
+                    {
+                        "id": "compute-1",
+                        "name": "local_compute",
+                        "arguments": {"code": "2 + 2"},
+                    },
+                ],
+                "tool_fixture_context": {
+                    "crops": {"img-1#sign": {"text": "MELIX"}},
+                },
+            },
+        ),
+    )
+    jobs_root = tmp_path / "runs" / "agentic"
+    backend = ScriptedEvaluationBackend(("Answer: MELIX",))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="agentic-eval-model")
+    runner = EvaluationCore(jobs_root=jobs_root, registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="agentic-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        few_shot=0,
+        seed=7,
+        scoring_mode="exact_match",
+        code_exec_policy="disabled",
+    )
+
+    metrics = {metric.name: metric.value for metric in run.result.metrics}
+    persisted_samples = [
+        json.loads(line)
+        for line in run.persisted_paths["samples_jsonl"].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert run.samples[0].agentic_tool_metrics["agentic_tool.call_count"] == 2.0
+    assert run.samples[0].agentic_tool_observations[0]["payload"]["text"] == "MELIX"
+    assert metrics["eval.mmlu.agentic_tool.call_count"] == 2.0
+    assert metrics["eval.mmlu.agentic_tool.completed_count"] == 2.0
+    assert persisted_samples[0]["agentic_tool_calls"][0]["name"] == "image_crop"
+    assert persisted_samples[0]["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
+
+
 @pytest.mark.parametrize(
     ("name", "expected_index"),
     [

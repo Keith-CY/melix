@@ -169,6 +169,36 @@ def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
     }
 
 
+def test_build_evaluation_sample_record_preserves_agentic_tool_evidence() -> None:
+    sample = build_evaluation_sample_record(
+        job_id="eval-1",
+        suite_id="agentic",
+        dataset_id="agentic-dev",
+        sample_id="sample-1",
+        system="",
+        input_text="Inspect image.",
+        target="MELIX",
+        raw_response="MELIX",
+        extracted_result="MELIX",
+        typed_score=1.0,
+        time_s=0.1,
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
+        agentic_tool_registry={"toolset_version": "melix.agentic_tools.builtin.v1"},
+        agentic_tool_calls=({"id": "call-1", "name": "image_crop", "arguments": {"media_ref": "img-1"}},),
+        agentic_tool_observations=({"status": "completed", "payload": {"text": "MELIX"}},),
+        agentic_tool_metrics={"agentic_tool.call_count": 1.0},
+    )
+
+    payload = sample.to_dict()
+
+    assert payload["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
+    assert payload["agentic_tool_calls"][0]["name"] == "image_crop"
+    assert payload["agentic_tool_observations"][0]["payload"]["text"] == "MELIX"
+    assert payload["agentic_tool_metrics"]["agentic_tool.call_count"] == 1.0
+
+
 def test_build_evaluation_sample_record_preserves_probe_fields() -> None:
     sample = build_evaluation_sample_record(
         job_id="eval-1",
