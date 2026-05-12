@@ -1565,26 +1565,29 @@ def evaluate_m9_release_evidence(
     required_probe_count = 0.0
     missing_probe_count = 0.0
     failed_threshold_count = 0.0
+    report_get = report.get
+    failures_extend = failures.extend
+    evaluate_section = _evaluate_section_metrics_with_counts
 
     for section_name, section_rules in policy.items():
         if not isinstance(section_rules, dict):
             continue
-        required_probe_count += float(len(section_rules))
-        section = report.get(section_name, {})
+        required_probe_count += len(section_rules)
+        section = report_get(section_name)
         metrics = section.get("metrics", {}) if isinstance(section, dict) else {}
-        section_failures, missing_for_section, failed_for_section = _evaluate_section_metrics_with_counts(
+        section_failures, missing_for_section, failed_for_section = evaluate_section(
             metrics,
             section_rules,
             prefix=f"m9.{section_name}.",
         )
-        failures.extend(section_failures)
-        missing_probe_count += float(missing_for_section)
-        failed_threshold_count += float(failed_for_section)
+        failures_extend(section_failures)
+        missing_probe_count += missing_for_section
+        failed_threshold_count += failed_for_section
 
     return failures, {
-        "required_probe_count": required_probe_count,
-        "missing_probe_count": missing_probe_count,
-        "failed_threshold_count": failed_threshold_count,
+        "required_probe_count": float(required_probe_count),
+        "missing_probe_count": float(missing_probe_count),
+        "failed_threshold_count": float(failed_threshold_count),
     }
 
 
