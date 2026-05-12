@@ -1618,7 +1618,7 @@ public enum MelixCLIParser {
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
       melix eval report --from PATH [--format markdown|json]
-      melix batch run --models PATH [--config PATH] [--run-id ID] [--output-root PATH] [--temp-root PATH] [--start-index N] [--max-models N] [--judge-remote-server-id ID] [--judge-model MODEL] [--bench-suite SUITE] [--bench-context-length N] [--bench-generation-length N] [--bench-batch-size N] [--bench-repeats N] [--bench-sample-size N] [--bench-batch-factor N] [--eval-suite SUITE] [--eval-dataset-id ID] [--eval-scoring-mode MODE] [--eval-sample-size N] [--eval-batch-factor N] [--continue-on-failure true|false] [--restart-stack-per-model true|false] --dry-run [--json]
+      melix batch run --models PATH [--config PATH] [--run-id ID] [--output-root PATH] [--temp-root PATH] [--start-index N] [--max-models N] [--judge-remote-server-id ID] [--judge-model MODEL] [--bench-suite SUITE] [--bench-context-length N] [--bench-generation-length N] [--bench-batch-size N] [--bench-repeats N] [--bench-sample-size N] [--bench-batch-factor N] [--eval-suite SUITE] [--eval-dataset-id ID] [--eval-scoring-mode MODE] [--eval-sample-size N] [--eval-batch-factor N] [--continue-on-failure true|false] [--restart-stack-per-model true|false] [--preflight] --dry-run [--json]
       melix runs list [--from PATH] [--json]
       melix runs show RUN_ID [--from PATH] [--json]
       melix runs export RUN_ID --format json|md [--from PATH] [--output PATH]
@@ -3200,7 +3200,8 @@ public enum MelixCLIParser {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
         }
-        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst()))
+            .parse(valueLessFlags: ArgumentCursor.defaultValueLessFlags.union(["--preflight"]))
         switch action {
         case "run":
             let explicitOptions = Set(values.single.keys).union(values.flags)
@@ -3239,6 +3240,7 @@ public enum MelixCLIParser {
                     evalBatchFactor: try parseUInt32Value(values.single["--eval-batch-factor"], option: "--eval-batch-factor") ?? 0,
                     continueOnFailure: continueOnFailure,
                     restartStackPerModel: restartStackPerModel,
+                    preflight: values.flags.contains("--preflight"),
                     dryRun: values.flags.contains("--dry-run"),
                     json: values.flags.contains("--json"),
                     explicitOptions: explicitOptions
@@ -3876,22 +3878,26 @@ private struct ParsedArguments {
 }
 
 private struct ArgumentCursor {
+    static let defaultValueLessFlags: Set<String> = [
+        "--json",
+        "--response-only",
+        "--mask-prompt",
+        "--gradient-checkpointing",
+        "--allow-large-matrix",
+        "--preflight-fit-check",
+        "--allow-memory-risk",
+        "--resume",
+        "--dry-run",
+    ]
+
     let arguments: [String]
 
-    func parse(multiValueOptions: Set<String> = ["--suite"]) throws -> ParsedArguments {
+    func parse(
+        multiValueOptions: Set<String> = ["--suite"],
+        valueLessFlags: Set<String> = Self.defaultValueLessFlags
+    ) throws -> ParsedArguments {
         var result = ParsedArguments()
         var index = 0
-        let valueLessFlags: Set<String> = [
-            "--json",
-            "--response-only",
-            "--mask-prompt",
-            "--gradient-checkpointing",
-            "--allow-large-matrix",
-            "--preflight-fit-check",
-            "--allow-memory-risk",
-            "--resume",
-            "--dry-run",
-        ]
         while index < arguments.count {
             let token = arguments[index]
             if valueLessFlags.contains(token) {
@@ -4461,7 +4467,7 @@ public actor MelixCLIRunner {
         case .pipelineRun(let options):
             return try await runPipeline(options)
         case .batchRun(let options):
-            return try runBatch(options)
+            return try await runBatch(options)
         case .doctor(let options):
             let report = try await client.runDoctor()
             if options.json {
@@ -8234,16 +8240,311 @@ public actor MelixCLIRunner {
         return String(decoding: data, as: UTF8.self) + "\n"
     }
 
-    private func runBatch(_ options: BatchRunOptions) throws -> String {
+    private func runBatch(_ options: BatchRunOptions) async throws -> String {
         guard options.dryRun else {
             throw MelixCLIError.runtime("melix batch run currently supports --dry-run only; execution is tracked in #755 and follow-up issues.")
         }
         let plan = try BatchRunPlanner.makePlan(options: options, environment: environment)
         try BatchRunArtifacts.writeFoundationArtifacts(plan: plan)
+        if plan.config.preflight {
+            let report = try await buildBatchPreflightReport(plan: plan)
+            try BatchRunArtifacts.writePreflightReport(report, plan: plan)
+            if report.blockers.isEmpty == false {
+                let blockerList = report.blockers.map { "\($0.name): \($0.detail)" }.joined(separator: "; ")
+                throw MelixCLIError.runtime(
+                    "Batch preflight blocked run \(plan.config.runID) before execution. \(blockerList)"
+                )
+            }
+            if options.json {
+                var payload = BatchRunArtifacts.effectiveConfigPayload(plan: plan)
+                payload["preflight_result"] = report.payload(plan: plan)
+                return try prettyJSON(payload)
+            }
+            return BatchRunArtifacts.renderPreflightTextSummary(plan: plan, report: report)
+        }
         if options.json {
             return try prettyJSON(BatchRunArtifacts.effectiveConfigPayload(plan: plan))
         }
         return BatchRunArtifacts.renderTextSummary(plan: plan)
+    }
+
+    private func buildBatchPreflightReport(plan: BatchRunPlan) async throws -> BatchRunPreflightReport {
+        var checks: [BatchRunPreflightCheck] = []
+        let fileManager = FileManager.default
+        let config = plan.config
+
+        checks.append(directoryCheck(
+            name: "repo_root",
+            path: config.repoRoot,
+            blockedDetail: "Melix repository root does not exist: \(config.repoRoot).",
+            readyDetail: "Melix repository root exists."
+        ))
+        checks.append(executableCheck(
+            name: "cli",
+            path: config.cliPath,
+            blockedDetail: "Melix CLI build artifact is missing or not executable: \(config.cliPath). Build with xcrun swift build --product melix or set MELIX_CLI.",
+            readyDetail: "Melix CLI build artifact is executable."
+        ))
+        checks.append(portCheck(config.httpPort))
+        checks.append(directoryCreatableCheck(name: "melix_home", path: config.melixHome))
+        checks.append(directoryCreatableCheck(name: "runtime_dir", path: config.runtimeDir))
+        checks.append(directoryCreatableCheck(name: "temp_root", path: config.tempRoot))
+        checks.append(directoryCreatableCheck(name: "output_root", path: config.outputRoot))
+        checks.append(diskCheck(path: config.outputRoot, fileManager: fileManager))
+        checks.append(preflightCacheCheck(config: config))
+        checks.append(contentsOf: preflightModelChecks(plan: plan))
+        checks.append(try preflightDatasetCheck(config: config))
+        checks.append(try preflightJudgeCheck(config: config))
+
+        let status = checks.contains(where: \.isBlocking) ? "blocked" : "ready"
+        return BatchRunPreflightReport(
+            schemaVersion: "melix.batch.preflight_report.v1",
+            status: status,
+            checks: checks
+        )
+    }
+
+    private func directoryCheck(
+        name: String,
+        path: String,
+        blockedDetail: String,
+        readyDetail: String
+    ) -> BatchRunPreflightCheck {
+        var isDirectory = ObjCBool(false)
+        if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
+            return .init(name: name, status: "ready", detail: readyDetail, actionable: "")
+        }
+        return .init(name: name, status: "blocked", detail: blockedDetail, actionable: "Create the directory or provide the correct path.")
+    }
+
+    private func directoryCreatableCheck(name: String, path: String) -> BatchRunPreflightCheck {
+        let url = URL(fileURLWithPath: path)
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            var isDirectory = ObjCBool(false)
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                return .init(name: name, status: "ready", detail: "\(name) is available at \(path).", actionable: "")
+            }
+            return .init(name: name, status: "blocked", detail: "\(name) is not a directory: \(path).", actionable: "Choose a directory path.")
+        } catch {
+            return .init(
+                name: name,
+                status: "blocked",
+                detail: "\(name) cannot be created at \(path): \(error.localizedDescription)",
+                actionable: "Fix permissions or choose a writable directory."
+            )
+        }
+    }
+
+    private func executableCheck(
+        name: String,
+        path: String,
+        blockedDetail: String,
+        readyDetail: String
+    ) -> BatchRunPreflightCheck {
+        if FileManager.default.isExecutableFile(atPath: path) {
+            return .init(name: name, status: "ready", detail: readyDetail, actionable: "")
+        }
+        return .init(name: name, status: "blocked", detail: blockedDetail, actionable: "Build or point to the executable before launching a sweep.")
+    }
+
+    private func portCheck(_ value: String) -> BatchRunPreflightCheck {
+        guard let port = Int(value), (1...65535).contains(port) else {
+            return .init(
+                name: "http_port",
+                status: "blocked",
+                detail: "Invalid MELIX_HTTP_PORT value: \(value).",
+                actionable: "Use a TCP port between 1 and 65535."
+            )
+        }
+        return .init(name: "http_port", status: "ready", detail: "HTTP port \(port) is valid.", actionable: "")
+    }
+
+    private func diskCheck(path: String, fileManager: FileManager) -> BatchRunPreflightCheck {
+        let url = URL(fileURLWithPath: path)
+        do {
+            let values = try url.resourceValues(forKeys: [
+                .volumeAvailableCapacityForImportantUsageKey,
+                .volumeAvailableCapacityKey,
+            ])
+            let available: Int64?
+            if let importantCapacity = values.volumeAvailableCapacityForImportantUsage,
+               importantCapacity > 0
+            {
+                available = importantCapacity
+            } else if let volumeCapacity = values.volumeAvailableCapacity,
+                      volumeCapacity > 0
+            {
+                available = Int64(volumeCapacity)
+            } else if let fileSystemAttributes = try? fileManager.attributesOfFileSystem(forPath: url.path),
+                      let fileSystemAvailable = fileSystemAttributes[.systemFreeSize]
+            {
+                if let number = fileSystemAvailable as? NSNumber {
+                    available = number.int64Value
+                } else if let integer = fileSystemAvailable as? Int {
+                    available = Int64(integer)
+                } else if let int64 = fileSystemAvailable as? Int64 {
+                    available = int64
+                } else {
+                    available = nil
+                }
+            } else {
+                available = nil
+            }
+            guard let available, available > 0 else {
+                return .init(
+                    name: "disk",
+                    status: "warning",
+                    detail: "Could not determine available disk capacity near \(path).",
+                    actionable: "Confirm there is enough free disk before a long sweep."
+                )
+            }
+            let availableBytes = UInt64(max(0, available))
+            let detail = "Available capacity near \(path): \(formatBinaryBytes(availableBytes))."
+            return .init(name: "disk", status: "ready", detail: detail, actionable: "")
+        } catch {
+            return .init(
+                name: "disk",
+                status: "warning",
+                detail: "Could not read available disk capacity near \(path): \(error.localizedDescription)",
+                actionable: "Confirm there is enough free disk before a long sweep."
+            )
+        }
+    }
+
+    private func preflightCacheCheck(config: BatchRunEffectiveConfig) -> BatchRunPreflightCheck {
+        let melixHome = isolatedMelixHome(config: config)
+        let modelCacheRoot = melixHome.managedModelRootURL
+        let datasetCacheRoot = melixHome.rootURL.appendingPathComponent("datasets", isDirectory: true)
+        let modelCacheExists = FileManager.default.fileExists(atPath: modelCacheRoot.path)
+        let datasetCacheExists = FileManager.default.fileExists(atPath: datasetCacheRoot.path)
+        let status = modelCacheExists || datasetCacheExists ? "ready" : "warning"
+        let detail = [
+            "model_cache=\(modelCacheRoot.path) \(modelCacheExists ? "exists" : "missing")",
+            "dataset_cache=\(datasetCacheRoot.path) \(datasetCacheExists ? "exists" : "missing")",
+        ].joined(separator: "; ")
+        let actionable = status == "ready"
+            ? ""
+            : "Confirm required models and datasets can be downloaded or materialized before a long sweep."
+        return .init(name: "cache_state", status: status, detail: detail, actionable: actionable)
+    }
+
+    private func preflightModelChecks(plan: BatchRunPlan) -> [BatchRunPreflightCheck] {
+        plan.selectedModels.map { model in
+            if model.repoID.contains("/") {
+                return .init(
+                    name: "model_repo:\(model.index)",
+                    status: "ready",
+                    detail: "\(model.repoID) has a Hugging Face repo-shaped id.",
+                    actionable: ""
+                )
+            }
+            return .init(
+                name: "model_repo:\(model.index)",
+                status: "blocked",
+                detail: "\(model.repoID) is not a Hugging Face repo id.",
+                actionable: "Use owner/repo model ids in the model list."
+            )
+        }
+    }
+
+    private func preflightDatasetCheck(config: BatchRunEffectiveConfig) throws -> BatchRunPreflightCheck {
+        let datasetID = config.evalDatasetID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard datasetID.isEmpty == false else {
+            return .init(
+                name: "dataset",
+                status: "blocked",
+                detail: "Evaluation dataset id is empty.",
+                actionable: "Set --eval-dataset-id or eval_dataset_id."
+            )
+        }
+        let repoRootFixture = URL(fileURLWithPath: config.repoRoot)
+            .appendingPathComponent("services/mlx-worker-python/fixtures/evaluation", isDirectory: true)
+            .appendingPathComponent(datasetID, isDirectory: true)
+        if FileManager.default.fileExists(atPath: repoRootFixture.appendingPathComponent("manifest.json").path),
+           FileManager.default.fileExists(atPath: repoRootFixture.appendingPathComponent("samples.jsonl").path)
+        {
+            return .init(
+                name: "dataset",
+                status: "ready",
+                detail: "Fixture dataset \(datasetID) is packaged at \(repoRootFixture.path).",
+                actionable: ""
+            )
+        }
+
+        let managedRoot = isolatedMelixHome(config: config).rootURL
+            .appendingPathComponent("datasets", isDirectory: true)
+        if FileManager.default.fileExists(atPath: managedRoot.path) {
+            return .init(
+                name: "dataset",
+                status: "warning",
+                detail: "Dataset \(datasetID) was not found in repo fixtures; managed dataset cache exists at \(managedRoot.path).",
+                actionable: "Confirm the dataset is materialized before a long sweep."
+            )
+        }
+        return .init(
+            name: "dataset",
+            status: "blocked",
+            detail: "Dataset \(datasetID) was not found in repo fixtures or managed dataset cache.",
+            actionable: "Download or package the evaluation dataset before running the sweep."
+        )
+    }
+
+    private func preflightJudgeCheck(config: BatchRunEffectiveConfig) throws -> BatchRunPreflightCheck {
+        let judgeID = config.judgeRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard judgeID.isEmpty == false else {
+            return .init(
+                name: "judge",
+                status: "blocked",
+                detail: "Semantic judge remote-server id is empty.",
+                actionable: "Set --judge-remote-server-id or judge_remote_server_id."
+            )
+        }
+        let melixHome = isolatedMelixHome(config: config)
+        guard let server = try RemoteServerStore(melixHome: melixHome).get(id: judgeID) else {
+            return .init(
+                name: "judge",
+                status: "blocked",
+                detail: "Remote server \(judgeID) was not found in MELIX_HOME=\(config.melixHome).",
+                actionable: "Configure the judge with melix remote-server add before launching a long run."
+            )
+        }
+        let apiKey = try RemoteServerAPIKeyStore(melixHome: melixHome)
+            .loadAPIKey(remoteServerID: server.id)?
+            .apiKey
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard apiKey.isEmpty == false else {
+            return .init(
+                name: "judge",
+                status: "blocked",
+                detail: "Remote server \(judgeID) has no API key configured.",
+                actionable: "Store the judge API key with melix remote-server add/update."
+            )
+        }
+        let modelID = config.judgeModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? server.defaultModelID
+            : config.judgeModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard modelID.isEmpty == false else {
+            return .init(
+                name: "judge",
+                status: "blocked",
+                detail: "Remote server \(judgeID) has no judge model configured.",
+                actionable: "Set --judge-model or configure a default remote model."
+            )
+        }
+        return .init(
+            name: "judge",
+            status: "ready",
+            detail: "Remote server \(judgeID) is configured for model \(modelID).",
+            actionable: ""
+        )
+    }
+
+    private func isolatedMelixHome(config: BatchRunEffectiveConfig) -> MelixHome {
+        MelixHome(environment: environment.merging([
+            "MELIX_HOME": config.melixHome,
+            "MELIX_RUNTIME_DIR": config.runtimeDir,
+        ]) { _, new in new })
     }
 
     private static func defaultEvaluationDatasetID(for suiteID: String) -> String {

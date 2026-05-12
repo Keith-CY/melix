@@ -603,6 +603,9 @@ public enum MelixCLICommandCodec {
             appendUInt32("--eval-batch-factor", value: options.evalBatchFactor, defaultValue: 0, force: options.explicitOptions.contains("--eval-batch-factor"), into: &arguments)
             appendBool("--continue-on-failure", value: options.continueOnFailure, defaultValue: true, force: options.explicitOptions.contains("--continue-on-failure"), into: &arguments)
             appendBool("--restart-stack-per-model", value: options.restartStackPerModel, defaultValue: true, force: options.explicitOptions.contains("--restart-stack-per-model"), into: &arguments)
+            if options.preflight {
+                arguments.append("--preflight")
+            }
             if options.dryRun {
                 arguments.append("--dry-run")
             }

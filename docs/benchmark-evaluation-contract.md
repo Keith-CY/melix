@@ -120,6 +120,11 @@ The supported config file keys are:
 | `run_id` | `--run-id` | `MELIX_RUN_ID` | UTC timestamp `yyyyMMdd-HHmmss` | Stable run identifier. |
 | `output_root` | `--output-root` | `MELIX_DOWNLOAD_ROOT` | `~/Downloads/melix-bench-eval-<run_id>` | Operator-visible bundle root. |
 | `temp_root` | `--temp-root` | `MELIX_RUN_TMP_ROOT` | `.runtime/bench-eval-run/<run_id>` | Worktree-local scratch run root. |
+| `melix_home` | config only | `MELIX_HOME` | `.runtime/home-<service_instance_name>` | Isolated Melix home used by health checks and later execution. |
+| `runtime_dir` | config only | `MELIX_RUNTIME_DIR` | `.runtime/sidecars/<service_instance_name>` | Isolated runtime metadata directory. |
+| `service_instance_name` | config only | `MELIX_SERVICE_INSTANCE_NAME` | `bench-eval-batch` | Local stack instance label. |
+| `http_port` | config only | `MELIX_HTTP_PORT` | `12436` | Local HTTP port preflight value. |
+| `melix_cli` | config only | `MELIX_CLI` | `<repo_root>/.build/debug/melix` | CLI artifact checked before long runs. |
 | `start_index` | `--start-index` | `MELIX_START_INDEX` | `1` | 1-based model-list position to start from. |
 | `max_models` | `--max-models` | `MELIX_MAX_MODELS` | `0` | Maximum selected models; `0` means all remaining. |
 | `judge_remote_server_id` | `--judge-remote-server-id` | `MELIX_JUDGE_SERVER_ID` | `owlia-gpt-5-5-judge` | Stored remote-server id for semantic judging. |
@@ -138,6 +143,7 @@ The supported config file keys are:
 | `eval_batch_factor` | `--eval-batch-factor` | `MELIX_EVAL_BATCH_FACTOR` | `1` | Evaluation batch factor. |
 | `continue_on_failure` | `--continue-on-failure` | `MELIX_CONTINUE_ON_FAILURE` | `true` | Whether one model failure allows the batch to continue. |
 | `restart_stack_per_model` | `--restart-stack-per-model` | `MELIX_RESTART_STACK_PER_MODEL` | `true` | Whether execution restarts the local stack between models. |
+| `preflight` | `--preflight` | `MELIX_BATCH_PREFLIGHT` | `false` | Whether dry-run planning also writes a health gate report and blocks on missing long-run prerequisites. |
 
 Batch configs must reference stored credentials by id, not embed raw credential
 values. For semantic judging, `judge_remote_server_id` identifies a remote
@@ -156,11 +162,35 @@ JSONL record with `schema_version: melix.batch.manifest_entry.v1`.
 The initial dry-run manifest entry status is `planned`. Per-step statuses start
 as `pending` for:
 
+- `preflight`
+- `runtime_prepare`
+- `model_unload`
 - `hub_check`
 - `benchmark`
 - `evaluation`
 - `exports`
 - `artifact_copy`
+
+Each manifest entry includes top-level `failure_category` and `recoverability`
+fields, and every step carries the same fields for execution-time attribution.
+The failure categories are stable strings:
+
+- `worker_connectivity`
+- `runtime_unavailable`
+- `metal_oom`
+- `target_resolution`
+- `model_load`
+- `judge_failure`
+- `artifact_export`
+- `unknown_failure`
+
+Recoverability values are:
+
+- `retry_same_model`
+- `clean_restart_and_retry`
+- `operator_action_required`
+- `not_recoverable`
+- `unknown`
 
 Future non-dry-run execution may update model status to:
 
@@ -174,6 +204,41 @@ Future non-dry-run execution may update model status to:
 benchmarking or evaluation, completed and produced auditable artifacts while
 another product line failed.
 
+### Runtime Health Preflight
+
+`melix batch run --dry-run --preflight` must validate prerequisites before an
+operator starts an expensive sweep. It writes `preflight-report.json` to both
+the temporary run directory and the operator output directory, and it fails
+before execution if any check is `blocked`.
+
+The preflight report uses `schema_version: melix.batch.preflight_report.v1` and
+records:
+
+- the isolated `MELIX_HOME`, runtime dir, service instance, HTTP port, repo root,
+  and CLI artifact path
+- judge remote-server id and judge model
+- selected model ids
+- check rows for CLI artifact, runtime directories, output directories, disk
+  capacity, cache state, model repo-id shape, dataset materialization, and
+  judge config
+
+Judge config preflight confirms that the remote-server record and API key exist
+in the isolated `MELIX_HOME`. Provider reachability remains an execution-time
+check until the per-model execution pipeline in #760 is available to run the
+same command surface as the external runner.
+
+### Isolation Policy
+
+The effective config includes `isolation_policy` with
+`schema_version: melix.batch.isolation_policy.v1`. The policy defaults to:
+
+- best-effort unload of the previous model before a model starts
+- best-effort unload after a model finishes
+- `restart_stack_per_model: true`
+- force a clean stack after runtime failure categories such as worker
+  connectivity loss or Metal OOM
+- cleanup failures preserve per-model artifacts
+
 ### Terminal Summary
 
 Dry-run terminal output must show:
@@ -183,6 +248,7 @@ Dry-run terminal output must show:
 - subset controls when present
 - temporary and output roots
 - judge server and judge model
+- preflight status and report path when `--preflight` is used
 - failure-continuation and per-model stack restart policy
 - effective configuration and manifest paths
 - one compact `PLAN` line per selected model

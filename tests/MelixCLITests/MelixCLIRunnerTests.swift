@@ -342,6 +342,10 @@ struct MelixCLIRunnerTests {
         #expect(effectiveConfig["selected_model_count"] as? Int == 1)
         #expect(effectiveConfig["total_model_count"] as? Int == 3)
         #expect(effectiveConfig["is_subset_run"] as? Bool == true)
+        #expect(effectiveConfig["preflight"] as? Bool == false)
+        let isolationPolicy = try #require(effectiveConfig["isolation_policy"] as? [String: Any])
+        #expect(isolationPolicy["best_effort_unload_previous_model"] as? Bool == true)
+        #expect(isolationPolicy["force_clean_stack_after_runtime_failure"] as? Bool == true)
         let models = try #require(effectiveConfig["models"] as? [[String: Any]])
         #expect(models.count == 1)
         #expect(models[0]["index"] as? String == "07")
@@ -354,6 +358,12 @@ struct MelixCLIRunnerTests {
         #expect(manifestEntry["status"] as? String == "planned")
         #expect(manifestEntry["model_index"] as? String == "07")
         #expect(manifestEntry["repo_id"] as? String == "unsloth/Qwen3.6-27B-UD-MLX-4bit")
+        #expect(manifestEntry["failure_category"] as? String == "")
+        #expect(manifestEntry["recoverability"] as? String == "")
+        let steps = try #require(manifestEntry["steps"] as? [String: Any])
+        #expect(steps["preflight"] != nil)
+        #expect(steps["runtime_prepare"] != nil)
+        #expect(steps["model_unload"] != nil)
     }
 
     @Test("batch run dry-run start index is positional")
@@ -488,6 +498,157 @@ struct MelixCLIRunnerTests {
         #expect(effectiveConfig["restart_stack_per_model"] as? Bool == true)
         let benchmark = try #require(effectiveConfig["benchmark"] as? [String: Any])
         #expect(benchmark["sample_size"] as? Int == 1)
+    }
+
+    @Test("batch run dry-run preflight writes readiness report")
+    func batchRunDryRunPreflightWritesReadinessReport() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let repoRoot = root.appendingPathComponent("repo")
+        let cliPath = repoRoot.appendingPathComponent(".build/debug/melix")
+        let fixtureRoot = repoRoot
+            .appendingPathComponent("services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.top20.v1", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home")
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        try FileManager.default.createDirectory(at: cliPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "#!/usr/bin/env bash\n".write(to: cliPath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cliPath.path)
+        try "{}\n".write(to: fixtureRoot.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+        try "{}\n".write(to: fixtureRoot.appendingPathComponent("samples.jsonl"), atomically: true, encoding: .utf8)
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_REPO_ROOT": repoRoot.path,
+            "MELIX_HOME": melixHome.path,
+            "MELIX_CLI": cliPath.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        _ = try await runner.run(
+            .remoteServerAdd(
+                .init(
+                    remoteServerID: "judge",
+                    title: "Judge",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://judge.example/v1",
+                    defaultModelID: "gpt-test",
+                    apiKey: "sk-test-secret",
+                    json: true
+                )
+            )
+        )
+
+        let output = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "preflight-ok",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test",
+            preflight: true,
+            dryRun: true
+        )))
+
+        #expect(output.contains("preflight_status=ready"))
+        #expect(output.contains("CHECK judge ready"))
+        #expect(output.contains("melix_home=\(melixHome.path)"))
+
+        let reportPath = tempRoot.appendingPathComponent("preflight-report.json")
+        let copiedReportPath = outputRoot.appendingPathComponent("preflight-report.json")
+        #expect(FileManager.default.fileExists(atPath: reportPath.path))
+        #expect(FileManager.default.fileExists(atPath: copiedReportPath.path))
+        let report = try #require(try parseJSONFile(reportPath.path))
+        #expect(report["schema_version"] as? String == "melix.batch.preflight_report.v1")
+        #expect(report["status"] as? String == "ready")
+        #expect(report["blocker_count"] as? Int == 0)
+        let runtime = try #require(report["runtime"] as? [String: Any])
+        #expect(runtime["melix_home"] as? String == melixHome.path)
+        let checks = try #require(report["checks"] as? [[String: Any]])
+        #expect(checks.contains { $0["name"] as? String == "model_repo:01" && $0["status"] as? String == "ready" })
+        #expect(checks.contains { $0["name"] as? String == "cache_state" })
+
+        let effectiveConfig = try #require(try parseJSONFile(tempRoot.appendingPathComponent("effective-config.json").path))
+        #expect(effectiveConfig["preflight"] as? Bool == true)
+        #expect(effectiveConfig["preflight_report"] as? String == reportPath.path)
+    }
+
+    @Test("batch run dry-run preflight blocks missing judge before sweep")
+    func batchRunDryRunPreflightBlocksMissingJudgeBeforeSweep() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let repoRoot = root.appendingPathComponent("repo")
+        let cliPath = repoRoot.appendingPathComponent(".build/debug/melix")
+        let fixtureRoot = repoRoot
+            .appendingPathComponent("services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.top20.v1", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home")
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        try FileManager.default.createDirectory(at: cliPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "#!/usr/bin/env bash\n".write(to: cliPath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cliPath.path)
+        try "{}\n".write(to: fixtureRoot.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+        try "{}\n".write(to: fixtureRoot.appendingPathComponent("samples.jsonl"), atomically: true, encoding: .utf8)
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_REPO_ROOT": repoRoot.path,
+            "MELIX_HOME": melixHome.path,
+            "MELIX_CLI": cliPath.path,
+        ])
+        let message = try await requireRuntimeError {
+            _ = try await runner.run(.batchRun(.init(
+                modelListPath: modelList.path,
+                runID: "preflight-blocked",
+                outputRoot: outputRoot.path,
+                tempRoot: tempRoot.path,
+                judgeRemoteServerID: "missing-judge",
+                preflight: true,
+                dryRun: true
+            )))
+        }
+
+        #expect(message.contains("Batch preflight blocked run preflight-blocked before execution."))
+        #expect(message.contains("Remote server missing-judge was not found"))
+        let report = try #require(try parseJSONFile(tempRoot.appendingPathComponent("preflight-report.json").path))
+        #expect(report["status"] as? String == "blocked")
+        #expect(report["blocker_count"] as? Int == 1)
+    }
+
+    @Test("batch failure classifier separates runtime and model failures")
+    func batchFailureClassifierSeparatesRuntimeAndModelFailures() throws {
+        let socket = BatchRunFailureClassifier.classify(stderr: #"requestFailed(code: "unavailable", message: "python-worker.sock: connect: Connection refused (61)")"#)
+        #expect(socket.category == "worker_connectivity")
+        #expect(socket.recoverability == .cleanRestartAndRetry)
+        #expect(BatchRunFailureClassifier.runtimeFailureRequiresCleanStack(socket))
+
+        let oom = BatchRunFailureClassifier.classify(stderr: "kIOGPUCommandBufferCallbackErrorOutOfMemory")
+        #expect(oom.category == "metal_oom")
+        #expect(oom.recoverability == .cleanRestartAndRetry)
+
+        let target = BatchRunFailureClassifier.classify(stderr: "No loaded benchmark target is available for repo_id bad")
+        #expect(target.category == "target_resolution")
+        #expect(target.recoverability == .operatorActionRequired)
+
+        let judge = BatchRunFailureClassifier.classify(stderr: "Semantic judge remote server returned 401 unauthorized")
+        #expect(judge.category == "judge_failure")
+        #expect(judge.recoverability == .operatorActionRequired)
+
+        let export = BatchRunFailureClassifier.classify(stderr: "eval export-samples-jsonl failed: permission denied")
+        #expect(export.category == "artifact_export")
+        #expect(export.recoverability == .retrySameModel)
+
+        let unknown = BatchRunFailureClassifier.classify(stderr: "unexpected model response")
+        #expect(unknown.category == "unknown_failure")
+        #expect(unknown.recoverability == .unknown)
     }
 
     @Test("batch run config rejects unsupported and raw secret keys")
@@ -8379,6 +8540,23 @@ private func requireUsageError(_ body: () async throws -> Void) async throws -> 
         return message
     } catch {
         Issue.record("Expected MelixCLIError.usage, got \(error).")
+        return ""
+    }
+}
+
+private func requireRuntimeError(_ body: () async throws -> Void) async throws -> String {
+    do {
+        try await body()
+        Issue.record("Expected MelixCLIError.runtime to be thrown.")
+        return ""
+    } catch let error as MelixCLIError {
+        guard case .runtime(let message) = error else {
+            Issue.record("Expected MelixCLIError.runtime, got \(error).")
+            return ""
+        }
+        return message
+    } catch {
+        Issue.record("Expected MelixCLIError.runtime, got \(error).")
         return ""
     }
 }

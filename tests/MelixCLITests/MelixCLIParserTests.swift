@@ -2076,6 +2076,7 @@ struct MelixCLIParserTests {
             "--eval-batch-factor", "8",
             "--continue-on-failure", "false",
             "--restart-stack-per-model", "false",
+            "--preflight",
             "--dry-run",
             "--json",
         ])
@@ -2098,6 +2099,7 @@ struct MelixCLIParserTests {
         #expect(options.evalSampleSize == 7)
         #expect(options.continueOnFailure == false)
         #expect(options.restartStackPerModel == false)
+        #expect(options.preflight)
         #expect(options.dryRun)
         #expect(options.json)
     }
