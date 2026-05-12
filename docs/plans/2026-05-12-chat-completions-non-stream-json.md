@@ -66,13 +66,17 @@ The JSON response shape is:
 If no worker usage event is emitted, `usage` is omitted instead of fabricating
 zero-token accounting.
 
+If the worker emits an error event while the gateway is buffering a non-stream
+chat completion, that error terminates aggregation immediately. The gateway
+returns the mapped worker error response and ignores any later stream events.
+
 ## Metrics
 
 The HTTP gateway records:
 
 - `http.chat_completions_non_stream_request_count`
 - `http.chat_completions_non_stream_latency_ms`
-- `http.chat_completions_non_stream_completion_tokens`
+- `http.chat_completions_non_stream_completion_tokens` as a cumulative counter
 
 Success means the explicit and default non-stream tests exercise the new JSON
 path, the existing SSE test remains unchanged, and changed-line coverage for the
