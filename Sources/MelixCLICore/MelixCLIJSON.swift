@@ -188,6 +188,7 @@ public enum MelixCLIJSONEnvelope {
         commandID: String,
         traceID: String,
         error: MelixCLIError,
+        artifacts: [[String: Any]] = [],
         metrics: [String: Double] = [:]
     ) throws -> String {
         try errorEnvelopeString(
@@ -195,6 +196,7 @@ public enum MelixCLIJSONEnvelope {
             traceID: traceID,
             code: code(for: error),
             message: error.errorDescription ?? "\(error)",
+            artifacts: artifacts,
             metrics: metrics
         )
     }
@@ -204,6 +206,7 @@ public enum MelixCLIJSONEnvelope {
         traceID: String,
         code: String,
         message: String,
+        artifacts: [[String: Any]] = [],
         metrics: [String: Double] = [:]
     ) throws -> String {
         let placeholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode_ms")
@@ -222,7 +225,7 @@ public enum MelixCLIJSONEnvelope {
                 "message": message,
             ],
             "warnings": [],
-            "artifacts": [],
+            "artifacts": artifacts,
             "metrics": finalMetrics,
         ]
         let encodeStart = DispatchTime.now()

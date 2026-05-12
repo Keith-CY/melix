@@ -867,6 +867,24 @@ public struct DoctorOptions: Equatable, Sendable {
     }
 }
 
+public struct SystemOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct MonitorOptions: Equatable, Sendable {
+    public let sourcePath: String
+    public let json: Bool
+
+    public init(sourcePath: String = "", json: Bool = false) {
+        self.sourcePath = sourcePath
+        self.json = json
+    }
+}
+
 public struct ConvertOptions: Equatable, Sendable {
     public let modelID: String
     public let outputDir: String
@@ -1356,6 +1374,10 @@ public struct MelixCLIInvocation: Equatable, Sendable {
 
 public enum MelixCLICommand: Equatable, Sendable {
     case doctor(DoctorOptions)
+    case system(SystemOptions)
+    case monitor(MonitorOptions)
+    case logs(LogsOptions)
+    case debugBundle(DebugBundleOptions)
     case estimateImport(EstimateImportOptions)
     case convert(ConvertOptions)
     case quantize(QuantizeOptions)
@@ -1500,6 +1522,14 @@ public enum MelixCLIParser {
         switch group {
         case "doctor":
             return try parseDoctor(tail)
+        case "system":
+            return try parseSystem(tail)
+        case "monitor":
+            return try parseMonitor(tail)
+        case "logs":
+            return try parseLogs(tail)
+        case "debug":
+            return try parseDebug(tail)
         case "estimate":
             return try parseEstimate(tail)
         case "convert":
@@ -1540,6 +1570,10 @@ public enum MelixCLIParser {
     public static let usageText = """
     Usage:
       melix doctor [--json]
+      melix system --json
+      melix monitor [--from PATH] [--json]
+      melix logs JOB_ID [--from PATH] [--follow] [--json]
+      melix debug bundle RUN_OR_JOB_ID [--from PATH] [--output PATH] [--json]
       melix estimate import HF_REPO [--json]
       melix estimate import --repo-id HF_REPO [--json]
       melix convert --model-id MODEL_ID [--output-dir PATH] [--target-format FORMAT] [--json]
@@ -1687,6 +1721,52 @@ public enum MelixCLIParser {
     private static func parseDoctor(_ arguments: [String]) throws -> MelixCLICommand {
         let values = try ArgumentCursor(arguments: arguments).parse()
         return .doctor(.init(json: values.flags.contains("--json")))
+    }
+
+    private static func parseSystem(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        return .system(.init(json: values.flags.contains("--json")))
+    }
+
+    private static func parseMonitor(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        return .monitor(.init(sourcePath: values.single["--from"] ?? "", json: values.flags.contains("--json")))
+    }
+
+    private static func parseLogs(_ arguments: [String]) throws -> MelixCLICommand {
+        var optionArguments = arguments
+        let jobID = try extractRunID(from: &optionArguments, command: "melix logs")
+        let values = try ArgumentCursor(arguments: optionArguments).parse()
+        return .logs(
+            LogsOptions(
+                jobID: jobID,
+                sourcePath: values.single["--from"] ?? "",
+                follow: values.flags.contains("--follow"),
+                json: values.flags.contains("--json")
+            )
+        )
+    }
+
+    private static func parseDebug(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        switch action {
+        case "bundle":
+            var optionArguments = Array(arguments.dropFirst())
+            let runID = try extractRunID(from: &optionArguments, command: "melix debug bundle")
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .debugBundle(
+                DebugBundleOptions(
+                    runID: runID,
+                    sourcePath: values.single["--from"] ?? "",
+                    outputPath: values.single["--output"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
     }
 
     private static func parseEstimate(_ arguments: [String]) throws -> MelixCLICommand {
@@ -3888,6 +3968,7 @@ private struct ArgumentCursor {
         "--allow-memory-risk",
         "--resume",
         "--dry-run",
+        "--follow",
     ]
 
     let arguments: [String]
@@ -4470,10 +4551,40 @@ public actor MelixCLIRunner {
             return try await runBatch(options)
         case .doctor(let options):
             let report = try await client.runDoctor()
+            let systemPayload = makeSystemPayload()
             if options.json {
-                return try prettyJSON(makeDoctorPayload(report))
+                return try prettyJSON(makeDoctorPayload(report, systemPayload: systemPayload))
             }
             return report.markdown.isEmpty ? "# Melix Doctor\n" : report.markdown
+        case .system(let options):
+            let payload = makeSystemPayload()
+            if options.json {
+                return try prettyJSON(payload)
+            }
+            return renderSystemPayload(payload)
+        case .monitor(let options):
+            let records = try runRecordStore().loadRecords(sourcePath: options.sourcePath)
+            let payload = diagnosticsStore().monitorPayload(records: records)
+            if options.json {
+                return try prettyJSON(payload)
+            }
+            return renderMonitorPayload(payload)
+        case .logs(let options):
+            let record = try runRecordStore().findRecord(runID: options.jobID, sourcePath: options.sourcePath)
+            let snapshot = try diagnosticsStore().logSnapshot(record: record, follow: options.follow)
+            if options.json {
+                return try prettyJSON(snapshot.payload)
+            }
+            return snapshot.text.hasSuffix("\n") ? snapshot.text : snapshot.text + "\n"
+        case .debugBundle(let options):
+            let record = try runRecordStore().findRecord(runID: options.runID, sourcePath: options.sourcePath)
+            let result = try diagnosticsStore().writeDebugBundle(record: record, outputPath: options.outputPath)
+            if options.json {
+                var payload = result.manifest
+                payload["bundle_path"] = MelixDiagnosticsRedaction.redactString(result.bundleRoot.path)
+                return try prettyJSON(payload)
+            }
+            return result.bundleRoot.path + "\n"
         case .estimateImport(let options):
             let receipt = try await makeMemoryFitReceipt(repoID: options.repoID, targetKind: "import")
             return options.json ? try prettyJSON(receipt.payload) : renderMemoryFitReceipt(receipt)
@@ -5961,6 +6072,13 @@ public actor MelixCLIRunner {
         MelixRunRecordStore(melixHome: MelixHome(environment: environment))
     }
 
+    private func diagnosticsStore() -> MelixDiagnosticsStore {
+        MelixDiagnosticsStore(
+            melixHome: MelixHome(environment: environment),
+            environment: environment
+        )
+    }
+
     private func renderRunReport(kind: String, options: RunReportOptions) throws -> String {
         let report = try runRecordStore().report(kind: kind, sourcePath: options.sourcePath)
         switch options.format.lowercased() {
@@ -6678,11 +6796,16 @@ public actor MelixCLIRunner {
         ]
     }
 
-    private func makeDoctorPayload(_ report: Melix_Controlplane_V1_DoctorReport) -> [String: Any] {
-        [
+    private func makeDoctorPayload(
+        _ report: Melix_Controlplane_V1_DoctorReport,
+        systemPayload: [String: Any]? = nil
+    ) -> [String: Any] {
+        let melixHome = MelixHome(environment: environment)
+        let resolvedSystemPayload = systemPayload ?? makeSystemPayload()
+        let systemFindings = MelixSystemDiagnostics.missingDependencyFindings(melixHome: melixHome)
+        let redactedReport = MelixDiagnosticsRedaction.redactMapping([
             "markdown": report.markdown,
-            "health_status": doctorHealthStatusLabel(report.healthStatus),
-            "findings": report.findings.map { finding in
+            "findings": report.findings.map { finding -> [String: Any] in
                 [
                     "code": finding.code,
                     "severity": doctorHealthStatusLabel(finding.severity),
@@ -6690,7 +6813,73 @@ public actor MelixCLIRunner {
                     "detail": finding.detail,
                 ]
             },
+        ])
+        var payload: [String: Any] = [
+            "markdown": redactedReport.payload["markdown"] as? String ?? "",
+            "health_status": doctorHealthStatusLabel(report.healthStatus),
+            "diagnostics_consent_state": MelixSystemDiagnostics.diagnosticsConsentState,
+            "redaction_schema_version": MelixDiagnosticsRedaction.schemaVersion,
+            "redacted_field_count": (resolvedSystemPayload["redacted_field_count"] as? Int ?? 0)
+                + redactedReport.redactedFieldCount,
+            "system": resolvedSystemPayload,
+            "findings": (redactedReport.payload["findings"] as? [[String: Any]] ?? []) + systemFindings,
         ]
+        if report.markdown.isEmpty && systemFindings.isEmpty == false {
+            payload["markdown"] = "# Melix Doctor\n"
+        }
+        return payload
+    }
+
+    private func makeSystemPayload() -> [String: Any] {
+        let melixHome = MelixHome(environment: environment)
+        let redactedEnvironment = MelixDiagnosticsRedaction.redactEnvironment(environment)
+        return MelixSystemDiagnostics.payload(
+            melixHome: melixHome,
+            environment: environment,
+            redactedFieldCount: redactedEnvironment.redactedFieldCount
+        )
+    }
+
+    private func renderSystemPayload(_ payload: [String: Any]) -> String {
+        let platform = payload["platform"] as? [String: Any] ?? [:]
+        let melixHome = payload["melix_home"] as? [String: Any] ?? [:]
+        let lines = [
+            "# Melix System",
+            "",
+            "- Diagnostics consent: \(payload["diagnostics_consent_state"] ?? "unknown")",
+            "- Redaction schema: \(payload["redaction_schema_version"] ?? MelixDiagnosticsRedaction.schemaVersion)",
+            "- Redacted fields: \(payload["redacted_field_count"] ?? 0)",
+            "- Operating system: \(platform["operating_system"] ?? "unknown")",
+            "- Physical memory bytes: \(platform["physical_memory_bytes"] ?? 0)",
+            "- MELIX_HOME: \(melixHome["root"] ?? "")",
+            "- Logs: \(melixHome["logs"] ?? "")",
+            "",
+        ]
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private func renderMonitorPayload(_ payload: [String: Any]) -> String {
+        let statusCounts = payload["status_counts"] as? [String: Any] ?? [:]
+        let recentRuns = payload["recent_runs"] as? [[String: Any]] ?? []
+        var lines = [
+            "# Melix Monitor",
+            "",
+            "- Runs: \(payload["run_count"] ?? 0)",
+            "- Status counts: \(statusCounts.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))",
+            "- Logs: \(payload["logs_directory"] ?? "")",
+            "",
+            "run_id\trun_kind\tstatus\tmodel_id\tstarted_at_unix_ms",
+        ]
+        lines.append(contentsOf: recentRuns.map { run in
+            [
+                stringField(run, "run_id"),
+                stringField(run, "run_kind"),
+                stringField(run, "status"),
+                stringField(run, "model_id"),
+                stringField(run, "started_at_unix_ms"),
+            ].joined(separator: "\t")
+        })
+        return lines.joined(separator: "\n") + "\n"
     }
 
     private func modelStateLabel(_ value: Melix_Controlplane_V1_ModelState) -> String {

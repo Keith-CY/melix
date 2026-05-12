@@ -339,12 +339,40 @@ struct MelixCLIParserTests {
     @Test("documents and parses public model ops commands")
     func documentsAndParsesPublicModelOpsCommands() throws {
         #expect(MelixCLIParser.usageText.contains("melix doctor [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix system --json"))
+        #expect(MelixCLIParser.usageText.contains("melix monitor [--from PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix logs JOB_ID"))
+        #expect(MelixCLIParser.usageText.contains("melix debug bundle RUN_OR_JOB_ID"))
         #expect(MelixCLIParser.usageText.contains("melix convert --model-id MODEL_ID"))
         #expect(MelixCLIParser.usageText.contains("melix quantize --model-id MODEL_ID"))
         #expect(MelixCLIParser.usageText.contains("melix upload --model-id MODEL_ID"))
 
         let doctorCommand = try MelixCLIParser.parse([
             "doctor",
+            "--json",
+        ])
+        let systemCommand = try MelixCLIParser.parse([
+            "system",
+            "--json",
+        ])
+        let monitorCommand = try MelixCLIParser.parse([
+            "monitor",
+            "--from", "/tmp/melix/jobs",
+            "--json",
+        ])
+        let logsCommand = try MelixCLIParser.parse([
+            "logs",
+            "bench-1",
+            "--from", "/tmp/melix/jobs",
+            "--follow",
+            "--json",
+        ])
+        let debugBundleCommand = try MelixCLIParser.parse([
+            "debug",
+            "bundle",
+            "bench-1",
+            "--from", "/tmp/melix/jobs",
+            "--output", "/tmp/melix-debug/bench-1",
             "--json",
         ])
         let convertCommand = try MelixCLIParser.parse([
@@ -390,6 +418,22 @@ struct MelixCLIParserTests {
             Issue.record("Expected doctor command")
             return
         }
+        guard case .system(let systemOptions) = systemCommand else {
+            Issue.record("Expected system command")
+            return
+        }
+        guard case .monitor(let monitorOptions) = monitorCommand else {
+            Issue.record("Expected monitor command")
+            return
+        }
+        guard case .logs(let logsOptions) = logsCommand else {
+            Issue.record("Expected logs command")
+            return
+        }
+        guard case .debugBundle(let debugBundleOptions) = debugBundleCommand else {
+            Issue.record("Expected debugBundle command")
+            return
+        }
         guard case .convert(let convertOptions) = convertCommand else {
             Issue.record("Expected convert command")
             return
@@ -404,6 +448,17 @@ struct MelixCLIParserTests {
         }
 
         #expect(doctorOptions.json)
+        #expect(systemOptions.json)
+        #expect(monitorOptions.sourcePath == "/tmp/melix/jobs")
+        #expect(monitorOptions.json)
+        #expect(logsOptions.jobID == "bench-1")
+        #expect(logsOptions.sourcePath == "/tmp/melix/jobs")
+        #expect(logsOptions.follow)
+        #expect(logsOptions.json)
+        #expect(debugBundleOptions.runID == "bench-1")
+        #expect(debugBundleOptions.sourcePath == "/tmp/melix/jobs")
+        #expect(debugBundleOptions.outputPath == "/tmp/melix-debug/bench-1")
+        #expect(debugBundleOptions.json)
         #expect(convertOptions.modelID == "melix-dev-text")
         #expect(convertOptions.outputDir == "/tmp/melix-convert")
         #expect(convertOptions.targetFormat == "melix_model_bundle")

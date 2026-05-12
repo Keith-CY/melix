@@ -975,46 +975,50 @@ final class WorkerScaffoldTests: XCTestCase {
 
     @available(*, deprecated, message: "Exercises the deprecated ModelContainer chat-template compatibility shim.")
     func testVendoredModelContainerConvenienceMethodsUseSerialRead() async throws {
-        let container = makeLiveSwiftMLXModelContainer(promptTokens: [4, 5, 6])
+        try await withTemporaryDefaultMetallib {
+            let container = makeLiveSwiftMLXModelContainer(promptTokens: [4, 5, 6])
 
-        let prepared = try await container.prepare(input: UserInput(prompt: "hello"))
-        let decoded = await container.decode(tokens: [1, 2])
-        let encoded = await container.encode("tok3 tok4")
-        let templated = try await container.applyChatTemplate(messages: [
-            ["role": "user", "content": "hello"]
-        ])
+            let prepared = try await container.prepare(input: UserInput(prompt: "hello"))
+            let decoded = await container.decode(tokens: [1, 2])
+            let encoded = await container.encode("tok3 tok4")
+            let templated = try await container.applyChatTemplate(messages: [
+                ["role": "user", "content": "hello"]
+            ])
 
-        XCTAssertEqual(prepared.text.tokens.size, 3)
-        XCTAssertEqual(decoded, "tok1 tok2")
-        XCTAssertEqual(encoded, [3, 4])
-        XCTAssertEqual(templated, [1, 2])
+            XCTAssertEqual(prepared.text.tokens.size, 3)
+            XCTAssertEqual(decoded, "tok1 tok2")
+            XCTAssertEqual(encoded, [3, 4])
+            XCTAssertEqual(templated, [1, 2])
+        }
     }
 
     func testVendoredModelContainerSerialAccessCompactsQueuedWaiters() async throws {
-        let container = makeLiveSwiftMLXModelContainer(promptTokens: [1, 2, 3])
-        let gate = WorkerScaffoldAsyncGate()
+        try await withTemporaryDefaultMetallib {
+            let container = makeLiveSwiftMLXModelContainer(promptTokens: [1, 2, 3])
+            let gate = WorkerScaffoldAsyncGate()
 
-        let holder = Task {
-            await container.perform { _ in
-                await gate.enterAndWait()
-                return ()
+            let holder = Task {
+                await container.perform { _ in
+                    await gate.enterAndWait()
+                    return ()
+                }
             }
-        }
-        await gate.waitUntilEntered()
+            await gate.waitUntilEntered()
 
-        let waiters = (0 ..< 40).map { _ in
-            Task {
-                await container.decode(tokens: [1])
+            let waiters = (0 ..< 40).map { _ in
+                Task {
+                    await container.decode(tokens: [1])
+                }
             }
-        }
 
-        try await Task.sleep(nanoseconds: 50_000_000)
-        await gate.open()
-        await holder.value
+            try await Task.sleep(nanoseconds: 50_000_000)
+            await gate.open()
+            await holder.value
 
-        for waiter in waiters {
-            let decoded = await waiter.value
-            XCTAssertEqual(decoded, "tok1")
+            for waiter in waiters {
+                let decoded = await waiter.value
+                XCTAssertEqual(decoded, "tok1")
+            }
         }
     }
 
