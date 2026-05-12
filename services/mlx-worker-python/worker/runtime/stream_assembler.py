@@ -110,22 +110,28 @@ class RequestStreamAssembler:
         reasoning_enabled: bool,
         structured_output_mode: str = "",
         tool_parser_mode: str = "",
-        allowed_tool_names: tuple[str, ...] = (),
+        allowed_tool_names: tuple[str, ...] | None = None,
     ) -> None:
         self._request_id = request_id
         self._reasoning_enabled = reasoning_enabled
         self._structured_output_mode = structured_output_mode.strip().lower()
         self._tool_parser_mode = tool_parser_mode.strip().lower()
-        self._allowed_tool_names = tuple(
-            dict.fromkeys(name.strip() for name in allowed_tool_names if name.strip())
-        )
-        self._allowed_tool_name_set = set(self._allowed_tool_names)
-        self._allowed_tool_names_by_casefold = {
-            name.casefold(): name for name in self._allowed_tool_names
-        }
-        self._allowed_tool_names_by_prefix = tuple(
-            sorted(self._allowed_tool_names, key=len, reverse=True)
-        )
+        if allowed_tool_names:
+            self._allowed_tool_names = tuple(
+                dict.fromkeys(name.strip() for name in allowed_tool_names if name.strip())
+            )
+            self._allowed_tool_name_set = set(self._allowed_tool_names)
+            self._allowed_tool_names_by_casefold = {
+                name.casefold(): name for name in self._allowed_tool_names
+            }
+            self._allowed_tool_names_by_prefix = tuple(
+                sorted(self._allowed_tool_names, key=len, reverse=True)
+            )
+        else:
+            self._allowed_tool_names = ()
+            self._allowed_tool_name_set = frozenset()
+            self._allowed_tool_names_by_casefold = {}
+            self._allowed_tool_names_by_prefix = ()
         self._tool_parsing_enabled_value = bool(self._tool_parser_mode)
         self._is_json_structured_output_value = self._structured_output_mode in {
             "json_object",
