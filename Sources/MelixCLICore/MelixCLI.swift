@@ -1837,7 +1837,7 @@ public enum MelixCLIParser {
     }
 
     private static func normalizedEstimateTargetKind(_ action: String) -> String {
-        action == "benchmark" ? "benchmark" : action
+        action
     }
 
     private static func estimateTargetInputs(_ values: ParsedArguments) -> [String: String] {
