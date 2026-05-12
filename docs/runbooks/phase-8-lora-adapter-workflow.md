@@ -197,6 +197,10 @@ Expected training behavior:
 - quantized LoRA and QLoRA reject embedding, LM head, and output-projection target modules; keep quantized runs on attention or expert projection targets
 - Melix writes a normalized dataset snapshot under `<jobs_root>/train_lora/<job_id>/`
 - Melix emits the stages `resolve_source`, `validate_dataset`, `normalize_config`, `prepare_training_data`, `apply_lora`, `train`, `write_adapter`, and `write_manifest`
+- component-scoped multimodal adapter receipts include `multimodal_lora_nan_guard_triggered`,
+  `unexpected_frozen_param_count`, `adapter_checkpoint_bytes`, and `adapter_freeze_audit`; any
+  serialized vision, audio, embedding, projector, or full base tensor outside the intended
+  LoRA/DoRA target surface fails export before the adapter manifest is written
 - the completed artifact is `train_lora.adapter.json` with schema `melix.lora_adapter_package.v1`
 
 ## Family Support Boundaries

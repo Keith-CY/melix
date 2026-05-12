@@ -12,6 +12,11 @@ from typing import Any, Callable
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.multimodal_lora_contracts import (
+    audit_adapter_checkpoint,
+    audit_manifest_fields,
+    raise_for_adapter_freeze_audit,
+)
 from worker.model_ops.response_only_boundary import ResponseOnlyBoundaryAggregate
 from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest, TrainingResult
 from worker.model_ops.training_config import LoRATrainingConfig, normalize_training_config
@@ -119,7 +124,19 @@ class LoRATrainingPipeline:
         )
 
         emit("write_adapter", 0.9)
-        adapter_artifact_bytes = training_result.weights_path.stat().st_size
+        adapter_audit = audit_adapter_checkpoint(
+            weights_path=training_result.weights_path,
+            allowed_target_modules=config.expanded_target_modules,
+            source_model_kind=source_model.model_kind,
+            source_model_ext=dict(source_model.ext),
+            live_audit=training_result.metrics.adapter_freeze_audit,
+            multimodal_lora_nan_guard_triggered=(
+                training_result.metrics.multimodal_lora_nan_guard_triggered
+            ),
+        )
+        raise_for_adapter_freeze_audit(adapter_audit)
+        adapter_audit_fields = audit_manifest_fields(adapter_audit)
+        adapter_artifact_bytes = adapter_audit.adapter_checkpoint_bytes
         adapter_set_hash = _content_hash(training_result.weights_path, training_result.adapter_config_path)
         checkpoint_count = training_result.metrics.checkpoint_count
         resume_ready = training_result.metrics.resume_ready
@@ -231,6 +248,7 @@ class LoRATrainingPipeline:
             "created_at_unix_ms": persisted_at_unix_ms,
             "updated_at_unix_ms": persisted_at_unix_ms,
         }
+        manifest.update(adapter_audit_fields)
         if resume_context["resume_manifest_path"] is not None:
             manifest["resume_source_manifest_path"] = str(resume_context["resume_manifest_path"])
         if resume_context["resume_source_job_id"]:

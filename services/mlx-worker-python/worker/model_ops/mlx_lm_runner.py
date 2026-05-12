@@ -13,6 +13,10 @@ import time
 from typing import Any
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.multimodal_lora_contracts import (
+    audit_manifest_fields,
+    audit_trainable_module_tree,
+)
 from worker.model_ops.response_only_boundary import (
     ResponseOnlyBoundary,
     ResponseOnlyBoundaryAggregate,
@@ -77,6 +81,10 @@ class TrainingMetrics:
     candidate_scoring_mode: str = ""
     reward_scoring_backend: str = ""
     generated_candidate_count: int = 0
+    multimodal_lora_nan_guard_triggered: bool = False
+    unexpected_frozen_param_count: int = 0
+    adapter_checkpoint_bytes: int = 0
+    adapter_freeze_audit: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -269,8 +277,16 @@ class MLXLMRunner:
         if duration_ms > 0.0 and collector.tokens_seen > 0:
             tokens_per_second = collector.tokens_seen / (duration_ms / 1000.0)
         checkpoint_count, latest_checkpoint_path = _checkpoint_summary(request.adapter_output_dir)
+        weights_path = request.adapter_output_dir / "adapters.safetensors"
+        live_audit = audit_trainable_module_tree(
+            model,
+            allowed_target_modules=request.config.expanded_target_modules,
+            source_model_kind=request.source_model_kind,
+            source_model_ext=request.source_model_ext or {},
+        )
+        live_audit_fields = audit_manifest_fields(live_audit)
         return TrainingResult(
-            weights_path=request.adapter_output_dir / "adapters.safetensors",
+            weights_path=weights_path,
             adapter_config_path=request.adapter_output_dir / "adapter_config.json",
             metrics=TrainingMetrics(
                 job_duration_ms=duration_ms,
@@ -292,6 +308,9 @@ class MLXLMRunner:
                 chunked_enabled=chunk_stats.enabled,
                 chunk_count=chunk_stats.chunk_count,
                 source_sample_count=chunk_stats.source_sample_count,
+                unexpected_frozen_param_count=int(live_audit_fields["unexpected_frozen_param_count"]),
+                adapter_checkpoint_bytes=weights_path.stat().st_size if weights_path.is_file() else 0,
+                adapter_freeze_audit=live_audit_fields["adapter_freeze_audit"],
             ),
             execution_backend="native",
         )
