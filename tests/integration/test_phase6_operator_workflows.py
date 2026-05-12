@@ -41,6 +41,18 @@ def _timed_post_json(
     return status, body, elapsed_ms
 
 
+def _chat_completions_tool_call_stream_success(status: int, payload: object) -> bool:
+    if not isinstance(payload, bytes):
+        return False
+    return (
+        status == 200
+        and b"event: message" in payload
+        and b"\"object\":\"chat.completion.chunk\"" in payload
+        and b"\"tool_calls\"" in payload
+        and b"\"name\":\"tools.vision\"" in payload
+    )
+
+
 def _start_image_fixture_server(payload: bytes, *, content_type: str = "image/png") -> tuple[ThreadingHTTPServer, str]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -543,6 +555,7 @@ def test_multimodal_chat_streams_tool_calls_with_shared_parser_selection(tmp_pat
 
         assert status == 200
         assert b"event: message" in payload
+        assert b"\"object\":\"chat.completion.chunk\"" in payload
         assert b"\"tool_calls\"" in payload
         assert b"\"parser_mode\":\"qwen\"" in payload
         assert b"\"parser_namespaces\":[\"tools.vision\"]" in payload
@@ -589,6 +602,7 @@ def test_multimodal_chat_uses_model_default_parser_selection_for_llava_family(tm
 
         assert status == 200
         assert b"event: message" in payload
+        assert b"\"object\":\"chat.completion.chunk\"" in payload
         assert b"\"tool_calls\"" in payload
         assert b"\"parser_mode\":\"qwen\"" in payload
         assert b"\"parser_namespaces\":[\"tools.vision\"]" in payload
@@ -775,12 +789,7 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
             },
             vlm={
                 "request_latency_ms": tool_elapsed_ms,
-                "tool_call_success": (
-                    tool_status == 200
-                    and b"event: message" in tool_payload
-                    and b"\"tool_calls\"" in tool_payload
-                    and b"\"name\":\"tools.vision\"" in tool_payload
-                ),
+                "tool_call_success": _chat_completions_tool_call_stream_success(tool_status, tool_payload),
             },
             metrics_snapshot=read_metrics_export(stack.control_plane_metrics_path),
         )
