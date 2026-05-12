@@ -84,7 +84,53 @@ public struct BatchRunOptions: Equatable, Sendable {
         self.preflight = preflight
         self.dryRun = dryRun
         self.json = json
-        self.explicitOptions = explicitOptions
+        self.explicitOptions = explicitOptions.union(Self.inferredExplicitOptions(
+            startIndex: startIndex,
+            maxModels: maxModels,
+            benchContextLength: benchContextLength,
+            benchGenerationLength: benchGenerationLength,
+            benchBatchSize: benchBatchSize,
+            benchRepeats: benchRepeats,
+            benchSampleSize: benchSampleSize,
+            benchBatchFactor: benchBatchFactor,
+            evalSampleSize: evalSampleSize,
+            evalBatchFactor: evalBatchFactor,
+            continueOnFailure: continueOnFailure,
+            restartStackPerModel: restartStackPerModel,
+            preflight: preflight
+        ))
+    }
+
+    private static func inferredExplicitOptions(
+        startIndex: Int,
+        maxModels: Int,
+        benchContextLength: UInt32,
+        benchGenerationLength: UInt32,
+        benchBatchSize: UInt32,
+        benchRepeats: UInt32,
+        benchSampleSize: UInt32,
+        benchBatchFactor: UInt32,
+        evalSampleSize: UInt32,
+        evalBatchFactor: UInt32,
+        continueOnFailure: Bool,
+        restartStackPerModel: Bool,
+        preflight: Bool
+    ) -> Set<String> {
+        var options: Set<String> = []
+        if startIndex != 1 { options.insert("--start-index") }
+        if maxModels != 0 { options.insert("--max-models") }
+        if benchContextLength != 0 { options.insert("--bench-context-length") }
+        if benchGenerationLength != 0 { options.insert("--bench-generation-length") }
+        if benchBatchSize != 0 { options.insert("--bench-batch-size") }
+        if benchRepeats != 0 { options.insert("--bench-repeats") }
+        if benchSampleSize != 0 { options.insert("--bench-sample-size") }
+        if benchBatchFactor != 0 { options.insert("--bench-batch-factor") }
+        if evalSampleSize != 0 { options.insert("--eval-sample-size") }
+        if evalBatchFactor != 0 { options.insert("--eval-batch-factor") }
+        if continueOnFailure { options.insert("--continue-on-failure") }
+        if restartStackPerModel { options.insert("--restart-stack-per-model") }
+        if preflight { options.insert("--preflight") }
+        return options
     }
 }
 
