@@ -23,12 +23,17 @@ import Tokenizers
 final class WorkerScaffoldTests: XCTestCase {
     func testConfigurationDefaultsPreferDedicatedWorkerIdentity() {
         let configuration = WorkerConfiguration()
+        let matchingConfiguration = WorkerConfiguration(
+            backendMode: configuration.backendMode,
+            runtimeVersion: configuration.runtimeVersion
+        )
 
         XCTAssertEqual(configuration.workerID, "swift-text-worker-001")
         XCTAssertEqual(configuration.socketPath, "/var/run/melix/swift-text-worker.sock")
         XCTAssertEqual(configuration.backendMode, "swift")
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/dev")
         XCTAssertFalse(configuration.runtimeCacheFingerprint.isEmpty)
+        XCTAssertEqual(configuration.runtimeCacheFingerprint, matchingConfiguration.runtimeCacheFingerprint)
         XCTAssertEqual(configuration.cacheRootPath, ".runtime/swift-text-worker-cache")
         XCTAssertFalse(configuration.memoryEnforcementDisabled)
         XCTAssertEqual(configuration.processMemoryBudgetBytes, 0)
@@ -37,6 +42,21 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 0)
         XCTAssertEqual(configuration.initialCacheBlocks, 0)
         XCTAssertFalse(configuration.turboQuantCandidateProbeEnabled)
+    }
+
+    func testConfigurationDefaultRuntimeFingerprintTracksCustomRuntimeInputs() {
+        let baseline = WorkerConfiguration()
+        let custom = WorkerConfiguration(
+            backendMode: "swift-experimental",
+            runtimeVersion: "melix-swift-text-worker/test"
+        )
+        let matchingCustom = WorkerConfiguration(
+            backendMode: "swift-experimental",
+            runtimeVersion: "melix-swift-text-worker/test"
+        )
+
+        XCTAssertNotEqual(custom.runtimeCacheFingerprint, baseline.runtimeCacheFingerprint)
+        XCTAssertEqual(custom.runtimeCacheFingerprint, matchingCustom.runtimeCacheFingerprint)
     }
 
     func testConfigurationReadsEnvironmentOverrides() {

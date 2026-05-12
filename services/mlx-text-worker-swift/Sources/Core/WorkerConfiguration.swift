@@ -23,10 +23,7 @@ package struct WorkerConfiguration: Sendable, Equatable {
         socketPath: String = "/var/run/melix/swift-text-worker.sock",
         backendMode: String = "swift",
         runtimeVersion: String = "melix-swift-text-worker/dev",
-        runtimeCacheFingerprint: String = WorkerConfiguration.makeRuntimeCacheFingerprint(
-            backendMode: "swift",
-            runtimeVersion: "melix-swift-text-worker/dev"
-        ),
+        runtimeCacheFingerprint: String? = nil,
         metricsExportPath: String? = nil,
         cacheRootPath: String = ".runtime/swift-text-worker-cache",
         memoryEnforcementDisabled: Bool = false,
@@ -41,7 +38,10 @@ package struct WorkerConfiguration: Sendable, Equatable {
         self.socketPath = socketPath
         self.backendMode = backendMode
         self.runtimeVersion = runtimeVersion
-        self.runtimeCacheFingerprint = runtimeCacheFingerprint
+        self.runtimeCacheFingerprint = runtimeCacheFingerprint ?? WorkerConfiguration.makeRuntimeCacheFingerprint(
+            backendMode: backendMode,
+            runtimeVersion: runtimeVersion
+        )
         self.metricsExportPath = metricsExportPath
         self.cacheRootPath = cacheRootPath
         self.memoryEnforcementDisabled = memoryEnforcementDisabled

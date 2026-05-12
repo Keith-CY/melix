@@ -705,8 +705,11 @@ actor WorkerRuntimeRegistry {
     }
 
     func runtimeStats() async -> Melix_Worker_V1_RuntimeStats {
-        let cacheStats = cacheStatsWithRuntimeContext(await cacheStore.stats())
         let modelResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
+        let cacheStats = cacheStatsWithRuntimeContext(
+            await cacheStore.stats(),
+            modelResidentBytes: modelResidentBytes
+        )
         let cacheResidentBytes = cacheStats.l1Bytes
         let kvCacheBytes: UInt64 = 0
         var stats = Melix_Worker_V1_RuntimeStats()
@@ -961,16 +964,18 @@ actor WorkerRuntimeRegistry {
     }
 
     private func cacheStatsWithRuntimeContext(
-        _ cacheStats: Melix_Worker_V1_CacheStats
+        _ cacheStats: Melix_Worker_V1_CacheStats,
+        modelResidentBytes: UInt64? = nil
     ) -> Melix_Worker_V1_CacheStats {
         var stats = cacheStats
-        let modelResidentBytes = loadedModels.values.reduce(UInt64(0)) { $0 + $1.estimatedResidentBytes }
-        let activeMemoryBytes = modelResidentBytes &+ stats.l1Bytes
+        let resolvedModelResidentBytes = modelResidentBytes
+            ?? loadedModels.values.reduce(UInt64(0)) { $0 + $1.estimatedResidentBytes }
+        let activeMemoryBytes = resolvedModelResidentBytes &+ stats.l1Bytes
         stats.runtimeCacheFingerprint = configuration.runtimeCacheFingerprint
         stats.activeMemoryBytes = activeMemoryBytes
         stats.maxWorkingSetBytes = configuration.processMemoryBudgetBytes
         stats.effectiveCacheBudgetBytes = effectiveCacheBudgetBytes(
-            modelResidentBytes: modelResidentBytes
+            modelResidentBytes: resolvedModelResidentBytes
         )
         return stats
     }
