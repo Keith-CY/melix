@@ -2234,8 +2234,9 @@ def _maximum_weight_event_matching(
 
     def solve(gold_index: int, used_pred_mask: int) -> tuple[float, tuple[tuple[int, int, float], ...]]:
         key = (gold_index, used_pred_mask)
-        if key in memo:
-            return memo[key]
+        cached = memo.get(key)
+        if cached is not None:
+            return cached
         if gold_index >= gold_count:
             return (0.0, ())
 
