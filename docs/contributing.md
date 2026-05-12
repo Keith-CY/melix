@@ -39,6 +39,8 @@ make integration-test
 
 GitHub Actions runs the same gates on every PR. If you are working in a specific subsystem, add any relevant focused commands, smoke scripts, or runbook verification steps to your PR description.
 
+`make bootstrap` installs the repository git hooks by configuring `core.hooksPath=.githooks`. You can also run `make git-hooks-install` directly. On macOS hosts with at least 128 GiB of physical memory, the pre-commit hook runs the full local test gate and writes a scoped performance report under `.runtime/pre-commit-performance/`. A regression in that report blocks the commit unless it has been analyzed and is explicitly allowed with both `MELIX_PRE_COMMIT_ALLOW_PERF_REGRESSION=1` and `MELIX_PRE_COMMIT_PERF_REGRESSION_REASON`.
+
 ---
 
 ## Coverage & Metrics
