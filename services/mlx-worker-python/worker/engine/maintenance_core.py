@@ -50,6 +50,20 @@ _CAPABILITY_SUPPORTED_PARSERS_KEY = "melix.capability.supported_parsers"
 logger = logging.getLogger(__name__)
 
 
+class ShapedBenchmarkPrompt(str):
+    __slots__ = ("_tokens",)
+
+    def __new__(cls, value: str, tokens: tuple[str, ...]) -> ShapedBenchmarkPrompt:
+        prompt = str.__new__(cls, value)
+        prompt._tokens = tokens
+        return prompt
+
+    def split(self, sep: str | None = None, maxsplit: int = -1) -> list[str]:
+        if sep is None and maxsplit == -1:
+            return list(self._tokens)
+        return str(self).split(sep, maxsplit)
+
+
 @dataclass(frozen=True)
 class BenchMetricSpec:
     suite: str
@@ -3696,13 +3710,13 @@ class MaintenanceCore:
         if not tokens:
             tokens = ["benchmark"]
         if len(tokens) >= context_length:
-            return " ".join(tokens[:context_length])
+            shaped_tokens = tuple(tokens[:context_length])
+            return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
         full_repeats, remainder = divmod(context_length, len(tokens))
-        token_phrase = " ".join(tokens)
+        shaped_tokens = tuple(tokens * full_repeats + tokens[:remainder])
         if remainder:
-            remainder_phrase = " ".join(tokens[:remainder])
-            return f"{(token_phrase + ' ') * full_repeats}{remainder_phrase}"
-        return ((token_phrase + " ") * full_repeats)[:-1]
+            return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
+        return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
 
     @staticmethod
     def _benchmark_execution_ext(

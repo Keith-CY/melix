@@ -3017,11 +3017,37 @@ class EvaluationCore:
             option = EvaluationCore._extract_option_value(stripped)
             if option is not None:
                 return option
-        return re.sub(r"\s+", " ", stripped).casefold()
+        if (
+            "  " in stripped
+            or "\t" in stripped
+            or "\n" in stripped
+            or "\r" in stripped
+            or "\f" in stripped
+            or "\v" in stripped
+            or (
+                not stripped.isascii()
+                and any(character.isspace() and character != " " for character in stripped)
+            )
+        ):
+            stripped = " ".join(stripped.split())
+        return stripped.casefold()
 
     @staticmethod
     def _strip_wrapping(value: str) -> str:
-        return value.strip().strip("`").strip().strip("\"'").strip().rstrip(".")
+        stripped = value.strip()
+        if not stripped:
+            return ""
+        if stripped[0] == "`" or stripped[-1] == "`":
+            stripped = stripped.strip("`").strip()
+            if not stripped:
+                return ""
+        if stripped[0] in "\"'" or stripped[-1] in "\"'":
+            stripped = stripped.strip("\"'").strip()
+            if not stripped:
+                return ""
+        if stripped.endswith("."):
+            stripped = stripped.rstrip(".")
+        return stripped
 
     @staticmethod
     def _looks_like_numeric(value: str) -> bool:
@@ -3045,8 +3071,11 @@ class EvaluationCore:
 
     @staticmethod
     def _looks_like_option(value: str) -> bool:
-        normalized = value.strip().upper()
-        return len(normalized) == 1 and normalized.isalpha()
+        normalized = value.strip()
+        if len(normalized) != 1:
+            return False
+        upper = normalized.upper()
+        return len(upper) == 1 and upper.isalpha()
 
     @staticmethod
     def _extract_option_value(value: str) -> str | None:
