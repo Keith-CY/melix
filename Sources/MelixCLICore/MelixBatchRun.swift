@@ -127,8 +127,8 @@ public struct BatchRunOptions: Equatable, Sendable {
         if benchBatchFactor != 0 { options.insert("--bench-batch-factor") }
         if evalSampleSize != 0 { options.insert("--eval-sample-size") }
         if evalBatchFactor != 0 { options.insert("--eval-batch-factor") }
-        if continueOnFailure != true { options.insert("--continue-on-failure") }
-        if restartStackPerModel != true { options.insert("--restart-stack-per-model") }
+        if continueOnFailure { options.insert("--continue-on-failure") }
+        if restartStackPerModel { options.insert("--restart-stack-per-model") }
         if preflight { options.insert("--preflight") }
         return options
     }
