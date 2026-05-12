@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-import re
 from functools import lru_cache
-
-_NON_WHITESPACE_TOKEN_RE = re.compile(r"\S+")
 
 
 @lru_cache(maxsize=512)
 def whitespace_token_count(text: str) -> int:
-    return sum(1 for _ in _NON_WHITESPACE_TOKEN_RE.finditer(text))
+    token_count = 0
+    in_token = False
+    for character in text:
+        if character.isspace():
+            in_token = False
+        elif not in_token:
+            token_count += 1
+            in_token = True
+    return token_count
