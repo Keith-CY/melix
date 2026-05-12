@@ -545,7 +545,12 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
                         break
         return rows
     if suffix == ".json":
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        json_text = path.read_text(encoding="utf-8")
+        if limit is not None:
+            limited_rows = _limited_rows_from_json_text(json_text, limit=limit)
+            if limited_rows is not None:
+                return limited_rows
+        payload = json.loads(json_text)
         return _rows_from_json_payload(payload, limit=limit)
     if suffix == ".csv":
         rows: list[dict[str, Any]] = []
@@ -622,6 +627,89 @@ def _limit_rows(rows: list[dict[str, Any]], limit: int | None) -> list[dict[str,
     if limit is None:
         return rows
     return rows[:limit]
+
+
+def _limited_rows_from_json_text(json_text: str, *, limit: int) -> list[dict[str, Any]] | None:
+    if limit <= 0:
+        return []
+    cursor = _json_text_first_array_start(json_text)
+    if cursor is None:
+        return None
+    rows: list[dict[str, Any]] = []
+    decoder = json.JSONDecoder()
+    text_length = len(json_text)
+    cursor += 1
+    while cursor < text_length:
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if cursor >= text_length or json_text[cursor] == "]":
+            return rows
+        try:
+            value, cursor = decoder.raw_decode(json_text, cursor)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(value, dict):
+            rows.append(value)
+            if len(rows) >= limit:
+                return rows
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if cursor < text_length and json_text[cursor] == ",":
+            cursor += 1
+            continue
+        if cursor < text_length and json_text[cursor] == "]":
+            return rows
+        return None
+    return None
+
+
+def _json_text_first_array_start(json_text: str) -> int | None:
+    cursor = 0
+    text_length = len(json_text)
+    while cursor < text_length and json_text[cursor].isspace():
+        cursor += 1
+    if cursor >= text_length:
+        return None
+    if json_text[cursor] == "[":
+        return cursor
+    if json_text[cursor] != "{":
+        return None
+
+    decoder = json.JSONDecoder()
+    cursor += 1
+    while cursor < text_length:
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if cursor >= text_length or json_text[cursor] == "}":
+            return None
+        try:
+            key, cursor = decoder.raw_decode(json_text, cursor)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(key, str):
+            return None
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if cursor >= text_length or json_text[cursor] != ":":
+            return None
+        cursor += 1
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if key in {"rows", "data"} and cursor < text_length and json_text[cursor] == "[":
+            return cursor
+        try:
+            _, cursor = decoder.raw_decode(json_text, cursor)
+        except json.JSONDecodeError:
+            return None
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if cursor < text_length and json_text[cursor] == ",":
+            cursor += 1
+            continue
+        if cursor < text_length and json_text[cursor] == "}":
+            return None
+        return None
+    return None
 
 
 def _append_limited_dict_rows(
