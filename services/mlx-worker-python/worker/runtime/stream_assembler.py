@@ -308,7 +308,8 @@ class RequestStreamAssembler:
         return self._structural_open_tags_value
 
     def _unseen_delta(self, raw: str) -> str:
-        self._materialized_raw_seen()
+        if self._raw_seen_assistant_part_count:
+            self._materialized_raw_seen()
         if raw.startswith(self._raw_seen):
             delta = raw[len(self._raw_seen) :]
             self._raw_seen = raw
@@ -598,12 +599,13 @@ class RequestStreamAssembler:
         )
 
     def _content_delta(self, content: str) -> AssemblyDelta:
-        if self._tool_parsing_enabled_value and (
-            "<tool_call" in content or "<|tool_call" in content
-        ):
-            self._metrics["tool_call_markup_leak_count"] += 1
-        if self._contains_reasoning_leak_marker(content):
-            self._metrics["reasoning_leak_count"] += 1
+        if "<" in content:
+            if self._tool_parsing_enabled_value and (
+                "<tool_call" in content or "<|tool_call" in content
+            ):
+                self._metrics["tool_call_markup_leak_count"] += 1
+            if self._contains_reasoning_leak_marker(content):
+                self._metrics["reasoning_leak_count"] += 1
         self._assistant_parts.append(content)
         return AssemblyDelta(content_text=content, raw_text=content)
 
