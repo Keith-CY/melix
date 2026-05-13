@@ -992,6 +992,7 @@ struct OpenAIHandlerTests {
         vlmModel.modelID = "imported-gemma-vlm"
         vlmModel.routeClass = .workerRouteSwiftText
         vlmModel.settings.ext["melix.capability.route_kind"] = "python_vlm"
+        vlmModel.settings.ext["melix.model_path"] = "/tmp/imported-gemma-vlm"
         vlmModel.settings.ext["melix.vlm.text_only_step_cooperative"] = "false"
         vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])

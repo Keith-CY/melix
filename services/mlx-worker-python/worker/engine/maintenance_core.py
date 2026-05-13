@@ -63,6 +63,14 @@ class ShapedBenchmarkPrompt(str):
             return list(self._tokens)
         return str(self).split(sep, maxsplit)
 
+    @property
+    def tokens(self) -> tuple[str, ...]:
+        return self._tokens
+
+    @property
+    def token_count(self) -> int:
+        return len(self._tokens)
+
 
 @dataclass(frozen=True)
 class BenchMetricSpec:
@@ -3018,7 +3026,7 @@ class MaintenanceCore:
         request_latency_ms = round((completed_at - started_at) * 1_000.0, 2)
         ttft_ms = round((first_token_time - started_at) * 1_000.0, 2)
         if prompt_tokens <= 0:
-            prompt_tokens = max(1, len(shaped_prompt.split()))
+            prompt_tokens = self._benchmark_prompt_token_count(shaped_prompt)
         if prompt_tps <= 0.0:
             prompt_tps = prompt_tokens / max(ttft_ms / 1_000.0, 0.001)
         if generation_tps <= 0.0:
@@ -3725,6 +3733,12 @@ class MaintenanceCore:
         if remainder:
             return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
         return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
+
+    @staticmethod
+    def _benchmark_prompt_token_count(prompt: str) -> int:
+        if isinstance(prompt, ShapedBenchmarkPrompt):
+            return max(1, prompt.token_count)
+        return max(1, len(prompt.split()))
 
     @staticmethod
     def _benchmark_execution_ext(

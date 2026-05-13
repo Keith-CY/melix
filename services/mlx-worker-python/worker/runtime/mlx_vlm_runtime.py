@@ -2081,11 +2081,14 @@ class MLXVLMRuntime:
         *,
         signature: tuple[str, ...] | None = None,
     ) -> None:
-        fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
-        self._last_fast_path_signature = signature or fast_path_probe_signature(
+        signature = signature or fast_path_probe_signature(
             loaded_model,
             prepared_request,
         )
+        if self._last_fast_path_signature == signature:
+            return
+        fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
+        self._last_fast_path_signature = signature
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,

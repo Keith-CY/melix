@@ -124,6 +124,14 @@ class DeterministicVLMRuntime:
 
     def load_model(self, model_spec):
         family_config = resolve_vision_family_config(dict(model_spec.ext))
+        metadata = {
+            **family_config.capability_metadata(),
+            "melix.vlm.execution_mode": dict(model_spec.ext).get(
+                "melix.vlm.execution_mode",
+                "multimodal",
+            ).strip()
+            or "multimodal",
+        }
         return {
             "model_id": model_spec.model_id,
             "model_kind": model_spec.model_kind,
@@ -132,7 +140,8 @@ class DeterministicVLMRuntime:
             "quant_profile_id": model_spec.quant_profile_id,
             "parser_mode": model_spec.parser_mode,
             "reasoning_mode": model_spec.reasoning_mode,
-            **family_config.capability_metadata(),
+            "metadata": metadata,
+            **metadata,
         }
 
     def estimate_resident_bytes(self, model_spec):
@@ -317,7 +326,8 @@ class DeterministicVLMRuntime:
                     execution_ext=execution_ext,
                 )
             )
-        self._last_probe = VisionProbeSnapshot(
+        self._last_probe = replace(
+            self._last_probe,
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,
             preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,

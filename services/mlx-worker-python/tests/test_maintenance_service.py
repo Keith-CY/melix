@@ -5252,6 +5252,7 @@ def test_benchmark_helper_defaults_cover_invalid_parameters_and_sparse_samples(t
     )
 
     assert sample.completion_tokens == 1
+    assert sample.prompt_tokens == 16
     assert resolved_suite.sample_size == 1
     assert resolved_suite.batch_factor == 1
     assert MaintenanceCore._benchmark_max_output_tokens({"max_output_tokens": "oops"}) == 8
@@ -5583,8 +5584,13 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     )
     shaped_repeated_prompt = core._shape_benchmark_prompt("one two", context_length=6)
     assert shaped_repeated_prompt == "one two one two one two"
+    assert shaped_repeated_prompt.tokens == ("one", "two", "one", "two", "one", "two")
+    assert shaped_repeated_prompt.token_count == 6
     assert shaped_repeated_prompt.split() == ["one", "two", "one", "two", "one", "two"]
     assert shaped_repeated_prompt.split(" ", 1) == ["one", "two one two one two"]
+    assert core._benchmark_prompt_token_count(shaped_repeated_prompt) == 6
+    assert core._benchmark_prompt_token_count("") == 1
+    assert core._benchmark_prompt_token_count("one two") == 2
     assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
     assert MaintenanceCore._shape_benchmark_prompt.cache_info().hits == 1
     MaintenanceCore._shape_benchmark_prompt.cache_clear()

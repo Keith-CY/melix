@@ -1179,6 +1179,7 @@ def test_mlx_vlm_runtime_caches_family_config_across_prompt_render_and_token_cou
     assert runtime.prompt_token_count(prepared, loaded_model=loaded_model) == 3
     assert runtime.prompt_token_count(prepared, loaded_model=loaded_model) == 3
     assert loaded_model["_vision_family_config"] is cached_config
+    runtime._record_fast_path_probe(loaded_model, prepared)
     assert resolve_call_count == 1
 
 
