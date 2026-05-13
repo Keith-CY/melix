@@ -539,17 +539,34 @@ class RequestStreamAssembler:
 
     def _next_structural_tag(self) -> tuple[str, int] | None:
         buffer = self._buffer
-        for tag in self._structural_open_tags_value:
-            if buffer.startswith(tag):
-                return (tag, 0)
-
+        think_index = buffer.find(self._THINK_OPEN)
+        has_pipe_marker = "<|" in buffer
+        pipe_reasoning_index = (
+            buffer.find(self._PIPE_REASONING_OPEN) if has_pipe_marker else -1
+        )
         best_tag = ""
         best_index = -1
-        for tag in self._structural_open_tags_value:
-            index = buffer.find(tag, 1)
-            if index >= 0 and (best_index < 0 or index < best_index):
-                best_tag = tag
-                best_index = index
+        if think_index >= 0:
+            best_tag = self._THINK_OPEN
+            best_index = think_index
+        if pipe_reasoning_index >= 0 and (
+            best_index < 0 or pipe_reasoning_index < best_index
+        ):
+            best_tag = self._PIPE_REASONING_OPEN
+            best_index = pipe_reasoning_index
+        if not self._tool_parsing_enabled_value:
+            if best_index < 0:
+                return None
+            return (best_tag, best_index)
+
+        tool_index = buffer.find(self._TOOL_OPEN)
+        if tool_index >= 0 and (best_index < 0 or tool_index < best_index):
+            best_tag = self._TOOL_OPEN
+            best_index = tool_index
+        pipe_tool_index = buffer.find(self._PIPE_TOOL_OPEN) if has_pipe_marker else -1
+        if pipe_tool_index >= 0 and (best_index < 0 or pipe_tool_index < best_index):
+            best_tag = self._PIPE_TOOL_OPEN
+            best_index = pipe_tool_index
         if best_index < 0:
             return None
         return (best_tag, best_index)
@@ -589,7 +606,7 @@ class RequestStreamAssembler:
 
     def _contains_reasoning_leak_marker(self, content: str) -> bool:
         return self._REASONING_LEAK_PREFIXES[0] in content or (
-            self._REASONING_LEAK_PREFIXES[1] in content
+            "<|" in content and self._REASONING_LEAK_PREFIXES[1] in content
         )
 
     def _record_prefix_hold(self, suffix: str) -> None:
@@ -601,7 +618,7 @@ class RequestStreamAssembler:
     def _content_delta(self, content: str) -> AssemblyDelta:
         if "<" in content:
             if self._tool_parsing_enabled_value and (
-                "<tool_call" in content or "<|tool_call" in content
+                "<tool_call" in content or ("<|" in content and "<|tool_call" in content)
             ):
                 self._metrics["tool_call_markup_leak_count"] += 1
             if self._contains_reasoning_leak_marker(content):
