@@ -864,20 +864,25 @@ def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
         return "", "default"
     filename = parts[-1]
     stem = filename.rsplit(".", 1)[0]
-    candidates = [stem]
-    candidates.extend(part for part in parts[:-1] if part not in {"data", "default"})
-    split = ""
-    for candidate in candidates:
-        prefix = candidate.split("-", 1)[0].split("_", 1)[0].lower()
-        if prefix in _SPLIT_ALIASES:
-            split = _SPLIT_ALIASES[prefix]
-            break
+    split = _split_alias_from_candidate(stem)
+    if not split:
+        for candidate in parts[:-1]:
+            if candidate in {"data", "default"}:
+                continue
+            split = _split_alias_from_candidate(candidate)
+            if split:
+                break
     if len(parts) < 2:
         return split, "default"
     first = parts[0]
     if first in {"data", "train", "test", "validation", "valid", "dev"}:
         return split, "default"
     return split, first
+
+
+def _split_alias_from_candidate(candidate: str) -> str:
+    prefix = candidate.split("-", 1)[0].split("_", 1)[0].lower()
+    return _SPLIT_ALIASES.get(prefix, "")
 
 
 def _path_matches_split(relative_path: Path, split: str) -> bool:
