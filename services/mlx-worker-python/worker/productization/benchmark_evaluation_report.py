@@ -260,6 +260,8 @@ def load_report_input(path: str | Path) -> dict[str, object]:
         bundle_path = input_path / "benchmark-evaluation-export.json"
         if not bundle_path.is_file():
             bundle_path = input_path / "export-bundle.json"
+        if not bundle_path.is_file() and (input_path / "run-summary.json").is_file():
+            return _load_batch_run_summary_bundle(input_path)
         input_path = bundle_path
     if not input_path.is_file():
         raise ValueError(f"report input is missing: {input_path}")
@@ -270,6 +272,64 @@ def load_report_input(path: str | Path) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError(f"report input must be a JSON object: {input_path}")
     return payload
+
+
+def _load_batch_run_summary_bundle(bundle_root: Path) -> dict[str, object]:
+    summary_path = bundle_root / "run-summary.json"
+    try:
+        summary = json.loads(summary_path.read_bytes())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"batch run summary could not be decoded: {summary_path}") from exc
+    if not isinstance(summary, dict):
+        raise ValueError(f"batch run summary must be a JSON object: {summary_path}")
+    models = _dict_list(summary.get("models", []))
+    benchmark_results: list[dict[str, object]] = []
+    evaluation_summary_rows: list[dict[str, object]] = []
+    for model in models:
+        metrics = model.get("metric_fields", {})
+        if not isinstance(metrics, dict):
+            metrics = {}
+        benchmark_metrics = [
+            {"name": str(name), "value": value}
+            for name, value in metrics.items()
+            if str(name).startswith("bench.") and _float_or_none(value) is not None
+        ]
+        if benchmark_metrics:
+            benchmark_results.append(
+                {
+                    "job_id": model.get("benchmark_job_id", ""),
+                    "suite": "batch",
+                    "model_index": model.get("model_index", ""),
+                    "repo_id": model.get("repo_id", ""),
+                    "metrics": benchmark_metrics,
+                }
+            )
+        for name, value in metrics.items():
+            metric_name = str(name)
+            metric_value = _float_or_none(value)
+            if not metric_name.startswith("eval.") or metric_value is None:
+                continue
+            parts = metric_name.split(".")
+            suite_id = parts[1] if len(parts) > 2 else "batch"
+            score_name = ".".join(parts[2:]) if len(parts) > 2 else metric_name
+            evaluation_summary_rows.append(
+                {
+                    "job_id": model.get("evaluation_job_id", ""),
+                    "suite_id": suite_id,
+                    "dataset_id": "batch",
+                    "primary_score_name": score_name,
+                    "primary_score_value": metric_value,
+                    "sample_size": None,
+                    "failure_count": 1 if model.get("status") == "failed" else 0,
+                    "duration_seconds": model.get("duration_seconds"),
+                }
+            )
+    return {
+        "export_schema_version": "melix.batch.summary_bundle.v1",
+        "batch_run_summary": summary,
+        "benchmark_results": benchmark_results,
+        "evaluation_summary_rows": evaluation_summary_rows,
+    }
 
 
 def build_benchmark_evaluation_report(

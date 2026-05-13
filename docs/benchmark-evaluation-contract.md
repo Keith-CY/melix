@@ -38,16 +38,26 @@ This contract does not define:
 Melix may expose `melix batch run` as an operator-facing orchestration surface
 for repeated benchmark plus evaluation sweeps over a model list. This surface
 does not replace the canonical `bench` and `eval` product semantics; it plans,
-records, and eventually dispatches those existing product commands for each
-selected model.
+records, and dispatches those existing product commands for each selected
+model.
 
-The initial supported execution mode is:
+The supported batch commands are:
 
 - `melix batch run --models <path> --dry-run`
+- `melix batch run --models <path>`
+- `melix batch status --run-id <id>`
+- `melix batch status --temp-root <path>`
+- `melix batch resume --run-id <id>`
+- `melix batch resume --temp-root <path> --eval-only`
 
 The dry-run mode must not contact Hugging Face, start a Melix runtime stack, or
 submit benchmark or evaluation jobs. It must validate and normalize inputs,
 materialize planning artifacts, and print a compact terminal summary.
+
+The non-dry-run mode must execute one model at a time, update the manifest after
+each stage, export benchmark and evaluation artifacts as soon as their jobs
+complete, and keep an operator-visible bundle under `output_root` synchronized
+with the temporary run directory.
 
 ### Model List Contract
 
@@ -192,7 +202,7 @@ Recoverability values are:
 - `not_recoverable`
 - `unknown`
 
-Future non-dry-run execution may update model status to:
+Non-dry-run execution may update model status to:
 
 - `running`
 - `succeeded`
@@ -203,6 +213,80 @@ Future non-dry-run execution may update model status to:
 `partial_success` is reserved for models where one product line, such as
 benchmarking or evaluation, completed and produced auditable artifacts while
 another product line failed.
+
+Execution updates each step with:
+
+- `status`
+- `job_id`
+- `stdout_path`
+- `stderr_path`
+- `artifact_path`
+- `started_at`
+- `finished_at`
+- `duration_seconds`
+- `failure_category`
+- `recoverability`
+- `message`
+
+Top-level execution rows also persist `benchmark_job_id`,
+`evaluation_job_id`, exported CSV/JSONL paths, copied raw artifact paths,
+duration, metric fields parsed from command JSON, and failure attribution.
+
+### Execution Pipeline
+
+For each selected model, non-dry-run batch execution must stage model-specific
+temporary and output directories, then run these stages in order:
+
+- `preflight`
+- `runtime_prepare`
+- `model_unload`
+- `hub_check`
+- `benchmark`
+- `evaluation`
+- `exports`
+- `artifact_copy`
+
+`benchmark` dispatches `melix bench run --repo-id <repo_id> ... --json` and
+then `melix bench export-csv --job-id <job_id> --output <model>/exports/benchmark.csv`.
+`evaluation` dispatches `melix eval run --repo-id <repo_id> ... --json` with
+the configured semantic judge and then exports summary CSV, samples CSV, and
+samples JSONL under the model exports directory.
+
+The batch runner records subprocess stdout and stderr for every dispatched
+command under `<model>/commands/`. Missing job ids are treated as execution
+failures because downstream export commands would otherwise be ambiguous.
+
+### Status And Resume
+
+`melix batch status` must resolve a run by explicit temporary root, explicit
+output root, or run id. It reads `manifest.jsonl`, summarizes totals, and emits
+either compact text or JSON.
+
+`melix batch resume` must load an existing manifest and recovered effective
+configuration, rebuild the model list from manifest rows when `--models` is not
+provided, and execute only incomplete work by default. `--eval-only` skips
+benchmark stages and reruns missing or failed evaluation/export work. `--dry-run`
+for resume prints the planned model rows without dispatching commands.
+
+Resume must preserve the original run id, temporary root, output root, judge,
+benchmark, and evaluation settings when they are available in
+`effective-config.json`.
+
+### Summary Artifacts
+
+After each non-dry-run batch completion or resume, Melix must write these
+operator-visible artifacts to `output_root`:
+
+- `manifest.jsonl`
+- `effective-config.json`
+- `RUN_SUMMARY.md`
+- `run-summary.json`
+- `run-summary.csv`
+- `index.html`
+
+The summary artifacts include totals, per-model status, benchmark and
+evaluation job ids, duration, failure category, recoverability, and links or
+paths for exported artifacts.
 
 ### Runtime Health Preflight
 
@@ -226,8 +310,7 @@ records:
 
 Judge config preflight confirms that the remote-server record and API key exist
 in the isolated `MELIX_HOME`. Provider reachability remains an execution-time
-check until the per-model execution pipeline in #760 is available to run the
-same command surface as the external runner.
+failure category recorded by the per-model evaluation stage.
 
 Runtime config preflight blocks bare default stack settings. Batch runs must use
 a named instance, an isolated `MELIX_HOME`, an isolated runtime directory, and a
@@ -262,6 +345,15 @@ Dry-run terminal output must show:
 - failure-continuation and per-model stack restart policy
 - effective configuration and manifest paths
 - one compact `PLAN` line per selected model
+
+Non-dry-run terminal output must show:
+
+- run id and selected model counts
+- per-model `START`, stage start/success, semantic judge heartbeat, and `DONE`
+  lines
+- failure category and message when a stage fails
+- final status totals
+- manifest and summary artifact paths
 
 ## Product Split
 
