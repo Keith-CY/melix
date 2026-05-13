@@ -1846,7 +1846,10 @@ public final class RuntimeViewModel {
     public private(set) var lastModelOperation: RuntimeModelOperationState?
     public private(set) var loraWorkflowStatus: RuntimeLoraWorkflowStatusState?
     public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = [] {
-        didSet { refreshModelRegistryEntries() }
+        didSet {
+            refreshModelRegistryEntries()
+            persistOperatorSessionState()
+        }
     }
     public private(set) var modelRegistryEntries: [RuntimeRegistryEntryState] = []
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?

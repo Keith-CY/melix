@@ -142,13 +142,15 @@ struct Phase8LoRAWindowSmokeTests {
             foundation: viewModel.desktopFoundationState
         )
         await diagnosticsSection.runEvaluationCompare()
-        viewModel.selectEvaluationHistory(jobID: evaluationJobID)
+        let runnerEvaluationRequests = await runnerClient.recordedEvaluationRequests
+        #expect(runnerEvaluationRequests.isEmpty == false)
+        #expect(runnerEvaluationRequests.last?.parameters["compare_target_model_ids"] == derivedModelID)
+        #expect(viewModel.selectedEvaluationHistoryJobID == evaluationJobID)
         await viewModel.exportSelectedEvaluationSummaryCSV()
         let lastEvaluationExport = try #require(viewModel.lastEvaluationExport)
+        let runnerExports = await runnerClient.recordedExportOutputDirs
         await trainingSection.removeDerivedModel()
         let runnerModelOps = await runnerClient.recordedModelOperationRequests
-        let runnerEvaluationRequests = await runnerClient.recordedEvaluationRequests
-        let runnerExports = await runnerClient.recordedExportOutputDirs
 
         let negativeTrainClient = FakeControlPlaneXPCClient()
         await negativeTrainClient.configureSnapshot(
