@@ -379,7 +379,7 @@ class LiveMelixStack:
                                 os.unlink(entry.path)
                         except FileNotFoundError:
                             pass
-            except FileNotFoundError:
+            except (FileNotFoundError, NotADirectoryError):
                 pass
 
     def _control_plane_hit_port_conflict(self) -> bool:
