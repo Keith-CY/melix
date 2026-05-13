@@ -63,7 +63,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             continue
         if current_changed_lines is None or new_line is None:
             continue
-        if first_char == "\\" and line.startswith("\\ "):
+        if first_char == "\\":
             continue
         if first_char == "+":
             current_changed_lines.add(new_line)
