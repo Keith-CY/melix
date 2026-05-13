@@ -23,4 +23,8 @@ conflicts = [
     { package = "melix-mlx-worker", extra = "mlx" },
     { package = "melix-mlx-worker", extra = "audio-tts" },
   ],
+  [
+    { package = "melix-mlx-worker", extra = "mlx" },
+    { package = "melix-mlx-worker", extra = "synthetic-data" },
+  ],
 ]
