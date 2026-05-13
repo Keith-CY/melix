@@ -31,7 +31,8 @@ struct Phase8LoRAWindowSmokeTests {
         )
         let snapshot = phase8LoRAWindowSnapshot(
             models: [baseModel, derivedModel],
-            runtimeSessions: [phase8LoRAWindowRuntimeSession()]
+            runtimeSessions: [phase8LoRAWindowRuntimeSession()],
+            servedModelID: baseModelID
         )
 
         let directClient = FakeControlPlaneXPCClient()
@@ -141,13 +142,15 @@ struct Phase8LoRAWindowSmokeTests {
             foundation: viewModel.desktopFoundationState
         )
         await diagnosticsSection.runEvaluationCompare()
-        viewModel.selectEvaluationHistory(jobID: evaluationJobID)
+        let runnerEvaluationRequests = await runnerClient.recordedEvaluationRequests
+        #expect(runnerEvaluationRequests.isEmpty == false)
+        #expect(runnerEvaluationRequests.last?.parameters["compare_target_model_ids"] == derivedModelID)
+        #expect(viewModel.selectedEvaluationHistoryJobID == evaluationJobID)
         await viewModel.exportSelectedEvaluationSummaryCSV()
         let lastEvaluationExport = try #require(viewModel.lastEvaluationExport)
+        let runnerExports = await runnerClient.recordedExportOutputDirs
         await trainingSection.removeDerivedModel()
         let runnerModelOps = await runnerClient.recordedModelOperationRequests
-        let runnerEvaluationRequests = await runnerClient.recordedEvaluationRequests
-        let runnerExports = await runnerClient.recordedExportOutputDirs
 
         let negativeTrainClient = FakeControlPlaneXPCClient()
         await negativeTrainClient.configureSnapshot(
@@ -181,14 +184,16 @@ struct Phase8LoRAWindowSmokeTests {
         await negativeActionClient.configureSnapshot(
             phase8LoRAWindowSnapshot(
                 models: [baseModel],
-                runtimeSessions: [phase8LoRAWindowRuntimeSession()]
+                runtimeSessions: [phase8LoRAWindowRuntimeSession()],
+                servedModelID: baseModelID
             )
         )
         let negativeActionRunnerClient = FakeControlPlaneXPCClient()
         await negativeActionRunnerClient.configureSnapshot(
             phase8LoRAWindowSnapshot(
                 models: [baseModel],
-                runtimeSessions: [phase8LoRAWindowRuntimeSession()]
+                runtimeSessions: [phase8LoRAWindowRuntimeSession()],
+                servedModelID: baseModelID
             )
         )
         await negativeActionRunnerClient.configureExportResult(
@@ -279,12 +284,48 @@ struct Phase8LoRAWindowSmokeTests {
 
 private func phase8LoRAWindowSnapshot(
     models: [Melix_Controlplane_V1_ModelSummary],
-    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
+    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = [],
+    servedModelID: String = ""
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = .serverReady
     snapshot.models = models
     snapshot.runtimeSessions = runtimeSessions
+    let normalizedServedModelID = servedModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let runtimeSession = runtimeSessions.first, normalizedServedModelID.isEmpty == false {
+        var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
+        listener.serverSessionID = runtimeSession.serverSessionID
+        listener.requestedHost = "127.0.0.1"
+        listener.requestedPort = 8080
+        listener.effectiveHost = "127.0.0.1"
+        listener.effectivePort = 8080
+        listener.servedModelID = normalizedServedModelID
+        listener.rateLimitPerMinute = 60
+        listener.timeoutSeconds = 120
+        listener.source = .operatorOverride
+        listener.activeBinding = true
+        snapshot.gatewayConfig.listeners = [listener]
+
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = runtimeSession.serverSessionID
+        servingDefaults.servedModelID = normalizedServedModelID
+        servingDefaults.requestedTemperature = 0.7
+        servingDefaults.requestedTopP = 0.9
+        servingDefaults.requestedMaxTokens = 512
+        servingDefaults.requestedStreamIntervalTokens = 16
+        servingDefaults.requestedMaxConcurrentRequests = 1
+        servingDefaults.requestedPrefillBatchSize = 1
+        servingDefaults.requestedCompletionBatchSize = 1
+        servingDefaults.effectiveTemperature = 0.7
+        servingDefaults.effectiveTopP = 0.9
+        servingDefaults.effectiveMaxTokens = 512
+        servingDefaults.effectiveStreamIntervalTokens = 16
+        servingDefaults.effectiveMaxConcurrentRequests = 1
+        servingDefaults.effectivePrefillBatchSize = 1
+        servingDefaults.effectiveCompletionBatchSize = 1
+        servingDefaults.source = .operatorOverride
+        snapshot.servingDefaults.sessions = [servingDefaults]
+    }
     return snapshot
 }
 

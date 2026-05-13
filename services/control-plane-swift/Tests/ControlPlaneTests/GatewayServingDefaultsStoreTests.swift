@@ -50,7 +50,7 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
         #expect(session.requestedTemperature == 0.7)
         #expect(session.requestedTopP == 1.0)
-        #expect(session.requestedMaxTokens == 256)
+        #expect(session.requestedMaxTokens == 32_768)
         #expect(session.requestedStreamIntervalTokens == 1)
         #expect(session.requestedMaxConcurrentRequests == 4)
         #expect(session.requestedConcurrentProcessingEnabled)

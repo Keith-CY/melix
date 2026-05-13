@@ -2,6 +2,8 @@ import Foundation
 import MelixControlPlaneProtocol
 
 public struct OCRExecutionPolicy: Sendable, Equatable {
+    private static let defaultMaxTokens: UInt32 = 256
+
     public let promptProfileID: String
     public let promptTemplate: String
     public let autoPrompt: String
@@ -45,7 +47,7 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
         self.samplingProfileID = samplingProfileID ?? "ocr-default"
         self.temperature = temperature
         self.topP = topP
-        self.maxTokens = maxTokens
+        self.maxTokens = maxTokens ?? Self.defaultMaxTokens
     }
 
     private static func parseList(_ rawValue: String?) -> [String] {
@@ -265,7 +267,10 @@ public struct TextRequestShaper: Sendable {
             ?? gatewayServingDefaults?.maxTokens
         let temperature = request.temperature ?? preset?.temperature ?? fallbackTemperature ?? 0.7
         let topP = request.topP ?? preset?.topP ?? fallbackTopP ?? 1.0
-        let maxTokens = request.maxTokens ?? preset?.maxTokens ?? fallbackMaxTokens ?? 256
+        let maxTokens = request.maxTokens
+            ?? preset?.maxTokens
+            ?? fallbackMaxTokens
+            ?? GatewayServingDefaultsStore.defaultMaxTokens
         let streamIntervalTokens = gatewayServingDefaults?.streamIntervalTokens ?? 1
         let maxConcurrentRequests = gatewayServingDefaults?.maxConcurrentRequests ?? 4
         let concurrentProcessingEnabled = gatewayServingDefaults?.concurrentProcessingEnabled ?? true

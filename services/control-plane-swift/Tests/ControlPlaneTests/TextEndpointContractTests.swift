@@ -1430,6 +1430,34 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.execution.ext["melix.ocr.sampling_source"] == "model")
     }
 
+    @Test("ocr token fallback stays short when gateway text defaults increase")
+    func ocrTokenFallbackStaysShortWhenGatewayTextDefaultsIncrease() throws {
+        let translator = ChatRequestTranslator()
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-ocr",
+                messages: [.init(role: "user", content: "Read the image.")]
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-ocr::python",
+            modelOCRPolicy: OCRExecutionPolicy(modelSettings: modelSettings),
+            gatewayServingDefaults: GatewayServingDefaultsPolicy(
+                temperature: 0.35,
+                topP: 0.92,
+                maxTokens: 32_768,
+                streamIntervalTokens: 3,
+                maxConcurrentRequests: 5
+            )
+        )
+
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 256)
+    }
+
     @Test("chat request contracts accept image-only multimodal content")
     func chatRequestContractsDecodeImageOnlyMultimodalContent() throws {
         let decoder = JSONDecoder()
@@ -1866,7 +1894,7 @@ struct TextEndpointContractTests {
         #expect(!translated.workerRequest.stream)
         #expect(translated.workerRequest.sampling.temperature == 0.7)
         #expect(translated.workerRequest.sampling.topP == 1.0)
-        #expect(translated.workerRequest.sampling.maxOutputTokens == 256)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 32_768)
         #expect(translated.workerRequest.execution.id.branchID == "branch-main")
         #expect(translated.workerRequest.execution.cacheHints.saveBoundarySnapshot)
         #expect(translated.workerRequest.execution.cacheHints.allowL1)
