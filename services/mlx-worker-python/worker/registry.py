@@ -218,6 +218,7 @@ class WorkerRegistry:
             )
         runtime_kind, runtime = self._runtime_for_model(resolved)
         trust_started_at = time.monotonic()
+        record_trust_latency = True
         try:
             load_trust_policy = resolve_model_load_trust_policy(
                 resolved,
@@ -225,14 +226,18 @@ class WorkerRegistry:
                 runtime_kind=runtime_kind,
                 runtime=runtime,
             )
+            record_trust_latency = (
+                load_trust_policy.effective_mode != common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+            )
         except ModelLoadTrustRejection:
             with self._lock:
                 self._model_load_trust_blocked_count += 1
             raise
         finally:
-            latency_ms = (time.monotonic() - trust_started_at) * 1000.0
-            with self._lock:
-                self._last_model_load_trust_policy_resolution_ms = latency_ms
+            if record_trust_latency:
+                latency_ms = (time.monotonic() - trust_started_at) * 1000.0
+                with self._lock:
+                    self._last_model_load_trust_policy_resolution_ms = latency_ms
         estimated = runtime.estimate_resident_bytes(resolved)
         with self._lock:
             existing_resident_bytes = self._loaded_model_resident_bytes + self._reserved_model_resident_bytes

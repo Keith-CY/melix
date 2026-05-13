@@ -106,6 +106,28 @@ def test_worker_reports_not_applicable_receipt_for_non_custom_loader_runtime() -
     assert response.load_trust.custom_loader_required is False
 
 
+def test_worker_skips_latency_metric_for_non_applicable_text_loader(tmp_path: Path) -> None:
+    backend = NonApplicableTextBackend()
+    service = WorkerRuntimeService(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=backend),
+            model_catalog=WorkerModelCatalog(),
+        )
+    )
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=_custom_loader_text_model(tmp_path)),
+        context=None,
+    )
+    stats = service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+
+    assert response.ok is True
+    assert response.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+    assert response.load_trust.policy_source == "not_applicable"
+    assert stats.last_model_load_trust_policy_resolution_ms == 0.0
+    assert backend.load_calls == [False]
+
+
 def test_trust_policy_treats_non_mlx_text_loader_as_not_applicable(tmp_path: Path) -> None:
     model = _custom_loader_text_model(tmp_path)
 
@@ -168,4 +190,8 @@ def _custom_loader_vlm_model(tmp_path: Path) -> common_pb2.ModelSpec:
 
 
 class FakeTextRuntime:
+    runtime_name = "fake-mlx"
+
+
+class NonApplicableTextBackend(RecordingTextBackend):
     runtime_name = "fake-mlx"

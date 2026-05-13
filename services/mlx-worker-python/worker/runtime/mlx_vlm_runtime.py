@@ -25,8 +25,10 @@ from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 logger = logging.getLogger(__name__)
-_GEMMA4_VISION_WEIGHT_PREFIXES = ("vision_tower.", "embed_vision.")
-_GEMMA4_AUDIO_WEIGHT_PREFIXES = ("audio_tower.", "embed_audio.")
+_GEMMA4_PRESENCE_NONE = (False, False)
+_GEMMA4_PRESENCE_VISION = (True, False)
+_GEMMA4_PRESENCE_AUDIO = (False, True)
+_GEMMA4_PRESENCE_BOTH = (True, True)
 
 
 class RuntimeUnavailableError(RuntimeError):
@@ -79,16 +81,26 @@ class _CallableTokenizerProcessor:
 def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[bool, bool]:
     has_vision = False
     has_audio = False
-    vision_prefixes = _GEMMA4_VISION_WEIGHT_PREFIXES
-    audio_prefixes = _GEMMA4_AUDIO_WEIGHT_PREFIXES
     for name in weight_names:
-        if not has_vision and name.startswith(vision_prefixes):
-            has_vision = True
-        elif not has_audio and name.startswith(audio_prefixes):
-            has_audio = True
+        first = name[0]
+        if first == "v":
+            if not has_vision and name.startswith("vision_tower."):
+                has_vision = True
+        elif first == "a":
+            if not has_audio and name.startswith("audio_tower."):
+                has_audio = True
+        elif first == "e":
+            if not has_vision and name.startswith("embed_vision."):
+                has_vision = True
+            elif not has_audio and name.startswith("embed_audio."):
+                has_audio = True
         if has_vision and has_audio:
-            break
-    return has_vision, has_audio
+            return _GEMMA4_PRESENCE_BOTH
+    if has_vision:
+        return _GEMMA4_PRESENCE_VISION
+    if has_audio:
+        return _GEMMA4_PRESENCE_AUDIO
+    return _GEMMA4_PRESENCE_NONE
 
 
 def _mlx_peak_memory_gb(mx_module: Any) -> float:

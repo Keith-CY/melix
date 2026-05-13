@@ -992,10 +992,10 @@ def test_mlx_vlm_runtime_records_temp_media_cleanup_failures_in_probe(tmp_path: 
 
 def test_gemma4_multimodal_weight_presence_detects_text_backed_exports() -> None:
     has_vision, has_audio = _gemma4_multimodal_weight_presence(
-        {
+        (
             "language_model.model.layers.0.self_attn.q_proj.weight",
             "language_model.model.per_layer_model_projection.weight",
-        }
+        )
     )
 
     assert has_vision is False
@@ -1040,6 +1040,17 @@ def test_gemma4_multimodal_weight_presence_accepts_dict_keys_view() -> None:
     }
 
     assert _gemma4_multimodal_weight_presence(weights.keys()) == (False, True)
+    assert _gemma4_multimodal_weight_presence(
+        {
+            "embed_vision.proj.weight": object(),
+            "embed_audio.proj.weight": object(),
+        }.keys()
+    ) == (True, True)
+    assert _gemma4_multimodal_weight_presence(
+        {
+            "vision_tower.proj.weight": object(),
+        }.keys()
+    ) == (True, False)
 
 
 def test_gemma4_scaled_linear_patch_accepts_newer_language_api(monkeypatch: pytest.MonkeyPatch) -> None:

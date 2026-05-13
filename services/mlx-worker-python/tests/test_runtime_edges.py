@@ -60,6 +60,10 @@ class FailingBackend(FakeBackend):
         raise RuntimeError("cannot load model")
 
 
+class ApplicableBackend(FakeBackend):
+    runtime_name = "mlx-lm"
+
+
 class StubAudioRuntime:
     def __init__(self, runtime_name: str):
         self.runtime_name = runtime_name
@@ -398,6 +402,13 @@ def test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes() ->
     assert registry.unload_model("missing-handle") is False
     assert registry.runtime_stats().model_resident_bytes == 0
 
+    applicable_registry = build_registry(backend=ApplicableBackend())
+    applicable_loaded = applicable_registry.load_model(WorkerModelCatalog.dev_text_model())
+    applicable_stats = applicable_registry.runtime_stats()
+
+    assert applicable_loaded.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE
+    assert applicable_stats.last_model_load_trust_policy_resolution_ms >= 0.0
+
 
 
 def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -428,8 +439,6 @@ def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch:
 
     assert len(invalidated_handles) == 2
     assert sorted_calls == 2
-
-
 
 def test_registry_capabilities_and_request_lifecycle() -> None:
     registry = build_registry()

@@ -149,7 +149,9 @@ resolution and metadata inspection.
 Metrics:
 
 - `control_plane.model_load_trust_resolution_ms`
-- `worker.model_load_trust_policy_resolution_ms`
+- `worker.model_load_trust_policy_resolution_ms` for trust-applicable or rejected load gates.
+  Non-applicable routes keep their existing sample so default deterministic load probes are not
+  perturbed by an observability-only metric.
 - `worker.model_load_trust_blocked_count`
 
 Performance target:
