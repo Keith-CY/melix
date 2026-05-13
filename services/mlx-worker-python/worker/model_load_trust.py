@@ -187,6 +187,9 @@ def _is_trust_applicable(
 ) -> bool:
     if runtime is None:
         return False
+    supports_trust_policy = getattr(runtime, "supports_trust_policy", None)
+    if supports_trust_policy is not None:
+        return bool(supports_trust_policy)
     normalized_runtime_name = runtime_name.strip().lower().replace("-", "_")
     family = loader_family.strip().lower().replace("-", "_")
     if runtime_kind == "text":
@@ -194,11 +197,7 @@ def _is_trust_applicable(
     if runtime_kind == "vlm":
         if normalized_runtime_name.startswith("deterministic"):
             return False
-        return (
-            family in TRUST_APPLICABLE_VLM_LOADERS
-            or normalized_runtime_name in TRUST_APPLICABLE_VLM_LOADERS
-            or runtime.__class__.__name__ == "MLXVLMRuntime"
-        )
+        return family in TRUST_APPLICABLE_VLM_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_VLM_LOADERS
     return False
 
 

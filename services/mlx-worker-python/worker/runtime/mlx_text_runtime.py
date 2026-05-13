@@ -579,7 +579,9 @@ class AutoMLXBackend:
         self._ensure_runtime()
         adapter_metadata = _resolve_adapter_backed_metadata(model_spec)
         load_kwargs: dict[str, Any] = {"lazy": False}
-        if trust_remote_code and _callable_accepts_kwarg(self._load_fn, "trust_remote_code"):
+        if trust_remote_code and not _callable_accepts_kwarg(self._load_fn, "trust_remote_code"):
+            raise RuntimeError("mlx-lm loader cannot honor trust_remote_code.")
+        if trust_remote_code:
             load_kwargs["trust_remote_code"] = True
         if adapter_metadata:
             load_kwargs["adapter_path"] = adapter_metadata["adapter_dir"]
@@ -735,10 +737,20 @@ class MLXTextRuntime:
     def runtime_name(self) -> str:
         return getattr(self._backend, "runtime_name", "unknown-runtime")
 
+    @property
+    def supports_trust_policy(self) -> bool:
+        explicit_support = getattr(self._backend, "supports_trust_policy", None)
+        if explicit_support is not None:
+            return bool(explicit_support)
+        runtime_name = self.runtime_name.strip().lower().replace("-", "_")
+        return runtime_name in {"mlx_lm", "mlx_unavailable", "mlx_lm_unavailable"}
+
     def load_model(self, model_spec, *, trust_remote_code: bool = False):
         def load_backend():
             if _callable_accepts_kwarg(self._backend.load_model, "trust_remote_code"):
                 return self._backend.load_model(model_spec, trust_remote_code=trust_remote_code)
+            if trust_remote_code:
+                raise RuntimeError("Text runtime backend cannot honor trust_remote_code.")
             return self._backend.load_model(model_spec)
 
         if self._executor is None:

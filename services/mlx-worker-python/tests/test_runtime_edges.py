@@ -64,6 +64,13 @@ class FailingBackend(FakeBackend):
 class ApplicableBackend(FakeBackend):
     runtime_name = "mlx-lm"
 
+    def load_model(self, model_spec, *, trust_remote_code: bool = False):
+        return {
+            "model_id": model_spec.model_id,
+            "model_path": model_spec.model_path,
+            "trust_remote_code": trust_remote_code,
+        }
+
 
 class StubAudioRuntime:
     def __init__(self, runtime_name: str):

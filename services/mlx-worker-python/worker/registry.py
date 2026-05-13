@@ -804,6 +804,8 @@ class WorkerRegistry:
         load_kwargs = load_kwargs_for_policy(load_trust_policy)
         if load_kwargs and callable_accepts_kwarg(runtime.load_model, "trust_remote_code"):
             return runtime.load_model(model_spec, **load_kwargs)
+        if load_kwargs:
+            raise RuntimeError("Runtime cannot honor trust_remote_code.")
         return runtime.load_model(model_spec)
 
     @staticmethod

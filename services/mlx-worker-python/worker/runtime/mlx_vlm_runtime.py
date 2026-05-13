@@ -268,7 +268,9 @@ class AutoMLXVLMBackend:
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
         try:
             load_kwargs: dict[str, Any] = {"revision": model_spec.revision or "main"}
-            if trust_remote_code and _callable_accepts_kwarg(self.load_fn, "trust_remote_code"):
+            if trust_remote_code and not _callable_accepts_kwarg(self.load_fn, "trust_remote_code"):
+                raise RuntimeError("mlx-vlm loader cannot honor trust_remote_code.")
+            if trust_remote_code:
                 load_kwargs["trust_remote_code"] = True
             model, processor = self.load_fn(model_spec.model_path, **load_kwargs)
             if self._should_attempt_gemma4_text_backed_fallback(model_spec):
@@ -469,10 +471,20 @@ class MLXVLMRuntime:
     def runtime_name(self) -> str:
         return getattr(self._backend, "runtime_name", "mlx-vlm-unavailable")
 
+    @property
+    def supports_trust_policy(self) -> bool:
+        explicit_support = getattr(self._backend, "supports_trust_policy", None)
+        if explicit_support is not None:
+            return bool(explicit_support)
+        runtime_name = self.runtime_name.strip().lower().replace("-", "_")
+        return runtime_name in {"mlx_vlm", "mlx_vlm_unavailable"}
+
     def load_model(self, model_spec, *, trust_remote_code: bool = False):
         def load_backend():
             if _callable_accepts_kwarg(self._backend.load_model, "trust_remote_code"):
                 return self._backend.load_model(model_spec, trust_remote_code=trust_remote_code)
+            if trust_remote_code:
+                raise RuntimeError("VLM runtime backend cannot honor trust_remote_code.")
             return self._backend.load_model(model_spec)
 
         if self._executor is None:

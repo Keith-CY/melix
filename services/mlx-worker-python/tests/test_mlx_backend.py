@@ -258,6 +258,57 @@ def test_auto_backend_forwards_trust_remote_code_when_loader_supports_it() -> No
     assert seen["load"] == ("models/melix-dev-text", False, True)
 
 
+def test_auto_backend_rejects_trust_when_loader_cannot_accept_kwarg() -> None:
+    def fake_load(model_source: str, *, lazy: bool = False):  # pragma: no cover - must be blocked.
+        _ = model_source, lazy
+        return object(), FakeTokenizer()
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+
+    with pytest.raises(RuntimeError, match="trust_remote_code"):
+        backend.load_model(WorkerModelCatalog.dev_text_model(), trust_remote_code=True)
+
+
+def test_mlx_text_runtime_rejects_trust_when_backend_cannot_accept_kwarg() -> None:
+    class LegacyBackend:
+        runtime_name = "mlx-lm"
+
+        def load_model(self, model_spec):  # pragma: no cover - must be blocked before invocation.
+            return {"model_id": model_spec.model_id}
+
+        def estimate_resident_bytes(self, model_spec) -> int:  # pragma: no cover - not used by this test.
+            _ = model_spec
+            return 0
+
+    runtime = MLXTextRuntime(backend=LegacyBackend())
+
+    with pytest.raises(RuntimeError, match="trust_remote_code"):
+        runtime.load_model(WorkerModelCatalog.dev_text_model(), trust_remote_code=True)
+
+
+def test_mlx_text_runtime_uses_explicit_trust_support_override() -> None:
+    class BackendWithExplicitSupport:
+        runtime_name = "wrapped-runtime"
+        supports_trust_policy = True
+
+        def load_model(self, model_spec):  # pragma: no cover - property checks only.
+            return {"model_id": model_spec.model_id}
+
+    class BackendWithExplicitOptOut:
+        runtime_name = "mlx-lm"
+        supports_trust_policy = False
+
+        def load_model(self, model_spec):  # pragma: no cover - property checks only.
+            return {"model_id": model_spec.model_id}
+
+    assert MLXTextRuntime(backend=BackendWithExplicitSupport()).supports_trust_policy is True
+    assert MLXTextRuntime(backend=BackendWithExplicitOptOut()).supports_trust_policy is False
+
+
 def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_utils.clear_callable_kwarg_signature_cache()
     signature_calls: dict[str, int] = {}

@@ -220,6 +220,60 @@ def test_mlx_vlm_runtime_forwards_trust_remote_code_when_loader_supports_it() ->
     assert seen["load"] == ("unsloth/gemma-4-E4B-it-MLX-8bit", "main", True)
 
 
+def test_auto_vlm_backend_rejects_trust_when_loader_cannot_accept_kwarg() -> None:
+    def fake_load(model_path: str, *, revision: str = "main"):  # pragma: no cover - must be blocked.
+        _ = model_path, revision
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    backend = AutoMLXVLMBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        apply_chat_template_fn=lambda *args, **kwargs: "",
+    )
+
+    with pytest.raises(RuntimeError, match="trust_remote_code"):
+        backend.load_model(imported_gemma4_vlm_model(), trust_remote_code=True)
+
+
+def test_mlx_vlm_runtime_rejects_trust_when_backend_cannot_accept_kwarg() -> None:
+    class LegacyBackend:
+        runtime_name = "mlx-vlm"
+
+        def load_model(self, model_spec):  # pragma: no cover - must be blocked before invocation.
+            return {"model_id": model_spec.model_id}
+
+        def estimate_resident_bytes(self, model_spec) -> int:  # pragma: no cover - not used by this test.
+            _ = model_spec
+            return 0
+
+    runtime = MLXVLMRuntime(backend=LegacyBackend())
+
+    with pytest.raises(RuntimeError, match="trust_remote_code"):
+        runtime.load_model(imported_gemma4_vlm_model(), trust_remote_code=True)
+
+
+def test_mlx_vlm_runtime_uses_explicit_trust_support_override() -> None:
+    class BackendWithExplicitSupport:
+        runtime_name = "wrapped-runtime"
+        supports_trust_policy = True
+
+        def load_model(self, model_spec):  # pragma: no cover - property checks only.
+            return {"model_id": model_spec.model_id}
+
+    class BackendWithExplicitOptOut:
+        runtime_name = "mlx-vlm"
+        supports_trust_policy = False
+
+        def load_model(self, model_spec):  # pragma: no cover - property checks only.
+            return {"model_id": model_spec.model_id}
+
+    assert MLXVLMRuntime(backend=BackendWithExplicitSupport()).supports_trust_policy is True
+    assert MLXVLMRuntime(backend=BackendWithExplicitOptOut()).supports_trust_policy is False
+    assert MLXVLMRuntime(backend=AutoMLXVLMBackend(load_fn=lambda *args, **kwargs: None)).supports_trust_policy is True
+
+
 def test_mlx_vlm_runtime_records_installed_package_versions(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_version(package_name: str) -> str:
         return {

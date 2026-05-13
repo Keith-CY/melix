@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from packages.protocol.python.worker.v1 import common_pb2, runtime_pb2
 
 from worker.grpc_server import WorkerRuntimeService
@@ -90,6 +92,46 @@ def test_worker_trusted_custom_loader_receipt_passes_trust_remote_code(tmp_path:
     assert stats.model_load_trust_blocked_count == 0
 
 
+def test_worker_rejects_trusted_custom_loader_when_backend_cannot_honor_trust(tmp_path: Path) -> None:
+    service = WorkerRuntimeService(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=LegacyTrustedBackend()),
+            model_catalog=WorkerModelCatalog(),
+        )
+    )
+    load_trust = common_pb2.ModelLoadTrustPolicy(
+        requested_mode=common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+        policy_source="model_settings",
+        route_class=common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
+        loader_family="mlx-lm",
+    )
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=_custom_loader_text_model(tmp_path),
+            load_trust=load_trust,
+        ),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "load_failed"
+    assert "trust_remote_code" in response.error.message
+
+
+def test_registry_trust_loader_rejects_runtime_that_cannot_honor_trust() -> None:
+    policy = common_pb2.ModelLoadTrustPolicy(
+        effective_mode=common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+    )
+
+    with pytest.raises(RuntimeError, match="trust_remote_code"):
+        WorkerRegistry._load_runtime_model(
+            NoTrustKwargRuntime(),
+            WorkerModelCatalog.dev_text_model(),
+            load_trust_policy=policy,
+        )
+
+
 def test_worker_reports_not_applicable_receipt_for_non_custom_loader_runtime() -> None:
     service = WorkerRuntimeService(WorkerRegistry(model_catalog=WorkerModelCatalog()))
 
@@ -164,6 +206,46 @@ def test_trust_policy_treats_missing_runtime_as_not_applicable(tmp_path: Path) -
     assert policy.custom_loader_required is False
 
 
+def test_trust_policy_uses_explicit_runtime_support_contract(tmp_path: Path) -> None:
+    model = _custom_loader_vlm_model(tmp_path)
+    trusted_request = common_pb2.ModelLoadTrustPolicy(
+        requested_mode=common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+    )
+
+    supported = resolve_model_load_trust_policy(
+        model,
+        request_policy=trusted_request,
+        runtime_kind="vlm",
+        runtime=ExplicitTrustRuntime(True),
+    )
+    unsupported = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="vlm",
+        runtime=ExplicitTrustRuntime(False),
+    )
+
+    assert supported.effective_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    assert unsupported.effective_mode == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+
+
+def test_trust_policy_falls_back_to_vlm_loader_family_without_runtime_contract(tmp_path: Path) -> None:
+    trusted_request = common_pb2.ModelLoadTrustPolicy(
+        requested_mode=common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+        loader_family="mlx-vlm",
+    )
+
+    policy = resolve_model_load_trust_policy(
+        _custom_loader_vlm_model(tmp_path),
+        request_policy=trusted_request,
+        runtime_kind="vlm",
+        runtime=NamedRuntime("wrapped-vlm"),
+    )
+
+    assert policy.effective_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    assert policy.loader_family == "mlx-vlm"
+
+
 def _custom_loader_text_model(tmp_path: Path) -> common_pb2.ModelSpec:
     model_dir = tmp_path / "custom-loader-model"
     model_dir.mkdir()
@@ -195,3 +277,31 @@ class FakeTextRuntime:
 
 class NonApplicableTextBackend(RecordingTextBackend):
     runtime_name = "fake-mlx"
+
+
+class LegacyTrustedBackend:
+    runtime_name = "mlx-lm"
+
+    def load_model(self, model_spec):  # pragma: no cover - must be blocked before invocation.
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec) -> int:
+        _ = model_spec
+        return 4096
+
+
+class ExplicitTrustRuntime:
+    runtime_name = "wrapped-vlm"
+
+    def __init__(self, supports_trust_policy: bool) -> None:
+        self.supports_trust_policy = supports_trust_policy
+
+
+class NoTrustKwargRuntime:
+    def load_model(self, model_spec):  # pragma: no cover - must be blocked before invocation.
+        return {"model_id": model_spec.model_id}
+
+
+class NamedRuntime:
+    def __init__(self, runtime_name: str) -> None:
+        self.runtime_name = runtime_name
