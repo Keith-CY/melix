@@ -2,7 +2,7 @@
 
 ## Goal
 
-Avoid redundant paired-bootstrap work when every paired outcome has the same value. In that case every bootstrap replicate has the same mean, so the percentile interval can be returned exactly without allocating and sorting the replicate vector. This follow-up slice keeps that short-circuit and removes the preflight tuple-tail slice used to detect constant outcomes.
+Avoid redundant paired-bootstrap and analytical interval work when every paired outcome has the same value. In that case every bootstrap replicate and the analytical margin are exact, so the percentile interval can be returned without allocating and sorting the replicate vector, and the analytical interval can reuse the same constant-outcome scan instead of walking the sample again.
 
 ## Linux-only constraint
 
@@ -18,7 +18,7 @@ This is a Python worker/productization slice and is verifiable on Linux with foc
 
 Run `/tmp/statistical_evidence_constant_probe.py <origin-main-worktree> <head-worktree>` against a synthetic homogeneous `paired_outcomes=(1.0,) * 200000` workload with `bootstrap_iterations=1000` and five samples. Compare mean elapsed time and traced peak allocation while asserting the returned bootstrap bounds stay exactly `1.0`.
 
-The repository already has the `statistical-evidence-bootstrap-single-sort` PR-scoped performance probe watching this production file and test file. This slice relies on that registered probe to validate no regression in the mixed-outcome bootstrap path, and the local homogeneous probe validates the new short-circuit path.
+The repository already has the `statistical-evidence-bootstrap-single-sort` PR-scoped performance probe watching this production file and test file. This slice relies on that registered probe to validate no regression in the mixed-outcome bootstrap path, and the local homogeneous probe validates that the shared mean/constant scan improves the constant-outcome path.
 
 ## Success metrics
 
