@@ -172,6 +172,34 @@ def test_serving_diagnostics_bounded_queue_drops_oldest_without_blocking(
     assert [row["event_index"] for row in event_rows] == [1, 2]
 
 
+def test_serving_diagnostics_queue_append_uses_retained_count_without_len() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-retained-count",
+        phase="decode",
+        event_index=0,
+        status="completed",
+    )
+
+    class NoLenBuffer:
+        def __init__(self) -> None:
+            self.events: list[ServingDiagnosticsEvent] = []
+
+        def __len__(self) -> int:
+            raise AssertionError(
+                "append should use the retained counter, not len(_events)"
+            )  # pragma: no cover
+
+        def append(self, queued_event: ServingDiagnosticsEvent) -> None:
+            self.events.append(queued_event)
+
+    queue = BoundedServingDiagnosticsEventQueue(max_events=2)
+    buffer = NoLenBuffer()
+    queue._events = buffer  # type: ignore[assignment]
+
+    assert queue.append(event) is True
+    assert buffer.events == [event]
+
+
 def test_serving_diagnostics_event_instances_use_slots_for_debug_queue() -> None:
     event = ServingDiagnosticsEvent(
         request_id="req-slots",

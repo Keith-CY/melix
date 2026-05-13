@@ -32,3 +32,7 @@ The probe repeatedly prepares a vision request with a local `file://` image URI 
 - Changed-scope coverage for touched executable Python files is at least 95%.
 - The local probe reports `urlparse_calls_mean == iteration_count` on the optimized branch.
 - `git diff --check` passes.
+
+## 2026-05-13 follow-up slice
+
+The plain local `file://` path now skips `urllib.parse.unquote(...)` when the parsed path contains no percent escapes, while percent-encoded file paths still decode through the existing helper. This keeps the registered `multimodal-preprocessing-image-uri-single-parse` / local URI probe coverage on the affected preprocessing path and narrows the per-image URI hot path without changing remote URL handling.

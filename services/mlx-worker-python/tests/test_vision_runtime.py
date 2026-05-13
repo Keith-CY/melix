@@ -1771,14 +1771,16 @@ def test_bytes_from_local_image_uri_reuses_single_parsed_uri(
 ) -> None:
     image_path = tmp_path / "single-parse-image.txt"
     image_path.write_bytes(b"local image bytes")
-    calls: list[str] = []
+    parse_calls: list[str] = []
+    unquote_calls: list[str] = []
     original_urlparse = multimodal_preprocessing.urlparse
 
     def tracked_urlparse(uri: str):
-        calls.append(uri)
+        parse_calls.append(uri)
         return original_urlparse(uri)
 
     monkeypatch.setattr(multimodal_preprocessing, "urlparse", tracked_urlparse)
+    monkeypatch.setattr(multimodal_preprocessing, "unquote", unquote_calls.append)
 
     bytes_data, reference, mime_type, format_name, filename = _bytes_from_image_uri(image_path.as_uri())
 
@@ -1787,7 +1789,32 @@ def test_bytes_from_local_image_uri_reuses_single_parsed_uri(
     assert mime_type == ""
     assert format_name == "txt"
     assert filename == image_path.name
-    assert calls == [image_path.as_uri()]
+    assert parse_calls == [image_path.as_uri()]
+    assert unquote_calls == []
+
+
+def test_bytes_from_percent_encoded_local_image_uri_still_decodes_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_path = tmp_path / "encoded image.txt"
+    image_path.write_bytes(b"encoded local image bytes")
+    unquote_calls: list[str] = []
+    original_unquote = multimodal_preprocessing.unquote
+
+    def tracked_unquote(path: str) -> str:
+        unquote_calls.append(path)
+        return original_unquote(path)
+
+    monkeypatch.setattr(multimodal_preprocessing, "unquote", tracked_unquote)
+
+    bytes_data, reference, mime_type, format_name, filename = _bytes_from_image_uri(image_path.as_uri())
+
+    assert bytes_data == b"encoded local image bytes"
+    assert reference == image_path.as_uri()
+    assert mime_type == ""
+    assert format_name == "txt"
+    assert filename == image_path.name
+    assert unquote_calls == ["/" + image_path.as_uri().split("file:///")[1]]
 
 
 def test_prepare_image_part_preserves_direct_uri_helper_behavior(tmp_path: Path) -> None:
