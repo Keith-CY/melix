@@ -402,10 +402,14 @@ def test_command_soft_judge_and_required_cli_flag(monkeypatch, tmp_path: Path) -
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         observed["command"] = command
         observed["stdin"] = kwargs.get("input")
+        observed["kwargs"] = kwargs
         return subprocess.CompletedProcess(command, 0, stdout='{"passed": true, "rationale": "ok"}', stderr="")
 
     monkeypatch.setattr(tool_call_system_prompt_eval.subprocess, "run", fake_run)
-    judge = tool_call_system_prompt_eval.make_command_soft_judge("judge --case {case_id}")
+    judge = tool_call_system_prompt_eval.make_command_soft_judge(
+        "judge --case {case_id} --literal {not_a_placeholder}",
+        timeout_seconds=17,
+    )
     result = judge(
         {"id": "case-1", "semantic_expectation": "Equivalent."},
         "raw",
@@ -413,8 +417,9 @@ def test_command_soft_judge_and_required_cli_flag(monkeypatch, tmp_path: Path) -
     )
 
     assert result["passed"] is True
-    assert observed["command"] == ["judge", "--case", "case-1"]
+    assert observed["command"] == ["judge", "--case", "case-1", "--literal", "{not_a_placeholder}"]
     assert json.loads(str(observed["stdin"]))["case"]["id"] == "case-1"
+    assert observed["kwargs"]["timeout"] == 17
 
     dataset = tmp_path / "semantic.jsonl"
     dataset.write_text(

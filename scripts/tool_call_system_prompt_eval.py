@@ -500,10 +500,11 @@ def _soft_judge_passed(result: dict[str, Any]) -> bool:
     return bool(isinstance(judge, dict) and judge.get("required") and judge.get("passed"))
 
 
-def make_command_soft_judge(command_template: str) -> SoftJudge:
+def make_command_soft_judge(command_template: str, *, timeout_seconds: float = 60.0) -> SoftJudge:
     command_template = command_template.strip()
     if not command_template:
         raise ValueError("soft judge command template must be non-empty.")
+    template_parts = shlex.split(command_template)
 
     def judge(case: dict[str, Any], raw_response: str, parsed: dict[str, Any]) -> dict[str, Any]:
         payload = {
@@ -511,13 +512,14 @@ def make_command_soft_judge(command_template: str) -> SoftJudge:
             "raw_response": raw_response,
             "parsed": parsed,
         }
-        command = [part.format(case_id=case.get("id", "")) for part in shlex.split(command_template)]
+        command = [part.replace("{case_id}", str(case.get("id", ""))) for part in template_parts]
         completed = subprocess.run(
             command,
             input=json.dumps(payload, ensure_ascii=False),
             check=False,
             capture_output=True,
             text=True,
+            timeout=timeout_seconds,
         )
         if completed.returncode != 0:
             return {
@@ -591,6 +593,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--soft-judge-timeout-seconds",
+        type=float,
+        default=60.0,
+        help="External soft judge command timeout per case.",
+    )
+    parser.add_argument(
         "--require-soft-judge",
         action="store_true",
         help="Fail if any case requires a soft judge and --soft-judge-command is not provided.",
@@ -612,7 +620,14 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             timeout_seconds=args.timeout_seconds,
         )
-    soft_judge = make_command_soft_judge(args.soft_judge_command) if args.soft_judge_command else None
+    soft_judge = (
+        make_command_soft_judge(
+            args.soft_judge_command,
+            timeout_seconds=args.soft_judge_timeout_seconds,
+        )
+        if args.soft_judge_command
+        else None
+    )
     report = evaluate_cases(cases, responses, soft_judge=soft_judge)
     report["provider"] = args.provider
     report["model"] = args.model

@@ -202,6 +202,14 @@ def test_importer_rejects_invalid_record_shapes(tmp_path: Path) -> None:
         import_tool_call_benchmark_cases._iter_json_records(list_non_object)
 
 
+def test_importer_reports_jsonl_parse_errors_with_path_and_line(tmp_path: Path) -> None:
+    malformed = tmp_path / "malformed.jsonl"
+    malformed.write_text("{}\n{bad\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"Invalid JSON in .*malformed\.jsonl:2:"):
+        import_tool_call_benchmark_cases._iter_json_records(malformed)
+
+
 def test_coercion_helpers_skip_invalid_values_and_unknown_tools() -> None:
     assert import_tool_call_benchmark_cases._coerce_calls("not-json") == []
     assert import_tool_call_benchmark_cases._coerce_calls(123) == []

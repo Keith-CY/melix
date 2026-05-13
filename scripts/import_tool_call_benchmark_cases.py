@@ -113,7 +113,10 @@ def _iter_json_records(input_path: Path) -> list[dict[str, Any]]:
         for line_number, line in enumerate(text.splitlines(), start=1):
             if not line.strip():
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid JSON in {input_path}:{line_number}: {exc}") from exc
             if not isinstance(row, dict):
                 raise ValueError(f"{input_path}:{line_number} must contain JSON objects.")
             records.append(row)
