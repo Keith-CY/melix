@@ -6,6 +6,10 @@ Melix adds a local Evaluation Prompt registry for event extraction evaluation.
 The v1 scope is limited to `event_extraction_weighted_f1`; other evaluation
 suites keep their current prompt and scoring behavior.
 
+`eval run` also supports one-off ad hoc system prompts for any evaluation
+suite. These prompts are not registry revisions; they are a per-run override
+for operator experiments and apply to every suite requested by that invocation.
+
 Frozen prompts are immutable revisions. Editing a frozen revision creates a new
 draft revision so completed evaluation runs remain reproducible.
 
@@ -22,6 +26,10 @@ draft revision so completed evaluation runs remain reproducible.
   prompts.
 - Resolve `eval run --eval-prompt-id` and optional
   `--eval-prompt-revision` before dispatch.
+- Accept exactly one of `eval run --eval-prompt TEXT`,
+  `--eval-prompt-file PATH`, or `--eval-prompt-id ID`. The text/file forms are
+  one-off prompts for all suites in the run and use the ad hoc metadata identity
+  `ad-hoc.evaluation.prompt` / `ad-hoc`.
 - Event extraction runs record `prompt_id`, `prompt_revision_id`, and
   `prompt_content_hash`, and write `prompt_snapshot.json` beside run artifacts.
 - Provider calls receive only the selected system prompt, optional frozen
@@ -63,11 +71,14 @@ melix eval prompt create --prompt-id ID --title TITLE --system-prompt-file PATH 
 melix eval prompt update --prompt-id ID --system-prompt-file PATH [--json]
 melix eval prompt freeze --prompt-id ID [--revision-id REV] [--json]
 melix eval prompt archive --prompt-id ID [--json]
+melix eval run ... --eval-prompt TEXT
+melix eval run ... --eval-prompt-file PATH
 melix eval run ... --eval-prompt-id ID [--eval-prompt-revision REV]
 ```
 
-The default eval prompt is the built-in baseline prompt's latest frozen
-revision when no prompt id is provided.
+The default event-extraction eval prompt is the built-in baseline prompt's
+latest frozen revision when no prompt id is provided. For other suites, no
+registry prompt is applied unless a one-off prompt is passed.
 
 ## Worker Flow
 
@@ -89,14 +100,20 @@ If prompt examples are later populated from a gold JSONL source, every example
 must include `dialogue_id`; the run rejects prompt examples whose ids overlap
 the evaluation rows.
 
+For non-event-extraction suites, one-off prompt text is prepended into the
+system message after the suite's fixed instruction and before any sample-level
+system text. The worker records the prompt character count as a metric so report
+artifacts make the prompt-control surface auditable.
+
 ## Verification
 
 - Swift unit tests cover prompt store lifecycle, built-in read-only behavior,
   frozen revision immutability, deterministic hashes, CLI parsing, and eval run
-  prompt parameter forwarding.
+  prompt parameter forwarding, including one-off prompt text and file inputs.
 - Python tests cover selected prompt payloads for OpenAI-compatible and Gemini
   clients, prompt snapshot output, prompt content non-persistence in job
-  parameters, no gold leakage, and example overlap rejection.
+  parameters, no gold leakage, example overlap rejection, and ad hoc prompt
+  insertion for generic evaluation suites.
 - macOS tests cover prompt picker/editor state, draft editing, freeze
   behavior, and eval run parameter forwarding.
 - Scorer regression tests must continue to pass without schema changes.

@@ -257,12 +257,15 @@ class ProbeRuntime:
     def __init__(self, response: str, probe: object) -> None:
         self._response = response
         self._probe = probe
+        self.rendered_prompts: list[str] = []
 
     def render_prompt(self, messages, loaded_model=None, execution_ext=None, template_kwargs=None):
         _ = loaded_model
         _ = execution_ext
         _ = template_kwargs
-        return "\n".join(part.text for message in messages for part in message.parts)
+        prompt = "\n".join(part.text for message in messages for part in message.parts)
+        self.rendered_prompts.append(prompt)
+        return prompt
 
     def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
         _ = loaded_model
@@ -1177,6 +1180,53 @@ def test_run_local_suite_uses_loaded_runtime_predictions_for_live_evaluation(
     assert run.job.parameters["runtime_model_handle"] == registry.handle
 
 
+def test_run_local_suite_applies_ad_hoc_eval_prompt_before_sample_system(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {
+                "system": "Sample system instruction.",
+                "prompt": "capital of france?",
+                "expected": "Paris",
+            },
+        ),
+    )
+    probe = SimpleNamespace(
+        execution_mode="live",
+        fallback_reason="",
+        requested_sample_count=1,
+        executed_sample_count=1,
+        probe_count=1,
+        probe_names=("eval.mmlu.inference",),
+        missing_probe_names=(),
+    )
+    runtime = ProbeRuntime(response="Paris", probe=probe)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="live-eval-model")
+    runner = EvaluationCore(registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="live-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        parameters={"eval_prompt_system_prompt": "Use this one-off rubric."},
+    )
+
+    assert run.samples[0].raw_response == "Paris"
+    assert run.job.parameters["eval_prompt_system_prompt"] == "Use this one-off rubric."
+    assert run.job.parameters["eval_prompt_system_prompt_chars"] == "24"
+    metrics = {metric.name: metric.value for metric in run.result.metrics}
+    assert metrics["eval.mmlu.eval_prompt_system_prompt_chars"] == 24.0
+    rendered_prompt = runtime.rendered_prompts[0]
+    instruction_index = rendered_prompt.index("Return only the final short answer.")
+    ad_hoc_index = rendered_prompt.index("Use this one-off rubric.")
+    sample_system_index = rendered_prompt.index("Sample system instruction.")
+    assert instruction_index < ad_hoc_index < sample_system_index
+
+
 def test_run_local_suite_require_live_model_rejects_offline_fallback(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
@@ -1287,6 +1337,84 @@ def test_event_extraction_weighted_f1_can_use_local_loaded_model(
     assert registry.vision_probes == [("vlm", {"images": 0})]
     assert metrics["eval.event_extraction.overall_weighted_f1"] == 1.0
     assert run.result.primary_score_value == 1.0
+
+
+def test_event_extraction_ad_hoc_prompt_writes_prompt_snapshot(tmp_path: Path, monkeypatch) -> None:
+    source_jsonl = tmp_path / "event-samples.jsonl"
+    source_jsonl.write_text(
+        json.dumps(
+            {
+                "dialogue_id": "dlg-adhoc",
+                "dialogue": ["speaker_1: 明天我开会"],
+                "events": [
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["明天"],
+                        "location": None,
+                        "action": ["开会"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class FakeTarget:
+        provider_kind = "openai-compatible"
+        base_url = "https://sub2api.example/v1"
+        api_key = "sk-secret"
+        model_id = "remote-model"
+        timeout_seconds = 30
+        rate_limit_per_minute = 0
+
+    class FakeClient:
+        def extract_events(self, dialogue, dialogue_id=""):
+            _ = dialogue
+            _ = dialogue_id
+            return EventExtractionClientResult(
+                events=[
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["明天"],
+                        "location": None,
+                        "action": ["开会"],
+                    }
+                ],
+                raw_response='{"events":[]}',
+            )
+
+    monkeypatch.setattr(
+        evaluation_core_module,
+        "make_event_extraction_client",
+        lambda target, prompt_spec=None: FakeClient(),
+    )
+    runner = EvaluationCore(jobs_root=tmp_path / "evals")
+
+    run = runner.run_local_suite(
+        model_id="remote-model",
+        suite_id="event_extraction",
+        dataset_root=tmp_path,
+        sample_size=1,
+        scoring_mode="event_extraction_weighted_f1",
+        parameters={
+            "event_source_jsonl": str(source_jsonl),
+            "eval_prompt_id": "ad-hoc.evaluation.prompt",
+            "eval_prompt_revision_id": "ad-hoc",
+            "eval_prompt_title": "Ad Hoc Evaluation Prompt",
+            "eval_prompt_system_prompt": "Use an ad hoc event extraction rubric.",
+            "eval_prompt_examples_json": "[]",
+        },
+        remote_target=FakeTarget(),
+    )
+
+    snapshot = json.loads(Path(run.job.parameters["prompt_snapshot"]).read_text(encoding="utf-8"))
+    assert snapshot["prompt_id"] == "ad-hoc.evaluation.prompt"
+    assert snapshot["prompt_revision_id"] == "ad-hoc"
+    assert snapshot["title"] == "Ad Hoc Evaluation Prompt"
+    assert snapshot["system_prompt"] == "Use an ad hoc event extraction rubric."
+    assert snapshot["prompt_content_hash"].startswith("sha256:")
 
 
 def test_run_local_suite_supports_multimodal_live_evaluation_and_persists_media_evidence(
