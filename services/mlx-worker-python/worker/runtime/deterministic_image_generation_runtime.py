@@ -12,6 +12,13 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 from worker.runtime.deterministic_delay import sleep_if_configured
 
 
+_IMAGE_MIME_TYPES = {
+    "png": "image/png",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+}
+
+
 class ImageGenerationCancelled(RuntimeError):
     pass
 
@@ -289,11 +296,7 @@ class DeterministicImageGenerationRuntime:
 
     @staticmethod
     def _mime_type_for_format(image_format: str) -> str:
-        return {
-            "png": "image/png",
-            "jpeg": "image/jpeg",
-            "webp": "image/webp",
-        }[image_format]
+        return _IMAGE_MIME_TYPES[image_format]
 
     @staticmethod
     def _output_dir(images_root: Path, artifact_namespace: str, job_id: str) -> Path:
