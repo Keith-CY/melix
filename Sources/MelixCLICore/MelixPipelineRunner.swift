@@ -1112,7 +1112,15 @@ private enum MelixPipelineCommandBuilder {
                         "threshold",
                         "output_schema_json",
                         "ignored_paths",
-                    ])
+                        "eval_prompt",
+                        "eval_prompt_file",
+                        "eval_prompt_id",
+                        "eval_prompt_revision",
+                    ]),
+                    evalPromptID: string("eval_prompt_id", args) ?? "",
+                    evalPromptRevisionID: string("eval_prompt_revision", args) ?? "",
+                    evalPrompt: string("eval_prompt", args) ?? "",
+                    evalPromptFile: string("eval_prompt_file", args) ?? ""
                 )
             )
         case "eval.export-summary-csv":

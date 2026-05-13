@@ -614,6 +614,8 @@ public enum MelixCLICommandCodec {
             appendEvalParameters(options.parameters, into: &arguments)
             appendOption("--eval-prompt-id", value: options.evalPromptID, into: &arguments)
             appendOption("--eval-prompt-revision", value: options.evalPromptRevisionID, into: &arguments)
+            appendOption("--eval-prompt", value: options.evalPrompt, into: &arguments)
+            appendOption("--eval-prompt-file", value: options.evalPromptFile, into: &arguments)
             appendOption("--semantic-judge-remote-server-id", value: options.semanticJudgeRemoteServerID, into: &arguments)
             appendOption("--semantic-judge-model", value: options.semanticJudgeModelID, into: &arguments)
             appendPositiveUInt32("--remote-parallelism", value: options.remoteParallelism, into: &arguments)

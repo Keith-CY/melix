@@ -800,6 +800,7 @@ struct MelixCLIParserTests {
                     "schema_path": schemaPath.path,
                     "hints_path": hintsPath.path,
                 ],
+                evalPromptFile: "/tmp/eval-prompt.txt",
                 json: true
             )
         )
@@ -808,6 +809,8 @@ struct MelixCLIParserTests {
         #expect(evalArguments.contains(schemaPath.path))
         #expect(evalArguments.contains("--hints"))
         #expect(evalArguments.contains(hintsPath.path))
+        #expect(evalArguments.contains("--eval-prompt-file"))
+        #expect(evalArguments.contains("/tmp/eval-prompt.txt"))
         #expect(evalArguments.contains("--output-schema-json") == false)
         guard case .evalRun(let parsedEvalOptions) = try MelixCLIParser.parse(evalArguments) else {
             Issue.record("Expected evalRun command from codec arguments")
@@ -825,6 +828,7 @@ struct MelixCLIParserTests {
         #expect(parsedEvalOptions.parameters["hints_size_bytes"] == "30")
         #expect(parsedEvalOptions.parameters["hints_format"] == "text")
         #expect(parsedEvalOptions.parameters["evaluation_hints_text"] == "Return the normalized answer.")
+        #expect(parsedEvalOptions.evalPromptFile == "/tmp/eval-prompt.txt")
         #expect(parsedEvalOptions.json)
     }
 
@@ -2772,6 +2776,90 @@ struct MelixCLIParserTests {
         #expect(options.parameters["hints_size_bytes"] == "24")
         #expect(options.parameters["hints_format"] == "markdown")
         #expect(options.parameters["evaluation_hints_text"] == "Prefer integer answers.")
+    }
+
+    @Test("parses eval run with ad hoc prompt text and file")
+    func parsesEvalRunWithAdHocPromptInputs() throws {
+        let promptTextCommand = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--suite", "mmlu",
+            "--eval-prompt", "Answer using the provided rubric.",
+        ])
+        let promptFileCommand = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--suite", "gsm8k",
+            "--eval-prompt-file", "/tmp/eval-prompt.txt",
+        ])
+
+        guard case .evalRun(let promptTextOptions) = promptTextCommand else {
+            Issue.record("Expected evalRun command")
+            return
+        }
+        guard case .evalRun(let promptFileOptions) = promptFileCommand else {
+            Issue.record("Expected evalRun command")
+            return
+        }
+
+        #expect(promptTextOptions.evalPrompt == "Answer using the provided rubric.")
+        #expect(promptTextOptions.evalPromptFile.isEmpty)
+        #expect(promptFileOptions.evalPrompt.isEmpty)
+        #expect(promptFileOptions.evalPromptFile == "/tmp/eval-prompt.txt")
+    }
+
+    @Test("eval run ad hoc prompt parser rejects ambiguous prompt choices")
+    func evalRunAdHocPromptParserRejectsAmbiguousPromptChoices() throws {
+        try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--eval-prompt", "Prompt",
+                "--eval-prompt-file", "/tmp/prompt.txt",
+            ],
+            equals: .usage("--eval-prompt and --eval-prompt-file are mutually exclusive.")
+        )
+        try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--eval-prompt", "Prompt",
+                "--eval-prompt-id", "event-prod",
+            ],
+            equals: .usage("--eval-prompt and --eval-prompt-file cannot be combined with --eval-prompt-id.")
+        )
+        try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--eval-prompt-file", "/tmp/prompt.txt",
+                "--eval-prompt-revision", "rev-1",
+            ],
+            equals: .usage("--eval-prompt-revision requires --eval-prompt-id.")
+        )
+        try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--eval-prompt-revision", "rev-1",
+            ],
+            equals: .usage("--eval-prompt-revision requires --eval-prompt-id.")
+        )
+        try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--eval-prompt", "   ",
+            ],
+            equals: .usage("--eval-prompt must contain non-empty text.")
+        )
     }
 
     @Test("eval run schema file parser surfaces reproducibility input errors")
