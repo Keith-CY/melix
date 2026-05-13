@@ -109,6 +109,8 @@ public struct ModelSamplingPolicy: Sendable, Equatable {
     }
 }
 
+private let defaultTextGenerationMaxTokens: UInt32 = 32_768
+
 public struct ResolvedOCRExecutionPolicy: Sendable, Equatable {
     public let promptProfileID: String
     public let promptTemplate: String
@@ -265,7 +267,7 @@ public struct TextRequestShaper: Sendable {
             ?? gatewayServingDefaults?.maxTokens
         let temperature = request.temperature ?? preset?.temperature ?? fallbackTemperature ?? 0.7
         let topP = request.topP ?? preset?.topP ?? fallbackTopP ?? 1.0
-        let maxTokens = request.maxTokens ?? preset?.maxTokens ?? fallbackMaxTokens ?? 256
+        let maxTokens = request.maxTokens ?? preset?.maxTokens ?? fallbackMaxTokens ?? defaultTextGenerationMaxTokens
         let streamIntervalTokens = gatewayServingDefaults?.streamIntervalTokens ?? 1
         let maxConcurrentRequests = gatewayServingDefaults?.maxConcurrentRequests ?? 4
         let concurrentProcessingEnabled = gatewayServingDefaults?.concurrentProcessingEnabled ?? true

@@ -1866,7 +1866,7 @@ struct TextEndpointContractTests {
         #expect(!translated.workerRequest.stream)
         #expect(translated.workerRequest.sampling.temperature == 0.7)
         #expect(translated.workerRequest.sampling.topP == 1.0)
-        #expect(translated.workerRequest.sampling.maxOutputTokens == 256)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 32_768)
         #expect(translated.workerRequest.execution.id.branchID == "branch-main")
         #expect(translated.workerRequest.execution.cacheHints.saveBoundarySnapshot)
         #expect(translated.workerRequest.execution.cacheHints.allowL1)
