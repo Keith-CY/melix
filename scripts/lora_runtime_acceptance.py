@@ -28,10 +28,11 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _iter_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if line:
-            rows.append(json.loads(line))
+    with path.open(encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if line:
+                rows.append(json.loads(line))
     return rows
 
 

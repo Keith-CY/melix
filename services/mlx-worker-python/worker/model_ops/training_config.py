@@ -93,6 +93,7 @@ _UNSAFE_QUANTIZED_LORA_TARGETS = {
 }
 _CONFIRMED_EXPERT_COUNT_SOURCES = {"config"}
 _QUANTIZED_MODEL_PATTERN = re.compile(r"(?<![a-z0-9])(?:4bit|8bit|q4|q8|optiq)(?![a-z0-9])")
+_EXPLICIT_QUANTIZED_PROFILE_IDS = {"quantized", "quantized_base"}
 _SFT_TRAINING_MODES = {"lora", "qlora", "dora"}
 _PREFERENCE_TRAINING_MODES = {"dpo", "orpo", "cpo"}
 _RL_TRAINING_MODES = {"grpo", "rlhf"}
@@ -1060,8 +1061,12 @@ def _backend_target_modules(expanded_target_modules: Iterable[str]) -> list[str]
 
 
 def _is_quantized_base_model(source_model: common_pb2.ModelSpec) -> bool:
-    if source_model.quant_profile_id.strip():
-        return True
+    profile_id = source_model.quant_profile_id.strip().lower()
+    if profile_id:
+        return (
+            profile_id in _EXPLICIT_QUANTIZED_PROFILE_IDS
+            or _QUANTIZED_MODEL_PATTERN.search(profile_id) is not None
+        )
 
     searchable = " ".join(
         [

@@ -30,6 +30,7 @@ from worker.model_ops.lora_training_pipeline import (
     _validated_resume_path,
 )
 from worker.model_ops.lora_runtime_metadata import build_adapter_runtime_manifest_fields
+from worker.model_ops.lora_runtime_metadata import build_quantized_lora_manifest_fields
 from worker.model_ops.multimodal_lora_contracts import (
     audit_adapter_checkpoint,
     finite_masked_softmax,
@@ -189,6 +190,46 @@ def test_lora_training_manifest_records_quantized_qlora_compatibility_for_gemma8
     assert freeze_audit["unexpected_serialized_param_count"] == 0
     assert freeze_audit["unexpected_trainable_param_count"] == 0
     assert freeze_audit["adapter_checkpoint_size_within_target"] is True
+
+
+def test_quantized_lora_metadata_does_not_treat_fp_profile_as_quantized() -> None:
+    source_model = _text_model(
+        model_path="mlx-community/plain-gemma-bf16",
+        quant_profile_id="bf16",
+        family_id="gemma",
+    )
+
+    fields = build_quantized_lora_manifest_fields(
+        source_model=source_model,
+        training_mode="lora",
+        quantization_mode="none",
+        target_modules=["model.layers.0.self_attn.q_proj"],
+    )
+
+    assert fields["quantized_base_detected"] is False
+    assert fields["quantized_base_kind"] == "unknown"
+    assert fields["quantization_profile_id"] == "bf16"
+    assert fields["quantized_base_evidence_source"] == ""
+    assert fields["qlora_compatibility_status"] == "not_applicable"
+    assert fields["quantized_target_module_guard"] == "not_required"
+
+
+def test_normalize_training_config_rejects_qlora_for_non_quantized_profile() -> None:
+    with pytest.raises(ModelOperationError) as exc:
+        training_config_module.normalize_training_config(
+            source_model=_text_model(
+                model_path="models/plain-gemma-bf16",
+                quant_profile_id="bf16",
+                family_id="gemma",
+            ),
+            ext={"training_mode": "qlora"},
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=1,
+        )
+
+    assert exc.value.code == "unsupported_training_mode"
+    assert "requires a quantized base model" in exc.value.message
 
 
 def test_multimodal_lora_finite_mask_handles_fully_padded_vision_rows() -> None:

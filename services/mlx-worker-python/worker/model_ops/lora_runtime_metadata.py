@@ -22,6 +22,7 @@ QLORA_COMPATIBILITY_STATUS = "qlora_compatibility_status"
 QUANTIZED_TARGET_MODULE_GUARD = "quantized_target_module_guard"
 
 _QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
+_EXPLICIT_QUANTIZED_PROFILE_IDS = {"quantized", "quantized_base"}
 
 
 ADAPTER_RUNTIME_EXT_KEY_MAP: tuple[tuple[str, str], ...] = (
@@ -175,12 +176,15 @@ def build_quantized_lora_manifest_fields(
 def detect_quantized_base(source_model: common_pb2.ModelSpec) -> dict[str, object]:
     profile_id = source_model.quant_profile_id.strip()
     if profile_id:
-        return {
-            QUANTIZED_BASE_DETECTED: True,
-            QUANTIZED_BASE_KIND: _quantized_kind_from_text(profile_id),
-            QUANTIZATION_PROFILE_ID: profile_id,
-            QUANTIZED_BASE_EVIDENCE_SOURCE: "quant_profile_id",
-        }
+        kind = _quantized_kind_from_text(profile_id)
+        if kind != "unknown" or profile_id.lower() in _EXPLICIT_QUANTIZED_PROFILE_IDS:
+            return {
+                QUANTIZED_BASE_DETECTED: True,
+                QUANTIZED_BASE_KIND: kind,
+                QUANTIZATION_PROFILE_ID: profile_id,
+                QUANTIZED_BASE_EVIDENCE_SOURCE: "quant_profile_id",
+            }
+        return _not_quantized_detection(quantization_profile_id=profile_id)
 
     for ext_key in (
         "melix.quantization.profile_id",
@@ -193,7 +197,7 @@ def detect_quantized_base(source_model: common_pb2.ModelSpec) -> dict[str, objec
         if not ext_value:
             continue
         kind = _quantized_kind_from_text(ext_value)
-        if kind != "unknown" or ext_value.lower() in {"quantized", "quantized_base"}:
+        if kind != "unknown" or ext_value.lower() in _EXPLICIT_QUANTIZED_PROFILE_IDS:
             return {
                 QUANTIZED_BASE_DETECTED: True,
                 QUANTIZED_BASE_KIND: kind,
@@ -214,6 +218,15 @@ def detect_quantized_base(source_model: common_pb2.ModelSpec) -> dict[str, objec
         QUANTIZED_BASE_KIND: kind,
         QUANTIZATION_PROFILE_ID: "",
         QUANTIZED_BASE_EVIDENCE_SOURCE: "model_identity" if kind != "unknown" else "",
+    }
+
+
+def _not_quantized_detection(*, quantization_profile_id: str = "") -> dict[str, object]:
+    return {
+        QUANTIZED_BASE_DETECTED: False,
+        QUANTIZED_BASE_KIND: "unknown",
+        QUANTIZATION_PROFILE_ID: quantization_profile_id,
+        QUANTIZED_BASE_EVIDENCE_SOURCE: "",
     }
 
 

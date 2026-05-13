@@ -31,6 +31,8 @@ from worker.model_ops.training_dataset_chunker import (
 
 _RESULT_PREFIX = "__MELIX_MLX_RESULT__="
 _NUMERIC_TOKEN_RE = re.compile(r"\d+")
+_MLX_LM_UNMATCHED_WEIGHT_MARKERS = ("parameters not in model",)
+_LOGGER = logging.getLogger("melix.lora.mlx_lm_runner")
 
 
 @dataclass(frozen=True)
@@ -486,6 +488,11 @@ def _load_lora_training_model(request: TrainingRequest, load_fn: Any) -> tuple[A
             raise
         from mlx_lm.utils import _download, load_model, load_tokenizer
 
+        _LOGGER.warning(
+            "Retrying quantized LoRA model load with strict=False after MLX-LM "
+            "reported unmatched weight tensors for %s.",
+            request.model_path,
+        )
         model_path = _download(
             str(request.model_path),
             revision=request.model_revision or None,
@@ -503,13 +510,17 @@ def _should_retry_quantized_lora_load_without_strict(
     request: TrainingRequest,
     exc: ValueError,
 ) -> bool:
-    message = str(exc)
-    if "parameters not in model" not in message:
+    if not _is_mlx_lm_unmatched_weight_error(exc):
         return False
     return (
         request.config.training_mode == "qlora"
         or request.config.quantization_mode == "quantized_base"
     )
+
+
+def _is_mlx_lm_unmatched_weight_error(exc: ValueError) -> bool:
+    message = str(exc).lower()
+    return any(marker in message for marker in _MLX_LM_UNMATCHED_WEIGHT_MARKERS)
 
 
 def _serialize_training_request(request: TrainingRequest) -> dict:
