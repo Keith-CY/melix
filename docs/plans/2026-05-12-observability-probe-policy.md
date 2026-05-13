@@ -342,6 +342,9 @@ Executable units:
   specific debug environment variable is enabled.
 - CI isolation: PR-scoped probe commands run from `infra/perf/pr_scoped_probes.json`
   and are not imported by serving hot path modules.
+- Debug queue event overhead: high-volume debug diagnostics should keep bounded
+  queue event objects slot-backed so saturation probes measure append/drop
+  semantics without per-event instance dictionaries.
 
 ## Acceptance Metrics For Follow-Up Issues
 
