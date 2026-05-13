@@ -59,6 +59,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 | [Control Plane Protocol](control-plane-protocol.md) | The typed protocol between the control plane and worker surfaces |
 | [Worker RPC Schema](worker-rpc-schema.md) | RPC message shapes and worker communication contracts |
 | [Benchmark & Evaluation Contract](benchmark-evaluation-contract.md) | Benchmark and evaluation data formats, output contracts, and artifact shapes |
+| [Agentic Trajectory Dataset Contract](agentic-trajectory-dataset-contract.md) | Shared trajectory package, validation, and provenance contract for LoRA, RL, benchmark, and evaluation alignment work |
 | [Unified Agentic Tool Runtime Contract](unified-agentic-tool-runtime-contract.md) | Shared tool registry, observation, replay, rollout, benchmark, and evaluation contracts for OpenSearch-VL alignment |
 | [Evidence, Telemetry & Report Contract](evidence-telemetry-report-contract.md) | Run evidence, probe timeline, Apple Silicon telemetry, report, and release-gate source-of-truth rules |
 | [Repository Skeleton](repo-skeleton.md) | Directory layout and conventions for the Melix repository |
