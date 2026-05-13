@@ -186,6 +186,7 @@ class FakeEvaluationRegistry:
         # (used by ``resolve_compare_target_adapters``); ``unload_model_calls``
         # records the handles the compare ``finally`` block cleans up.
         self.load_model_calls: list[str] = []
+        self.loaded_model_specs: list[common_pb2.ModelSpec] = []
         self.unload_model_calls: list[str] = []
         self._ephemeral_runtime = ephemeral_runtime or runtime
 
@@ -231,6 +232,9 @@ class FakeEvaluationRegistry:
         # Materialize a new ephemeral adapter-backed compare target. Records
         # the model_id for test assertions and reuses the primary runtime
         # (so the probe runtime still returns scripted responses).
+        model_spec_snapshot = common_pb2.ModelSpec()
+        model_spec_snapshot.CopyFrom(model_spec)
+        self.loaded_model_specs.append(model_spec_snapshot)
         self.load_model_calls.append(str(model_spec.model_id))
         self._register_loaded_model(
             model_id=str(model_spec.model_id),
@@ -2058,6 +2062,12 @@ def test_run_local_suite_compares_adapter_targets_and_unloads_ephemerals(tmp_pat
     assert len(registry.load_model_calls) == 1
     ephemeral_id = registry.load_model_calls[0]
     assert ephemeral_id.startswith("melix-dev-text-lora-adapterh-compare-")
+    loaded_spec = registry.loaded_model_specs[0]
+    assert loaded_spec.ext["melix.adapter_runtime.switch_mode"] == "base_reuse_adapter_swap"
+    assert loaded_spec.ext["melix.adapter_runtime.sharing_policy"] == "shared_base_isolated_adapter"
+    assert loaded_spec.ext["melix.adapter_runtime.compatibility_status"] == "compatible"
+    assert len(loaded_spec.ext["melix.adapter_runtime.base_reuse_key"]) == 64
+    assert len(loaded_spec.ext["melix.adapter_runtime.adapter_isolation_key"]) == 64
     # Unload fired exactly once for the one ephemeral.
     assert len(registry.unload_model_calls) == 1
     # Compare job recorded the ephemeral id as a target.
@@ -2271,6 +2281,10 @@ def test_load_adapter_target_spec_populates_ephemeral_id(tmp_path: Path) -> None
     assert spec.adapter_weights_path.endswith("adapters.safetensors")
     assert spec.derived_from_model_id == "melix-dev-text"
     assert spec.derived_from_model_path == "/tmp/dev/model"
+    assert spec.runtime_manifest_fields["adapter_runtime.switch_mode"] == "base_reuse_adapter_swap"
+    assert spec.runtime_manifest_fields["adapter_runtime.sharing_policy"] == "shared_base_isolated_adapter"
+    assert len(spec.runtime_manifest_fields["adapter_runtime.base_reuse_key"]) == 64
+    assert len(spec.runtime_manifest_fields["adapter_runtime.adapter_isolation_key"]) == 64
 
 
 def test_resolve_compare_target_adapters_empty_is_noop() -> None:

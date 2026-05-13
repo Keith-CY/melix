@@ -30,6 +30,7 @@ from worker.model_ops.hub_catalog import (
     HubModelSummaryRecord,
 )
 from worker.model_ops.job_registry import ModelOpsJobRegistry
+from worker.model_ops.lora_runtime_metadata import ADAPTER_RUNTIME_EXT_KEY_MAP
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.model_ops.local_import_pipeline import LocalImportPipeline
 from worker.model_ops.operation_locks import ModelOpsConflictRegistry
@@ -2216,6 +2217,10 @@ class MaintenanceCore:
             ("component_family", "melix.lora.family_id"),
             ("component_model_path", "melix.lora.base_model_path"),
         ):
+            value = str(manifest.get(manifest_key, "")).strip()
+            if value:
+                model_spec.ext[ext_key] = value
+        for manifest_key, ext_key in ADAPTER_RUNTIME_EXT_KEY_MAP:
             value = str(manifest.get(manifest_key, "")).strip()
             if value:
                 model_spec.ext[ext_key] = value

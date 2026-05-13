@@ -29,6 +29,7 @@ from worker.model_ops.lora_training_pipeline import (
     _resolve_adapter_scope_metadata,
     _validated_resume_path,
 )
+from worker.model_ops.lora_runtime_metadata import build_adapter_runtime_manifest_fields
 from worker.model_ops.multimodal_lora_contracts import (
     audit_adapter_checkpoint,
     finite_masked_softmax,
@@ -3719,4 +3720,49 @@ def test_adapter_backed_runtime_activation_writes_explicit_runtime_contract(tmp_
     assert result.manifest["adapter_weights_path"] == str(adapter_weights_path)
     assert result.manifest["derived_model_path"] == str(tmp_path / "base-model")
     assert result.manifest["derived_model_alias"] == "Demo Alias"
+    assert result.manifest["adapter_runtime.switch_mode"] == "base_reuse_adapter_swap"
+    assert result.manifest["adapter_runtime.sharing_policy"] == "shared_base_isolated_adapter"
+    assert result.manifest["adapter_runtime.compatibility_status"] == "compatible"
+    assert len(result.manifest["adapter_runtime.base_reuse_key"]) == 64
+    assert len(result.manifest["adapter_runtime.adapter_isolation_key"]) == 64
     assert result.manifest_path.exists()
+
+
+def test_adapter_runtime_plan_reuses_base_and_isolates_adapters(tmp_path: Path) -> None:
+    source_model = _text_model(model_path=str(tmp_path / "base-model"), quant_profile_id="q4")
+    adapter_scope = {
+        "adapter_scope": "model",
+        "training_surface": "model",
+        "component_model_type": "",
+        "component_family": "gemma",
+        "component_model_path": str(tmp_path / "base-model"),
+    }
+    first = build_adapter_runtime_manifest_fields(
+        source_model=source_model,
+        adapter_manifest={
+            "adapter_name": "alpha",
+            "adapter_set_hash": "adapter-alpha",
+            "job_id": "train-alpha",
+        },
+        adapter_manifest_path=tmp_path / "alpha.adapter.json",
+        adapter_weights_path=str(tmp_path / "alpha" / "adapters.safetensors"),
+        activation_mode="adapter_backed_runtime",
+        adapter_scope=adapter_scope,
+    )
+    second = build_adapter_runtime_manifest_fields(
+        source_model=source_model,
+        adapter_manifest={
+            "adapter_name": "beta",
+            "adapter_set_hash": "adapter-beta",
+            "job_id": "train-beta",
+        },
+        adapter_manifest_path=tmp_path / "beta.adapter.json",
+        adapter_weights_path=str(tmp_path / "beta" / "adapters.safetensors"),
+        activation_mode="adapter_backed_runtime",
+        adapter_scope=adapter_scope,
+    )
+
+    assert first["adapter_runtime.base_reuse_key"] == second["adapter_runtime.base_reuse_key"]
+    assert first["adapter_runtime.adapter_isolation_key"] != second["adapter_runtime.adapter_isolation_key"]
+    assert first["adapter_runtime.switch_mode"] == "base_reuse_adapter_swap"
+    assert second["adapter_runtime.sharing_policy"] == "shared_base_isolated_adapter"

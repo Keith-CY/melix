@@ -3452,6 +3452,11 @@ def test_derived_model_registration_preserves_component_scoped_adapter_metadata(
             "component_model_type": "gemma4_text",
             "component_family": "gemma",
             "component_model_path": source_model.model_path,
+            "adapter_runtime.base_reuse_key": "base-key-123",
+            "adapter_runtime.adapter_isolation_key": "adapter-key-456",
+            "adapter_runtime.switch_mode": "base_reuse_adapter_swap",
+            "adapter_runtime.sharing_policy": "shared_base_isolated_adapter",
+            "adapter_runtime.compatibility_status": "compatible",
         }
     )
 
@@ -3468,6 +3473,11 @@ def test_derived_model_registration_preserves_component_scoped_adapter_metadata(
     assert model_spec.ext["melix.lora.component_model_type"] == "gemma4_text"
     assert model_spec.ext["melix.lora.family_id"] == "gemma"
     assert model_spec.ext["melix.lora.base_model_path"] == source_model.model_path
+    assert model_spec.ext["melix.adapter_runtime.base_reuse_key"] == "base-key-123"
+    assert model_spec.ext["melix.adapter_runtime.adapter_isolation_key"] == "adapter-key-456"
+    assert model_spec.ext["melix.adapter_runtime.switch_mode"] == "base_reuse_adapter_swap"
+    assert model_spec.ext["melix.adapter_runtime.sharing_policy"] == "shared_base_isolated_adapter"
+    assert model_spec.ext["melix.adapter_runtime.compatibility_status"] == "compatible"
 
 
 def test_job_registry_snapshot_exposes_download_rows_with_machine_readable_status(tmp_path: Path) -> None:
