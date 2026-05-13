@@ -506,6 +506,18 @@ def test_score_final_result_aggregates_wide_json_without_losing_ignored_paths() 
     assert score.typed_score == pytest.approx(0.75)
 
 
+def test_score_final_result_reuses_cached_ignored_path_sets() -> None:
+    ignored = tuple(f"field_{index}.metadata" for index in range(200))
+    evaluation_final_result_module._json_ignored_paths.cache_clear()
+
+    first = evaluation_final_result_module._json_ignored_paths(ignored)
+    second = evaluation_final_result_module._json_ignored_paths(ignored)
+
+    assert first is second
+    assert "confidence" in first
+    assert "field_199.metadata" in first
+
+
 def test_score_final_result_treats_fully_ignored_json_object_as_match() -> None:
     score = score_final_result(
         extracted_result=json.dumps({"metadata": {"confidence": 0.0}}),

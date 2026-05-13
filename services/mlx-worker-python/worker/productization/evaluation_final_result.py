@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Container, Iterable, Iterator
 from functools import lru_cache
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -327,7 +327,7 @@ def _score_json_result(
     score = _json_typed_score(
         expected=parsed_target,
         actual=parsed_result,
-        ignored_paths=_DEFAULT_IGNORED_PATHS | set(profile.ignored_paths),
+        ignored_paths=_json_ignored_paths(profile.ignored_paths),
     )
     return ScoringOutcome(typed_score=round(score, 4), validation_status="validated")
 
@@ -335,6 +335,11 @@ def _score_json_result(
 @lru_cache(maxsize=128)
 def _loads_json_payload(payload: str) -> Any:
     return json.loads(payload)
+
+
+@lru_cache(maxsize=128)
+def _json_ignored_paths(profile_ignored_paths: tuple[str, ...]) -> frozenset[str]:
+    return frozenset((*_DEFAULT_IGNORED_PATHS, *profile_ignored_paths))
 
 
 def _score_text_result(
@@ -455,7 +460,7 @@ def _matches_json_schema_pattern(pattern_properties: Any, key: str) -> bool:
     return isinstance(pattern_properties, dict) and bool(_json_schema_pattern_schemas(pattern_properties, key))
 
 
-def _json_typed_score(*, expected: Any, actual: Any, ignored_paths: set[str], path: str = "") -> float:
+def _json_typed_score(*, expected: Any, actual: Any, ignored_paths: Container[str], path: str = "") -> float:
     if isinstance(expected, dict):
         total = 0.0
         count = 0
