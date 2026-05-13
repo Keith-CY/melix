@@ -611,7 +611,7 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
 
 
 def _direct_size_hint_from_text(text: str) -> int:
-    parts = text.split()
+    parts = text.split(maxsplit=2)
     if len(parts) != 2:
         return 0
     value_text, unit_text = parts
