@@ -528,10 +528,45 @@ class ModelOpsJobRegistry:
         derived_model_id: str = "",
         manifest_path: str = "",
     ) -> dict[str, Any] | None:
+        if derived_model_id and not manifest_path:
+            lookup = self._cached_active_derived_model_by_id().get(derived_model_id)
+            if lookup is not None:
+                resolved_activation_manifest_path = lookup.resolved_activation_manifest_path
+                if resolved_activation_manifest_path is None:
+                    resolved_activation_manifest_path = str(
+                        Path(lookup.activation_manifest_path).expanduser().resolve()
+                    )
+                    lookup.resolved_activation_manifest_path = resolved_activation_manifest_path
+                return self._cached_derived_model_target_payload(
+                    lookup,
+                    resolved_activation_manifest_path=resolved_activation_manifest_path,
+                )
+            normalized_model_id = derived_model_id.strip()
+            if not normalized_model_id or normalized_model_id == derived_model_id:
+                return None
+            lookup = self._cached_active_derived_model_by_id().get(normalized_model_id)
+            if lookup is None:
+                return None
+            resolved_activation_manifest_path = lookup.resolved_activation_manifest_path
+            if resolved_activation_manifest_path is None:
+                resolved_activation_manifest_path = str(
+                    Path(lookup.activation_manifest_path).expanduser().resolve()
+                )
+                lookup.resolved_activation_manifest_path = resolved_activation_manifest_path
+            return self._cached_derived_model_target_payload(
+                lookup,
+                resolved_activation_manifest_path=resolved_activation_manifest_path,
+            )
+
         normalized_model_id = derived_model_id.strip()
         normalized_manifest_path = ""
-        if manifest_path.strip():
-            normalized_manifest_path = str(Path(manifest_path).expanduser().resolve())
+        raw_manifest_path = manifest_path.strip()
+        if raw_manifest_path:
+            cached_by_manifest_path = self._cached_active_derived_model_by_manifest_path()
+            if raw_manifest_path in cached_by_manifest_path:
+                normalized_manifest_path = raw_manifest_path
+            else:
+                normalized_manifest_path = str(Path(raw_manifest_path).expanduser().resolve())
         if not normalized_model_id and not normalized_manifest_path:
             return None
 
@@ -552,7 +587,7 @@ class ModelOpsJobRegistry:
                 resolved_activation_manifest_path=resolved_activation_manifest_path,
             )
 
-        lookup = self._cached_active_derived_model_by_manifest_path().get(normalized_manifest_path)
+        lookup = cached_by_manifest_path.get(normalized_manifest_path)
         if lookup is None:
             return None
         return self._cached_derived_model_target_payload(

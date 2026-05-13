@@ -660,6 +660,29 @@ def test_resolve_derived_model_target_id_lookup_negative_paths() -> None:
     )
 
 
+def test_resolve_derived_model_target_trims_model_id_before_lookup() -> None:
+    registry = ModelOpsJobRegistry()
+    job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    manifest_path = "/runtime/activate/melix-dev-active/manifest.json"
+    registry.attach_manifest(
+        job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": "/runtime/activate/melix-dev-active",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(job.job_id, manifest_path)
+
+    target = registry.resolve_derived_model_target(derived_model_id=" melix-dev-active ")
+
+    assert target is not None
+    assert target["derived_model_id"] == "melix-dev-active"
+    assert target["activation_manifest_path"] == manifest_path
+
+
 def test_resolve_derived_model_target_manifest_only_uses_payload_helper() -> None:
     registry = ModelOpsJobRegistry()
     job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
@@ -681,6 +704,31 @@ def test_resolve_derived_model_target_manifest_only_uses_payload_helper() -> Non
     assert target is not None
     assert target["derived_model_id"] == "melix-dev-active"
     assert target["activation_manifest_path"] == manifest_path
+
+
+def test_resolve_derived_model_target_resolves_manifest_path_before_lookup(tmp_path: Path) -> None:
+    registry = ModelOpsJobRegistry()
+    job = registry.start("activate_adapter", "melix-dev-text", str(tmp_path / "activate"))
+    manifest_path = tmp_path / "activate" / "melix-dev-active" / "manifest.json"
+    registry.attach_manifest(
+        job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": str(manifest_path.parent),
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(job.job_id, str(manifest_path))
+
+    target = registry.resolve_derived_model_target(
+        manifest_path=str(manifest_path.parent / ".." / "melix-dev-active" / "manifest.json")
+    )
+
+    assert target is not None
+    assert target["derived_model_id"] == "melix-dev-active"
+    assert target["activation_manifest_path"] == str(manifest_path.resolve())
 
 
 def test_resolve_derived_model_target_uses_cached_manifest_path_lookup(
