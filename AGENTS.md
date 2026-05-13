@@ -177,7 +177,11 @@ state from `.runtime`.
 - Before each work transaction, read the relevant docs and standards before changing code.
 - Confirm the implementation approach in plan mode before editing code. If plan mode is unavailable, create or update an explicit written plan before broad implementation.
 - For non-trivial work, start from an explicit plan under `docs/plans/` or update the active plan before broad implementation.
-- During design, do not anchor on minimal change or implementation cost. Optimize for the best end-state architecture, best practices, and the most reasonable long-term choice for Melix.
+- During design and solution evaluation, start from the best end-state architecture
+  for Melix as if time and implementation cost were not constraints. Do not
+  optimize the recommended direction for the shortest path, smallest diff, or
+  lowest-effort patch. After the best solution is identified, slice the delivery
+  into small, verifiable implementation steps.
 - During design, define the performance probes, measurement points, and success metrics for the code path being changed.
 - For material UI/UX changes, use the interactive walkthrough workflow in `docs/runbooks/agent-ui-walkthrough.md` before broad App implementation when feasible: create or update a `.runtime/walkthrough/` HTML artifact, review it with the operator in the in-app browser, record decisions in a paired runtime note, then implement after the direction is confirmed.
 - Prefer small, verifiable slices over broad speculative rewrites.
