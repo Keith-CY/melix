@@ -430,7 +430,7 @@ class ModelOpsJobRegistry:
                 resolved_activation_manifest_path=resolved_activation_manifest_path,
             )
             lookup.target_payload = target_payload
-        return dict(target_payload)
+        return target_payload.copy()
 
     @staticmethod
     def _copy_adapter_runtime_row_fields(row: dict[str, Any], manifest: dict[str, Any]) -> None:
@@ -531,6 +531,9 @@ class ModelOpsJobRegistry:
         if derived_model_id and not manifest_path:
             lookup = self._cached_active_derived_model_by_id().get(derived_model_id)
             if lookup is not None:
+                target_payload = lookup.target_payload
+                if target_payload is not None:
+                    return target_payload.copy()
                 resolved_activation_manifest_path = lookup.resolved_activation_manifest_path
                 if resolved_activation_manifest_path is None:
                     resolved_activation_manifest_path = str(
@@ -590,6 +593,9 @@ class ModelOpsJobRegistry:
         lookup = cached_by_manifest_path.get(normalized_manifest_path)
         if lookup is None:
             return None
+        target_payload = lookup.target_payload
+        if target_payload is not None:
+            return target_payload.copy()
         return self._cached_derived_model_target_payload(
             lookup,
             resolved_activation_manifest_path=normalized_manifest_path,
