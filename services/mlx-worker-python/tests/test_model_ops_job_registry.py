@@ -456,6 +456,7 @@ def test_active_derived_model_row_cache_reuses_rows_and_invalidates() -> None:
     second_manifests = registry.active_derived_model_manifests()
 
     assert first_rows is second_rows
+    assert first_manifests is registry._active_derived_model_manifests_cache
     assert first_manifests is second_manifests
     assert first_manifests == (
         {

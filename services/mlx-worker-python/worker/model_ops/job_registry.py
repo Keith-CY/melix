@@ -352,6 +352,9 @@ class ModelOpsJobRegistry:
         if cached_rows is None:
             cached_rows = self._active_derived_model_job_rows(self._ordered_jobs())
             self._active_derived_model_rows_cache = cached_rows
+            self._active_derived_model_manifests_cache = tuple(
+                manifest for _, manifest, _ in cached_rows
+            )
         return cached_rows
 
     def _cached_active_derived_model_by_id(self) -> dict[str, _ActiveDerivedModelLookup]:

@@ -134,6 +134,39 @@ def test_resolve_compare_target_models_ignores_empty_and_none_loaded_models() ->
     assert registry.get_loaded_model_calls == ["handle-0", "handle-1", "handle-2"]
 
 
+def test_resolve_compare_target_models_normalizes_noncanonical_model_ids() -> None:
+    registry = _FakeRegistry(["unused", "unused", "unused"])
+    registry._loaded_by_handle["handle-0"] = SimpleNamespace(spec=SimpleNamespace(model_id=" target-a "))
+    registry._loaded_by_handle["handle-1"] = SimpleNamespace(spec=SimpleNamespace(model_id=1234))
+    registry._loaded_by_handle["handle-2"] = SimpleNamespace(spec=SimpleNamespace(model_id="target-b"))
+
+    resolved = resolve_compare_target_models(
+        registry=registry,
+        target_model_ids=("target-a", "1234"),
+    )
+
+    assert tuple(resolved) == ("target-a", "1234")
+    assert registry.get_loaded_model_calls == ["handle-0", "handle-1"]
+
+
+def test_resolve_compare_target_models_preserves_calls_when_targets_repeated() -> None:
+    registry = _FakeRegistry(["target-a", "target-b", "unused"])
+
+    first = resolve_compare_target_models(
+        registry=registry,
+        target_model_ids=("target-a", "target-b"),
+    )
+    second = resolve_compare_target_models(
+        registry=registry,
+        target_model_ids=("target-b", "target-a"),
+    )
+
+    assert tuple(first) == ("target-a", "target-b")
+    assert tuple(second) == ("target-b", "target-a")
+    assert [loaded.spec.model_id for loaded in second.values()] == ["target-b", "target-a"]
+    assert registry.get_loaded_model_calls == ["handle-0", "handle-1", "handle-0", "handle-1"]
+
+
 def test_load_adapter_target_spec_populates_runtime_fields_and_ephemeral_id(
     tmp_path: Path,
 ) -> None:

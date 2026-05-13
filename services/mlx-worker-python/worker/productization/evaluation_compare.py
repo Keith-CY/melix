@@ -225,7 +225,13 @@ def resolve_compare_target_models(
         loaded_model = registry.get_loaded_model(handle)
         if loaded_model is None:
             continue
-        model_id = str(getattr(getattr(loaded_model, "spec", None), "model_id", "")).strip()
+        raw_model_id = getattr(getattr(loaded_model, "spec", None), "model_id", "")
+        if isinstance(raw_model_id, str):
+            model_id = raw_model_id
+            if model_id and (model_id[0].isspace() or model_id[-1].isspace()):
+                model_id = model_id.strip()
+        else:
+            model_id = str(raw_model_id).strip()
         if model_id in remaining_targets:
             loaded_models_by_id[model_id] = loaded_model
             remaining_targets.remove(model_id)
@@ -236,6 +242,8 @@ def resolve_compare_target_models(
     ]
     if unknown_targets:
         raise ValueError(f"Unknown comparison target model IDs: {', '.join(unknown_targets)}")
+    if tuple(loaded_models_by_id) == tuple(requested_targets):
+        return loaded_models_by_id
     return {model_id: loaded_models_by_id[model_id] for model_id in requested_targets}
 
 
