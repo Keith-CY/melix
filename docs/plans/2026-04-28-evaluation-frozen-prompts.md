@@ -102,8 +102,9 @@ the evaluation rows.
 
 For non-event-extraction suites, one-off prompt text is prepended into the
 system message after the suite's fixed instruction and before any sample-level
-system text. The worker records the prompt character count as a metric so report
-artifacts make the prompt-control surface auditable.
+system text. The worker removes the full prompt text from persisted job
+parameters and records the prompt character count as a metric so report artifacts
+make the prompt-control surface auditable.
 
 ## Verification
 

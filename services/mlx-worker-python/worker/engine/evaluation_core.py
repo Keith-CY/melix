@@ -427,7 +427,7 @@ class EvaluationCore:
         if parameters:
             job_parameters.update(parameters)
         hints_text = str(job_parameters.pop("evaluation_hints_text", "") or "").strip()
-        eval_prompt_system_prompt = str(job_parameters.get("eval_prompt_system_prompt", "") or "").strip()
+        eval_prompt_system_prompt = str(job_parameters.pop("eval_prompt_system_prompt", "") or "").strip()
         if hints_text:
             job_parameters["hints_prompt_chars"] = str(len(hints_text))
         if eval_prompt_system_prompt:
