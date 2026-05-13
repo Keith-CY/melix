@@ -57,7 +57,7 @@ def _run_once(root: Path, build_root: Path, product_name: str, *, legacy: bool) 
     return elapsed_ms, peak, len(resolved.parts)
 
 
-def main() -> None:
+def collect_metrics() -> dict[str, float | int]:
     triples = int(os.environ.get("MELIX_SWIFT_BINARY_RESOLUTION_TRIPLES", "1500"))
     samples = int(os.environ.get("MELIX_SWIFT_BINARY_RESOLUTION_SAMPLES", "5"))
     product_name = "melix-probe"
@@ -81,23 +81,28 @@ def main() -> None:
             new_elapsed.append(elapsed)
             new_peaks.append(float(peak))
 
-        print(
-            json.dumps(
-                {
-                    "candidate_count": triples + 1,
-                    "samples": samples,
-                    "legacy_elapsed_ms_mean": statistics.fmean(old_elapsed),
-                    "elapsed_ms_mean": statistics.fmean(new_elapsed),
-                    "delta_ms_mean": statistics.fmean(new_elapsed) - statistics.fmean(old_elapsed),
-                    "legacy_peak_bytes_mean": statistics.fmean(old_peaks),
-                    "peak_bytes_mean": statistics.fmean(new_peaks),
-                    "peak_bytes_delta_mean": statistics.fmean(new_peaks) - statistics.fmean(old_peaks),
-                },
-                sort_keys=True,
-            )
-        )
+        old_mean = statistics.fmean(old_elapsed)
+        new_mean = statistics.fmean(new_elapsed)
+        return {
+            "candidate_count": triples + 1,
+            "samples": samples,
+            "legacy_elapsed_ms_mean": old_mean,
+            "elapsed_ms_mean": new_mean,
+            "delta_ms_mean": new_mean - old_mean,
+            "legacy_peak_bytes_mean": statistics.fmean(old_peaks),
+            "peak_bytes_mean": statistics.fmean(new_peaks),
+            "peak_bytes_delta_mean": statistics.fmean(new_peaks) - statistics.fmean(old_peaks),
+        }
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def main() -> None:
+    from scripts.integration_remove_tree_probe import collect_metrics as collect_remove_tree_metrics
+
+    metrics = collect_metrics()
+    metrics.update(collect_remove_tree_metrics())
+    print(json.dumps(metrics, sort_keys=True))
 
 
 if __name__ == "__main__":

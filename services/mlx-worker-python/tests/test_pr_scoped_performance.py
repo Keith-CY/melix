@@ -188,6 +188,9 @@ def test_integration_swift_binary_resolution_probe_script_emits_metrics(
 ) -> None:
     monkeypatch.setenv("MELIX_SWIFT_BINARY_RESOLUTION_TRIPLES", "8")
     monkeypatch.setenv("MELIX_SWIFT_BINARY_RESOLUTION_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_REMOVE_TREE_DIRECTORIES", "4")
+    monkeypatch.setenv("MELIX_REMOVE_TREE_FILES_PER_DIRECTORY", "1")
+    monkeypatch.setenv("MELIX_REMOVE_TREE_SAMPLES", "1")
 
     runpy.run_path(
         str(REPO_ROOT / "scripts/integration_swift_binary_resolution_probe.py"),
@@ -200,6 +203,31 @@ def test_integration_swift_binary_resolution_probe_script_emits_metrics(
     assert metrics["legacy_elapsed_ms_mean"] >= 0
     assert "delta_ms_mean" in metrics
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["remove_tree_directories"] == 4
+    assert metrics["remove_tree_elapsed_ms_mean"] >= 0
+    assert metrics["remove_tree_legacy_elapsed_ms_mean"] >= 0
+    assert "remove_tree_delta_ms_mean" in metrics
+
+
+def test_integration_remove_tree_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_REMOVE_TREE_DIRECTORIES", "4")
+    monkeypatch.setenv("MELIX_REMOVE_TREE_FILES_PER_DIRECTORY", "1")
+    monkeypatch.setenv("MELIX_REMOVE_TREE_SAMPLES", "1")
+
+    runpy.run_path(
+        str(REPO_ROOT / "scripts/integration_remove_tree_probe.py"),
+        run_name="__main__",
+    )
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["remove_tree_directories"] == 4
+    assert metrics["remove_tree_files_per_directory"] == 1
+    assert metrics["remove_tree_elapsed_ms_mean"] >= 0
+    assert metrics["remove_tree_legacy_elapsed_ms_mean"] >= 0
+    assert "remove_tree_peak_bytes_delta_mean" in metrics
 
 
 def test_scope_report_selects_mlx_text_stop_kwarg_probe() -> None:
