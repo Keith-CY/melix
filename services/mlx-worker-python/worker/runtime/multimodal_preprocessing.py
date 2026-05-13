@@ -223,6 +223,18 @@ def _parse_image_reference(uri: str) -> ParsedImageReference:
             format=path.suffix.lstrip("."),
         )
 
+    if uri.startswith("file:///"):
+        decoded_path = unquote(uri[7:])
+        path = Path(decoded_path)
+        return ParsedImageReference(
+            raw=uri,
+            parsed=ParseResult("file", "", decoded_path, "", "", ""),
+            decoded_path=decoded_path,
+            path=path,
+            filename=path.name,
+            format=path.suffix.lstrip("."),
+        )
+
     parsed = urlparse(uri)
     if parsed.scheme in {"http", "https", "file"}:
         decoded_path = unquote(parsed.path)

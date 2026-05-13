@@ -1504,7 +1504,7 @@ def test_prepare_vision_request_parses_each_image_uri_once(
     )
 
     assert [prepared.filename for prepared in request.images] == [image.name, image.name]
-    assert parse_calls == [image.as_uri()]
+    assert parse_calls == []
 
 
 def test_prepare_vision_request_parses_remote_image_uri_once(monkeypatch: pytest.MonkeyPatch) -> None:
