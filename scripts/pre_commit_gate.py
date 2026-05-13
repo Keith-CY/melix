@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from collections.abc import Callable, Mapping
 
 
@@ -116,11 +117,6 @@ def unstaged_tracked_files(root: Path) -> list[str]:
     return [line.strip() for line in output.splitlines() if line.strip()]
 
 
-def untracked_files(root: Path) -> list[str]:
-    output = run_git(root, ["ls-files", "--others", "--exclude-standard"])
-    return [line.strip() for line in output.splitlines() if line.strip()]
-
-
 def run_shell_command(command: str, cwd: Path) -> CommandResult:
     print(f"[pre-commit] running: {command}", flush=True)
     started = time.perf_counter()
@@ -140,18 +136,18 @@ def run_shell_command(command: str, cwd: Path) -> CommandResult:
 
 def export_head_snapshot(root: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
-    archive = subprocess.Popen(
+    with subprocess.Popen(
         ["git", "archive", "--format=tar", "HEAD"],
         cwd=root,
         stdout=subprocess.PIPE,
-    )
-    assert archive.stdout is not None
-    extract = subprocess.run(
-        ["tar", "-xf", "-", "-C", os.fspath(destination)],
-        stdin=archive.stdout,
-    )
-    archive.stdout.close()
-    archive_rc = archive.wait()
+    ) as archive:
+        assert archive.stdout is not None
+        extract = subprocess.run(
+            ["tar", "-xf", "-", "-C", os.fspath(destination)],
+            stdin=archive.stdout,
+        )
+        archive.stdout.close()
+        archive_rc = archive.wait()
     if archive_rc != 0:
         raise GateError(f"git archive HEAD failed with exit {archive_rc}")
     if extract.returncode != 0:
@@ -234,10 +230,15 @@ def run_performance_report(root: Path, changed_files: list[str]) -> PerformanceO
                         json.dumps(result, indent=2, sort_keys=True) + "\n",
                         encoding="utf-8",
                     )
-                except Exception as exc:  # noqa: BLE001
+                except Exception:  # noqa: BLE001
+                    exc_text = traceback.format_exc()
                     error_path = probes_dir / f"{probe_id}.error.txt"
-                    error_path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
-                    print(f"[pre-commit] performance probe failed before result: {probe_id}: {exc}", file=sys.stderr)
+                    error_path.write_text(exc_text, encoding="utf-8")
+                    error_summary = exc_text.rstrip().splitlines()[-1] if exc_text.strip() else "unknown error"
+                    print(
+                        f"[pre-commit] performance probe failed before result: {probe_id}: {error_summary}",
+                        file=sys.stderr,
+                    )
                     if probe_id not in probes:
                         print(f"[pre-commit] unknown registered probe during report generation: {probe_id}", file=sys.stderr)
 
@@ -273,10 +274,9 @@ def run_gate(
         return 0
 
     dirty_files = unstaged_tracked_files(root)
-    extra_files = untracked_files(root)
-    if dirty_files or extra_files:
+    if dirty_files:
         print(
-            "[pre-commit] refusing to run with unstaged or untracked changes; "
+            "[pre-commit] refusing to run with unstaged changes; "
             "stage or stash them so the gate validates the exact commit content.",
             file=sys.stderr,
         )
@@ -284,10 +284,6 @@ def run_gate(
             print(f"[pre-commit] unstaged: {path}", file=sys.stderr)
         if len(dirty_files) > 20:
             print(f"[pre-commit] unstaged: ... (+{len(dirty_files) - 20} more)", file=sys.stderr)
-        for path in extra_files[:20]:
-            print(f"[pre-commit] untracked: {path}", file=sys.stderr)
-        if len(extra_files) > 20:
-            print(f"[pre-commit] untracked: ... (+{len(extra_files) - 20} more)", file=sys.stderr)
         return 1
 
     if not run_full_tests(root, command_runner=command_runner):

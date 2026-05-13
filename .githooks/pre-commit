@@ -18,4 +18,8 @@ if [[ "$force_flag" != "1" && "$force_flag" != "true" && "$force_flag" != "TRUE"
   fi
 fi
 
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$repo_root/.uv-cache}"
+export UV_PYTHON="${MELIX_PRE_COMMIT_UV_PYTHON:-${UV_PYTHON:-3.12}}"
+mkdir -p "$UV_CACHE_DIR"
+
 exec uv run --frozen --project services/mlx-worker-python --extra mlx python scripts/pre_commit_gate.py
