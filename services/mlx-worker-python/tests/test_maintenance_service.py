@@ -5519,6 +5519,8 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     shaped_repeated_prompt = core._shape_benchmark_prompt("one two", context_length=6)
     assert shaped_repeated_prompt == "one two one two one two"
     assert shaped_repeated_prompt.split() == ["one", "two", "one", "two", "one", "two"]
+    with pytest.raises(TypeError, match="immutable"):
+        shaped_repeated_prompt.split().append("three")
     assert shaped_repeated_prompt.split(" ", 1) == ["one", "two one two one two"]
     assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
     assert MaintenanceCore._shape_benchmark_prompt.cache_info().hits == 1

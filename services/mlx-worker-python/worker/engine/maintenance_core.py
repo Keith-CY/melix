@@ -51,17 +51,38 @@ _CAPABILITY_SUPPORTED_PARSERS_KEY = "melix.capability.supported_parsers"
 logger = logging.getLogger(__name__)
 
 
+class ImmutableBenchmarkTokens(list[str]):
+    __slots__ = ()
+
+    @staticmethod
+    def _raise_immutable(*_: object, **__: object) -> NoReturn:
+        raise TypeError("Shaped benchmark prompt tokens are immutable")
+
+    append = _raise_immutable
+    clear = _raise_immutable
+    extend = _raise_immutable
+    insert = _raise_immutable
+    pop = _raise_immutable
+    remove = _raise_immutable
+    reverse = _raise_immutable
+    sort = _raise_immutable
+    __delitem__ = _raise_immutable
+    __iadd__ = _raise_immutable
+    __imul__ = _raise_immutable
+    __setitem__ = _raise_immutable
+
+
 class ShapedBenchmarkPrompt(str):
     __slots__ = ("_tokens",)
 
     def __new__(cls, value: str, tokens: tuple[str, ...]) -> ShapedBenchmarkPrompt:
         prompt = str.__new__(cls, value)
-        prompt._tokens = tokens
+        prompt._tokens = ImmutableBenchmarkTokens(tokens)
         return prompt
 
     def split(self, sep: str | None = None, maxsplit: int = -1) -> list[str]:
         if sep is None and maxsplit == -1:
-            return list(self._tokens)
+            return self._tokens
         return str(self).split(sep, maxsplit)
 
 
