@@ -30,6 +30,8 @@ inspectable, preflightable, and reproducible by emitting concrete
   document.
 - Route recipe application through the existing pipeline runner and preserve its
   dry-run, resume, from-step, receipt, and JSON v1 behavior.
+- Keep recipe apply artifacts bounded by pruning old UUID run directories under
+  each recipe while preserving the newest 20 runs and non-UUID operator files.
 
 ## Non-Goals
 
@@ -85,6 +87,7 @@ Record deterministic CLI-side metrics in JSON outputs where practical:
 - `recipe.schema_validate_ms`
 - `recipe.plan_ms`
 - `recipe.apply_start_ms`
+- `recipe.apply_retained_runs`
 
 The first implementation does not require a live runtime. Runtime-heavy probes
 such as memory-fit timing are covered by existing command paths and should be
@@ -146,5 +149,7 @@ and validate with `scripts/validate_pr_evidence.py`.
 - Ambiguous URI inspection returns multiple candidates.
 - Recipe application reuses pipeline receipts and dry-run behavior.
 - Sensitive values are redacted in public arguments and outputs.
+- Recipe apply artifacts use a bounded retention policy instead of growing
+  indefinitely.
 - The final PR links issue #636 and reports coverage, metrics, local commands,
   known gaps, CI state, and performance-report state.

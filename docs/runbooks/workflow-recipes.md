@@ -80,7 +80,11 @@ melix recipes apply import.hf-mlx-model \
 ```
 
 Generated pipeline files and receipts live under `MELIX_HOME/workflow-recipes/`
-unless `MELIX_HOME` points at a worktree-local runtime home.
+unless `MELIX_HOME` points at a worktree-local runtime home. Melix stores each
+recipe application in a UUID-named run directory under the recipe ID and keeps
+the newest 20 run directories for that recipe. Older UUID run directories are
+removed before a new apply executes, while non-UUID files or operator-managed
+notes in the recipe directory are left untouched.
 
 ## Provenance
 

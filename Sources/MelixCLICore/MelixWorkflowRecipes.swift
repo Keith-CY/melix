@@ -1,6 +1,8 @@
 import Dispatch
 import Foundation
 
+private let defaultWorkflowRecipeRunRetentionLimit = 20
+
 private struct MelixURIInspectionResult {
     let payload: [String: Any]
     let candidates: [[String: Any]]
@@ -69,7 +71,11 @@ private struct MelixWorkflowRecipe: @unchecked Sendable {
 
 private enum MelixRecipeHash {
     static func hash(_ object: [String: Any]) throws -> String {
-        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        let compatibleObject = try jsonCompatibleValue(object, context: "recipe payload")
+        guard JSONSerialization.isValidJSONObject(compatibleObject) else {
+            throw MelixCLIError.usage("Recipe payload contains values that cannot be serialized as JSON.")
+        }
+        let data = try JSONSerialization.data(withJSONObject: compatibleObject, options: [.sortedKeys])
         return data.reduce(UInt64(0xcbf29ce484222325)) { hash, byte in
             (hash ^ UInt64(byte)) &* 0x100000001b3
         }
@@ -81,6 +87,27 @@ private enum MelixRecipeHash {
             (hash ^ UInt64(byte)) &* 0x100000001b3
         }
         .hexString
+    }
+
+    private static func jsonCompatibleValue(_ value: Any, context: String) throws -> Any {
+        switch value {
+        case let dictionary as [String: Any]:
+            var compatible: [String: Any] = [:]
+            for (key, nestedValue) in dictionary {
+                compatible[key] = try jsonCompatibleValue(nestedValue, context: "\(context).\(key)")
+            }
+            return compatible
+        case let array as [Any]:
+            return try array.enumerated().map { index, nestedValue in
+                try jsonCompatibleValue(nestedValue, context: "\(context)[\(index)]")
+            }
+        case is NSNull, is String, is Bool, is Int, is Int64, is UInt, is UInt64, is Double, is Float:
+            return value
+        case let number as NSNumber:
+            return number
+        default:
+            throw MelixCLIError.usage("Recipe payload field \(context) is not JSON-compatible.")
+        }
     }
 }
 
@@ -132,6 +159,7 @@ private enum MelixWorkflowRecipeCatalog {
                 throw MelixCLIError.usage("Recipe \(recipe.id) has duplicate input \(name).")
             }
         }
+        _ = try MelixRecipeHash.hash(recipe.payload)
         let pipeline = try MelixRecipePlanner.plan(recipe: recipe, values: validationValues(for: recipe))
         try MelixRecipePlanner.validatePipelineCommands(pipeline)
         return [
@@ -420,8 +448,10 @@ private enum MelixWorkflowRecipeCatalog {
 private enum MelixRecipePlanner {
     static func plan(recipe: MelixWorkflowRecipe, values: [String: String]) throws -> [String: Any] {
         let inputs = mergedInputs(recipe: recipe, values: values)
+        let validationStart = DispatchTime.now()
         try validateRequiredInputs(recipe, values: inputs)
         let steps = try recipe.plan(inputs)
+        let schemaValidateMS = elapsedMilliseconds(since: validationStart)
         let provenance = provenance(recipe: recipe, values: inputs)
         return [
             "schema_version": "melix.pipeline.v1",
@@ -433,6 +463,7 @@ private enum MelixRecipePlanner {
                 "source_recipe_version": recipe.version,
                 "source_recipe_digest": recipe.digest,
                 "governing_issue": "https://github.com/Keith-CY/melix/issues/636",
+                "recipe.schema_validate_ms": schemaValidateMS,
             ],
         ]
     }
@@ -570,23 +601,87 @@ private enum MelixURIResolver {
     }
 
     private static func hfLocator(_ uri: String) -> (kind: String, repoID: String, revision: String, locator: String)? {
-        if uri.hasPrefix("hf://model/") {
-            let (repoID, revision) = splitRevision(String(uri.dropFirst("hf://model/".count)))
-            return ("hf_model_repo", repoID, revision, "hf://model/\(repoID)@\(revision)")
+        guard let components = URLComponents(string: uri) else {
+            return nil
         }
-        if uri.hasPrefix("hf://dataset/") {
-            let (repoID, revision) = splitRevision(String(uri.dropFirst("hf://dataset/".count)))
-            return ("hf_dataset_repo", repoID, revision, "hf://dataset/\(repoID)@\(revision)")
+        if components.scheme == "hf" {
+            let kind: String
+            let locatorPrefix: String
+            switch components.host?.lowercased() {
+            case "model":
+                kind = "hf_model_repo"
+                locatorPrefix = "hf://model"
+            case "dataset":
+                kind = "hf_dataset_repo"
+                locatorPrefix = "hf://dataset"
+            default:
+                return nil
+            }
+            return hfLocator(kind: kind, locatorPrefix: locatorPrefix, pathComponents: hfPathComponents(components.path))
         }
-        if uri.hasPrefix("https://huggingface.co/datasets/") {
-            let (repoID, revision) = splitRevision(String(uri.dropFirst("https://huggingface.co/datasets/".count)))
-            return ("hf_dataset_repo", repoID, revision, "hf://dataset/\(repoID)@\(revision)")
+        guard ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
+              components.host?.lowercased() == "huggingface.co"
+        else {
+            return nil
         }
-        if uri.hasPrefix("https://huggingface.co/") {
-            let (repoID, revision) = splitRevision(String(uri.dropFirst("https://huggingface.co/".count)))
-            return ("hf_model_repo", repoID, revision, "hf://model/\(repoID)@\(revision)")
+        var pathComponents = hfPathComponents(components.path)
+        var kind = "hf_model_repo"
+        var locatorPrefix = "hf://model"
+        if pathComponents.first == "datasets" {
+            pathComponents.removeFirst()
+            kind = "hf_dataset_repo"
+            locatorPrefix = "hf://dataset"
         }
-        return nil
+        return hfLocator(kind: kind, locatorPrefix: locatorPrefix, pathComponents: pathComponents)
+    }
+
+    private static func hfLocator(
+        kind: String,
+        locatorPrefix: String,
+        pathComponents: [String]
+    ) -> (kind: String, repoID: String, revision: String, locator: String)? {
+        guard pathComponents.count >= 2 else {
+            return nil
+        }
+        let second = pathComponents[1].split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false)
+        let repoName = second.first.map(String.init) ?? ""
+        let repoID = "\(pathComponents[0])/\(repoName)"
+        guard isBareHuggingFaceRepo(repoID) else {
+            return nil
+        }
+        let revision: String
+        if second.count > 1 {
+            let explicitRevision = [String(second[1])] + Array(pathComponents.dropFirst(2))
+            revision = explicitRevision.joined(separator: "/")
+        } else {
+            revision = revisionFromPathRemainder(Array(pathComponents.dropFirst(2))) ?? "main"
+        }
+        return (kind, repoID, revision, "\(locatorPrefix)/\(repoID)@\(revision)")
+    }
+
+    private static func hfPathComponents(_ path: String) -> [String] {
+        path.split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+            .map { $0.removingPercentEncoding ?? $0 }
+    }
+
+    private static func revisionFromPathRemainder(_ pathRemainder: [String]) -> String? {
+        guard let marker = pathRemainder.first,
+              ["tree", "blob", "resolve"].contains(marker),
+              pathRemainder.count >= 2
+        else {
+            return nil
+        }
+        let revisionParts: ArraySlice<String>
+        if pathRemainder.count >= 4,
+           pathRemainder[1] == "refs"
+        {
+            revisionParts = pathRemainder[1...3]
+        } else {
+            revisionParts = pathRemainder[1...1]
+        }
+        let revision = revisionParts.joined(separator: "/")
+        return revision.isEmpty ? nil : revision
     }
 
     private static func hfCandidate(_ hf: (kind: String, repoID: String, revision: String, locator: String)) -> [String: Any] {
@@ -633,10 +728,12 @@ private enum MelixURIResolver {
     private static func localDirectoryCandidates(_ url: URL) -> [[String: Any]] {
         var candidates: [[String: Any]] = []
         let fileManager = FileManager.default
-        let children = (try? fileManager.contentsOfDirectory(atPath: url.path)) ?? []
-        if children.contains("config.json"),
-           children.contains(where: { ["safetensors", "bin", "gguf"].contains(URL(fileURLWithPath: $0).pathExtension.lowercased()) })
-        {
+        let hasConfig = fileManager.fileExists(atPath: url.appendingPathComponent("config.json").path)
+        let hasModelWeights = directoryContainsFile(
+            in: url,
+            withExtensions: ["safetensors", "bin", "gguf"]
+        )
+        if hasConfig && hasModelWeights {
             candidates.append(candidate(
                 kind: "local_mlx_model_directory",
                 confidence: 0.90,
@@ -648,7 +745,9 @@ private enum MelixURIResolver {
                 extra: ["resolved_path": url.path]
             ))
         }
-        if children.contains("samples.jsonl") || children.contains("dataset.json") || children.contains("manifest.json") {
+        if ["samples.jsonl", "dataset.json", "manifest.json"].contains(where: {
+            fileManager.fileExists(atPath: url.appendingPathComponent($0).path)
+        }) {
             candidates.append(candidate(
                 kind: "local_dataset_package",
                 confidence: 0.72,
@@ -660,7 +759,9 @@ private enum MelixURIResolver {
                 extra: ["resolved_path": url.path]
             ))
         }
-        if children.contains("train_lora.adapter.json") || children.contains("adapter_config.json") {
+        if ["train_lora.adapter.json", "adapter_config.json"].contains(where: {
+            fileManager.fileExists(atPath: url.appendingPathComponent($0).path)
+        }) {
             candidates.append(candidate(
                 kind: "local_lora_adapter",
                 confidence: 0.82,
@@ -684,6 +785,26 @@ private enum MelixURIResolver {
                 extra: ["resolved_path": url.path]
             ),
         ] : candidates
+    }
+
+    private static func directoryContainsFile(in url: URL, withExtensions extensions: Set<String>) -> Bool {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        ) else {
+            return false
+        }
+        for case let childURL as URL in enumerator {
+            guard extensions.contains(childURL.pathExtension.lowercased()) else {
+                continue
+            }
+            let values = try? childURL.resourceValues(forKeys: [.isRegularFileKey])
+            if values?.isRegularFile != false {
+                return true
+            }
+        }
+        return false
     }
 
     private static func localFileCandidates(_ url: URL) -> [[String: Any]] {
@@ -805,15 +926,23 @@ extension MelixCLIRunner {
 
     public func runURIImport(_ options: URIImportOptions) async throws -> String {
         let inspection = MelixURIResolver.inspect(options.uri)
-        guard let candidate = inspection.candidates.first,
-              inspection.candidates.count == 1
+        let importableCandidates = inspection.candidates.filter { candidate in
+            isURIImportableKind(candidate["kind"] as? String ?? "")
+        }
+        guard let candidate = importableCandidates.first,
+              importableCandidates.count == 1
         else {
+            let status = importableCandidates.isEmpty ? "unresolved" : "ambiguous"
             let payload: [String: Any] = [
                 "schema_version": "melix.uri_import.v1",
-                "status": "ambiguous",
+                "status": status,
                 "inspection": inspection.payload,
+                "importable_candidate_count": importableCandidates.count,
             ]
-            return options.json ? try prettyWorkflowJSON(payload) : "URI import is ambiguous. Run melix uri inspect first.\n"
+            let message = importableCandidates.isEmpty
+                ? "URI import did not resolve an importable candidate. Run melix uri inspect first.\n"
+                : "URI import is ambiguous. Run melix uri inspect first.\n"
+            return options.json ? try prettyWorkflowJSON(payload) : message
         }
         guard let kind = candidate["kind"] as? String else {
             throw MelixCLIError.runtime("URI inspection did not produce a candidate kind.")
@@ -893,7 +1022,7 @@ extension MelixCLIRunner {
             "artifacts": artifacts,
             "metrics": [
                 "recipe.lookup_ms": lookupMS,
-                "recipe.schema_validate_ms": 0,
+                "recipe.schema_validate_ms": (plan["metadata"] as? [String: Any])?["recipe.schema_validate_ms"] ?? 0,
                 "recipe.plan_ms": elapsedMilliseconds(since: startedAt),
             ],
         ]
@@ -910,6 +1039,11 @@ extension MelixCLIRunner {
             .appendingPathComponent(sanitizeRecipePathComponent(recipe.id), isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: runRoot, withIntermediateDirectories: true)
+        let retainedRuns = try pruneRecipeRuns(
+            under: runRoot.deletingLastPathComponent(),
+            keeping: runRoot,
+            limit: defaultWorkflowRecipeRunRetentionLimit
+        )
         let pipelineURL = runRoot.appendingPathComponent("pipeline.json")
         _ = try MelixRecipePlanner.writePipeline(plan, to: pipelineURL.path)
         let receiptURL = runRoot.appendingPathComponent("receipts", isDirectory: true)
@@ -928,9 +1062,12 @@ extension MelixCLIRunner {
                 "id": recipe.id,
                 "version": recipe.version,
                 "digest": recipe.digest,
+                "retention_limit": defaultWorkflowRecipeRunRetentionLimit,
+                "run_root": runRoot.path,
             ]
             payload["metrics"] = (payload["metrics"] as? [String: Any] ?? [:]).merging([
                 "recipe.apply_start_ms": elapsedMilliseconds(since: startedAt),
+                "recipe.apply_retained_runs": retainedRuns,
             ]) { current, _ in current }
             return try prettyWorkflowJSON(payload)
         }
@@ -939,7 +1076,7 @@ extension MelixCLIRunner {
 
     public func runRecipesInit(_ options: RecipeInitOptions) throws -> String {
         let inspection = MelixURIResolver.inspect(options.sourceURI)
-        let recipeID = recommendedRecipeID(task: options.task, inspection: inspection)
+        let recipeID = try recommendedRecipeID(task: options.task, inspection: inspection)
         let recipe = try MelixWorkflowRecipeCatalog.recipe(id: recipeID)
         var payload = recipe.payload
         payload["provenance"] = [
@@ -1001,6 +1138,10 @@ extension MelixCLIRunner {
         return value
     }
 
+    private func isURIImportableKind(_ kind: String) -> Bool {
+        ["hf_model_repo", "hf_dataset_repo", "local_mlx_model_directory"].contains(kind)
+    }
+
     private func summaryPayload(_ recipe: MelixWorkflowRecipe) -> [String: Any] {
         [
             "id": recipe.id,
@@ -1044,7 +1185,7 @@ extension MelixCLIRunner {
         "id=\(recipe.id)\nversion=\(recipe.version)\ntasks=\(recipe.tasks.joined(separator: ","))\ntitle=\(recipe.title)\n"
     }
 
-    private func recommendedRecipeID(task: String, inspection: MelixURIInspectionResult) -> String {
+    private func recommendedRecipeID(task: String, inspection: MelixURIInspectionResult) throws -> String {
         if task == "import",
            let firstKind = inspection.candidates.first?["kind"] as? String
         {
@@ -1058,7 +1199,48 @@ extension MelixCLIRunner {
         if task == "eval" {
             return "dataset.hf-eval"
         }
-        return MelixWorkflowRecipeCatalog.list(task: task).first?.id ?? "import.hf-mlx-model"
+        guard let recipeID = MelixWorkflowRecipeCatalog.list(task: task).first?.id else {
+            throw MelixCLIError.runtime("No workflow recipe matches task \(task).")
+        }
+        return recipeID
+    }
+
+    private func pruneRecipeRuns(under recipeRoot: URL, keeping currentRunRoot: URL, limit: Int) throws -> Int {
+        guard limit > 0 else {
+            return 0
+        }
+        let fileManager = FileManager.default
+        guard let children = try? fileManager.contentsOfDirectory(
+            at: recipeRoot,
+            includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey, .isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return 1
+        }
+        let runDirectories = children.compactMap { url -> (url: URL, date: Date)? in
+            guard url != currentRunRoot,
+                  UUID(uuidString: url.lastPathComponent) != nil
+            else {
+                return nil
+            }
+            let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey, .isDirectoryKey])
+            guard values?.isDirectory == true else {
+                return nil
+            }
+            return (url, values?.creationDate ?? values?.contentModificationDate ?? .distantPast)
+        }
+        let removable = runDirectories
+            .sorted { left, right in
+                if left.date == right.date {
+                    return left.url.lastPathComponent < right.url.lastPathComponent
+                }
+                return left.date > right.date
+            }
+            .dropFirst(max(limit - 1, 0))
+        for run in removable {
+            try? fileManager.removeItem(at: run.url)
+        }
+        return min(runDirectories.count + 1, limit)
     }
 
     private func prettyWorkflowJSON(_ payload: [String: Any]) throws -> String {

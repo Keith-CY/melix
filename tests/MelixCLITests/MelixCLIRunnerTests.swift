@@ -3986,6 +3986,16 @@ struct MelixCLIRunnerTests {
         #expect(ambiguousPayload["candidate_count"] as? Int == 2)
         #expect(ambiguousPayload["ambiguity_count"] as? Int == 1)
 
+        let datasetURLPayload = try #require(parseJSONObject(try await runner.run(.uriInspect(.init(
+            uri: "https://huggingface.co/datasets/org/repo/tree/refs/pr/2?download=1",
+            json: true
+        )))))
+        let datasetURLCandidate = try #require((datasetURLPayload["candidates"] as? [[String: Any]])?.first)
+        #expect(datasetURLCandidate["kind"] as? String == "hf_dataset_repo")
+        #expect(datasetURLCandidate["repo_id"] as? String == "org/repo")
+        #expect(datasetURLCandidate["revision"] as? String == "refs/pr/2")
+        #expect(datasetURLCandidate["normalized_locator"] as? String == "hf://dataset/org/repo@refs/pr/2")
+
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-uri-inspect-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -4001,6 +4011,10 @@ struct MelixCLIRunnerTests {
         #expect(localKinds.contains("local_mlx_model_directory"))
         #expect(localKinds.contains("local_dataset_package"))
         #expect(localPayload["ambiguity_count"] as? Int == 1)
+
+        let unresolvedOutput = try await runner.run(.uriImport(.init(uri: root.appendingPathComponent("missing").path, dryRun: true, json: true)))
+        let unresolvedPayload = try #require(parseJSONObject(unresolvedOutput))
+        #expect(unresolvedPayload["status"] as? String == "unresolved")
     }
 
     @Test("workflow recipes list show validate and plan")
@@ -4070,6 +4084,41 @@ struct MelixCLIRunnerTests {
         let receiptDir = try #require(payload["receipt_dir"] as? String)
         #expect(FileManager.default.fileExists(atPath: receiptDir))
         #expect((payload["metrics"] as? [String: Any])?["recipe.apply_start_ms"] as? Double != nil)
+        #expect((payload["metrics"] as? [String: Any])?["recipe.apply_retained_runs"] as? Int == 1)
+
+        let recipeRoot = melixHome
+            .appendingPathComponent("workflow-recipes", isDirectory: true)
+            .appendingPathComponent("import.hf-mlx-model", isDirectory: true)
+        for _ in 0..<22 {
+            _ = try await runner.run(.recipesApply(
+                .init(
+                    recipeID: "import.hf-mlx-model",
+                    values: ["repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
+                    dryRun: true,
+                    json: true
+                )
+            ))
+        }
+        let runDirectories = try FileManager.default.contentsOfDirectory(
+            at: recipeRoot,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        ).filter { url in
+            UUID(uuidString: url.lastPathComponent) != nil
+        }
+        #expect(runDirectories.count == 20)
+    }
+
+    @Test("workflow recipe init rejects unmatched tasks")
+    func workflowRecipeInitRejectsUnmatchedTasks() async throws {
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+
+        await #expect(throws: MelixCLIError.runtime("No workflow recipe matches task missing_task.")) {
+            try await runner.run(.recipesInit(.init(
+                sourceURI: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                task: "missing_task",
+                json: true
+            )))
+        }
     }
 
     @Test("dataset remove forwards safe snapshot selector")
