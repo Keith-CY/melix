@@ -21,6 +21,8 @@ GIT_LOCAL_ENV_VARS = (
     "GIT_SHALLOW_FILE",
     "GIT_COMMON_DIR",
 )
+# GIT_NAMESPACE is not scrubbed: it selects a repository namespace, not the
+# caller's working tree, index, object directory, or config context.
 
 
 def scrub_git_local_env(*, env: Mapping[str, str] | None = None) -> dict[str, str]:
