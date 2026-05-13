@@ -35,10 +35,11 @@ class BoundedServingDiagnosticsEventQueue:
 
     def append(self, event: ServingDiagnosticsEvent) -> bool:
         with self._lock:
-            dropped = len(self._events) >= self._max_events
+            events = self._events
+            dropped = len(events) >= self._max_events
             if dropped:
                 self._dropped_count += 1
-            self._events.append(event)
+            events.append(event)
             return not dropped
 
     def snapshot(self) -> ServingDiagnosticsQueueSnapshot:
@@ -114,7 +115,7 @@ class ServingDiagnosticsRequestSummary:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ServingDiagnosticsEvent:
     request_id: str
     phase: str

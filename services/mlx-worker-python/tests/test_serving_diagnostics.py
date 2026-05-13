@@ -172,6 +172,20 @@ def test_serving_diagnostics_bounded_queue_drops_oldest_without_blocking(
     assert [row["event_index"] for row in event_rows] == [1, 2]
 
 
+def test_serving_diagnostics_event_instances_use_slots_for_debug_queue() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-slots",
+        phase="decode",
+        event_index=1,
+        status="completed",
+        duration_ms=0.25,
+        attributes={"token": "ok"},
+    )
+
+    assert hasattr(event, "__dict__") is False
+    assert event.to_dict()["attributes"] == {"token": "ok"}
+
+
 def test_serving_diagnostics_bounded_queue_serializes_append_during_snapshot() -> None:
     first_event = ServingDiagnosticsEvent(
         request_id="req-concurrent",
