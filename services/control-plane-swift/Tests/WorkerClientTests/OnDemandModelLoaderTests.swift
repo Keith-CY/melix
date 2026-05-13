@@ -166,6 +166,83 @@ struct OnDemandModelLoaderTests {
         #expect(await swiftClient.loadRequestCount == 0)
     }
 
+    @Test("python compatibility lazy loads forward default-safe model-load trust policy")
+    func pythonCompatibilityLazyLoadsForwardDefaultSafeModelLoadTrustPolicy() async throws {
+        var model = makeTextModel(id: "registry-text", state: .modelDiscovered)
+        model.routeClass = .workerRoutePythonTextCompatibility
+        let catalog = ModelCatalog(seedModels: [model])
+        let swiftClient = LoaderTestingWorkerClient()
+        let pythonClient = LoaderTestingWorkerClient()
+        await pythonClient.setLoadResponse(
+            ok: true,
+            handle: "registry-text::python",
+            estimatedResidentBytes: 8_192
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: swiftClient,
+            pythonCompatibilityClient: pythonClient,
+            modelCatalog: catalog
+        )
+        let metricsStore = MetricsStore()
+
+        _ = try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: "registry-text",
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+
+        let loadRequest = try #require(await pythonClient.lastLoadModelRequest)
+        let loadedModel = try #require(await catalog.model(id: "registry-text"))
+        let metrics = await metricsStore.snapshot()
+
+        #expect(loadRequest.loadTrust.requestedMode == .modelLoadTrustDefaultSafe)
+        #expect(loadRequest.loadTrust.effectiveMode == .modelLoadTrustDefaultSafe)
+        #expect(loadRequest.loadTrust.policySource == "default_safe")
+        #expect(loadRequest.loadTrust.routeClass == .workerRoutePythonTextCompatibility)
+        #expect(loadRequest.loadTrust.loaderFamily == "python_text_compatibility")
+        #expect(loadedModel.loadTrust.effectiveMode == .modelLoadTrustDefaultSafe)
+        #expect(loadedModel.loadTrust.policySource == "default_safe")
+        #expect(metrics.values.keys.contains("control_plane.model_load_trust_resolution_ms"))
+    }
+
+    @Test("python compatibility lazy loads forward explicit trust-remote-code opt-in")
+    func pythonCompatibilityLazyLoadsForwardExplicitTrustRemoteCodeOptIn() async throws {
+        var model = makeTextModel(id: "trusted-text", state: .modelDiscovered)
+        model.routeClass = .workerRoutePythonTextCompatibility
+        model.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        let catalog = ModelCatalog(seedModels: [model])
+        let swiftClient = LoaderTestingWorkerClient()
+        let pythonClient = LoaderTestingWorkerClient()
+        await pythonClient.setLoadResponse(
+            ok: true,
+            handle: "trusted-text::python",
+            estimatedResidentBytes: 8_192
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: swiftClient,
+            pythonCompatibilityClient: pythonClient,
+            modelCatalog: catalog
+        )
+
+        _ = try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: "trusted-text",
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: MetricsStore()
+        )
+
+        let loadRequest = try #require(await pythonClient.lastLoadModelRequest)
+        let loadedModel = try #require(await catalog.model(id: "trusted-text"))
+
+        #expect(loadRequest.model.settings.loadTrustMode == .modelLoadTrustTrustRemoteCode)
+        #expect(loadRequest.loadTrust.requestedMode == .modelLoadTrustTrustRemoteCode)
+        #expect(loadRequest.loadTrust.effectiveMode == .modelLoadTrustTrustRemoteCode)
+        #expect(loadRequest.loadTrust.policySource == "model_settings")
+        #expect(loadedModel.loadTrust.requestedMode == .modelLoadTrustTrustRemoteCode)
+        #expect(loadedModel.loadTrust.effectiveMode == .modelLoadTrustTrustRemoteCode)
+    }
+
     @Test("text-capable VLM models lazy-load through the Python VLM route")
     func textCapableVLMModelsLazyLoadThroughThePythonVLMRoute() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
@@ -444,6 +521,56 @@ struct OnDemandModelLoaderTests {
         #expect(metrics.values["control_plane.text_load_last_required_bytes"] == 34_816)
     }
 
+    @Test("failed lazy loads persist worker model-load trust receipts")
+    func failedLazyLoadsPersistWorkerModelLoadTrustReceipts() async throws {
+        var model = makeTextModel(id: "unsafe-text", state: .modelDiscovered)
+        model.routeClass = .workerRoutePythonTextCompatibility
+        let catalog = ModelCatalog(seedModels: [model])
+        let swiftClient = LoaderTestingWorkerClient()
+        let pythonClient = LoaderTestingWorkerClient()
+        var workerTrust = Melix_Worker_V1_ModelLoadTrustPolicy()
+        workerTrust.requestedMode = .modelLoadTrustDefaultSafe
+        workerTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        workerTrust.policySource = "default_safe"
+        workerTrust.customLoaderRequired = true
+        workerTrust.customLoaderDetectionSource = "config_json:auto_map"
+        workerTrust.blockReason = "custom_loader_requires_trust_remote_code"
+        workerTrust.routeClass = .workerRoutePythonTextCompatibility
+        workerTrust.loaderFamily = "mlx_lm"
+        await pythonClient.setLoadResponse(
+            ok: false,
+            handle: "",
+            estimatedResidentBytes: 0,
+            errorCode: "unsafe_load_rejected",
+            errorMessage: "Custom loader requires an explicit trust_remote_code opt-in.",
+            loadTrust: workerTrust
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: swiftClient,
+            pythonCompatibilityClient: pythonClient,
+            modelCatalog: catalog
+        )
+
+        var expectedError = Melix_Worker_V1_ErrorStatus()
+        expectedError.code = "unsafe_load_rejected"
+        expectedError.message = "Custom loader requires an explicit trust_remote_code opt-in."
+        await #expect(throws: OnDemandModelLoadError.workerRejected(expectedError)) {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "unsafe-text",
+                modelCatalog: catalog,
+                workerRegistry: registry,
+                metricsStore: MetricsStore()
+            )
+        }
+
+        let failedModel = try #require(await catalog.model(id: "unsafe-text"))
+        #expect(failedModel.state == .modelFailed)
+        #expect(failedModel.loadTrust.customLoaderRequired)
+        #expect(failedModel.loadTrust.customLoaderDetectionSource == "config_json:auto_map")
+        #expect(failedModel.loadTrust.blockReason == "custom_loader_requires_trust_remote_code")
+        #expect(failedModel.loadTrust.loaderFamily == "mlx_lm")
+    }
+
     @Test("failed lazy loads forward disk-streaming mode and preserve explicit worker rejection codes")
     func failedLazyLoadsForwardDiskStreamingModeAndPreserveExplicitWorkerRejectionCodes() async throws {
         var model = ModelCatalog.devTextModel()
@@ -688,7 +815,8 @@ private actor LoaderTestingWorkerClient: WorkerRoutingClient, RuntimeIntrospecti
         estimatedResidentBytes: UInt64,
         errorCode: String = "",
         errorMessage: String = "",
-        errorDetails: [String: String] = [:]
+        errorDetails: [String: String] = [:],
+        loadTrust: Melix_Worker_V1_ModelLoadTrustPolicy? = nil
     ) {
         loadResponse = Melix_Worker_V1_LoadModelResponse()
         loadResponse.ok = ok
@@ -698,6 +826,9 @@ private actor LoaderTestingWorkerClient: WorkerRoutingClient, RuntimeIntrospecti
         loadResponse.error.code = errorCode
         loadResponse.error.message = errorMessage
         loadResponse.error.details = errorDetails
+        if let loadTrust {
+            loadResponse.loadTrust = loadTrust
+        }
     }
 
     func setUnloadResponse(ok: Bool) {

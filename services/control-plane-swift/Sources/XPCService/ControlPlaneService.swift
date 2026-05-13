@@ -2903,6 +2903,17 @@ public actor ControlPlaneService {
                 } else if let multimodalCacheBudgetBytes = UInt64(value) {
                     settings.multimodalCacheBudgetBytes = multimodalCacheBudgetBytes
                 }
+            case "trust_remote_code":
+                let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if normalizedValue.isEmpty {
+                    settings.loadTrustMode = .unspecified
+                } else {
+                    settings.loadTrustMode = parseBool(value)
+                        ? .modelLoadTrustTrustRemoteCode
+                        : .modelLoadTrustDefaultSafe
+                }
+            case "load_trust_mode", "model_load_trust_mode":
+                settings.loadTrustMode = ModelLoadTrustPolicyResolver.mode(fromPolicyValue: value)
             default:
                 settings.ext[key] = value
             }
@@ -4334,9 +4345,21 @@ public actor ControlPlaneService {
         let requestedDiskStreamingMode = fallbackPreparedModelSpec.map {
             controlPlaneDiskStreamingMode(for: $0.settings.diskStreamingMode)
         } ?? .diskStreamingDisabled
+        let resolvedRoute: WorkerRouteKind?
+        if let workerRegistry {
+            resolvedRoute = await workerRegistry.route(forModelID: modelID)
+        } else {
+            resolvedRoute = nil
+        }
         guard let workerRegistry,
               let modelSpec = hydratedPreparedModelSpec ?? preparedModelSpec,
-              let workerClient = await workerRegistry.client(forModelID: modelID) else {
+              let route = resolvedRoute,
+              let workerClient = await workerRegistry.client(for: route) else {
+            let fallbackRoute = hydratedCatalogModel ?? catalogModel
+            let fallbackRouteKind = resolvedRoute ?? .swiftText
+            let loadTrustPolicy = fallbackRoute.map {
+                ModelLoadTrustPolicyResolver.resolvePolicy(for: $0, route: fallbackRouteKind)
+            }
             if requestedDiskStreamingMode == .diskStreamingPreferDisk
                 || requestedDiskStreamingMode == .diskStreamingRequireDisk {
                 _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
@@ -4345,7 +4368,8 @@ public actor ControlPlaneService {
                 )
                 let failedModel = await modelCatalog.recordLoadFailed(
                     id: modelID,
-                    reason: "\(reason)_disk_streaming_unsupported"
+                    reason: "\(reason)_disk_streaming_unsupported",
+                    loadTrust: loadTrustPolicy
                 ) ?? Melix_Controlplane_V1_ModelSummary()
                 var error = Melix_Controlplane_V1_ErrorStatus()
                 error.code = "disk_streaming_unsupported"
@@ -4359,10 +4383,19 @@ public actor ControlPlaneService {
             let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,
                 dispatchHandle: "\(modelID)::local",
+                loadTrust: loadTrustPolicy,
                 reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
             return ModelLoadOutcome(model: hydrate(model), error: nil)
         }
+        let trustStartedAt = Date()
+        let loadTrustPolicy = (hydratedCatalogModel ?? catalogModel).map {
+            ModelLoadTrustPolicyResolver.resolvePolicy(for: $0, route: route)
+        } ?? Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        await metricsStore.set(
+            Date().timeIntervalSince(trustStartedAt) * 1000,
+            forKey: "control_plane.model_load_trust_resolution_ms"
+        )
 
         var workerRequest = Melix_Worker_V1_LoadModelRequest()
         workerRequest.model = modelSpec
@@ -4370,6 +4403,7 @@ public actor ControlPlaneService {
         workerRequest.pinOnLoad = false
         workerRequest.warmupAfterLoad = false
         workerRequest.diskStreamingMode = modelSpec.settings.diskStreamingMode
+        workerRequest.loadTrust = ModelLoadTrustPolicyResolver.workerPolicy(from: loadTrustPolicy)
 
         do {
             let response = try await workerClient.loadModel(request: workerRequest)
@@ -4390,7 +4424,11 @@ public actor ControlPlaneService {
                 let model = await modelCatalog.recordLoadFailed(
                     id: modelID,
                     reason: failureReason,
-                    memoryBudgetEvidence: memoryBudgetEvidence
+                    memoryBudgetEvidence: memoryBudgetEvidence,
+                    loadTrust: ModelLoadTrustPolicyResolver.receiptForLoadFailure(
+                        response: response,
+                        fallback: loadTrustPolicy
+                    )
                 ) ?? Melix_Controlplane_V1_ModelSummary()
                 return ModelLoadOutcome(model: hydrate(model), error: explicitError)
             }
@@ -4405,6 +4443,9 @@ public actor ControlPlaneService {
                 dispatchHandle: response.modelHandle,
                 pinRequested: workerRequest.pinOnLoad,
                 workerResidency: response.hasResidency ? response.residency : nil,
+                loadTrust: response.hasLoadTrust
+                    ? ModelLoadTrustPolicyResolver.controlPlanePolicy(from: response.loadTrust, fallback: loadTrustPolicy)
+                    : loadTrustPolicy,
                 reason: reason
             ) ?? Melix_Controlplane_V1_ModelSummary()
             return ModelLoadOutcome(model: hydrate(model), error: nil)
@@ -4415,7 +4456,8 @@ public actor ControlPlaneService {
             )
             let model = await modelCatalog.recordLoadFailed(
                 id: modelID,
-                reason: "\(reason)_failed"
+                reason: "\(reason)_failed",
+                loadTrust: loadTrustPolicy
             ) ?? Melix_Controlplane_V1_ModelSummary()
             return ModelLoadOutcome(model: hydrate(model), error: nil)
         }

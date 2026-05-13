@@ -33,6 +33,7 @@ message LoadModelRequest {
   bool pin_on_load = 3;
   bool warmup_after_load = 4;
   DiskStreamingMode disk_streaming_mode = 5;
+  ModelLoadTrustPolicy load_trust = 6;
 }
 
 message LoadModelResponse {
@@ -42,6 +43,7 @@ message LoadModelResponse {
   uint64 estimated_resident_bytes = 4;
   RuntimeCapabilities resolved_capabilities = 5;
   ResidencyInfo residency = 6;
+  ModelLoadTrustPolicy load_trust = 7;
 }
 
 message UnloadModelRequest {

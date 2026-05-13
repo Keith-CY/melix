@@ -798,6 +798,35 @@ struct ModelCatalogTests {
         #expect(failed.residency.requiredBytes == 9_216)
     }
 
+    @Test("load trust receipts persist and loaded model setting changes require reload")
+    func loadTrustReceiptsPersistAndLoadedModelSettingChangesRequireReload() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        loadTrust.requestedMode = .modelLoadTrustDefaultSafe
+        loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        loadTrust.policySource = "default_safe"
+        loadTrust.routeClass = .workerRouteSwiftText
+        loadTrust.loaderFamily = "swift_text"
+
+        let loaded = try #require(await catalog.recordLoadSucceeded(
+            id: "melix-dev-text",
+            dispatchHandle: "melix-dev-text::swift",
+            loadTrust: loadTrust
+        ))
+        #expect(loaded.loadTrust.effectiveMode == .modelLoadTrustDefaultSafe)
+        #expect(!loaded.loadTrust.requiresReloadForTrustChange)
+
+        var settings = loaded.settings
+        settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        let updated = try #require(await catalog.updateSettings(id: "melix-dev-text", settings: settings))
+
+        #expect(updated.settings.loadTrustMode == .modelLoadTrustTrustRemoteCode)
+        #expect(updated.loadTrust.requestedMode == .modelLoadTrustTrustRemoteCode)
+        #expect(updated.loadTrust.effectiveMode == .modelLoadTrustDefaultSafe)
+        #expect(updated.loadTrust.policySource == "model_settings")
+        #expect(updated.loadTrust.requiresReloadForTrustChange)
+    }
+
     @Test("explicit transition helpers handle missing models custom handles and unload failures")
     func explicitTransitionHelpersHandleMissingModelsCustomHandlesAndUnloadFailures() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])

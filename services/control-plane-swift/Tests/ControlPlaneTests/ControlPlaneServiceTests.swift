@@ -2842,6 +2842,7 @@ struct ControlPlaneServiceTests {
                     "multimodal_cache_budget_bytes": "2048",
                     "default_acceleration_mode": "speculative_decode",
                     "acceleration_profile_id": "draft-q4",
+                    "trust_remote_code": "true",
                 ]
             )
         )
@@ -2860,6 +2861,38 @@ struct ControlPlaneServiceTests {
         #expect(response.model.model.settings.multimodalCacheBudgetBytes == 2_048)
         #expect(response.model.model.settings.defaultAccelerationMode == .speculativeDecode)
         #expect(response.model.model.settings.accelerationProfileID == "draft-q4")
+        #expect(response.model.model.settings.loadTrustMode == .modelLoadTrustTrustRemoteCode)
+    }
+
+    @Test("execute normalizes and clears model-load trust policy settings")
+    func executeNormalizesAndClearsModelLoadTrustPolicySettings() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let defaultSafe = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["load_trust_mode": "default-safe"]
+            )
+        )
+        let trusted = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["model_load_trust_mode": "trust_remote_code"]
+            )
+        )
+        let cleared = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["trust_remote_code": ""]
+            )
+        )
+
+        #expect(defaultSafe.ok)
+        #expect(defaultSafe.model.model.settings.loadTrustMode == .modelLoadTrustDefaultSafe)
+        #expect(trusted.ok)
+        #expect(trusted.model.model.settings.loadTrustMode == .modelLoadTrustTrustRemoteCode)
+        #expect(cleared.ok)
+        #expect(cleared.model.model.settings.loadTrustMode == .unspecified)
     }
 
     @Test("execute normalizes cache mode labels and clears cache policy settings")

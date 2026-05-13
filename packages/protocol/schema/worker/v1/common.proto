@@ -61,6 +61,13 @@ enum WorkerRouteClass {
   WORKER_ROUTE_PYTHON_IMAGE = 10;
 }
 
+enum ModelLoadTrustMode {
+  MODEL_LOAD_TRUST_MODE_UNSPECIFIED = 0;
+  MODEL_LOAD_TRUST_DEFAULT_SAFE = 1;
+  MODEL_LOAD_TRUST_TRUST_REMOTE_CODE = 2;
+  MODEL_LOAD_TRUST_NOT_APPLICABLE = 3;
+}
+
 enum MemoryResidencyPolicy {
   MEMORY_RESIDENCY_POLICY_UNSPECIFIED = 0;
   MEMORY_RESIDENCY_EVICTABLE = 1;
@@ -405,6 +412,19 @@ message ModelSettings {
   uint32 cache_block_size_tokens = 12;
   string cache_directory = 13;
   uint64 multimodal_cache_budget_bytes = 14;
+  ModelLoadTrustMode load_trust_mode = 15;
+}
+
+message ModelLoadTrustPolicy {
+  ModelLoadTrustMode requested_mode = 1;
+  ModelLoadTrustMode effective_mode = 2;
+  string policy_source = 3;
+  bool custom_loader_required = 4;
+  string custom_loader_detection_source = 5;
+  string block_reason = 6;
+  bool requires_reload_for_trust_change = 7;
+  WorkerRouteClass route_class = 8;
+  string loader_family = 9;
 }
 
 message BlockTable {
