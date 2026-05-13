@@ -86,16 +86,24 @@ class AssemblyCompletion:
 class RequestStreamAssembler:
     _THINK_OPEN = "<think>"
     _THINK_CLOSE = "</think>"
+    _PIPE_REASONING_OPEN = "<|channel>thought"
+    _PIPE_REASONING_CLOSE = "<channel|>"
     _TOOL_OPEN = "<tool_call>"
     _TOOL_CLOSE = "</tool_call>"
     _PIPE_TOOL_OPEN = "<|tool_call>"
     _PIPE_TOOL_CLOSE = "<tool_call|>"
     _THINK_PREFIXES = tuple("<think>"[:index] for index in range(1, len("<think>")))
+    _PIPE_REASONING_PREFIXES = tuple(
+        "<|channel>thought"[:index] for index in range(1, len("<|channel>thought"))
+    )
     _TOOL_PREFIXES = tuple("<tool_call>"[:index] for index in range(1, len("<tool_call>")))
     _PIPE_TOOL_PREFIXES = tuple(
         "<|tool_call>"[:index] for index in range(1, len("<|tool_call>"))
     )
+    _REASONING_PREFIXES = _THINK_PREFIXES + _PIPE_REASONING_PREFIXES
     _THINK_PREFIXES_REVERSED = tuple(reversed(_THINK_PREFIXES))
+    _PIPE_REASONING_PREFIXES_REVERSED = tuple(reversed(_PIPE_REASONING_PREFIXES))
+    _REASONING_PREFIXES_REVERSED = tuple(reversed(_REASONING_PREFIXES))
     _TOOL_PREFIXES_REVERSED = tuple(reversed(_TOOL_PREFIXES))
     _PIPE_TOOL_PREFIXES_REVERSED = tuple(reversed(_PIPE_TOOL_PREFIXES))
     _VISIBLE_TAIL_MARKERS = ("\nFinal answer", "\nFinal:", "\nAnswer:", "\nAssistant:", "\nResult:")
@@ -142,17 +150,17 @@ class RequestStreamAssembler:
         self._is_json_only_structured_output_value = (
             self._is_json_structured_output_value and not self._tool_parsing_enabled_value
         )
-        self._structural_tag_prefixes_value = self._THINK_PREFIXES
-        self._structural_tag_prefixes_reversed_value = self._THINK_PREFIXES_REVERSED
+        self._structural_tag_prefixes_value = self._REASONING_PREFIXES
+        self._structural_tag_prefixes_reversed_value = self._REASONING_PREFIXES_REVERSED
         if self._tool_parsing_enabled_value:
             self._request_context_mode_value = "tool_parser"
             self._structural_tag_prefixes_value = (
-                self._THINK_PREFIXES + self._TOOL_PREFIXES + self._PIPE_TOOL_PREFIXES
+                self._REASONING_PREFIXES + self._TOOL_PREFIXES + self._PIPE_TOOL_PREFIXES
             )
             self._structural_tag_prefixes_reversed_value = (
                 self._PIPE_TOOL_PREFIXES_REVERSED
                 + self._TOOL_PREFIXES_REVERSED
-                + self._THINK_PREFIXES_REVERSED
+                + self._REASONING_PREFIXES_REVERSED
             )
         elif self._is_json_structured_output_value:
             self._request_context_mode_value = "structured_json"
@@ -425,13 +433,18 @@ class RequestStreamAssembler:
                 deltas.append(self._content_delta(content))
                 continue
 
-            if tag == self._THINK_OPEN:
-                close_index = self._buffer.find(self._THINK_CLOSE, len(self._THINK_OPEN))
+            if tag == self._THINK_OPEN or tag == self._PIPE_REASONING_OPEN:
+                close_tag = (
+                    self._PIPE_REASONING_CLOSE
+                    if tag == self._PIPE_REASONING_OPEN
+                    else self._THINK_CLOSE
+                )
+                close_index = self._buffer.find(close_tag, len(tag))
                 if close_index < 0:
                     if final:
                         self._metrics["malformed_reasoning_count"] += 1
                         self._metrics["reasoning_channel_recovery_count"] += 1
-                        body = self._buffer[len(self._THINK_OPEN) :]
+                        body = self._buffer[len(tag) :]
                         hidden, visible = self._recover_unclosed_reasoning_body(body)
                         if hidden:
                             if self._reasoning_enabled:
@@ -443,8 +456,8 @@ class RequestStreamAssembler:
                         if visible:
                             deltas.append(self._content_delta(visible))
                     break
-                body = self._buffer[len(self._THINK_OPEN) : close_index]
-                self._buffer = self._buffer[close_index + len(self._THINK_CLOSE) :]
+                body = self._buffer[len(tag) : close_index]
+                self._buffer = self._buffer[close_index + len(close_tag) :]
                 if body.strip() == "":
                     self._metrics["empty_thinking_sentinel_count"] += 1
                     continue
@@ -495,26 +508,27 @@ class RequestStreamAssembler:
 
     def _next_structural_tag(self) -> tuple[str, int] | None:
         think_index = self._buffer.find(self._THINK_OPEN)
+        pipe_reasoning_index = self._buffer.find(self._PIPE_REASONING_OPEN)
         if not self._tool_parsing_enabled_value:
-            return None if think_index < 0 else (self._THINK_OPEN, think_index)
+            candidates = []
+            if think_index >= 0:
+                candidates.append((self._THINK_OPEN, think_index))
+            if pipe_reasoning_index >= 0:
+                candidates.append((self._PIPE_REASONING_OPEN, pipe_reasoning_index))
+            return min(candidates, key=lambda item: item[1]) if candidates else None
 
         tool_index = self._buffer.find(self._TOOL_OPEN)
         pipe_tool_index = self._buffer.find(self._PIPE_TOOL_OPEN)
-        if think_index < 0:
-            if tool_index < 0 and pipe_tool_index < 0:
-                return None
-            if tool_index < 0:
-                return (self._PIPE_TOOL_OPEN, pipe_tool_index)
-            if pipe_tool_index < 0 or tool_index <= pipe_tool_index:
-                return (self._TOOL_OPEN, tool_index)
-            return (self._PIPE_TOOL_OPEN, pipe_tool_index)
-
-        candidates = [(self._THINK_OPEN, think_index)]
+        candidates = []
+        if think_index >= 0:
+            candidates.append((self._THINK_OPEN, think_index))
+        if pipe_reasoning_index >= 0:
+            candidates.append((self._PIPE_REASONING_OPEN, pipe_reasoning_index))
         if tool_index >= 0:
             candidates.append((self._TOOL_OPEN, tool_index))
         if pipe_tool_index >= 0:
             candidates.append((self._PIPE_TOOL_OPEN, pipe_tool_index))
-        return min(candidates, key=lambda item: item[1])
+        return min(candidates, key=lambda item: item[1]) if candidates else None
 
     def _has_partial_structural_tag_suffix(self) -> bool:
         return bool(self._partial_structural_tag_suffix())
@@ -535,6 +549,10 @@ class RequestStreamAssembler:
             suffix
         ):
             return suffix
+        if 0 < len(suffix) < len(self._PIPE_REASONING_OPEN) and self._PIPE_REASONING_OPEN.startswith(
+            suffix
+        ):
+            return suffix
         return ""
 
     def _record_prefix_hold(self, suffix: str) -> None:
@@ -548,6 +566,8 @@ class RequestStreamAssembler:
             "<tool_call" in content or "<|tool_call" in content
         ):
             self._metrics["tool_call_markup_leak_count"] += 1
+        if "<think" in content or "<|channel>thought" in content:
+            self._metrics["reasoning_leak_count"] += 1
         self._assistant_parts.append(content)
         return AssemblyDelta(content_text=content, raw_text=content)
 

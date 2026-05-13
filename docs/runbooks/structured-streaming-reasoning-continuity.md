@@ -87,7 +87,9 @@ Expected healthy values:
 - truncated tool calls increment `malformed_tool_fragment_count` without failing the stream
 - truncated reasoning increments `malformed_reasoning_count` without exposing hidden text
 - non-monotonic adapter fragments increment `non_monotonic_stream_count`
-- reasoning-disabled requests with `<think>` blocks increment `suppressed_reasoning_count`
+- reasoning-disabled requests with `<think>` blocks or
+  `<|channel>thought...<channel|>` blocks increment
+  `suppressed_reasoning_count`
 - partial marker prefixes hold only the still-viable structural suffix; public
   text before that suffix is emitted immediately
 - short visible prefixes that flush before a held marker suffix increment
@@ -108,7 +110,8 @@ Expected healthy values:
   only when multiple byte fragments are merged into one valid Unicode delta
 - whitespace-only closed thinking blocks should increment
   `empty_thinking_sentinel_count` and emit neither reasoning metadata nor
-  visible marker text
+  visible marker text; the same sentinel behavior applies to empty
+  `<|channel>thought...<channel|>` blocks
 - reasoning-disabled requests should increment `reasoning_parser_bypassed_count`
   for suppressed hidden blocks and still emit normal visible content/tool calls
 - `effective_parser_config_json` should be present on completed events and
