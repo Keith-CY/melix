@@ -2287,6 +2287,34 @@ def test_load_adapter_target_spec_populates_ephemeral_id(tmp_path: Path) -> None
     assert len(spec.runtime_manifest_fields["adapter_runtime.adapter_isolation_key"]) == 64
 
 
+def test_load_adapter_target_spec_shares_base_key_and_isolates_adapters(tmp_path: Path) -> None:
+    from worker.productization.evaluation_compare import load_adapter_target_spec
+
+    manifest_a = _write_adapter_manifest(
+        tmp_path=tmp_path,
+        adapter_name="alpha",
+        adapter_set_hash="adapteralpha1234",
+    )
+    manifest_b = _write_adapter_manifest(
+        tmp_path=tmp_path,
+        adapter_name="beta",
+        adapter_set_hash="adapterbeta5678",
+    )
+
+    spec_a = load_adapter_target_spec(manifest_path=manifest_a, job_id="compare-shared")
+    spec_b = load_adapter_target_spec(manifest_path=manifest_b, job_id="compare-shared")
+
+    assert (
+        spec_a.runtime_manifest_fields["adapter_runtime.base_reuse_key"]
+        == spec_b.runtime_manifest_fields["adapter_runtime.base_reuse_key"]
+    )
+    assert (
+        spec_a.runtime_manifest_fields["adapter_runtime.adapter_isolation_key"]
+        != spec_b.runtime_manifest_fields["adapter_runtime.adapter_isolation_key"]
+    )
+    assert spec_a.ephemeral_derived_model_id != spec_b.ephemeral_derived_model_id
+
+
 def test_resolve_compare_target_adapters_empty_is_noop() -> None:
     from worker.productization.evaluation_compare import resolve_compare_target_adapters
     # No adapter specs → no registry required; empty result.

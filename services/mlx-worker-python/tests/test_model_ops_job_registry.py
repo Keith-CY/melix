@@ -377,6 +377,56 @@ def test_active_derived_model_manifests_avoids_full_snapshot(monkeypatch: pytest
 
     assert registry.active_derived_model_manifests() == (active_manifest,)
 
+
+def test_job_registry_snapshot_preserves_adapter_runtime_fields() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps({"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"}),
+    )
+    registry.complete(train_job.job_id, adapter_manifest_path)
+
+    active_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.attach_manifest(
+        active_job.job_id,
+        json.dumps(
+            {
+                "adapter_manifest_path": adapter_manifest_path,
+                "adapter_weights_path": "/runtime/train/adapters.safetensors",
+                "adapter_set_hash": "hash-a",
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": "/runtime/activate/melix-dev-active",
+                "source_model": "melix-dev-text",
+                "activation_mode": "adapter_backed_runtime",
+                "adapter_runtime.base_reuse_key": "base-runtime-key",
+                "adapter_runtime.adapter_isolation_key": "adapter-runtime-key",
+                "adapter_runtime.switch_mode": "base_reuse_adapter_swap",
+                "adapter_runtime.sharing_policy": "shared_base_isolated_adapter",
+                "adapter_runtime.compatibility_status": "compatible",
+            }
+        ),
+    )
+    registry.complete(active_job.job_id, "/runtime/activate/melix-dev-active/manifest.json")
+
+    snapshot = registry.snapshot()
+    adapter = snapshot["adapters"][0]
+    derived_model = snapshot["derived_models"][0]
+    for row in (adapter, derived_model):
+        assert row["adapter_runtime_base_reuse_key"] == "base-runtime-key"
+        assert row["adapter_runtime_adapter_isolation_key"] == "adapter-runtime-key"
+        assert row["adapter_runtime_switch_mode"] == "base_reuse_adapter_swap"
+        assert row["adapter_runtime_sharing_policy"] == "shared_base_isolated_adapter"
+        assert row["adapter_runtime_compatibility_status"] == "compatible"
+
+    target = registry.resolve_derived_model_target(derived_model_id="melix-dev-active")
+    assert target is not None
+    assert target["adapter_runtime_base_reuse_key"] == "base-runtime-key"
+    assert target["adapter_runtime_adapter_isolation_key"] == "adapter-runtime-key"
+
+
 def test_active_derived_model_row_cache_reuses_rows_and_invalidates() -> None:
     registry = ModelOpsJobRegistry()
     active_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
@@ -748,7 +798,8 @@ def test_resolve_derived_model_target_avoids_snapshot_jobs(monkeypatch: pytest.M
 
     target = registry.resolve_derived_model_target(derived_model_id="melix-dev-active")
 
-    assert target == {
+    assert target is not None
+    expected = {
         "activation_job_id": active_job.job_id,
         "activation_manifest_path": active_output_path,
         "output_dir": "/runtime/activate",
@@ -761,6 +812,13 @@ def test_resolve_derived_model_target_avoids_snapshot_jobs(monkeypatch: pytest.M
         "adapter_manifest_path": adapter_manifest_path,
         "adapter_weights_path": "/runtime/train/adapters.safetensors",
     }
+    for key, value in expected.items():
+        assert target[key] == value
+    assert target["adapter_runtime_base_reuse_key"] == ""
+    assert target["adapter_runtime_adapter_isolation_key"] == ""
+    assert target["adapter_runtime_switch_mode"] == ""
+    assert target["adapter_runtime_sharing_policy"] == ""
+    assert target["adapter_runtime_compatibility_status"] == ""
 
 
 def test_resolve_derived_model_target_delays_path_resolution_until_id_match(

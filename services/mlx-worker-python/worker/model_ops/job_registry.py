@@ -398,6 +398,15 @@ class ModelOpsJobRegistry:
             "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
             "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
             "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
+            "adapter_runtime_base_reuse_key": str(manifest.get("adapter_runtime.base_reuse_key", "")),
+            "adapter_runtime_adapter_isolation_key": str(
+                manifest.get("adapter_runtime.adapter_isolation_key", "")
+            ),
+            "adapter_runtime_switch_mode": str(manifest.get("adapter_runtime.switch_mode", "")),
+            "adapter_runtime_sharing_policy": str(manifest.get("adapter_runtime.sharing_policy", "")),
+            "adapter_runtime_compatibility_status": str(
+                manifest.get("adapter_runtime.compatibility_status", "")
+            ),
         }
 
     @classmethod
@@ -660,6 +669,15 @@ class ModelOpsJobRegistry:
                 "component_model_type": str(manifest.get("component_model_type", "")),
                 "component_family": str(manifest.get("component_family", "")),
                 "component_model_path": str(manifest.get("component_model_path", "")),
+                "adapter_runtime_base_reuse_key": str(manifest.get("adapter_runtime.base_reuse_key", "")),
+                "adapter_runtime_adapter_isolation_key": str(
+                    manifest.get("adapter_runtime.adapter_isolation_key", "")
+                ),
+                "adapter_runtime_switch_mode": str(manifest.get("adapter_runtime.switch_mode", "")),
+                "adapter_runtime_sharing_policy": str(manifest.get("adapter_runtime.sharing_policy", "")),
+                "adapter_runtime_compatibility_status": str(
+                    manifest.get("adapter_runtime.compatibility_status", "")
+                ),
                 "activation_manifest_path": str(job.get("output_path", "")),
                 "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                 "status": "activated",
@@ -766,6 +784,25 @@ class ModelOpsJobRegistry:
                         ""
                         if removal_applied
                         else activation["component_model_path"] if activation else component_model_path
+                    ),
+                    "adapter_runtime_base_reuse_key": (
+                        "" if removal_applied else activation["adapter_runtime_base_reuse_key"] if activation else ""
+                    ),
+                    "adapter_runtime_adapter_isolation_key": (
+                        ""
+                        if removal_applied
+                        else activation["adapter_runtime_adapter_isolation_key"] if activation else ""
+                    ),
+                    "adapter_runtime_switch_mode": (
+                        "" if removal_applied else activation["adapter_runtime_switch_mode"] if activation else ""
+                    ),
+                    "adapter_runtime_sharing_policy": (
+                        "" if removal_applied else activation["adapter_runtime_sharing_policy"] if activation else ""
+                    ),
+                    "adapter_runtime_compatibility_status": (
+                        ""
+                        if removal_applied
+                        else activation["adapter_runtime_compatibility_status"] if activation else ""
                     ),
                     "source_adapter_job_id": activation["source_adapter_job_id"] if activation else job["job_id"],
                     "activation_duration_ms": 0.0 if removal_applied else activation["activation_duration_ms"] if activation else 0.0,
@@ -885,6 +922,15 @@ class ModelOpsJobRegistry:
                     "component_model_type": str(manifest.get("component_model_type", "")),
                     "component_family": str(manifest.get("component_family", "")),
                     "component_model_path": str(manifest.get("component_model_path", "")),
+                    "adapter_runtime_base_reuse_key": str(manifest.get("adapter_runtime.base_reuse_key", "")),
+                    "adapter_runtime_adapter_isolation_key": str(
+                        manifest.get("adapter_runtime.adapter_isolation_key", "")
+                    ),
+                    "adapter_runtime_switch_mode": str(manifest.get("adapter_runtime.switch_mode", "")),
+                    "adapter_runtime_sharing_policy": str(manifest.get("adapter_runtime.sharing_policy", "")),
+                    "adapter_runtime_compatibility_status": str(
+                        manifest.get("adapter_runtime.compatibility_status", "")
+                    ),
                     "derived_model_alias": str(manifest.get("derived_model_alias", "")),
                     "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                     "source_model": str(manifest.get("source_model", "")),
