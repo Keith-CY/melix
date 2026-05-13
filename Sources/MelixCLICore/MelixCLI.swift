@@ -1568,6 +1568,8 @@ public enum MelixCLICommand: Equatable, Sendable {
     case evalExportSamplesJSONL(EvalExportOptions)
     case evalReport(RunReportOptions)
     case batchRun(BatchRunOptions)
+    case batchStatus(BatchStatusOptions)
+    case batchResume(BatchResumeOptions)
     case runsList(RunsListOptions)
     case runsShow(RunsShowOptions)
     case runsExport(RunsExportOptions)
@@ -1792,7 +1794,9 @@ public enum MelixCLIParser {
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
       melix eval report --from PATH [--format markdown|json]
-      melix batch run --models PATH [--config PATH] [--run-id ID] [--output-root PATH] [--temp-root PATH] [--start-index N] [--max-models N] [--judge-remote-server-id ID] [--judge-model MODEL] [--bench-suite SUITE] [--bench-context-length N] [--bench-generation-length N] [--bench-batch-size N] [--bench-repeats N] [--bench-sample-size N] [--bench-batch-factor N] [--eval-suite SUITE] [--eval-dataset-id ID] [--eval-scoring-mode MODE] [--eval-sample-size N] [--eval-batch-factor N] [--continue-on-failure true|false] [--restart-stack-per-model true|false] [--preflight] --dry-run [--json]
+      melix batch run --models PATH [--config PATH] [--run-id ID] [--output-root PATH] [--temp-root PATH] [--start-index N] [--max-models N] [--judge-remote-server-id ID] [--judge-model MODEL] [--bench-suite SUITE] [--bench-context-length N] [--bench-generation-length N] [--bench-batch-size N] [--bench-repeats N] [--bench-sample-size N] [--bench-batch-factor N] [--eval-suite SUITE] [--eval-dataset-id ID] [--eval-scoring-mode MODE] [--eval-sample-size N] [--eval-batch-factor N] [--continue-on-failure true|false] [--restart-stack-per-model true|false] [--preflight] [--dry-run] [--json]
+      melix batch status [--run-id ID] [--output-root PATH] [--temp-root PATH] [--json]
+      melix batch resume [--run-id ID] [--output-root PATH] [--temp-root PATH] [--models PATH] [--config PATH] [--eval-only] [--missing-only true|false] [--continue-on-failure true|false] [--dry-run] [--json]
       melix runs list [--from PATH] [--json]
       melix runs show RUN_ID [--from PATH] [--json]
       melix runs export RUN_ID --format json|md [--from PATH] [--output PATH]
@@ -3644,6 +3648,40 @@ public enum MelixCLIParser {
                     explicitOptions: explicitOptions
                 )
             )
+        case "status":
+            return .batchStatus(
+                BatchStatusOptions(
+                    runID: values.single["--run-id"] ?? "",
+                    outputRoot: values.single["--output-root"] ?? "",
+                    tempRoot: values.single["--temp-root"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "resume":
+            let continueOnFailure = try parseRequiredBooleanValue(
+                values.single["--continue-on-failure"],
+                option: "--continue-on-failure",
+                defaultValue: true
+            )
+            let missingOnly = try parseRequiredBooleanValue(
+                values.single["--missing-only"],
+                option: "--missing-only",
+                defaultValue: true
+            )
+            return .batchResume(
+                BatchResumeOptions(
+                    runID: values.single["--run-id"] ?? "",
+                    outputRoot: values.single["--output-root"] ?? "",
+                    tempRoot: values.single["--temp-root"] ?? "",
+                    modelListPath: values.single["--models"] ?? "",
+                    configPath: values.single["--config"] ?? "",
+                    evalOnly: values.flags.contains("--eval-only"),
+                    missingOnly: missingOnly,
+                    continueOnFailure: continueOnFailure,
+                    dryRun: values.flags.contains("--dry-run"),
+                    json: values.flags.contains("--json")
+                )
+            )
         default:
             throw MelixCLIError.usage(usageText)
         }
@@ -4320,6 +4358,7 @@ private struct ArgumentCursor {
         "--resume",
         "--dry-run",
         "--follow",
+        "--eval-only",
     ]
 
     let arguments: [String]
@@ -5041,6 +5080,10 @@ public actor MelixCLIRunner {
             return try await runPipeline(options)
         case .batchRun(let options):
             return try await runBatch(options)
+        case .batchStatus(let options):
+            return try runBatchStatus(options)
+        case .batchResume(let options):
+            return try await runBatchResume(options)
         case .doctor(let options):
             let report = try await client.runDoctor()
             let systemPayload = makeSystemPayload()
@@ -6511,7 +6554,7 @@ public actor MelixCLIRunner {
             return options.remoteServerID.isEmpty
         case .evalRun(let options):
             return Self.effectiveRemoteTargetOptions(for: options).isEmpty
-        case .batchRun:
+        case .batchRun, .batchStatus, .batchResume:
             return false
         default:
             return false
@@ -9122,9 +9165,6 @@ public actor MelixCLIRunner {
     }
 
     private func runBatch(_ options: BatchRunOptions) async throws -> String {
-        guard options.dryRun else {
-            throw MelixCLIError.runtime("melix batch run currently supports --dry-run only; execution is tracked in #755 and follow-up issues.")
-        }
         let plan = try BatchRunPlanner.makePlan(options: options, environment: environment)
         try BatchRunArtifacts.writeFoundationArtifacts(plan: plan)
         if plan.config.preflight {
@@ -9136,17 +9176,77 @@ public actor MelixCLIRunner {
                     "Batch preflight blocked run \(plan.config.runID) before execution. \(blockerList)"
                 )
             }
-            if options.json {
+            if options.dryRun, options.json {
                 var payload = BatchRunArtifacts.effectiveConfigPayload(plan: plan)
                 payload["preflight_result"] = report.payload(plan: plan)
                 return try prettyJSON(payload)
             }
-            return BatchRunArtifacts.renderPreflightTextSummary(plan: plan, report: report)
+            if options.dryRun {
+                return BatchRunArtifacts.renderPreflightTextSummary(plan: plan, report: report)
+            }
         }
-        if options.json {
+        if options.dryRun, options.json {
             return try prettyJSON(BatchRunArtifacts.effectiveConfigPayload(plan: plan))
         }
-        return BatchRunArtifacts.renderTextSummary(plan: plan)
+        if options.dryRun {
+            return BatchRunArtifacts.renderTextSummary(plan: plan)
+        }
+        let executor = BatchRunExecutor(plan: plan, commandExecutor: makeBatchSubprocessExecutor(plan: plan))
+        let result = try await executor.execute()
+        if options.json {
+            return try prettyJSON(result.summary.payload())
+        }
+        return BatchRunReporter.renderRunText(summary: result.summary, progressLines: result.progressLines)
+    }
+
+    private func runBatchStatus(_ options: BatchStatusOptions) throws -> String {
+        let resolution = try BatchRunStatusResolver.resolve(options: options, environment: environment)
+        let records = try BatchRunManifestStore.loadRecords(manifestPath: resolution.manifestPath)
+        let summary = BatchRunManifestStore.summarize(
+            records: records,
+            runID: resolution.runID,
+            tempRoot: resolution.tempRoot,
+            outputRoot: resolution.outputRoot,
+            manifestPath: resolution.manifestPath
+        )
+        if options.json {
+            return try prettyJSON(summary.payload())
+        }
+        return BatchRunReporter.renderStatusText(summary: summary)
+    }
+
+    private func runBatchResume(_ options: BatchResumeOptions) async throws -> String {
+        let (plan, records) = try BatchRunResumePlanner.makePlan(options: options, environment: environment)
+        let mode = BatchRunResumeMode(evalOnly: options.evalOnly, missingOnly: options.missingOnly)
+        if options.dryRun {
+            return try BatchRunResumePlanner.renderDryRun(plan: plan, records: records, mode: mode, json: options.json)
+        }
+        let executor = BatchRunExecutor(plan: plan, commandExecutor: makeBatchSubprocessExecutor(plan: plan))
+        let result = try await executor.execute(existingRecords: records, resumeMode: mode)
+        if options.json {
+            return try prettyJSON(result.summary.payload())
+        }
+        return BatchRunReporter.renderRunText(summary: result.summary, progressLines: result.progressLines)
+    }
+
+    private func makeBatchSubprocessExecutor(plan: BatchRunPlan) -> BatchRunSubprocessExecutor {
+        { arguments, extraEnvironment, workingDirectory in
+            let baseCommand = plan.config.cliPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? ["melix"]
+                : [plan.config.cliPath]
+            let executor = MelixCLIProcessExecutor(
+                baseCommand: baseCommand,
+                environment: ProcessInfo.processInfo.environment
+                    .merging(self.environment) { _, new in new }
+                    .merging(extraEnvironment) { _, new in new },
+                workingDirectory: workingDirectory
+            )
+            do {
+                return BatchRunSubprocessResult(stdout: try await executor.run(arguments: arguments), stderr: "")
+            } catch {
+                return BatchRunSubprocessResult(stdout: "", stderr: error.localizedDescription)
+            }
+        }
     }
 
     private func buildBatchPreflightReport(plan: BatchRunPlan) async throws -> BatchRunPreflightReport {
