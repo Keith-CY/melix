@@ -7845,6 +7845,7 @@ public final class RuntimeViewModel {
                 .sorted { $0.modelID < $1.modelID }
             refreshModelRegistryEntries()
         }
+        persistOperatorSessionState(force: true)
         refreshLoraSelectionState()
     }
 
@@ -8457,13 +8458,13 @@ public final class RuntimeViewModel {
         )
     }
 
-    private func persistOperatorSessionState() {
+    private func persistOperatorSessionState(force: Bool = false) {
         guard operatorStateRestored else {
             return
         }
 
         let state = currentOperatorSessionState()
-        guard state != lastPersistedOperatorSessionState else {
+        guard force || state != lastPersistedOperatorSessionState else {
             return
         }
 
@@ -9584,11 +9585,25 @@ public final class RuntimeViewModel {
                 ? selectedEvaluationHistoryEntry?.jobID
                 : selectedEvaluationHistoryJobID
             let bundle: ControlPlaneBenchmarkExportBundle
-            if let operatorCommandRunner {
-                bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
-            } else {
-                let export = try await client.exportResults(outputDir: exportDirectory.path)
-                bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            do {
+                if let operatorCommandRunner {
+                    bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
+                } else {
+                    let export = try await client.exportResults(outputDir: exportDirectory.path)
+                    bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+                }
+            } catch {
+                if try await exportPendingEvaluationSummaryIfAvailable(
+                    selectedJobID: selectedJobIDBeforeRefresh,
+                    formatTitle: formatTitle,
+                    fileName: fileName,
+                    exportDirectory: exportDirectory,
+                    startedAt: startedAt
+                ) {
+                    notifyStateChanged()
+                    return
+                }
+                throw error
             }
             applyBenchmarkExportBundle(bundle)
             let pendingSelectedJobID = selectedJobIDBeforeRefresh.flatMap { jobID -> String? in
@@ -9606,22 +9621,13 @@ public final class RuntimeViewModel {
             let selectedJobID = selectedEvaluationHistoryJobID.isEmpty ? nil : selectedEvaluationHistoryJobID
             let (rowCount, payload) = builder(bundle, selectedJobID)
             guard rowCount > 0 else {
-                if formatTitle == "summary.csv",
-                   let selectedJobID,
-                   let rows = pendingEvaluationSummaryRows[selectedJobID],
-                   rows.isEmpty == false {
-                    let outputURL = exportDirectory.appendingPathComponent(fileName)
-                    try Self.evaluationSummaryCSV(rows: rows)
-                        .write(to: outputURL, atomically: true, encoding: .utf8)
-                    lastEvaluationExport = RuntimeEvaluationExportState(
-                        outputPath: outputURL.path,
-                        rowCount: rows.count,
-                        formatTitle: formatTitle
-                    )
-                    await metrics.record(
-                        name: "menu.eval_export_csv_ms",
-                        valueMs: Date().timeIntervalSince(startedAt) * 1_000
-                    )
+                if try await exportPendingEvaluationSummaryIfAvailable(
+                    selectedJobID: selectedJobID,
+                    formatTitle: formatTitle,
+                    fileName: fileName,
+                    exportDirectory: exportDirectory,
+                    startedAt: startedAt
+                ) {
                     notifyStateChanged()
                     return
                 }
@@ -9644,6 +9650,37 @@ public final class RuntimeViewModel {
             recordLocalError(String(describing: error))
         }
         notifyStateChanged()
+    }
+
+    private func exportPendingEvaluationSummaryIfAvailable(
+        selectedJobID: String?,
+        formatTitle: String,
+        fileName: String,
+        exportDirectory: URL,
+        startedAt: Date
+    ) async throws -> Bool {
+        guard formatTitle == "summary.csv",
+              let selectedJobID,
+              let rows = pendingEvaluationSummaryRows[selectedJobID],
+              rows.isEmpty == false
+        else {
+            return false
+        }
+
+        let outputURL = exportDirectory.appendingPathComponent(fileName)
+        try Self.evaluationSummaryCSV(rows: rows)
+            .write(to: outputURL, atomically: true, encoding: .utf8)
+        selectedEvaluationHistoryJobID = selectedJobID
+        lastEvaluationExport = RuntimeEvaluationExportState(
+            outputPath: outputURL.path,
+            rowCount: rows.count,
+            formatTitle: formatTitle
+        )
+        await metrics.record(
+            name: "menu.eval_export_csv_ms",
+            valueMs: Date().timeIntervalSince(startedAt) * 1_000
+        )
+        return true
     }
 
     private func upsert(model: Melix_Controlplane_V1_ModelSummary) {
