@@ -128,8 +128,10 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
 def compare_versions(left: str, right: str) -> int:
     left_cleaned = left.strip()
     right_cleaned = right.strip()
-    left_index = 1 if left_cleaned.startswith("v") else 0
-    right_index = 1 if right_cleaned.startswith("v") else 0
+    if left_cleaned == right_cleaned:
+        return 0
+    left_index = 1 if left_cleaned and left_cleaned[0] == "v" else 0
+    right_index = 1 if right_cleaned and right_cleaned[0] == "v" else 0
     while True:
         left_value, left_index, left_done = _next_normalized_version_part(left_cleaned, left_index)
         right_value, right_index, right_done = _next_normalized_version_part(right_cleaned, right_index)
