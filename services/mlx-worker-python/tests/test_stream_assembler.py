@@ -12,6 +12,10 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
         RequestStreamAssembler._THINK_OPEN[:index]
         for index in range(1, len(RequestStreamAssembler._THINK_OPEN))
     )
+    pipe_reasoning_prefixes = tuple(
+        RequestStreamAssembler._PIPE_REASONING_OPEN[:index]
+        for index in range(1, len(RequestStreamAssembler._PIPE_REASONING_OPEN))
+    )
     tool_prefixes = tuple(
         RequestStreamAssembler._TOOL_OPEN[:index]
         for index in range(1, len(RequestStreamAssembler._TOOL_OPEN))
@@ -35,23 +39,32 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
     )
 
     assert tool_enabled._structural_tag_prefixes == (
-        think_prefixes + tool_prefixes + pipe_tool_prefixes
+        think_prefixes + pipe_reasoning_prefixes + tool_prefixes + pipe_tool_prefixes
+    )
+    assert (
+        tool_enabled._structural_open_tags
+        is RequestStreamAssembler._TOOL_PARSER_STRUCTURAL_OPEN_TAGS
     )
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_enabled._structural_tag_prefixes_reversed == (
         tuple(reversed(pipe_tool_prefixes))
         + tuple(reversed(tool_prefixes))
+        + tuple(reversed(pipe_reasoning_prefixes))
         + tuple(reversed(think_prefixes))
     )
     assert (
         tool_enabled._structural_tag_prefixes_reversed
         is tool_enabled._structural_tag_prefixes_reversed
     )
-    assert tool_disabled._structural_tag_prefixes == think_prefixes
+    assert tool_disabled._structural_tag_prefixes == think_prefixes + pipe_reasoning_prefixes
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_disabled._structural_tag_prefixes is tool_disabled._structural_tag_prefixes
-    assert tool_disabled._structural_tag_prefixes is RequestStreamAssembler._THINK_PREFIXES
-    assert tool_disabled._structural_tag_prefixes_reversed is RequestStreamAssembler._THINK_PREFIXES_REVERSED
+    assert tool_disabled._structural_tag_prefixes is RequestStreamAssembler._REASONING_PREFIXES
+    assert tool_disabled._structural_open_tags is RequestStreamAssembler._REASONING_OPEN_TAGS
+    assert (
+        tool_disabled._structural_tag_prefixes_reversed
+        is RequestStreamAssembler._REASONING_PREFIXES_REVERSED
+    )
 
 
 def test_parser_mode_flags_are_computed_once_at_initialization() -> None:
@@ -67,6 +80,7 @@ def test_parser_mode_flags_are_computed_once_at_initialization() -> None:
     assert assembler._tool_parsing_enabled is True
     assert assembler._request_context_mode == "tool_parser"
     assert assembler._structural_tag_prefixes is assembler._structural_tag_prefixes_value
+    assert assembler._structural_open_tags is assembler._structural_open_tags_value
 
 
 def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
@@ -79,6 +93,24 @@ def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
     assembler._buffer = '<tool_call>{"name":"search","arguments":{}}</tool_call><think>later</think>'
 
     assert assembler._next_structural_tag() == (RequestStreamAssembler._TOOL_OPEN, 0)
+
+
+def test_next_structural_tag_prefers_earliest_pipe_reasoning_tag() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-reasoning-first",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    assembler._buffer = (
+        "lead<|channel>thought hidden<channel|>"
+        '<tool_call>{"name":"search","arguments":{}}</tool_call>'
+    )
+
+    assert assembler._next_structural_tag() == (
+        RequestStreamAssembler._PIPE_REASONING_OPEN,
+        4,
+    )
 
 
 def test_plain_buffer_without_tag_marker_flushes_without_structural_scans(monkeypatch) -> None:
@@ -127,6 +159,7 @@ def test_token_byte_delta_decodes_complete_ascii_without_incremental_decoder(mon
 
     assert [delta.content_text for delta in deltas] == ["hello ", "world"]
     assert completed.assistant_text == "hello world"
+    assert completed.raw_text == "hello world"
     assert completed.metrics["generated_token_count"] == 2
     assert completed.metrics["byte_fallback_decode_error_count"] == 0
     assert decoder_calls == 0
@@ -155,9 +188,28 @@ def test_token_byte_delta_preserves_split_multibyte_sequence(monkeypatch) -> Non
 
     assert [delta.content_text for delta in deltas] == ["€"]
     assert completed.assistant_text == "€"
+    assert completed.raw_text == "€"
     assert completed.metrics["generated_token_count"] == 2
     assert completed.metrics["byte_fallback_merge_count"] == 1
     assert decoder_calls == 2
+
+
+def test_token_byte_raw_parts_materialize_before_raw_text_delta() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-token-byte-then-raw-text",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    first = assembler.accept(StreamFragment(token_bytes=b"hello "))
+    second = assembler.accept(StreamFragment(raw_text="hello world"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in first + second] == ["hello ", "world"]
+    assert completed.assistant_text == "hello world"
+    assert completed.raw_text == "hello world"
+    assert completed.metrics["non_monotonic_stream_count"] == 0
 
 
 def test_plain_buffer_with_marker_still_holds_partial_structural_prefix() -> None:
@@ -543,8 +595,45 @@ def test_partial_structural_tag_suffix_ignores_complete_or_unknown_markers() -> 
     assembler._buffer = "answer <thi"
     assert assembler._partial_structural_tag_suffix() == "<thi"
 
+    assembler._buffer = "answer <|channel>tho"
+    assert assembler._partial_structural_tag_suffix() == "<|channel>tho"
+
     assembler._buffer = "answer <xml"
     assert assembler._partial_structural_tag_suffix() == ""
+
+    assembler._buffer = "answer"
+    assert assembler._partial_structural_tag_suffix() == ""
+
+
+def test_partial_pipe_reasoning_leak_marker_increments_metric() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-pipe-reasoning-leak",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="visible <|channel>tho"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas] == ["visible "]
+    assert completed.assistant_text == "visible <|channel>tho"
+    assert completed.metrics["reasoning_leak_count"] == 1
+
+
+def test_json_structured_output_partial_pipe_reasoning_prefix_counts_as_leak() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-json-partial-pipe-reasoning-prefix",
+        reasoning_enabled=False,
+        structured_output_mode="json_schema",
+        tool_parser_mode="",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<|channel>tho hidden preamble")) == []
+    completed = assembler.completed()
+
+    assert completed.assistant_text == ""
+    assert completed.metrics["reasoning_leak_count"] == 1
 
 
 def test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call() -> None:
@@ -1083,6 +1172,46 @@ def test_empty_thinking_block_is_suppressed_as_thinking_off_sentinel() -> None:
     assert completed.metrics["reasoning_leak_count"] == 0
 
 
+def test_pipe_reasoning_channel_is_suppressed_and_visible_tail_emitted() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-reasoning-channel",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(raw_text="<|channel>thought\ninternal plan<channel|>READY")
+    )
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == []
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["READY"]
+    assert completed.assistant_text == "READY"
+    assert completed.reasoning_text == ""
+    assert completed.metrics["suppressed_reasoning_count"] == 1
+    assert completed.metrics["reasoning_parser_bypassed_count"] == 1
+    assert completed.metrics["reasoning_leak_count"] == 0
+
+
+def test_empty_pipe_reasoning_channel_is_suppressed_as_thinking_off_sentinel() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-empty-pipe-reasoning-sentinel",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="<|channel>thought\n<channel|>READY"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["READY"]
+    assert completed.assistant_text == "READY"
+    assert completed.reasoning_text == ""
+    assert completed.metrics["empty_thinking_sentinel_count"] == 1
+    assert completed.metrics["reasoning_leak_count"] == 0
+
+
 def test_unclosed_reasoning_channel_recovers_visible_answer_tail_at_eos() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-unclosed-reasoning-visible-tail",
@@ -1098,6 +1227,24 @@ def test_unclosed_reasoning_channel_recovers_visible_answer_tail_at_eos() -> Non
     assert completed.assistant_text == "Final answer"
     assert completed.metrics["malformed_reasoning_count"] == 1
     assert completed.metrics["reasoning_channel_recovery_count"] == 1
+
+
+def test_unclosed_pipe_reasoning_channel_recovers_visible_answer_tail_at_eos() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-unclosed-pipe-reasoning-visible-tail",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<|channel>thought\nplan step\n\nFinal answer")) == []
+    completed = assembler.completed()
+
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == "Final answer"
+    assert completed.metrics["malformed_reasoning_count"] == 1
+    assert completed.metrics["reasoning_channel_recovery_count"] == 1
+    assert completed.metrics["reasoning_leak_count"] == 0
 
 
 def test_reasoning_disabled_request_suppresses_hidden_blocks_without_reasoning_metadata() -> None:

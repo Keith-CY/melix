@@ -31,7 +31,7 @@ def test_fixture_dataset_scores_all_cases_passed() -> None:
     )
 
     assert report["status"] == "passed"
-    assert report["metrics"]["tool_call_eval.case_count"] == 25.0
+    assert report["metrics"]["tool_call_eval.case_count"] == 26.0
     assert report["metrics"]["tool_call_eval.pass_rate"] == 1.0
     assert report["metrics"]["tool_call_eval.exact_tool_call_match_rate"] == 1.0
     assert report["metrics"]["tool_call_eval.schema_valid_rate"] == 1.0
@@ -54,6 +54,7 @@ def test_dataset_manifest_matches_cases_and_required_dimensions() -> None:
     assert manifest["toolset_version"] == "melix.agentic_tools.builtin.v1"
     assert "parallel_tool_use" in manifest["risk_coverage"]
     assert "missing_required_user_parameter" in manifest["risk_coverage"]
+    assert "no_reasoning_leak" in manifest["risk_coverage"]
     assert "BFCL" in manifest["external_calibration"]
 
 

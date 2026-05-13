@@ -2,7 +2,7 @@
   "schema_version": "melix.tool_call_eval_dataset.v1",
   "dataset_id": "tool-call-system-prompts.v1",
   "version": "2026-05-13",
-  "sample_count": 25,
+  "sample_count": 26,
   "dimensions": [
     "basic_instruction_following",
     "tool_schema_and_argument_fidelity",
@@ -11,6 +11,7 @@
   "risk_coverage": [
     "must_call_tool",
     "no_markdown_or_prose",
+    "no_reasoning_leak",
     "json_only_public_text",
     "schema_required_argument",
     "schema_argument_fidelity",
