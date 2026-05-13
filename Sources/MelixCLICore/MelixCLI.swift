@@ -526,6 +526,8 @@ public struct EvalRunOptions: Equatable, Sendable {
     public let parameters: [String: String]
     public let evalPromptID: String
     public let evalPromptRevisionID: String
+    public let evalPrompt: String
+    public let evalPromptFile: String
     public let semanticJudgeRemoteServerID: String
     public let semanticJudgeModelID: String
     public let remoteParallelism: UInt32
@@ -548,6 +550,8 @@ public struct EvalRunOptions: Equatable, Sendable {
         parameters: [String: String] = [:],
         evalPromptID: String = "",
         evalPromptRevisionID: String = "",
+        evalPrompt: String = "",
+        evalPromptFile: String = "",
         semanticJudgeRemoteServerID: String = "",
         semanticJudgeModelID: String = "",
         remoteParallelism: UInt32 = 0,
@@ -587,6 +591,8 @@ public struct EvalRunOptions: Equatable, Sendable {
         self.parameters = parameters
         self.evalPromptID = evalPromptID
         self.evalPromptRevisionID = evalPromptRevisionID
+        self.evalPrompt = evalPrompt
+        self.evalPromptFile = evalPromptFile
         self.semanticJudgeRemoteServerID = semanticJudgeRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.semanticJudgeModelID = semanticJudgeModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.remoteParallelism = remoteParallelism
@@ -1770,7 +1776,7 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--preflight-fit-check] [--allow-memory-risk] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt TEXT | --eval-prompt-file PATH | --eval-prompt-id ID [--eval-prompt-revision REV]] [--preflight-fit-check] [--allow-memory-risk] [--json]
       melix eval prompt list [--json]
       melix eval prompt show --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt create --prompt-id ID --title TITLE --system-prompt-file PATH [--json]
@@ -3524,6 +3530,7 @@ public enum MelixCLIParser {
             let suites = (values.multi["--suite"] ?? []).isEmpty && scoringMode == "event_extraction_weighted_f1"
                 ? ["event_extraction"]
                 : (values.multi["--suite"] ?? [])
+            try validateEvalPromptOptions(values)
             return .evalRun(
                 EvalRunOptions(
                     modelID: modelID,
@@ -3540,6 +3547,8 @@ public enum MelixCLIParser {
                     parameters: try parseEvalParameters(values),
                     evalPromptID: values.single["--eval-prompt-id"] ?? "",
                     evalPromptRevisionID: values.single["--eval-prompt-revision"] ?? "",
+                    evalPrompt: values.single["--eval-prompt"] ?? "",
+                    evalPromptFile: values.single["--eval-prompt-file"] ?? "",
                     semanticJudgeRemoteServerID: semanticJudgeRemoteServerID,
                     semanticJudgeModelID: semanticJudgeModelID,
                     remoteParallelism: UInt32(values.single["--remote-parallelism"] ?? "") ?? 0,
@@ -3934,6 +3943,39 @@ public enum MelixCLIParser {
             parameters["hf_dataset_revision"] = values.single["--hf-dataset-revision"] ?? parsedRef.revision
         }
         return parameters
+    }
+
+    private static func validateEvalPromptOptions(_ values: ParsedArguments) throws {
+        let hasInlinePrompt = values.single["--eval-prompt"] != nil
+        let hasPromptFile = values.single["--eval-prompt-file"] != nil
+        let inlinePrompt = values.single["--eval-prompt"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptFile = values.single["--eval-prompt-file"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptID = values.single["--eval-prompt-id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptRevision = values.single["--eval-prompt-revision"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard hasInlinePrompt == false || hasPromptFile == false else {
+            throw MelixCLIError.usage("--eval-prompt and --eval-prompt-file are mutually exclusive.")
+        }
+        if hasInlinePrompt {
+            guard inlinePrompt.isEmpty == false else {
+                throw MelixCLIError.usage("--eval-prompt must contain non-empty text.")
+            }
+        }
+        if hasPromptFile {
+            guard promptFile.isEmpty == false else {
+                throw MelixCLIError.usage("--eval-prompt-file must be a non-empty path.")
+            }
+        }
+        if hasInlinePrompt || hasPromptFile {
+            guard promptID.isEmpty else {
+                throw MelixCLIError.usage("--eval-prompt and --eval-prompt-file cannot be combined with --eval-prompt-id.")
+            }
+            guard promptRevision.isEmpty else {
+                throw MelixCLIError.usage("--eval-prompt-revision requires --eval-prompt-id.")
+            }
+        }
+        if promptRevision.isEmpty == false && promptID.isEmpty {
+            throw MelixCLIError.usage("--eval-prompt-revision requires --eval-prompt-id.")
+        }
     }
 
     private static func parseEvaluationSourceConfiguration(
@@ -8327,6 +8369,8 @@ public actor MelixCLIRunner {
             parameters: baseParameters,
             evalPromptID: options.evalPromptID,
             evalPromptRevisionID: options.evalPromptRevisionID,
+            evalPrompt: options.evalPrompt,
+            evalPromptFile: options.evalPromptFile,
             semanticJudgeRemoteServerID: options.semanticJudgeRemoteServerID,
             semanticJudgeModelID: options.semanticJudgeModelID,
             remoteParallelism: options.remoteParallelism,
@@ -8334,6 +8378,7 @@ public actor MelixCLIRunner {
             allowMemoryRisk: options.allowMemoryRisk,
             json: options.json
         )
+        let adHocPrompt = try adHocEvaluationPromptSystemPrompt(effectiveOptions)
         let remoteTargetOptions = Self.effectiveRemoteTargetOptions(for: effectiveOptions)
         let resolvedRemoteTargets: [ControlPlaneEvaluationRequest.RemoteTarget?] = try remoteTargetOptions.isEmpty
             ? [nil]
@@ -8345,7 +8390,7 @@ public actor MelixCLIRunner {
             }
         var suiteParameters: [String: [String: String]] = [:]
         for suiteID in suites {
-            suiteParameters[suiteID] = try evaluationParameters(options: effectiveOptions, suiteID: suiteID)
+            suiteParameters[suiteID] = try evaluationParameters(options: effectiveOptions, suiteID: suiteID, adHocPrompt: adHocPrompt)
         }
 
         var plannedRequests: [PlannedEvaluationRequest] = []
@@ -8389,13 +8434,18 @@ public actor MelixCLIRunner {
         )
     }
 
-    private func evaluationParameters(options: EvalRunOptions, suiteID: String) throws -> [String: String] {
+    private func evaluationParameters(options: EvalRunOptions, suiteID: String, adHocPrompt: String) throws -> [String: String] {
         var parameters = options.parameters
+        if adHocPrompt.isEmpty == false {
+            parameters.merge(
+                try adHocEvaluationPromptParameters(systemPrompt: adHocPrompt, suiteID: suiteID, options: options)
+            ) { _, new in new }
+        }
         let usesEventPrompt = suiteID == "event_extraction"
             || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
             || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
             || options.evalPromptID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        if usesEventPrompt {
+        if usesEventPrompt && adHocPrompt.isEmpty {
             guard suiteID == "event_extraction"
                 || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
                 || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
@@ -8497,6 +8547,71 @@ public actor MelixCLIRunner {
             "eval_prompt_title": snapshot.title,
             "eval_prompt_system_prompt": snapshot.systemPrompt,
             "eval_prompt_examples_json": try EvaluationPromptStore.examplesJSONString(snapshot.examples),
+        ]
+    }
+
+    private func adHocEvaluationPromptSystemPrompt(_ options: EvalRunOptions) throws -> String {
+        let hasInlinePrompt = options.evalPrompt.isEmpty == false
+        let hasPromptFile = options.evalPromptFile.isEmpty == false
+        let inlinePrompt = options.evalPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let promptFile = options.evalPromptFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard hasInlinePrompt == false || hasPromptFile == false else {
+            throw MelixCLIError.usage("--eval-prompt and --eval-prompt-file are mutually exclusive.")
+        }
+        guard hasInlinePrompt || hasPromptFile else {
+            return ""
+        }
+        if hasInlinePrompt {
+            guard inlinePrompt.isEmpty == false else {
+                throw MelixCLIError.usage("--eval-prompt must contain non-empty text.")
+            }
+        }
+        if hasPromptFile {
+            guard promptFile.isEmpty == false else {
+                throw MelixCLIError.usage("--eval-prompt-file must be a non-empty path.")
+            }
+        }
+        guard options.evalPromptID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MelixCLIError.usage("--eval-prompt and --eval-prompt-file cannot be combined with --eval-prompt-id.")
+        }
+        guard options.evalPromptRevisionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MelixCLIError.usage("--eval-prompt-revision requires --eval-prompt-id.")
+        }
+        if promptFile.isEmpty == false {
+            let prompt = try String(contentsOfFile: promptFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard prompt.isEmpty == false else {
+                throw MelixCLIError.usage("--eval-prompt-file must contain non-empty UTF-8 text.")
+            }
+            return prompt
+        }
+        return inlinePrompt
+    }
+
+    private func adHocEvaluationPromptParameters(
+        systemPrompt: String,
+        suiteID: String,
+        options: EvalRunOptions
+    ) throws -> [String: String] {
+        let scoringMode = options.parameters["scoring_mode"]?.isEmpty == false
+            ? options.parameters["scoring_mode"] ?? ""
+            : options.profile.scoringMode
+        let contentHash = try EvaluationPromptStore.contentHash(
+            taskKind: suiteID,
+            scoringMode: scoringMode,
+            systemPrompt: systemPrompt
+        )
+        return [
+            "prompt_id": "ad-hoc.evaluation.prompt",
+            "prompt_revision_id": "ad-hoc",
+            "prompt_content_hash": contentHash,
+            "prompt_title": "Ad Hoc Evaluation Prompt",
+            "eval_prompt_id": "ad-hoc.evaluation.prompt",
+            "eval_prompt_revision_id": "ad-hoc",
+            "eval_prompt_content_hash": contentHash,
+            "eval_prompt_title": "Ad Hoc Evaluation Prompt",
+            "eval_prompt_system_prompt": systemPrompt,
+            "eval_prompt_examples_json": "[]",
         ]
     }
 

@@ -427,8 +427,11 @@ class EvaluationCore:
         if parameters:
             job_parameters.update(parameters)
         hints_text = str(job_parameters.pop("evaluation_hints_text", "") or "").strip()
+        eval_prompt_system_prompt = str(job_parameters.get("eval_prompt_system_prompt", "") or "").strip()
         if hints_text:
             job_parameters["hints_prompt_chars"] = str(len(hints_text))
+        if eval_prompt_system_prompt:
+            job_parameters["eval_prompt_system_prompt_chars"] = str(len(eval_prompt_system_prompt))
         runtime_evidence = EvaluationCore._runtime_evidence_for_loaded_model(loaded_model)
         job_parameters.update(runtime_evidence)
         if EvaluationCore._truthy_parameter(job_parameters, "require_live_model"):
@@ -489,6 +492,7 @@ class EvaluationCore:
                 run_root=run_root,
                 job_parameters=job_parameters,
                 hints_text=hints_text,
+                eval_prompt_system_prompt=eval_prompt_system_prompt,
                 created_at_unix_ms=created_at_unix_ms,
                 resolved_code_exec_policy=resolved_code_exec_policy,
                 resolved_seed=resolved_seed,
@@ -513,6 +517,7 @@ class EvaluationCore:
                 job_parameters=job_parameters,
                 profile=profile,
                 hints_text=hints_text,
+                eval_prompt_system_prompt=eval_prompt_system_prompt,
             )
         except BaseException:
             telemetry_session.cancel()
@@ -602,6 +607,9 @@ class EvaluationCore:
         if hints_text:
             result_metrics[f"eval.{suite_id}.hints_prompt_chars"] = float(len(hints_text))
             result_units[f"eval.{suite_id}.hints_prompt_chars"] = "chars"
+        if eval_prompt_system_prompt:
+            result_metrics[f"eval.{suite_id}.eval_prompt_system_prompt_chars"] = float(len(eval_prompt_system_prompt))
+            result_units[f"eval.{suite_id}.eval_prompt_system_prompt_chars"] = "chars"
 
         report_path = self._result_path(run_root if self._jobs_root is not None else dataset_root)
         output_dir = str(run_root) if self._jobs_root is not None else str(dataset_root)
@@ -1444,6 +1452,7 @@ class EvaluationCore:
         run_root: Path,
         job_parameters: dict[str, str],
         hints_text: str,
+        eval_prompt_system_prompt: str,
         created_at_unix_ms: int,
         resolved_code_exec_policy: str,
         resolved_seed: int,
@@ -1485,6 +1494,7 @@ class EvaluationCore:
                 run_root=run_root,
                 job_parameters=job_parameters,
                 hints_text=hints_text,
+                eval_prompt_system_prompt=eval_prompt_system_prompt,
                 created_at_unix_ms=created_at_unix_ms,
                 resolved_code_exec_policy=resolved_code_exec_policy,
                 resolved_seed=resolved_seed,
@@ -1533,6 +1543,7 @@ class EvaluationCore:
         run_root: Path,
         job_parameters: dict[str, str],
         hints_text: str,
+        eval_prompt_system_prompt: str,
         created_at_unix_ms: int,
         resolved_code_exec_policy: str,
         resolved_seed: int,
@@ -1573,6 +1584,7 @@ class EvaluationCore:
             seed=resolved_seed,
             job_parameters=job_parameters,
             hints_text=hints_text,
+            eval_prompt_system_prompt=eval_prompt_system_prompt,
             request_label=f"base:{resolved_model_id}",
         )
         compare_samples: list[EvaluationCompareSample] = []
@@ -1596,6 +1608,7 @@ class EvaluationCore:
                 seed=resolved_seed,
                 job_parameters=job_parameters,
                 hints_text=hints_text,
+                eval_prompt_system_prompt=eval_prompt_system_prompt,
                 request_label=f"target:{target_model_id}",
             )
             target_compare_samples = build_compare_samples(
@@ -1749,6 +1762,7 @@ class EvaluationCore:
         seed: int,
         job_parameters: dict[str, str],
         hints_text: str = "",
+        eval_prompt_system_prompt: str = "",
         request_label: str = "",
     ) -> tuple[EvaluationSample, ...]:
         sample_records_list: list[EvaluationSample] = []
@@ -1771,6 +1785,7 @@ class EvaluationCore:
                     seed=seed,
                     job_parameters=job_parameters,
                     hints_text=hints_text,
+                    eval_prompt_system_prompt=eval_prompt_system_prompt,
                     request_label=request_label,
                 )
             )
@@ -2243,6 +2258,7 @@ class EvaluationCore:
         seed: int,
         job_parameters: dict[str, str],
         hints_text: str = "",
+        eval_prompt_system_prompt: str = "",
         request_label: str = "",
     ) -> EvaluationSample:
         system_text = EvaluationCore._system_text_for_sample(sample)
@@ -2308,6 +2324,7 @@ class EvaluationCore:
                     dataset_root=dataset_root,
                     task_kind=task_kind,
                     hints_text=hints_text,
+                    eval_prompt_system_prompt=eval_prompt_system_prompt,
                 ),
                 expected=target,
                 result_kind=profile.result_kind,
@@ -2625,6 +2642,7 @@ class EvaluationCore:
         dataset_root: Path | None = None,
         task_kind: str = "text-generation",
         hints_text: str = "",
+        eval_prompt_system_prompt: str = "",
     ) -> list[common_pb2.ChatMessage]:
         if scoring_mode == "pass_at_1":
             instruction = "Return only executable Python code for the requested solution. Do not include explanations."
@@ -2639,8 +2657,11 @@ class EvaluationCore:
         else:
             instruction = "Return only the final short answer. Do not include reasoning or explanation."
         resolved_system_text = instruction
+        normalized_eval_prompt_system_prompt = eval_prompt_system_prompt.strip()
+        if normalized_eval_prompt_system_prompt:
+            resolved_system_text = f"{resolved_system_text}\n\n{normalized_eval_prompt_system_prompt}"
         if system_text.strip():
-            resolved_system_text = f"{instruction}\n\n{system_text.strip()}"
+            resolved_system_text = f"{resolved_system_text}\n\n{system_text.strip()}"
         normalized_hints_text = hints_text.strip()
         if normalized_hints_text:
             resolved_system_text = f"{resolved_system_text}\n\nAdditional Hints:\n{normalized_hints_text}"

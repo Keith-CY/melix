@@ -8146,6 +8146,87 @@ struct MelixCLIRunnerTests {
         #expect((receipt["probe"] as? [String: Any])?["name"] as? String == "cli.memory_fit.eval")
     }
 
+    @Test("eval run forwards ad hoc prompt to every evaluation suite")
+    func evalRunForwardsAdHocPromptToEveryEvaluationSuite() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-adhoc-mmlu",
+                suiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                metricName: "eval.mmlu.accuracy",
+                metricValue: 0.75
+            ),
+            makeEvaluationRunResult(
+                jobID: "eval-adhoc-event",
+                suiteID: "event_extraction",
+                datasetID: "top200.event-extraction.top20.v1",
+                metricName: "eval.event_extraction.overall_weighted_f1",
+                metricValue: 0.5
+            ),
+        ])
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["mmlu", "event_extraction"],
+                    evalPrompt: "Use this one-off evaluation rubric.",
+                    json: true
+                )
+            )
+        )
+
+        let requests = await client.evaluationRequests
+        #expect(requests.count == 2)
+        for request in requests {
+            #expect(request.parameters["eval_prompt_system_prompt"] == "Use this one-off evaluation rubric.")
+            #expect(request.parameters["eval_prompt_id"] == "ad-hoc.evaluation.prompt")
+            #expect(request.parameters["eval_prompt_revision_id"] == "ad-hoc")
+            #expect(request.parameters["eval_prompt_title"] == "Ad Hoc Evaluation Prompt")
+            #expect(request.parameters["eval_prompt_examples_json"] == "[]")
+            #expect(request.parameters["prompt_id"] == "ad-hoc.evaluation.prompt")
+            #expect(request.parameters["prompt_revision_id"] == "ad-hoc")
+            #expect(request.parameters["eval_prompt_content_hash"]?.hasPrefix("sha256:") == true)
+        }
+    }
+
+    @Test("eval run reads ad hoc prompt from file")
+    func evalRunReadsAdHocPromptFromFile() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-adhoc-eval-prompt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        let promptFile = temporaryRoot.appendingPathComponent("prompt.txt")
+        try "  Apply the file-backed rubric.\n".write(to: promptFile, atomically: true, encoding: .utf8)
+
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-adhoc-file",
+                suiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                metricName: "eval.mmlu.accuracy",
+                metricValue: 0.75
+            ),
+        ])
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["mmlu"],
+                    evalPromptFile: promptFile.path,
+                    json: true
+                )
+            )
+        )
+
+        let request = try #require((await client.evaluationRequests).first)
+        #expect(request.parameters["eval_prompt_system_prompt"] == "Apply the file-backed rubric.")
+        #expect(request.parameters["eval_prompt_id"] == "ad-hoc.evaluation.prompt")
+    }
+
     @Test("eval run defaults event extraction to the built in top20 dataset")
     func evalRunDefaultsEventExtractionToBuiltInTop20Dataset() async throws {
         let client = StubControlPlaneXPCClient()

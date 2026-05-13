@@ -725,6 +725,20 @@ Optional evaluation controls:
 - `source`
 - `field_mapping`
 - `profile`
+- `eval_prompt`
+- `eval_prompt_file`
+- `eval_prompt_id`
+- `eval_prompt_revision`
+
+`eval_prompt` and `eval_prompt_file` are one-off system prompts for a single
+`eval run`. They are mutually exclusive with each other and with the frozen
+registry selector `eval_prompt_id`. A one-off prompt applies to every requested
+evaluation suite in the run. It is prepended after Melix's suite instruction and
+before any sample-provided system text; it must not replace the sample input
+text. The worker records prompt identity, revision, title, and content hash
+parameters using the ad hoc identity `ad-hoc.evaluation.prompt` /
+`ad-hoc`, but must not persist prompt content in event-extraction job
+parameters.
 
 Executable-code suites add one enforcement rule:
 
