@@ -581,6 +581,40 @@ def test_partial_structural_tag_suffix_ignores_complete_or_unknown_markers() -> 
     assembler._buffer = "answer <xml"
     assert assembler._partial_structural_tag_suffix() == ""
 
+    assembler._buffer = "answer"
+    assert assembler._partial_structural_tag_suffix() == ""
+
+
+def test_partial_pipe_reasoning_leak_marker_increments_metric() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-pipe-reasoning-leak",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="visible <|channel>tho"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas] == ["visible "]
+    assert completed.assistant_text == "visible <|channel>tho"
+    assert completed.metrics["reasoning_leak_count"] == 1
+
+
+def test_json_structured_output_partial_pipe_reasoning_prefix_counts_as_leak() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-json-partial-pipe-reasoning-prefix",
+        reasoning_enabled=False,
+        structured_output_mode="json_schema",
+        tool_parser_mode="",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<|channel>tho hidden preamble")) == []
+    completed = assembler.completed()
+
+    assert completed.assistant_text == ""
+    assert completed.metrics["reasoning_leak_count"] == 1
+
 
 def test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call() -> None:
     test_partial_structural_tag_suffix_checks_only_last_marker_candidate()

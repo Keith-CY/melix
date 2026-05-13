@@ -103,6 +103,7 @@ class RequestStreamAssembler:
     _PIPE_TOOL_PREFIXES = tuple(
         "<|tool_call>"[:index] for index in range(1, len("<|tool_call>"))
     )
+    _REASONING_LEAK_PREFIXES = ("<think", "<|channel")
     _REASONING_PREFIXES = _THINK_PREFIXES + _PIPE_REASONING_PREFIXES
     _THINK_PREFIXES_REVERSED = tuple(reversed(_THINK_PREFIXES))
     _PIPE_REASONING_PREFIXES_REVERSED = tuple(reversed(_PIPE_REASONING_PREFIXES))
@@ -256,7 +257,9 @@ class RequestStreamAssembler:
             self._pending_token_bytes = b""
         if self._is_json_only_structured_output:
             if not self._json_started:
-                self._metrics["reasoning_leak_count"] += int("<think" in self._buffer)
+                self._metrics["reasoning_leak_count"] += int(
+                    self._contains_reasoning_leak_marker(self._buffer)
+                )
                 self._buffer = ""
         else:
             self._drain_buffer(final=True)
@@ -402,7 +405,7 @@ class RequestStreamAssembler:
 
         content = self._buffer
         self._buffer = ""
-        if "<think" in content:
+        if self._contains_reasoning_leak_marker(content):
             self._metrics["reasoning_leak_count"] += 1
         self._assistant_parts.append(content)
         return [AssemblyDelta(content_text=content, raw_text=delta)]
@@ -543,19 +546,32 @@ class RequestStreamAssembler:
         suffix = self._buffer[marker_index:]
         suffix_len = len(suffix)
         if self._tool_parsing_enabled_value:
-            if suffix_len < len(self._TOOL_OPEN) and self._TOOL_OPEN.startswith(suffix):
-                return suffix
-            if suffix_len < len(self._PIPE_TOOL_OPEN) and self._PIPE_TOOL_OPEN.startswith(
-                suffix
+            if (
+                0 < suffix_len < len(self._TOOL_OPEN)
+                and self._TOOL_OPEN.startswith(suffix)
             ):
                 return suffix
-        if suffix_len < len(self._THINK_OPEN) and self._THINK_OPEN.startswith(suffix):
+            if (
+                0 < suffix_len < len(self._PIPE_TOOL_OPEN)
+                and self._PIPE_TOOL_OPEN.startswith(suffix)
+            ):
+                return suffix
+        if (
+            0 < suffix_len < len(self._THINK_OPEN)
+            and self._THINK_OPEN.startswith(suffix)
+        ):
             return suffix
-        if suffix_len < len(self._PIPE_REASONING_OPEN) and self._PIPE_REASONING_OPEN.startswith(
-            suffix
+        if (
+            0 < suffix_len < len(self._PIPE_REASONING_OPEN)
+            and self._PIPE_REASONING_OPEN.startswith(suffix)
         ):
             return suffix
         return ""
+
+    def _contains_reasoning_leak_marker(self, content: str) -> bool:
+        return self._REASONING_LEAK_PREFIXES[0] in content or (
+            self._REASONING_LEAK_PREFIXES[1] in content
+        )
 
     def _record_prefix_hold(self, suffix: str) -> None:
         self._metrics["stream_prefix_hold_chars"] = max(
@@ -568,7 +584,7 @@ class RequestStreamAssembler:
             "<tool_call" in content or "<|tool_call" in content
         ):
             self._metrics["tool_call_markup_leak_count"] += 1
-        if "<think" in content or "<|channel>thought" in content:
+        if self._contains_reasoning_leak_marker(content):
             self._metrics["reasoning_leak_count"] += 1
         self._assistant_parts.append(content)
         return AssemblyDelta(content_text=content, raw_text=content)
