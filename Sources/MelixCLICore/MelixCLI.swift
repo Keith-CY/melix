@@ -1472,7 +1472,7 @@ public struct URIImportOptions: Equatable, Sendable {
     public init(
         uri: String,
         modelID: String = "",
-        revision: String = "main",
+        revision: String = "",
         dryRun: Bool = false,
         json: Bool = false
     ) {
@@ -2558,7 +2558,7 @@ public enum MelixCLIParser {
                 .init(
                     uri: uri,
                     modelID: values.single["--model-id"] ?? "",
-                    revision: values.single["--revision"] ?? "main",
+                    revision: values.single["--revision"] ?? "",
                     dryRun: values.flags.contains("--dry-run"),
                     json: values.flags.contains("--json")
                 )

@@ -772,7 +772,9 @@ public enum MelixCLICommandCodec {
         case .uriImport(let options):
             arguments = ["uri", "import", options.uri]
             appendOption("--model-id", value: options.modelID, into: &arguments)
-            appendOption("--revision", value: options.revision, into: &arguments)
+            if options.revision.isEmpty == false {
+                appendOption("--revision", value: options.revision, into: &arguments)
+            }
             if options.dryRun {
                 arguments.append("--dry-run")
             }

@@ -1300,12 +1300,29 @@ struct MelixCLIParserTests {
             "--dry-run",
             "--json",
         ])
+        let importFromRevisionURI = try MelixCLIParser.parse([
+            "uri",
+            "import",
+            "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit@refs/pr/2",
+            "--dry-run",
+            "--json",
+        ])
 
         #expect(
             inspect ==
                 .uriInspect(
                     .init(
                         uri: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        json: true
+                    )
+                )
+        )
+        #expect(
+            importFromRevisionURI ==
+                .uriImport(
+                    .init(
+                        uri: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit@refs/pr/2",
+                        dryRun: true,
                         json: true
                     )
                 )
