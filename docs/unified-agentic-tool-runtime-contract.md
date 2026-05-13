@@ -58,6 +58,9 @@ This contract does not require:
 Current implementation anchors that future slices must reuse instead of
 redefining equivalent contracts:
 
+- `docs/agentic-trajectory-dataset-contract.md`
+  - defines the repository-owned `agentic_tool_trace` package, validation, and
+    provenance contract for issue #664
 - `services/mlx-worker-python/worker/runtime/tool_registry.py`
   - defines `melix.agentic_tool_registry.v1`
   - defines the built-in `melix.agentic_tools.builtin.v1` toolset
@@ -166,11 +169,11 @@ external dependency use visible.
 
 ### SFT Data Replay
 
-`agentic_tool_trace` packages are the replayable training data shape. A replay
-slice must validate that each tool observation references a prior assistant
-tool call and must preserve trace identity, media references, tool schemas,
-turns, final answer, expected answer, evidence IDs, reward, fatal stage, and
-leakage terms.
+`agentic_tool_trace` packages are the replayable training data shape governed by
+`docs/agentic-trajectory-dataset-contract.md`. A replay slice must validate that
+each tool observation references a prior assistant tool call and must preserve
+trace identity, media references, tool schemas, turns, final answer, expected
+answer, evidence IDs, reward, fatal stage, and leakage terms.
 
 Required evidence:
 
