@@ -3858,6 +3858,8 @@ public actor ControlPlaneService {
         model.settings.ext["melix.derived_from_model_id"] = sourceModelID
         model.settings.ext["melix.derived_from_model_revision"] = (payload["source_model_revision"] as? String) ?? ""
         model.settings.ext["melix.activation_mode"] = activationMode
+        model.settings.loadTrustMode = .unspecified
+        model.clearLoadTrust()
         // Mirror the typed RuntimeMode onto the operator-facing ModelSummary
         // string field so CLI `models list` and `models show` can render the
         // authoritative serving mode without re-parsing ext strings. See

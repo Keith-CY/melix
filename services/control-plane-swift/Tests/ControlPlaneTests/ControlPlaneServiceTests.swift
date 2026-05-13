@@ -3437,7 +3437,18 @@ struct ControlPlaneServiceTests {
             }(),
         ])
 
-        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        var sourceModel = ModelCatalog.devTextModel()
+        sourceModel.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        sourceModel.loadTrust = {
+            var policy = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+            policy.requestedMode = .modelLoadTrustTrustRemoteCode
+            policy.effectiveMode = .modelLoadTrustTrustRemoteCode
+            policy.policySource = "model_settings"
+            policy.routeClass = .workerRoutePythonTextCompatibility
+            policy.loaderFamily = "mlx_lm"
+            return policy
+        }()
+        let catalog = ModelCatalog(seedModels: [sourceModel])
         let service = ControlPlaneService(
             modelCatalog: catalog,
             workerRegistry: WorkerRegistry(
@@ -3471,6 +3482,8 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.ext["melix.adapter_weights_path"] == "/tmp/melix-train/weights/adapters.safetensors")
         #expect(derived.settings.ext["melix.derived_model_alias"] == "Runtime Alias")
         #expect(derived.settings.ext["melix.derived_from_model_id"] == "melix-dev-text")
+        #expect(derived.settings.loadTrustMode == .unspecified)
+        #expect(derived.hasLoadTrust == false)
     }
 
     @Test("execute prunes removed derived models from the catalog after remove-derived completes")

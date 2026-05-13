@@ -113,6 +113,33 @@ should read typed fields.
   records model load state.
 - Add profile/template/server-default regression coverage proving trust does not propagate
   implicitly.
+- Surface trust receipts through `/v1/models` metadata so external operator tools can inspect the
+  same requested/effective policy, policy source, route, reload-required flag, custom-loader
+  detection source, and block reason.
+- Reset derived model trust settings and receipts during adapter activation. Trust remains scoped to
+  the concrete derived model entry and must be enabled again for that model if required.
+
+## Operator Workflow
+
+Default local model loading is safe:
+
+1. Inspect the current policy with `melix model list --json`, `melix model inspect --model-id
+   MODEL_ID --json`, or the `/v1/models` metadata field group `melix.load_trust.*`.
+2. Enable custom loader code for one concrete model through the existing control-plane
+   `model.set_policy` command by setting one of:
+   - `trust_remote_code=true`
+   - `load_trust_mode=trust_remote_code`
+   - `model_load_trust_mode=trust_remote_code`
+3. Unload and reload the model if the receipt reports `requires_reload_for_trust_change=true`.
+4. Clear the opt-in with `trust_remote_code=` or `load_trust_mode=clear`.
+
+Text CLI output uses the `TRUST` column:
+
+- `safe`: custom loader execution is denied unless a model-scoped opt-in is present.
+- `trust`: this concrete model entry requested and effectively allowed custom loader execution.
+- `n/a`: the selected route cannot execute custom loader code.
+- `*`: appended to any label when a load/unload cycle is required for the active engine to match
+  the stored model setting.
 
 ## Metrics and Performance Probes
 

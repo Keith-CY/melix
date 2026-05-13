@@ -4807,18 +4807,31 @@ struct MelixCLIRunnerTests {
         // Seed a mix of base, fused, and adapter-backed models to prove the
         // list renderer distinguishes all three via the runtime_mode column.
         await client.setServerSnapshot(makeServerSnapshot(models: [
-            makeModelSummary(id: "melix-base-text", kind: "text"),
+            makeModelSummary(
+                id: "melix-base-text",
+                kind: "text",
+                routeClass: .workerRouteSwiftText
+            ),
             makeModelSummary(
                 id: "melix-base-text-lora-fused",
                 kind: "text",
                 runtimeMode: "fused_derived_model",
-                activationMode: "fused_derived_model"
+                activationMode: "fused_derived_model",
+                routeClass: .workerRoutePythonTextCompatibility
             ),
             makeModelSummary(
                 id: "melix-base-text-lora-runtime",
                 kind: "text",
                 runtimeMode: "adapter_backed_runtime",
-                activationMode: "adapter_backed_runtime"
+                activationMode: "adapter_backed_runtime",
+                routeClass: .workerRoutePythonTextCompatibility,
+                loadTrust: makeLoadTrustPolicy(
+                    requested: .modelLoadTrustTrustRemoteCode,
+                    effective: .modelLoadTrustTrustRemoteCode,
+                    policySource: "model_settings",
+                    routeClass: .workerRoutePythonTextCompatibility,
+                    loaderFamily: "mlx_lm"
+                )
             ),
         ]))
         let store = MelixOperatorSessionStore(
@@ -4847,6 +4860,16 @@ struct MelixCLIRunnerTests {
         #expect(byID["melix-base-text-lora-fused"]?["runtime_mode"] as? String == "fused_derived_model")
         #expect(byID["melix-base-text-lora-runtime"]?["runtime_mode"] as? String == "adapter_backed_runtime")
         #expect(byID["melix-base-text-lora-runtime"]?["activation_mode"] as? String == "adapter_backed_runtime")
+        let baseTrust = try #require(byID["melix-base-text"]?["load_trust"] as? [String: Any])
+        let fusedTrust = try #require(byID["melix-base-text-lora-fused"]?["load_trust"] as? [String: Any])
+        let runtimeTrust = try #require(byID["melix-base-text-lora-runtime"]?["load_trust"] as? [String: Any])
+        #expect(baseTrust["effective_mode"] as? String == "not_applicable")
+        #expect(fusedTrust["requested_mode"] as? String == "default_safe")
+        #expect(fusedTrust["effective_mode"] as? String == "default_safe")
+        #expect(fusedTrust["receipt_present"] as? Bool == false)
+        #expect(runtimeTrust["requested_mode"] as? String == "trust_remote_code")
+        #expect(runtimeTrust["effective_mode"] as? String == "trust_remote_code")
+        #expect(runtimeTrust["receipt_present"] as? Bool == true)
         // Base models have no activation_mode in settings.ext so the field
         // is omitted from the payload rather than blank-strung.
         #expect(byID["melix-base-text"]?["activation_mode"] == nil)
@@ -4865,18 +4888,19 @@ struct MelixCLIRunnerTests {
         #expect(header.contains("STATE"))
         #expect(header.contains("STATUS"))
         #expect(header.contains("RUNTIME"))
+        #expect(header.contains("TRUST"))
         // Each short-form runtime tag appears exactly once on a data row.
         // Use ``hasPrefix`` on the model_id + trailing space to unambiguously
         // pick each row even if another id were a superstring.
         let dataRows = lines.dropFirst()
         let baseRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text ") && $0.hasSuffix("-") })
+            dataRows.first(where: { $0.hasPrefix("melix-base-text ") && $0.hasSuffix("-  n/a") })
         )
         let fusedRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") && $0.hasSuffix("fused") })
+            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") && $0.hasSuffix("fused    safe") })
         )
         let adapterRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") && $0.hasSuffix("adapter") })
+            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") && $0.hasSuffix("adapter  trust") })
         )
         // The first column is padded to the widest model_id
         // ("melix-base-text-lora-runtime" = 28 chars); assert the "KIND"
@@ -5043,6 +5067,64 @@ struct MelixCLIRunnerTests {
         #expect(payload["model_path"] as? String == "/tmp/hf-cache/models--mlx-community--Qwen3-0.6B-4bit/snapshots/missing")
         #expect(payload["registry_descriptor_path"] as? String == "/tmp/melix-managed/huggingface/mlx-community/Qwen3-0.6B-4bit/main")
         #expect(payload["restore_command"] as? String == "melix model hub download --repo-id mlx-community/Qwen3-0.6B-4bit --revision main")
+    }
+
+    @Test("model inspect surfaces model-load trust receipt details")
+    func modelInspectSurfacesModelLoadTrustReceiptDetails() async throws {
+        var trustedModel = makeModelSummary(
+            id: "mlx-community/Custom-Loader-4bit",
+            kind: "text",
+            routeClass: .workerRoutePythonTextCompatibility,
+            loadTrust: makeLoadTrustPolicy(
+                requested: .modelLoadTrustTrustRemoteCode,
+                effective: .modelLoadTrustDefaultSafe,
+                policySource: "model_settings",
+                customLoaderRequired: true,
+                customLoaderDetectionSource: "config_json:auto_map",
+                blockReason: "custom_loader_requires_trust_remote_code",
+                requiresReloadForTrustChange: true,
+                routeClass: .workerRoutePythonTextCompatibility,
+                loaderFamily: "mlx_lm"
+            )
+        )
+        trustedModel.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [trustedModel]))
+        await client.setModelInfo(
+            modelID: "mlx-community/Custom-Loader-4bit",
+            info: {
+                var info = Melix_Controlplane_V1_ModelInfo()
+                info.ok = true
+                info.modelKind = "text"
+                info.supportedTasks = ["generate"]
+                return info
+            }()
+        )
+        let runner = MelixCLIRunner(client: client)
+
+        let textOutput = try await runner.run(
+            .modelInspect(.init(modelID: "mlx-community/Custom-Loader-4bit", json: false))
+        )
+        let jsonOutput = try await runner.run(
+            .modelInspect(.init(modelID: "mlx-community/Custom-Loader-4bit", json: true))
+        )
+        let jsonData = try #require(jsonOutput.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: jsonData) as? [String: Any])
+        let loadTrust = try #require(payload["load_trust"] as? [String: Any])
+
+        #expect(textOutput.contains("load_trust_requested=trust_remote_code"))
+        #expect(textOutput.contains("load_trust_effective=default_safe"))
+        #expect(textOutput.contains("load_trust_custom_loader_required=true"))
+        #expect(textOutput.contains("load_trust_requires_reload=true"))
+        #expect(textOutput.contains("load_trust_detection=config_json:auto_map"))
+        #expect(textOutput.contains("load_trust_block_reason=custom_loader_requires_trust_remote_code"))
+        #expect(loadTrust["requested_mode"] as? String == "trust_remote_code")
+        #expect(loadTrust["effective_mode"] as? String == "default_safe")
+        #expect(loadTrust["custom_loader_required"] as? Bool == true)
+        #expect(loadTrust["requires_reload_for_trust_change"] as? Bool == true)
+        #expect(loadTrust["custom_loader_detection_source"] as? String == "config_json:auto_map")
+        #expect(loadTrust["block_reason"] as? String == "custom_loader_requires_trust_remote_code")
     }
 
     @Test("model load and chat run map missing cache errors to the stable CLI code")
@@ -10399,16 +10481,46 @@ private func makeModelSummary(
     id: String,
     kind: String,
     runtimeMode: String = "",
-    activationMode: String = ""
+    activationMode: String = "",
+    routeClass: Melix_Controlplane_V1_WorkerRouteClass = .unspecified,
+    loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy? = nil
 ) -> Melix_Controlplane_V1_ModelSummary {
     var model = Melix_Controlplane_V1_ModelSummary()
     model.modelID = id
     model.kind = kind
     model.runtimeMode = runtimeMode
+    model.routeClass = routeClass
     if !activationMode.isEmpty {
         model.settings.ext["melix.activation_mode"] = activationMode
     }
+    if let loadTrust {
+        model.loadTrust = loadTrust
+    }
     return model
+}
+
+private func makeLoadTrustPolicy(
+    requested: Melix_Controlplane_V1_ModelLoadTrustMode,
+    effective: Melix_Controlplane_V1_ModelLoadTrustMode,
+    policySource: String,
+    customLoaderRequired: Bool = false,
+    customLoaderDetectionSource: String = "",
+    blockReason: String = "",
+    requiresReloadForTrustChange: Bool = false,
+    routeClass: Melix_Controlplane_V1_WorkerRouteClass = .unspecified,
+    loaderFamily: String = ""
+) -> Melix_Controlplane_V1_ModelLoadTrustPolicy {
+    var policy = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+    policy.requestedMode = requested
+    policy.effectiveMode = effective
+    policy.policySource = policySource
+    policy.customLoaderRequired = customLoaderRequired
+    policy.customLoaderDetectionSource = customLoaderDetectionSource
+    policy.blockReason = blockReason
+    policy.requiresReloadForTrustChange = requiresReloadForTrustChange
+    policy.routeClass = routeClass
+    policy.loaderFamily = loaderFamily
+    return policy
 }
 
 private func makeHubModelCard(

@@ -33,6 +33,19 @@ struct ModelCatalogTests {
         registryBacked.settings.ext["melix.model_path"] = "/tmp/registry/model"
         registryBacked.settings.ext["melix.model_path_missing"] = "true"
         registryBacked.settings.ext["unrelated"] = "ignore"
+        registryBacked.loadTrust = {
+            var policy = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+            policy.requestedMode = .modelLoadTrustTrustRemoteCode
+            policy.effectiveMode = .modelLoadTrustDefaultSafe
+            policy.policySource = "model_settings"
+            policy.customLoaderRequired = true
+            policy.customLoaderDetectionSource = "config_json:auto_map"
+            policy.blockReason = "custom_loader_requires_trust_remote_code"
+            policy.requiresReloadForTrustChange = true
+            policy.routeClass = .workerRoutePythonTextCompatibility
+            policy.loaderFamily = "mlx_lm"
+            return policy
+        }()
         let metadata = try #require(ModelCatalogPresentation.publicAPIMetadata(for: registryBacked))
         #expect(metadata["melix.display_name"] == "Registry Text")
         #expect(metadata["melix.kind"] == "text")
@@ -42,6 +55,16 @@ struct ModelCatalogTests {
         #expect(metadata["melix.registry_provider_id"] == "hf-mirror")
         #expect(metadata["melix.model_path"] == "/tmp/registry/model")
         #expect(metadata["melix.model_path_missing"] == "true")
+        #expect(metadata["melix.load_trust.receipt_present"] == "true")
+        #expect(metadata["melix.load_trust.requested_mode"] == "trust_remote_code")
+        #expect(metadata["melix.load_trust.effective_mode"] == "default_safe")
+        #expect(metadata["melix.load_trust.policy_source"] == "model_settings")
+        #expect(metadata["melix.load_trust.custom_loader_required"] == "true")
+        #expect(metadata["melix.load_trust.custom_loader_detection_source"] == "config_json:auto_map")
+        #expect(metadata["melix.load_trust.block_reason"] == "custom_loader_requires_trust_remote_code")
+        #expect(metadata["melix.load_trust.requires_reload"] == "true")
+        #expect(metadata["melix.load_trust.route_class"] == "python_text_compatibility")
+        #expect(metadata["melix.load_trust.loader_family"] == "mlx_lm")
         #expect(metadata["unrelated"] == nil)
 
         let legacyMetadata = try #require(RegistrySnapshotSync.publicMetadata(from: registryBacked.settings.ext))
