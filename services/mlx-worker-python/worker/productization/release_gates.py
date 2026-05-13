@@ -1729,6 +1729,9 @@ _MISSING = object()
 def _metric_value(values: dict[str, Any], dotted_key: str) -> Any:
     if dotted_key in values:
         return values[dotted_key]
+    first_dot = dotted_key.find(".")
+    if first_dot != -1 and dotted_key[:first_dot] not in values:
+        return _MISSING
     current: Any = values
     for segment in dotted_key.split("."):
         if not isinstance(current, dict) or segment not in current:
