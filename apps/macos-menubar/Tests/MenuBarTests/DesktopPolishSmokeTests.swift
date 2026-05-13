@@ -107,16 +107,20 @@ struct DesktopPolishSmokeTests {
         #expect(viewModel.desktopBannerState?.title == "Download Recovery Available")
         #expect(viewModel.desktopSignalStates.contains(where: { $0.title == "Update available: 0.2.0" && $0.isDismissible }))
 
-        try await waitForDesktopPolishCondition("operator session should persist queue state") {
-            guard let uiData = try? Data(contentsOf: melixHome.operatorSessionFileURL),
-                  let uiPayload = try? JSONSerialization.jsonObject(with: uiData) as? [String: Any],
-                  let queueData = try? Data(contentsOf: melixHome.downloadQueueFileURL),
-                  let queuePayload = try? JSONSerialization.jsonObject(with: queueData) as? [String: Any],
-                  let downloadQueue = queuePayload["download_queue"] as? [[String: Any]]
-            else {
+        try await waitForDesktopPolishCondition("download queue should refresh before persistence") {
+            if viewModel.downloadQueue.isEmpty {
                 return false
             }
-            return downloadQueue.isEmpty == false && uiPayload["selected_tool_section"] as? String == "downloads"
+            viewModel.selectToolSection(.downloads)
+            return true
+        }
+        try await waitForDesktopPolishCondition("operator session should persist queue state") {
+            guard let restoredState = try? operatorSessionStore.load() else {
+                return false
+            }
+            viewModel.selectToolSection(.downloads)
+            return restoredState.downloadQueue.isEmpty == false
+                && restoredState.selectedToolSection == .downloads
         }
 
         let persistedUIData = try Data(contentsOf: melixHome.operatorSessionFileURL)

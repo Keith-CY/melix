@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.1
 
 import PackageDescription
 
@@ -14,7 +14,7 @@ let package = Package(
         .package(name: "melix", path: "../.."),
         .package(path: "../../services/control-plane-swift"),
         .package(path: "../../packages/protocol/swift"),
-        .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.7.3"),
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.8.0"),
     ],
     targets: [
         .executableTarget(
