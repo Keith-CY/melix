@@ -19,7 +19,9 @@ Keep the Phase 8 evaluation-compare category breakdown path behaviorally identic
 
 ## Implementation Note
 
-The accepted slice removes the per-row `row_get = row.get` bound-method allocation and lets CPython dispatch the three `dict.get(...)` calls directly. A trial that added extra category-label sentinel/type-dispatch bindings increased mean time and peak traced bytes, so it was rejected and reverted before this smaller implementation.
+The first accepted slice removed the per-row `row_get = row.get` bound-method allocation and lets CPython dispatch the three `dict.get(...)` calls directly. A trial that added extra category-label sentinel/type-dispatch bindings increased mean time and peak traced bytes, so it was rejected and reverted before that smaller implementation.
+
+This follow-up slice keeps the same category semantics but moves the common non-empty category-label path from `row.get("category_label", "")` to direct key access with a `KeyError` skip for missing labels. The registered probe workload always carries category labels, so the hot path avoids the default-argument dictionary lookup while existing tests continue to cover missing and blank labels.
 
 ## Acceptance Metric
 
