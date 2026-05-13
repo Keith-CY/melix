@@ -64,6 +64,22 @@ public enum MelixCLICommandCodec {
             return "dataset.hub.download"
         case .datasetRemove:
             return "dataset.remove"
+        case .uriInspect:
+            return "uri.inspect"
+        case .uriImport:
+            return "uri.import"
+        case .recipesList:
+            return "recipes.list"
+        case .recipesShow:
+            return "recipes.show"
+        case .recipesValidate:
+            return "recipes.validate"
+        case .recipesPlan:
+            return "recipes.plan"
+        case .recipesApply:
+            return "recipes.apply"
+        case .recipesInit:
+            return "recipes.init"
         case .modelRootsList:
             return "model.roots.list"
         case .modelRootsAdd:
@@ -729,6 +745,52 @@ public enum MelixCLICommandCodec {
             appendOption("--from", value: options.sourcePath, into: &arguments)
             appendOption("--output", value: options.outputPath, into: &arguments)
             json = false
+        case .uriInspect(let options):
+            arguments = ["uri", "inspect", options.uri]
+            json = options.json
+        case .uriImport(let options):
+            arguments = ["uri", "import", options.uri]
+            appendOption("--model-id", value: options.modelID, into: &arguments)
+            appendOption("--revision", value: options.revision, into: &arguments)
+            if options.dryRun {
+                arguments.append("--dry-run")
+            }
+            json = options.json
+        case .recipesList(let options):
+            arguments = ["recipes", "list"]
+            appendOption("--task", value: options.task, into: &arguments)
+            json = options.json
+        case .recipesShow(let options):
+            arguments = ["recipes", "show", options.recipeID]
+            appendOption("--version", value: options.version, into: &arguments)
+            json = options.json
+        case .recipesValidate(let options):
+            arguments = ["recipes", "validate", options.target]
+            json = options.json
+        case .recipesPlan(let options):
+            arguments = ["recipes", "plan", options.recipeID]
+            appendOption("--version", value: options.version, into: &arguments)
+            appendRecipeValues(options.values, into: &arguments)
+            appendOption("--output", value: options.outputPath, into: &arguments)
+            json = options.json
+        case .recipesApply(let options):
+            arguments = ["recipes", "apply", options.recipeID]
+            appendOption("--version", value: options.version, into: &arguments)
+            appendRecipeValues(options.values, into: &arguments)
+            if options.dryRun {
+                arguments.append("--dry-run")
+            }
+            if options.resume {
+                arguments.append("--resume")
+            }
+            appendOption("--from-step", value: options.fromStepID, into: &arguments)
+            json = options.json
+        case .recipesInit(let options):
+            arguments = ["recipes", "init"]
+            appendOption("--from", value: options.sourceURI, into: &arguments)
+            appendOption("--task", value: options.task, into: &arguments)
+            appendOption("--output", value: options.outputPath, into: &arguments)
+            json = options.json
         case .pipelineRun(let options):
             arguments = ["pipeline", "run"]
             appendOption("--file", value: options.filePath, into: &arguments)
@@ -766,6 +828,12 @@ public enum MelixCLICommandCodec {
         } else if remoteServerID.isEmpty == false {
             arguments.append(contentsOf: ["--remote-server-id", remoteServerID])
             appendOption("--remote-model", value: remoteModelID, into: &arguments)
+        }
+    }
+
+    private static func appendRecipeValues(_ values: [String: String], into arguments: inout [String]) {
+        for key in values.keys.sorted() {
+            appendOption("--set", value: "\(key)=\(values[key] ?? "")", into: &arguments)
         }
     }
 
