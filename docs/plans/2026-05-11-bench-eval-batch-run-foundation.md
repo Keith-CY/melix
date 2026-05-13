@@ -85,7 +85,9 @@ job ids are known, and copies raw artifact paths into the model bundle when the
 child command reports them.
 
 `BatchRunManifestStore` is the crash-safe source of truth for status and resume.
-It loads and rewrites JSONL rows without relying on summary prose.
+It loads and rewrites JSONL rows without relying on summary prose. Manifest
+updates align rows by the stable model identity tuple `model_index`, `repo_id`,
+and `source_line` so duplicate operator-requested rows remain independent.
 
 `BatchRunReporter` writes operator-visible summary artifacts:
 
@@ -96,7 +98,8 @@ It loads and rewrites JSONL rows without relying on summary prose.
 
 `BatchRunResumePlanner` rebuilds a model list from the manifest when necessary
 and preserves run id, artifact roots, judge, benchmark, and evaluation settings
-from `effective-config.json`.
+from `effective-config.json`. The recovered model list preserves original
+source-line positions so resume identity aligns with existing manifest rows.
 
 The temporary run directory remains the working source for future execution.
 The operator output directory receives a copy immediately so an interrupted run
@@ -105,17 +108,23 @@ still leaves inspectable evidence outside transient worker state.
 ## Metrics And Success Targets
 
 - Model-list parsing preserves duplicates and records source line numbers.
+- Per-model artifact slugs include source line numbers to prevent collisions
+  for duplicate explicit indexes and repo ids.
 - Dry-run planning writes one manifest row per selected model.
 - `effective-config.json` records selected and total model counts.
 - Subset selection is deterministic for `--start-index` and `--max-models`.
 - Dry-run command completion does not require a running Melix development
   stack, network access, or local model downloads.
 - Non-dry-run execution updates manifest status after every stage.
-- Each dispatched command records stdout, stderr, duration, and a JSON receipt.
+- Each dispatched command records stdout, stderr, exit code, duration, and a
+  JSON receipt; exit code is the success contract, while exit-zero stderr is
+  retained as warning evidence.
 - Summary artifacts are present in `output_root` after completion or resume.
 - Status inspection reads `manifest.jsonl` directly.
 - Resume eval-only reruns missing evaluation/export work without rerunning
   benchmark stages.
+- Resume-generated model lists preserve source-line identity for rows preceded
+  by comments or blank lines.
 - Failure classification persists both model-level and step-level category and
   recoverability.
 
@@ -124,7 +133,7 @@ Performance probes and success metrics:
 - Manifest write overhead target: one atomic JSONL rewrite per stage, bounded by
   selected model count and acceptable for operator-scale sweeps.
 - Command receipt overhead target: one stdout file, one stderr file, and one
-  JSON receipt per dispatched child command.
+  JSON receipt including exit code per dispatched child command.
 - Progress latency target: terminal progress lines are produced at every
   model/stage boundary instead of only after the full sweep.
 - Recovery target: `melix batch status` and `melix batch resume --dry-run` work
@@ -138,6 +147,8 @@ Performance probes and success metrics:
 - Swift runner tests for non-dry-run benchmark/evaluation/export dispatch,
   manifest updates, summary artifacts, status rendering, partial failure
   attribution, and eval-only resume.
+- Swift runner tests for duplicate explicit model rows and exit-zero stderr
+  warning handling.
 - `git diff --check`.
 - `xcrun swift build --product melix`.
 - Targeted Swift test invocation for the touched CLI tests when the local Swift
