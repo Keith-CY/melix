@@ -44,6 +44,10 @@ _GEMMA4_CLOSE_MARKER = "<channel|>"
 _GEMMA4_TURN_END_MARKER = "<turn|>"
 _GEMMA4_TOOL_RESPONSE_OPEN = "<|tool_response>"
 _GEMMA4_TOOL_RESPONSE_CLOSE = "<tool_response|>"
+_GEMMA4_WEIGHT_PRESENCE_NONE = (False, False)
+_GEMMA4_WEIGHT_PRESENCE_VISION_ONLY = (True, False)
+_GEMMA4_WEIGHT_PRESENCE_AUDIO_ONLY = (False, True)
+_GEMMA4_WEIGHT_PRESENCE_MULTIMODAL = (True, True)
 
 
 class RuntimeUnavailableError(RuntimeError):
@@ -506,13 +510,31 @@ def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[boo
     has_vision = False
     has_audio = False
     for name in weight_names:
-        if not has_vision and (name.startswith("vision_tower.") or name.startswith("embed_vision.")):
-            has_vision = True
-        elif not has_audio and (name.startswith("audio_tower.") or name.startswith("embed_audio.")):
-            has_audio = True
-        if has_vision and has_audio:
-            break
-    return has_vision, has_audio
+        first_character = name[0]
+        if first_character == "v":
+            if not has_vision and name.startswith("vision_tower."):
+                if has_audio:
+                    return _GEMMA4_WEIGHT_PRESENCE_MULTIMODAL
+                has_vision = True
+        elif first_character == "a":
+            if not has_audio and name.startswith("audio_tower."):
+                if has_vision:
+                    return _GEMMA4_WEIGHT_PRESENCE_MULTIMODAL
+                has_audio = True
+        elif first_character == "e":
+            if not has_vision and name.startswith("embed_vision."):
+                if has_audio:
+                    return _GEMMA4_WEIGHT_PRESENCE_MULTIMODAL
+                has_vision = True
+            elif not has_audio and name.startswith("embed_audio."):
+                if has_vision:
+                    return _GEMMA4_WEIGHT_PRESENCE_MULTIMODAL
+                has_audio = True
+    if has_vision:
+        return _GEMMA4_WEIGHT_PRESENCE_VISION_ONLY
+    if has_audio:
+        return _GEMMA4_WEIGHT_PRESENCE_AUDIO_ONLY
+    return _GEMMA4_WEIGHT_PRESENCE_NONE
 
 
 def _mlx_peak_memory_gb(mx_module: Any) -> float:
@@ -1156,6 +1178,7 @@ class MLXVLMRuntime:
                     messages,
                     family_config=family_config,
                     started_at=started_at,
+                    include_chat_messages=self._truthy_ext(execution_ext, _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY),
                 )
         else:
             if has_non_text_media:
@@ -1165,6 +1188,7 @@ class MLXVLMRuntime:
                     messages,
                     family_config=family_config,
                     started_at=started_at,
+                    include_chat_messages=self._truthy_ext(execution_ext, _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY),
                 )
         self._record_fast_path_probe(loaded_model, prepared)
         return prepared
@@ -2172,18 +2196,13 @@ class MLXVLMRuntime:
         *,
         family_config,
         started_at: float,
+        include_chat_messages: bool = False,
     ) -> PreparedVisionRequest:
         prompt_text = MLXVLMRuntime._prompt_text_from_messages(messages)
-        chat_messages = tuple(
-            {
-                "role": str(getattr(message, "role", "user") or "user"),
-                "content": " ".join(
-                    str(getattr(part, "text", "") or "").strip()
-                    for part in getattr(message, "parts", ())
-                    if str(getattr(part, "text", "") or "").strip()
-                ),
-            }
-            for message in messages
+        chat_messages = (
+            MLXVLMRuntime._chat_messages_for_text_only_template(messages)
+            if include_chat_messages
+            else ()
         )
         prepared = PreparedVisionRequest(
             prompt_text=prompt_text,
@@ -2201,6 +2220,20 @@ class MLXVLMRuntime:
             prepared,
             prompt_hash_hex=prompt_hash_hex,
             multimodal_hash_hex=prompt_hash_hex,
+        )
+
+    @staticmethod
+    def _chat_messages_for_text_only_template(messages) -> tuple[dict[str, object], ...]:
+        return tuple(
+            {
+                "role": str(getattr(message, "role", "user") or "user"),
+                "content": " ".join(
+                    str(getattr(part, "text", "") or "").strip()
+                    for part in getattr(message, "parts", ())
+                    if str(getattr(part, "text", "") or "").strip()
+                ),
+            }
+            for message in messages
         )
 
     @staticmethod

@@ -2769,6 +2769,9 @@ public struct OpenAIHandler: Sendable {
         timeoutSeconds: UInt32
     ) -> Melix_Controlplane_V1_ErrorStatus {
         guard let workerError = error as? WorkerClientError else {
+            if isImageDeadlineExceeded(code: "", message: String(describing: error)) {
+                return imageDeadlineExceededError(timeoutSeconds: timeoutSeconds)
+            }
             return controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
         }
         switch workerError {
@@ -2776,12 +2779,10 @@ public struct OpenAIHandler: Sendable {
             return controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
         case let .requestFailed(code, message):
             let normalizedCode = normalizedBridgeErrorCode(code)
+            if isImageDeadlineExceeded(code: normalizedCode, message: message) {
+                return imageDeadlineExceededError(timeoutSeconds: timeoutSeconds)
+            }
             switch normalizedCode {
-            case "deadline_exceeded":
-                return controlPlaneError(
-                    code: "deadline_exceeded",
-                    message: "Image request exceeded the \(timeoutSeconds)-second creative workflow deadline."
-                )
             case "cancelled":
                 return controlPlaneError(code: "cancelled", message: message.isEmpty ? "Image request was cancelled." : message)
             case "":
@@ -2795,11 +2796,35 @@ public struct OpenAIHandler: Sendable {
         }
     }
 
+    private func imageDeadlineExceededError(timeoutSeconds: UInt32) -> Melix_Controlplane_V1_ErrorStatus {
+        controlPlaneError(
+            code: "deadline_exceeded",
+            message: "Image request exceeded the \(timeoutSeconds)-second creative workflow deadline."
+        )
+    }
+
+    private func isImageDeadlineExceeded(code: String, message: String) -> Bool {
+        let normalizedCode = normalizedBridgeErrorCode(code)
+        if normalizedCode == "deadline_exceeded" {
+            return true
+        }
+        guard normalizedCode.isEmpty || normalizedCode == "unknown" else {
+            return false
+        }
+        let normalizedMessage = message
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalizedMessage.contains("deadline")
+            || normalizedMessage.contains("timed out")
+            || normalizedMessage.contains("timeout")
+    }
+
     private func normalizedBridgeErrorCode(_ rawValue: String) -> String {
         rawValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
     }
 
     private func controlPlaneError(from workerError: Melix_Worker_V1_ErrorStatus) -> Melix_Controlplane_V1_ErrorStatus {
@@ -3029,9 +3054,9 @@ public struct OpenAIHandler: Sendable {
                 Double(stats.lastVoiceFallbackCount),
                 forKey: "audio.voice_fallback_count"
             )
-            if stats.lastProbeKind == "speech" {
+            if stats.lastProbeKind == "speech" && stats.lastSpeechStreamingEnabled {
                 await metricsStore.set(
-                    stats.lastSpeechStreamingEnabled ? 1 : 0,
+                    1,
                     forKey: "audio.speech_streaming_enabled"
                 )
                 await metricsStore.set(
@@ -3068,6 +3093,7 @@ public struct OpenAIHandler: Sendable {
         default:
             break
         }
+        await metricsStore.flushExport()
     }
 
     private func estimatedTokenCount(for inputs: [String]) -> Int {

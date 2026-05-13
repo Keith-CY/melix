@@ -1004,6 +1004,7 @@ public actor RequestCoordinator {
                         using: workerClient,
                         routeKind: plan.routeKind
                     )
+                    await metricsStore.flushExport()
                     let terminalPhase = await self.terminalPhase(
                         requestID: requestID,
                         fallback: .requestCompleted
@@ -1018,6 +1019,7 @@ public actor RequestCoordinator {
                         using: workerClient,
                         routeKind: plan.routeKind
                     )
+                    await metricsStore.flushExport()
                     await hub.emitLifecycle(.terminalFailure(code: "transport_error", message: error.localizedDescription))
                     await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
                     await hub.finish(throwing: error)

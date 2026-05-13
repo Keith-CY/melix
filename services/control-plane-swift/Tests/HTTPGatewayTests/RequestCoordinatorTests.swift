@@ -3634,7 +3634,7 @@ private actor PhaseAwareWorkerClient:
 
     func canDispatchRequests() async -> Bool {
         dispatchReadinessCheckCount += 1
-        true
+        return true
     }
 
     func generate(
@@ -3742,12 +3742,12 @@ private actor PhaseAwareWorkerClient:
 
     func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
         runtimeStatsCallCount += 1
-        runtimeStatsResponse
+        return runtimeStatsResponse
     }
 
     func cacheStats() async throws -> Melix_Worker_V1_GetCacheStatsResponse {
         cacheStatsCallCount += 1
-        cacheStatsResponse
+        return cacheStatsResponse
     }
 
     func emitPrefillStarted(

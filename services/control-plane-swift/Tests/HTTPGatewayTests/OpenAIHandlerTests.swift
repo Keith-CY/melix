@@ -4325,9 +4325,6 @@ struct OpenAIHandlerTests {
             response.stats.lastSpeechLatencyMs = 12
             response.stats.lastAudioOutputBytes = UInt64(envelopeBytes.count + pcmChunk.count)
             response.stats.lastAudioChunkCount = 1
-            response.stats.lastSpeechStreamingEnabled = true
-            response.stats.lastSpeechStreamingIntervalMs = 30
-            response.stats.lastSpeechFirstAudioLatencyMs = 4.5
             return response
         }())
 
@@ -6601,6 +6598,53 @@ struct OpenAIHandlerTests {
         #expect(failedJob.progress.stage == "timed_out")
         #expect(failedJob.timeoutSeconds == 600)
         #expect(failedJob.recipe.prompt == "timeout")
+    }
+
+    @Test("image generate maps unknown deadline failures into deadline_exceeded")
+    func imageGenerateMapsUnknownDeadlineFailure() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setThrownFailure(
+            WorkerClientError.requestFailed(code: "UNKNOWN", message: "deadline exceeded before response headers")
+        )
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel,
+            environment: ["MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS": "600"]
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-generate-unknown-timeout",
+              "model": "melix-dev-image",
+              "prompt": "timeout"
+            }
+            """.data(using: .utf8)
+        )
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let failedJob = try #require(await imageJobReadModel.job(requestID: "image-generate-unknown-timeout"))
+
+        #expect(response.statusCode == 504)
+        #expect(payload.contains("\"code\":\"deadline_exceeded\""))
+        #expect(failedJob.state == .imageJobFailed)
+        #expect(failedJob.error.code == "deadline_exceeded")
+        #expect(failedJob.progress.stage == "timed_out")
     }
 
     @Test("image endpoints fall back to request mapped jobs when worker job identifiers drift")
