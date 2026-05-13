@@ -2406,10 +2406,10 @@ public struct OpenAIHandler: Sendable {
     private func modelRouteKind(
         for model: Melix_Controlplane_V1_ModelSummary
     ) -> WorkerRouteKind? {
-        if let route = WorkerRouteKind(routeClass: model.routeClass) {
+        if let route = WorkerRouteKind(metadataIdentifier: model.settings.ext["melix.capability.route_kind"]) {
             return route
         }
-        if let route = WorkerRouteKind(metadataIdentifier: model.settings.ext["melix.capability.route_kind"]) {
+        if let route = WorkerRouteKind(routeClass: model.routeClass) {
             return route
         }
         return WorkerRouteKind(capabilityIdentifier: model.settings.ext["melix.capability.class"])

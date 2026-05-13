@@ -317,8 +317,7 @@ class DeterministicVLMRuntime:
                     execution_ext=execution_ext,
                 )
             )
-        self._last_probe = replace(
-            self._last_probe,
+        self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,
             preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,

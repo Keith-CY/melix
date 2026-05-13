@@ -44,11 +44,6 @@ _GEMMA4_CLOSE_MARKER = "<channel|>"
 _GEMMA4_TURN_END_MARKER = "<turn|>"
 _GEMMA4_TOOL_RESPONSE_OPEN = "<|tool_response>"
 _GEMMA4_TOOL_RESPONSE_CLOSE = "<tool_response|>"
-_GEMMA4_WEIGHT_PRESENCE_NONE = (False, False)
-_GEMMA4_WEIGHT_PRESENCE_VISION_ONLY = (True, False)
-_GEMMA4_WEIGHT_PRESENCE_AUDIO_ONLY = (False, True)
-_GEMMA4_WEIGHT_PRESENCE_MULTIMODAL = (True, True)
-
 
 class RuntimeUnavailableError(RuntimeError):
     pass
@@ -514,27 +509,23 @@ def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[boo
         if first_character == "v":
             if not has_vision and name.startswith("vision_tower."):
                 if has_audio:
-                    return _GEMMA4_WEIGHT_PRESENCE_MULTIMODAL
+                    return True, True
                 has_vision = True
         elif first_character == "a":
             if not has_audio and name.startswith("audio_tower."):
                 if has_vision:
-                    return _GEMMA4_WEIGHT_PRESENCE_MULTIMODAL
+                    return True, True
                 has_audio = True
         elif first_character == "e":
             if not has_vision and name.startswith("embed_vision."):
                 if has_audio:
-                    return _GEMMA4_WEIGHT_PRESENCE_MULTIMODAL
+                    return True, True
                 has_vision = True
             elif not has_audio and name.startswith("embed_audio."):
                 if has_vision:
-                    return _GEMMA4_WEIGHT_PRESENCE_MULTIMODAL
+                    return True, True
                 has_audio = True
-    if has_vision:
-        return _GEMMA4_WEIGHT_PRESENCE_VISION_ONLY
-    if has_audio:
-        return _GEMMA4_WEIGHT_PRESENCE_AUDIO_ONLY
-    return _GEMMA4_WEIGHT_PRESENCE_NONE
+    return has_vision, has_audio
 
 
 def _mlx_peak_memory_gb(mx_module: Any) -> float:
@@ -1159,6 +1150,10 @@ class MLXVLMRuntime:
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
         family_config = self._family_config(loaded_model)
         has_non_text_media = self._contains_non_text_media(messages)
+        include_chat_messages = (
+            bool(execution_ext)
+            and self._truthy_ext(execution_ext, _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY)
+        )
         if execution_mode == "text_backed":
             if has_non_text_media:
                 prepared = family_config.shape_request(prepare_vision_request(messages))
@@ -1178,7 +1173,7 @@ class MLXVLMRuntime:
                     messages,
                     family_config=family_config,
                     started_at=started_at,
-                    include_chat_messages=self._truthy_ext(execution_ext, _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY),
+                    include_chat_messages=include_chat_messages,
                 )
         else:
             if has_non_text_media:
@@ -1188,7 +1183,7 @@ class MLXVLMRuntime:
                     messages,
                     family_config=family_config,
                     started_at=started_at,
-                    include_chat_messages=self._truthy_ext(execution_ext, _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY),
+                    include_chat_messages=include_chat_messages,
                 )
         self._record_fast_path_probe(loaded_model, prepared)
         return prepared
