@@ -1149,6 +1149,161 @@ struct MelixCLIRunnerTests {
         #expect(secretMessage == "Unsupported batch config key 'judge_api_key' at line 2. Batch configs must reference stored credentials by id instead of embedding raw secrets.")
     }
 
+    @Test("batch run executes benchmark evaluation exports and writes reports")
+    func batchRunExecutesBenchmarkEvaluationExportsAndWritesReports() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        let fakeCLI = root.appendingPathComponent("fake-melix")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+        try writeFakeBatchCLI(fakeCLI)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        let output = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "batch-ok",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test"
+        )))
+
+        #expect(output.contains("Melix batch run complete"))
+        #expect(output.contains("[1/1] benchmark succeeded 01"))
+        #expect(output.contains("[1/1] semantic judge heartbeat judge/gpt-test"))
+        #expect(output.contains("[1/1] evaluation succeeded 01"))
+        #expect(output.contains("status=succeeded"))
+
+        let summary = try #require(try parseJSONFile(outputRoot.appendingPathComponent("run-summary.json").path))
+        #expect(summary["schema_version"] as? String == "melix.batch.run_summary.v1")
+        #expect(summary["status"] as? String == "succeeded")
+        #expect(summary["succeeded_models"] as? Int == 1)
+        #expect(FileManager.default.fileExists(atPath: outputRoot.appendingPathComponent("RUN_SUMMARY.md").path))
+        #expect(FileManager.default.fileExists(atPath: outputRoot.appendingPathComponent("run-summary.csv").path))
+        #expect(FileManager.default.fileExists(atPath: outputRoot.appendingPathComponent("index.html").path))
+
+        let manifestLines = try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8)
+            .split(separator: "\n")
+        let entry = try #require(parseJSONObject(String(manifestLines[0])))
+        #expect(entry["status"] as? String == "succeeded")
+        #expect(entry["benchmark_job_id"] as? String == "bench-01")
+        #expect(entry["evaluation_job_id"] as? String == "eval-01")
+        #expect((entry["metric_fields"] as? [String: Any])?["bench.smoke.tokens_per_second"] as? Double == 12.5)
+        let steps = try #require(entry["steps"] as? [String: Any])
+        let benchmark = try #require(steps["benchmark"] as? [String: Any])
+        #expect(benchmark["status"] as? String == "succeeded")
+        let exports = try #require(steps["exports"] as? [String: Any])
+        #expect(exports["status"] as? String == "succeeded")
+        #expect(FileManager.default.fileExists(atPath: entry["benchmark_csv_path"] as? String ?? ""))
+        #expect(FileManager.default.fileExists(atPath: entry["evaluation_summary_csv_path"] as? String ?? ""))
+
+        let statusText = try await runner.run(.batchStatus(.init(tempRoot: tempRoot.path)))
+        #expect(statusText.contains("Melix batch status"))
+        #expect(statusText.contains("[01] succeeded mlx-community/Qwen3.5-9B-MLX-4bit"))
+        let statusJSON = try parseJSONObject(try await runner.run(.batchStatus(.init(tempRoot: tempRoot.path, json: true))))
+        #expect(statusJSON?["status"] as? String == "succeeded")
+    }
+
+    @Test("batch run records partial success and failure attribution")
+    func batchRunRecordsPartialSuccessAndFailureAttribution() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        let fakeCLI = root.appendingPathComponent("fake-melix")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+        try writeFakeBatchCLI(fakeCLI, failEval: true)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        let output = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "batch-partial",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test",
+            continueOnFailure: true
+        )))
+
+        #expect(output.contains("status=partial_success"))
+        let summary = try #require(try parseJSONFile(outputRoot.appendingPathComponent("run-summary.json").path))
+        #expect(summary["status"] as? String == "partial_success")
+        #expect(summary["partial_success_models"] as? Int == 1)
+        let manifestLine = try #require(try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8).split(separator: "\n").first)
+        let entry = try #require(parseJSONObject(String(manifestLine)))
+        #expect(entry["status"] as? String == "partial_success")
+        #expect(entry["failure_category"] as? String == "judge_failure")
+        #expect(entry["recoverability"] as? String == "operator_action_required")
+    }
+
+    @Test("batch resume eval-only reruns missing evaluation")
+    func batchResumeEvalOnlyRerunsMissingEvaluation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        let fakeCLI = root.appendingPathComponent("fake-melix")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+        try writeFakeBatchCLI(fakeCLI, failEval: true)
+
+        let failingRunner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        _ = try await failingRunner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "batch-resume",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test",
+            continueOnFailure: true
+        )))
+
+        try writeFakeBatchCLI(fakeCLI, failEval: false)
+        let resumeRunner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        let dryRun = try await resumeRunner.run(.batchResume(.init(
+            tempRoot: tempRoot.path,
+            evalOnly: true,
+            dryRun: true
+        )))
+        #expect(dryRun.contains("Melix batch resume dry-run"))
+        #expect(dryRun.contains("RESUME 01 mlx-community/Qwen3.5-9B-MLX-4bit"))
+
+        let output = try await resumeRunner.run(.batchResume(.init(
+            tempRoot: tempRoot.path,
+            evalOnly: true
+        )))
+        #expect(output.contains("resume eval-only 01"))
+        #expect(output.contains("status=succeeded"))
+        let summary = try #require(try parseJSONFile(outputRoot.appendingPathComponent("run-summary.json").path))
+        #expect(summary["status"] as? String == "succeeded")
+        let manifestLine = try #require(try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8).split(separator: "\n").first)
+        let entry = try #require(parseJSONObject(String(manifestLine)))
+        #expect(entry["status"] as? String == "succeeded")
+        #expect(entry["evaluation_job_id"] as? String == "eval-01")
+    }
+
     @Test("json metric patching preserves user artifact strings that look like the old sentinel")
     func jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel() throws {
         let sentinel = "9.9999999999989997e+99"
@@ -11241,4 +11396,56 @@ private func makeEvaluationCompareResult(
     }
 
     return ControlPlaneEvaluationResult(job: job, results: results)
+}
+
+private func writeFakeBatchCLI(_ path: URL, failEval: Bool = false) throws {
+    let failEvalLiteral = failEval ? "1" : "0"
+    let script = """
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "${MELIX_BATCH_MODEL_DIR}/fake-raw"
+    printf '{"raw": true}\\n' > "${MELIX_BATCH_MODEL_DIR}/fake-raw/raw.json"
+    if [[ "$1 $2" == "bench run" ]]; then
+      printf '{"job_id":"bench-01","metrics":{"bench.smoke.tokens_per_second":12.5},"output_dir":"%s"}\\n' "${MELIX_BATCH_MODEL_DIR}/fake-raw"
+      exit 0
+    fi
+    if [[ "$1 $2" == "bench export-csv" ]]; then
+      output=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --output) output="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      mkdir -p "$(dirname "$output")"
+      printf 'job_id,metric,value\\nbench-01,bench.smoke.tokens_per_second,12.5\\n' > "$output"
+      printf '{"output":"%s"}\\n' "$output"
+      exit 0
+    fi
+    if [[ "$1 $2" == "eval run" ]]; then
+      if [[ "\(failEvalLiteral)" == "1" ]]; then
+        printf 'Semantic judge remote server returned 401 unauthorized\\n' >&2
+        exit 2
+      fi
+      printf '{"job_id":"eval-01","metrics":{"eval.event_extraction.semantic_f1":0.9},"output_dir":"%s"}\\n' "${MELIX_BATCH_MODEL_DIR}/fake-raw"
+      exit 0
+    fi
+    if [[ "$1 $2" == "eval export-summary-csv" || "$1 $2" == "eval export-samples-csv" || "$1 $2" == "eval export-samples-jsonl" ]]; then
+      output=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --output) output="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      mkdir -p "$(dirname "$output")"
+      printf 'job_id,metric,value\\neval-01,eval.event_extraction.semantic_f1,0.9\\n' > "$output"
+      printf '{"output":"%s"}\\n' "$output"
+      exit 0
+    fi
+    printf 'unexpected fake melix command: %s\\n' "$*" >&2
+    exit 64
+    """
+    try script.write(to: path, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
 }

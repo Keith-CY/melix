@@ -202,6 +202,10 @@ public enum MelixCLICommandCodec {
             return "eval.report"
         case .batchRun:
             return "batch.run"
+        case .batchStatus:
+            return "batch.status"
+        case .batchResume:
+            return "batch.resume"
         case .runsList:
             return "runs.list"
         case .runsShow:
@@ -748,6 +752,28 @@ public enum MelixCLICommandCodec {
             if options.preflight {
                 arguments.append("--preflight")
             }
+            if options.dryRun {
+                arguments.append("--dry-run")
+            }
+            json = options.json
+        case .batchStatus(let options):
+            arguments = ["batch", "status"]
+            appendOption("--run-id", value: options.runID, into: &arguments)
+            appendOption("--output-root", value: options.outputRoot, into: &arguments)
+            appendOption("--temp-root", value: options.tempRoot, into: &arguments)
+            json = options.json
+        case .batchResume(let options):
+            arguments = ["batch", "resume"]
+            appendOption("--run-id", value: options.runID, into: &arguments)
+            appendOption("--output-root", value: options.outputRoot, into: &arguments)
+            appendOption("--temp-root", value: options.tempRoot, into: &arguments)
+            appendOption("--models", value: options.modelListPath, into: &arguments)
+            appendOption("--config", value: options.configPath, into: &arguments)
+            if options.evalOnly {
+                arguments.append("--eval-only")
+            }
+            appendBool("--missing-only", value: options.missingOnly, defaultValue: true, force: false, into: &arguments)
+            appendBool("--continue-on-failure", value: options.continueOnFailure, defaultValue: true, force: false, into: &arguments)
             if options.dryRun {
                 arguments.append("--dry-run")
             }

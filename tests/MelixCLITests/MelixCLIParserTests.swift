@@ -2464,6 +2464,8 @@ struct MelixCLIParserTests {
     @Test("parses batch run dry-run foundation options")
     func parsesBatchRunDryRunFoundationOptions() throws {
         #expect(MelixCLIParser.usageText.contains("melix batch run --models PATH"))
+        #expect(MelixCLIParser.usageText.contains("melix batch status"))
+        #expect(MelixCLIParser.usageText.contains("melix batch resume"))
 
         let command = try MelixCLIParser.parse([
             "batch", "run",
@@ -2516,6 +2518,53 @@ struct MelixCLIParserTests {
         #expect(options.preflight)
         #expect(options.dryRun)
         #expect(options.json)
+    }
+
+    @Test("parses batch status and resume commands")
+    func parsesBatchStatusAndResumeCommands() throws {
+        let status = try MelixCLIParser.parse([
+            "batch", "status",
+            "--run-id", "run-1",
+            "--output-root", "/tmp/out",
+            "--temp-root", "/tmp/tmp",
+            "--json",
+        ])
+        guard case .batchStatus(let statusOptions) = status else {
+            Issue.record("Expected batchStatus command")
+            return
+        }
+        #expect(statusOptions.runID == "run-1")
+        #expect(statusOptions.outputRoot == "/tmp/out")
+        #expect(statusOptions.tempRoot == "/tmp/tmp")
+        #expect(statusOptions.json)
+
+        let resume = try MelixCLIParser.parse([
+            "batch", "resume",
+            "--run-id", "run-1",
+            "--output-root", "/tmp/out",
+            "--temp-root", "/tmp/tmp",
+            "--models", "/tmp/models.txt",
+            "--config", "/tmp/batch.yaml",
+            "--eval-only",
+            "--missing-only", "false",
+            "--continue-on-failure", "false",
+            "--dry-run",
+            "--json",
+        ])
+        guard case .batchResume(let resumeOptions) = resume else {
+            Issue.record("Expected batchResume command")
+            return
+        }
+        #expect(resumeOptions.runID == "run-1")
+        #expect(resumeOptions.outputRoot == "/tmp/out")
+        #expect(resumeOptions.tempRoot == "/tmp/tmp")
+        #expect(resumeOptions.modelListPath == "/tmp/models.txt")
+        #expect(resumeOptions.configPath == "/tmp/batch.yaml")
+        #expect(resumeOptions.evalOnly)
+        #expect(resumeOptions.missingOnly == false)
+        #expect(resumeOptions.continueOnFailure == false)
+        #expect(resumeOptions.dryRun)
+        #expect(resumeOptions.json)
     }
 
     @Test("parses bench list and export-csv commands")
