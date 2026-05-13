@@ -7129,6 +7129,15 @@ public final class RuntimeViewModel {
         await refreshBenchmarkHistory(notify: true)
     }
 
+    public func refreshDiagnosticsHistory() async {
+        let preferredStage = preferredDiagnosticsStage
+        let benchmarkPresentationMode = selectedBenchmarkPresentationMode
+        await refreshBenchmarkHistory(notify: false)
+        preferredDiagnosticsStage = preferredStage
+        selectedBenchmarkPresentationMode = benchmarkPresentationMode
+        notifyStateChanged()
+    }
+
     public func exportSelectedBenchmarkCSV() async {
         let startedAt = Date()
         if let cliWorkflowRunner {
