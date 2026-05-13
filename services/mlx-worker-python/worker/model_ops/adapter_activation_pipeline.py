@@ -8,7 +8,10 @@ from typing import Any, Callable
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
-from worker.model_ops.lora_runtime_metadata import build_adapter_runtime_manifest_fields
+from worker.model_ops.lora_runtime_metadata import (
+    build_adapter_runtime_manifest_fields,
+    build_quantized_lora_manifest_fields,
+)
 from worker.model_ops.mlx_lm_runner import ActivationRequest, MLXLMRunner
 
 
@@ -129,6 +132,15 @@ class AdapterActivationPipeline:
             activation_mode=activation_mode,
             adapter_scope=adapter_scope,
         )
+        target_modules = adapter_manifest.get("target_modules", [])
+        if not isinstance(target_modules, list):
+            target_modules = []
+        quantized_lora_fields = build_quantized_lora_manifest_fields(
+            source_model=source_model,
+            training_mode=str(adapter_manifest.get("training_mode", "")),
+            quantization_mode=str(adapter_manifest.get("quantization_mode", "")),
+            target_modules=[str(module) for module in target_modules],
+        )
         manifest = {
             "schema_version": "melix.derived_text_model.v1",
             "job_id": job_id,
@@ -163,6 +175,7 @@ class AdapterActivationPipeline:
             "melix.derived_from_adapter": True,
         }
         manifest.update(runtime_fields)
+        manifest.update(quantized_lora_fields)
         if derived_model_alias:
             manifest["derived_model_alias"] = derived_model_alias
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

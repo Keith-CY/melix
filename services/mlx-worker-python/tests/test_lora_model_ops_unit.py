@@ -153,6 +153,37 @@ def test_lora_training_pipeline_uses_component_scope_metadata_for_gemma4_vlm(tmp
     assert result.manifest["adapter_checkpoint_bytes"] == result.manifest["adapter_artifact_bytes"]
     assert result.manifest["training.multimodal_lora_nan_guard_triggered"] is False
     assert result.manifest["training.unexpected_frozen_param_count"] == 0
+
+
+def test_lora_training_manifest_records_quantized_qlora_compatibility_for_gemma8bit(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _write_dataset_package(tmp_path / "dataset")
+
+    result = LoRATrainingPipeline(runner=DeterministicLoRARunner()).run(
+        job_id="train-gemma8bit-qlora",
+        request_ext={
+            "operation": "train_lora",
+            "training_mode": "qlora",
+            "adapter_name": "gemma8bit-dialogue-adapter",
+            "dataset_uri": str(dataset_dir),
+        },
+        source_model=_text_model(
+            model_path="unsloth/gemma-4-E4B-it-MLX-8bit",
+            family_id="gemma",
+        ),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    assert result.manifest["training_mode"] == "qlora"
+    assert result.manifest["quantization_mode"] == "quantized_base"
+    assert result.manifest["quantized_base_detected"] is True
+    assert result.manifest["quantized_base_kind"] == "8bit"
+    assert result.manifest["quantization_profile_id"] == ""
+    assert result.manifest["quantized_base_evidence_source"] == "model_identity"
+    assert result.manifest["qlora_compatibility_status"] == "compatible"
+    assert result.manifest["quantized_target_module_guard"] == "accepted"
     assert result.manifest["training.adapter_checkpoint_bytes"] == result.manifest["adapter_checkpoint_bytes"]
     freeze_audit = result.manifest["adapter_freeze_audit"]
     assert freeze_audit["unexpected_serialized_param_count"] == 0
@@ -3693,6 +3724,9 @@ def test_adapter_backed_runtime_activation_writes_explicit_runtime_contract(tmp_
                 "adapter_name": "demo-adapter",
                 "weights_path": str(adapter_weights_path),
                 "desired_derived_model_alias": "Demo Alias",
+                "training_mode": "qlora",
+                "quantization_mode": "quantized_base",
+                "target_modules": ["model.layers.0.self_attn.q_proj"],
             }
         ) + "\n",
         encoding="utf-8",
@@ -3709,7 +3743,10 @@ def test_adapter_backed_runtime_activation_writes_explicit_runtime_contract(tmp_
             "artifact_path": str(adapter_manifest_path),
             "activation_mode": "adapter_backed_runtime",
         },
-        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        source_model=_text_model(
+            model_path=str(tmp_path / "base-model"),
+            quant_profile_id="q4",
+        ),
         output_dir=tmp_path / "activate",
     )
 
@@ -3725,6 +3762,12 @@ def test_adapter_backed_runtime_activation_writes_explicit_runtime_contract(tmp_
     assert result.manifest["adapter_runtime.compatibility_status"] == "compatible"
     assert len(result.manifest["adapter_runtime.base_reuse_key"]) == 64
     assert len(result.manifest["adapter_runtime.adapter_isolation_key"]) == 64
+    assert result.manifest["quantized_base_detected"] is True
+    assert result.manifest["quantized_base_kind"] == "q4"
+    assert result.manifest["quantization_profile_id"] == "q4"
+    assert result.manifest["quantized_base_evidence_source"] == "quant_profile_id"
+    assert result.manifest["qlora_compatibility_status"] == "compatible"
+    assert result.manifest["quantized_target_module_guard"] == "accepted"
     assert result.manifest_path.exists()
 
 

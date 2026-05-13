@@ -12,6 +12,7 @@ from typing import Any, Callable
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.lora_runtime_metadata import build_quantized_lora_manifest_fields
 from worker.model_ops.multimodal_lora_contracts import (
     audit_adapter_checkpoint,
     audit_manifest_fields,
@@ -157,6 +158,12 @@ class LoRATrainingPipeline:
             or (experiment_group_id if request_ext.get("experiment_group_id", "").strip() else config.adapter_name)
         )
         persisted_at_unix_ms = int(time.time() * 1000)
+        quantized_lora_fields = build_quantized_lora_manifest_fields(
+            source_model=source_model,
+            training_mode=config.training_mode,
+            quantization_mode=config.quantization_mode,
+            target_modules=config.expanded_target_modules,
+        )
 
         emit("write_manifest", 0.97)
         manifest = {
@@ -195,6 +202,7 @@ class LoRATrainingPipeline:
             "dataset_contract": config.dataset_contract,
             "dora_enabled": config.adapter_algorithm == "dora",
             "quantization_mode": config.quantization_mode,
+            **quantized_lora_fields,
             "training_backend": training_result.execution_backend,
             "adapter_set_hash": adapter_set_hash,
             "weights_path": str(training_result.weights_path),
