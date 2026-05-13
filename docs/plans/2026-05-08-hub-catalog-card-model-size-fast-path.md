@@ -20,8 +20,16 @@ The affected path is already covered by the PR-scoped `hub-catalog-size-hint-reg
 - Run the registered changed-scope coverage command and require at least 95% coverage for touched executable scope.
 - Run `scripts/hub_catalog_size_hint_probe.py` before and after the change on Linux and compare `elapsed_ms_mean` plus `size_hint_calls_mean`.
 
+## Follow-up Slice: Direct Parser Bounded Split
+
+This follow-up keeps the same registered probe and narrows `_direct_size_hint_from_text(...)`
+to a bounded two-token split. Direct `cardData.model_size` values are expected to be shaped
+like `128 MB`; values with additional words still return `0` from the direct parser so the
+existing generic `_size_hint_from_text(...)` fallback can handle labeled text such as
+`Model size: 7 MB`.
+
 ## Success Metrics
 
 - Preserve all existing size-hint parsing behavior by falling back to `_size_hint_from_text(...)` when the direct parser cannot handle the value.
-- Reduce `_size_hint_from_text(...)` calls for direct `cardData.model_size` values in the registered probe.
+- Keep `_size_hint_from_text(...)` call counts unchanged for this bounded-split follow-up.
 - Improve or hold steady `elapsed_ms_mean` in the local registered probe.
