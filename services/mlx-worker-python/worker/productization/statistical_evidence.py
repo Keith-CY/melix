@@ -84,7 +84,11 @@ def build_category_breakdown(
 ) -> dict[str, dict[str, object]]:
     category_totals: dict[str, list[int]] = {}
     for row in rows:
-        category_label = str(row.get("category_label", "")).strip()
+        try:
+            raw_category_label = row["category_label"]
+        except KeyError:
+            continue
+        category_label = str(raw_category_label).strip()
         if not category_label:
             continue
         base_correct = 1 if row.get("base_correct", False) else 0
