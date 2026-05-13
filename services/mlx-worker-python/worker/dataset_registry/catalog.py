@@ -891,12 +891,18 @@ def _path_matches_split(relative_path: Path, split: str) -> bool:
     split_underscore_prefix = f"{normalized_split}_"
     for part in relative_path.parts:
         lowered = part.lower()
-        stem = _string_stem(part).lower()
         if (
             lowered == normalized_split
             or lowered.startswith(split_dash_prefix)
             or lowered.startswith(split_underscore_prefix)
-            or stem == normalized_split
+        ):
+            return True
+        dot_index = lowered.rfind(".")
+        if dot_index <= 0 or dot_index == len(lowered) - 1:
+            continue
+        stem = lowered[:dot_index]
+        if (
+            stem == normalized_split
             or stem.startswith(split_dash_prefix)
             or stem.startswith(split_underscore_prefix)
         ):
