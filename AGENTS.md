@@ -213,15 +213,17 @@ state from `.runtime`.
 - When conflicts appear, resolve the textual conflicts and also inspect the new
   `origin/main` changes that caused or surround the conflict. Decide whether
   those newly introduced behaviors should be covered, replaced, or adapted by
-  the current task before pushing the resolution.
+  the current task, then re-verify the branch locally before pushing the
+  resolution.
 - When CI fails, treat the failing jobs as blockers. Inspect the logs, repair the
   branch, rerun the relevant local verification when feasible, and push the fix.
 - When the performance report identifies a regression, treat it as a blocker
   unless the report or direct probe artifacts prove it is outside the PR scope.
   Fix in-scope regressions and document non-blocking findings in the PR.
-- Squash merge only after code review is addressed, conflicts are resolved, CI is
-  green, the performance report is acceptable, PR evidence is complete, and the
-  branch is current with `origin/main`.
+- Squash merge only after code review threads are resolved, any required reviewer
+  approval is present, conflicts are resolved, CI is green, the performance
+  report is acceptable, PR evidence is complete, and the branch is current with
+  `origin/main`.
 
 ## Pull Request Evidence Rules
 
