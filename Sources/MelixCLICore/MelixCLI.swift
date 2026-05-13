@@ -1452,6 +1452,139 @@ public struct PipelineRunOptions: Equatable, Sendable {
     }
 }
 
+public struct URIInspectOptions: Equatable, Sendable {
+    public let uri: String
+    public let json: Bool
+
+    public init(uri: String, json: Bool = false) {
+        self.uri = uri
+        self.json = json
+    }
+}
+
+public struct URIImportOptions: Equatable, Sendable {
+    public let uri: String
+    public let modelID: String
+    public let revision: String
+    public let dryRun: Bool
+    public let json: Bool
+
+    public init(
+        uri: String,
+        modelID: String = "",
+        revision: String = "",
+        dryRun: Bool = false,
+        json: Bool = false
+    ) {
+        self.uri = uri
+        self.modelID = modelID
+        self.revision = revision
+        self.dryRun = dryRun
+        self.json = json
+    }
+}
+
+public struct RecipeListOptions: Equatable, Sendable {
+    public let task: String
+    public let json: Bool
+
+    public init(task: String = "", json: Bool = false) {
+        self.task = task
+        self.json = json
+    }
+}
+
+public struct RecipeShowOptions: Equatable, Sendable {
+    public let recipeID: String
+    public let version: String
+    public let json: Bool
+
+    public init(recipeID: String, version: String = "", json: Bool = false) {
+        self.recipeID = recipeID
+        self.version = version
+        self.json = json
+    }
+}
+
+public struct RecipeValidateOptions: Equatable, Sendable {
+    public let target: String
+    public let json: Bool
+
+    public init(target: String, json: Bool = false) {
+        self.target = target
+        self.json = json
+    }
+}
+
+public struct RecipePlanOptions: Equatable, Sendable {
+    public let recipeID: String
+    public let version: String
+    public let values: [String: String]
+    public let outputPath: String
+    public let json: Bool
+
+    public init(
+        recipeID: String,
+        version: String = "",
+        values: [String: String] = [:],
+        outputPath: String = "",
+        json: Bool = false
+    ) {
+        self.recipeID = recipeID
+        self.version = version
+        self.values = values
+        self.outputPath = outputPath
+        self.json = json
+    }
+}
+
+public struct RecipeApplyOptions: Equatable, Sendable {
+    public let recipeID: String
+    public let version: String
+    public let values: [String: String]
+    public let dryRun: Bool
+    public let resume: Bool
+    public let fromStepID: String
+    public let json: Bool
+
+    public init(
+        recipeID: String,
+        version: String = "",
+        values: [String: String] = [:],
+        dryRun: Bool = false,
+        resume: Bool = false,
+        fromStepID: String = "",
+        json: Bool = false
+    ) {
+        self.recipeID = recipeID
+        self.version = version
+        self.values = values
+        self.dryRun = dryRun
+        self.resume = resume
+        self.fromStepID = fromStepID
+        self.json = json
+    }
+}
+
+public struct RecipeInitOptions: Equatable, Sendable {
+    public let sourceURI: String
+    public let task: String
+    public let outputPath: String
+    public let json: Bool
+
+    public init(
+        sourceURI: String,
+        task: String,
+        outputPath: String = "",
+        json: Bool = false
+    ) {
+        self.sourceURI = sourceURI
+        self.task = task
+        self.outputPath = outputPath
+        self.json = json
+    }
+}
+
 public enum MelixCLIOutputFormat: String, Equatable, Sendable {
     case legacy
     case jsonV1 = "json-v1"
@@ -1507,6 +1640,14 @@ public enum MelixCLICommand: Equatable, Sendable {
     case datasetList(DatasetListOptions)
     case datasetHubDownload(DatasetHubDownloadOptions)
     case datasetRemove(DatasetRemoveOptions)
+    case uriInspect(URIInspectOptions)
+    case uriImport(URIImportOptions)
+    case recipesList(RecipeListOptions)
+    case recipesShow(RecipeShowOptions)
+    case recipesValidate(RecipeValidateOptions)
+    case recipesPlan(RecipePlanOptions)
+    case recipesApply(RecipeApplyOptions)
+    case recipesInit(RecipeInitOptions)
     case modelRootsList(ModelRootsListOptions)
     case modelRootsAdd(ModelRootsMutateOptions)
     case modelRootsRemove(ModelRootsMutateOptions)
@@ -1669,6 +1810,10 @@ public enum MelixCLIParser {
             return try parseModel(tail)
         case "dataset":
             return try parseDataset(tail)
+        case "uri":
+            return try parseURI(tail)
+        case "recipes":
+            return try parseRecipes(tail)
         case "server":
             return try parseServer(tail)
         case "remote-server":
@@ -1733,6 +1878,14 @@ public enum MelixCLIParser {
       melix dataset list [--json]
       melix dataset hub download --repo-id HF_DATASET [--revision REV] [--hf-token TOKEN] [--json]
       melix dataset remove --repo-id HF_DATASET [--revision REV | --snapshot-id SHA] [--json]
+      melix uri inspect URI [--json]
+      melix uri import URI [--model-id MODEL_ID] [--revision REV] [--dry-run] [--json]
+      melix recipes list [--task TASK] [--json]
+      melix recipes show RECIPE_ID [--version VERSION] [--json]
+      melix recipes validate PATH_OR_ID [--json]
+      melix recipes plan RECIPE_ID [--version VERSION] [--set KEY=VALUE ...] [--output PATH] [--json]
+      melix recipes apply RECIPE_ID [--version VERSION] [--set KEY=VALUE ...] [--dry-run] [--resume] [--from-step STEP_ID] [--json]
+      melix recipes init --from URI --task TASK [--output PATH] [--json]
       melix model roots list [--json]
       melix model roots add --path PATH [--json]
       melix model roots remove --path PATH [--json]
@@ -2382,6 +2535,160 @@ public enum MelixCLIParser {
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseURI(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        var optionArguments = Array(arguments.dropFirst())
+        switch action {
+        case "inspect":
+            let uri = try extractPositionalValue(
+                from: &optionArguments,
+                label: "URI",
+                command: "melix uri inspect"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .uriInspect(.init(uri: uri, json: values.flags.contains("--json")))
+        case "import":
+            let uri = try extractPositionalValue(
+                from: &optionArguments,
+                label: "URI",
+                command: "melix uri import"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .uriImport(
+                .init(
+                    uri: uri,
+                    modelID: values.single["--model-id"] ?? "",
+                    revision: values.single["--revision"] ?? "",
+                    dryRun: values.flags.contains("--dry-run"),
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseRecipes(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        var optionArguments = Array(arguments.dropFirst())
+        switch action {
+        case "list":
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .recipesList(
+                .init(
+                    task: values.single["--task"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "show":
+            let recipeID = try extractPositionalValue(
+                from: &optionArguments,
+                label: "RECIPE_ID",
+                command: "melix recipes show"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .recipesShow(
+                .init(
+                    recipeID: recipeID,
+                    version: values.single["--version"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "validate":
+            let target = try extractPositionalValue(
+                from: &optionArguments,
+                label: "PATH_OR_ID",
+                command: "melix recipes validate"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .recipesValidate(.init(target: target, json: values.flags.contains("--json")))
+        case "plan":
+            let recipeID = try extractPositionalValue(
+                from: &optionArguments,
+                label: "RECIPE_ID",
+                command: "melix recipes plan"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse(multiValueOptions: ["--set"])
+            return .recipesPlan(
+                .init(
+                    recipeID: recipeID,
+                    version: values.single["--version"] ?? "",
+                    values: try keyValueMap(from: values.multi["--set"] ?? [], option: "--set"),
+                    outputPath: values.single["--output"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "apply":
+            let recipeID = try extractPositionalValue(
+                from: &optionArguments,
+                label: "RECIPE_ID",
+                command: "melix recipes apply"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse(multiValueOptions: ["--set"])
+            return .recipesApply(
+                .init(
+                    recipeID: recipeID,
+                    version: values.single["--version"] ?? "",
+                    values: try keyValueMap(from: values.multi["--set"] ?? [], option: "--set"),
+                    dryRun: values.flags.contains("--dry-run"),
+                    resume: values.flags.contains("--resume"),
+                    fromStepID: values.single["--from-step"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "init":
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            guard let sourceURI = values.single["--from"], sourceURI.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--from is required for melix recipes init.")
+            }
+            guard let task = values.single["--task"], task.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--task is required for melix recipes init.")
+            }
+            return .recipesInit(
+                .init(
+                    sourceURI: sourceURI,
+                    task: task,
+                    outputPath: values.single["--output"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func extractPositionalValue(
+        from arguments: inout [String],
+        label: String,
+        command: String
+    ) throws -> String {
+        guard let first = arguments.first, first.hasPrefix("--") == false else {
+            throw MelixCLIError.missingRequired("\(label) is required for \(command).")
+        }
+        arguments.removeFirst()
+        let value = first.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.isEmpty == false else {
+            throw MelixCLIError.missingRequired("\(label) is required for \(command).")
+        }
+        return value
+    }
+
+    private static func keyValueMap(from rawValues: [String], option: String) throws -> [String: String] {
+        var values: [String: String] = [:]
+        for rawValue in rawValues {
+            let parts = rawValue.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, parts[0].isEmpty == false else {
+                throw MelixCLIError.usage("\(option) must use KEY=VALUE.")
+            }
+            values[String(parts[0])] = String(parts[1])
+        }
+        return values
     }
 
     private static func parseServer(_ arguments: [String]) throws -> MelixCLICommand {
@@ -4397,6 +4704,32 @@ private struct ArgumentCursor {
 
 public typealias MelixCLICommandExecutor = @Sendable ([String]) async throws -> String
 
+public struct MelixCLIProcessResult: Equatable, Sendable {
+    public let stdout: String
+    public let stderr: String
+    public let exitCode: Int32
+
+    public init(stdout: String, stderr: String, exitCode: Int32) {
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exitCode = exitCode
+    }
+}
+
+public enum MelixCLIProcessFailureMessage {
+    public static func make(stdout: String, stderr: String, exitCode: Int32) -> String {
+        let stderrMessage = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stderrMessage.isEmpty {
+            return stderrMessage
+        }
+        let stdoutMessage = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stdoutMessage.isEmpty {
+            return stdoutMessage
+        }
+        return "Subprocess exited with status \(exitCode)."
+    }
+}
+
 public struct MelixCLIProcessExecutor: Sendable {
     public let baseCommand: [String]
     public let environment: [String: String]
@@ -4413,10 +4746,23 @@ public struct MelixCLIProcessExecutor: Sendable {
     }
 
     public func run(arguments: [String]) async throws -> String {
+        let result = try await runDetailed(arguments: arguments)
+        guard result.exitCode == 0 else {
+            let message = MelixCLIProcessFailureMessage.make(
+                stdout: result.stdout,
+                stderr: result.stderr,
+                exitCode: result.exitCode
+            )
+            throw MelixCLIError.runtime(message)
+        }
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public func runDetailed(arguments: [String]) async throws -> MelixCLIProcessResult {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    continuation.resume(returning: try runSync(arguments: arguments))
+                    continuation.resume(returning: try runDetailedSync(arguments: arguments))
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -4424,7 +4770,7 @@ public struct MelixCLIProcessExecutor: Sendable {
         }
     }
 
-    private func runSync(arguments: [String]) throws -> String {
+    private func runDetailedSync(arguments: [String]) throws -> MelixCLIProcessResult {
         guard let executable = baseCommand.first else {
             throw MelixCLIError.runtime("The melix subprocess command is not configured.")
         }
@@ -4446,11 +4792,7 @@ public struct MelixCLIProcessExecutor: Sendable {
         let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
         let stdoutText = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
-        guard process.terminationStatus == 0 else {
-            let message = stderrText.isEmpty ? stdoutText : stderrText
-            throw MelixCLIError.runtime(message.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        return stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return MelixCLIProcessResult(stdout: stdoutText, stderr: stderrText, exitCode: process.terminationStatus)
     }
 }
 
@@ -5076,6 +5418,22 @@ public actor MelixCLIRunner {
         case .configMetadata:
             let payload = MelixRuntimeDiscoveryBuilder(environment: environment).configMetadataPayload()
             return try prettyJSON(payload)
+        case .uriInspect(let options):
+            return try runURIInspect(options)
+        case .uriImport(let options):
+            return try await runURIImport(options)
+        case .recipesList(let options):
+            return try runRecipesList(options)
+        case .recipesShow(let options):
+            return try runRecipesShow(options)
+        case .recipesValidate(let options):
+            return try runRecipesValidate(options)
+        case .recipesPlan(let options):
+            return try runRecipesPlan(options)
+        case .recipesApply(let options):
+            return try await runRecipesApply(options)
+        case .recipesInit(let options):
+            return try runRecipesInit(options)
         case .pipelineRun(let options):
             return try await runPipeline(options)
         case .batchRun(let options):
@@ -9316,9 +9674,10 @@ public actor MelixCLIRunner {
                 workingDirectory: workingDirectory
             )
             do {
-                return BatchRunSubprocessResult(stdout: try await executor.run(arguments: arguments), stderr: "")
+                let result = try await executor.runDetailed(arguments: arguments)
+                return BatchRunSubprocessResult(stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode)
             } catch {
-                return BatchRunSubprocessResult(stdout: "", stderr: error.localizedDescription)
+                return BatchRunSubprocessResult(stdout: "", stderr: error.localizedDescription, exitCode: -1)
             }
         }
     }

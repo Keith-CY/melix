@@ -909,7 +909,7 @@ enum BatchRunPlanner {
 }
 
 enum BatchRunArtifacts {
-    static func writeFoundationArtifacts(plan: BatchRunPlan) throws {
+    static func writeFoundationArtifacts(plan: BatchRunPlan, writePlannedManifest: Bool = true) throws {
         let tempRoot = URL(fileURLWithPath: plan.config.tempRoot)
         let outputRoot = URL(fileURLWithPath: plan.config.outputRoot)
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
@@ -918,19 +918,21 @@ enum BatchRunArtifacts {
             to: URL(fileURLWithPath: plan.effectiveConfigPath),
             options: .atomic
         )
-        try manifestText(plan: plan).write(
-            to: URL(fileURLWithPath: plan.manifestPath),
-            atomically: true,
-            encoding: .utf8
-        )
         try FileManager.default.copyItemReplacingExisting(
             at: URL(fileURLWithPath: plan.effectiveConfigPath),
             to: outputRoot.appendingPathComponent("effective-config.json")
         )
-        try FileManager.default.copyItemReplacingExisting(
-            at: URL(fileURLWithPath: plan.manifestPath),
-            to: outputRoot.appendingPathComponent("manifest.jsonl")
-        )
+        if writePlannedManifest {
+            try manifestText(plan: plan).write(
+                to: URL(fileURLWithPath: plan.manifestPath),
+                atomically: true,
+                encoding: .utf8
+            )
+            try FileManager.default.copyItemReplacingExisting(
+                at: URL(fileURLWithPath: plan.manifestPath),
+                to: outputRoot.appendingPathComponent("manifest.jsonl")
+            )
+        }
     }
 
     static func writePreflightReport(_ report: BatchRunPreflightReport, plan: BatchRunPlan) throws {
@@ -998,7 +1000,7 @@ enum BatchRunArtifacts {
     static func manifestText(plan: BatchRunPlan) throws -> String {
         try plan.selectedModels.map { model in
             let modelDir = URL(fileURLWithPath: plan.config.outputRoot)
-                .appendingPathComponent(modelSlug(index: model.index, repoID: model.repoID))
+                .appendingPathComponent(BatchRunSlug.modelSlug(model: model))
                 .path
             let payload: [String: Any] = [
                 "schema_version": "melix.batch.manifest_entry.v1",
@@ -1072,7 +1074,7 @@ enum BatchRunArtifacts {
             "index": model.index,
             "repo_id": model.repoID,
             "source_line": model.sourceLine,
-            "slug": modelSlug(index: model.index, repoID: model.repoID),
+            "slug": BatchRunSlug.modelSlug(model: model),
         ]
     }
 
@@ -1097,25 +1099,6 @@ enum BatchRunArtifacts {
             "force_clean_stack_after_runtime_failure": true,
             "cleanup_failures_preserve_artifacts": true,
         ]
-    }
-
-    private static func modelSlug(index: String, repoID: String) -> String {
-        let raw = "\(index)-\(repoID)"
-        var slug = ""
-        var lastWasDash = false
-        for scalar in raw.lowercased().unicodeScalars {
-            let allowed = CharacterSet.alphanumerics.contains(scalar)
-                || scalar == "."
-                || scalar == "_"
-            if allowed {
-                slug.unicodeScalars.append(scalar)
-                lastWasDash = false
-            } else if lastWasDash == false {
-                slug.append("-")
-                lastWasDash = true
-            }
-        }
-        return slug.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 
     private static func jsonData(_ payload: [String: Any]) throws -> Data {
@@ -1344,6 +1327,24 @@ struct BatchRunModelRecord: Equatable {
     }
 }
 
+struct BatchRunRecordIdentity: Hashable {
+    let modelIndex: String
+    let repoID: String
+    let sourceLine: Int
+
+    init(model: BatchRunModelEntry) {
+        modelIndex = model.index
+        repoID = model.repoID
+        sourceLine = model.sourceLine
+    }
+
+    init(record: BatchRunModelRecord) {
+        modelIndex = record.modelIndex
+        repoID = record.repoID
+        sourceLine = record.sourceLine
+    }
+}
+
 struct BatchRunSummary {
     let schemaVersion: String
     let runID: String
@@ -1513,6 +1514,58 @@ enum BatchRunManifestStore {
         }
     }
 
+    static func alignedRecords(plan: BatchRunPlan, existingRecords: [BatchRunModelRecord]?) -> [BatchRunModelRecord] {
+        guard let existingRecords, !existingRecords.isEmpty else {
+            return initialRecords(plan: plan)
+        }
+        var recordsByIdentity: [BatchRunRecordIdentity: [BatchRunModelRecord]] = [:]
+        for record in existingRecords {
+            recordsByIdentity[BatchRunRecordIdentity(record: record), default: []].append(record)
+        }
+        var aligned = plan.selectedModels.map { model -> (model: BatchRunModelEntry, record: BatchRunModelRecord) in
+            let identity = BatchRunRecordIdentity(model: model)
+            if var matches = recordsByIdentity[identity], !matches.isEmpty {
+                var record = matches.removeFirst()
+                recordsByIdentity[identity] = matches
+                if record.modelDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    record.modelDir = modelDir(plan: plan, model: model).path
+                }
+                if record.tempDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    record.tempDir = modelTempDir(plan: plan, model: model).path
+                }
+                return (model, record)
+            }
+            return (model, BatchRunModelRecord(
+                runID: plan.config.runID,
+                model: model,
+                modelDir: modelDir(plan: plan, model: model).path,
+                tempDir: modelTempDir(plan: plan, model: model).path
+            ))
+        }
+        let duplicateModelDirs = duplicateValues(aligned.map { $0.record.modelDir })
+        let duplicateTempDirs = duplicateValues(aligned.map { $0.record.tempDir })
+        for index in aligned.indices {
+            if duplicateModelDirs.contains(aligned[index].record.modelDir) {
+                aligned[index].record.modelDir = modelDir(plan: plan, model: aligned[index].model).path
+            }
+            if duplicateTempDirs.contains(aligned[index].record.tempDir) {
+                aligned[index].record.tempDir = modelTempDir(plan: plan, model: aligned[index].model).path
+            }
+        }
+        return aligned.map { $0.record }
+    }
+
+    private static func duplicateValues(_ values: [String]) -> Set<String> {
+        var seen: Set<String> = []
+        var duplicates: Set<String> = []
+        for value in values where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if !seen.insert(value).inserted {
+                duplicates.insert(value)
+            }
+        }
+        return duplicates
+    }
+
     static func loadRecords(manifestPath: String) throws -> [BatchRunModelRecord] {
         guard FileManager.default.fileExists(atPath: manifestPath) else {
             throw MelixCLIError.runtime("Batch manifest was not found at \(manifestPath).")
@@ -1595,13 +1648,13 @@ enum BatchRunManifestStore {
 
     static func modelDir(plan: BatchRunPlan, model: BatchRunModelEntry) -> URL {
         URL(fileURLWithPath: plan.config.outputRoot)
-            .appendingPathComponent(BatchRunSlug.modelSlug(index: model.index, repoID: model.repoID), isDirectory: true)
+            .appendingPathComponent(BatchRunSlug.modelSlug(model: model), isDirectory: true)
     }
 
     static func modelTempDir(plan: BatchRunPlan, model: BatchRunModelEntry) -> URL {
         URL(fileURLWithPath: plan.config.tempRoot)
             .appendingPathComponent("models", isDirectory: true)
-            .appendingPathComponent(BatchRunSlug.modelSlug(index: model.index, repoID: model.repoID), isDirectory: true)
+            .appendingPathComponent(BatchRunSlug.modelSlug(model: model), isDirectory: true)
     }
 }
 
@@ -1854,6 +1907,7 @@ enum BatchRunPayloadParser {
 struct BatchRunSubprocessResult {
     let stdout: String
     let stderr: String
+    let exitCode: Int32
 }
 
 typealias BatchRunSubprocessExecutor = @Sendable ([String], [String: String], String) async -> BatchRunSubprocessResult
@@ -1874,12 +1928,9 @@ final class BatchRunExecutor {
     }
 
     func execute(existingRecords: [BatchRunModelRecord]? = nil, resumeMode: BatchRunResumeMode = .none) async throws -> (summary: BatchRunSummary, progressLines: [String]) {
-        try BatchRunArtifacts.writeFoundationArtifacts(plan: plan)
-        var records = existingRecords ?? BatchRunManifestStore.initialRecords(plan: plan)
-        if records.count != plan.selectedModels.count {
-            records = BatchRunManifestStore.initialRecords(plan: plan)
-        }
-        try BatchRunManifestStore.writeRecords(records, plan: plan)
+        try BatchRunArtifacts.writeFoundationArtifacts(plan: plan, writePlannedManifest: false)
+        var records = BatchRunManifestStore.alignedRecords(plan: plan, existingRecords: existingRecords)
+        try persist(records)
         var progress: [String] = [
             "Melix batch run",
             "run_id=\(plan.config.runID)",
@@ -1888,61 +1939,60 @@ final class BatchRunExecutor {
         let runStart = Date()
 
         for (offset, model) in plan.selectedModels.enumerated() {
-            guard let recordIndex = records.firstIndex(where: { $0.modelIndex == model.index && $0.repoID == model.repoID }) else {
-                continue
-            }
-            if resumeMode.shouldSkipModel(records[recordIndex]) {
+            var record = records[offset]
+            if resumeMode.shouldSkipModel(record) {
                 progress.append("[\(offset + 1)/\(plan.selectedModels.count)] SKIP \(model.index) \(model.repoID) already succeeded")
                 continue
             }
             progress.append("[\(offset + 1)/\(plan.selectedModels.count)] START \(model.index) \(model.repoID)")
-            records[recordIndex].status = "running"
-            records[recordIndex].startedAt = isoTimestamp()
-            try BatchRunManifestStore.writeRecords(records, plan: plan)
+            record.status = "running"
+            record.startedAt = isoTimestamp()
+            try persistRecord(record, in: &records)
             let modelStart = Date()
             do {
-                try prepareDirectories(record: records[recordIndex])
+                try prepareDirectories(record: record)
                 if !resumeMode.evalOnly {
-                    try await runSyntheticStep(.preflight, record: &records[recordIndex], message: "Per-model preflight accepted \(model.repoID).")
-                    try await runSyntheticStep(.runtimePrepare, record: &records[recordIndex], message: "Runtime uses \(plan.config.serviceInstanceName) on port \(plan.config.httpPort).")
-                    try await runSyntheticStep(.modelUnload, record: &records[recordIndex], message: "Best-effort previous model unload recorded.")
-                    try await runHubCheck(record: &records[recordIndex])
+                    try await runSyntheticStep(.preflight, record: &record, records: &records, message: "Per-model preflight accepted \(model.repoID).")
+                    try await runSyntheticStep(.runtimePrepare, record: &record, records: &records, message: "Runtime uses \(plan.config.serviceInstanceName) on port \(plan.config.httpPort).")
+                    try await runSyntheticStep(.modelUnload, record: &record, records: &records, message: "Best-effort previous model unload recorded.")
+                    try await runHubCheck(record: &record, records: &records)
                     progress.append("[\(offset + 1)/\(plan.selectedModels.count)] benchmark start \(model.index)")
-                    try await runBenchmark(record: &records[recordIndex])
-                    progress.append("[\(offset + 1)/\(plan.selectedModels.count)] benchmark succeeded \(model.index) job=\(records[recordIndex].benchmarkJobID)")
+                    try await runBenchmark(record: &record, records: &records)
+                    progress.append("[\(offset + 1)/\(plan.selectedModels.count)] benchmark succeeded \(model.index) job=\(record.benchmarkJobID)")
                 } else {
-                    markSkippedBeforeEval(record: &records[recordIndex])
+                    markSkippedBeforeEval(record: &record)
+                    try persistRecord(record, in: &records)
                     progress.append("[\(offset + 1)/\(plan.selectedModels.count)] resume eval-only \(model.index)")
                 }
                 progress.append("[\(offset + 1)/\(plan.selectedModels.count)] semantic judge heartbeat \(plan.config.judgeRemoteServerID)/\(plan.config.judgeModelID)")
-                try await runEvaluation(record: &records[recordIndex])
-                progress.append("[\(offset + 1)/\(plan.selectedModels.count)] evaluation succeeded \(model.index) job=\(records[recordIndex].evaluationJobID)")
-                try await runExports(record: &records[recordIndex])
-                try await copyRawArtifacts(record: &records[recordIndex])
-                records[recordIndex].status = records[recordIndex].benchmarkSucceeded ? "succeeded" : "partial_success"
-                if records[recordIndex].status == "succeeded" {
-                    records[recordIndex].failureCategory = ""
-                    records[recordIndex].recoverability = ""
-                    records[recordIndex].failureMessage = ""
-                } else if records[recordIndex].failureCategory.isEmpty {
-                    records[recordIndex].failureCategory = "unknown_failure"
-                    records[recordIndex].recoverability = BatchRunFailureRecoverability.unknown.rawValue
-                    records[recordIndex].failureMessage = "Evaluation completed, but benchmark did not succeed for this model."
+                try await runEvaluation(record: &record, records: &records)
+                progress.append("[\(offset + 1)/\(plan.selectedModels.count)] evaluation succeeded \(model.index) job=\(record.evaluationJobID)")
+                try await runExports(record: &record, records: &records)
+                try await copyRawArtifacts(record: &record, records: &records)
+                record.status = record.benchmarkSucceeded ? "succeeded" : "partial_success"
+                if record.status == "succeeded" {
+                    record.failureCategory = ""
+                    record.recoverability = ""
+                    record.failureMessage = ""
+                } else if record.failureCategory.isEmpty {
+                    record.failureCategory = "unknown_failure"
+                    record.recoverability = BatchRunFailureRecoverability.unknown.rawValue
+                    record.failureMessage = "Evaluation completed, but benchmark did not succeed for this model."
                 }
             } catch {
-                applyFailure(error, record: &records[recordIndex])
-                progress.append("[\(offset + 1)/\(plan.selectedModels.count)] FAILED \(model.index) \(records[recordIndex].failureCategory): \(records[recordIndex].failureMessage)")
+                applyFailure(error, record: &record)
+                progress.append("[\(offset + 1)/\(plan.selectedModels.count)] FAILED \(model.index) \(record.failureCategory): \(record.failureMessage)")
                 if !plan.config.continueOnFailure {
-                    records[recordIndex].finishedAt = isoTimestamp()
-                    records[recordIndex].durationSeconds = Date().timeIntervalSince(modelStart)
-                    try BatchRunManifestStore.writeRecords(records, plan: plan)
+                    record.finishedAt = isoTimestamp()
+                    record.durationSeconds = Date().timeIntervalSince(modelStart)
+                    try persistRecord(record, in: &records)
                     throw error
                 }
             }
-            records[recordIndex].finishedAt = isoTimestamp()
-            records[recordIndex].durationSeconds = Date().timeIntervalSince(modelStart)
-            try BatchRunManifestStore.writeRecords(records, plan: plan)
-            progress.append("[\(offset + 1)/\(plan.selectedModels.count)] DONE \(model.index) status=\(records[recordIndex].status) elapsed=\(formatDuration(records[recordIndex].durationSeconds))")
+            record.finishedAt = isoTimestamp()
+            record.durationSeconds = Date().timeIntervalSince(modelStart)
+            try persistRecord(record, in: &records)
+            progress.append("[\(offset + 1)/\(plan.selectedModels.count)] DONE \(model.index) status=\(record.status) elapsed=\(formatDuration(record.durationSeconds))")
         }
 
         let summary = BatchRunManifestStore.summarize(
@@ -1957,6 +2007,17 @@ final class BatchRunExecutor {
         return (summary, progress)
     }
 
+    private func persist(_ records: [BatchRunModelRecord]) throws {
+        try BatchRunManifestStore.writeRecords(records, plan: plan)
+    }
+
+    private func persistRecord(_ record: BatchRunModelRecord, in records: inout [BatchRunModelRecord]) throws {
+        if let index = records.firstIndex(where: { BatchRunRecordIdentity(record: $0) == BatchRunRecordIdentity(record: record) }) {
+            records[index] = record
+        }
+        try persist(records)
+    }
+
     private func prepareDirectories(record: BatchRunModelRecord) throws {
         try fileManager.createDirectory(atPath: record.modelDir, withIntermediateDirectories: true)
         try fileManager.createDirectory(atPath: record.tempDir, withIntermediateDirectories: true)
@@ -1965,7 +2026,7 @@ final class BatchRunExecutor {
         try fileManager.createDirectory(atPath: URL(fileURLWithPath: record.modelDir).appendingPathComponent("raw", isDirectory: true).path, withIntermediateDirectories: true)
     }
 
-    private func runSyntheticStep(_ step: BatchRunStepName, record: inout BatchRunModelRecord, message: String) async throws {
+    private func runSyntheticStep(_ step: BatchRunStepName, record: inout BatchRunModelRecord, records: inout [BatchRunModelRecord], message: String) async throws {
         let startedAt = isoTimestamp()
         let started = Date()
         record.steps[step.rawValue] = BatchRunStepRecord(
@@ -1975,10 +2036,10 @@ final class BatchRunExecutor {
             durationSeconds: Date().timeIntervalSince(started),
             message: message
         )
-        try BatchRunManifestStore.writeRecords(currentRecords(updating: record), plan: plan)
+        try persistRecord(record, in: &records)
     }
 
-    private func runHubCheck(record: inout BatchRunModelRecord) async throws {
+    private func runHubCheck(record: inout BatchRunModelRecord, records: inout [BatchRunModelRecord]) async throws {
         let step = BatchRunStepName.hubCheck
         let startedAt = isoTimestamp()
         let started = Date()
@@ -1993,6 +2054,7 @@ final class BatchRunExecutor {
                 recoverability: classification.recoverability.rawValue,
                 message: classification.reason
             )
+            try persistRecord(record, in: &records)
             throw MelixCLIError.runtime(classification.reason)
         }
         record.steps[step.rawValue] = BatchRunStepRecord(
@@ -2002,10 +2064,10 @@ final class BatchRunExecutor {
             durationSeconds: Date().timeIntervalSince(started),
             message: "Repo id \(record.repoID) is owner/name-shaped."
         )
-        try BatchRunManifestStore.writeRecords(currentRecords(updating: record), plan: plan)
+        try persistRecord(record, in: &records)
     }
 
-    private func runBenchmark(record: inout BatchRunModelRecord) async throws {
+    private func runBenchmark(record: inout BatchRunModelRecord, records: inout [BatchRunModelRecord]) async throws {
         let exportsDir = URL(fileURLWithPath: record.modelDir).appendingPathComponent("exports", isDirectory: true)
         let arguments = [
             "bench", "run",
@@ -2019,7 +2081,7 @@ final class BatchRunExecutor {
             "--batch-factor", "\(plan.config.benchBatchFactor)",
             "--json",
         ]
-        let result = try await runCommand(step: .benchmark, arguments: arguments, record: &record)
+        let result = try await runCommand(step: .benchmark, arguments: arguments, record: &record, records: &records)
         let payload = BatchRunPayloadParser.object(from: result.stdout)
         record.benchmarkJobID = BatchRunPayloadParser.jobID(from: payload)
         record.metricFields.merge(BatchRunPayloadParser.metricValues(from: payload), uniquingKeysWith: { _, new in new })
@@ -2032,13 +2094,14 @@ final class BatchRunExecutor {
             step: .exports,
             arguments: ["bench", "export-csv", "--job-id", record.benchmarkJobID, "--output", csvPath, "--json"],
             record: &record,
+            records: &records,
             appendStep: true
         )
         record.benchmarkCSVPath = csvPath
-        try BatchRunManifestStore.writeRecords(currentRecords(updating: record), plan: plan)
+        try persistRecord(record, in: &records)
     }
 
-    private func runEvaluation(record: inout BatchRunModelRecord) async throws {
+    private func runEvaluation(record: inout BatchRunModelRecord, records: inout [BatchRunModelRecord]) async throws {
         let arguments = [
             "eval", "run",
             "--repo-id", record.repoID,
@@ -2051,7 +2114,7 @@ final class BatchRunExecutor {
             "--batch-factor", "\(plan.config.evalBatchFactor)",
             "--json",
         ]
-        let result = try await runCommand(step: .evaluation, arguments: arguments, record: &record)
+        let result = try await runCommand(step: .evaluation, arguments: arguments, record: &record, records: &records)
         let payload = BatchRunPayloadParser.object(from: result.stdout)
         record.evaluationJobID = BatchRunPayloadParser.jobID(from: payload)
         record.metricFields.merge(BatchRunPayloadParser.metricValues(from: payload), uniquingKeysWith: { _, new in new })
@@ -2059,10 +2122,10 @@ final class BatchRunExecutor {
         guard !record.evaluationJobID.isEmpty else {
             throw MelixCLIError.runtime("eval run did not return job_id; cannot export evaluation artifacts.")
         }
-        try BatchRunManifestStore.writeRecords(currentRecords(updating: record), plan: plan)
+        try persistRecord(record, in: &records)
     }
 
-    private func runExports(record: inout BatchRunModelRecord) async throws {
+    private func runExports(record: inout BatchRunModelRecord, records: inout [BatchRunModelRecord]) async throws {
         guard !record.evaluationJobID.isEmpty else {
             return
         }
@@ -2074,27 +2137,30 @@ final class BatchRunExecutor {
             step: .exports,
             arguments: ["eval", "export-summary-csv", "--job-id", record.evaluationJobID, "--output", summaryCSV, "--json"],
             record: &record,
+            records: &records,
             appendStep: true
         )
         _ = try await runCommand(
             step: .exports,
             arguments: ["eval", "export-samples-csv", "--job-id", record.evaluationJobID, "--output", samplesCSV, "--json"],
             record: &record,
+            records: &records,
             appendStep: true
         )
         _ = try await runCommand(
             step: .exports,
             arguments: ["eval", "export-samples-jsonl", "--job-id", record.evaluationJobID, "--output", samplesJSONL, "--json"],
             record: &record,
+            records: &records,
             appendStep: true
         )
         record.evaluationSummaryCSVPath = summaryCSV
         record.evaluationSamplesCSVPath = samplesCSV
         record.evaluationSamplesJSONLPath = samplesJSONL
-        try BatchRunManifestStore.writeRecords(currentRecords(updating: record), plan: plan)
+        try persistRecord(record, in: &records)
     }
 
-    private func copyRawArtifacts(record: inout BatchRunModelRecord) async throws {
+    private func copyRawArtifacts(record: inout BatchRunModelRecord, records: inout [BatchRunModelRecord]) async throws {
         let step = BatchRunStepName.artifactCopy
         let started = Date()
         let rawDir = URL(fileURLWithPath: record.modelDir).appendingPathComponent("raw", isDirectory: true)
@@ -2124,6 +2190,7 @@ final class BatchRunExecutor {
                     recoverability: classification.recoverability.rawValue,
                     message: error.localizedDescription
                 )
+                try persistRecord(record, in: &records)
                 throw error
             }
         }
@@ -2136,13 +2203,14 @@ final class BatchRunExecutor {
             durationSeconds: Date().timeIntervalSince(started),
             message: "Copied \(copied.count) raw artifact path(s)."
         )
-        try BatchRunManifestStore.writeRecords(currentRecords(updating: record), plan: plan)
+        try persistRecord(record, in: &records)
     }
 
     private func runCommand(
         step: BatchRunStepName,
         arguments: [String],
         record: inout BatchRunModelRecord,
+        records: inout [BatchRunModelRecord],
         appendStep: Bool = false
     ) async throws -> BatchRunSubprocessResult {
         let started = Date()
@@ -2161,7 +2229,7 @@ final class BatchRunExecutor {
         runningStep.stderrPath = stderrPath
         runningStep.artifactPath = receiptPath
         record.steps[step.rawValue] = runningStep
-        try BatchRunManifestStore.writeRecords(currentRecords(updating: record), plan: plan)
+        try persistRecord(record, in: &records)
 
         let result = await commandExecutor(arguments, commandEnvironment(record: record), record.tempDir)
         try result.stdout.write(toFile: stdoutPath, atomically: true, encoding: .utf8)
@@ -2171,6 +2239,7 @@ final class BatchRunExecutor {
             "schema_version": "melix.batch.command_receipt.v1",
             "step": step.rawValue,
             "arguments": arguments,
+            "exit_code": NSNumber(value: result.exitCode),
             "stdout_path": stdoutPath,
             "stderr_path": stderrPath,
             "duration_seconds": duration,
@@ -2179,8 +2248,9 @@ final class BatchRunExecutor {
         ]
         try JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys])
             .write(to: URL(fileURLWithPath: receiptPath), options: .atomic)
-        if !result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if result.exitCode != 0 {
             let classification = BatchRunFailureClassifier.classify(stdout: result.stdout, stderr: result.stderr)
+            let failureMessage = MelixCLIProcessFailureMessage.make(stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode)
             record.steps[step.rawValue] = BatchRunStepRecord(
                 status: "failed",
                 stdoutPath: stdoutPath,
@@ -2191,15 +2261,18 @@ final class BatchRunExecutor {
                 durationSeconds: duration,
                 failureCategory: classification.category,
                 recoverability: classification.recoverability.rawValue,
-                message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                message: failureMessage
             )
-            try BatchRunManifestStore.writeRecords(currentRecords(updating: record), plan: plan)
-            throw MelixCLIError.runtime(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+            try persistRecord(record, in: &records)
+            throw MelixCLIError.runtime(failureMessage)
         }
         let existingMessage = appendStep ? (record.steps[step.rawValue]?.message ?? "") : ""
-        let message = appendStep && !existingMessage.isEmpty
+        var message = appendStep && !existingMessage.isEmpty
             ? existingMessage + "; completed \(arguments.prefix(2).joined(separator: " "))"
             : "completed \(arguments.prefix(2).joined(separator: " "))"
+        if !result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            message += "; stderr captured"
+        }
         var completed = BatchRunStepRecord(
             status: "succeeded",
             stdoutPath: stdoutPath,
@@ -2217,7 +2290,7 @@ final class BatchRunExecutor {
             completed.jobID = BatchRunPayloadParser.jobID(from: BatchRunPayloadParser.object(from: result.stdout))
         }
         record.steps[step.rawValue] = completed
-        try BatchRunManifestStore.writeRecords(currentRecords(updating: record), plan: plan)
+        try persistRecord(record, in: &records)
         return result
     }
 
@@ -2254,14 +2327,6 @@ final class BatchRunExecutor {
         if BatchRunFailureClassifier.runtimeFailureRequiresCleanStack(classification) {
             record.steps[BatchRunStepName.runtimePrepare.rawValue]?.message = "Clean stack required before the next model: \(classification.reason)"
         }
-    }
-
-    private func currentRecords(updating record: BatchRunModelRecord) -> [BatchRunModelRecord] {
-        var records = (try? BatchRunManifestStore.loadRecords(manifestPath: plan.manifestPath)) ?? BatchRunManifestStore.initialRecords(plan: plan)
-        if let index = records.firstIndex(where: { $0.modelIndex == record.modelIndex && $0.repoID == record.repoID }) {
-            records[index] = record
-        }
-        return records
     }
 
     private func commandCount(record: BatchRunModelRecord, step: BatchRunStepName) -> Int {
@@ -2406,7 +2471,17 @@ enum BatchRunResumePlanner {
             : URL(fileURLWithPath: resolution.tempRoot)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let path = root.appendingPathComponent("resume-models.txt")
-        let text = records.map { "\($0.modelIndex)|\($0.repoID)" }.joined(separator: "\n") + "\n"
+        var lines: [String] = []
+        for record in records {
+            let targetLine = record.sourceLine > 0
+                ? max(record.sourceLine, lines.count + 1)
+                : lines.count + 1
+            while lines.count + 1 < targetLine {
+                lines.append("")
+            }
+            lines.append("\(record.modelIndex)|\(record.repoID)")
+        }
+        let text = lines.joined(separator: "\n") + "\n"
         try text.write(to: path, atomically: true, encoding: .utf8)
         return path.path
     }
@@ -2464,8 +2539,19 @@ enum BatchRunResumePlanner {
 }
 
 enum BatchRunSlug {
+    static func modelSlug(model: BatchRunModelEntry) -> String {
+        modelSlug(index: model.index, repoID: model.repoID, sourceLine: model.sourceLine)
+    }
+
+    static func modelSlug(index: String, repoID: String, sourceLine: Int) -> String {
+        modelSlug(raw: "\(index)-line-\(sourceLine)-\(repoID)")
+    }
+
     static func modelSlug(index: String, repoID: String) -> String {
-        let raw = "\(index)-\(repoID)"
+        modelSlug(raw: "\(index)-\(repoID)")
+    }
+
+    private static func modelSlug(raw: String) -> String {
         var slug = ""
         var lastWasDash = false
         for scalar in raw.lowercased().unicodeScalars {

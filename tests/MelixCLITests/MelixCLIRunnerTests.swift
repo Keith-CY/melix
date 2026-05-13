@@ -1211,6 +1211,95 @@ struct MelixCLIRunnerTests {
         #expect(statusJSON?["status"] as? String == "succeeded")
     }
 
+    @Test("batch run isolates duplicate explicit model rows by source line")
+    func batchRunIsolatesDuplicateExplicitModelRowsBySourceLine() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        let fakeCLI = root.appendingPathComponent("fake-melix")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try """
+        A|mlx-community/Duplicate-4bit
+        A|mlx-community/Duplicate-4bit
+        """.write(to: modelList, atomically: true, encoding: .utf8)
+        try writeFakeBatchCLI(fakeCLI)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        let output = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "batch-duplicates",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test"
+        )))
+
+        #expect(output.contains("[1/2] DONE A status=succeeded"))
+        #expect(output.contains("[2/2] DONE A status=succeeded"))
+        let manifestLines = try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8)
+            .split(separator: "\n")
+        #expect(manifestLines.count == 2)
+        let entries = try manifestLines.map { try #require(parseJSONObject(String($0))) }
+        #expect(entries.map { $0["source_line"] as? Int } == [1, 2])
+        #expect(entries.allSatisfy { $0["status"] as? String == "succeeded" })
+        let modelDirs = entries.compactMap { $0["model_dir"] as? String }
+        #expect(Set(modelDirs).count == 2)
+        #expect(modelDirs.allSatisfy { $0.contains("-line-") })
+        #expect(modelDirs.allSatisfy { FileManager.default.fileExists(atPath: $0) })
+        let commandDirs = modelDirs.map { URL(fileURLWithPath: $0).appendingPathComponent("commands", isDirectory: true) }
+        #expect(commandDirs.allSatisfy { FileManager.default.fileExists(atPath: $0.appendingPathComponent("benchmark-1.json").path) })
+
+        let summary = try #require(try parseJSONFile(outputRoot.appendingPathComponent("run-summary.json").path))
+        #expect(summary["succeeded_models"] as? Int == 2)
+    }
+
+    @Test("batch run treats successful stderr as captured evidence")
+    func batchRunTreatsSuccessfulStderrAsCapturedEvidence() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        let fakeCLI = root.appendingPathComponent("fake-melix")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+        try writeFakeBatchCLI(fakeCLI, warnBench: true)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        _ = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "batch-stderr-warning",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test"
+        )))
+
+        let manifestLine = try #require(try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8).split(separator: "\n").first)
+        let entry = try #require(parseJSONObject(String(manifestLine)))
+        #expect(entry["status"] as? String == "succeeded")
+        let steps = try #require(entry["steps"] as? [String: Any])
+        let benchmark = try #require(steps["benchmark"] as? [String: Any])
+        #expect(benchmark["status"] as? String == "succeeded")
+        #expect((benchmark["message"] as? String)?.contains("stderr captured") == true)
+        let receiptPath = try #require(benchmark["artifact_path"] as? String)
+        let receipt = try #require(try parseJSONFile(receiptPath))
+        #expect(receipt["exit_code"] as? Int == 0)
+        let stderrPath = try #require(benchmark["stderr_path"] as? String)
+        let stderr = try String(contentsOfFile: stderrPath, encoding: .utf8)
+        #expect(stderr.contains("bench warning"))
+    }
+
     @Test("batch run records partial success and failure attribution")
     func batchRunRecordsPartialSuccessAndFailureAttribution() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1258,7 +1347,10 @@ struct MelixCLIRunnerTests {
         let fakeCLI = root.appendingPathComponent("fake-melix")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+        try """
+        # resume keeps this source line stable
+        mlx-community/Qwen3.5-9B-MLX-4bit
+        """.write(to: modelList, atomically: true, encoding: .utf8)
         try writeFakeBatchCLI(fakeCLI, failEval: true)
 
         let failingRunner = MelixCLIRunner(environment: [
@@ -1301,7 +1393,10 @@ struct MelixCLIRunnerTests {
         let manifestLine = try #require(try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8).split(separator: "\n").first)
         let entry = try #require(parseJSONObject(String(manifestLine)))
         #expect(entry["status"] as? String == "succeeded")
+        #expect(entry["source_line"] as? Int == 2)
         #expect(entry["evaluation_job_id"] as? String == "eval-01")
+        let recoveredModelList = try String(contentsOf: tempRoot.appendingPathComponent("resume-models.txt"), encoding: .utf8)
+        #expect(recoveredModelList.split(separator: "\n", omittingEmptySubsequences: false).first?.isEmpty == true)
     }
 
     @Test("json metric patching preserves user artifact strings that look like the old sentinel")
@@ -3969,6 +4064,156 @@ struct MelixCLIRunnerTests {
         )
         let reusedTokenCall = try #require(await client.lastModelOperationCall)
         #expect(reusedTokenCall.ext["melix.hf_token"] == "hf_secret_token")
+    }
+
+    @Test("uri inspect classifies huggingface local and ambiguous sources")
+    func uriInspectClassifiesSources() async throws {
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+        let hfOutput = try await runner.run(.uriInspect(.init(uri: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit", json: true)))
+        let hfPayload = try #require(parseJSONObject(hfOutput))
+        let hfCandidates = try #require(hfPayload["candidates"] as? [[String: Any]])
+        #expect(hfCandidates.first?["kind"] as? String == "hf_model_repo")
+        #expect(hfCandidates.first?["repo_id"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect((hfPayload["metrics"] as? [String: Any])?["uri.candidate_count"] as? Double == 1)
+
+        let ambiguousOutput = try await runner.run(.uriInspect(.init(uri: "org/repo", json: true)))
+        let ambiguousPayload = try #require(parseJSONObject(ambiguousOutput))
+        #expect(ambiguousPayload["candidate_count"] as? Int == 2)
+        #expect(ambiguousPayload["ambiguity_count"] as? Int == 1)
+
+        let datasetURLPayload = try #require(parseJSONObject(try await runner.run(.uriInspect(.init(
+            uri: "https://huggingface.co/datasets/org/repo/tree/refs/pr/2?download=1",
+            json: true
+        )))))
+        let datasetURLCandidate = try #require((datasetURLPayload["candidates"] as? [[String: Any]])?.first)
+        #expect(datasetURLCandidate["kind"] as? String == "hf_dataset_repo")
+        #expect(datasetURLCandidate["repo_id"] as? String == "org/repo")
+        #expect(datasetURLCandidate["revision"] as? String == "refs/pr/2")
+        #expect(datasetURLCandidate["normalized_locator"] as? String == "hf://dataset/org/repo@refs/pr/2")
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-uri-inspect-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "{}".write(to: root.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
+        try Data([0]).write(to: root.appendingPathComponent("model.safetensors"))
+        try "{}".write(to: root.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+
+        let localOutput = try await runner.run(.uriInspect(.init(uri: root.path, json: true)))
+        let localPayload = try #require(parseJSONObject(localOutput))
+        let localCandidates = try #require(localPayload["candidates"] as? [[String: Any]])
+        let localKinds = Set(localCandidates.compactMap { $0["kind"] as? String })
+        #expect(localKinds.contains("local_mlx_model_directory"))
+        #expect(localKinds.contains("local_dataset_package"))
+        #expect(localPayload["ambiguity_count"] as? Int == 1)
+
+        let unresolvedOutput = try await runner.run(.uriImport(.init(uri: root.appendingPathComponent("missing").path, dryRun: true, json: true)))
+        let unresolvedPayload = try #require(parseJSONObject(unresolvedOutput))
+        #expect(unresolvedPayload["status"] as? String == "unresolved")
+    }
+
+    @Test("workflow recipes list show validate and plan")
+    func workflowRecipesListShowValidateAndPlan() async throws {
+        let outputRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-recipe-plan-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputRoot) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": outputRoot.path]
+        )
+        let listPayload = try #require(parseJSONObject(try await runner.run(.recipesList(.init(task: "model_import", json: true)))))
+        let recipes = try #require(listPayload["recipes"] as? [[String: Any]])
+        #expect(recipes.contains { $0["id"] as? String == "import.hf-mlx-model" })
+
+        let showPayload = try #require(parseJSONObject(try await runner.run(.recipesShow(.init(recipeID: "import.hf-mlx-model", json: true)))))
+        #expect(showPayload["schema_version"] as? String == "melix.workflow_recipe.v1")
+        #expect(showPayload["recipe_digest"] as? String != "")
+
+        let validatePayload = try #require(parseJSONObject(try await runner.run(.recipesValidate(.init(target: "import.hf-mlx-model", json: true)))))
+        #expect(validatePayload["valid"] as? Bool == true)
+
+        let pipelineURL = outputRoot.appendingPathComponent("planned.pipeline.json")
+        let planPayload = try #require(parseJSONObject(try await runner.run(.recipesPlan(
+            .init(
+                recipeID: "import.hf-mlx-model",
+                values: ["repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
+                outputPath: pipelineURL.path,
+                json: true
+            )
+        ))))
+        let pipeline = try #require(planPayload["pipeline"] as? [String: Any])
+        let steps = try #require(pipeline["steps"] as? [[String: Any]])
+        #expect(pipeline["schema_version"] as? String == "melix.pipeline.v1")
+        #expect(steps.map { $0["command"] as? String } == ["estimate.import", "model.hub.download", "model.roots.rescan"])
+        #expect(FileManager.default.fileExists(atPath: pipelineURL.path))
+    }
+
+    @Test("workflow recipe apply dry run writes pipeline receipts")
+    func workflowRecipeApplyDryRunWritesPipelineReceipts() async throws {
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-recipe-apply-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: melixHome) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": melixHome.path]
+        )
+        let output = try await runner.run(.recipesApply(
+            .init(
+                recipeID: "import.hf-mlx-model",
+                values: ["repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
+                dryRun: true,
+                json: true
+            )
+        ))
+        let payload = try #require(parseJSONObject(output))
+        #expect(payload["schema_version"] as? String == "melix.pipeline.run.v1")
+        #expect(payload["status"] as? String == "planned")
+        let recipe = try #require(payload["recipe"] as? [String: Any])
+        #expect(recipe["id"] as? String == "import.hf-mlx-model")
+        let steps = try #require(payload["steps"] as? [[String: Any]])
+        #expect(steps.count == 3)
+        let receiptDir = try #require(payload["receipt_dir"] as? String)
+        #expect(FileManager.default.fileExists(atPath: receiptDir))
+        #expect((payload["metrics"] as? [String: Any])?["recipe.apply_start_ms"] as? Double != nil)
+        #expect((payload["metrics"] as? [String: Any])?["recipe.apply_retained_runs"] as? Int == 1)
+
+        let recipeRoot = melixHome
+            .appendingPathComponent("workflow-recipes", isDirectory: true)
+            .appendingPathComponent("import.hf-mlx-model", isDirectory: true)
+        for _ in 0..<22 {
+            _ = try await runner.run(.recipesApply(
+                .init(
+                    recipeID: "import.hf-mlx-model",
+                    values: ["repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
+                    dryRun: true,
+                    json: true
+                )
+            ))
+        }
+        let runDirectories = try FileManager.default.contentsOfDirectory(
+            at: recipeRoot,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        ).filter { url in
+            UUID(uuidString: url.lastPathComponent) != nil
+        }
+        #expect(runDirectories.count == 20)
+    }
+
+    @Test("workflow recipe init rejects unmatched tasks")
+    func workflowRecipeInitRejectsUnmatchedTasks() async throws {
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+
+        await #expect(throws: MelixCLIError.runtime("No workflow recipe matches task missing_task.")) {
+            try await runner.run(.recipesInit(.init(
+                sourceURI: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                task: "missing_task",
+                json: true
+            )))
+        }
     }
 
     @Test("dataset remove forwards safe snapshot selector")
@@ -7222,6 +7467,7 @@ struct MelixCLIRunnerTests {
         )
 
         let output = try await executor.run(arguments: ["runner-arg"])
+        let detailed = try await executor.runDetailed(arguments: ["runner-arg"])
         let components = output.split(separator: ":", maxSplits: 2).map(String.init)
 
         #expect(components.count == 3)
@@ -7231,6 +7477,9 @@ struct MelixCLIRunnerTests {
             root.resolvingSymlinksInPath().path
         )
         #expect(components[2] == "runner-arg")
+        #expect(detailed.exitCode == 0)
+        #expect(detailed.stderr == "")
+        #expect(detailed.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == output)
     }
 
     @Test("process executor surfaces subprocess failures and rejects empty commands")
@@ -7250,6 +7499,9 @@ struct MelixCLIRunnerTests {
         } catch let error as MelixCLIError {
             #expect(error == .runtime("subprocess boom"))
         }
+        let failedDetails = try await failingExecutor.runDetailed(arguments: [])
+        #expect(failedDetails.exitCode == 3)
+        #expect(failedDetails.stderr == "subprocess boom")
 
         let misconfiguredExecutor = MelixCLIProcessExecutor(baseCommand: [])
 
@@ -11409,14 +11661,18 @@ private func makeEvaluationCompareResult(
     return ControlPlaneEvaluationResult(job: job, results: results)
 }
 
-private func writeFakeBatchCLI(_ path: URL, failEval: Bool = false) throws {
+private func writeFakeBatchCLI(_ path: URL, failEval: Bool = false, warnBench: Bool = false) throws {
     let failEvalLiteral = failEval ? "1" : "0"
+    let warnBenchLiteral = warnBench ? "1" : "0"
     let script = """
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p "${MELIX_BATCH_MODEL_DIR}/fake-raw"
     printf '{"raw": true}\\n' > "${MELIX_BATCH_MODEL_DIR}/fake-raw/raw.json"
     if [[ "$1 $2" == "bench run" ]]; then
+      if [[ "\(warnBenchLiteral)" == "1" ]]; then
+        printf 'bench warning for %s\\n' "${MELIX_BATCH_MODEL_INDEX}" >&2
+      fi
       printf '{"job_id":"bench-01","metrics":{"bench.smoke.tokens_per_second":12.5},"output_dir":"%s"}\\n' "${MELIX_BATCH_MODEL_DIR}/fake-raw"
       exit 0
     fi
