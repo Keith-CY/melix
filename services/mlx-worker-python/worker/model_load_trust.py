@@ -119,6 +119,7 @@ def _loader_family(
     runtime_kind: str,
     runtime: Any,
 ) -> str:
+    runtime_name = str(getattr(runtime, "runtime_name", "") or "") if runtime is not None else ""
     requested_family = (
         str(getattr(request_policy, "loader_family", "") or "").strip()
         if request_policy is not None
@@ -128,14 +129,16 @@ def _loader_family(
         return requested_family
     if runtime_kind == "vlm":
         return model_spec.ext.get("melix.vlm.backend_id", "").strip() or str(
-            getattr(runtime, "runtime_name", "") or "mlx_vlm"
+            runtime_name or "mlx_vlm"
         )
     if runtime_kind == "text":
-        return str(getattr(runtime, "runtime_name", "") or "mlx-lm")
-    return str(getattr(runtime, "runtime_name", "") or runtime_kind)
+        return runtime_name or "mlx-lm"
+    return runtime_name or runtime_kind
 
 
 def _is_trust_applicable(runtime_kind: str, loader_family: str, runtime: Any) -> bool:
+    if runtime is None:
+        return False
     runtime_name = str(getattr(runtime, "runtime_name", "") or "").strip().lower()
     family = loader_family.strip().lower().replace("-", "_")
     if runtime_kind == "text":
@@ -167,6 +170,8 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
         return None
     config_path = Path(model_path).expanduser() / "config.json"
     try:
+        if not config_path.is_file():
+            return None
         payload = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None

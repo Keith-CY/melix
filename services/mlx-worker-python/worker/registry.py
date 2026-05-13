@@ -228,14 +228,11 @@ class WorkerRegistry:
         except ModelLoadTrustRejection:
             with self._lock:
                 self._model_load_trust_blocked_count += 1
-                self._last_model_load_trust_policy_resolution_ms = (
-                    time.monotonic() - trust_started_at
-                ) * 1000.0
             raise
-        with self._lock:
-            self._last_model_load_trust_policy_resolution_ms = (
-                time.monotonic() - trust_started_at
-            ) * 1000.0
+        finally:
+            latency_ms = (time.monotonic() - trust_started_at) * 1000.0
+            with self._lock:
+                self._last_model_load_trust_policy_resolution_ms = latency_ms
         estimated = runtime.estimate_resident_bytes(resolved)
         with self._lock:
             existing_resident_bytes = self._loaded_model_resident_bytes + self._reserved_model_resident_bytes

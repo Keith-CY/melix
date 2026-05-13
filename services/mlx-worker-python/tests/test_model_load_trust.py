@@ -6,6 +6,7 @@ from pathlib import Path
 from packages.protocol.python.worker.v1 import common_pb2, runtime_pb2
 
 from worker.grpc_server import WorkerRuntimeService
+from worker.model_load_trust import resolve_model_load_trust_policy
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
@@ -105,6 +106,24 @@ def test_worker_reports_not_applicable_receipt_for_non_custom_loader_runtime() -
     assert response.load_trust.custom_loader_required is False
 
 
+def test_trust_policy_treats_missing_runtime_as_not_applicable(tmp_path: Path) -> None:
+    model = _custom_loader_vlm_model(tmp_path)
+
+    policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="vlm",
+        runtime=None,
+    )
+
+    assert policy.requested_mode == common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE
+    assert policy.effective_mode == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+    assert policy.policy_source == "not_applicable"
+    assert policy.loader_family == "mlx_vlm"
+    assert policy.custom_loader_detection_source == "not_applicable"
+    assert policy.custom_loader_required is False
+
+
 def _custom_loader_text_model(tmp_path: Path) -> common_pb2.ModelSpec:
     model_dir = tmp_path / "custom-loader-model"
     model_dir.mkdir()
@@ -114,4 +133,17 @@ def _custom_loader_text_model(tmp_path: Path) -> common_pb2.ModelSpec:
     )
     model = WorkerModelCatalog.dev_text_model()
     model.model_path = str(model_dir)
+    return model
+
+
+def _custom_loader_vlm_model(tmp_path: Path) -> common_pb2.ModelSpec:
+    model_dir = tmp_path / "custom-loader-vlm"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        json.dumps({"auto_map": {"AutoModel": "custom.VisionLoader"}}),
+        encoding="utf-8",
+    )
+    model = WorkerModelCatalog.dev_vlm_model()
+    model.model_path = str(model_dir)
+    model.ext["melix.vlm.backend_id"] = ""
     return model
