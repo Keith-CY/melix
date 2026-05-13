@@ -14,6 +14,8 @@ NOT_APPLICABLE_SOURCE = "not_applicable"
 REQUEST_SOURCE = "request"
 CONFIG_JSON_AUTO_MAP_SOURCE = "config_json:auto_map"
 BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST = "custom_loader_requires_trust_remote_code"
+TRUST_APPLICABLE_TEXT_LOADERS = frozenset({"mlx_lm", "mlx_lm_unavailable"})
+TRUST_APPLICABLE_VLM_LOADERS = frozenset({"mlx_vlm", "python_vlm", "mlx_vlm_unavailable"})
 
 
 @dataclass(frozen=True)
@@ -142,13 +144,16 @@ def _is_trust_applicable(runtime_kind: str, loader_family: str, runtime: Any) ->
     runtime_name = str(getattr(runtime, "runtime_name", "") or "").strip().lower()
     family = loader_family.strip().lower().replace("-", "_")
     if runtime_kind == "text":
-        return True
+        return (
+            family in TRUST_APPLICABLE_TEXT_LOADERS
+            or runtime_name.replace("-", "_") in TRUST_APPLICABLE_TEXT_LOADERS
+        )
     if runtime_kind == "vlm":
         if runtime_name.startswith("deterministic"):
             return False
         return (
-            family in {"mlx_vlm", "python_vlm"}
-            or runtime_name in {"mlx_vlm", "mlx-vlm", "mlx-vlm-unavailable"}
+            family in TRUST_APPLICABLE_VLM_LOADERS
+            or runtime_name.replace("-", "_") in TRUST_APPLICABLE_VLM_LOADERS
             or runtime.__class__.__name__ == "MLXVLMRuntime"
         )
     return False

@@ -13,7 +13,7 @@ from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
 class RecordingTextBackend:
-    runtime_name = "fake-mlx"
+    runtime_name = "mlx-lm"
 
     def __init__(self) -> None:
         self.load_calls: list[bool] = []
@@ -106,6 +106,24 @@ def test_worker_reports_not_applicable_receipt_for_non_custom_loader_runtime() -
     assert response.load_trust.custom_loader_required is False
 
 
+def test_trust_policy_treats_non_mlx_text_loader_as_not_applicable(tmp_path: Path) -> None:
+    model = _custom_loader_text_model(tmp_path)
+
+    policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=FakeTextRuntime(),
+    )
+
+    assert policy.requested_mode == common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE
+    assert policy.effective_mode == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+    assert policy.policy_source == "not_applicable"
+    assert policy.loader_family == "fake-mlx"
+    assert policy.custom_loader_detection_source == "not_applicable"
+    assert policy.custom_loader_required is False
+
+
 def test_trust_policy_treats_missing_runtime_as_not_applicable(tmp_path: Path) -> None:
     model = _custom_loader_vlm_model(tmp_path)
 
@@ -147,3 +165,7 @@ def _custom_loader_vlm_model(tmp_path: Path) -> common_pb2.ModelSpec:
     model.model_path = str(model_dir)
     model.ext["melix.vlm.backend_id"] = ""
     return model
+
+
+class FakeTextRuntime:
+    runtime_name = "fake-mlx"
