@@ -95,7 +95,6 @@ class RequestStreamAssembler:
     _REASONING_OPEN_TAGS = (_THINK_OPEN, _PIPE_REASONING_OPEN)
     _TOOL_OPEN_TAGS = (_TOOL_OPEN, _PIPE_TOOL_OPEN)
     _TOOL_PARSER_STRUCTURAL_OPEN_TAGS = _REASONING_OPEN_TAGS + _TOOL_OPEN_TAGS
-    _TOOL_PARSER_SUFFIX_OPEN_TAGS = _TOOL_OPEN_TAGS + _REASONING_OPEN_TAGS
     _THINK_PREFIXES = tuple("<think>"[:index] for index in range(1, len("<think>")))
     _PIPE_REASONING_PREFIXES = tuple(
         "<|channel>thought"[:index] for index in range(1, len("<|channel>thought"))
@@ -157,11 +156,9 @@ class RequestStreamAssembler:
         self._structural_tag_prefixes_value = self._REASONING_PREFIXES
         self._structural_tag_prefixes_reversed_value = self._REASONING_PREFIXES_REVERSED
         self._structural_open_tags_value = self._REASONING_OPEN_TAGS
-        self._structural_suffix_open_tags_value = self._REASONING_OPEN_TAGS
         if self._tool_parsing_enabled_value:
             self._request_context_mode_value = "tool_parser"
             self._structural_open_tags_value = self._TOOL_PARSER_STRUCTURAL_OPEN_TAGS
-            self._structural_suffix_open_tags_value = self._TOOL_PARSER_SUFFIX_OPEN_TAGS
             self._structural_tag_prefixes_value = (
                 self._REASONING_PREFIXES + self._TOOL_PREFIXES + self._PIPE_TOOL_PREFIXES
             )
@@ -545,9 +542,19 @@ class RequestStreamAssembler:
 
         suffix = self._buffer[marker_index:]
         suffix_len = len(suffix)
-        for tag in self._structural_suffix_open_tags_value:
-            if suffix_len < len(tag) and tag.startswith(suffix):
+        if self._tool_parsing_enabled_value:
+            if suffix_len < len(self._TOOL_OPEN) and self._TOOL_OPEN.startswith(suffix):
                 return suffix
+            if suffix_len < len(self._PIPE_TOOL_OPEN) and self._PIPE_TOOL_OPEN.startswith(
+                suffix
+            ):
+                return suffix
+        if suffix_len < len(self._THINK_OPEN) and self._THINK_OPEN.startswith(suffix):
+            return suffix
+        if suffix_len < len(self._PIPE_REASONING_OPEN) and self._PIPE_REASONING_OPEN.startswith(
+            suffix
+        ):
+            return suffix
         return ""
 
     def _record_prefix_hold(self, suffix: str) -> None:
