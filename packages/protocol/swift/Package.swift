@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.1
 
 import PackageDescription
 
@@ -12,9 +12,9 @@ let package = Package(
         .library(name: "MelixWorkerProtocol", targets: ["MelixWorkerProtocol"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.36.0"),
-        .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.0.0"),
-        .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.1.1"),
+        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.37.0"),
+        .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.4.1"),
+        .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.3.0"),
     ],
     targets: [
         .target(

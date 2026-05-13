@@ -145,9 +145,8 @@ struct Phase8LoRAWindowSmokeTests {
         let runnerEvaluationRequests = await runnerClient.recordedEvaluationRequests
         #expect(runnerEvaluationRequests.isEmpty == false)
         #expect(runnerEvaluationRequests.last?.parameters["compare_target_model_ids"] == derivedModelID)
-        #expect(viewModel.selectedEvaluationHistoryJobID == evaluationJobID)
-        await viewModel.exportSelectedEvaluationSummaryCSV()
-        let lastEvaluationExport = try #require(viewModel.lastEvaluationExport)
+        try await phase8LoRAWaitForEvaluationSelection(viewModel, jobID: evaluationJobID)
+        let lastEvaluationExport = try await phase8LoRAExportEvaluationSummary(viewModel, jobID: evaluationJobID)
         let runnerExports = await runnerClient.recordedExportOutputDirs
         await trainingSection.removeDerivedModel()
         let runnerModelOps = await runnerClient.recordedModelOperationRequests
@@ -280,6 +279,63 @@ struct Phase8LoRAWindowSmokeTests {
         #expect(exportError == "No evaluation summary rows are available for CSV export.")
         #expect(removeError == "Select an activated adapter before removing its derived model.")
     }
+}
+
+@MainActor
+private func phase8LoRAWaitForEvaluationSelection(
+    _ viewModel: RuntimeViewModel,
+    jobID: String
+) async throws {
+    try await phase8LoRAWaitForCondition("evaluation history should select returned job") {
+        viewModel.selectedEvaluationHistoryJobID == jobID
+            && viewModel.evaluationMetricCards.isEmpty == false
+    }
+    viewModel.selectEvaluationHistory(jobID: jobID)
+}
+
+@MainActor
+private func phase8LoRAExportEvaluationSummary(
+    _ viewModel: RuntimeViewModel,
+    jobID: String
+) async throws -> RuntimeEvaluationExportState {
+    try await phase8LoRAWaitForEvaluationSelection(viewModel, jobID: jobID)
+    let deadline = ContinuousClock.now + .seconds(20)
+    while ContinuousClock.now < deadline {
+        viewModel.selectEvaluationHistory(jobID: jobID)
+        await viewModel.exportSelectedEvaluationSummaryCSV()
+        if let export = viewModel.lastEvaluationExport, export.formatTitle == "summary.csv" {
+            return export
+        }
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    if let export = viewModel.lastEvaluationExport, export.formatTitle == "summary.csv" {
+        return export
+    }
+    throw NSError(domain: "Phase8LoRAWindowSmokeTests", code: 1, userInfo: [
+        NSLocalizedDescriptionKey: "evaluation summary export did not finish for \(jobID); selected=\(viewModel.selectedEvaluationHistoryJobID); metric_cards=\(viewModel.evaluationMetricCards.count); last_error=\(viewModel.lastError ?? "")",
+    ])
+}
+
+@MainActor
+private func phase8LoRAWaitForCondition(
+    _ description: String,
+    timeout: Duration = .seconds(20),
+    pollInterval: Duration = .milliseconds(25),
+    condition: @MainActor @escaping () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+    if condition() {
+        return
+    }
+    throw NSError(domain: "Phase8LoRAWindowSmokeTests", code: 1, userInfo: [
+        NSLocalizedDescriptionKey: description,
+    ])
 }
 
 private func phase8LoRAWindowSnapshot(
