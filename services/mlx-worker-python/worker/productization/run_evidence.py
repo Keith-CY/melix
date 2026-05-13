@@ -1716,5 +1716,10 @@ def _git_output(repo_root: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        env=_git_env(),
     )
     return result.stdout.strip()
+
+
+def _git_env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}

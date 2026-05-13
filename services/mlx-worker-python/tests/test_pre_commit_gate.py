@@ -76,9 +76,10 @@ def test_gate_blocks_when_full_test_command_fails(monkeypatch, tmp_path: Path) -
 
 def test_gate_allows_untracked_files(monkeypatch, tmp_path: Path) -> None:
     commands: list[str] = []
-    subprocess.check_call(["git", "init"], cwd=tmp_path, stdout=subprocess.DEVNULL)
+    git_env = pre_commit_gate._git_env()
+    subprocess.check_call(["git", "init"], cwd=tmp_path, stdout=subprocess.DEVNULL, env=git_env)
     (tmp_path / "tracked.py").write_text("print('tracked')\n", encoding="utf-8")
-    subprocess.check_call(["git", "add", "tracked.py"], cwd=tmp_path)
+    subprocess.check_call(["git", "add", "tracked.py"], cwd=tmp_path, env=git_env)
     (tmp_path / "local-probe.py").write_text("print('local')\n", encoding="utf-8")
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
     monkeypatch.setattr(

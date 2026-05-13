@@ -100,7 +100,11 @@ def resolve_host_gate(env: Mapping[str, str] | None = None) -> HostGate:
 
 
 def run_git(root: Path, args: list[str]) -> str:
-    return subprocess.check_output(["git", *args], cwd=root, text=True)
+    return subprocess.check_output(["git", *args], cwd=root, text=True, env=_git_env())
+
+
+def _git_env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
 
 
 def repo_root() -> Path:
