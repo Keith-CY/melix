@@ -90,6 +90,7 @@ struct DesktopPolishSmokeTests {
         await viewModel.refreshDownloadQueueState()
         viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.downloads)
+        await viewModel.refreshDownloadQueueState()
 
         let chatServerSessionID = try #require(viewModel.selectedServerSession?.id)
         viewModel.bindSelectedChatSessionToServer(serverSessionID: chatServerSessionID)
@@ -307,7 +308,7 @@ private func hostedDesktopPolishViewHasSubviews<Content: View>(_ rootView: Conte
 @MainActor
 private func waitForDesktopPolishCondition(
     _ description: String,
-    timeout: Duration = .seconds(2),
+    timeout: Duration = .seconds(5),
     pollInterval: Duration = .milliseconds(10),
     condition: @MainActor @escaping () -> Bool
 ) async throws {

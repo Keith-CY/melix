@@ -429,4 +429,10 @@ def _copy_repo_subset(repo_root: Path, target_root: Path) -> None:
             symlinks=True,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
-    shutil.copy2(repo_root / "scripts/wait_for_worker_ready.py", scripts_root / "wait_for_worker_ready.py")
+    _copy_packaged_script(repo_root, scripts_root, "wait_for_worker_ready.py")
+
+
+def _copy_packaged_script(repo_root: Path, target_scripts_root: Path, script_name: str) -> None:
+    if script_name.endswith("_probe.py") or script_name.startswith("pr_scoped_performance_"):
+        raise ValueError(f"CI-only probe script must not be packaged: {script_name}")
+    shutil.copy2(repo_root / "scripts" / script_name, target_scripts_root / script_name)

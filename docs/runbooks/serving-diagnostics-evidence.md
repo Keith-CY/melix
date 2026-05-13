@@ -18,6 +18,16 @@ performance claim. Claim-supporting evidence must use the same prompt protocol,
 same prompt digest, same model, same task kind, same generation config, and
 greedy deterministic sampling for both runs.
 
+Use `MELIX_PROBE_MODE=debug` when a local operator explicitly wants detailed
+debug artifacts. Use `MELIX_PROBE_MODE=evidence` for benchmark, evaluation,
+comparison, and release evidence. Use `minimal` or `off` for packaged serving
+paths where status surfaces may reuse already-computed counters but must not
+start heavyweight samplers or detailed trace capture. Missing or empty
+`MELIX_PROBE_MODE` resolves to `minimal`; set `MELIX_PROBE_MODE=off` only for an
+explicit opt-out from lightweight health telemetry. A diagnostics
+`fallback_applied` field of `true` means Melix received a non-empty unrecognized
+mode string and substituted `minimal`.
+
 Do not use debug-only diagnostics bundles as public performance claims. They are
 for reproducing runtime shape and request events, not for leaderboard-style
 comparisons.
@@ -46,6 +56,8 @@ serving-diagnostics/<bundle_id>/
 - model id
 - runtime kind
 - acceleration mode
+- event count
+- dropped event count
 - artifact paths
 
 `effective-config.json` records the effective runtime and request config after
@@ -76,6 +88,13 @@ defaults, admission, and runtime-specific resolution.
 `events.jsonl` records phase events. Prefill must appear as a first-class phase
 when a request reaches prefill. Event attributes should stay small and must not
 include full prompts, full responses, credentials, or operator secrets.
+
+Serving diagnostics event queues are bounded. When the queue reaches its
+capacity, the oldest retained debug event is dropped and new request-critical
+work continues. `manifest.json` records `event_count` and
+`dropped_event_count`, so operators can tell whether a debug bundle is complete
+enough for diagnosis. Dropped debug events do not invalidate separate
+evidence-mode benchmark or evaluation artifacts.
 
 ## Lightweight Status Diagnostics
 
@@ -181,6 +200,15 @@ write_serving_diagnostics_bundle(
     diagnostics_mode="debug",
 )
 ```
+
+## Disabling Optional Debug Probes
+
+To disable optional debug diagnostics without breaking benchmark or evaluation
+evidence, unset `MELIX_PROBE_MODE` or set it to `minimal` for serving. Keep
+benchmark, evaluation, report, and release commands on `evidence` mode when the
+output is used for claims. If sampled or debug mode causes local overhead,
+disable only that operator session; do not remove `run-evidence.json`,
+`probe_timeline`, or `telemetry_summary` from evidence-mode runs.
 
 ## Verification
 

@@ -6671,6 +6671,97 @@ struct RuntimeViewModelTests {
         #expect(summaryExport.rowCount == 1)
     }
 
+    @Test("evaluation export uses the just returned runner job while export bundle is still stale")
+    @MainActor
+    func evaluationExportUsesPendingRunnerJobWhenExportBundleIsStale() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let runnerClient = FakeControlPlaneXPCClient()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-pending-eval-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let baseModel = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        let targetModel = makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm)
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [baseModel, targetModel],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        await runnerClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [baseModel, targetModel],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        var evaluationJob = Melix_Controlplane_V1_EvaluationJobSummary()
+        evaluationJob.jobID = "eval-pending-runner"
+        evaluationJob.modelID = "melix-dev-text"
+        evaluationJob.taskKind = "text-generation"
+        evaluationJob.sourceRepo = "cais/mmlu"
+        evaluationJob.suiteID = "mmlu"
+        evaluationJob.datasetID = "mmlu.dev.v1"
+        evaluationJob.sampleSize = 8
+        evaluationJob.scoringMode = "multiple_choice_accuracy"
+        evaluationJob.status = "completed"
+        evaluationJob.outputDir = "/tmp/melix/evaluation/runs/eval-pending-runner"
+        evaluationJob.createdAtUnixMs = 1_712_500_000_000
+        evaluationJob.updatedAtUnixMs = 1_712_500_001_000
+
+        var metric = Melix_Controlplane_V1_BenchmarkMetricValue()
+        metric.name = "eval.compare.win_rate"
+        metric.value = 0.625
+        metric.unit = "ratio"
+
+        var evaluationSummary = Melix_Controlplane_V1_EvaluationResultSummary()
+        evaluationSummary.jobID = "eval-pending-runner"
+        evaluationSummary.suiteID = "mmlu"
+        evaluationSummary.datasetID = "mmlu.dev.v1"
+        evaluationSummary.sampleSize = 8
+        evaluationSummary.metrics = [metric]
+        evaluationSummary.reportPath = "/tmp/melix/evaluation/runs/eval-pending-runner/evaluation-report.md"
+
+        await runnerClient.configureEvaluationResponse(
+            ControlPlaneEvaluationResult(job: evaluationJob, results: [evaluationSummary])
+        )
+        await runnerClient.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSONWithoutResults())
+        )
+        let runner = MelixCLIRunner(
+            client: runnerClient,
+            environment: ["MELIX_HOME": temporaryRoot.path],
+            operatorSessionStore: MelixOperatorSessionStore(
+                melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+            )
+        )
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            operatorCommandRunner: runner
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationMode = .compare
+        viewModel.selectedEvaluationCompareTargetModelIDs = ["melix-dev-text-lora"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        await viewModel.runEvaluation()
+        await viewModel.exportSelectedEvaluationSummaryCSV()
+
+        let summaryExport = try #require(viewModel.lastEvaluationExport)
+        let summaryCSV = try String(contentsOfFile: summaryExport.outputPath, encoding: .utf8)
+        #expect(viewModel.selectedEvaluationHistoryJobID == "eval-pending-runner")
+        #expect(summaryExport.formatTitle == "summary.csv")
+        #expect(summaryExport.rowCount == 1)
+        #expect(summaryCSV.contains("eval-pending-runner"))
+        #expect(summaryCSV.contains("eval.compare.win_rate"))
+        #expect(await runnerClient.recordedEvaluationRequests.isEmpty == false)
+        #expect(await runnerClient.recordedExportOutputDirs.isEmpty == false)
+    }
+
     @Test("benchmark matrix evaluation and exports use the shared operator command runner when available")
     @MainActor
     func benchmarkMatrixEvaluationAndExportsUseSharedOperatorCommandRunnerWhenAvailable() async throws {

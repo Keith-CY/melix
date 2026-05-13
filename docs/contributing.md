@@ -55,6 +55,19 @@ For documentation-only changes, an explicit `N/A` metrics report is acceptable.
 
 ---
 
+## Observability Changes
+
+Choose the observability plane deliberately:
+
+- Runtime metrics are for production health and should reuse counters already produced by request execution.
+- Evidence-mode probes are for benchmark, evaluation, comparison, and release claims, and must preserve `run-evidence.json`, `probe_timeline`, and `telemetry_summary`.
+- Debug diagnostics are opt-in local artifacts and must stay bounded; they do not qualify as public performance evidence.
+- PR-scoped performance probes belong in `infra/perf/pr_scoped_probes.json` plus a focused script under `scripts/` when the workload is synthetic, repeated, base-vs-head, or uses monkeypatching/tracemalloc.
+
+When adding a PR-scoped performance probe, follow the existing `probe-policy-noop-overhead` entry as the minimal pattern: declare `watch_globs`, `test_command`, `coverage_command`, `probe_command`, `probe_impl`, and machine-readable metrics. Keep synthetic probe scripts out of production package manifests.
+
+---
+
 ## What Makes a Good PR
 
 A clear and complete PR includes:

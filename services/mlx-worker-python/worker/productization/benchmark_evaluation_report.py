@@ -629,6 +629,12 @@ def validate_report_payload(report: dict[str, object]) -> list[str]:
         ):
             if not isinstance(gate_result.get(field_name), bool):
                 errors.append(f"gate_result.{field_name} must be boolean")
+        if (
+            gate_result.get("required_evidence_present") is False
+            or gate_result.get("required_probe_phases_present") is False
+            or gate_result.get("required_telemetry_present") is False
+        ) and not _dict_rows(gate_result.get("blocking_failures")):
+            errors.append("gate_result.blocking_failures must explain missing required evidence")
 
     return errors
 
@@ -1018,11 +1024,16 @@ def _gate_result(
         isinstance(telemetry_summary.get(side), list) and bool(telemetry_summary.get(side))
         for side in ("baseline", "candidate")
     )
+    missing_required_failures = _missing_required_evidence_failures(
+        required_evidence_present=required_evidence_present,
+        required_probe_phases_present=required_probe_phases_present,
+        required_telemetry_present=required_telemetry_present,
+        known_gaps=known_gaps,
+    )
+    blocking_failures.extend(missing_required_failures)
     if blocking_failures:
         overall_result = "fail"
-    elif not (
-        required_evidence_present and required_probe_phases_present and required_telemetry_present
-    ) or informational_rows:
+    elif informational_rows:
         overall_result = "informational"
     else:
         overall_result = "pass"
@@ -1035,6 +1046,49 @@ def _gate_result(
         "required_evidence_present": required_evidence_present,
         "required_probe_phases_present": required_probe_phases_present,
         "required_telemetry_present": required_telemetry_present,
+        "evidence_validity_metrics": {
+            "source_evidence_count": len(source_evidence_ids),
+            "required_evidence_present": 1.0 if required_evidence_present else 0.0,
+            "required_probe_phases_present": 1.0 if required_probe_phases_present else 0.0,
+            "required_telemetry_present": 1.0 if required_telemetry_present else 0.0,
+            "known_gap_count": float(len(known_gaps)),
+            "blocking_failure_count": float(len(blocking_failures)),
+        },
+    }
+
+
+def _missing_required_evidence_failures(
+    *,
+    required_evidence_present: bool,
+    required_probe_phases_present: bool,
+    required_telemetry_present: bool,
+    known_gaps: list[str],
+) -> list[dict[str, object]]:
+    failures: list[dict[str, object]] = []
+    if not required_evidence_present:
+        failures.append(_missing_evidence_failure("source_evidence_ids", "required source evidence is missing"))
+    if not required_probe_phases_present:
+        failures.append(_missing_evidence_failure("probe_timeline", "required probe timeline is missing"))
+    if not required_telemetry_present:
+        failures.append(_missing_evidence_failure("telemetry_summary", "required telemetry summary is missing"))
+    if failures and known_gaps:
+        for failure in failures:
+            failure["known_gaps"] = list(known_gaps)
+    return failures
+
+
+def _missing_evidence_failure(field_name: str, message: str) -> dict[str, object]:
+    return {
+        "metric": f"evidence.{field_name}",
+        "result": "fail",
+        "status": "missing",
+        "direction": "required",
+        "gate_policy": {"required": True},
+        "baseline": None,
+        "current": None,
+        "delta": None,
+        "delta_percent": None,
+        "message": message,
     }
 
 

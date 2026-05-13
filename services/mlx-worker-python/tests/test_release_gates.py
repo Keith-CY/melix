@@ -231,6 +231,25 @@ def _passing_lora_path_evidence() -> dict[str, object]:
     }
 
 
+def _passing_observability_evidence() -> dict[str, object]:
+    return {
+        "probe_policy": {
+            "noop_overhead_threshold_passed": 1.0,
+            "noop_recorder_overhead_pct": 0.5,
+            "noop_policy_check_overhead_pct": 0.5,
+            "production_sampler_invocations": 0.0,
+        },
+        "evidence": {
+            "required_artifact_validity_passed": 1.0,
+        },
+        "serving_diagnostics": {
+            "debug_queue_bounded": 1.0,
+            "debug_queue_dropped_event_count": 24.0,
+            "debug_queue_retained_event_count": 8.0,
+        },
+    }
+
+
 def _write_persisted_real_workload_evidence(jobs_root: Path) -> None:
     real_workload_root = jobs_root / "real_workload"
     real_workload_root.mkdir(parents=True, exist_ok=True)
@@ -1219,6 +1238,11 @@ def test_build_release_gate_report_includes_m9_summary_when_collectors_pass(
         lambda repo_root, policy=None: _passing_m9_evidence(policy),
         raising=False,
     )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_observability_evidence",
+        _passing_observability_evidence,
+    )
 
     report = build_release_gate_report(
         repo_root,
@@ -1257,6 +1281,9 @@ def test_build_release_gate_report_includes_m9_summary_when_collectors_pass(
     assert report["m9"]["summary"]["required_probe_count"] == 8.0
     assert report["m9"]["summary"]["missing_probe_count"] == 0.0
     assert report["m9"]["summary"]["failed_threshold_count"] == 0.0
+    assert report["observability"]["probe_policy"]["production_sampler_invocations"] == 0.0
+    assert report["observability"]["evidence"]["required_artifact_validity_passed"] == 1.0
+    assert report["observability"]["serving_diagnostics"]["debug_queue_bounded"] == 1.0
     assert report["passed"] is True
 
 
@@ -1420,6 +1447,11 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
         lambda repo_root, policy=None: _passing_m9_evidence(policy),
         raising=False,
     )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_observability_evidence",
+        _passing_observability_evidence,
+    )
 
     report = build_release_gate_report(
         repo_root,
@@ -1440,6 +1472,32 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
     assert report["failures"] == []
     assert report["audio"]["checks"]["slim_requires_runtime_pack_download"] is True
     assert report["audio"]["checks"]["full_runtime_pack_preinstalled"] is True
+    assert report["observability"]["probe_policy"]["noop_overhead_threshold_passed"] == 1.0
+
+
+def test_evaluate_release_gate_fails_closed_for_observability_regression() -> None:
+    failures = evaluate_release_gate(
+        {
+            "observability": {
+                "probe_policy": {
+                    "noop_overhead_threshold_passed": 0.0,
+                    "noop_recorder_overhead_pct": 12.5,
+                    "production_sampler_invocations": 1.0,
+                },
+                "evidence": {"required_artifact_validity_passed": 0.0},
+                "serving_diagnostics": {"debug_queue_bounded": 0.0},
+            }
+        },
+        {
+            "observability": DEFAULT_RELEASE_GATE_POLICY["observability"],
+        },
+    )
+
+    assert "probe_policy.noop_overhead_threshold_passed=0.00 fell below minimum 1.00" in failures
+    assert "probe_policy.noop_recorder_overhead_pct=12.50 exceeded maximum 5.00" in failures
+    assert "probe_policy.production_sampler_invocations=1.00 exceeded maximum 0.00" in failures
+    assert "evidence.required_artifact_validity_passed=0.00 fell below minimum 1.00" in failures
+    assert "serving_diagnostics.debug_queue_bounded=0.00 fell below minimum 1.00" in failures
 
 
 def test_load_release_gate_policy_reads_checked_in_json(tmp_path: Path) -> None:
@@ -1515,6 +1573,11 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
         release_gates_module,
         "collect_lora_path_evidence",
         lambda jobs_root: _passing_lora_path_evidence(),
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_observability_evidence",
+        _passing_observability_evidence,
     )
 
     report = build_release_gate_report(
@@ -1700,6 +1763,8 @@ def test_default_policy_includes_evaluation_section() -> None:
     assert "evaluation_compare" in DEFAULT_RELEASE_GATE_POLICY
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["effect_threshold"] == 0.1
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["required_verdict"] == "improvement"
+    assert "observability" in DEFAULT_RELEASE_GATE_POLICY
+    assert DEFAULT_RELEASE_GATE_POLICY["observability"]["probe_policy.production_sampler_invocations"]["max"] == 0.0
 
 
 def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None:
@@ -1716,6 +1781,8 @@ def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None
     assert "m9" in policy
     assert policy["m9"]["agent_export"]["integration.export_generation_ms"]["min"] == 0.0
     assert policy["m9"]["shared_access"]["gateway.auth_validation_failures"]["min"] == 1.0
+    assert "observability" in policy
+    assert policy["observability"]["evidence.required_artifact_validity_passed"]["min"] == 1.0
 
 
 def test_collect_evaluation_evidence_returns_metrics(tmp_path: Path) -> None:

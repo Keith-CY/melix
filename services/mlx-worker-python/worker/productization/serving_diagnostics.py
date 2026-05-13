@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,35 @@ SERVING_DIAGNOSTICS_COMPARISON_SCHEMA_VERSION = "melix.serving_diagnostics.compa
 
 class ServingDiagnosticsComparisonError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class ServingDiagnosticsQueueSnapshot:
+    events: tuple[ServingDiagnosticsEvent, ...]
+    dropped_count: int
+
+
+class BoundedServingDiagnosticsEventQueue:
+    def __init__(self, *, max_events: int = 256) -> None:
+        self._max_events = max(int(max_events), 1)
+        self._events: deque[ServingDiagnosticsEvent] = deque(maxlen=self._max_events)
+        self._dropped_count = 0
+        self._lock = threading.Lock()
+
+    def append(self, event: ServingDiagnosticsEvent) -> bool:
+        with self._lock:
+            dropped = len(self._events) >= self._max_events
+            if dropped:
+                self._dropped_count += 1
+            self._events.append(event)
+            return not dropped
+
+    def snapshot(self) -> ServingDiagnosticsQueueSnapshot:
+        with self._lock:
+            return ServingDiagnosticsQueueSnapshot(
+                events=tuple(self._events),
+                dropped_count=self._dropped_count,
+            )
 
 
 @dataclass(frozen=True)
@@ -172,7 +203,7 @@ def write_serving_diagnostics_bundle(
     effective_config: dict[str, object],
     model_refs: dict[str, object],
     request_summary: ServingDiagnosticsRequestSummary,
-    events: tuple[ServingDiagnosticsEvent, ...],
+    events: tuple[ServingDiagnosticsEvent, ...] | ServingDiagnosticsQueueSnapshot,
     diagnostics_mode: str,
 ) -> dict[str, Path]:
     if request_summary.prefill_chunk_size:
@@ -187,6 +218,7 @@ def write_serving_diagnostics_bundle(
     request_summary_path = bundle_root / "request-summary.json"
     events_path = bundle_root / "events.jsonl"
 
+    event_rows, dropped_event_count = _event_rows_and_dropped_count(events)
     manifest = {
         "schema_version": SERVING_DIAGNOSTICS_MANIFEST_SCHEMA_VERSION,
         "bundle_id": bundle_id,
@@ -200,6 +232,8 @@ def write_serving_diagnostics_bundle(
         "model_id": request_summary.model_id,
         "runtime_kind": request_summary.runtime_kind,
         "acceleration_mode": request_summary.acceleration_mode,
+        "event_count": len(event_rows),
+        "dropped_event_count": dropped_event_count,
         "artifacts": {
             "effective_config": "effective-config.json",
             "request_summary": "request-summary.json",
@@ -210,7 +244,7 @@ def write_serving_diagnostics_bundle(
     _write_json(manifest_path, manifest)
     _write_json(effective_config_path, _stable_json_object(effective_config))
     _write_json(request_summary_path, request_summary.to_dict())
-    _write_jsonl(events_path, (event.to_dict() for event in events))
+    _write_jsonl(events_path, (event.to_dict() for event in event_rows))
     return {
         "bundle_root": bundle_root,
         "manifest": manifest_path,
@@ -321,6 +355,14 @@ def _comparison_phase_rows(
             }
         )
     return rows
+
+
+def _event_rows_and_dropped_count(
+    events: tuple[ServingDiagnosticsEvent, ...] | ServingDiagnosticsQueueSnapshot,
+) -> tuple[tuple[ServingDiagnosticsEvent, ...], int]:
+    if isinstance(events, ServingDiagnosticsQueueSnapshot):
+        return events.events, events.dropped_count
+    return events, 0
 
 
 def _required_metric_value(run: ServingEvidenceRun, metric_name: str) -> float:

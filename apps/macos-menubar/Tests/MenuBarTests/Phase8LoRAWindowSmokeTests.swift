@@ -126,6 +126,9 @@ struct Phase8LoRAWindowSmokeTests {
 
         viewModel.selectToolSection(.diagnostics)
         viewModel.updateSelectedServerSessionModelID(baseModelID)
+        if let localTarget = viewModel.diagnosticsServerTargets.first(where: { $0.kind == .localServer }) {
+            viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        }
         viewModel.selectedEvaluationModelID = baseModelID
         viewModel.selectedEvaluationMode = .compare
         viewModel.selectedEvaluationCompareTargetModelIDs = [derivedModelID]
@@ -140,12 +143,11 @@ struct Phase8LoRAWindowSmokeTests {
         await diagnosticsSection.runEvaluationCompare()
         viewModel.selectEvaluationHistory(jobID: evaluationJobID)
         await viewModel.exportSelectedEvaluationSummaryCSV()
+        let lastEvaluationExport = try #require(viewModel.lastEvaluationExport)
         await trainingSection.removeDerivedModel()
-
         let runnerModelOps = await runnerClient.recordedModelOperationRequests
         let runnerEvaluationRequests = await runnerClient.recordedEvaluationRequests
         let runnerExports = await runnerClient.recordedExportOutputDirs
-        let lastEvaluationExport = try #require(viewModel.lastEvaluationExport)
 
         let negativeTrainClient = FakeControlPlaneXPCClient()
         await negativeTrainClient.configureSnapshot(

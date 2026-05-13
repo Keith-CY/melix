@@ -1340,6 +1340,9 @@ def test_report_builder_adds_contract_sections_from_run_evidence() -> None:
     assert report["comparison"]["comparison_validity"] == "valid"
     assert report["gate_result"]["overall_result"] == "fail"
     assert report["gate_result"]["required_telemetry_present"] is True
+    assert report["gate_result"]["evidence_validity_metrics"]["required_evidence_present"] == 1.0
+    assert report["gate_result"]["evidence_validity_metrics"]["required_probe_phases_present"] == 1.0
+    assert report["gate_result"]["evidence_validity_metrics"]["required_telemetry_present"] == 1.0
     assert any(
         row["metric"] == "probe.serving_benchmark.runtime.decode.duration_ms_mean"
         and row["result"] == "fail"
@@ -1431,6 +1434,34 @@ def test_report_verifier_rejects_missing_required_sections() -> None:
     assert "probe_summary.baseline.probe_count must be positive" in errors
     assert "telemetry_summary.candidate must be a non-empty list" in errors
     assert "gate_result.overall_result must be pass, fail, or informational" in errors
+
+
+def test_report_gate_fails_missing_evidence_instead_of_downgrading_to_informational() -> None:
+    report = build_benchmark_evaluation_report(baseline={}, candidate={})
+
+    assert report["gate_result"]["overall_result"] == "fail"
+    assert report["gate_result"]["required_evidence_present"] is False
+    assert report["gate_result"]["required_probe_phases_present"] is False
+    assert report["gate_result"]["required_telemetry_present"] is False
+    assert {
+        failure["metric"] for failure in report["gate_result"]["blocking_failures"]
+    } == {
+        "evidence.source_evidence_ids",
+        "evidence.probe_timeline",
+        "evidence.telemetry_summary",
+    }
+    assert report["gate_result"]["evidence_validity_metrics"] == {
+        "source_evidence_count": 0,
+        "required_evidence_present": 0.0,
+        "required_probe_phases_present": 0.0,
+        "required_telemetry_present": 0.0,
+        "known_gap_count": 5.0,
+        "blocking_failure_count": 3.0,
+    }
+    errors = validate_report_payload(report)
+    assert "source_evidence_ids must be a non-empty list" in errors
+    assert "probe_summary.baseline.probe_count must be positive" in errors
+    assert "telemetry_summary.baseline must be a non-empty list" in errors
 
 
 def test_report_verifier_reports_field_level_shape_errors() -> None:

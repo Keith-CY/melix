@@ -1,5 +1,40 @@
 import Foundation
 
+public enum MelixProbeMode: String, CaseIterable, Sendable {
+    case off
+    case minimal
+    case sampled
+    case evidence
+    case debug
+
+    public static let environmentKey = "MELIX_PROBE_MODE"
+
+    public static func fromEnvironment(_ environment: [String: String]) -> MelixProbeMode {
+        fromValue(environment[environmentKey])
+    }
+
+    public static func fromValue(_ value: String?) -> MelixProbeMode {
+        let normalized = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalized.isEmpty == false else {
+            return .minimal
+        }
+        return MelixProbeMode(rawValue: normalized) ?? .minimal
+    }
+
+    public var debugArtifactsEnabled: Bool {
+        self == .debug
+    }
+
+    public var detailedTelemetryEnabled: Bool {
+        switch self {
+        case .sampled, .evidence, .debug:
+            return true
+        case .off, .minimal:
+            return false
+        }
+    }
+}
+
 public enum MelixDiagnosticsRedaction {
     public static let schemaVersion = "melix.diagnostics.redaction.v1"
     private static let sensitiveKeyFragments = [
@@ -159,6 +194,7 @@ public struct MelixSystemDiagnostics {
                 "melix_worker_socket_path_set": environment["MELIX_WORKER_SOCKET_PATH"]?.isEmpty == false,
                 "melix_swift_text_worker_socket_path_set": environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"]?.isEmpty == false,
             ],
+            "probe_policy": MelixDiagnosticsStore.probePolicyPayload(environment: environment),
         ]
     }
 
@@ -249,6 +285,21 @@ public struct MelixDiagnosticsStore {
         self.fileManager = fileManager
     }
 
+    public static func probePolicyPayload(environment: [String: String]) -> [String: Any] {
+        let rawValue = environment[MelixProbeMode.environmentKey] ?? ""
+        let mode = MelixProbeMode.fromEnvironment(environment)
+        return [
+            "schema_version": "melix.probe_policy.swift.v1",
+            "environment_key": MelixProbeMode.environmentKey,
+            "mode": mode.rawValue,
+            "source_value": rawValue,
+            "fallback_applied": rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                && MelixProbeMode(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) == nil,
+            "detailed_telemetry_enabled": mode.detailedTelemetryEnabled,
+            "debug_artifacts_enabled": mode.debugArtifactsEnabled,
+        ]
+    }
+
     public func writeEarlyFailureBundle(
         commandID: String,
         arguments: [String],
@@ -336,6 +387,10 @@ public struct MelixDiagnosticsStore {
             "bundle_id": bundleID,
             "created_at_unix_ms": currentUnixMilliseconds(),
             "diagnostics_consent_state": MelixSystemDiagnostics.diagnosticsConsentState,
+            "probe_policy": Self.probePolicyPayload(environment: environment),
+            "debug_artifact_policy": "early_failure_capture",
+            "debug_jsonl_enabled": false,
+            "debug_jsonl_event_limit": 0,
             "redaction_schema_version": MelixDiagnosticsRedaction.schemaVersion,
             "redacted_field_count": totalRedactedFieldCount,
             "command_id": commandID,
@@ -481,6 +536,10 @@ public struct MelixDiagnosticsStore {
             "bundle_id": record.runID,
             "created_at_unix_ms": currentUnixMilliseconds(),
             "diagnostics_consent_state": MelixSystemDiagnostics.diagnosticsConsentState,
+            "probe_policy": Self.probePolicyPayload(environment: environment),
+            "debug_artifact_policy": "explicit_cli_command",
+            "debug_jsonl_enabled": MelixProbeMode.fromEnvironment(environment).debugArtifactsEnabled,
+            "debug_jsonl_event_limit": 256,
             "redaction_schema_version": MelixDiagnosticsRedaction.schemaVersion,
             "redacted_field_count": totalRedacted,
             "source_run_record_path": record.path,
