@@ -106,6 +106,38 @@ def _bundle(*, ttft_ms: float, tokens_per_second: float, accuracy: float) -> dic
     }
 
 
+def test_load_report_input_accepts_batch_run_summary_bundle(tmp_path: Path) -> None:
+    summary = {
+        "schema_version": "melix.batch.run_summary.v1",
+        "run_id": "batch-1",
+        "status": "succeeded",
+        "models": [
+            {
+                "model_index": "01",
+                "repo_id": "mlx-community/Smoke-4bit",
+                "status": "succeeded",
+                "benchmark_job_id": "bench-1",
+                "evaluation_job_id": "eval-1",
+                "duration_seconds": 2.5,
+                "metric_fields": {
+                    "bench.smoke.tokens_per_second": 12.5,
+                    "eval.event_extraction.semantic_f1": 0.9,
+                },
+            }
+        ],
+    }
+    (tmp_path / "run-summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+    bundle = load_report_input(tmp_path)
+
+    assert bundle["export_schema_version"] == "melix.batch.summary_bundle.v1"
+    assert bundle["batch_run_summary"] == summary
+    report = build_benchmark_evaluation_report(baseline=bundle, candidate=bundle)
+    metrics = {row["metric"]: row for row in report["metrics"]}
+    assert metrics["bench.smoke.tokens_per_second"]["status"] == "ok"
+    assert metrics["eval.event_extraction.semantic_f1"]["status"] == "ok"
+
+
 def _run_evidence(
     *,
     run_id: str,
