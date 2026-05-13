@@ -541,6 +541,17 @@ class RequestStreamAssembler:
         buffer = self._buffer
         think_index = buffer.find(self._THINK_OPEN)
         has_pipe_marker = "<|" in buffer
+        if not has_pipe_marker:
+            if not self._tool_parsing_enabled_value:
+                return None if think_index < 0 else (self._THINK_OPEN, think_index)
+
+            tool_index = buffer.find(self._TOOL_OPEN)
+            if think_index < 0:
+                return None if tool_index < 0 else (self._TOOL_OPEN, tool_index)
+            if tool_index < 0 or think_index <= tool_index:
+                return (self._THINK_OPEN, think_index)
+            return (self._TOOL_OPEN, tool_index)
+
         pipe_reasoning_index = (
             buffer.find(self._PIPE_REASONING_OPEN) if has_pipe_marker else -1
         )
