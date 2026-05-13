@@ -30,7 +30,38 @@ def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
 
     try:
         with os.scandir(build_root) as entries:
-            triple_names = sorted(entry.name for entry in entries if entry.is_dir())
+            lex_first_triple_name: str | None = None
+            for entry in entries:
+                try:
+                    if not entry.is_dir(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                if lex_first_triple_name is None or entry.name < lex_first_triple_name:
+                    lex_first_triple_name = entry.name
+    except OSError:
+        return None
+
+    if lex_first_triple_name is None:
+        return None
+
+    lex_first_candidate = build_root / lex_first_triple_name / "debug" / product_name
+    if lex_first_candidate.is_file():
+        return lex_first_candidate
+
+    try:
+        with os.scandir(build_root) as entries:
+            triple_names: list[str] = []
+            for entry in entries:
+                if entry.name == lex_first_triple_name:
+                    continue
+                try:
+                    if not entry.is_dir(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                triple_names.append(entry.name)
+            triple_names.sort()
     except OSError:
         return None
 
