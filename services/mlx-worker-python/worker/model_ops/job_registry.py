@@ -12,6 +12,18 @@ from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.productization.lora_experiment_store import LoraExperimentStore
 
+ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD = "adapter_runtime_base_reuse_key"
+ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD = "adapter_runtime_adapter_isolation_key"
+ADAPTER_RUNTIME_SWITCH_MODE_FIELD = "adapter_runtime_switch_mode"
+ADAPTER_RUNTIME_SHARING_POLICY_FIELD = "adapter_runtime_sharing_policy"
+ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD = "adapter_runtime_compatibility_status"
+
+_ADAPTER_RUNTIME_BASE_REUSE_MANIFEST_KEY = "adapter_runtime.base_reuse_key"
+_ADAPTER_RUNTIME_ADAPTER_ISOLATION_MANIFEST_KEY = "adapter_runtime.adapter_isolation_key"
+_ADAPTER_RUNTIME_SWITCH_MODE_MANIFEST_KEY = "adapter_runtime.switch_mode"
+_ADAPTER_RUNTIME_SHARING_POLICY_MANIFEST_KEY = "adapter_runtime.sharing_policy"
+_ADAPTER_RUNTIME_COMPATIBILITY_STATUS_MANIFEST_KEY = "adapter_runtime.compatibility_status"
+
 
 def _runtime_mode_from_activation(activation_mode: str) -> int:
     """Map the manifest activation_mode string to a ``RuntimeMode`` enum int.
@@ -386,7 +398,7 @@ class ModelOpsJobRegistry:
         if resolved_activation_manifest_path is None:
             resolved_activation_manifest_path = str(Path(activation_manifest_path).expanduser().resolve())
         candidate_model_id = str(manifest.get("derived_model_id", "")).strip()
-        return {
+        target_payload = {
             "activation_job_id": job.job_id,
             "activation_manifest_path": resolved_activation_manifest_path,
             "output_dir": job.output_dir,
@@ -398,16 +410,9 @@ class ModelOpsJobRegistry:
             "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
             "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
             "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
-            "adapter_runtime_base_reuse_key": str(manifest.get("adapter_runtime.base_reuse_key", "")),
-            "adapter_runtime_adapter_isolation_key": str(
-                manifest.get("adapter_runtime.adapter_isolation_key", "")
-            ),
-            "adapter_runtime_switch_mode": str(manifest.get("adapter_runtime.switch_mode", "")),
-            "adapter_runtime_sharing_policy": str(manifest.get("adapter_runtime.sharing_policy", "")),
-            "adapter_runtime_compatibility_status": str(
-                manifest.get("adapter_runtime.compatibility_status", "")
-            ),
         }
+        ModelOpsJobRegistry._copy_adapter_runtime_row_fields(target_payload, manifest)
+        return target_payload
 
     @classmethod
     def _cached_derived_model_target_payload(
@@ -426,6 +431,31 @@ class ModelOpsJobRegistry:
             )
             lookup.target_payload = target_payload
         return dict(target_payload)
+
+    @staticmethod
+    def _copy_adapter_runtime_row_fields(row: dict[str, Any], manifest: dict[str, Any]) -> None:
+        if (
+            _ADAPTER_RUNTIME_BASE_REUSE_MANIFEST_KEY in manifest
+            or _ADAPTER_RUNTIME_ADAPTER_ISOLATION_MANIFEST_KEY in manifest
+            or _ADAPTER_RUNTIME_SWITCH_MODE_MANIFEST_KEY in manifest
+            or _ADAPTER_RUNTIME_SHARING_POLICY_MANIFEST_KEY in manifest
+            or _ADAPTER_RUNTIME_COMPATIBILITY_STATUS_MANIFEST_KEY in manifest
+        ):
+            row[ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD] = str(
+                manifest.get(_ADAPTER_RUNTIME_BASE_REUSE_MANIFEST_KEY, "")
+            )
+            row[ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD] = str(
+                manifest.get(_ADAPTER_RUNTIME_ADAPTER_ISOLATION_MANIFEST_KEY, "")
+            )
+            row[ADAPTER_RUNTIME_SWITCH_MODE_FIELD] = str(
+                manifest.get(_ADAPTER_RUNTIME_SWITCH_MODE_MANIFEST_KEY, "")
+            )
+            row[ADAPTER_RUNTIME_SHARING_POLICY_FIELD] = str(
+                manifest.get(_ADAPTER_RUNTIME_SHARING_POLICY_MANIFEST_KEY, "")
+            )
+            row[ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD] = str(
+                manifest.get(_ADAPTER_RUNTIME_COMPATIBILITY_STATUS_MANIFEST_KEY, "")
+            )
 
     @classmethod
     def _job_manifest(cls, job: ModelOpsJob) -> dict[str, Any]:
@@ -669,19 +699,11 @@ class ModelOpsJobRegistry:
                 "component_model_type": str(manifest.get("component_model_type", "")),
                 "component_family": str(manifest.get("component_family", "")),
                 "component_model_path": str(manifest.get("component_model_path", "")),
-                "adapter_runtime_base_reuse_key": str(manifest.get("adapter_runtime.base_reuse_key", "")),
-                "adapter_runtime_adapter_isolation_key": str(
-                    manifest.get("adapter_runtime.adapter_isolation_key", "")
-                ),
-                "adapter_runtime_switch_mode": str(manifest.get("adapter_runtime.switch_mode", "")),
-                "adapter_runtime_sharing_policy": str(manifest.get("adapter_runtime.sharing_policy", "")),
-                "adapter_runtime_compatibility_status": str(
-                    manifest.get("adapter_runtime.compatibility_status", "")
-                ),
                 "activation_manifest_path": str(job.get("output_path", "")),
                 "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                 "status": "activated",
             }
+            ModelOpsJobRegistry._copy_adapter_runtime_row_fields(activation, manifest)
             if activation["derived_model_id"] in removed_model_ids:
                 continue
             adapter_set_hash = str(manifest.get("adapter_set_hash", ""))
@@ -785,24 +807,26 @@ class ModelOpsJobRegistry:
                         if removal_applied
                         else activation["component_model_path"] if activation else component_model_path
                     ),
-                    "adapter_runtime_base_reuse_key": (
-                        "" if removal_applied else activation["adapter_runtime_base_reuse_key"] if activation else ""
-                    ),
-                    "adapter_runtime_adapter_isolation_key": (
+                    ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD: (
                         ""
                         if removal_applied
-                        else activation["adapter_runtime_adapter_isolation_key"] if activation else ""
+                        else activation.get(ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD, "") if activation else ""
                     ),
-                    "adapter_runtime_switch_mode": (
-                        "" if removal_applied else activation["adapter_runtime_switch_mode"] if activation else ""
-                    ),
-                    "adapter_runtime_sharing_policy": (
-                        "" if removal_applied else activation["adapter_runtime_sharing_policy"] if activation else ""
-                    ),
-                    "adapter_runtime_compatibility_status": (
+                    ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD: (
                         ""
                         if removal_applied
-                        else activation["adapter_runtime_compatibility_status"] if activation else ""
+                        else activation.get(ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD, "") if activation else ""
+                    ),
+                    ADAPTER_RUNTIME_SWITCH_MODE_FIELD: (
+                        "" if removal_applied else activation.get(ADAPTER_RUNTIME_SWITCH_MODE_FIELD, "") if activation else ""
+                    ),
+                    ADAPTER_RUNTIME_SHARING_POLICY_FIELD: (
+                        "" if removal_applied else activation.get(ADAPTER_RUNTIME_SHARING_POLICY_FIELD, "") if activation else ""
+                    ),
+                    ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD: (
+                        ""
+                        if removal_applied
+                        else activation.get(ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD, "") if activation else ""
                     ),
                     "source_adapter_job_id": activation["source_adapter_job_id"] if activation else job["job_id"],
                     "activation_duration_ms": 0.0 if removal_applied else activation["activation_duration_ms"] if activation else 0.0,
@@ -908,47 +932,38 @@ class ModelOpsJobRegistry:
                 (activation_manifest_path and publish_by_manifest_path.get(activation_manifest_path))
                 or (model_path and publish_by_model_path.get(model_path))
             )
-            derived_models.append(
-                {
-                    "job_id": job["job_id"],
-                    "model_id": derived_model_id,
-                    "model_path": model_path,
-                    "adapter_set_hash": str(manifest.get("adapter_set_hash", "")),
-                    "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
-                    "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
-                    "adapter_name": str(manifest.get("adapter_name", "")),
-                    "adapter_scope": str(manifest.get("adapter_scope", "")),
-                    "training_surface": str(manifest.get("training_surface", "")),
-                    "component_model_type": str(manifest.get("component_model_type", "")),
-                    "component_family": str(manifest.get("component_family", "")),
-                    "component_model_path": str(manifest.get("component_model_path", "")),
-                    "adapter_runtime_base_reuse_key": str(manifest.get("adapter_runtime.base_reuse_key", "")),
-                    "adapter_runtime_adapter_isolation_key": str(
-                        manifest.get("adapter_runtime.adapter_isolation_key", "")
-                    ),
-                    "adapter_runtime_switch_mode": str(manifest.get("adapter_runtime.switch_mode", "")),
-                    "adapter_runtime_sharing_policy": str(manifest.get("adapter_runtime.sharing_policy", "")),
-                    "adapter_runtime_compatibility_status": str(
-                        manifest.get("adapter_runtime.compatibility_status", "")
-                    ),
-                    "derived_model_alias": str(manifest.get("derived_model_alias", "")),
-                    "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
-                    "source_model": str(manifest.get("source_model", "")),
-                    "activation_mode": str(manifest.get("activation_mode", "")),
-                    "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
-                    "activation_backend": str(manifest.get("activation_backend", "")),
-                    "activation_manifest_path": activation_manifest_path,
-                    "published_repo": publish["target_repo"] if publish else "",
-                    "publish_job_id": publish["job_id"] if publish else "",
-                    "publish_backend": publish["publish_backend"] if publish else "",
-                    "publish_artifact_kind": publish["export_artifact_kind"] if publish else "",
-                    "publish_parent_lineage": publish["parent_lineage"] if publish else {},
-                    "distribution_contract": publish["distribution_contract"] if publish else "",
-                    "processor_config_files": publish["processor_config_files"] if publish else [],
-                    "published_state": "published" if publish else "not_published",
-                    "status": "activated",
-                }
-            )
+            derived_model = {
+                "job_id": job["job_id"],
+                "model_id": derived_model_id,
+                "model_path": model_path,
+                "adapter_set_hash": str(manifest.get("adapter_set_hash", "")),
+                "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
+                "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
+                "adapter_name": str(manifest.get("adapter_name", "")),
+                "adapter_scope": str(manifest.get("adapter_scope", "")),
+                "training_surface": str(manifest.get("training_surface", "")),
+                "component_model_type": str(manifest.get("component_model_type", "")),
+                "component_family": str(manifest.get("component_family", "")),
+                "component_model_path": str(manifest.get("component_model_path", "")),
+                "derived_model_alias": str(manifest.get("derived_model_alias", "")),
+                "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
+                "source_model": str(manifest.get("source_model", "")),
+                "activation_mode": str(manifest.get("activation_mode", "")),
+                "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
+                "activation_backend": str(manifest.get("activation_backend", "")),
+                "activation_manifest_path": activation_manifest_path,
+                "published_repo": publish["target_repo"] if publish else "",
+                "publish_job_id": publish["job_id"] if publish else "",
+                "publish_backend": publish["publish_backend"] if publish else "",
+                "publish_artifact_kind": publish["export_artifact_kind"] if publish else "",
+                "publish_parent_lineage": publish["parent_lineage"] if publish else {},
+                "distribution_contract": publish["distribution_contract"] if publish else "",
+                "processor_config_files": publish["processor_config_files"] if publish else [],
+                "published_state": "published" if publish else "not_published",
+                "status": "activated",
+            }
+            ModelOpsJobRegistry._copy_adapter_runtime_row_fields(derived_model, manifest)
+            derived_models.append(derived_model)
         return derived_models
 
     @staticmethod

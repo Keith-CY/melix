@@ -969,18 +969,18 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
     default_targets = profile.get(_NORMALIZED_DEFAULT_TARGET_MODULES_KEY)
     if not isinstance(default_targets, tuple):
         default_targets = _normalize_default_target_modules(profile)
-    requested = [item.strip().lower() for item in raw_value.split(",") if item.strip()]
-    if not requested:
+    if not raw_value.strip():
         return list(default_targets)
 
     resolved_targets: list[str] = []
-    seen: set[str] = set()
-    for requested_target in requested:
-        target_key = requested_target.lstrip("@")
+    for raw_target in raw_value.split(","):
+        requested_target = raw_target.strip().lower()
+        if not requested_target:
+            continue
+        target_key = requested_target[1:] if requested_target.startswith("@") else requested_target
         expanded_targets = presets.get(target_key, (requested_target,))
         for expanded_target in expanded_targets:
-            if expanded_target not in seen:
-                seen.add(expanded_target)
+            if expanded_target not in resolved_targets:
                 resolved_targets.append(expanded_target)
     return resolved_targets
 

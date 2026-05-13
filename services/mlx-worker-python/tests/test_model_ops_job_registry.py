@@ -8,7 +8,15 @@ from typing import Any
 
 import pytest
 
-from worker.model_ops.job_registry import ModelOpsJob, ModelOpsJobRegistry
+from worker.model_ops.job_registry import (
+    ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD,
+    ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD,
+    ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD,
+    ADAPTER_RUNTIME_SHARING_POLICY_FIELD,
+    ADAPTER_RUNTIME_SWITCH_MODE_FIELD,
+    ModelOpsJob,
+    ModelOpsJobRegistry,
+)
 
 
 def test_collect_restore_manifest_paths_scans_expected_operations_once(tmp_path: Path) -> None:
@@ -415,16 +423,16 @@ def test_job_registry_snapshot_preserves_adapter_runtime_fields() -> None:
     adapter = snapshot["adapters"][0]
     derived_model = snapshot["derived_models"][0]
     for row in (adapter, derived_model):
-        assert row["adapter_runtime_base_reuse_key"] == "base-runtime-key"
-        assert row["adapter_runtime_adapter_isolation_key"] == "adapter-runtime-key"
-        assert row["adapter_runtime_switch_mode"] == "base_reuse_adapter_swap"
-        assert row["adapter_runtime_sharing_policy"] == "shared_base_isolated_adapter"
-        assert row["adapter_runtime_compatibility_status"] == "compatible"
+        assert row[ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD] == "base-runtime-key"
+        assert row[ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD] == "adapter-runtime-key"
+        assert row[ADAPTER_RUNTIME_SWITCH_MODE_FIELD] == "base_reuse_adapter_swap"
+        assert row[ADAPTER_RUNTIME_SHARING_POLICY_FIELD] == "shared_base_isolated_adapter"
+        assert row[ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD] == "compatible"
 
     target = registry.resolve_derived_model_target(derived_model_id="melix-dev-active")
     assert target is not None
-    assert target["adapter_runtime_base_reuse_key"] == "base-runtime-key"
-    assert target["adapter_runtime_adapter_isolation_key"] == "adapter-runtime-key"
+    assert target[ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD] == "base-runtime-key"
+    assert target[ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD] == "adapter-runtime-key"
 
 
 def test_active_derived_model_row_cache_reuses_rows_and_invalidates() -> None:
@@ -814,11 +822,11 @@ def test_resolve_derived_model_target_avoids_snapshot_jobs(monkeypatch: pytest.M
     }
     for key, value in expected.items():
         assert target[key] == value
-    assert target["adapter_runtime_base_reuse_key"] == ""
-    assert target["adapter_runtime_adapter_isolation_key"] == ""
-    assert target["adapter_runtime_switch_mode"] == ""
-    assert target["adapter_runtime_sharing_policy"] == ""
-    assert target["adapter_runtime_compatibility_status"] == ""
+    assert ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD not in target
+    assert ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD not in target
+    assert ADAPTER_RUNTIME_SWITCH_MODE_FIELD not in target
+    assert ADAPTER_RUNTIME_SHARING_POLICY_FIELD not in target
+    assert ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD not in target
 
 
 def test_resolve_derived_model_target_delays_path_resolution_until_id_match(
