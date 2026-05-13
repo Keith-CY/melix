@@ -192,6 +192,39 @@ state from `.runtime`.
 - The versioned pre-commit hook must use the repository-local `.uv-cache` and defaults to Python 3.12 for dependency compatibility. Set `MELIX_PRE_COMMIT_UV_PYTHON` only when a different supported interpreter is required for a local diagnosis.
 - If the pre-commit performance report shows a regression, analyze the report before proceeding. If the regression is an intentional and acceptable tradeoff, commit only with `MELIX_PRE_COMMIT_ALLOW_PERF_REGRESSION=1` and a non-empty `MELIX_PRE_COMMIT_PERF_REGRESSION_REASON`, then record that rationale in the PR or handoff. Otherwise, fix the regression and rerun the hook before committing.
 
+## Task Worktree and Pull Request Lifecycle Rules
+
+- Start every new task from a fresh worktree created from the current
+  `origin/main`. Fetch `origin/main` first, choose a task-specific branch name,
+  and avoid mixing task work into a dirty checkout or an older branch.
+- For multi-step tasks, create one focused commit for each completed step. Keep
+  commits small enough that each commit maps to a reviewable task phase and has
+  its own relevant verification or explicit `N/A` metrics note.
+- Keep the task branch current with `origin/main` throughout the task. Merge
+  `origin/main` promptly at natural boundaries and before creating or updating a
+  pull request. When `origin/main` changes while a PR is under observation,
+  merge it again before concluding the PR is ready.
+- After opening or updating a pull request, continue monitoring the PR until it
+  reaches a terminal outcome. Check code review, merge conflicts, CI status, and
+  the PR performance report comment instead of relying on a single status signal.
+- When code review appears, decide whether each comment requires a code or
+  documentation change. Reply to the review thread either way: explain the fix
+  made, or explain why no change is appropriate.
+- When conflicts appear, resolve the textual conflicts and also inspect the new
+  `origin/main` changes that caused or surround the conflict. Decide whether
+  those newly introduced behaviors should be covered, replaced, or adapted by
+  the current task, then re-verify the branch locally before pushing the
+  resolution.
+- When CI fails, treat the failing jobs as blockers. Inspect the logs, repair the
+  branch, rerun the relevant local verification when feasible, and push the fix.
+- When the performance report identifies a regression, treat it as a blocker
+  unless the report or direct probe artifacts prove it is outside the PR scope.
+  Fix in-scope regressions and document non-blocking findings in the PR.
+- Squash merge only after code review threads are resolved, any required reviewer
+  approval is present, conflicts are resolved, CI is green, the performance
+  report is acceptable, PR evidence is complete, and the branch is current with
+  `origin/main`.
+
 ## Pull Request Evidence Rules
 
 Before creating or updating a pull request, read and follow:

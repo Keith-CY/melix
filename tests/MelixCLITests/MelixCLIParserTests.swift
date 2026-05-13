@@ -19,6 +19,8 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix info --json"))
         #expect(MelixCLIParser.usageText.contains("melix capabilities --json [--model-query MODEL]"))
         #expect(MelixCLIParser.usageText.contains("melix config metadata --json"))
+        #expect(MelixCLIParser.usageText.contains("melix uri inspect URI [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix recipes plan RECIPE_ID"))
     }
 
     @Test("parses runtime settings and machine readable discovery commands")
@@ -855,6 +857,14 @@ struct MelixCLIParserTests {
             (.datasetList(.init(json: true)), "dataset.list"),
             (.datasetHubDownload(.init(repoID: "org/dataset", revision: "main", json: true)), "dataset.hub.download"),
             (.datasetRemove(.init(repoID: "org/dataset", revision: "main", snapshotID: "abc123", json: true)), "dataset.remove"),
+            (.uriInspect(.init(uri: "hf://model/org/model", json: true)), "uri.inspect"),
+            (.uriImport(.init(uri: "hf://model/org/model", modelID: "model", revision: "main", dryRun: true, json: true)), "uri.import"),
+            (.recipesList(.init(task: "import", json: true)), "recipes.list"),
+            (.recipesShow(.init(recipeID: "import.hf-mlx-model", version: "1", json: true)), "recipes.show"),
+            (.recipesValidate(.init(target: "import.hf-mlx-model", json: true)), "recipes.validate"),
+            (.recipesPlan(.init(recipeID: "import.hf-mlx-model", version: "1", values: ["repo_id": "org/model", "model_id": "model"], outputPath: "/tmp/plan.json", json: true)), "recipes.plan"),
+            (.recipesApply(.init(recipeID: "benchmark.eval.smoke", version: "1", values: ["model_id": "model"], dryRun: true, resume: true, fromStepID: "benchmark", json: true)), "recipes.apply"),
+            (.recipesInit(.init(sourceURI: "hf://model/org/model", task: "import", outputPath: "/tmp/import.recipe.json", json: true)), "recipes.init"),
             (.modelRootsList(.init(json: true)), "model.roots.list"),
             (.modelRootsAdd(.init(path: "/models", json: true)), "model.roots.add"),
             (.modelRootsRemove(.init(path: "/models", json: true)), "model.roots.remove"),
@@ -942,6 +952,14 @@ struct MelixCLIParserTests {
             .datasetList(.init(json: true)),
             .datasetHubDownload(.init(repoID: "org/dataset", revision: "main", json: true)),
             .datasetRemove(.init(repoID: "org/dataset", revision: "main", snapshotID: "abc123", json: true)),
+            .uriInspect(.init(uri: "hf://model/org/model", json: true)),
+            .uriImport(.init(uri: "hf://model/org/model", modelID: "model", revision: "main", dryRun: true, json: true)),
+            .recipesList(.init(task: "import", json: true)),
+            .recipesShow(.init(recipeID: "import.hf-mlx-model", version: "1", json: true)),
+            .recipesValidate(.init(target: "import.hf-mlx-model", json: true)),
+            .recipesPlan(.init(recipeID: "import.hf-mlx-model", version: "1", values: ["repo_id": "org/model", "model_id": "model"], outputPath: "/tmp/plan.json", json: true)),
+            .recipesApply(.init(recipeID: "benchmark.eval.smoke", version: "1", values: ["model_id": "model"], dryRun: true, resume: true, fromStepID: "benchmark", json: true)),
+            .recipesInit(.init(sourceURI: "hf://model/org/model", task: "import", outputPath: "/tmp/import.recipe.json", json: true)),
             .modelRootsList(.init(json: true)),
             .modelRootsAdd(.init(path: "/models", json: true)),
             .modelRootsRemove(.init(path: "/models", json: true)),
@@ -1016,7 +1034,6 @@ struct MelixCLIParserTests {
         let unsupported: [MelixCLICommand] = [
             .modelList(.init()),
             .loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl")),
-            .evalCompare(.init(modelID: "base", targetModelIDs: ["target"])),
         ]
         for command in unsupported {
             do {
@@ -1264,6 +1281,178 @@ struct MelixCLIParserTests {
         #expect(removeOptions.revision == "main")
         #expect(removeOptions.snapshotID == "abc123")
         #expect(removeOptions.json)
+    }
+
+    @Test("parses uri resolver commands")
+    func parsesURIResolverCommands() throws {
+        let inspect = try MelixCLIParser.parse([
+            "uri",
+            "inspect",
+            "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--json",
+        ])
+        let importCommand = try MelixCLIParser.parse([
+            "uri",
+            "import",
+            "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--model-id", "qwen35-08b",
+            "--revision", "refs/pr/1",
+            "--dry-run",
+            "--json",
+        ])
+        let importFromRevisionURI = try MelixCLIParser.parse([
+            "uri",
+            "import",
+            "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit@refs/pr/2",
+            "--dry-run",
+            "--json",
+        ])
+
+        #expect(
+            inspect ==
+                .uriInspect(
+                    .init(
+                        uri: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        json: true
+                    )
+                )
+        )
+        #expect(
+            importFromRevisionURI ==
+                .uriImport(
+                    .init(
+                        uri: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit@refs/pr/2",
+                        dryRun: true,
+                        json: true
+                    )
+                )
+        )
+        #expect(
+            importCommand ==
+                .uriImport(
+                    .init(
+                        uri: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        modelID: "qwen35-08b",
+                        revision: "refs/pr/1",
+                        dryRun: true,
+                        json: true
+                    )
+                )
+        )
+
+        #expect(throws: MelixCLIError.missingRequired("URI is required for melix uri inspect.")) {
+            try MelixCLIParser.parse(["uri", "inspect", "--json"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("URI is required for melix uri import.")) {
+            try MelixCLIParser.parse(["uri", "import", "--json"])
+        }
+    }
+
+    @Test("parses workflow recipe catalog commands")
+    func parsesWorkflowRecipeCatalogCommands() throws {
+        let list = try MelixCLIParser.parse([
+            "recipes",
+            "list",
+            "--task", "import",
+            "--json",
+        ])
+        let show = try MelixCLIParser.parse([
+            "recipes",
+            "show",
+            "import.hf-mlx-model",
+            "--version", "1",
+            "--json",
+        ])
+        let validate = try MelixCLIParser.parse([
+            "recipes",
+            "validate",
+            "import.hf-mlx-model",
+            "--json",
+        ])
+        let plan = try MelixCLIParser.parse([
+            "recipes",
+            "plan",
+            "import.hf-mlx-model",
+            "--set", "repo_id=mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--set", "model_id=qwen35-08b",
+            "--output", "/tmp/recipe-plan.json",
+            "--json",
+        ])
+        let apply = try MelixCLIParser.parse([
+            "recipes",
+            "apply",
+            "benchmark.eval.smoke",
+            "--version", "1",
+            "--set", "model_id=qwen35-08b",
+            "--dry-run",
+            "--resume",
+            "--from-step", "benchmark",
+            "--json",
+        ])
+        let initCommand = try MelixCLIParser.parse([
+            "recipes",
+            "init",
+            "--from", "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--task", "import",
+            "--output", "/tmp/import.recipe.json",
+            "--json",
+        ])
+
+        #expect(list == .recipesList(.init(task: "import", json: true)))
+        #expect(show == .recipesShow(.init(recipeID: "import.hf-mlx-model", version: "1", json: true)))
+        #expect(validate == .recipesValidate(.init(target: "import.hf-mlx-model", json: true)))
+        #expect(
+            plan ==
+                .recipesPlan(
+                    .init(
+                        recipeID: "import.hf-mlx-model",
+                        values: [
+                            "repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                            "model_id": "qwen35-08b",
+                        ],
+                        outputPath: "/tmp/recipe-plan.json",
+                        json: true
+                    )
+                )
+        )
+        #expect(
+            apply ==
+                .recipesApply(
+                    .init(
+                        recipeID: "benchmark.eval.smoke",
+                        version: "1",
+                        values: ["model_id": "qwen35-08b"],
+                        dryRun: true,
+                        resume: true,
+                        fromStepID: "benchmark",
+                        json: true
+                    )
+                )
+        )
+        #expect(
+            initCommand ==
+                .recipesInit(
+                    .init(
+                        sourceURI: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        task: "import",
+                        outputPath: "/tmp/import.recipe.json",
+                        json: true
+                    )
+                )
+        )
+
+        #expect(throws: MelixCLIError.missingRequired("RECIPE_ID is required for melix recipes show.")) {
+            try MelixCLIParser.parse(["recipes", "show", "--json"])
+        }
+        #expect(throws: MelixCLIError.usage("--set must use KEY=VALUE.")) {
+            try MelixCLIParser.parse(["recipes", "plan", "import.hf-mlx-model", "--set", "=bad"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--from is required for melix recipes init.")) {
+            try MelixCLIParser.parse(["recipes", "init", "--task", "import"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--task is required for melix recipes init.")) {
+            try MelixCLIParser.parse(["recipes", "init", "--from", "hf://model/org/repo"])
+        }
     }
 
     @Test("parses model import command and rejects missing import path")
