@@ -32,10 +32,23 @@ struct TextGenerationEngine: Sendable {
             var seq: UInt64 = 1
             var promptTokens = 0
             var completionTokens = 0
-            var assistantText = ""
-            var eventCount = 0
-            var sawFirstToken = false
+            var outputState = FilteredTextOutputState()
             var tokensPerSecond: Double?
+            var outputFilter = HarmonyChannelOutputFilter()
+
+            func writeOutput(_ output: HarmonyChannelOutputFilter.Output) async throws {
+                try await writeFilteredTextOutput(
+                    output,
+                    response: response,
+                    requestID: requestID,
+                    executionKind: "generate",
+                    seq: &seq,
+                    state: &outputState,
+                    metrics: metrics,
+                    ttftMetricName: "swift_text.ttft_ms",
+                    startedAt: startedAt
+                )
+            }
 
             for try await runtimeEvent in runtimeStream {
                 switch runtimeEvent {
@@ -51,36 +64,20 @@ struct TextGenerationEngine: Sendable {
                     payload.inputTokens = UInt32(max(0, inputTokens))
                     event.prefillStarted = payload
                     try await response.write(event)
-                    eventCount += 1
+                    outputState.eventCount += 1
                 case .token(let text):
-                    if !sawFirstToken {
-                        sawFirstToken = true
-                        metrics.recordMilliseconds(
-                            "swift_text.ttft_ms",
-                            value: elapsedMilliseconds(since: startedAt)
-                        )
-                    }
-
-                    assistantText.append(text)
                     completionTokens += 1
-
-                    var event = Melix_Worker_V1_ExecuteEvent()
-                    event.requestID = requestID
-                    event.executionKind = "generate"
-                    event.seq = seq
-                    seq += 1
-
-                    var payload = Melix_Worker_V1_TokenDelta()
-                    payload.text = text
-                    event.tokenDelta = payload
-                    try await response.write(event)
-                    eventCount += 1
+                    let filtered = outputFilter.accept(text)
+                    try await writeOutput(filtered)
                 case .summary(let summary):
                     promptTokens = max(promptTokens, summary.promptTokens)
                     completionTokens = max(completionTokens, summary.completionTokens)
                     tokensPerSecond = summary.tokensPerSecond
                 }
             }
+
+            let finalFiltered = outputFilter.finish()
+            try await writeOutput(finalFiltered)
 
             if request.returnUsage && !abortHandle.isAborted {
                 var event = Melix_Worker_V1_ExecuteEvent()
@@ -94,12 +91,13 @@ struct TextGenerationEngine: Sendable {
                 payload.completionTokens = UInt32(max(0, completionTokens))
                 event.usageDelta = payload
                 try await response.write(event)
-                eventCount += 1
+                outputState.eventCount += 1
             }
 
             var completed = Melix_Worker_V1_Completed()
             completed.finishReason = abortHandle.isAborted ? "cancelled" : "stop"
-            completed.assistantText = assistantText
+            completed.assistantText = outputState.assistantText
+            completed.reasoningText = outputState.reasoningText
 
             var completedEvent = Melix_Worker_V1_ExecuteEvent()
             completedEvent.requestID = requestID
@@ -107,16 +105,16 @@ struct TextGenerationEngine: Sendable {
             completedEvent.seq = seq
             completedEvent.completed = completed
             try await response.write(completedEvent)
-            eventCount += 1
+            outputState.eventCount += 1
 
-            if !sawFirstToken {
+            if !outputState.sawFirstToken {
                 metrics.recordMilliseconds(
                     "swift_text.ttft_ms",
                     value: elapsedMilliseconds(since: startedAt)
                 )
             }
             metrics.recordMilliseconds("swift_text.generate_ms", value: elapsedMilliseconds(since: startedAt))
-            metrics.set("swift_text.stream_event_count", value: eventCount)
+            metrics.set("swift_text.stream_event_count", value: outputState.eventCount)
 
             if let tokensPerSecond {
                 metrics.set(

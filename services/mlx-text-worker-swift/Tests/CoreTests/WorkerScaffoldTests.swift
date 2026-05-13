@@ -21,6 +21,24 @@ import Tokenizers
 
 @available(macOS 15.0, *)
 final class WorkerScaffoldTests: XCTestCase {
+    func testHarmonyChannelOutputFilterSuppressesInternalChannels() {
+        var filter = HarmonyChannelOutputFilter()
+
+        let first = filter.accept("<|chan")
+        let second = filter.accept("nel>thought\n<channel|>\nsecret")
+        let third = filter.accept("<|channel>debug\n<channel|>\ndropped")
+        let fourth = filter.accept("<|channel>final\n<channel|>\nvisible")
+        let finished = filter.finish()
+
+        XCTAssertEqual(first, HarmonyChannelOutputFilter.Output())
+        XCTAssertEqual(second.reasoningText, "\nsecret")
+        XCTAssertEqual(second.visibleText, "")
+        XCTAssertEqual(third, HarmonyChannelOutputFilter.Output())
+        XCTAssertEqual(fourth.visibleText, "\nvisible")
+        XCTAssertEqual(fourth.reasoningText, "")
+        XCTAssertEqual(finished, HarmonyChannelOutputFilter.Output())
+    }
+
     func testConfigurationDefaultsPreferDedicatedWorkerIdentity() {
         let configuration = WorkerConfiguration()
         let matchingConfiguration = WorkerConfiguration(
@@ -3589,6 +3607,79 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
         XCTAssertFalse(recorded.last?.completed.assistantText.isEmpty ?? true)
         XCTAssertEqual(services.metrics.counters["swift_text.stream_event_count"], recorded.count)
+    }
+
+    func testGenerateSuppressesHarmonyThoughtChannelForLoadedModel() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(generatedChunks: [
+                "<|channel>thought\n<channel|>\n{\"output\":\"pwd\",\"exit_code\":0}",
+                "<|channel>final\n<channel|>\nRepository reviewed.",
+            ])
+        )
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_GenerateRequest()
+        request.execution.id.requestID = "req-harmony-generate"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.execution.ext["melix.harmony"] = "true"
+        request.returnUsage = true
+        var message = Melix_Worker_V1_ChatMessage()
+        message.role = "user"
+        var part = Melix_Worker_V1_MessagePart()
+        part.text = "Review the repo."
+        message.parts = [part]
+        request.messages = [message]
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.generate(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Generate.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        let tokenText = recorded.compactMap { event -> String? in
+            guard case .tokenDelta(let token) = event.payload else {
+                return nil
+            }
+            return token.text
+        }
+        let reasoningText = recorded.compactMap { event -> String? in
+            guard case .reasoningDelta(let reasoning) = event.payload else {
+                return nil
+            }
+            return reasoning.text
+        }
+        let usage = try XCTUnwrap(recorded.first { event in
+            matches(event.payload, .usageDelta)
+        }?.usageDelta)
+
+        XCTAssertEqual(tokenText, ["\nRepository reviewed."])
+        XCTAssertEqual(reasoningText, ["\n{\"output\":\"pwd\",\"exit_code\":0}"])
+        XCTAssertEqual(usage.completionTokens, 2)
+        XCTAssertEqual(recorded.last?.completed.assistantText, "\nRepository reviewed.")
+        XCTAssertFalse(recorded.last?.completed.assistantText.contains("<|channel>") ?? true)
+        XCTAssertFalse(recorded.last?.completed.assistantText.contains("pwd") ?? true)
     }
 
     func testGenerateReturnsNotFoundErrorEventForUnknownModelHandle() async throws {
