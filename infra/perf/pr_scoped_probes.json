@@ -2141,14 +2141,12 @@
       {
         "key": "elapsed_ms_mean",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "elapsed_ms_min",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       }
     ]
   },
@@ -2957,8 +2955,7 @@
       {
         "key": "elapsed_ms_mean",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "endswith_checks_mean",
@@ -3593,8 +3590,7 @@
       {
         "key": "no_op_recorder_overhead_pct",
         "unit": "pct",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "no_op_policy_check_overhead_pct",

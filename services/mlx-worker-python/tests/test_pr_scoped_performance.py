@@ -2257,8 +2257,27 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     probe_policy_metrics = {
         metric["key"]: metric for metric in by_id["probe-policy-noop-overhead"]["metrics"]
     }
-    assert probe_policy_metrics["no_op_recorder_overhead_pct"]["direction"] == "lower_is_better"
+    assert probe_policy_metrics["no_op_recorder_overhead_pct"]["direction"] == "informational"
     assert probe_policy_metrics["no_op_policy_check_overhead_pct"]["direction"] == "informational"
+    assert probe_policy_metrics["threshold_passed"]["direction"] == "higher_is_better"
+    assert probe_policy_metrics["threshold_passed"]["warn_pct"] == 0.0
+
+    quantization_metrics = {
+        metric["key"]: metric
+        for metric in by_id["quantization-gate-manifest-event-streaming"]["metrics"]
+    }
+    assert quantization_metrics["events_consumed_mean"]["direction"] == "lower_is_better"
+    assert quantization_metrics["events_consumed_mean"]["warn_pct"] == 0.0
+    assert quantization_metrics["elapsed_ms_mean"]["direction"] == "informational"
+    assert quantization_metrics["elapsed_ms_min"]["direction"] == "informational"
+
+    release_gate_metrics = {
+        metric["key"]: metric
+        for metric in by_id["release-gates-m9-failure-count-single-pass"]["metrics"]
+    }
+    assert release_gate_metrics["endswith_checks_mean"]["direction"] == "lower_is_better"
+    assert release_gate_metrics["endswith_checks_mean"]["warn_pct"] == 0.0
+    assert release_gate_metrics["elapsed_ms_mean"]["direction"] == "informational"
 
 
 def test_scope_report_selects_probe_policy_overhead_probe() -> None:

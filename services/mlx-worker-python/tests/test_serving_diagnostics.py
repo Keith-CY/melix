@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -169,6 +170,75 @@ def test_serving_diagnostics_bounded_queue_drops_oldest_without_blocking(
         for line in paths["events"].read_text(encoding="utf-8").splitlines()
     ]
     assert [row["event_index"] for row in event_rows] == [1, 2]
+
+
+def test_serving_diagnostics_bounded_queue_serializes_append_during_snapshot() -> None:
+    first_event = ServingDiagnosticsEvent(
+        request_id="req-concurrent",
+        phase="prefill",
+        event_index=0,
+        status="completed",
+    )
+    second_event = ServingDiagnosticsEvent(
+        request_id="req-concurrent",
+        phase="decode",
+        event_index=1,
+        status="completed",
+    )
+
+    class InstrumentedBuffer:
+        def __init__(self) -> None:
+            self._events = [first_event]
+            self.iteration_started = threading.Event()
+            self.release_iteration = threading.Event()
+
+        def __len__(self) -> int:
+            return len(self._events)
+
+        def append(self, event: ServingDiagnosticsEvent) -> None:
+            if self.iteration_started.is_set() and not self.release_iteration.is_set():
+                raise AssertionError("append entered while snapshot iteration was active")
+            self._events.append(event)
+
+        def __iter__(self):
+            self.iteration_started.set()
+            assert self.release_iteration.wait(timeout=2.0)
+            return iter(tuple(self._events))
+
+    queue = BoundedServingDiagnosticsEventQueue(max_events=8)
+    instrumented = InstrumentedBuffer()
+    queue._events = instrumented  # type: ignore[assignment]
+    errors: list[BaseException] = []
+    snapshots: list[tuple[int, ...]] = []
+
+    def capture_snapshot() -> None:
+        try:
+            snapshot = queue.snapshot()
+            snapshots.append(tuple(event.event_index for event in snapshot.events))
+        except BaseException as exc:  # pragma: no cover - propagated below
+            errors.append(exc)
+
+    def append_event() -> None:
+        try:
+            assert queue.append(second_event) is True
+        except BaseException as exc:  # pragma: no cover - propagated below
+            errors.append(exc)
+
+    snapshot_thread = threading.Thread(target=capture_snapshot)
+    snapshot_thread.start()
+    assert instrumented.iteration_started.wait(timeout=2.0)
+
+    append_thread = threading.Thread(target=append_event)
+    append_thread.start()
+    instrumented.release_iteration.set()
+    snapshot_thread.join(timeout=2.0)
+    append_thread.join(timeout=2.0)
+
+    assert snapshot_thread.is_alive() is False
+    assert append_thread.is_alive() is False
+    assert errors == []
+    assert snapshots == [(0,)]
+    assert [event.event_index for event in instrumented._events] == [0, 1]
 
 
 def test_serving_diagnostics_summary_defaults_throughput_to_float_zero() -> None:

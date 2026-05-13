@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -30,19 +31,22 @@ class BoundedServingDiagnosticsEventQueue:
         self._max_events = max(int(max_events), 1)
         self._events: deque[ServingDiagnosticsEvent] = deque(maxlen=self._max_events)
         self._dropped_count = 0
+        self._lock = threading.Lock()
 
     def append(self, event: ServingDiagnosticsEvent) -> bool:
-        dropped = len(self._events) >= self._max_events
-        if dropped:
-            self._dropped_count += 1
-        self._events.append(event)
-        return not dropped
+        with self._lock:
+            dropped = len(self._events) >= self._max_events
+            if dropped:
+                self._dropped_count += 1
+            self._events.append(event)
+            return not dropped
 
     def snapshot(self) -> ServingDiagnosticsQueueSnapshot:
-        return ServingDiagnosticsQueueSnapshot(
-            events=tuple(self._events),
-            dropped_count=self._dropped_count,
-        )
+        with self._lock:
+            return ServingDiagnosticsQueueSnapshot(
+                events=tuple(self._events),
+                dropped_count=self._dropped_count,
+            )
 
 
 @dataclass(frozen=True)

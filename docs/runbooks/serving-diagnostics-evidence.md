@@ -22,7 +22,11 @@ Use `MELIX_PROBE_MODE=debug` when a local operator explicitly wants detailed
 debug artifacts. Use `MELIX_PROBE_MODE=evidence` for benchmark, evaluation,
 comparison, and release evidence. Use `minimal` or `off` for packaged serving
 paths where status surfaces may reuse already-computed counters but must not
-start heavyweight samplers or detailed trace capture.
+start heavyweight samplers or detailed trace capture. Missing or empty
+`MELIX_PROBE_MODE` resolves to `minimal`; set `MELIX_PROBE_MODE=off` only for an
+explicit opt-out from lightweight health telemetry. A diagnostics
+`fallback_applied` field of `true` means Melix received a non-empty unrecognized
+mode string and substituted `minimal`.
 
 Do not use debug-only diagnostics bundles as public performance claims. They are
 for reproducing runtime shape and request events, not for leaderboard-style
