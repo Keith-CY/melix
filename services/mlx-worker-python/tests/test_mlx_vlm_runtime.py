@@ -1224,6 +1224,51 @@ def test_mlx_vlm_runtime_family_config_backfills_cache_for_legacy_loaded_model(
     assert resolve_call_count == 1
 
 
+def test_mlx_vlm_runtime_prompt_text_and_media_presence_detects_media() -> None:
+    image_prompt, has_image = MLXVLMRuntime._prompt_text_and_media_presence(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text=" describe "),
+                    common_pb2.MessagePart(image_uri="file:///tmp/image.png"),
+                ],
+            )
+        ]
+    )
+    video_prompt, has_video = MLXVLMRuntime._prompt_text_and_media_presence(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="watch"),
+                    common_pb2.MessagePart(video_bytes=b"video"),
+                ],
+            )
+        ]
+    )
+
+    assert image_prompt == "describe"
+    assert has_image is True
+    assert video_prompt == "watch"
+    assert has_video is True
+
+
+def test_mlx_vlm_runtime_prompt_only_request_falls_back_to_message_text() -> None:
+    class IdentityFamilyConfig:
+        def shape_request(self, prepared: PreparedVisionRequest) -> PreparedVisionRequest:
+            return prepared
+
+    prepared = MLXVLMRuntime._prompt_only_request(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="fallback prompt")])],
+        family_config=IdentityFamilyConfig(),
+        started_at=time.perf_counter(),
+    )
+
+    assert prepared.prompt_text == "fallback prompt"
+    assert prepared.prompt_hash_hex == prepared.multimodal_hash_hex
+
+
 def test_mlx_vlm_runtime_passes_video_when_backend_accepts_video_argument() -> None:
     stream_calls: list[dict[str, object]] = []
 

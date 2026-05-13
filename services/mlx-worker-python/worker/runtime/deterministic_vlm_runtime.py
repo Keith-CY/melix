@@ -17,7 +17,7 @@ from worker.runtime.token_counting import whitespace_token_count as _whitespace_
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class VisionProbeSnapshot:
     preprocess_latency_ms: float
     preprocess_input_bytes: int
@@ -333,6 +333,26 @@ class DeterministicVLMRuntime:
             cache_scope_id=scope_id,
             cache_hit=cache_hit,
         )
+        if not prepared_request.images and not prepared_request.videos:
+            sleep_if_configured("vlm")
+            if cancel_event.is_set():
+                return
+            tool_call_event = self._tool_call_event(
+                prepared_request,
+                loaded_model,
+                execution_ext,
+            )
+            if tool_call_event is not None:
+                yield tool_call_event
+                if cancel_event.is_set():
+                    return
+            yield RuntimeTokenEvent(
+                text=response,
+                prompt_tokens=self.prompt_token_count(prepared_request, loaded_model=loaded_model),
+                completion_tokens=max(1, _whitespace_token_count(response)),
+                finish_reason="stop",
+            )
+            return
         temp_media_session = self._temp_media_session_factory(
             temp_root=self._temp_root,
             prefix="melix-vlm-",

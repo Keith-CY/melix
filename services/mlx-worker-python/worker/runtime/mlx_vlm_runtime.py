@@ -1149,7 +1149,7 @@ class MLXVLMRuntime:
         metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
         family_config = self._family_config(loaded_model)
-        has_non_text_media = self._contains_non_text_media(messages)
+        prompt_text, has_non_text_media = self._prompt_text_and_media_presence(messages)
         include_chat_messages = (
             bool(execution_ext)
             and self._truthy_ext(execution_ext, _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY)
@@ -1173,6 +1173,7 @@ class MLXVLMRuntime:
                     messages,
                     family_config=family_config,
                     started_at=started_at,
+                    prompt_text=prompt_text,
                     include_chat_messages=include_chat_messages,
                 )
         else:
@@ -1183,6 +1184,7 @@ class MLXVLMRuntime:
                     messages,
                     family_config=family_config,
                     started_at=started_at,
+                    prompt_text=prompt_text,
                     include_chat_messages=include_chat_messages,
                 )
         self._record_fast_path_probe(loaded_model, prepared)
@@ -2151,24 +2153,25 @@ class MLXVLMRuntime:
         return family_config
 
     @staticmethod
-    def _prompt_text_from_messages(messages) -> str:
+    def _prompt_text_and_media_presence(messages) -> tuple[str, bool]:
         prompt_segments: list[str] = []
+        has_non_text_media = False
         for message in messages:
             for part in message.parts:
                 text = str(getattr(part, "text", "") or "").strip()
                 if text:
                     prompt_segments.append(text)
-        return "\n".join(prompt_segments).strip()
+                if not has_non_text_media:
+                    if getattr(part, "image_bytes", b"") or getattr(part, "image_uri", ""):
+                        has_non_text_media = True
+                    elif getattr(part, "video_bytes", b"") or getattr(part, "video_uri", ""):
+                        has_non_text_media = True
+        return "\n".join(prompt_segments).strip(), has_non_text_media
 
     @staticmethod
-    def _contains_non_text_media(messages) -> bool:
-        for message in messages:
-            for part in message.parts:
-                if getattr(part, "image_bytes", b"") or getattr(part, "image_uri", ""):
-                    return True
-                if getattr(part, "video_bytes", b"") or getattr(part, "video_uri", ""):
-                    return True
-        return False
+    def _prompt_text_from_messages(messages) -> str:
+        prompt_text, _ = MLXVLMRuntime._prompt_text_and_media_presence(messages)
+        return prompt_text
 
     @staticmethod
     def _replace_prompt_text(
@@ -2191,9 +2194,11 @@ class MLXVLMRuntime:
         *,
         family_config,
         started_at: float,
+        prompt_text: str | None = None,
         include_chat_messages: bool = False,
     ) -> PreparedVisionRequest:
-        prompt_text = MLXVLMRuntime._prompt_text_from_messages(messages)
+        if prompt_text is None:
+            prompt_text = MLXVLMRuntime._prompt_text_from_messages(messages)
         chat_messages = (
             MLXVLMRuntime._chat_messages_for_text_only_template(messages)
             if include_chat_messages

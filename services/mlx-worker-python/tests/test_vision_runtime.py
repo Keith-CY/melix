@@ -82,6 +82,20 @@ def paligemma_vlm_model() -> common_pb2.ModelSpec:
     return model
 
 
+def text_only_vlm_request(prompt_text: str) -> PreparedVisionRequest:
+    return PreparedVisionRequest(
+        prompt_text=prompt_text,
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(prompt_text.encode("utf-8")),
+        preprocess_peak_memory_bytes=0,
+        prompt_hash_hex="1" * 64,
+        multimodal_hash_hex="2" * 64,
+    )
+
+
 def test_generate_streams_ocr_text_from_inline_image_bytes() -> None:
     runtime_service, inference_service, maintenance_core = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_ocr_model())
@@ -2058,6 +2072,72 @@ def test_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
     assert probe.image_feature_cache_misses == 1
     assert probe.multimodal_decode_mode == "native_quantized"
     assert probe.quantized_load_mode == "native_quantized"
+
+
+def test_vlm_runtime_text_only_fast_path_skips_temp_media_session_and_emits_tool_call() -> None:
+    session_creations = 0
+
+    def temp_media_session_factory(*args, **kwargs):
+        nonlocal session_creations
+        session_creations += 1
+        raise AssertionError("text-only VLM generation should not create a temp media session")
+
+    runtime = DeterministicVLMRuntime(temp_media_session_factory=temp_media_session_factory)
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = text_only_vlm_request("Call the tool")
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            None,
+            Event(),
+            execution_ext={
+                "melix.tool_parser.mode": "qwen",
+                "melix.tool_parser.namespaces": "tools.vision",
+            },
+        )
+    )
+    probe = runtime.last_probe_snapshot()
+
+    assert session_creations == 0
+    assert events[0].tool_name == "tools.vision"
+    assert events[0].arguments_json_fragment == '{"prompt":"Call the tool","image_count":0}'
+    assert events[1].text == "Prompt: Call the tool"
+    assert probe.temp_media_artifact_count == 0
+
+
+def test_vlm_runtime_text_only_fast_path_honors_cancel_before_token() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = text_only_vlm_request("Call the tool")
+    cancel_event = Event()
+    cancel_event.set()
+
+    assert list(runtime.generate_tokens(loaded_model, prepared, None, cancel_event)) == []
+
+
+def test_vlm_runtime_text_only_fast_path_honors_cancel_after_tool_call() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = text_only_vlm_request("Call the tool")
+    cancel_event = Event()
+    generator = runtime.generate_tokens(
+        loaded_model,
+        prepared,
+        None,
+        cancel_event,
+        execution_ext={
+            "melix.tool_parser.mode": "qwen",
+            "melix.tool_parser.namespaces": "tools.vision",
+        },
+    )
+
+    tool_call = next(generator)
+    cancel_event.set()
+
+    assert tool_call.tool_name == "tools.vision"
+    assert list(generator) == []
 
 
 def test_vlm_runtime_fast_path_signature_uses_nested_runtime_metadata() -> None:
