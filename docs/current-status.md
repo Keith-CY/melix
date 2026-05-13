@@ -1,6 +1,6 @@
 # Melix Current Status
 
-_Last updated: 2026-04-12_
+_Last updated: 2026-05-14_
 
 ---
 
@@ -40,6 +40,9 @@ The original Phase 0–8 productization roadmap is **complete**. The codebase is
 - Evaluation suites (MMLU and more)
 - Compare and export results from the same product surfaces
 - Results stored in a repository-owned format for reproducible comparisons
+- Fixture-backed agentic tool evidence can be reused across SFT trace replay,
+  RL alignment trace rows, benchmark request rows, and evaluation sample JSONL
+  artifacts
 
 ### Native macOS App
 - Menubar status and quick access
@@ -73,6 +76,10 @@ The repository records product-level evidence for:
 - Phase 8 native Window UI acceptance bundle and screenshot capture
 - Release-gate automation through the GitHub Actions workflow
 - Full LoRA workflow path evidence (`dataset → train → activate → compare → publish`) captured as per-stage success/failure counters in the release gate `lora_path` section and as a `lora_capability` section in the Phase 8 acceptance bundle
+- Unified agentic tool runtime closure evidence for issue #674, including
+  registry and observation contracts, deterministic local adapters, shared
+  benchmark/evaluation evidence, RL trace projection, and changed-scope
+  coverage reported by PRs #857, #860, and #875
 
 The default verification contract is: `make proto` → `make py-test` → `make swift-test` → `make integration-test`. Check [`progress.md`](../progress.md) for any current local caveats before treating the full gate as clean.
 
@@ -86,6 +93,7 @@ These are the current limits of the product. They're intentional, not oversights
 |---|---|
 | **Apple Silicon only** | Melix is intentionally scoped to macOS on Apple Silicon. No cross-platform support is planned for the current scope. |
 | **LoRA family coverage** | `llama`, `qwen`, `gemma`, and `kimi` are the stable dense-family path. `mixtral` and `qwen3moe` are experimental via MoE hooks. `deepseek-mla`, `mistral4`, `nemotron-h`, and embedding-family models are not yet productized for `train_lora`. |
+| **Agentic tool providers** | The unified agentic tool runtime is deterministic and fixture-backed. Network search, live browser visit providers, unsafe arbitrary Python execution, and online GRPO optimization remain outside the shipped local runtime closure. |
 | **Disk-streaming** | Documented and probed, but true SSD-backed runtime execution is not yet shipped. |
 | **Historical plans** | The plan archive is broader than the curated product docs. Archived plans are engineering history — not every plan is equally product-ready. |
 | **Progress log** | `progress.md` tracks active verification notes. Treat it as the operational truth for known local issues. |

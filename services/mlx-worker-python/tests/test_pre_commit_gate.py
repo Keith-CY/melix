@@ -95,6 +95,23 @@ def test_gate_allows_untracked_files(monkeypatch, tmp_path: Path) -> None:
     assert commands == ["make swift-test", "make py-test", "make integration-test"]
 
 
+def test_run_shell_command_scrubs_git_hook_environment(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GIT_DIR", "/tmp/melix-hook-git-dir")
+    monkeypatch.setenv("GIT_WORK_TREE", "/tmp/melix-hook-work-tree")
+    monkeypatch.setenv("GIT_INDEX_FILE", "/tmp/melix-hook-index")
+
+    command = (
+        f"{sys.executable} -c "
+        "'import os, sys; "
+        "sys.exit(any(os.environ.get(name) for name in "
+        "(\"GIT_DIR\", \"GIT_WORK_TREE\", \"GIT_INDEX_FILE\")))'"
+    )
+
+    result = pre_commit_gate.run_shell_command(command, tmp_path)
+
+    assert result.ok is True
+
+
 def test_gate_blocks_when_unstaged_tracked_files_are_present(monkeypatch, tmp_path: Path) -> None:
     commands: list[str] = []
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))

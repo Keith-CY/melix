@@ -13,6 +13,23 @@ from typing import Any
 RUN_EVIDENCE_SCHEMA_VERSION = "melix.run_evidence.v1"
 TELEMETRY_SUMMARY_SCHEMA_VERSION = "melix.telemetry_summary.v1"
 PROBE_SUMMARY_SCHEMA_VERSION = "melix.probe_summary.v1"
+GIT_LOCAL_ENV_VARS = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+)
 
 _BENCHMARK_ROW_PHASES = (
     ("dataset_materialize_ms", "worker", "dataset_materialize"),
@@ -1710,9 +1727,13 @@ def _bool_value(value: object) -> bool:
 
 
 def _git_output(repo_root: Path, *args: str) -> str:
+    clean_env = dict(os.environ)
+    for name in GIT_LOCAL_ENV_VARS:
+        clean_env.pop(name, None)
     result = subprocess.run(
         ["git", *args],
         cwd=repo_root,
+        env=clean_env,
         check=True,
         capture_output=True,
         text=True,
