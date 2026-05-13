@@ -10,7 +10,12 @@ from typing import Any
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, runtime_pb2
 
 from worker.engine.request_state import RequestState
-from worker.model_load_trust import ModelLoadTrustRejection, load_kwargs_for_policy, resolve_model_load_trust_policy
+from worker.model_load_trust import (
+    ModelLoadTrustRejection,
+    default_not_applicable_load_trust_policy,
+    load_kwargs_for_policy,
+    resolve_model_load_trust_policy,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
 from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRuntime
@@ -30,7 +35,7 @@ from worker.runtime.runtime_utils import callable_accepts_kwarg
 _MULTIMODAL_REQUEST_KINDS = frozenset({"ocr", "vlm", "transcription", "speech", "image"})
 
 
-@dataclass
+@dataclass(slots=True)
 class LoadedModel:
     handle: str
     spec: common_pb2.ModelSpec
@@ -167,6 +172,10 @@ class WorkerRegistry:
         self._last_image_peak_memory_bytes = 0
         self._last_model_load_trust_policy_resolution_ms = 0.0
         self._model_load_trust_blocked_count = 0
+        self._default_text_load_trust_policy = default_not_applicable_load_trust_policy(
+            runtime_kind="text",
+            runtime=self.runtime,
+        )
 
     def capabilities(self) -> common_pb2.RuntimeCapabilities:
         return common_pb2.RuntimeCapabilities(
@@ -216,28 +225,47 @@ class WorkerRegistry:
                 model_id=resolved.model_id,
                 requested_mode=requested_disk_streaming_mode,
             )
-        runtime_kind, runtime = self._runtime_for_model(resolved)
-        trust_started_at = time.monotonic()
-        record_trust_latency = True
-        try:
-            load_trust_policy = resolve_model_load_trust_policy(
-                resolved,
-                request_policy=load_trust,
-                runtime_kind=runtime_kind,
-                runtime=runtime,
-            )
-            record_trust_latency = (
-                load_trust_policy.effective_mode != common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
-            )
-        except ModelLoadTrustRejection:
-            with self._lock:
-                self._model_load_trust_blocked_count += 1
-            raise
-        finally:
-            if record_trust_latency:
-                latency_ms = (time.monotonic() - trust_started_at) * 1000.0
+        if resolved.model_kind == "text":
+            runtime_kind = "text"
+            runtime = self.runtime
+            uses_default_text_runtime = True
+        else:
+            runtime_kind, runtime = self._runtime_for_model(resolved)
+            uses_default_text_runtime = runtime_kind == "text" and runtime is self.runtime
+        load_trust_policy: common_pb2.ModelLoadTrustPolicy | None = None
+        trust_remote_code = False
+        if (
+            load_trust is None
+            and uses_default_text_runtime
+            and resolved.route_class == common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
+            and not resolved.HasField("settings")
+        ):
+            load_trust_policy = self._default_text_load_trust_policy
+        if load_trust_policy is None:
+            trust_started_at = time.monotonic()
+            record_trust_latency = True
+            try:
+                load_trust_policy = resolve_model_load_trust_policy(
+                    resolved,
+                    request_policy=load_trust,
+                    runtime_kind=runtime_kind,
+                    runtime=runtime,
+                )
+                record_trust_latency = (
+                    load_trust_policy.effective_mode != common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+                )
+                trust_remote_code = (
+                    load_trust_policy.effective_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+                )
+            except ModelLoadTrustRejection:
                 with self._lock:
-                    self._last_model_load_trust_policy_resolution_ms = latency_ms
+                    self._model_load_trust_blocked_count += 1
+                raise
+            finally:
+                if record_trust_latency:
+                    latency_ms = (time.monotonic() - trust_started_at) * 1000.0
+                    with self._lock:
+                        self._last_model_load_trust_policy_resolution_ms = latency_ms
         estimated = runtime.estimate_resident_bytes(resolved)
         with self._lock:
             existing_resident_bytes = self._loaded_model_resident_bytes + self._reserved_model_resident_bytes
@@ -265,11 +293,14 @@ class WorkerRegistry:
             )
 
         try:
-            runtime_model = self._load_runtime_model(
-                runtime,
-                resolved,
-                load_trust_policy=load_trust_policy,
-            )
+            if trust_remote_code:
+                runtime_model = self._load_runtime_model(
+                    runtime,
+                    resolved,
+                    load_trust_policy=load_trust_policy,
+                )
+            else:
+                runtime_model = runtime.load_model(resolved)
             residency = self._loaded_residency(
                 resolved,
                 pin_on_load=pin_on_load,
@@ -555,9 +586,11 @@ class WorkerRegistry:
             generation_stream_owner_mode=mlx_executor_snapshot.generation_stream_owner_mode,
             worker_thread_init_latency_ms=mlx_executor_snapshot.worker_thread_init_latency_ms,
             stream_sync_fallback_count=mlx_executor_snapshot.stream_sync_fallback_count,
-            last_model_load_trust_policy_resolution_ms=last_model_load_trust_policy_resolution_ms,
-            model_load_trust_blocked_count=model_load_trust_blocked_count,
         )
+        if last_model_load_trust_policy_resolution_ms:
+            stats.last_model_load_trust_policy_resolution_ms = last_model_load_trust_policy_resolution_ms
+        if model_load_trust_blocked_count:
+            stats.model_load_trust_blocked_count = model_load_trust_blocked_count
         stats.model_resident_bytes = model_resident_bytes
         stats.cache_resident_bytes = cache_resident_bytes
         stats.kv_cache_bytes = kv_cache_bytes

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import json
 from pathlib import Path
 from typing import Any
@@ -45,22 +46,27 @@ def resolve_model_load_trust_policy(
     runtime_kind: str,
     runtime: Any,
 ) -> common_pb2.ModelLoadTrustPolicy:
-    policy = common_pb2.ModelLoadTrustPolicy()
+    runtime_name = _runtime_name(runtime)
     requested_mode, policy_source = _requested_mode(model_spec, request_policy)
+    route_class = _route_class(model_spec, request_policy, runtime_kind)
+    loader_family = _loader_family(
+        model_spec,
+        request_policy,
+        runtime_kind,
+        runtime_name=runtime_name,
+    )
+
+    if not _is_trust_applicable(runtime_kind, loader_family, runtime_name, runtime):
+        return _not_applicable_policy(requested_mode, route_class, loader_family)
+
+    policy = common_pb2.ModelLoadTrustPolicy()
     policy.requested_mode = requested_mode
     policy.policy_source = _non_empty(
         getattr(request_policy, "policy_source", "") if request_policy is not None else "",
         policy_source,
     )
-    policy.route_class = _route_class(model_spec, request_policy, runtime_kind)
-    policy.loader_family = _loader_family(model_spec, request_policy, runtime_kind, runtime)
-
-    if not _is_trust_applicable(runtime_kind, policy.loader_family, runtime):
-        policy.effective_mode = common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
-        policy.policy_source = NOT_APPLICABLE_SOURCE
-        policy.custom_loader_detection_source = NOT_APPLICABLE_SOURCE
-        return policy
-
+    policy.route_class = route_class
+    policy.loader_family = loader_family
     policy.effective_mode = requested_mode
     custom_loader_required, detection_source = _detect_custom_loader_requirement(model_spec)
     policy.custom_loader_required = custom_loader_required
@@ -69,6 +75,41 @@ def resolve_model_load_trust_policy(
         policy.block_reason = BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST
         raise ModelLoadTrustRejection(policy)
     return policy
+
+
+def default_not_applicable_load_trust_policy(
+    *,
+    runtime_kind: str,
+    runtime: Any,
+) -> common_pb2.ModelLoadTrustPolicy | None:
+    runtime_name = _runtime_name(runtime)
+    if not runtime_name:
+        return None
+    if runtime_kind != "text":
+        return None
+    if _is_trust_applicable(runtime_kind, runtime_name, runtime_name, runtime):
+        return None
+    return _not_applicable_policy(
+        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
+        runtime_name,
+    )
+
+
+@lru_cache(maxsize=128)
+def _not_applicable_policy(
+    requested_mode: int,
+    route_class: int,
+    loader_family: str,
+) -> common_pb2.ModelLoadTrustPolicy:
+    return common_pb2.ModelLoadTrustPolicy(
+        requested_mode=requested_mode,
+        effective_mode=common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE,
+        policy_source=NOT_APPLICABLE_SOURCE,
+        custom_loader_detection_source=NOT_APPLICABLE_SOURCE,
+        route_class=route_class,
+        loader_family=loader_family,
+    )
 
 
 def load_kwargs_for_policy(policy: common_pb2.ModelLoadTrustPolicy) -> dict[str, Any]:
@@ -119,9 +160,9 @@ def _loader_family(
     model_spec: common_pb2.ModelSpec,
     request_policy: common_pb2.ModelLoadTrustPolicy | None,
     runtime_kind: str,
-    runtime: Any,
+    *,
+    runtime_name: str,
 ) -> str:
-    runtime_name = str(getattr(runtime, "runtime_name", "") or "") if runtime is not None else ""
     requested_family = (
         str(getattr(request_policy, "loader_family", "") or "").strip()
         if request_policy is not None
@@ -138,25 +179,31 @@ def _loader_family(
     return runtime_name or runtime_kind
 
 
-def _is_trust_applicable(runtime_kind: str, loader_family: str, runtime: Any) -> bool:
+def _is_trust_applicable(
+    runtime_kind: str,
+    loader_family: str,
+    runtime_name: str,
+    runtime: Any,
+) -> bool:
     if runtime is None:
         return False
-    runtime_name = str(getattr(runtime, "runtime_name", "") or "").strip().lower()
+    normalized_runtime_name = runtime_name.strip().lower().replace("-", "_")
     family = loader_family.strip().lower().replace("-", "_")
     if runtime_kind == "text":
-        return (
-            family in TRUST_APPLICABLE_TEXT_LOADERS
-            or runtime_name.replace("-", "_") in TRUST_APPLICABLE_TEXT_LOADERS
-        )
+        return family in TRUST_APPLICABLE_TEXT_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_TEXT_LOADERS
     if runtime_kind == "vlm":
-        if runtime_name.startswith("deterministic"):
+        if normalized_runtime_name.startswith("deterministic"):
             return False
         return (
             family in TRUST_APPLICABLE_VLM_LOADERS
-            or runtime_name.replace("-", "_") in TRUST_APPLICABLE_VLM_LOADERS
+            or normalized_runtime_name in TRUST_APPLICABLE_VLM_LOADERS
             or runtime.__class__.__name__ == "MLXVLMRuntime"
         )
     return False
+
+
+def _runtime_name(runtime: Any) -> str:
+    return str(getattr(runtime, "runtime_name", "") or "") if runtime is not None else ""
 
 
 def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple[bool, str]:

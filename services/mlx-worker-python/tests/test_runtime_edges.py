@@ -26,6 +26,7 @@ from worker.grpc_server import (
     build_server,
     main,
 )
+from worker.model_load_trust import ModelLoadTrustRejection
 from worker.model_ops.deterministic_lora_runner import DeterministicLoRARunner
 from worker.model_ops.mlx_lm_runner import ActivationRequest, TrainingRequest
 from worker.model_ops.training_config import LoRATrainingConfig
@@ -185,7 +186,7 @@ def test_worker_registry_multimodal_request_kind_uses_expected_membership() -> N
         assert WorkerRegistry._is_multimodal_request_kind(runtime_kind) is False
 
 
-def test_worker_registry_sparse_model_request_fast_path_preserves_semantics() -> None:
+def test_worker_registry_sparse_model_request_fast_path_preserves_semantics(tmp_path: Path) -> None:
     sparse = common_pb2.ModelSpec(model_id="melix-dev-text")
     empty = common_pb2.ModelSpec()
     full = WorkerModelCatalog.dev_text_model()
@@ -231,6 +232,43 @@ def test_worker_registry_sparse_model_request_fast_path_preserves_semantics() ->
     assert loaded.spec.model_id == "melix-dev-text"
     assert loaded.spec.model_path == WorkerModelCatalog.dev_text_model().model_path
     assert loaded.runtime_model["model_path"] == WorkerModelCatalog.dev_text_model().model_path
+    assert loaded.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+    assert loaded.load_trust.loader_family == "fake-mlx"
+
+    request_policy = common_pb2.ModelLoadTrustPolicy(
+        requested_mode=common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+    )
+    requested = registry.load_model(full, load_trust=request_policy)
+    settings_model = common_pb2.ModelSpec()
+    settings_model.CopyFrom(full)
+    settings_model.settings.load_trust_mode = common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    settings_loaded = registry.load_model(settings_model)
+    routed_model = common_pb2.ModelSpec()
+    routed_model.CopyFrom(full)
+    routed_model.route_class = common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
+    routed_loaded = registry.load_model(routed_model)
+
+    assert requested.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+    assert requested.load_trust.requested_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    assert settings_loaded.load_trust.requested_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    assert routed_loaded.load_trust.route_class == common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
+
+    applicable_registry = build_registry(backend=ApplicableBackend())
+    trusted = applicable_registry.load_model(full, load_trust=request_policy)
+    assert trusted.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    assert trusted.runtime_model["model_id"] == "melix-dev-text"
+
+    custom_loader_dir = tmp_path / "custom-loader-model"
+    custom_loader_dir.mkdir()
+    (custom_loader_dir / "config.json").write_text(
+        json.dumps({"auto_map": {"AutoModelForCausalLM": "custom.Loader"}}),
+        encoding="utf-8",
+    )
+    custom_loader_model = common_pb2.ModelSpec()
+    custom_loader_model.CopyFrom(full)
+    custom_loader_model.model_path = str(custom_loader_dir)
+    with pytest.raises(ModelLoadTrustRejection):
+        applicable_registry.load_model(custom_loader_model)
 
 
 def load_default_model(runtime_service: WorkerRuntimeService) -> str:
@@ -408,7 +446,6 @@ def test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes() ->
 
     assert applicable_loaded.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE
     assert applicable_stats.last_model_load_trust_policy_resolution_ms >= 0.0
-
 
 
 def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
