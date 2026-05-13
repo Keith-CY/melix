@@ -872,6 +872,9 @@ def test_load_payload_file_fast_path_falls_back_for_escaped_fields(tmp_path: Pat
 
 
 def test_payload_fast_path_field_extractors_cover_malformed_edges() -> None:
+    assert code_eval_runner._json_object_payload_bounds(b' \n {"runtime_status":"ok"}\t ') == (3, 25)
+    assert code_eval_runner._json_object_payload_bounds(b"   ") is None
+    assert code_eval_runner._json_object_payload_bounds(b' {"runtime_status":"ok"] ') is None
     assert code_eval_runner._json_field_value_start(b'{"runtime_status" : "ok"}', "runtime_status") == 20
     assert code_eval_runner._json_field_value_start(b'{"runtime_status" "ok"}', "runtime_status") is None
     assert code_eval_runner._json_field_value_start(b'{"runtime_status": ', "runtime_status") is None
