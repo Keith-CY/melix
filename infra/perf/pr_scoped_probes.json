@@ -3582,18 +3582,20 @@
   },
   {
     "id": "integration-swift-binary-resolution-scandir",
-    "name": "Integration Swift binary resolution scandir fallback",
+    "name": "Integration helper cleanup and Swift binary resolution scandir fallbacks",
     "runner": "ubuntu-latest",
     "watch_globs": [
       "tests/integration/helpers.py",
       "tests/integration/test_helper_binary_resolution.py",
       "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
       "scripts/integration_swift_binary_resolution_probe.py",
+      "tests/integration/test_helper_remove_tree.py",
+      "scripts/integration_remove_tree_probe.py",
       "scripts/changed_scope_coverage.py"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q tests/integration/test_helper_binary_resolution.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_integration_swift_binary_resolution_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_integration_swift_binary_resolution_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/integration/test_helper_binary_resolution.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_integration_swift_binary_resolution_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_integration_swift_binary_resolution_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json tests/integration/helpers.py tests/integration/test_helper_binary_resolution.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/integration_swift_binary_resolution_probe.py",
-    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_SWIFT_BINARY_RESOLUTION_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"scripts/integration_swift_binary_resolution_probe.py\"; if [ -f \"$SCRIPT\" ]; then python3 \"$SCRIPT\"; else for PREFIX in \"${MELIX_SWIFT_BINARY_RESOLUTION_HEAD_REPO:-}\" \"${GITHUB_WORKSPACE:-}/head\" \"../head\"; do CANDIDATE=\"$PREFIX/$SCRIPT\"; if [ -f \"$CANDIDATE\" ]; then python3 \"$CANDIDATE\"; exit $?; fi; done; echo \"missing probe script fallback for $SCRIPT\" >&2; exit 2; fi'",
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q tests/integration/test_helper_binary_resolution.py tests/integration/test_helper_remove_tree.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_integration_swift_binary_resolution_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_integration_swift_binary_resolution_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_integration_remove_tree_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/integration/test_helper_binary_resolution.py tests/integration/test_helper_remove_tree.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_integration_swift_binary_resolution_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_integration_swift_binary_resolution_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_integration_remove_tree_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json tests/integration/helpers.py tests/integration/test_helper_binary_resolution.py tests/integration/test_helper_remove_tree.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/integration_swift_binary_resolution_probe.py scripts/integration_remove_tree_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_SWIFT_BINARY_RESOLUTION_REPO_ROOT=\"$PWD\" MELIX_REMOVE_TREE_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python python3 scripts/integration_swift_binary_resolution_probe.py",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -3617,6 +3619,23 @@
       {
         "key": "candidate_count",
         "unit": "candidates",
+        "direction": "informational"
+      },
+      {
+        "key": "remove_tree_peak_bytes_delta_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "remove_tree_delta_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "remove_tree_directories",
+        "unit": "directories",
         "direction": "informational"
       }
     ]

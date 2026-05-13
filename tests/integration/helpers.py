@@ -358,12 +358,23 @@ class LiveMelixStack:
     def _remove_tree(self, root: Path) -> None:
         if not root.exists():
             return
-        for child in sorted(root.rglob("*"), reverse=True):
-            if child.is_file() or child.is_symlink():
-                child.unlink(missing_ok=True)
-            else:
-                child.rmdir()
-        root.rmdir()
+        root_path = os.fspath(root)
+        for directory, dirnames, filenames in os.walk(root_path, topdown=False, followlinks=False):
+            for filename in filenames:
+                try:
+                    os.unlink(os.path.join(directory, filename))
+                except FileNotFoundError:
+                    pass
+            for dirname in dirnames:
+                child_dir = os.path.join(directory, dirname)
+                if os.path.islink(child_dir):
+                    try:
+                        os.unlink(child_dir)
+                    except FileNotFoundError:
+                        pass
+                else:
+                    os.rmdir(child_dir)
+        os.rmdir(root_path)
 
     def _control_plane_hit_port_conflict(self) -> bool:
         stderr = (
