@@ -225,7 +225,8 @@ def _parse_image_reference(uri: str) -> ParsedImageReference:
 
     parsed = urlparse(uri)
     if parsed.scheme in {"http", "https", "file"}:
-        decoded_path = unquote(parsed.path)
+        parsed_path = parsed.path
+        decoded_path = parsed_path if "%" not in parsed_path else unquote(parsed_path)
         path = Path(decoded_path)
     else:
         decoded_path = uri
