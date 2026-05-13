@@ -231,7 +231,7 @@ class RequestStreamAssembler:
         if (
             not self._is_json_only_structured_output_value
             and not self._buffer
-            and not token_count
+            and token_count <= 1
             and not fragment.parser_observation
             and "<" not in delta
         ):
