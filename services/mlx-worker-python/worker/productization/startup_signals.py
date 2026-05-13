@@ -153,17 +153,17 @@ def _next_normalized_version_part(value: str, index: int) -> tuple[int, int, boo
     value_length = len(value)
 
     while index < value_length:
-        character = value[index]
+        character_code = ord(value[index])
         index += 1
-        if character == "+" or character == "-":
+        if character_code == 43 or character_code == 45:
             break
-        if character == ".":
+        if character_code == 46:
             if part_has_chars:
                 return current_value if digit_seen else 0, index, False
             continue
         part_has_chars = True
-        if digit_prefix_active and character.isdigit():
-            current_value = current_value * 10 + (ord(character) - 48)
+        if digit_prefix_active and 48 <= character_code <= 57:
+            current_value = current_value * 10 + (character_code - 48)
             digit_seen = True
         else:
             digit_prefix_active = False
@@ -182,9 +182,10 @@ def _iter_normalized_version_parts(value: str) -> Iterator[int]:
     part_has_chars = False
 
     for character in cleaned[start_index:]:
-        if character == "+" or character == "-":
+        character_code = ord(character)
+        if character_code == 43 or character_code == 45:
             break
-        if character == ".":
+        if character_code == 46:
             if part_has_chars:
                 yield current_value if digit_seen else 0
             current_value = 0
@@ -193,8 +194,8 @@ def _iter_normalized_version_parts(value: str) -> Iterator[int]:
             part_has_chars = False
             continue
         part_has_chars = True
-        if digit_prefix_active and character.isdigit():
-            current_value = current_value * 10 + (ord(character) - 48)
+        if digit_prefix_active and 48 <= character_code <= 57:
+            current_value = current_value * 10 + (character_code - 48)
             digit_seen = True
         else:
             digit_prefix_active = False
