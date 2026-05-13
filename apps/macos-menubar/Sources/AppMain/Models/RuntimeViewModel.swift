@@ -9583,6 +9583,9 @@ public final class RuntimeViewModel {
         }
         do {
             let exportDirectory = try Self.ensureEvaluationExportDirectory()
+            let selectedJobIDBeforeRefresh = selectedEvaluationHistoryJobID.isEmpty
+                ? selectedEvaluationHistoryEntry?.jobID
+                : selectedEvaluationHistoryJobID
             let bundle: ControlPlaneBenchmarkExportBundle
             if let operatorCommandRunner {
                 bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
@@ -9591,6 +9594,18 @@ public final class RuntimeViewModel {
                 bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
             }
             applyBenchmarkExportBundle(bundle)
+            let pendingSelectedJobID = selectedJobIDBeforeRefresh.flatMap { jobID -> String? in
+                let trimmedJobID = jobID.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard pendingEvaluationSummaryRows[trimmedJobID]?.isEmpty == false else {
+                    return nil
+                }
+                return trimmedJobID
+            }
+            if let pendingSelectedJobID,
+               bundle.evaluationSummaryCSVRows(jobID: pendingSelectedJobID).isEmpty {
+                selectedEvaluationHistoryJobID = pendingSelectedJobID
+                rebuildEvaluationDerivedState()
+            }
             let selectedJobID = selectedEvaluationHistoryJobID.isEmpty ? nil : selectedEvaluationHistoryJobID
             let (rowCount, payload) = builder(bundle, selectedJobID)
             guard rowCount > 0 else {
