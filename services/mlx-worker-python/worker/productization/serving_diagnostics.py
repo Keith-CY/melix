@@ -30,16 +30,18 @@ class BoundedServingDiagnosticsEventQueue:
     def __init__(self, *, max_events: int = 256) -> None:
         self._max_events = max(int(max_events), 1)
         self._events: deque[ServingDiagnosticsEvent] = deque(maxlen=self._max_events)
+        self._retained_count = 0
         self._dropped_count = 0
         self._lock = threading.Lock()
 
     def append(self, event: ServingDiagnosticsEvent) -> bool:
         with self._lock:
-            events = self._events
-            dropped = len(events) >= self._max_events
+            dropped = self._retained_count >= self._max_events
             if dropped:
                 self._dropped_count += 1
-            events.append(event)
+            else:
+                self._retained_count += 1
+            self._events.append(event)
             return not dropped
 
     def snapshot(self) -> ServingDiagnosticsQueueSnapshot:
