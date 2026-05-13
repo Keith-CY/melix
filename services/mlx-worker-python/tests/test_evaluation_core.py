@@ -1216,7 +1216,7 @@ def test_run_local_suite_applies_ad_hoc_eval_prompt_before_sample_system(tmp_pat
     )
 
     assert run.samples[0].raw_response == "Paris"
-    assert run.job.parameters["eval_prompt_system_prompt"] == "Use this one-off rubric."
+    assert "eval_prompt_system_prompt" not in run.job.parameters
     assert run.job.parameters["eval_prompt_system_prompt_chars"] == "24"
     metrics = {metric.name: metric.value for metric in run.result.metrics}
     assert metrics["eval.mmlu.eval_prompt_system_prompt_chars"] == 24.0
