@@ -92,6 +92,10 @@ class RequestStreamAssembler:
     _TOOL_CLOSE = "</tool_call>"
     _PIPE_TOOL_OPEN = "<|tool_call>"
     _PIPE_TOOL_CLOSE = "<tool_call|>"
+    _REASONING_OPEN_TAGS = (_THINK_OPEN, _PIPE_REASONING_OPEN)
+    _TOOL_OPEN_TAGS = (_TOOL_OPEN, _PIPE_TOOL_OPEN)
+    _TOOL_PARSER_STRUCTURAL_OPEN_TAGS = _REASONING_OPEN_TAGS + _TOOL_OPEN_TAGS
+    _TOOL_PARSER_SUFFIX_OPEN_TAGS = _TOOL_OPEN_TAGS + _REASONING_OPEN_TAGS
     _THINK_PREFIXES = tuple("<think>"[:index] for index in range(1, len("<think>")))
     _PIPE_REASONING_PREFIXES = tuple(
         "<|channel>thought"[:index] for index in range(1, len("<|channel>thought"))
@@ -152,8 +156,12 @@ class RequestStreamAssembler:
         )
         self._structural_tag_prefixes_value = self._REASONING_PREFIXES
         self._structural_tag_prefixes_reversed_value = self._REASONING_PREFIXES_REVERSED
+        self._structural_open_tags_value = self._REASONING_OPEN_TAGS
+        self._structural_suffix_open_tags_value = self._REASONING_OPEN_TAGS
         if self._tool_parsing_enabled_value:
             self._request_context_mode_value = "tool_parser"
+            self._structural_open_tags_value = self._TOOL_PARSER_STRUCTURAL_OPEN_TAGS
+            self._structural_suffix_open_tags_value = self._TOOL_PARSER_SUFFIX_OPEN_TAGS
             self._structural_tag_prefixes_value = (
                 self._REASONING_PREFIXES + self._TOOL_PREFIXES + self._PIPE_TOOL_PREFIXES
             )
@@ -287,6 +295,10 @@ class RequestStreamAssembler:
     @property
     def _structural_tag_prefixes_reversed(self) -> tuple[str, ...]:
         return self._structural_tag_prefixes_reversed_value
+
+    @property
+    def _structural_open_tags(self) -> tuple[str, ...]:
+        return self._structural_open_tags_value
 
     def _unseen_delta(self, raw: str) -> str:
         if raw.startswith(self._raw_seen):
@@ -507,28 +519,21 @@ class RequestStreamAssembler:
         return "", ""
 
     def _next_structural_tag(self) -> tuple[str, int] | None:
-        think_index = self._buffer.find(self._THINK_OPEN)
-        pipe_reasoning_index = self._buffer.find(self._PIPE_REASONING_OPEN)
-        if not self._tool_parsing_enabled_value:
-            candidates = []
-            if think_index >= 0:
-                candidates.append((self._THINK_OPEN, think_index))
-            if pipe_reasoning_index >= 0:
-                candidates.append((self._PIPE_REASONING_OPEN, pipe_reasoning_index))
-            return min(candidates, key=lambda item: item[1]) if candidates else None
+        buffer = self._buffer
+        for tag in self._structural_open_tags_value:
+            if buffer.startswith(tag):
+                return (tag, 0)
 
-        tool_index = self._buffer.find(self._TOOL_OPEN)
-        pipe_tool_index = self._buffer.find(self._PIPE_TOOL_OPEN)
-        candidates = []
-        if think_index >= 0:
-            candidates.append((self._THINK_OPEN, think_index))
-        if pipe_reasoning_index >= 0:
-            candidates.append((self._PIPE_REASONING_OPEN, pipe_reasoning_index))
-        if tool_index >= 0:
-            candidates.append((self._TOOL_OPEN, tool_index))
-        if pipe_tool_index >= 0:
-            candidates.append((self._PIPE_TOOL_OPEN, pipe_tool_index))
-        return min(candidates, key=lambda item: item[1]) if candidates else None
+        best_tag = ""
+        best_index = -1
+        for tag in self._structural_open_tags_value:
+            index = buffer.find(tag, 1)
+            if index >= 0 and (best_index < 0 or index < best_index):
+                best_tag = tag
+                best_index = index
+        if best_index < 0:
+            return None
+        return (best_tag, best_index)
 
     def _has_partial_structural_tag_suffix(self) -> bool:
         return bool(self._partial_structural_tag_suffix())
@@ -539,20 +544,10 @@ class RequestStreamAssembler:
             return ""
 
         suffix = self._buffer[marker_index:]
-        if self._tool_parsing_enabled_value and 0 < len(suffix) < len(self._TOOL_OPEN):
-            if self._TOOL_OPEN.startswith(suffix):
+        suffix_len = len(suffix)
+        for tag in self._structural_suffix_open_tags_value:
+            if suffix_len < len(tag) and tag.startswith(suffix):
                 return suffix
-        if self._tool_parsing_enabled_value and 0 < len(suffix) < len(self._PIPE_TOOL_OPEN):
-            if self._PIPE_TOOL_OPEN.startswith(suffix):
-                return suffix
-        if 0 < len(suffix) < len(self._THINK_OPEN) and self._THINK_OPEN.startswith(
-            suffix
-        ):
-            return suffix
-        if 0 < len(suffix) < len(self._PIPE_REASONING_OPEN) and self._PIPE_REASONING_OPEN.startswith(
-            suffix
-        ):
-            return suffix
         return ""
 
     def _record_prefix_hold(self, suffix: str) -> None:

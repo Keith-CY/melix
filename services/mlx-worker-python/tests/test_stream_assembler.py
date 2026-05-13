@@ -41,6 +41,10 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
     assert tool_enabled._structural_tag_prefixes == (
         think_prefixes + pipe_reasoning_prefixes + tool_prefixes + pipe_tool_prefixes
     )
+    assert (
+        tool_enabled._structural_open_tags
+        is RequestStreamAssembler._TOOL_PARSER_STRUCTURAL_OPEN_TAGS
+    )
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_enabled._structural_tag_prefixes_reversed == (
         tuple(reversed(pipe_tool_prefixes))
@@ -56,6 +60,7 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_disabled._structural_tag_prefixes is tool_disabled._structural_tag_prefixes
     assert tool_disabled._structural_tag_prefixes is RequestStreamAssembler._REASONING_PREFIXES
+    assert tool_disabled._structural_open_tags is RequestStreamAssembler._REASONING_OPEN_TAGS
     assert (
         tool_disabled._structural_tag_prefixes_reversed
         is RequestStreamAssembler._REASONING_PREFIXES_REVERSED
@@ -75,6 +80,7 @@ def test_parser_mode_flags_are_computed_once_at_initialization() -> None:
     assert assembler._tool_parsing_enabled is True
     assert assembler._request_context_mode == "tool_parser"
     assert assembler._structural_tag_prefixes is assembler._structural_tag_prefixes_value
+    assert assembler._structural_open_tags is assembler._structural_open_tags_value
 
 
 def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
