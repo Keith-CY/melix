@@ -16,6 +16,7 @@ with focused pytest, changed-scope coverage, and the registered PR-scoped perfor
 ## Touched files
 
 - `services/mlx-worker-python/worker/productization/serving_diagnostics.py`
+- `services/mlx-worker-python/tests/test_serving_diagnostics.py`
 - `docs/plans/2026-05-13-serving-diagnostics-queue-retained-count.md`
 
 ## Registered probe

@@ -27,13 +27,21 @@ class ServingDiagnosticsQueueSnapshot:
 
 
 class BoundedServingDiagnosticsEventQueue:
-    __slots__ = ("_dropped_count", "_events", "_is_saturated", "_lock", "_max_events")
+    __slots__ = (
+        "_dropped_count",
+        "_events",
+        "_is_saturated",
+        "_lock",
+        "_max_events",
+        "_retained_count",
+    )
 
     def __init__(self, *, max_events: int = 256) -> None:
         self._max_events = max(int(max_events), 1)
         self._events: deque[ServingDiagnosticsEvent] = deque(maxlen=self._max_events)
         self._dropped_count = 0
         self._is_saturated = False
+        self._retained_count = 0
         self._lock = threading.Lock()
 
     def append(self, event: ServingDiagnosticsEvent) -> bool:
@@ -43,7 +51,8 @@ class BoundedServingDiagnosticsEventQueue:
                 self._events.append(event)
                 return False
             self._events.append(event)
-            self._is_saturated = len(self._events) >= self._max_events
+            self._retained_count += 1
+            self._is_saturated = self._retained_count >= self._max_events
             return True
 
     def snapshot(self) -> ServingDiagnosticsQueueSnapshot:
