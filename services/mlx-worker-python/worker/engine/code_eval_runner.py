@@ -368,17 +368,24 @@ def _extract_json_int_field(payload_bytes: bytes, key: str) -> int | None:
         return None
     cursor = start
     payload_length = len(payload_bytes)
+    sign = 1
     if cursor < payload_length and payload_bytes[cursor] == ord("-"):
+        sign = -1
         cursor += 1
-    digit_start = cursor
-    while cursor < payload_length and ord("0") <= payload_bytes[cursor] <= ord("9"):
+    if cursor >= payload_length:
+        return None
+    value = 0
+    digit_count = 0
+    while cursor < payload_length:
+        digit = payload_bytes[cursor] - ord("0")
+        if digit < 0 or digit > 9:
+            break
+        value = (value * 10) + digit
+        digit_count += 1
         cursor += 1
-    if cursor == digit_start:
+    if digit_count == 0:
         return None
-    try:
-        return int(payload_bytes[start:cursor])
-    except ValueError:  # pragma: no cover - digit scan above should prevent this.
-        return None
+    return sign * value
 
 
 def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
