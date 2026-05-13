@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import subprocess
+import threading
+import tracemalloc
+
+import pytest
+
 from worker.productization.apple_silicon_telemetry import (
     AppleSiliconProcessSample,
     AppleSiliconTelemetryCollector,
@@ -59,3 +65,37 @@ def fixture_telemetry_collector(*, sample_count: int = 1) -> AppleSiliconTelemet
         sample_count=sample_count,
         join_timeout_s=1.0,
     )
+
+
+def guard_production_safe_probe_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_heavy_sample(*args: object, **kwargs: object) -> None:
+        raise AssertionError("production-safe probe policy must not call the heavy telemetry sampler")
+
+    def fail_sleep(*args: object, **kwargs: object) -> None:
+        raise AssertionError("production-safe probe policy must not sleep during persist")
+
+    def fail_thread_start(self: threading.Thread) -> None:
+        raise AssertionError("production-safe probe policy must not start a telemetry thread")
+
+    original_subprocess_run = subprocess.run
+
+    def fail_powermetrics(*args: object, **kwargs: object) -> subprocess.CompletedProcess[object]:
+        command = args[0] if args else kwargs.get("args")
+        if "powermetrics" in str(command):
+            raise AssertionError("production-safe probe policy must not call powermetrics")
+        return original_subprocess_run(*args, **kwargs)
+
+    def fail_tracemalloc_start(*args: object, **kwargs: object) -> None:
+        raise AssertionError("production-safe probe policy must not start tracemalloc")
+
+    monkeypatch.setattr(
+        "worker.productization.apple_silicon_telemetry.MacOSAppleSiliconSampler.sample",
+        fail_heavy_sample,
+    )
+    monkeypatch.setattr(
+        "worker.productization.apple_silicon_telemetry.subprocess.run",
+        fail_powermetrics,
+    )
+    monkeypatch.setattr("worker.productization.apple_silicon_telemetry.time.sleep", fail_sleep)
+    monkeypatch.setattr(threading.Thread, "start", fail_thread_start)
+    monkeypatch.setattr(tracemalloc, "start", fail_tracemalloc_start)
