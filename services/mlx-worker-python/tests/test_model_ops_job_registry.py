@@ -155,6 +155,34 @@ def test_restore_manifest_jobs_preserves_collected_manifest_order_without_resort
     }
 
 
+def test_restore_manifest_operation_match_fast_path_preserves_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class OperationToken:
+        def __str__(self) -> str:
+            return " train_lora "
+
+    manifest_paths = tuple(
+        tmp_path / "train_lora" / f"model-ops-000{index}" / "train_lora.adapter.json"
+        for index in range(1, 5)
+    )
+    payloads = {
+        manifest_paths[0]: {"job_id": "model-ops-0001", "operation": "train_lora"},
+        manifest_paths[1]: {"job_id": "model-ops-0002", "operation": " train_lora "},
+        manifest_paths[2]: {"job_id": "model-ops-0003", "operation": OperationToken()},
+        manifest_paths[3]: {"job_id": "model-ops-0004", "operation": "activate_adapter"},
+    }
+    monkeypatch.setattr(
+        ModelOpsJobRegistry,
+        "_read_manifest_dict",
+        staticmethod(lambda path: payloads[path]),
+    )
+
+    registry = ModelOpsJobRegistry()
+    registry._restore_manifest_jobs(operation="train_lora", manifest_paths=manifest_paths, pct=0.97)
+
+    assert set(registry._jobs) == {"model-ops-0001", "model-ops-0002", "model-ops-0003"}
+
 
 def test_job_registry_restore_reads_manifest_bytes_without_text_decode(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
