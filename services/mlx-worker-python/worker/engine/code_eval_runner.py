@@ -302,9 +302,27 @@ _CODE_EVAL_PAYLOAD_KEY_TOKENS = {
 }
 
 
+_JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
+
+
+def _json_object_payload_bounds(payload_bytes: bytes) -> tuple[int, int] | None:
+    payload_length = len(payload_bytes)
+    start = 0
+    while start < payload_length and payload_bytes[start] in _JSON_PAYLOAD_WHITESPACE:
+        start += 1
+    if start >= payload_length or payload_bytes[start] != ord("{"):
+        return None
+
+    end = payload_length - 1
+    while end > start and payload_bytes[end] in _JSON_PAYLOAD_WHITESPACE:
+        end -= 1
+    if payload_bytes[end] != ord("}"):
+        return None
+    return start, end
+
+
 def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
-    stripped = payload_bytes.strip()
-    if not stripped.startswith(b"{") or not stripped.endswith(b"}"):
+    if _json_object_payload_bounds(payload_bytes) is None:
         return None
 
     payload: dict[str, object] = {}
