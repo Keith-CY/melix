@@ -377,6 +377,80 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.execution.ext["melix.reasoning.history_strip_count"] == "0")
     }
 
+    @Test("prior assistant raw tool-call prefixes are stripped before prompt rebuild")
+    func priorAssistantRawToolCallPrefixesAreStrippedBeforePromptRebuild() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "tool-call-history-strip" })
+        let translated = try translator.translate(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [
+                    .init(
+                        role: "assistant",
+                        content: """
+                        <|tool_call>call:github_auth:github_auth_check()<tool_call|>
+                        <think>hidden after tool</think>
+                        <|tool_call>call:terminal:run_command{"command":"gh auth status"}<tool_call|>
+                        Visible follow-up.
+                        """
+                    ),
+                    .init(role: "user", content: "Continue.")
+                ]
+            ),
+            modelHandle: "worker-text"
+        )
+
+        let assistant = try #require(translated.workerRequest.messages.first)
+
+        #expect(assistant.role == "assistant")
+        #expect(assistant.parts.first?.text == "\nVisible follow-up.")
+        #expect(translated.workerRequest.execution.ext["melix.tool_call_history_strip_count"] == "2")
+        #expect(translated.workerRequest.execution.ext["melix.reasoning.history_strip_count"] == "1")
+        #expect(
+            !translated.workerRequest.messages
+                .map(\.parts)
+                .flatMap { $0 }
+                .map(\.text)
+                .joined(separator: "\n")
+                .contains("github_auth:github_auth_check")
+        )
+        #expect(
+            !translated.workerRequest.messages
+                .map(\.parts)
+                .flatMap { $0 }
+                .map(\.text)
+                .joined(separator: "\n")
+                .contains("hidden after tool")
+        )
+        #expect(
+            !translated.workerRequest.messages
+                .map(\.parts)
+                .flatMap { $0 }
+                .map(\.text)
+                .joined(separator: "\n")
+                .contains("terminal:run_command")
+        )
+    }
+
+    @Test("inline raw tool-call literals in assistant history are preserved")
+    func inlineRawToolCallLiteralsInAssistantHistoryArePreserved() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "tool-call-history-literal" })
+        let translated = try translator.translate(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [
+                    .init(role: "assistant", content: "Visible <|tool_call> literal marker"),
+                    .init(role: "user", content: "Continue.")
+                ]
+            ),
+            modelHandle: "worker-text"
+        )
+
+        let assistant = try #require(translated.workerRequest.messages.first)
+
+        #expect(assistant.parts.first?.text == "Visible <|tool_call> literal marker")
+        #expect(translated.workerRequest.execution.ext["melix.tool_call_history_strip_count"] == "0")
+    }
+
     @Test("reasoning policy resolver covers template explicit-disable and family auto-detect precedence")
     func reasoningPolicyResolverCoversTemplateExplicitDisableAndFamilyAutoDetectPrecedence() {
         let resolver = ReasoningPolicyResolver()

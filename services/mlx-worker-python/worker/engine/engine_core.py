@@ -488,6 +488,10 @@ class EngineCore:
             reasoning_enabled=reasoning_enabled,
             structured_output_mode=ext.get("melix.structured_output.mode", ""),
             tool_parser_mode=ext.get("melix.tool_parser.mode", ""),
+            allowed_tool_names=(
+                tuple(tool.name for tool in request.execution.tool_config.tools)
+                if request.execution.tool_config.tools else None
+            ),
         )
 
     @staticmethod
