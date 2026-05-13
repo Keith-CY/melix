@@ -38,6 +38,14 @@ def test_probe_policy_telemetry_enabled_only_for_sampling_modes() -> None:
     assert ProbePolicy(mode=ProbeMode.DEBUG).telemetry_enabled is True
 
 
+def test_probe_policy_evidence_enabled_only_for_evidence_modes() -> None:
+    assert ProbePolicy(mode=ProbeMode.OFF).evidence_enabled is False
+    assert ProbePolicy(mode=ProbeMode.MINIMAL).evidence_enabled is False
+    assert ProbePolicy(mode=ProbeMode.SAMPLED).evidence_enabled is False
+    assert ProbePolicy(mode=ProbeMode.EVIDENCE).evidence_enabled is True
+    assert ProbePolicy(mode=ProbeMode.DEBUG).evidence_enabled is True
+
+
 def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     metrics = measure_no_op_probe_policy_overhead(iterations=16, samples=1, threshold_pct=10_000.0)
     payload = metrics.to_dict()
