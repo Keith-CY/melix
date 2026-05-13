@@ -53,6 +53,7 @@ _AUDIO_MODEL_ID = "melix-whisper-mlx"
 _AUDIO_MODEL_REVISION = "mlx-audio"
 _AUDIO_SOURCE_MODEL_PATH = "hf/mlx-community/whisper-large-v3-turbo-asr-fp16"
 _ARITHMETIC_PROMPT_PATTERN = re.compile(r"(\d+)\s*\+\s*(\d+)\s*\?")
+_NUMERIC_METRIC_TYPES = (int, float)
 DEFAULT_M9_RELEASE_GATE_POLICY: dict[str, Any] = {
     "mcp": {
         "mcp.tool_injection_count": {"min": 1.0},
@@ -1636,7 +1637,7 @@ def _evaluate_section_metrics_with_counts(
     failed_threshold_count = 0
     values_get = values.get
     failures_append = failures.append
-    numeric_types = (int, float)
+    numeric_types = _NUMERIC_METRIC_TYPES
     for name, rule in rules.items():
         value = values_get(name)
         if value is None:
