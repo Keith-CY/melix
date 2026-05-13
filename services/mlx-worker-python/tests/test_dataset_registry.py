@@ -659,6 +659,22 @@ def test_dataset_catalog_path_split_matching_avoids_temporary_path_construction(
     assert catalog._path_matches_split(Path("custom/test.arrow"), "test") is True
     assert catalog._path_matches_split(Path("train_dir/part-00000.parquet"), "train") is True
     assert catalog._path_matches_split(Path("custom/eval.jsonl"), "train") is False
+    assert catalog._path_matches_split(Path("custom/train."), "train") is False
+
+
+def test_dataset_catalog_split_matching_skips_stem_for_direct_prefix_hits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stem_calls: list[str] = []
+    monkeypatch.setattr(
+        catalog,
+        "_string_stem",
+        lambda name: stem_calls.append(name) or name,
+    )
+
+    assert catalog._path_matches_split(Path("data/validation-00000.jsonl"), "validation") is True
+    assert catalog._path_matches_split(Path("train_dir/part-00000.parquet"), "train") is True
+    assert stem_calls == []
 
 
 def test_dataset_catalog_string_stem_matches_pathlib_for_split_names() -> None:
