@@ -147,6 +147,27 @@ class WorkerRegistry:
         self._last_speech_streaming_enabled = False
         self._last_speech_streaming_interval_ms = 0
         self._last_speech_first_audio_latency_ms = 0.0
+        self._last_multimodal_decode_mode = ""
+        self._last_multimodal_fallback_reason = ""
+        self._last_multimodal_decode_sync_mode = ""
+        self._text_batch_generator_submitted_request_count = 0
+        self._text_batch_generator_completed_request_count = 0
+        self._text_batch_generator_step_count = 0
+        self._text_batch_generator_generated_token_count = 0
+        self._text_batch_generator_peak_active_batch_size = 0
+        self._text_batch_generator_queue_wait_ms_total = 0.0
+        self._text_batch_generator_insert_ms_total = 0.0
+        self._text_batch_generator_executor_step_ms_total = 0.0
+        self._text_batch_generator_next_ms_total = 0.0
+        self._text_batch_generator_emit_ms_total = 0.0
+        self._text_batch_generator_active_batch_size = 0
+        self._text_batch_generator_generated_response_count = 0
+        self._text_batch_generator_failed_request_count = 0
+        self._text_batch_generator_prepare_ms_total = 0.0
+        self._text_batch_generator_first_response_ms_total = 0.0
+        self._text_batch_generator_first_visible_ms_total = 0.0
+        self._text_batch_generator_first_visible_token_index_total = 0
+        self._text_batch_generator_first_empty_segment_count = 0
         self._last_audio_model_load_latency_ms = 0.0
         self._last_audio_backend_unavailable_count = 0
         self._last_voice_fallback_count = 0
@@ -188,6 +209,16 @@ class WorkerRegistry:
                 supports_speech=True,
                 supports_image_generation=True,
             ),
+            ext=[
+                common_pb2.Capability(
+                    name="melix.vlm.text_only_step_cooperative",
+                    metadata={
+                        "supported": "true",
+                        "experimental": "true",
+                        "default_enabled": "false",
+                    },
+                )
+            ],
         )
 
     def load_model(
@@ -303,7 +334,11 @@ class WorkerRegistry:
                 return False
             self._invalidate_loaded_model_order_locked()
             self._loaded_model_resident_bytes = max(0, self._loaded_model_resident_bytes - loaded.estimated_resident_bytes)
+        close_loaded_model = getattr(loaded.runtime, "close_loaded_model", None)
+        if callable(close_loaded_model):
+            close_loaded_model(loaded.runtime_model)
             return True
+        return True
 
     def _invalidate_loaded_model_order_locked(self) -> None:
         self._sorted_loaded_model_handles = None
@@ -463,6 +498,51 @@ class WorkerRegistry:
             last_speech_streaming_enabled = self._last_speech_streaming_enabled
             last_speech_streaming_interval_ms = self._last_speech_streaming_interval_ms
             last_speech_first_audio_latency_ms = self._last_speech_first_audio_latency_ms
+            last_multimodal_decode_mode = self._last_multimodal_decode_mode
+            last_multimodal_fallback_reason = self._last_multimodal_fallback_reason
+            last_multimodal_decode_sync_mode = self._last_multimodal_decode_sync_mode
+            text_batch_generator_submitted_request_count = (
+                self._text_batch_generator_submitted_request_count
+            )
+            text_batch_generator_completed_request_count = (
+                self._text_batch_generator_completed_request_count
+            )
+            text_batch_generator_step_count = self._text_batch_generator_step_count
+            text_batch_generator_generated_token_count = (
+                self._text_batch_generator_generated_token_count
+            )
+            text_batch_generator_peak_active_batch_size = (
+                self._text_batch_generator_peak_active_batch_size
+            )
+            text_batch_generator_queue_wait_ms_total = (
+                self._text_batch_generator_queue_wait_ms_total
+            )
+            text_batch_generator_insert_ms_total = self._text_batch_generator_insert_ms_total
+            text_batch_generator_executor_step_ms_total = (
+                self._text_batch_generator_executor_step_ms_total
+            )
+            text_batch_generator_next_ms_total = self._text_batch_generator_next_ms_total
+            text_batch_generator_emit_ms_total = self._text_batch_generator_emit_ms_total
+            text_batch_generator_active_batch_size = self._text_batch_generator_active_batch_size
+            text_batch_generator_generated_response_count = (
+                self._text_batch_generator_generated_response_count
+            )
+            text_batch_generator_failed_request_count = (
+                self._text_batch_generator_failed_request_count
+            )
+            text_batch_generator_prepare_ms_total = self._text_batch_generator_prepare_ms_total
+            text_batch_generator_first_response_ms_total = (
+                self._text_batch_generator_first_response_ms_total
+            )
+            text_batch_generator_first_visible_ms_total = (
+                self._text_batch_generator_first_visible_ms_total
+            )
+            text_batch_generator_first_visible_token_index_total = (
+                self._text_batch_generator_first_visible_token_index_total
+            )
+            text_batch_generator_first_empty_segment_count = (
+                self._text_batch_generator_first_empty_segment_count
+            )
             last_audio_model_load_latency_ms = self._last_audio_model_load_latency_ms
             last_audio_backend_unavailable_count = self._last_audio_backend_unavailable_count
             last_voice_fallback_count = self._last_voice_fallback_count
@@ -521,6 +601,47 @@ class WorkerRegistry:
             generation_stream_owner_mode=mlx_executor_snapshot.generation_stream_owner_mode,
             worker_thread_init_latency_ms=mlx_executor_snapshot.worker_thread_init_latency_ms,
             stream_sync_fallback_count=mlx_executor_snapshot.stream_sync_fallback_count,
+            last_multimodal_decode_mode=last_multimodal_decode_mode,
+            last_multimodal_fallback_reason=last_multimodal_fallback_reason,
+            last_multimodal_decode_sync_mode=last_multimodal_decode_sync_mode,
+            text_batch_generator_submitted_request_count=(
+                text_batch_generator_submitted_request_count
+            ),
+            text_batch_generator_completed_request_count=(
+                text_batch_generator_completed_request_count
+            ),
+            text_batch_generator_step_count=text_batch_generator_step_count,
+            text_batch_generator_generated_token_count=(
+                text_batch_generator_generated_token_count
+            ),
+            text_batch_generator_peak_active_batch_size=text_batch_generator_peak_active_batch_size,
+            text_batch_generator_queue_wait_ms_total=text_batch_generator_queue_wait_ms_total,
+            text_batch_generator_insert_ms_total=text_batch_generator_insert_ms_total,
+            text_batch_generator_executor_step_ms_total=(
+                text_batch_generator_executor_step_ms_total
+            ),
+            text_batch_generator_next_ms_total=text_batch_generator_next_ms_total,
+            text_batch_generator_emit_ms_total=text_batch_generator_emit_ms_total,
+            text_batch_generator_active_batch_size=text_batch_generator_active_batch_size,
+            text_batch_generator_generated_response_count=(
+                text_batch_generator_generated_response_count
+            ),
+            text_batch_generator_failed_request_count=(
+                text_batch_generator_failed_request_count
+            ),
+            text_batch_generator_prepare_ms_total=text_batch_generator_prepare_ms_total,
+            text_batch_generator_first_response_ms_total=(
+                text_batch_generator_first_response_ms_total
+            ),
+            text_batch_generator_first_visible_ms_total=(
+                text_batch_generator_first_visible_ms_total
+            ),
+            text_batch_generator_first_visible_token_index_total=(
+                text_batch_generator_first_visible_token_index_total
+            ),
+            text_batch_generator_first_empty_segment_count=(
+                text_batch_generator_first_empty_segment_count
+            ),
         )
         stats.model_resident_bytes = model_resident_bytes
         stats.cache_resident_bytes = cache_resident_bytes
@@ -567,6 +688,26 @@ class WorkerRegistry:
     def runtime_for_loaded_model(self, loaded_model: LoadedModel) -> Any:
         return loaded_model.runtime
 
+    def _clear_text_batch_generator_probe_locked(self) -> None:
+        self._text_batch_generator_submitted_request_count = 0
+        self._text_batch_generator_completed_request_count = 0
+        self._text_batch_generator_step_count = 0
+        self._text_batch_generator_generated_token_count = 0
+        self._text_batch_generator_peak_active_batch_size = 0
+        self._text_batch_generator_queue_wait_ms_total = 0.0
+        self._text_batch_generator_insert_ms_total = 0.0
+        self._text_batch_generator_executor_step_ms_total = 0.0
+        self._text_batch_generator_next_ms_total = 0.0
+        self._text_batch_generator_emit_ms_total = 0.0
+        self._text_batch_generator_active_batch_size = 0
+        self._text_batch_generator_generated_response_count = 0
+        self._text_batch_generator_failed_request_count = 0
+        self._text_batch_generator_prepare_ms_total = 0.0
+        self._text_batch_generator_first_response_ms_total = 0.0
+        self._text_batch_generator_first_visible_ms_total = 0.0
+        self._text_batch_generator_first_visible_token_index_total = 0
+        self._text_batch_generator_first_empty_segment_count = 0
+
     def record_vision_probe(self, runtime_kind: str, probe: Any) -> None:
         with self._lock:
             self._last_probe_kind = runtime_kind
@@ -582,6 +723,67 @@ class WorkerRegistry:
             self._last_speech_streaming_enabled = False
             self._last_speech_streaming_interval_ms = 0
             self._last_speech_first_audio_latency_ms = 0.0
+            self._last_multimodal_decode_mode = str(getattr(probe, "multimodal_decode_mode", "baseline"))
+            self._last_multimodal_fallback_reason = str(
+                getattr(probe, "multimodal_fallback_reason", "not_reported")
+            )
+            self._last_multimodal_decode_sync_mode = str(
+                getattr(probe, "multimodal_decode_sync_mode", "baseline")
+            )
+            self._text_batch_generator_submitted_request_count = int(
+                getattr(probe, "text_batch_generator_submitted_request_count", 0)
+            )
+            self._text_batch_generator_completed_request_count = int(
+                getattr(probe, "text_batch_generator_completed_request_count", 0)
+            )
+            self._text_batch_generator_step_count = int(
+                getattr(probe, "text_batch_generator_step_count", 0)
+            )
+            self._text_batch_generator_generated_token_count = int(
+                getattr(probe, "text_batch_generator_generated_token_count", 0)
+            )
+            self._text_batch_generator_peak_active_batch_size = int(
+                getattr(probe, "text_batch_generator_peak_active_batch_size", 0)
+            )
+            self._text_batch_generator_queue_wait_ms_total = float(
+                getattr(probe, "text_batch_generator_queue_wait_ms_total", 0.0)
+            )
+            self._text_batch_generator_insert_ms_total = float(
+                getattr(probe, "text_batch_generator_insert_ms_total", 0.0)
+            )
+            self._text_batch_generator_executor_step_ms_total = float(
+                getattr(probe, "text_batch_generator_executor_step_ms_total", 0.0)
+            )
+            self._text_batch_generator_next_ms_total = float(
+                getattr(probe, "text_batch_generator_next_ms_total", 0.0)
+            )
+            self._text_batch_generator_emit_ms_total = float(
+                getattr(probe, "text_batch_generator_emit_ms_total", 0.0)
+            )
+            self._text_batch_generator_active_batch_size = int(
+                getattr(probe, "text_batch_generator_active_batch_size", 0)
+            )
+            self._text_batch_generator_generated_response_count = int(
+                getattr(probe, "text_batch_generator_generated_response_count", 0)
+            )
+            self._text_batch_generator_failed_request_count = int(
+                getattr(probe, "text_batch_generator_failed_request_count", 0)
+            )
+            self._text_batch_generator_prepare_ms_total = float(
+                getattr(probe, "text_batch_generator_prepare_ms_total", 0.0)
+            )
+            self._text_batch_generator_first_response_ms_total = float(
+                getattr(probe, "text_batch_generator_first_response_ms_total", 0.0)
+            )
+            self._text_batch_generator_first_visible_ms_total = float(
+                getattr(probe, "text_batch_generator_first_visible_ms_total", 0.0)
+            )
+            self._text_batch_generator_first_visible_token_index_total = int(
+                getattr(probe, "text_batch_generator_first_visible_token_index_total", 0)
+            )
+            self._text_batch_generator_first_empty_segment_count = int(
+                getattr(probe, "text_batch_generator_first_empty_segment_count", 0)
+            )
             self._last_video_effective_frame_count = int(getattr(probe, "video_effective_frame_count", 0))
             self._last_video_requested_frame_budget = int(getattr(probe, "video_requested_frame_budget", 0))
             self._last_video_window_ms = int(getattr(probe, "video_window_ms", 0))
@@ -609,6 +811,10 @@ class WorkerRegistry:
             self._last_speech_streaming_enabled = False
             self._last_speech_streaming_interval_ms = 0
             self._last_speech_first_audio_latency_ms = 0.0
+            self._last_multimodal_decode_mode = ""
+            self._last_multimodal_fallback_reason = ""
+            self._last_multimodal_decode_sync_mode = ""
+            self._clear_text_batch_generator_probe_locked()
             self._last_language_fallback_count = int(getattr(probe, "language_fallback_count", 0))
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
@@ -639,6 +845,10 @@ class WorkerRegistry:
             self._last_speech_first_audio_latency_ms = float(
                 getattr(probe, "first_audio_latency_ms", 0.0)
             )
+            self._last_multimodal_decode_mode = ""
+            self._last_multimodal_fallback_reason = ""
+            self._last_multimodal_decode_sync_mode = ""
+            self._clear_text_batch_generator_probe_locked()
             self._last_voice_fallback_count = int(getattr(probe, "voice_fallback_count", 0))
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
@@ -675,6 +885,10 @@ class WorkerRegistry:
             self._last_speech_streaming_enabled = False
             self._last_speech_streaming_interval_ms = 0
             self._last_speech_first_audio_latency_ms = 0.0
+            self._last_multimodal_decode_mode = ""
+            self._last_multimodal_fallback_reason = ""
+            self._last_multimodal_decode_sync_mode = ""
+            self._clear_text_batch_generator_probe_locked()
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
             self._last_video_window_ms = 0

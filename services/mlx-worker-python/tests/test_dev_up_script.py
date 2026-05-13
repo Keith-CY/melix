@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shlex
 import stat
 import subprocess
 import sys
@@ -85,6 +86,7 @@ def make_layout(dev_up, tmp_path: Path):
         http_port="11434",
         python_backend_mode="deterministic",
         swift_text_worker_backend_mode="swift",
+        python_bridge_executable=None,
         uv_cache_dir=tmp_path / "uv-cache",
         swift_home=tmp_path / "swift-home",
         clang_module_cache_path=tmp_path / "module-cache",
@@ -202,6 +204,51 @@ def test_build_swift_launch_command_reports_missing_built_binary(tmp_path: Path)
     assert "Run `make swift-test` or `swift build --package-path" in message
 
 
+def test_build_python_worker_launch_command_defaults_to_uv_extra_mlx(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+
+    assert dev_up.build_python_worker_launch_command(
+        tmp_path,
+        python_executable=None,
+        socket_path=tmp_path / "worker.sock",
+        backend_mode="auto",
+    ) == [
+        "uv",
+        "run",
+        "--project",
+        f"{tmp_path}/services/mlx-worker-python",
+        "--extra",
+        "mlx",
+        "python",
+        "-m",
+        "worker.bootstrap",
+        "--socket-path",
+        f"{tmp_path}/worker.sock",
+        "--backend-mode",
+        "auto",
+    ]
+
+
+def test_build_python_worker_launch_command_uses_configured_python(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+    bridge_python = tmp_path / ".venv/bin/python"
+
+    assert dev_up.build_python_worker_launch_command(
+        tmp_path,
+        python_executable=bridge_python,
+        socket_path=tmp_path / "worker.sock",
+        backend_mode="auto",
+    ) == [
+        os.fspath(bridge_python),
+        "-m",
+        "worker.bootstrap",
+        "--socket-path",
+        f"{tmp_path}/worker.sock",
+        "--backend-mode",
+        "auto",
+    ]
+
+
 def test_dev_up_shell_wrapper_delegates_help_to_python_entrypoint() -> None:
     result = subprocess.run(
         ["bash", os.fspath(SCRIPT_PATH), "--help"],
@@ -263,7 +310,47 @@ def test_compute_runtime_layout_uses_environment_overrides(monkeypatch: pytest.M
     assert layout.http_port == "20001"
     assert layout.python_backend_mode == "deterministic"
     assert layout.swift_text_worker_backend_mode == "swift"
-    assert layout.python_socket_path == runtime_dir / "python-worker.sock"
+    assert layout.python_socket_path.parent == Path("/tmp").resolve()
+    assert layout.swift_text_worker_socket_path.parent == Path("/tmp").resolve()
+
+
+def test_compute_runtime_layout_uses_short_default_worker_sockets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    repo_root = tmp_path / (
+        "very/deep/worktree/path/that/would/overflow/the/macos/unix/socket/path/limit"
+    )
+    repo_root.mkdir(parents=True)
+    monkeypatch.setenv("MELIX_SERVICE_INSTANCE_NAME", "team-a")
+    monkeypatch.setenv("MELIX_RUNTIME_DIR", os.fspath(repo_root / ".runtime/sidecars/team-a"))
+
+    layout = dev_up.compute_runtime_layout(repo_root)
+
+    assert layout.python_socket_path.parent == Path("/tmp").resolve()
+    assert layout.swift_text_worker_socket_path.parent == Path("/tmp").resolve()
+    assert "team-a" in layout.python_socket_path.name
+    assert layout.python_socket_path.name.endswith("-python.sock")
+    assert layout.swift_text_worker_socket_path.name.endswith("-swift.sock")
+    assert len(os.fspath(layout.python_socket_path)) < 103
+    assert len(os.fspath(layout.swift_text_worker_socket_path)) < 103
+
+
+def test_compute_runtime_layout_honors_explicit_worker_socket_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    python_socket = tmp_path / "runtime/python-worker.sock"
+    swift_socket = tmp_path / "runtime/swift-text-worker.sock"
+    monkeypatch.setenv("MELIX_WORKER_SOCKET_PATH", os.fspath(python_socket))
+    monkeypatch.setenv("MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH", os.fspath(swift_socket))
+
+    layout = dev_up.compute_runtime_layout(tmp_path)
+
+    assert layout.python_socket_path == python_socket
+    assert layout.swift_text_worker_socket_path == swift_socket
 
 
 def test_compute_runtime_layout_defaults_to_real_backends(tmp_path: Path) -> None:
@@ -273,6 +360,71 @@ def test_compute_runtime_layout_defaults_to_real_backends(tmp_path: Path) -> Non
 
     assert layout.python_backend_mode == "auto"
     assert layout.swift_text_worker_backend_mode == "swift"
+
+
+def test_compute_runtime_layout_uses_bridge_executable_from_uv_project_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    venv_root = tmp_path / ".venv"
+    bridge_python = venv_root / "bin/python"
+    bridge_python.parent.mkdir(parents=True)
+    bridge_python.write_text("", encoding="utf-8")
+    bridge_python.chmod(bridge_python.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", os.fspath(venv_root))
+
+    layout = dev_up.compute_runtime_layout(tmp_path)
+
+    assert layout.python_bridge_executable == bridge_python.resolve()
+
+
+def test_compute_runtime_layout_ignores_non_executable_uv_project_python(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    venv_root = tmp_path / ".venv"
+    bridge_python = venv_root / "bin/python"
+    bridge_python.parent.mkdir(parents=True)
+    bridge_python.write_text("", encoding="utf-8")
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", os.fspath(venv_root))
+
+    layout = dev_up.compute_runtime_layout(tmp_path)
+
+    assert layout.python_bridge_executable is None
+
+
+def test_compute_runtime_layout_prefers_explicit_bridge_executable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    explicit_python = tmp_path / "custom-python"
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", os.fspath(tmp_path / ".venv"))
+    monkeypatch.setenv("MELIX_PYTHON_BRIDGE_EXECUTABLE", os.fspath(explicit_python))
+
+    layout = dev_up.compute_runtime_layout(tmp_path)
+
+    assert layout.python_bridge_executable == explicit_python.resolve()
+
+
+def test_resolve_python_bridge_executable_preserves_virtualenv_entrypoint_symlink(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    venv_root = tmp_path / ".venv"
+    real_python = tmp_path / "python-install/bin/python3.14"
+    real_python.parent.mkdir(parents=True)
+    real_python.write_text("", encoding="utf-8")
+    real_python.chmod(real_python.stat().st_mode | stat.S_IXUSR)
+    bridge_python = venv_root / "bin/python"
+    bridge_python.parent.mkdir(parents=True)
+    bridge_python.symlink_to(real_python)
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", os.fspath(venv_root))
+
+    assert dev_up.resolve_python_bridge_executable() == bridge_python
 
 
 def test_compute_runtime_layout_uses_service_instance_name_for_sidecar_defaults(
@@ -365,7 +517,8 @@ def test_runtime_layout_helpers_manage_directories_and_artifacts(
 
 def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     dev_up = load_dev_up_module()
-    layout = replace(make_layout(dev_up, tmp_path), service_instance_name="team-a")
+    bridge_python = tmp_path / ".venv/bin/python"
+    layout = replace(make_layout(dev_up, tmp_path), service_instance_name="team-a", python_bridge_executable=bridge_python)
     metallib_path = tmp_path / "swift-mlx-0.24.2" / "mlx.metallib"
     metallib_path.parent.mkdir(parents=True)
     metallib_path.write_text("mlx", encoding="utf-8")
@@ -381,6 +534,7 @@ def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path, monkeyp
     assert f'export MELIX_MODEL_OPS_JOBS_ROOT="{layout.model_ops_jobs_root}"' in payload
     assert f'export MELIX_EVALUATION_JOBS_ROOT="{layout.evaluation_jobs_root}"' in payload
     assert 'export MELIX_SERVICE_INSTANCE_NAME="team-a"' in payload
+    assert f'export MELIX_PYTHON_BRIDGE_EXECUTABLE="{bridge_python}"' in payload
     assert f'export MELIX_SWIFT_MLX_METALLIB_PATH="{metallib_path}"' in payload
     assert 'export MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE="1"' in payload
     assert 'export MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE="1"' in payload
@@ -778,6 +932,42 @@ def test_run_wait_for_worker_ready_builds_expected_uv_command(
     assert env["PYTHONPATH"] == f"{tmp_path}:{tmp_path / 'services/mlx-worker-python'}"
 
 
+def test_run_wait_for_worker_ready_uses_configured_python_executable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    seen: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["cwd"] = kwargs["cwd"]
+        seen["env"] = kwargs["env"]
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(dev_up.subprocess, "run", fake_run)
+    bridge_python = tmp_path / ".venv/bin/python"
+    dev_up.run_wait_for_worker_ready(
+        tmp_path,
+        uv_cache_dir=tmp_path / "uv-cache",
+        socket_path=tmp_path / "worker.sock",
+        output_path=tmp_path / "ready.log",
+        python_executable=bridge_python,
+    )
+
+    assert seen["command"] == [
+        os.fspath(bridge_python),
+        f"{tmp_path}/scripts/wait_for_worker_ready.py",
+        "--socket-path",
+        f"{tmp_path}/worker.sock",
+    ]
+    assert seen["cwd"] == tmp_path
+    env = seen["env"]
+    assert isinstance(env, dict)
+    assert env["UV_CACHE_DIR"] == f"{tmp_path}/uv-cache"
+    assert env["PYTHONPATH"] == f"{tmp_path}:{tmp_path / 'services/mlx-worker-python'}"
+
+
 def test_run_wait_for_worker_ready_raises_on_probe_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -856,6 +1046,51 @@ def test_write_runtime_environment_emits_export_file(tmp_path: Path) -> None:
         in content
     )
     assert f'export MELIX_IMAGE_DEFAULTS_STORE_PATH="{layout.image_defaults_store_path}"' in content
+    assert "MELIX_PYTHON_BRIDGE_EXECUTABLE" not in content
+
+
+def test_dev_down_sources_runtime_env_for_socket_cleanup(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    python_socket = tmp_path / "short-python.sock"
+    swift_socket = tmp_path / "short-swift.sock"
+    control_metrics = tmp_path / "control-plane-metrics.json"
+    swift_metrics = tmp_path / "swift-text-worker-metrics.json"
+    python_metrics = tmp_path / "python-worker-metrics.json"
+    for artifact in (python_socket, swift_socket, control_metrics, swift_metrics, python_metrics):
+        artifact.write_text("stale", encoding="utf-8")
+    (runtime_dir / "env.sh").write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                f"export MELIX_WORKER_SOCKET_PATH={shlex.quote(os.fspath(python_socket))}",
+                f"export MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH={shlex.quote(os.fspath(swift_socket))}",
+                f"export MELIX_CONTROL_PLANE_METRICS_PATH={shlex.quote(os.fspath(control_metrics))}",
+                f"export MELIX_SWIFT_TEXT_WORKER_METRICS_PATH={shlex.quote(os.fspath(swift_metrics))}",
+                f"export MELIX_PYTHON_WORKER_METRICS_PATH={shlex.quote(os.fspath(python_metrics))}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", os.fspath(REPO_ROOT / "scripts" / "dev_down.sh")],
+        cwd=REPO_ROOT,
+        env={**os.environ, "MELIX_RUNTIME_DIR": os.fspath(runtime_dir)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "Melix local stack is stopped."
+    assert not python_socket.exists()
+    assert not swift_socket.exists()
+    assert not control_metrics.exists()
+    assert not swift_metrics.exists()
+    assert not python_metrics.exists()
+    assert not (runtime_dir / "env.sh").exists()
 
 
 def test_start_stack_orchestrates_processes_and_emits_runtime_env(
@@ -864,7 +1099,12 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     dev_up = load_dev_up_module()
-    layout = replace(make_layout(dev_up, tmp_path), service_instance_name="team-a")
+    bridge_python = tmp_path / ".venv/bin/python"
+    layout = replace(
+        make_layout(dev_up, tmp_path),
+        service_instance_name="team-a",
+        python_bridge_executable=bridge_python,
+    )
     calls: list[tuple[str, object]] = []
     pid_values = iter([101, 202, 303])
     monkeypatch.setenv("MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE", "1")
@@ -910,6 +1150,9 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     assert any(kind == "spawn" for kind, _ in calls)
     assert any(kind == "wait" for kind, _ in calls)
     assert ("http", "11434") in calls
+    wait_calls = [payload for kind, payload in calls if kind == "wait"]
+    assert len(wait_calls) == 2
+    assert all(payload["python_executable"] == bridge_python for payload in wait_calls)
     swift_spawn = next(
         payload for kind, payload in calls if kind == "spawn" and payload["command"] == ["melix-text-worker-swift"]
     )
@@ -920,6 +1163,8 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
         payload for kind, payload in calls if kind == "spawn" and "worker.bootstrap" in payload["command"]
     )
     assert python_spawn["env_overrides"]["MELIX_HOME"] == str(layout.melix_home_dir)
+    assert python_spawn["command"][0] == os.fspath(bridge_python)
+    assert "uv" not in python_spawn["command"]
     control_plane_spawn = next(
         payload for kind, payload in calls if kind == "spawn" and payload["command"] == ["melix-control-plane"]
     )
@@ -933,6 +1178,7 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     assert control_plane_spawn["env_overrides"]["MELIX_IMAGE_DEFAULTS_STORE_PATH"] == str(
         layout.image_defaults_store_path
     )
+    assert control_plane_spawn["env_overrides"]["MELIX_PYTHON_BRIDGE_EXECUTABLE"] == str(bridge_python)
 
 
 def test_start_stack_wraps_http_timeout_with_log_paths(

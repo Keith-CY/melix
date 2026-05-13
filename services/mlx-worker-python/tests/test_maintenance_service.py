@@ -3198,6 +3198,62 @@ def test_registry_snapshot_includes_structured_identity_fields_for_discovered_mo
     assert identity["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit"
 
 
+def test_registry_snapshot_keeps_gemma4_vlm_cooperative_text_step_opt_in(tmp_path: Path) -> None:
+    default_model_dir = (
+        tmp_path / "registry-root" / "huggingface" / "lmstudio-community" / "gemma-4-26B-A4B-it-MLX-4bit"
+    )
+    _write_registry_manifest(
+        default_model_dir,
+        model_id="lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit",
+        model_kind="vlm",
+    )
+    (default_model_dir / "config.json").write_text(json.dumps({"model_type": "gemma4"}) + "\n", encoding="utf-8")
+    opt_in_model_dir = (
+        tmp_path / "registry-root" / "huggingface" / "melix-local" / "gemma-4-26B-A4B-it-MLX-4bit-cooperative"
+    )
+    _write_registry_manifest(
+        opt_in_model_dir,
+        model_id="melix-local/gemma-4-26B-A4B-it-MLX-4bit-cooperative",
+        model_kind="vlm",
+        ext={"melix.vlm.text_only_step_cooperative": "true"},
+    )
+    (opt_in_model_dir / "config.json").write_text(json.dumps({"model_type": "gemma4"}) + "\n", encoding="utf-8")
+
+    registry = WorkerRegistry(
+        model_catalog=WorkerModelCatalog(
+            environment={
+                "MELIX_MODEL_ROOTS": str(tmp_path / "registry-root"),
+            }
+        )
+    )
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_manifest = next(
+        event.manifest for event in snapshot_events if event.HasField("manifest")
+    )
+    payload = json.loads(snapshot_manifest.manifest_json)
+    models_by_id = {model["model_id"]: model for model in payload["model_registry"]["models"]}
+    default_ext = models_by_id["lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit"]["ext"]
+    opt_in_ext = models_by_id["melix-local/gemma-4-26B-A4B-it-MLX-4bit-cooperative"]["ext"]
+
+    assert default_ext["vision_family_id"] == "gemma4-v1"
+    assert default_ext["melix.vlm.backend_id"] == "mlx_vlm"
+    assert default_ext["melix.vlm.text_only_step_cooperative"] == "false"
+    assert opt_in_ext["vision_family_id"] == "gemma4-v1"
+    assert opt_in_ext["melix.vlm.text_only_step_cooperative"] == "true"
+
+
 def test_registry_snapshot_respects_explicit_root_override_and_rescan_flag(tmp_path: Path) -> None:
     root_a = tmp_path / "root-a"
     root_b = tmp_path / "root-b"
@@ -5223,6 +5279,25 @@ def test_vlm_fast_path_bench_metrics_surfaces_mixed_decode_modes() -> None:
 
     metrics_by_name = {metric.name: metric for metric in metrics}
     assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 5.0
+
+
+def test_vlm_fast_path_bench_metrics_encode_text_only_batch_generator() -> None:
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                multimodal_decode_mode="text_only_batch_generator",
+                multimodal_decode_sync_mode="executor_batch_generator",
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 7.0
+    assert metrics_by_name["bench.smoke.multimodal_decode_sync_mode"].value == 4.0
 
 
 def test_vlm_fast_path_bench_metrics_warns_for_unmapped_decode_mode(caplog) -> None:

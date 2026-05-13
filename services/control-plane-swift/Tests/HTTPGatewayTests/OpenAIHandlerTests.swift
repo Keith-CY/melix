@@ -765,6 +765,66 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/chat/completions skips registry sync for catalog-resident warm models")
+    func postChatCompletionsSkipsRegistrySyncForCatalogResidentWarmModels() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-warm-no-registry", seq: 1, finishReason: "stop", assistantText: "ready"),
+        ])
+        let modelOpsClient = ScriptedRegistryModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = #"{"model_registry":{"models":[],"roots":[]}}"#
+                return event
+            }(),
+        ])
+        let registry = WorkerRegistry(
+            defaultTextClient: workerClient,
+            modelOperationsClient: modelOpsClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: registry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-warm-no-registry" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let generated = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("data: [DONE]"))
+        #expect(generated.execution.modelHandle == "melix-dev-text::local")
+        #expect(await modelOpsClient.lastConvertRequest == nil)
+    }
+
     @Test("POST /v1/chat/completions forwards OpenAI tools and emits SDK-compatible tool deltas")
     func postChatCompletionsForwardsOpenAIToolsAndToolDeltas() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -857,7 +917,10 @@ struct OpenAIHandlerTests {
 
     @Test("POST /v1/chat/completions lazy-loads text-only VLM requests through the Python VLM route")
     func postChatCompletionsLazyLoadsTextOnlyVLMRequestsThroughPythonVLMRoute() async throws {
-        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devVLMModel()])
+        var vlmModel = ModelCatalog.devVLMModel()
+        vlmModel.settings.ext["melix.vlm.text_only_step_cooperative"] = "true"
+        vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
         let textClient = ScriptedWorkerClient(events: [])
         let vlmClient = ScriptedWorkerClient(
             events: [
@@ -918,6 +981,79 @@ struct OpenAIHandlerTests {
         #expect(loadRequest.model.modelKind == "vlm")
         #expect(loadRequest.model.ext["melix.capability.route_kind"] == "python_vlm")
         #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_step_cooperative"] == "true")
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(await textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions copies imported VLM batch-generator metadata by route metadata")
+    func postChatCompletionsCopiesImportedVLMBatchGeneratorMetadataByRouteMetadata() async throws {
+        var vlmModel = ModelCatalog.devVLMModel()
+        vlmModel.modelID = "imported-gemma-vlm"
+        vlmModel.routeClass = .workerRouteSwiftText
+        vlmModel.settings.ext["melix.capability.route_kind"] = "python_vlm"
+        vlmModel.settings.ext["melix.vlm.text_only_step_cooperative"] = "false"
+        vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
+        let textClient = ScriptedWorkerClient(events: [])
+        let vlmClient = ScriptedWorkerClient(
+            events: [
+                makeTokenEvent(requestID: "req-http-imported-vlm-text", seq: 1, text: "vlm"),
+                makeCompletedEvent(
+                    requestID: "req-http-imported-vlm-text",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "vlm"
+                ),
+            ],
+            loadModelHandle: "imported-gemma-vlm::python"
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: vlmClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-imported-vlm-text" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "imported-gemma-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_step_cooperative"] == nil)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(generateRequest.sampling.temperature == 0)
+        #expect(generateRequest.sampling.topP == 1)
+        #expect(generateRequest.sampling.topK == 0)
         #expect(await textClient.lastGenerateRequest == nil)
     }
 
@@ -1782,6 +1918,9 @@ struct OpenAIHandlerTests {
             response.stats.generationStreamOwnerMode = "executor_owned"
             response.stats.workerThreadInitLatencyMs = 7
             response.stats.streamSyncFallbackCount = 0
+            response.stats.lastMultimodalDecodeMode = "native_quantized"
+            response.stats.lastMultimodalFallbackReason = ""
+            response.stats.lastMultimodalDecodeSyncMode = "executor_stream"
             return response
         }()
         let vlmClient = ScriptedWorkerClient(
@@ -1888,6 +2027,10 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 1)
         #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 7)
         #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 0)
+        #expect(metrics.values["vision.multimodal_decode_mode_code", default: -1] == 3)
+        #expect(metrics.values["vision.multimodal_fallback_reason_code", default: -1] == 0)
+        #expect(metrics.values["vision.multimodal_decode_sync_mode_code", default: -1] == 1)
+        #expect(metrics.values["vision.text_batch_generator.step_count", default: -1] == 0)
     }
 
     @Test("chat completions translator preserves recovery metadata on worker requests")

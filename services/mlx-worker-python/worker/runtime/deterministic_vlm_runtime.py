@@ -41,6 +41,24 @@ class VisionProbeSnapshot:
     multi_image_scatter_mode: str = "none"
     quantized_load_mode: str = "fallback"
     quantized_load_fallback_reason: str = "not_reported"
+    text_batch_generator_submitted_request_count: int = 0
+    text_batch_generator_completed_request_count: int = 0
+    text_batch_generator_step_count: int = 0
+    text_batch_generator_generated_token_count: int = 0
+    text_batch_generator_peak_active_batch_size: int = 0
+    text_batch_generator_queue_wait_ms_total: float = 0.0
+    text_batch_generator_insert_ms_total: float = 0.0
+    text_batch_generator_executor_step_ms_total: float = 0.0
+    text_batch_generator_next_ms_total: float = 0.0
+    text_batch_generator_emit_ms_total: float = 0.0
+    text_batch_generator_active_batch_size: int = 0
+    text_batch_generator_generated_response_count: int = 0
+    text_batch_generator_failed_request_count: int = 0
+    text_batch_generator_prepare_ms_total: float = 0.0
+    text_batch_generator_first_response_ms_total: float = 0.0
+    text_batch_generator_first_visible_ms_total: float = 0.0
+    text_batch_generator_first_visible_token_index_total: int = 0
+    text_batch_generator_first_empty_segment_count: int = 0
 
 
 @dataclass(frozen=True)

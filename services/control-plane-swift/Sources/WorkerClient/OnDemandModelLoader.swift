@@ -66,16 +66,16 @@ enum OnDemandModelLoader {
         if ModelRuntimeAvailability.isRuntimeCacheMissing(model) {
             throw OnDemandModelLoadError.runtimeCacheMissing
         }
+        if let handle = await modelCatalog.dispatchHandle(for: modelID) {
+            _ = await modelCatalog.markModelUsed(id: modelID)
+            return handle
+        }
         _ = await evictModelsIfNeededForLoad(
             targetModelID: modelID,
             modelCatalog: modelCatalog,
             workerRegistry: workerRegistry,
             metricsStore: metricsStore
         )
-        if let handle = await modelCatalog.dispatchHandle(for: modelID) {
-            _ = await modelCatalog.markModelUsed(id: modelID)
-            return handle
-        }
         if requiresTextCapability,
            !supportsTextServing(model) {
             throw OnDemandModelLoadError.modelNotReady
@@ -105,6 +105,33 @@ enum OnDemandModelLoader {
         let response: Melix_Worker_V1_LoadModelResponse
         do {
             response = try await workerClient.loadModel(request: request)
+        } catch let workerError as WorkerClientError {
+            switch workerError {
+            case .requestFailed(let code, let message):
+                let errorStatus = workerErrorStatus(code: code, message: message)
+                let failureReason = if errorStatus.code.isEmpty {
+                    "\(loadReason)_failed"
+                } else {
+                    "\(loadReason)_\(sanitizeTransitionReasonComponent(errorStatus.code))"
+                }
+                let memoryBudgetEvidence = memoryBudgetEvidence(from: errorStatus)
+                if let memoryBudgetEvidence {
+                    await recordMemoryBudgetMetrics(
+                        memoryBudgetEvidence,
+                        metricsStore: metricsStore,
+                        metricsPrefix: metricsPrefix
+                    )
+                }
+                _ = await modelCatalog.recordLoadFailed(
+                    id: modelID,
+                    reason: failureReason,
+                    memoryBudgetEvidence: memoryBudgetEvidence
+                )
+                throw OnDemandModelLoadError.workerRejected(errorStatus)
+            case .unavailable:
+                _ = await modelCatalog.recordLoadFailed(id: modelID, reason: "\(loadReason)_failed")
+                throw OnDemandModelLoadError.workerUnavailable
+            }
         } catch {
             _ = await modelCatalog.recordLoadFailed(id: modelID, reason: "\(loadReason)_failed")
             throw OnDemandModelLoadError.workerUnavailable
@@ -235,6 +262,15 @@ enum OnDemandModelLoader {
             requiredBytes: UInt64(workerError.details["required_bytes"] ?? "") ?? 0
         )
         return evidence.isEmpty ? nil : evidence
+    }
+
+    private static func workerErrorStatus(code: String, message: String) -> Melix_Worker_V1_ErrorStatus {
+        var errorStatus = Melix_Worker_V1_ErrorStatus()
+        errorStatus.code = code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "worker_unavailable" : code
+        errorStatus.message = message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Worker bridge request failed."
+            : message
+        return errorStatus
     }
 
     private static func recordMemoryBudgetMetrics(

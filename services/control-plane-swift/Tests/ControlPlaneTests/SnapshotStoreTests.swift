@@ -28,6 +28,28 @@ struct SnapshotStoreTests {
         #expect(cacheModeMetricValue(.UNRECOGNIZED(99)) == 0)
     }
 
+    @Test("vision runtime mode metrics encode experimental VLM decode paths")
+    func visionRuntimeModeMetricsEncodeExperimentalVLMDecodePaths() {
+        #expect(visionMultimodalDecodeModeMetricValue("baseline") == 0)
+        #expect(visionMultimodalDecodeModeMetricValue("native_quantized") == 3)
+        #expect(visionMultimodalDecodeModeMetricValue("text_only_step") == 6)
+        #expect(visionMultimodalDecodeModeMetricValue("text_only_batch_generator") == 7)
+        #expect(visionMultimodalDecodeModeMetricValue("future_mode") == -1)
+
+        #expect(visionMultimodalFallbackReasonMetricValue("") == 0)
+        #expect(visionMultimodalFallbackReasonMetricValue("not_reported") == 0)
+        #expect(visionMultimodalFallbackReasonMetricValue("text_backed_no_vision_weights") == 2)
+        #expect(visionMultimodalFallbackReasonMetricValue("text_only_batch_generator_not_enabled") == 6)
+        #expect(visionMultimodalFallbackReasonMetricValue("non_greedy_sampling") == 9)
+        #expect(visionMultimodalFallbackReasonMetricValue("future_reason") == -1)
+
+        #expect(visionMultimodalDecodeSyncModeMetricValue("baseline") == 0)
+        #expect(visionMultimodalDecodeSyncModeMetricValue("executor_stream") == 1)
+        #expect(visionMultimodalDecodeSyncModeMetricValue("executor_step") == 3)
+        #expect(visionMultimodalDecodeSyncModeMetricValue("executor_batch_generator") == 4)
+        #expect(visionMultimodalDecodeSyncModeMetricValue("future_sync") == -1)
+    }
+
     @Test("cache metadata store defaults to an empty typed snapshot")
     func cacheMetadataStoreDefaultsToEmptySnapshot() async {
         let store = CacheMetadataStore()

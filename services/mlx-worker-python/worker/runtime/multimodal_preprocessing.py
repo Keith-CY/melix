@@ -70,6 +70,7 @@ class PreparedVisionRequest:
     preprocess_peak_memory_bytes: int
     prompt_hash_hex: str = ""
     multimodal_hash_hex: str = ""
+    chat_messages: tuple[dict[str, object], ...] = ()
 
     @property
     def contains_video(self) -> bool:

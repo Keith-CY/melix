@@ -136,6 +136,42 @@ def test_plain_buffer_without_tag_marker_flushes_without_structural_scans(monkey
     assert completed.metrics["stream_short_reply_flush_count"] == 0
 
 
+def test_plain_token_metadata_keeps_fast_path_and_metrics(monkeypatch) -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-no-marker-token-fast-path",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    def fail_structural_scan() -> None:
+        raise AssertionError("plain token metadata should not force structural scans")
+
+    monkeypatch.setattr(assembler, "_next_structural_tag", fail_structural_scan)
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="plain metadata chunk",
+            token_ids=(10, 11),
+            token_logprobs=(-0.1, -0.2),
+            parser_observation="flush_tokens=2",
+        )
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == [
+        "plain metadata chunk"
+    ]
+    assert [delta.parser_observation for delta in deltas if delta.content_text] == [
+        "flush_tokens=2"
+    ]
+    assert completed.assistant_text == "plain metadata chunk"
+    assert completed.metrics["generated_token_count"] == 2
+    assert completed.metrics["logprob_entry_count"] == 2
+    assert completed.metrics["stream_interval_delta_flush_count"] == 1
+    assert completed.metrics["stream_prefix_hold_chars"] == 0
+    assert completed.metrics["stream_short_reply_flush_count"] == 0
+
+
 def test_token_byte_delta_decodes_complete_ascii_without_incremental_decoder(monkeypatch) -> None:
     assembler = RequestStreamAssembler(
         request_id="req-token-byte-fast-path",
