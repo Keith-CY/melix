@@ -737,8 +737,7 @@ evaluation suite in the run. It is prepended after Melix's suite instruction and
 before any sample-provided system text; it must not replace the sample input
 text. The worker records prompt identity, revision, title, and content hash
 parameters using the ad hoc identity `ad-hoc.evaluation.prompt` /
-`ad-hoc`, but must not persist prompt content in event-extraction job
-parameters.
+`ad-hoc`, but must not persist prompt content in job parameters.
 
 Executable-code suites add one enforcement rule:
 
