@@ -17,16 +17,21 @@ def build_paired_statistical_evidence(
 ) -> dict[str, object]:
     outcomes = tuple(float(value) for value in paired_outcomes)
     sample_size = len(outcomes)
-    delta_accuracy = _rounded(_mean(outcomes))
+    mean_value = _mean(outcomes)
+    all_values_equal = bool(outcomes) and _all_values_equal(outcomes)
+    delta_accuracy = _rounded(mean_value)
     bootstrap_interval = _paired_bootstrap_interval(
         outcomes=outcomes,
         confidence_level=confidence_level,
         bootstrap_iterations=bootstrap_iterations,
         bootstrap_seed=bootstrap_seed,
+        all_values_equal=all_values_equal,
     )
     analytical_interval = _paired_analytical_interval(
         outcomes=outcomes,
         confidence_level=confidence_level,
+        mean_value=mean_value,
+        all_values_equal=all_values_equal,
     )
     return {
         "sample_size": sample_size,
@@ -113,6 +118,7 @@ def _paired_bootstrap_interval(
     confidence_level: float,
     bootstrap_iterations: int,
     bootstrap_seed: int,
+    all_values_equal: bool | None = None,
 ) -> dict[str, object]:
     if not outcomes or bootstrap_iterations <= 0:
         return _interval_payload(
@@ -124,7 +130,8 @@ def _paired_bootstrap_interval(
             seed=int(bootstrap_seed),
         )
 
-    if _all_values_equal(outcomes):
+    values_equal = all_values_equal if all_values_equal is not None else _all_values_equal(outcomes)
+    if values_equal:
         return _interval_payload(
             method="paired_bootstrap_percentile",
             confidence_level=confidence_level,
@@ -165,6 +172,8 @@ def _paired_analytical_interval(
     *,
     outcomes: tuple[float, ...],
     confidence_level: float,
+    mean_value: float | None = None,
+    all_values_equal: bool | None = None,
 ) -> dict[str, object]:
     if not outcomes:
         return _interval_payload(
@@ -174,11 +183,12 @@ def _paired_analytical_interval(
             upper_bound=0.0,
         )
 
-    mean_value = _mean(outcomes)
-    if len(outcomes) == 1:
+    resolved_mean = _mean(outcomes) if mean_value is None else mean_value
+    values_equal = all_values_equal if all_values_equal is not None else _all_values_equal(outcomes)
+    if len(outcomes) == 1 or values_equal:
         margin = 0.0
     else:
-        variance = sum((value - mean_value) ** 2 for value in outcomes) / (len(outcomes) - 1)
+        variance = sum((value - resolved_mean) ** 2 for value in outcomes) / (len(outcomes) - 1)
         standard_error = math.sqrt(variance) / math.sqrt(len(outcomes))
         z_value = _two_sided_normal_z_value(confidence_level)
         margin = z_value * standard_error
@@ -186,8 +196,8 @@ def _paired_analytical_interval(
     return _interval_payload(
         method="paired_difference_normal_approximation",
         confidence_level=confidence_level,
-        lower_bound=mean_value - margin,
-        upper_bound=mean_value + margin,
+        lower_bound=resolved_mean - margin,
+        upper_bound=resolved_mean + margin,
     )
 
 
