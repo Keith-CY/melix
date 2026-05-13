@@ -91,10 +91,11 @@ def _path_from_uri(uri: str) -> Path:
         elif not path_part.startswith("/"):
             parsed = urlparse(uri)
             path_part = parsed.path
-        return Path(unquote(path_part))
+        return Path(path_part if "%" not in path_part else unquote(path_part))
     if "://" not in uri:
         return Path(uri)
     parsed = urlparse(uri)
     if parsed.scheme != "file":
         raise AudioPreprocessError(f"Unsupported audio URI scheme: {parsed.scheme}")
-    return Path(unquote(parsed.path))
+    parsed_path = parsed.path
+    return Path(parsed_path if "%" not in parsed_path else unquote(parsed_path))
