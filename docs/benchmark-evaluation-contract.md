@@ -83,6 +83,12 @@ display `index` value. `start_index: 2` starts with the second selected line in
 the normalized model list even when explicit display indexes are non-numeric or
 non-contiguous.
 
+Artifact and manifest identity uses the tuple `index`, `repo_id`, and
+`source_line`. This keeps duplicate explicit entries isolated even when an
+operator intentionally repeats the same display index and repo id. Per-model
+artifact directory slugs must include the source line so repeated rows never
+overwrite each other's command receipts, exports, or raw artifacts.
+
 ### Effective Configuration
 
 Batch-run planning must resolve one effective configuration before any per-model
@@ -253,7 +259,11 @@ the configured semantic judge and then exports summary CSV, samples CSV, and
 samples JSONL under the model exports directory.
 
 The batch runner records subprocess stdout and stderr for every dispatched
-command under `<model>/commands/`. Missing job ids are treated as execution
+command under `<model>/commands/`. Command receipts must also persist the child
+process exit code. Exit code, not stderr text alone, decides subprocess success:
+stderr from an exit-zero command is preserved as evidence and noted in the step
+message, while non-zero exits fail the step using stderr, or stdout when stderr
+is empty, as the diagnostic message. Missing job ids are treated as execution
 failures because downstream export commands would otherwise be ambiguous.
 
 ### Status And Resume
@@ -267,6 +277,13 @@ configuration, rebuild the model list from manifest rows when `--models` is not
 provided, and execute only incomplete work by default. `--eval-only` skips
 benchmark stages and reruns missing or failed evaluation/export work. `--dry-run`
 for resume prints the planned model rows without dispatching commands.
+
+Resume planning must align existing manifest records back to selected models by
+`index`, `repo_id`, and `source_line`, preserving duplicate rows independently
+instead of collapsing them by display index or repo id. When resume rebuilds a
+model list from manifest rows, it must preserve source-line positions by
+inserting blank spacer lines before records whose original source line was
+greater than the current recovered line count.
 
 Resume must preserve the original run id, temporary root, output root, judge,
 benchmark, and evaluation settings when they are available in

@@ -4704,6 +4704,32 @@ private struct ArgumentCursor {
 
 public typealias MelixCLICommandExecutor = @Sendable ([String]) async throws -> String
 
+public struct MelixCLIProcessResult: Equatable, Sendable {
+    public let stdout: String
+    public let stderr: String
+    public let exitCode: Int32
+
+    public init(stdout: String, stderr: String, exitCode: Int32) {
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exitCode = exitCode
+    }
+}
+
+public enum MelixCLIProcessFailureMessage {
+    public static func make(stdout: String, stderr: String, exitCode: Int32) -> String {
+        let stderrMessage = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stderrMessage.isEmpty {
+            return stderrMessage
+        }
+        let stdoutMessage = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stdoutMessage.isEmpty {
+            return stdoutMessage
+        }
+        return "Subprocess exited with status \(exitCode)."
+    }
+}
+
 public struct MelixCLIProcessExecutor: Sendable {
     public let baseCommand: [String]
     public let environment: [String: String]
@@ -4720,10 +4746,23 @@ public struct MelixCLIProcessExecutor: Sendable {
     }
 
     public func run(arguments: [String]) async throws -> String {
+        let result = try await runDetailed(arguments: arguments)
+        guard result.exitCode == 0 else {
+            let message = MelixCLIProcessFailureMessage.make(
+                stdout: result.stdout,
+                stderr: result.stderr,
+                exitCode: result.exitCode
+            )
+            throw MelixCLIError.runtime(message)
+        }
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public func runDetailed(arguments: [String]) async throws -> MelixCLIProcessResult {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    continuation.resume(returning: try runSync(arguments: arguments))
+                    continuation.resume(returning: try runDetailedSync(arguments: arguments))
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -4731,7 +4770,7 @@ public struct MelixCLIProcessExecutor: Sendable {
         }
     }
 
-    private func runSync(arguments: [String]) throws -> String {
+    private func runDetailedSync(arguments: [String]) throws -> MelixCLIProcessResult {
         guard let executable = baseCommand.first else {
             throw MelixCLIError.runtime("The melix subprocess command is not configured.")
         }
@@ -4753,11 +4792,7 @@ public struct MelixCLIProcessExecutor: Sendable {
         let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
         let stdoutText = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
-        guard process.terminationStatus == 0 else {
-            let message = stderrText.isEmpty ? stdoutText : stderrText
-            throw MelixCLIError.runtime(message.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        return stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return MelixCLIProcessResult(stdout: stdoutText, stderr: stderrText, exitCode: process.terminationStatus)
     }
 }
 
@@ -9565,9 +9600,10 @@ public actor MelixCLIRunner {
                 workingDirectory: workingDirectory
             )
             do {
-                return BatchRunSubprocessResult(stdout: try await executor.run(arguments: arguments), stderr: "")
+                let result = try await executor.runDetailed(arguments: arguments)
+                return BatchRunSubprocessResult(stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode)
             } catch {
-                return BatchRunSubprocessResult(stdout: "", stderr: error.localizedDescription)
+                return BatchRunSubprocessResult(stdout: "", stderr: error.localizedDescription, exitCode: -1)
             }
         }
     }
