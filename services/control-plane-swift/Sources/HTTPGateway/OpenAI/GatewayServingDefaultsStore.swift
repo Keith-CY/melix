@@ -192,7 +192,7 @@ private struct GatewayServingDefaultsDocument: Codable, Equatable, Sendable {
 }
 
 public actor GatewayServingDefaultsStore {
-    private static let builtInMaxTokens: UInt32 = 32_768
+    internal static let defaultMaxTokens: UInt32 = 32_768
 
     private let storeURL: URL
     private let fileManager: FileManager
@@ -429,7 +429,7 @@ public actor GatewayServingDefaultsStore {
         )
         let maxTokens = parseUInt32(
             environment["MELIX_GATEWAY_DEFAULT_MAX_TOKENS"],
-            fallback: builtInMaxTokens
+            fallback: Self.defaultMaxTokens
         )
         let streamIntervalTokens = parseUInt32(
             environment["MELIX_GATEWAY_STREAM_INTERVAL_TOKENS"],
