@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from worker.productization.git_env import scrub_git_local_env
 from worker.productization.run_evidence import (
     RUN_EVIDENCE_SCHEMA_VERSION,
     RunEvidenceArtifact,
@@ -108,6 +109,22 @@ def test_git_identity_prefers_environment_and_falls_back_when_git_is_unavailable
     monkeypatch.delenv("MELIX_GIT_DIRTY")
 
     assert git_identity(tmp_path) == ("unknown", "unknown", True)
+
+
+def test_scrub_git_local_env_removes_hook_local_git_variables() -> None:
+    clean_env = scrub_git_local_env(
+        env={
+            "GIT_DIR": "/tmp/melix-hook-git-dir",
+            "GIT_WORK_TREE": "/tmp/melix-hook-work-tree",
+            "GIT_INDEX_FILE": "/tmp/melix-hook-index",
+            "MELIX_GIT_COMMIT": "commit-from-env",
+        }
+    )
+
+    assert "GIT_DIR" not in clean_env
+    assert "GIT_WORK_TREE" not in clean_env
+    assert "GIT_INDEX_FILE" not in clean_env
+    assert clean_env["MELIX_GIT_COMMIT"] == "commit-from-env"
 
 
 def test_benchmark_stage_probes_record_parent_child_runtime_and_fallback_phases() -> None:

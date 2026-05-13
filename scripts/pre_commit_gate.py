@@ -28,29 +28,13 @@ from worker.productization.pr_scoped_performance import (  # noqa: E402
     run_probe_job,
     write_report_outputs,
 )
+from worker.productization.git_env import scrub_git_local_env  # noqa: E402
 
 
 MEMORY_THRESHOLD_BYTES = 128 * 1024**3
 FULL_TEST_COMMANDS = ("make swift-test", "make py-test", "make integration-test")
 REGISTRY_PATH = Path("infra/perf/pr_scoped_probes.json")
 REPORT_ROOT = Path(".runtime/pre-commit-performance")
-GIT_LOCAL_ENV_VARS = (
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_CONFIG",
-    "GIT_CONFIG_PARAMETERS",
-    "GIT_CONFIG_COUNT",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_IMPLICIT_WORK_TREE",
-    "GIT_GRAFT_FILE",
-    "GIT_INDEX_FILE",
-    "GIT_NO_REPLACE_OBJECTS",
-    "GIT_REPLACE_REF_BASE",
-    "GIT_PREFIX",
-    "GIT_SHALLOW_FILE",
-    "GIT_COMMON_DIR",
-)
 
 
 @dataclass(frozen=True)
@@ -149,13 +133,6 @@ def run_shell_command(command: str, cwd: Path) -> CommandResult:
         returncode=completed.returncode,
         elapsed_seconds=elapsed,
     )
-
-
-def scrub_git_local_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
-    clean_env = dict(os.environ if env is None else env)
-    for name in GIT_LOCAL_ENV_VARS:
-        clean_env.pop(name, None)
-    return clean_env
 
 
 def export_head_snapshot(root: Path, destination: Path) -> None:
