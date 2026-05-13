@@ -302,6 +302,14 @@ def test_dataset_catalog_limited_json_text_reuses_shared_decoder(monkeypatch: py
     assert raw_decode_calls == 4
 
 
+def test_dataset_catalog_limited_json_text_reuses_shared_row_array_keys() -> None:
+    assert catalog._JSON_ROW_ARRAY_KEYS == frozenset({"rows", "data"})
+    assert catalog._limited_rows_from_json_text(
+        '{"metadata":{"name":"probe"},"data":[{"prompt":"first"},{"prompt":"second"}]}',
+        limit=1,
+    ) == [{"prompt": "first"}]
+
+
 class _FakeColumnarBatch:
     def __init__(self, rows: list[object]) -> None:
         self._rows = rows

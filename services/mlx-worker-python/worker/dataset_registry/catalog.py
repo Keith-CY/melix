@@ -36,6 +36,7 @@ _SPLIT_ALIASES = {
     "test": "test",
 }
 _JSON_DECODER = json.JSONDecoder()
+_JSON_ROW_ARRAY_KEYS = frozenset({"rows", "data"})
 
 
 @dataclass(frozen=True)
@@ -696,7 +697,7 @@ def _json_text_first_array_start(json_text: str) -> int | None:
         cursor += 1
         while cursor < text_length and json_text[cursor].isspace():
             cursor += 1
-        if key in {"rows", "data"} and cursor < text_length and json_text[cursor] == "[":
+        if key in _JSON_ROW_ARRAY_KEYS and cursor < text_length and json_text[cursor] == "[":
             return cursor
         try:
             _, cursor = decoder.raw_decode(json_text, cursor)
