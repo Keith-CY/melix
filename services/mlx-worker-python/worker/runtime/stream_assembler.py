@@ -100,7 +100,7 @@ class RequestStreamAssembler:
     _PIPE_TOOL_PREFIXES_REVERSED = tuple(reversed(_PIPE_TOOL_PREFIXES))
     _VISIBLE_TAIL_MARKERS = ("\nFinal answer", "\nFinal:", "\nAnswer:", "\nAssistant:", "\nResult:")
     _PIPE_CALL_RE = re.compile(
-        r"^\s*call:(?P<name>[A-Za-z0-9_.:/-]+)\s*(?P<args>\{.*\}|\(\))\s*$",
+        r"^\s*call:(?P<name>[A-Za-z0-9_.:/-]+)\s*(?P<args>\{.*\}|\(\s*\))\s*$",
         re.DOTALL,
     )
 
@@ -124,6 +124,8 @@ class RequestStreamAssembler:
             self._allowed_tool_names_by_casefold = {
                 name.casefold(): name for name in self._allowed_tool_names
             }
+            # Longest-first matching keeps a declared tool such as
+            # "terminal.execute" from being normalized to "terminal".
             self._allowed_tool_names_by_prefix = tuple(
                 sorted(self._allowed_tool_names, key=len, reverse=True)
             )
@@ -610,7 +612,7 @@ class RequestStreamAssembler:
         if match is None:
             self._metrics["malformed_tool_fragment_count"] += 1
             return None
-        if match.group("args") == "()":
+        if match.group("args").startswith("("):
             return {
                 "name": match.group("name"),
                 "arguments": {},
@@ -645,11 +647,13 @@ class RequestStreamAssembler:
 
     @staticmethod
     def _is_action_qualified_tool_name(name: str, declared: str) -> bool:
-        if len(name) <= len(declared):
+        folded_name = name.casefold()
+        folded_declared = declared.casefold()
+        if len(folded_name) <= len(folded_declared):
             return False
-        if not name.casefold().startswith(declared.casefold()):
+        if not folded_name.startswith(folded_declared):
             return False
-        return name[len(declared)] in {".", ":", "/"}
+        return folded_name[len(folded_declared)] in {".", ":", "/"}
 
     def _parse_relaxed_object_arguments(self, text: str) -> dict[str, object] | None:
         stripped = text.strip()

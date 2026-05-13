@@ -253,6 +253,28 @@ def test_pipe_tool_call_empty_parentheses_arguments_are_parsed() -> None:
     assert completed.metrics["tool_call_markup_leak_count"] == 0
 
 
+def test_pipe_tool_call_whitespace_parentheses_arguments_are_parsed() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-whitespace-parens",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="<|tool_call>call:github_auth:github_auth_check( \n )<tool_call|>"
+        )
+    )
+    completed = assembler.completed()
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+
+    assert len(calls) == 1
+    assert calls[0].tool_name == "github_auth:github_auth_check"
+    assert calls[0].arguments_json_fragment == "{}"
+    assert completed.metrics["malformed_tool_fragment_count"] == 0
+
+
 def test_action_qualified_tool_name_is_normalized_to_declared_openai_tool() -> None:
     cases = (
         (
