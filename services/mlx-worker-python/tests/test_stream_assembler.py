@@ -159,6 +159,7 @@ def test_token_byte_delta_decodes_complete_ascii_without_incremental_decoder(mon
 
     assert [delta.content_text for delta in deltas] == ["hello ", "world"]
     assert completed.assistant_text == "hello world"
+    assert completed.raw_text == "hello world"
     assert completed.metrics["generated_token_count"] == 2
     assert completed.metrics["byte_fallback_decode_error_count"] == 0
     assert decoder_calls == 0
@@ -187,9 +188,28 @@ def test_token_byte_delta_preserves_split_multibyte_sequence(monkeypatch) -> Non
 
     assert [delta.content_text for delta in deltas] == ["€"]
     assert completed.assistant_text == "€"
+    assert completed.raw_text == "€"
     assert completed.metrics["generated_token_count"] == 2
     assert completed.metrics["byte_fallback_merge_count"] == 1
     assert decoder_calls == 2
+
+
+def test_token_byte_raw_parts_materialize_before_raw_text_delta() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-token-byte-then-raw-text",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    first = assembler.accept(StreamFragment(token_bytes=b"hello "))
+    second = assembler.accept(StreamFragment(raw_text="hello world"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in first + second] == ["hello ", "world"]
+    assert completed.assistant_text == "hello world"
+    assert completed.raw_text == "hello world"
+    assert completed.metrics["non_monotonic_stream_count"] == 0
 
 
 def test_plain_buffer_with_marker_still_holds_partial_structural_prefix() -> None:

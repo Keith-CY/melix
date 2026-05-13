@@ -175,6 +175,7 @@ class RequestStreamAssembler:
         else:
             self._request_context_mode_value = "plain"
         self._raw_seen = ""
+        self._raw_seen_assistant_part_count = 0
         self._buffer = ""
         self._pending_token_bytes = b""
         self._json_started = False
@@ -220,7 +221,6 @@ class RequestStreamAssembler:
             if not byte_delta:
                 return []
             delta = byte_delta
-            self._raw_seen += byte_delta
         elif raw:
             delta = self._unseen_delta(raw)
         else:
@@ -229,6 +229,7 @@ class RequestStreamAssembler:
         if not delta:
             return []
 
+        raw_delta_from_token_bytes = byte_delta is not None
         if (
             not self._is_json_only_structured_output_value
             and not self._buffer
@@ -237,7 +238,13 @@ class RequestStreamAssembler:
             and "<" not in delta
         ):
             self._assistant_parts.append(delta)
+            if raw_delta_from_token_bytes:
+                self._raw_seen_assistant_part_count += 1
             return [AssemblyDelta(content_text=delta, raw_text=delta)]
+
+        if raw_delta_from_token_bytes:
+            self._materialized_raw_seen()
+            self._raw_seen += delta
 
         if self._is_json_only_structured_output_value:
             deltas = self._accept_json_structured_output(delta)
@@ -268,7 +275,7 @@ class RequestStreamAssembler:
         return AssemblyCompletion(
             assistant_text="".join(self._assistant_parts),
             reasoning_text="".join(self._reasoning_parts),
-            raw_text=self._raw_seen,
+            raw_text=self._materialized_raw_seen(),
             metrics=metrics,
         )
 
@@ -301,6 +308,7 @@ class RequestStreamAssembler:
         return self._structural_open_tags_value
 
     def _unseen_delta(self, raw: str) -> str:
+        self._materialized_raw_seen()
         if raw.startswith(self._raw_seen):
             delta = raw[len(self._raw_seen) :]
             self._raw_seen = raw
@@ -318,6 +326,16 @@ class RequestStreamAssembler:
         # the compatibility loss visible through metrics/logs.
         self._raw_seen += raw
         return raw
+
+    def _materialized_raw_seen(self) -> str:
+        if self._raw_seen_assistant_part_count:
+            if self._raw_seen_assistant_part_count == len(self._assistant_parts):
+                raw_parts = self._assistant_parts
+            else:
+                raw_parts = self._assistant_parts[-self._raw_seen_assistant_part_count :]
+            self._raw_seen += "".join(raw_parts)
+            self._raw_seen_assistant_part_count = 0
+        return self._raw_seen
 
     def _record_token_metadata(self, fragment: StreamFragment) -> int:
         if (
