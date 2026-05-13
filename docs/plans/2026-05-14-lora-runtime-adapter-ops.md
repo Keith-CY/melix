@@ -125,14 +125,19 @@ MELIX_REAL_LORA_DATASET_ID="dialogue-extraction" \
 MELIX_REAL_LORA_ACCEPTANCE=1 \
 PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
 uv run --project services/mlx-worker-python --extra mlx \
-  python scripts/phase8_lora_cli_smoke.py --json
+  python scripts/lora_runtime_acceptance.py --json \
+    --model-id unsloth/gemma-4-E4B-it-MLX-8bit \
+    --dataset-id top200.event-extraction.top20.v1
 ```
 
-The acceptance runner may need to be extended if the existing smoke script cannot target the dialogue extraction evaluation fixture directly. The PR must record the final evidence path or the exact blocker.
+The runner materializes the checked-in dialogue extraction evaluation fixture as a
+chat-messages training package, performs a minimal real QLoRA train, activates
+the result with `adapter_backed_runtime`, and writes
+`.runtime/lora-runtime-acceptance/lora-runtime-acceptance.json`. The PR must
+record the final evidence path or the exact blocker.
 
 ## Risks
 
 - A backend may still reload the base model internally even when metadata says two adapters share a base. This plan records shareability first; backend hot-swap can be separately optimized behind the same contract.
 - Quantized model identity can be inferred from names and metadata today. The implementation must prefer explicit quantization fields when present and treat name-based detection as evidence only.
 - Concurrent compare targets are transient. Cleanup remains the runtime responsibility; this slice adds isolation evidence and collision prevention, not a new scheduler.
-

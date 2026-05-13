@@ -242,7 +242,7 @@ class MLXLMRunner:
         request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
         _reset_mlx_peak_memory_probe()
 
-        model, tokenizer = load(str(request.model_path), lazy=False)
+        model, tokenizer = _load_lora_training_model(request, load)
         args = _mlx_lora_namespace(request)
         # Phase 3B: when chunked_training is enabled, rewrite train.jsonl with
         # chunked samples before MLX-LM reads it. No-op otherwise; the
@@ -475,6 +475,40 @@ def _mlx_lora_namespace(request: TrainingRequest):
         mask_prompt=request.config.mask_prompt,
         report_to=None,
         project_name=None,
+    )
+
+
+def _load_lora_training_model(request: TrainingRequest, load_fn: Any) -> tuple[Any, Any]:
+    try:
+        return load_fn(str(request.model_path), lazy=False)
+    except ValueError as exc:
+        if not _should_retry_quantized_lora_load_without_strict(request, exc):
+            raise
+        from mlx_lm.utils import _download, load_model, load_tokenizer
+
+        model_path = _download(
+            str(request.model_path),
+            revision=request.model_revision or None,
+        )
+        model, config = load_model(model_path, lazy=False, strict=False)
+        tokenizer = load_tokenizer(
+            model_path,
+            None,
+            eos_token_ids=config.get("eos_token_id", None),
+        )
+        return model, tokenizer
+
+
+def _should_retry_quantized_lora_load_without_strict(
+    request: TrainingRequest,
+    exc: ValueError,
+) -> bool:
+    message = str(exc)
+    if "parameters not in model" not in message:
+        return False
+    return (
+        request.config.training_mode == "qlora"
+        or request.config.quantization_mode == "quantized_base"
     )
 
 

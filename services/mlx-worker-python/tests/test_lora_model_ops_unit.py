@@ -3674,6 +3674,132 @@ def test_mlx_lm_runner_train_native_collects_checkpoint_throughput_and_peak_memo
     assert result.metrics.peak_memory_gb == pytest.approx(3.0)
 
 
+def test_mlx_lm_runner_train_native_retries_quantized_load_with_relaxed_strictness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mlx_lm = types.ModuleType("mlx_lm")
+    fake_mlx_lm.__path__ = []
+    fake_lora = types.ModuleType("mlx_lm.lora")
+    fake_callbacks = types.ModuleType("mlx_lm.tuner.callbacks")
+    fake_datasets = types.ModuleType("mlx_lm.tuner.datasets")
+    fake_utils = types.ModuleType("mlx_lm.utils")
+    calls: list[tuple[str, object]] = []
+    fake_model = object()
+    fake_tokenizer = object()
+
+    class FakeTrainingCallback:
+        pass
+
+    def fake_load(model_source: str, *, lazy: bool = False):
+        calls.append(("load", (model_source, lazy)))
+        raise ValueError("Received 126 parameters not in model: language_model.model.layers.24.self_attn.k_proj.biases")
+
+    def fake_download(model_source: str, revision: str | None = None):
+        calls.append(("download", (model_source, revision)))
+        return tmp_path / "downloaded-model"
+
+    def fake_load_model(model_path: Path, *, lazy: bool = False, strict: bool = True):
+        calls.append(("load_model", (model_path, lazy, strict)))
+        return fake_model, {"eos_token_id": [1, 2]}
+
+    def fake_load_tokenizer(model_path: Path, tokenizer_config_extra=None, eos_token_ids=None):
+        calls.append(("load_tokenizer", (model_path, tokenizer_config_extra, eos_token_ids)))
+        return fake_tokenizer
+
+    def fake_load_local_dataset(dataset_dir: Path, tokenizer, args):
+        _ = args
+        calls.append(("dataset", (dataset_dir, tokenizer)))
+        return ["train"], [], None
+
+    def fake_train_model(args, model, train_set, valid_set, training_callback) -> None:
+        _ = args
+        assert model is fake_model
+        assert train_set == ["train"]
+        assert valid_set == []
+        training_callback.on_train_loss_report(
+            {
+                "train_loss": 0.7,
+                "learning_rate": 2e-4,
+                "trained_tokens": 10,
+            }
+        )
+
+    fake_lora.train_model = fake_train_model
+    fake_callbacks.TrainingCallback = FakeTrainingCallback
+    fake_datasets.load_local_dataset = fake_load_local_dataset
+    fake_utils.load = fake_load
+    fake_utils._download = fake_download
+    fake_utils.load_model = fake_load_model
+    fake_utils.load_tokenizer = fake_load_tokenizer
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+    monkeypatch.setitem(sys.modules, "mlx_lm.lora", fake_lora)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.callbacks", fake_callbacks)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.datasets", fake_datasets)
+    monkeypatch.setitem(sys.modules, "mlx_lm.utils", fake_utils)
+
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(
+            model_path="unsloth/gemma-4-E4B-it-MLX-8bit",
+            quant_profile_id="8bit",
+        ),
+        ext={"training_mode": "qlora"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-quantized-retry",
+        base_model_id="gemma4-8bit",
+        model_path=Path("unsloth/gemma-4-E4B-it-MLX-8bit"),
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="chat_messages",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().train_native(request)
+
+    assert result.metrics.loss_final == pytest.approx(0.7)
+    assert calls[:4] == [
+        ("load", ("unsloth/gemma-4-E4B-it-MLX-8bit", False)),
+        ("download", ("unsloth/gemma-4-E4B-it-MLX-8bit", "main")),
+        ("load_model", (tmp_path / "downloaded-model", False, False)),
+        ("load_tokenizer", (tmp_path / "downloaded-model", None, [1, 2])),
+    ]
+    assert calls[4] == ("dataset", (tmp_path / "normalized", fake_tokenizer))
+
+
+def test_mlx_lm_runner_quantized_load_retry_preserves_unrelated_value_errors(
+    tmp_path: Path,
+) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-plain-load-failure",
+        base_model_id="plain",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="chat_messages",
+    )
+
+    def fake_load(_model_source: str, *, lazy: bool = False):
+        _ = lazy
+        raise ValueError("Tokenizer config is invalid.")
+
+    with pytest.raises(ValueError, match="Tokenizer config is invalid"):
+        mlx_lm_runner_module._load_lora_training_model(request, fake_load)
+
+
 @pytest.mark.parametrize("weights_path_value", [None, ""])
 def test_adapter_backed_runtime_manifest_requires_adapter_weights_path(
     tmp_path: Path,
@@ -3769,6 +3895,43 @@ def test_adapter_backed_runtime_activation_writes_explicit_runtime_contract(tmp_
     assert result.manifest["qlora_compatibility_status"] == "compatible"
     assert result.manifest["quantized_target_module_guard"] == "accepted"
     assert result.manifest_path.exists()
+
+
+def test_adapter_backed_runtime_activation_tolerates_legacy_scalar_targets(tmp_path: Path) -> None:
+    adapter_weights_path = tmp_path / "weights" / "adapters.safetensors"
+    adapter_weights_path.parent.mkdir(parents=True, exist_ok=True)
+    adapter_weights_path.write_text("adapter", encoding="utf-8")
+    adapter_manifest_path = tmp_path / "train_lora.adapter.json"
+    adapter_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-test-text",
+                "adapter_set_hash": "adapter-legacy",
+                "adapter_name": "legacy-adapter",
+                "weights_path": str(adapter_weights_path),
+                "training_mode": "qlora",
+                "quantization_mode": "quantized_base",
+                "target_modules": "model.layers.0.self_attn.q_proj",
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    result = AdapterActivationPipeline().run(
+        job_id="activate-legacy",
+        request_ext={
+            "artifact_path": str(adapter_manifest_path),
+            "activation_mode": "adapter_backed_runtime",
+        },
+        source_model=_text_model(
+            model_path=str(tmp_path / "base-model"),
+            quant_profile_id="q4",
+        ),
+        output_dir=tmp_path / "activate",
+    )
+
+    assert result.manifest["quantized_target_module_guard"] == "accepted_no_targets"
 
 
 def test_adapter_runtime_plan_reuses_base_and_isolates_adapters(tmp_path: Path) -> None:
