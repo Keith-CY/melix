@@ -11,6 +11,7 @@ import worker.model_ops.hub_catalog as hub_catalog_module
 from worker.model_ops.hub_catalog import (
     HubCatalog,
     HubCatalogError,
+    _bytes_per_parameter,
     _is_mlx_compatible,
     _local_fit_evidence,
     _quantization_summary,
@@ -40,6 +41,14 @@ def test_quantization_summary_preserves_alias_order_from_lowered_tags() -> None:
         _quantization_summary(["2-bit", "3bit", "8-bit", "float32", "bf16"])
         == "2-bit, 3-bit, 8-bit, fp32, bf16"
     )
+
+
+def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tags() -> None:
+    assert _bytes_per_parameter([], lowered_tags={"family", "float32", "4-bit"}) == 0.5
+    assert _bytes_per_parameter([], lowered_tags={"family", "8bit"}) == 1.0
+    assert _bytes_per_parameter([], lowered_tags={"family", "3-bit", "8bit"}) == 0.375
+    assert _bytes_per_parameter([], lowered_tags={"family", "foo4", "bitbar"}) == 2.0
+    assert _bytes_per_parameter(["adapter", "2bit-mlx"], lowered_tags=None) == 0.25
 
 
 class FakeHTTPResponse:
