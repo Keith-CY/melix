@@ -143,6 +143,15 @@ def test_mlx_audio_transcription_runtime_uses_local_uri_path_without_reading_byt
     monkeypatch.setattr(audio_preprocessing, "urlparse", fail_urlparse)
     assert audio_preprocessing._path_from_uri(audio_path.as_uri()) == audio_path
 
+    fail_unquote = lambda path: (_ for _ in ()).throw(  # noqa: E731
+        AssertionError(f"unencoded local audio URI should skip unquote: {path}")
+    )
+    monkeypatch.setattr(audio_preprocessing, "unquote", fail_unquote)
+    assert audio_preprocessing._path_from_uri(audio_path.as_uri()) == audio_path
+
+    monkeypatch.setattr(audio_preprocessing, "unquote", lambda path: str(audio_path))
+    assert audio_preprocessing._path_from_uri("file:///tmp/audio%20sample.wav") == audio_path
+
     monkeypatch.setattr(audio_preprocessing, "urlparse", fail_urlparse)
     assert audio_preprocessing._path_from_uri(str(audio_path)) == audio_path
 
