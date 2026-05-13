@@ -96,7 +96,6 @@ def main() -> None:
         lines_per_paragraph=args.lines_per_paragraph,
         line_width=args.line_width,
     )
-
     legacy_elapsed: list[float] = []
     legacy_peaks: list[float] = []
     new_elapsed: list[float] = []
@@ -109,6 +108,15 @@ def main() -> None:
         elapsed, peak, checksum = _run_once(raw_response, legacy=False, iterations=args.iterations)
         new_elapsed.append(elapsed)
         new_peaks.append(float(peak))
+
+    legacy_candidate = _legacy_extract_text_heuristic(raw_response)
+    new_candidate = extract_final_result(
+        raw_response=raw_response,
+        result_kind="text",
+        extraction_mode="heuristic_final",
+    ).extracted_result
+    if legacy_candidate != new_candidate:
+        raise ValueError("Legacy and optimized extraction results differ")
 
     legacy_elapsed_mean = statistics.fmean(legacy_elapsed)
     elapsed_mean = statistics.fmean(new_elapsed)
