@@ -230,6 +230,49 @@ sample-level evidence. Evaluation samples that use tools must record:
 Evaluation claims are valid only when backed by persisted job artifacts, such
 as evaluation samples JSONL, run evidence JSON, or report bundles.
 
+### Provider System Prompt Tool-Call Evaluation
+
+Server sessions can act as agent-facing LLM providers. Provider regression
+tests must therefore verify not only whether a tool runtime can execute a tool,
+but whether the model obeys system instructions and emits parser-compliant tool
+calls for an agent.
+
+The repository-owned golden dataset for this contract is:
+
+`tests/eval/tool-call-system-prompts.v1/`
+
+It covers:
+
+- basic instruction following for required tool calls
+- JSON-only or exact public text when tools are forbidden
+- tool schema and argument fidelity against built-in Melix tool names
+- ordered multi-call and unordered parallel-call matching
+- date, time, numeric, corpus, media-reference, and optional argument fidelity
+- agent-control negative constraints such as forbidden tools and no-tool
+  prompts
+- missing required user parameters, no-matching-tool refusals, and user-injected
+  fake tool-call markup
+
+The scorer must use Melix's production tool-call parser path when extracting
+model output. It must hard-match tool names and arguments, validate public text
+policy, aggregate parser failure metrics, and run parsed calls through the
+deterministic agentic tool runtime unless a case explicitly records that runtime
+validation is skipped for a future-tool argument-extraction scenario. Optional
+soft judges may score semantic equivalence or refusal quality, but the CI gate
+must remain deterministic without network or closed-source model dependencies.
+
+BFCL and ToolBench are useful external calibration suites, but they do not
+replace this repository-owned gate. Imported samples must be normalized into
+the same case envelope and pinned with conversion evidence before they can be
+used for release claims. The normalization importer consumes only local pinned
+JSON or JSONL snapshots and records the source benchmark plus source snapshot
+id in each generated case.
+
+CI may run fixture responses only. Local model runs, including Hermes-backed
+smoke tests, are optional evidence and must write JSON reports with per-case raw
+responses, parsed calls, parser metrics, optional judge results, and aggregate
+pass rates.
+
 ## Executable Child Issue Matrix
 
 The following child issues define the execution path for issue #674. Each
