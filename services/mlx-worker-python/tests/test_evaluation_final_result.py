@@ -15,6 +15,7 @@ from worker.productization.evaluation_final_result import (
     EvaluationMaterializationRequest,
     EvaluationProfileDefinition,
     _local_source_metadata,
+    _last_nonblank_text_line,
     extract_final_result,
     materialize_hf_evaluation_dataset,
     materialize_local_evaluation_dataset,
@@ -175,6 +176,29 @@ def test_extract_final_result_accepts_one_answer_prefix() -> None:
 
     assert outcome.extraction_status == "extracted"
     assert outcome.extracted_result == "Paris"
+
+
+def test_extract_final_result_text_fallback_scans_tail_without_regex_split(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_split(*args: object, **kwargs: object) -> list[str]:
+        raise AssertionError("text fallback should not materialize paragraphs with re.split")
+
+    monkeypatch.setattr(evaluation_final_result_module.re, "split", fail_split)
+
+    outcome = extract_final_result(
+        raw_response="draft paragraph\n\nfinal paragraph\n  Paris  \n\n  ",
+        result_kind="text",
+        extraction_mode="heuristic_final",
+    )
+
+    assert outcome.extraction_status == "extracted"
+    assert outcome.extracted_result == "Paris"
+
+
+def test_last_nonblank_text_line_handles_trailing_whitespace_and_empty_input() -> None:
+    assert _last_nonblank_text_line("draft\n  Paris  \n\t  ") == "Paris"
+    assert _last_nonblank_text_line("  \n\t\n  ") == ""
 
 
 def test_extract_final_result_scans_json_suffix_candidates_from_the_tail(

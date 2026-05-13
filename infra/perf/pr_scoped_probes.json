@@ -1174,6 +1174,55 @@
     ]
   },
   {
+    "id": "evaluation-final-result-text-fallback-tail-scan",
+    "name": "Evaluation final-result text fallback tail scan",
+    "description": "Avoid paragraph/list materialization when heuristic text extraction falls back to the final nonblank line.",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/evaluation_final_result.py",
+      "services/mlx-worker-python/tests/test_evaluation_final_result.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/evaluation_text_fallback_probe.py",
+      "scripts/changed_scope_coverage.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_evaluation_final_result.py::test_extract_final_result_text_fallback_scans_tail_without_regex_split services/mlx-worker-python/tests/test_evaluation_final_result.py::test_extract_final_result_accepts_one_answer_prefix services/mlx-worker-python/tests/test_evaluation_final_result.py::test_last_nonblank_text_line_handles_trailing_whitespace_and_empty_input services/mlx-worker-python/tests/test_evaluation_final_result.py::test_extract_final_result_uses_last_text_fence_without_materializing_all_fences services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_final_result_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_evaluation_text_fallback_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_evaluation_final_result.py::test_extract_final_result_text_fallback_scans_tail_without_regex_split services/mlx-worker-python/tests/test_evaluation_final_result.py::test_extract_final_result_accepts_one_answer_prefix services/mlx-worker-python/tests/test_evaluation_final_result.py::test_last_nonblank_text_line_handles_trailing_whitespace_and_empty_input services/mlx-worker-python/tests/test_evaluation_final_result.py::test_extract_final_result_uses_last_text_fence_without_materializing_all_fences services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_evaluation_final_result_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_evaluation_text_fallback_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/evaluation_final_result.py services/mlx-worker-python/tests/test_evaluation_final_result.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/evaluation_text_fallback_probe.py",
+    "probe_command": "PROBE_SCRIPT=\"scripts/evaluation_text_fallback_probe.py\"; if [ ! -f \"$PROBE_SCRIPT\" ] && [ -f \"../head/scripts/evaluation_text_fallback_probe.py\" ]; then PROBE_SCRIPT=\"../head/scripts/evaluation_text_fallback_probe.py\"; fi; PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 \"$PROBE_SCRIPT\"",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "delta_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_delta_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "paragraph_count",
+        "unit": "count",
+        "direction": "informational"
+      }
+    ]
+  },
+  {
     "id": "evaluation-final-result-json-typed-score-aggregate",
     "name": "Evaluation final-result JSON typed-score running aggregate",
     "runner": "ubuntu-latest",

@@ -291,14 +291,21 @@ def _extract_text_heuristic(raw_response: str) -> ExtractionOutcome:
     if candidate:
         return ExtractionOutcome(candidate, "extracted")
 
-    paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n", raw_response) if paragraph.strip()]
-    if paragraphs:
-        lines = [line.strip() for line in paragraphs[-1].splitlines() if line.strip()]
-        if lines:
-            return ExtractionOutcome(lines[-1], "extracted")
-        return ExtractionOutcome(paragraphs[-1], "extracted")
+    fallback_line = _last_nonblank_text_line(raw_response)
+    if fallback_line:
+        return ExtractionOutcome(fallback_line, "extracted")
 
     return ExtractionOutcome("", "extraction_failed", "no_text_candidate")
+
+
+def _last_nonblank_text_line(raw_response: str) -> str:
+    end = len(raw_response)
+    while end > 0 and raw_response[end - 1].isspace():
+        end -= 1
+    if end == 0:
+        return ""
+    line_start = raw_response.rfind("\n", 0, end) + 1
+    return raw_response[line_start:end].strip()
 
 
 def _score_json_result(
