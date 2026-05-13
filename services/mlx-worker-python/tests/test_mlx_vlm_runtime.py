@@ -193,6 +193,33 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
     assert probe.multi_image_scatter_mode == "none"
 
 
+def test_mlx_vlm_runtime_forwards_trust_remote_code_when_loader_supports_it() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(
+        model_path: str,
+        *,
+        revision: str = "main",
+        trust_remote_code: bool = False,
+    ):
+        seen["load"] = (model_path, revision, trust_remote_code)
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+        )
+    )
+
+    runtime.load_model(imported_gemma4_vlm_model(), trust_remote_code=True)
+
+    assert seen["load"] == ("unsloth/gemma-4-E4B-it-MLX-8bit", "main", True)
+
+
 def test_mlx_vlm_runtime_records_installed_package_versions(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_version(package_name: str) -> str:
         return {

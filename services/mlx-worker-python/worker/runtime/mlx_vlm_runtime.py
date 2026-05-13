@@ -17,6 +17,7 @@ from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.runtime_utils import (
+    callable_accepts_kwarg as _callable_accepts_kwarg,
     callable_declares_kwarg as _callable_declares_kwarg,
     installed_package_version as _installed_package_version,
 )
@@ -240,7 +241,7 @@ class AutoMLXVLMBackend:
         self._drafter_cache[cache_key] = drafter
         return drafter
 
-    def load_model(self, model_spec):
+    def load_model(self, model_spec, *, trust_remote_code: bool = False):
         if not self._available:
             raise RuntimeUnavailableError("mlx-vlm is not installed") from self._error
         self._ensure_runtime()
@@ -250,10 +251,10 @@ class AutoMLXVLMBackend:
         metadata["mlx_vlm_version"] = _installed_package_version("mlx-vlm")
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
         try:
-            model, processor = self.load_fn(
-                model_spec.model_path,
-                revision=model_spec.revision or "main",
-            )
+            load_kwargs: dict[str, Any] = {"revision": model_spec.revision or "main"}
+            if trust_remote_code and _callable_accepts_kwarg(self.load_fn, "trust_remote_code"):
+                load_kwargs["trust_remote_code"] = True
+            model, processor = self.load_fn(model_spec.model_path, **load_kwargs)
             if self._should_attempt_gemma4_text_backed_fallback(model_spec):
                 execution_mode = _gemma4_loaded_execution_mode(model, processor)
         except Exception as exc:
@@ -452,10 +453,15 @@ class MLXVLMRuntime:
     def runtime_name(self) -> str:
         return getattr(self._backend, "runtime_name", "mlx-vlm-unavailable")
 
-    def load_model(self, model_spec):
-        if self._executor is None:
+    def load_model(self, model_spec, *, trust_remote_code: bool = False):
+        def load_backend():
+            if _callable_accepts_kwarg(self._backend.load_model, "trust_remote_code"):
+                return self._backend.load_model(model_spec, trust_remote_code=trust_remote_code)
             return self._backend.load_model(model_spec)
-        return self._executor.run(lambda: self._backend.load_model(model_spec))
+
+        if self._executor is None:
+            return load_backend()
+        return self._executor.run(load_backend)
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))

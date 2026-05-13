@@ -235,6 +235,29 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].dflash_rollback_count == 2
 
 
+def test_auto_backend_forwards_trust_remote_code_when_loader_supports_it() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(
+        model_source: str,
+        *,
+        lazy: bool = False,
+        trust_remote_code: bool = False,
+    ):
+        seen["load"] = (model_source, lazy, trust_remote_code)
+        return object(), FakeTokenizer()
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+
+    backend.load_model(WorkerModelCatalog.dev_text_model(), trust_remote_code=True)
+
+    assert seen["load"] == ("models/melix-dev-text", False, True)
+
+
 def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_utils.clear_callable_kwarg_signature_cache()
     signature_calls: dict[str, int] = {}

@@ -100,6 +100,8 @@ should read typed fields.
 - Refuse custom-loader loads by default with typed `ErrorStatus` details.
 - Pass trust-sensitive kwargs only when the effective policy explicitly allows remote code.
 - Emit `not_applicable` receipts for routes that cannot execute custom code.
+- Publish worker trust-policy resolution latency and blocked-load count through `RuntimeStats`
+  and the control-plane metrics store.
 - Add focused Python tests for blocked text/VLM custom loaders, explicit opt-in, and
   non-applicable deterministic routes.
 

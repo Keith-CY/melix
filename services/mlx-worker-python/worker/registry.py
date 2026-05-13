@@ -10,6 +10,7 @@ from typing import Any
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, runtime_pb2
 
 from worker.engine.request_state import RequestState
+from worker.model_load_trust import ModelLoadTrustRejection, load_kwargs_for_policy, resolve_model_load_trust_policy
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
 from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRuntime
@@ -23,6 +24,7 @@ from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.mlx_vlm_runtime import MLXVLMRuntime
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
+from worker.runtime.runtime_utils import callable_accepts_kwarg
 
 
 _MULTIMODAL_REQUEST_KINDS = frozenset({"ocr", "vlm", "transcription", "speech", "image"})
@@ -37,6 +39,7 @@ class LoadedModel:
     estimated_resident_bytes: int
     runtime_kind: str
     residency: common_pb2.ResidencyInfo
+    load_trust: common_pb2.ModelLoadTrustPolicy
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
 
@@ -162,6 +165,8 @@ class WorkerRegistry:
         self._last_image_artifact_publish_ms = 0.0
         self._last_image_output_bytes = 0
         self._last_image_peak_memory_bytes = 0
+        self._last_model_load_trust_policy_resolution_ms = 0.0
+        self._model_load_trust_blocked_count = 0
 
     def capabilities(self) -> common_pb2.RuntimeCapabilities:
         return common_pb2.RuntimeCapabilities(
@@ -196,6 +201,7 @@ class WorkerRegistry:
         pin_on_load: bool = False,
         memory_budget_bytes: int = 0,
         disk_streaming_mode: int = common_pb2.DISK_STREAMING_MODE_UNSPECIFIED,
+        load_trust: common_pb2.ModelLoadTrustPolicy | None = None,
     ) -> LoadedModel:
         resolved = self._resolved_model_spec(model_spec)
         requested_disk_streaming_mode = self._effective_disk_streaming_mode_request(
@@ -211,6 +217,25 @@ class WorkerRegistry:
                 requested_mode=requested_disk_streaming_mode,
             )
         runtime_kind, runtime = self._runtime_for_model(resolved)
+        trust_started_at = time.monotonic()
+        try:
+            load_trust_policy = resolve_model_load_trust_policy(
+                resolved,
+                request_policy=load_trust,
+                runtime_kind=runtime_kind,
+                runtime=runtime,
+            )
+        except ModelLoadTrustRejection:
+            with self._lock:
+                self._model_load_trust_blocked_count += 1
+                self._last_model_load_trust_policy_resolution_ms = (
+                    time.monotonic() - trust_started_at
+                ) * 1000.0
+            raise
+        with self._lock:
+            self._last_model_load_trust_policy_resolution_ms = (
+                time.monotonic() - trust_started_at
+            ) * 1000.0
         estimated = runtime.estimate_resident_bytes(resolved)
         with self._lock:
             existing_resident_bytes = self._loaded_model_resident_bytes + self._reserved_model_resident_bytes
@@ -238,7 +263,11 @@ class WorkerRegistry:
             )
 
         try:
-            runtime_model = runtime.load_model(resolved)
+            runtime_model = self._load_runtime_model(
+                runtime,
+                resolved,
+                load_trust_policy=load_trust_policy,
+            )
             residency = self._loaded_residency(
                 resolved,
                 pin_on_load=pin_on_load,
@@ -261,6 +290,7 @@ class WorkerRegistry:
                 estimated_resident_bytes=estimated,
                 runtime_kind=runtime_kind,
                 residency=residency,
+                load_trust=load_trust_policy,
             )
             self._loaded_models[handle] = loaded
             self._invalidate_loaded_model_order_locked()
@@ -478,6 +508,8 @@ class WorkerRegistry:
             last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
             last_image_output_bytes = self._last_image_output_bytes
             last_image_peak_memory_bytes = self._last_image_peak_memory_bytes
+            last_model_load_trust_policy_resolution_ms = self._last_model_load_trust_policy_resolution_ms
+            model_load_trust_blocked_count = self._model_load_trust_blocked_count
         mlx_executor_snapshot = self._mlx_executor.snapshot()
         stats = runtime_pb2.RuntimeStats(
             worker_state="draining" if self._draining else "idle",
@@ -521,6 +553,8 @@ class WorkerRegistry:
             generation_stream_owner_mode=mlx_executor_snapshot.generation_stream_owner_mode,
             worker_thread_init_latency_ms=mlx_executor_snapshot.worker_thread_init_latency_ms,
             stream_sync_fallback_count=mlx_executor_snapshot.stream_sync_fallback_count,
+            last_model_load_trust_policy_resolution_ms=last_model_load_trust_policy_resolution_ms,
+            model_load_trust_blocked_count=model_load_trust_blocked_count,
         )
         stats.model_resident_bytes = model_resident_bytes
         stats.cache_resident_bytes = cache_resident_bytes
@@ -724,6 +758,18 @@ class WorkerRegistry:
         if model_spec.model_kind == "image":
             return "image", self.image_generation_runtime
         return "text", self.runtime
+
+    @staticmethod
+    def _load_runtime_model(
+        runtime: Any,
+        model_spec: common_pb2.ModelSpec,
+        *,
+        load_trust_policy: common_pb2.ModelLoadTrustPolicy,
+    ) -> Any:
+        load_kwargs = load_kwargs_for_policy(load_trust_policy)
+        if load_kwargs and callable_accepts_kwarg(runtime.load_model, "trust_remote_code"):
+            return runtime.load_model(model_spec, **load_kwargs)
+        return runtime.load_model(model_spec)
 
     @staticmethod
     def _audio_backend_id_for_model(model_spec: common_pb2.ModelSpec) -> str:

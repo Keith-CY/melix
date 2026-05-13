@@ -901,6 +901,8 @@ struct RequestCoordinatorTests {
             response.stats.generationStreamOwnerMode = "executor_owned_no_stream"
             response.stats.workerThreadInitLatencyMs = 4
             response.stats.streamSyncFallbackCount = 2
+            response.stats.lastModelLoadTrustPolicyResolutionMs = 1.25
+            response.stats.modelLoadTrustBlockedCount = 3
             return response
         }())
         await workerClient.setCacheStatsResponse({
@@ -953,6 +955,8 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 2)
         #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 4)
         #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 2)
+        #expect(metrics.values["worker.model_load_trust_policy_resolution_ms", default: -1] == 1.25)
+        #expect(metrics.values["worker.model_load_trust_blocked_count", default: -1] == 3)
     }
 
     @Test("python speech requests publish speech streaming metrics")

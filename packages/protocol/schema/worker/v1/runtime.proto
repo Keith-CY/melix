@@ -114,6 +114,8 @@ message RuntimeStats {
   bool last_speech_streaming_enabled = 44;
   uint32 last_speech_streaming_interval_ms = 45;
   double last_speech_first_audio_latency_ms = 46;
+  double last_model_load_trust_policy_resolution_ms = 47;
+  uint64 model_load_trust_blocked_count = 48;
 }
 
 message GetRuntimeStatsRequest {}

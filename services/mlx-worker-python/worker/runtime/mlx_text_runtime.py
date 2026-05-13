@@ -573,12 +573,14 @@ class AutoMLXBackend:
             self._sampler_factory = make_sampler
             self._stream_stop_kwarg = _first_declared_kwarg(stream_generate, _STREAM_STOP_KWARG_NAMES)
 
-    def load_model(self, model_spec) -> dict[str, Any]:
+    def load_model(self, model_spec, *, trust_remote_code: bool = False) -> dict[str, Any]:
         if not self._available:
             raise RuntimeUnavailableError("mlx-lm is not installed") from self._error
         self._ensure_runtime()
         adapter_metadata = _resolve_adapter_backed_metadata(model_spec)
         load_kwargs: dict[str, Any] = {"lazy": False}
+        if trust_remote_code and _callable_accepts_kwarg(self._load_fn, "trust_remote_code"):
+            load_kwargs["trust_remote_code"] = True
         if adapter_metadata:
             load_kwargs["adapter_path"] = adapter_metadata["adapter_dir"]
         loaded = self._load_fn(model_spec.model_path, **load_kwargs)
@@ -733,10 +735,15 @@ class MLXTextRuntime:
     def runtime_name(self) -> str:
         return getattr(self._backend, "runtime_name", "unknown-runtime")
 
-    def load_model(self, model_spec):
-        if self._executor is None:
+    def load_model(self, model_spec, *, trust_remote_code: bool = False):
+        def load_backend():
+            if _callable_accepts_kwarg(self._backend.load_model, "trust_remote_code"):
+                return self._backend.load_model(model_spec, trust_remote_code=trust_remote_code)
             return self._backend.load_model(model_spec)
-        return self._executor.run(lambda: self._backend.load_model(model_spec))
+
+        if self._executor is None:
+            return load_backend()
+        return self._executor.run(load_backend)
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))
