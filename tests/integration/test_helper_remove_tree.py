@@ -11,7 +11,7 @@ def _stack() -> helpers.LiveMelixStack:
     return helpers.LiveMelixStack.__new__(helpers.LiveMelixStack)
 
 
-def test_remove_tree_uses_os_walk_without_rglob(
+def test_remove_tree_uses_scandir_without_tree_materialization(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -24,7 +24,11 @@ def test_remove_tree_uses_os_walk_without_rglob(
     def fail_rglob(self: Path, pattern: str):
         raise AssertionError(f"Path.rglob should not be used for runtime cleanup: {pattern}")
 
+    def fail_os_walk(*args: object, **kwargs: object):  # pragma: no cover - must never be called
+        raise AssertionError(f"os.walk should not be used for runtime cleanup: {args!r} {kwargs!r}")
+
     monkeypatch.setattr(Path, "rglob", fail_rglob)
+    monkeypatch.setattr(helpers.os, "walk", fail_os_walk)
 
     _stack()._remove_tree(root)
 
@@ -47,6 +51,32 @@ def test_remove_tree_removes_directory_symlink_without_following_target(tmp_path
 
 def test_remove_tree_tolerates_missing_root(tmp_path: Path) -> None:
     _stack()._remove_tree(tmp_path / "missing")
+
+
+def test_remove_tree_ignores_disappearing_directory_before_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime-state"
+    nested = root / "state"
+    nested.mkdir(parents=True)
+    (nested / "session.json").write_text("{}", encoding="utf-8")
+    original_scandir = helpers.os.scandir
+    original_rmdir = helpers.os.rmdir
+
+    def tracked_scandir(path: str):
+        if Path(path).name == "state":
+            for child in Path(path).iterdir():
+                child.unlink()
+            original_rmdir(path)
+            raise FileNotFoundError(path)
+        return original_scandir(path)
+
+    monkeypatch.setattr(helpers.os, "scandir", tracked_scandir)
+
+    _stack()._remove_tree(root)
+
+    assert not root.exists()
 
 
 def test_remove_tree_ignores_disappearing_file_entries(
