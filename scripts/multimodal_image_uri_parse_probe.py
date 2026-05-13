@@ -35,7 +35,9 @@ def main() -> int:
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
     urlparse_calls: list[int] = []
+    unquote_calls: list[int] = []
     original_urlparse = multimodal_preprocessing.urlparse
+    original_unquote = multimodal_preprocessing.unquote
 
     with tempfile.TemporaryDirectory(prefix="melix-image-uri-parse-probe-") as tmpdir:
         root = Path(tmpdir)
@@ -48,13 +50,20 @@ def main() -> int:
 
         for _ in range(sample_count):
             call_count = 0
+            unquote_call_count = 0
 
             def counting_urlparse(uri: str):
                 nonlocal call_count
                 call_count += 1
                 return original_urlparse(uri)
 
+            def counting_unquote(path: str) -> str:  # pragma: no cover - exercised by base-repo probe
+                nonlocal unquote_call_count
+                unquote_call_count += 1
+                return original_unquote(path)
+
             multimodal_preprocessing.urlparse = counting_urlparse
+            multimodal_preprocessing.unquote = counting_unquote
             try:
                 tracemalloc.start()
                 started = time.perf_counter()
@@ -64,6 +73,7 @@ def main() -> int:
                 tracemalloc.stop()
             finally:
                 multimodal_preprocessing.urlparse = original_urlparse
+                multimodal_preprocessing.unquote = original_unquote
 
             if len(request.images) != image_count:
                 raise SystemExit(f"unexpected prepared image count: {len(request.images)}")
@@ -72,6 +82,7 @@ def main() -> int:
             elapsed_samples.append(elapsed_ms)
             peak_samples.append(float(peak_bytes))
             urlparse_calls.append(call_count)
+            unquote_calls.append(unquote_call_count)
 
     print(
         json.dumps(
@@ -79,6 +90,7 @@ def main() -> int:
                 "elapsed_ms_mean": statistics.fmean(elapsed_samples),
                 "peak_bytes_mean": statistics.fmean(peak_samples),
                 "urlparse_calls_mean": statistics.fmean(urlparse_calls),
+                "unquote_calls_mean": statistics.fmean(unquote_calls),
                 "prepared_image_count": float(image_count),
                 "sample_count": float(sample_count),
             },
