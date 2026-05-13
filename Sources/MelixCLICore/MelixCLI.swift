@@ -5344,15 +5344,22 @@ public actor MelixCLIRunner {
         case .configMetadata:
             let payload = MelixRuntimeDiscoveryBuilder(environment: environment).configMetadataPayload()
             return try prettyJSON(payload)
-        case .uriInspect,
-             .uriImport,
-             .recipesList,
-             .recipesShow,
-             .recipesValidate,
-             .recipesPlan,
-             .recipesApply,
-             .recipesInit:
-            throw MelixCLIError.runtime("\(MelixCLICommandCodec.commandID(for: command)) is not implemented yet.")
+        case .uriInspect(let options):
+            return try runURIInspect(options)
+        case .uriImport(let options):
+            return try await runURIImport(options)
+        case .recipesList(let options):
+            return try runRecipesList(options)
+        case .recipesShow(let options):
+            return try runRecipesShow(options)
+        case .recipesValidate(let options):
+            return try runRecipesValidate(options)
+        case .recipesPlan(let options):
+            return try runRecipesPlan(options)
+        case .recipesApply(let options):
+            return try await runRecipesApply(options)
+        case .recipesInit(let options):
+            return try runRecipesInit(options)
         case .pipelineRun(let options):
             return try await runPipeline(options)
         case .batchRun(let options):

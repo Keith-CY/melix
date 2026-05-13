@@ -327,6 +327,10 @@ public enum MelixCLICommandCodec {
             appendOption("--publish-backend", value: options.publishBackend, into: &arguments)
             appendOption("--local-publish-root", value: options.localPublishRoot, into: &arguments)
             json = options.json
+        case .modelInspect(let options):
+            arguments = ["model", "inspect"]
+            appendOption("--model-id", value: options.modelID, into: &arguments)
+            json = options.json
         case .modelImport(let options):
             arguments = ["model", "import"]
             appendOption("--path", value: options.path, into: &arguments)
@@ -669,6 +673,23 @@ public enum MelixCLICommandCodec {
         case .evalPromptArchive(let options):
             arguments = ["eval", "prompt", "archive"]
             appendOption("--prompt-id", value: options.promptID, into: &arguments)
+            json = options.json
+        case .evalCompare(let options):
+            arguments = ["eval", "compare"]
+            appendTarget(modelID: options.modelID, hfRepoID: options.hfRepoID, into: &arguments)
+            appendMultiOption("--target-model-id", values: options.targetModelIDs, into: &arguments)
+            appendMultiOption("--target-adapter", values: options.targetAdapterManifestPaths, into: &arguments)
+            appendMultiOption("--suite", values: options.suites, into: &arguments)
+            appendOption("--dataset-id", value: options.datasetID, into: &arguments)
+            appendPositiveUInt32("--sample-size", value: options.sampleSize, into: &arguments)
+            appendEvaluationSourceArguments(
+                source: options.source,
+                fieldMapping: options.fieldMapping,
+                profile: options.profile,
+                schemaPath: options.parameters["schema_path"],
+                into: &arguments
+            )
+            appendEvalParameters(options.parameters, into: &arguments)
             json = options.json
         case .evalExportSummaryCSV(let options):
             arguments = ["eval", "export-summary-csv"]

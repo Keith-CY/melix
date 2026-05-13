@@ -1034,7 +1034,6 @@ struct MelixCLIParserTests {
         let unsupported: [MelixCLICommand] = [
             .modelList(.init()),
             .loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl")),
-            .evalCompare(.init(modelID: "base", targetModelIDs: ["target"])),
         ]
         for command in unsupported {
             do {
