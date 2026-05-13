@@ -95,6 +95,28 @@ class ActionQualifiedToolStreamingBackend:
         )
 
 
+class HarmonyChannelStreamingBackend:
+    runtime_name = "fake-mlx"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 2048
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        yield RuntimeTokenEvent(
+            text="",
+            raw_text=(
+                '<|channel>thought\n<channel|>\n{"output":"pwd","exit_code":0}'
+                "<|channel>final\n<channel|>\nRepository reviewed."
+            ),
+            prompt_tokens=3,
+            completion_tokens=1,
+            finish_reason="stop",
+        )
+
+
 class ShortPrefixStreamingBackend:
     runtime_name = "fake-mlx"
 
@@ -690,6 +712,44 @@ def test_generate_stream_normalizes_tool_calls_to_declared_openai_tool_names() -
     assert completed.assistant_text == ""
     assert completed.parser_metrics["tool_call_name_normalized_count"] == "1"
     assert completed.parser_metrics["unknown_tool_delta_count"] == "0"
+
+
+def test_generate_stream_suppresses_harmony_thought_channel_content() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=HarmonyChannelStreamingBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-harmony-channel-output"),
+            model_handle=load_response.model_handle,
+            ext={"melix.harmony": "true"},
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Review the repo.")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert token_text == ["\nRepository reviewed."]
+    assert completed.assistant_text == "\nRepository reviewed."
+    assert "pwd" not in completed.assistant_text
+    assert completed.parser_metrics["harmony_channel_hidden_count"] == "1"
+    assert completed.parser_metrics["harmony_channel_markup_leak_count"] == "0"
 
 
 def test_generate_stream_flushes_short_visible_prefix_before_marker_hold() -> None:

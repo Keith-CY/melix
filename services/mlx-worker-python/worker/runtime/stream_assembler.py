@@ -92,7 +92,9 @@ class RequestStreamAssembler:
     _TOOL_CLOSE = "</tool_call>"
     _PIPE_TOOL_OPEN = "<|tool_call>"
     _PIPE_TOOL_CLOSE = "<tool_call|>"
-    _REASONING_OPEN_TAGS = (_THINK_OPEN, _PIPE_REASONING_OPEN)
+    _PIPE_CHANNEL_OPEN = "<|channel>"
+    _PIPE_CHANNEL_HEADER_CLOSE = "<channel|>"
+    _REASONING_OPEN_TAGS = (_THINK_OPEN, _PIPE_CHANNEL_OPEN)
     _TOOL_OPEN_TAGS = (_TOOL_OPEN, _PIPE_TOOL_OPEN)
     _TOOL_PARSER_STRUCTURAL_OPEN_TAGS = _REASONING_OPEN_TAGS + _TOOL_OPEN_TAGS
     _THINK_PREFIXES = tuple("<think>"[:index] for index in range(1, len("<think>")))
@@ -104,13 +106,19 @@ class RequestStreamAssembler:
         "<|tool_call>"[:index] for index in range(1, len("<|tool_call>"))
     )
     _REASONING_LEAK_PREFIXES = ("<think", "<|channel")
-    _REASONING_PREFIXES = _THINK_PREFIXES + _PIPE_REASONING_PREFIXES
+    _PIPE_CHANNEL_PREFIXES = tuple(
+        "<|channel>"[:index] for index in range(1, len("<|channel>"))
+    )
+    _REASONING_PREFIXES = _THINK_PREFIXES + _PIPE_CHANNEL_PREFIXES
     _THINK_PREFIXES_REVERSED = tuple(reversed(_THINK_PREFIXES))
     _PIPE_REASONING_PREFIXES_REVERSED = tuple(reversed(_PIPE_REASONING_PREFIXES))
     _REASONING_PREFIXES_REVERSED = tuple(reversed(_REASONING_PREFIXES))
     _TOOL_PREFIXES_REVERSED = tuple(reversed(_TOOL_PREFIXES))
     _PIPE_TOOL_PREFIXES_REVERSED = tuple(reversed(_PIPE_TOOL_PREFIXES))
+    _PIPE_CHANNEL_PREFIXES_REVERSED = tuple(reversed(_PIPE_CHANNEL_PREFIXES))
     _VISIBLE_TAIL_MARKERS = ("\nFinal answer", "\nFinal:", "\nAnswer:", "\nAssistant:", "\nResult:")
+    _HIDDEN_PIPE_CHANNELS = frozenset({"analysis", "thought", "reasoning"})
+    _VISIBLE_PIPE_CHANNELS = frozenset({"commentary", "final"})
     _PIPE_CALL_RE = re.compile(
         r"^\s*call:(?P<name>[A-Za-z0-9_.:/-]+)\s*(?P<args>\{.*\}|\(\s*\))\s*$",
         re.DOTALL,
@@ -164,9 +172,10 @@ class RequestStreamAssembler:
                 self._REASONING_PREFIXES + self._TOOL_PREFIXES + self._PIPE_TOOL_PREFIXES
             )
             self._structural_tag_prefixes_reversed_value = (
-                self._PIPE_TOOL_PREFIXES_REVERSED
+                self._PIPE_CHANNEL_PREFIXES_REVERSED
+                + self._PIPE_TOOL_PREFIXES_REVERSED
                 + self._TOOL_PREFIXES_REVERSED
-                + self._REASONING_PREFIXES_REVERSED
+                + self._THINK_PREFIXES_REVERSED
             )
         elif self._is_json_structured_output_value:
             self._request_context_mode_value = "structured_json"
@@ -206,6 +215,9 @@ class RequestStreamAssembler:
             "reasoning_parser_bypassed_count": 0,
             "tool_call_name_normalized_count": 0,
             "unknown_tool_delta_count": 0,
+            "harmony_channel_hidden_count": 0,
+            "harmony_channel_unknown_count": 0,
+            "harmony_channel_markup_leak_count": 0,
         }
 
     def accept(self, fragment: StreamFragment) -> list[AssemblyDelta]:
@@ -517,6 +529,13 @@ class RequestStreamAssembler:
                     deltas.append(AssemblyDelta(raw_text=body, tool_call=tool_delta))
                 continue
 
+            if tag == self._PIPE_CHANNEL_OPEN:
+                channel_deltas = self._drain_pipe_channel(final=final)
+                if channel_deltas is None:
+                    break
+                deltas.extend(channel_deltas)
+                continue
+
             break
         return deltas
 
@@ -546,41 +565,44 @@ class RequestStreamAssembler:
                 return None if think_index < 0 else (self._THINK_OPEN, think_index)
 
             tool_index = buffer.find(self._TOOL_OPEN)
-            if think_index < 0:
-                return None if tool_index < 0 else (self._TOOL_OPEN, tool_index)
-            if tool_index < 0 or think_index <= tool_index:
-                return (self._THINK_OPEN, think_index)
-            return (self._TOOL_OPEN, tool_index)
+            return self._earliest_structural_tag(
+                ((self._THINK_OPEN, think_index), (self._TOOL_OPEN, tool_index))
+            )
 
-        pipe_reasoning_index = (
-            buffer.find(self._PIPE_REASONING_OPEN) if has_pipe_marker else -1
-        )
-        best_tag = ""
-        best_index = -1
-        if think_index >= 0:
-            best_tag = self._THINK_OPEN
-            best_index = think_index
-        if pipe_reasoning_index >= 0 and (
-            best_index < 0 or pipe_reasoning_index < best_index
-        ):
-            best_tag = self._PIPE_REASONING_OPEN
-            best_index = pipe_reasoning_index
-        if not self._tool_parsing_enabled_value:
-            if best_index < 0:
-                return None
-            return (best_tag, best_index)
+        candidates = [
+            (self._THINK_OPEN, think_index),
+            (self._PIPE_CHANNEL_OPEN, buffer.find(self._PIPE_CHANNEL_OPEN)),
+        ]
+        if self._tool_parsing_enabled_value:
+            candidates.extend(
+                (
+                    (self._TOOL_OPEN, buffer.find(self._TOOL_OPEN)),
+                    (self._PIPE_TOOL_OPEN, buffer.find(self._PIPE_TOOL_OPEN)),
+                )
+            )
+        return self._earliest_structural_tag(candidates)
 
-        tool_index = buffer.find(self._TOOL_OPEN)
-        if tool_index >= 0 and (best_index < 0 or tool_index < best_index):
-            best_tag = self._TOOL_OPEN
-            best_index = tool_index
-        pipe_tool_index = buffer.find(self._PIPE_TOOL_OPEN) if has_pipe_marker else -1
-        if pipe_tool_index >= 0 and (best_index < 0 or pipe_tool_index < best_index):
-            best_tag = self._PIPE_TOOL_OPEN
-            best_index = pipe_tool_index
-        if best_index < 0:
-            return None
-        return (best_tag, best_index)
+    @staticmethod
+    def _earliest_structural_tag(
+        candidates: list[tuple[str, int]] | tuple[tuple[str, int], ...],
+    ) -> tuple[str, int] | None:
+        matches = [candidate for candidate in candidates if candidate[1] >= 0]
+        return min(matches, key=lambda item: item[1]) if matches else None
+
+    def _next_structural_tag_after(self, start: int) -> int:
+        candidates = [
+            index
+            for index in (
+                self._buffer.find(self._THINK_OPEN, start),
+                self._buffer.find(self._PIPE_CHANNEL_OPEN, start),
+                self._buffer.find(self._TOOL_OPEN, start)
+                if self._tool_parsing_enabled_value else -1,
+                self._buffer.find(self._PIPE_TOOL_OPEN, start)
+                if self._tool_parsing_enabled_value else -1,
+            )
+            if index >= 0
+        ]
+        return min(candidates) if candidates else -1
 
     def _has_partial_structural_tag_suffix(self) -> bool:
         return bool(self._partial_structural_tag_suffix())
@@ -609,6 +631,11 @@ class RequestStreamAssembler:
         ):
             return suffix
         if (
+            0 < suffix_len < len(self._PIPE_CHANNEL_OPEN)
+            and self._PIPE_CHANNEL_OPEN.startswith(suffix)
+        ):
+            return suffix
+        if (
             0 < suffix_len < len(self._PIPE_REASONING_OPEN)
             and self._PIPE_REASONING_OPEN.startswith(suffix)
         ):
@@ -634,8 +661,118 @@ class RequestStreamAssembler:
                 self._metrics["tool_call_markup_leak_count"] += 1
             if self._contains_reasoning_leak_marker(content):
                 self._metrics["reasoning_leak_count"] += 1
+                self._metrics["harmony_channel_markup_leak_count"] += 1
         self._assistant_parts.append(content)
         return AssemblyDelta(content_text=content, raw_text=content)
+
+    def _drain_pipe_channel(self, final: bool) -> list[AssemblyDelta] | None:
+        header_close_index = self._buffer.find(
+            self._PIPE_CHANNEL_HEADER_CLOSE,
+            len(self._PIPE_CHANNEL_OPEN),
+        )
+        if header_close_index < 0:
+            if final:
+                self._metrics["malformed_reasoning_count"] += 1
+                if self._buffer.startswith(self._PIPE_REASONING_OPEN):
+                    self._metrics["reasoning_channel_recovery_count"] += 1
+                    body = self._buffer[len(self._PIPE_REASONING_OPEN) :]
+                    self._buffer = ""
+                    hidden, visible = self._recover_unclosed_reasoning_body(body)
+                    return self._hidden_pipe_channel_deltas(
+                        hidden=hidden,
+                        visible=visible,
+                    )
+                self._buffer = ""
+                return []
+            return None
+
+        header = self._buffer[len(self._PIPE_CHANNEL_OPEN) : header_close_index]
+        body_start = header_close_index + len(self._PIPE_CHANNEL_HEADER_CLOSE)
+        channel_name = self._pipe_channel_name(header)
+        legacy_hidden = self._legacy_pipe_channel_header_body(header, channel_name)
+        if legacy_hidden is not None or self._tool_parsing_enabled_value:
+            next_index = self._next_structural_tag_after(body_start)
+            has_boundary = next_index >= 0
+            if has_boundary:
+                visible = self._buffer[body_start:next_index]
+                self._buffer = self._buffer[next_index:]
+            else:
+                visible = self._buffer[body_start:]
+                self._buffer = ""
+            return self._hidden_pipe_channel_deltas(
+                hidden=legacy_hidden or "",
+                visible=visible,
+            )
+
+        next_index = self._next_structural_tag_after(body_start)
+        has_boundary = next_index >= 0
+
+        if has_boundary:
+            body = self._buffer[body_start:next_index]
+            self._buffer = self._buffer[next_index:]
+        elif channel_name in self._VISIBLE_PIPE_CHANNELS or final:
+            body = self._buffer[body_start:]
+            self._buffer = ""
+        else:
+            return None
+
+        return self._pipe_channel_deltas(
+            channel_name=channel_name,
+            body=body,
+            recover_visible_tail=final and not has_boundary,
+        )
+
+    @staticmethod
+    def _pipe_channel_name(header: str) -> str:
+        stripped = header.strip().lower()
+        if not stripped:
+            return ""
+        return stripped.split(maxsplit=1)[0]
+
+    @classmethod
+    def _legacy_pipe_channel_header_body(cls, header: str, channel_name: str) -> str | None:
+        if channel_name not in cls._HIDDEN_PIPE_CHANNELS:
+            return None
+        body = header[len(channel_name) :]
+        return body if body.strip() else None
+
+    def _pipe_channel_deltas(
+        self,
+        channel_name: str,
+        body: str,
+        recover_visible_tail: bool,
+    ) -> list[AssemblyDelta]:
+        if channel_name in self._VISIBLE_PIPE_CHANNELS:
+            return [self._content_delta(body)] if body else []
+
+        if channel_name in self._HIDDEN_PIPE_CHANNELS:
+            self._metrics["harmony_channel_hidden_count"] += 1
+            hidden = body
+            visible = ""
+            if recover_visible_tail:
+                recovered_hidden, recovered_visible = self._recover_unclosed_reasoning_body(body)
+                if recovered_hidden or recovered_visible:
+                    hidden = recovered_hidden
+                    visible = recovered_visible
+            return self._hidden_pipe_channel_deltas(hidden=hidden, visible=visible)
+
+        self._metrics["harmony_channel_unknown_count"] += 1
+        return []
+
+    def _hidden_pipe_channel_deltas(self, hidden: str, visible: str = "") -> list[AssemblyDelta]:
+        if not hidden.strip():
+            self._metrics["empty_thinking_sentinel_count"] += 1
+        deltas: list[AssemblyDelta] = []
+        if hidden.strip():
+            if self._reasoning_enabled:
+                self._reasoning_parts.append(hidden)
+                deltas.append(AssemblyDelta(reasoning_text=hidden, raw_text=hidden))
+            else:
+                self._metrics["suppressed_reasoning_count"] += 1
+                self._metrics["reasoning_parser_bypassed_count"] += 1
+        if visible:
+            deltas.append(self._content_delta(visible))
+        return deltas
 
     def _tool_delta(self, body: str) -> AssembledToolCall | None:
         payload = self._parse_tool_body(body)

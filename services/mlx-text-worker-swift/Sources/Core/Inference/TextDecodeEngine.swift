@@ -62,9 +62,7 @@ struct TextDecodeEngine: Sendable {
 
             var seq: UInt64 = 1
             var completionTokens = 0
-            var assistantText = ""
-            var eventCount = 0
-            var sawFirstToken = false
+            var outputState = FilteredTextOutputState()
             var tokensPerSecond: Double?
             var speculativeAccepted: Int?
             var speculativeRejected: Int?
@@ -76,6 +74,26 @@ struct TextDecodeEngine: Sendable {
             var dflashRollbackCount: Int?
             var dflashTargetHiddenLayers: Int?
             var activeKVProbe: ActiveKVProbeSummary?
+
+            func writeOutput(_ output: HarmonyChannelOutputFilter.Output) async throws {
+                try await writeFilteredTextOutput(
+                    output,
+                    response: response,
+                    requestID: requestID,
+                    executionKind: "decode",
+                    seq: &seq,
+                    state: &outputState,
+                    metrics: metrics,
+                    ttftMetricName: "swift_text.decode_ttft_ms",
+                    startedAt: startedAt,
+                    decorateEvent: { event in
+                        event.phase = .executionDecoding
+                        event.admissionState = .admissionAdmitted
+                        event.lane = lane
+                        event.accelerationMode = acceleration.mode
+                    }
+                )
+            }
 
             if acceleration.mode != .baseline {
                 var accelerationEvent = Melix_Worker_V1_ExecuteEvent()
@@ -92,7 +110,7 @@ struct TextDecodeEngine: Sendable {
                 accelerationEvent.accelerationApplied = payload
                 try await response.write(accelerationEvent)
                 seq += 1
-                eventCount += 1
+                outputState.eventCount += 1
             }
 
             var startedEvent = Melix_Worker_V1_ExecuteEvent()
@@ -111,7 +129,7 @@ struct TextDecodeEngine: Sendable {
             startedEvent.decodeStarted = payload
             try await response.write(startedEvent)
             seq += 1
-            eventCount += 1
+            outputState.eventCount += 1
 
             if !session.prefill.restoredSnapshotID.isEmpty {
                 var cacheDecisionEvent = Melix_Worker_V1_ExecuteEvent()
@@ -130,41 +148,20 @@ struct TextDecodeEngine: Sendable {
                 cacheDecisionEvent.cacheDecision = cacheDecision
                 try await response.write(cacheDecisionEvent)
                 seq += 1
-                eventCount += 1
+                outputState.eventCount += 1
             }
 
+            var outputFilter = HarmonyChannelOutputFilter()
             for try await runtimeEvent in runtimeStream {
                 switch runtimeEvent {
                 case .prefillStarted:
                     continue
                 case .token(let text):
-                    if !sawFirstToken {
-                        sawFirstToken = true
-                        metrics.recordMilliseconds(
-                            "swift_text.decode_ttft_ms",
-                            value: elapsedMilliseconds(since: startedAt)
-                        )
-                    }
-
-                    assistantText.append(text)
-
-                    var event = Melix_Worker_V1_ExecuteEvent()
-                    event.requestID = requestID
-                    event.executionKind = "decode"
-                    event.seq = seq
-                    event.phase = .executionDecoding
-                    event.admissionState = .admissionAdmitted
-                    event.lane = lane
-                    event.accelerationMode = acceleration.mode
-
-                    var tokenDelta = Melix_Worker_V1_TokenDelta()
-                    tokenDelta.text = text
-                    event.tokenDelta = tokenDelta
-                    try await response.write(event)
-                    seq += 1
-                    eventCount += 1
+                    completionTokens += 1
+                    let filtered = outputFilter.accept(text)
+                    try await writeOutput(filtered)
                 case .summary(let summary):
-                    completionTokens = summary.completionTokens
+                    completionTokens = max(completionTokens, summary.completionTokens)
                     tokensPerSecond = summary.tokensPerSecond
                     speculativeAccepted = summary.speculativeAcceptedTokens
                     speculativeRejected = summary.speculativeRejectedTokens
@@ -178,6 +175,9 @@ struct TextDecodeEngine: Sendable {
                     activeKVProbe = summary.activeKVProbe
                 }
             }
+
+            let finalFiltered = outputFilter.finish()
+            try await writeOutput(finalFiltered)
 
             if request.returnUsage && !(abortHandle?.isAborted ?? false) {
                 var event = Melix_Worker_V1_ExecuteEvent()
@@ -195,7 +195,7 @@ struct TextDecodeEngine: Sendable {
                 event.usageDelta = usage
                 try await response.write(event)
                 seq += 1
-                eventCount += 1
+                outputState.eventCount += 1
             }
 
             if request.execution.cacheHints.saveBoundarySnapshot && !(abortHandle?.isAborted ?? false) {
@@ -222,7 +222,7 @@ struct TextDecodeEngine: Sendable {
                 snapshotEvent.snapshotCreated = snapshotCreated
                 try await response.write(snapshotEvent)
                 seq += 1
-                eventCount += 1
+                outputState.eventCount += 1
 
                 metrics.recordMilliseconds(
                     "swift_text.cache_snapshot_save_ms",
@@ -232,7 +232,8 @@ struct TextDecodeEngine: Sendable {
 
             var completed = Melix_Worker_V1_Completed()
             completed.finishReason = (abortHandle?.isAborted ?? false) ? "cancelled" : "stop"
-            completed.assistantText = assistantText
+            completed.assistantText = outputState.assistantText
+            completed.reasoningText = outputState.reasoningText
 
             var completedEvent = Melix_Worker_V1_ExecuteEvent()
             completedEvent.requestID = requestID
@@ -244,16 +245,16 @@ struct TextDecodeEngine: Sendable {
             completedEvent.accelerationMode = acceleration.mode
             completedEvent.completed = completed
             try await response.write(completedEvent)
-            eventCount += 1
+            outputState.eventCount += 1
 
-            if !sawFirstToken {
+            if !outputState.sawFirstToken {
                 metrics.recordMilliseconds(
                     "swift_text.decode_ttft_ms",
                     value: elapsedMilliseconds(since: startedAt)
                 )
             }
             metrics.recordMilliseconds("swift_text.decode_ms", value: elapsedMilliseconds(since: startedAt))
-            metrics.set("swift_text.decode_stream_event_count", value: eventCount)
+            metrics.set("swift_text.decode_stream_event_count", value: outputState.eventCount)
             metrics.set(
                 "swift_text.decode_tokens_per_second",
                 value: max(0, Int((tokensPerSecond ?? 0).rounded()))
