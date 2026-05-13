@@ -359,22 +359,28 @@ class LiveMelixStack:
         if not root.exists():
             return
         root_path = os.fspath(root)
-        for directory, dirnames, filenames in os.walk(root_path, topdown=False, followlinks=False):
-            for filename in filenames:
+        stack: list[tuple[str, bool]] = [(root_path, False)]
+        while stack:
+            path, visited = stack.pop()
+            if visited:
                 try:
-                    os.unlink(os.path.join(directory, filename))
+                    os.rmdir(path)
                 except FileNotFoundError:
                     pass
-            for dirname in dirnames:
-                child_dir = os.path.join(directory, dirname)
-                if os.path.islink(child_dir):
-                    try:
-                        os.unlink(child_dir)
-                    except FileNotFoundError:
-                        pass
-                else:
-                    os.rmdir(child_dir)
-        os.rmdir(root_path)
+                continue
+            try:
+                with os.scandir(path) as entries:
+                    stack.append((path, True))
+                    for entry in entries:
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                stack.append((entry.path, False))
+                            else:
+                                os.unlink(entry.path)
+                        except FileNotFoundError:
+                            pass
+            except (FileNotFoundError, NotADirectoryError):
+                pass
 
     def _control_plane_hit_port_conflict(self) -> bool:
         stderr = (
