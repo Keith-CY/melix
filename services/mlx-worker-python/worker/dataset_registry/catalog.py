@@ -35,6 +35,7 @@ _SPLIT_ALIASES = {
     "dev": "validation",
     "test": "test",
 }
+_JSON_DECODER = json.JSONDecoder()
 
 
 @dataclass(frozen=True)
@@ -636,7 +637,7 @@ def _limited_rows_from_json_text(json_text: str, *, limit: int) -> list[dict[str
     if cursor is None:
         return None
     rows: list[dict[str, Any]] = []
-    decoder = json.JSONDecoder()
+    decoder = _JSON_DECODER
     text_length = len(json_text)
     cursor += 1
     while cursor < text_length:
@@ -675,7 +676,7 @@ def _json_text_first_array_start(json_text: str) -> int | None:
     if json_text[cursor] != "{":
         return None
 
-    decoder = json.JSONDecoder()
+    decoder = _JSON_DECODER
     cursor += 1
     while cursor < text_length:
         while cursor < text_length and json_text[cursor].isspace():
