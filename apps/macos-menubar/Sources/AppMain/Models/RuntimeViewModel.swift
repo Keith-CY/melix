@@ -8943,17 +8943,9 @@ public final class RuntimeViewModel {
     }
 
     private func rebuildEvaluationDerivedState() {
-        guard let benchmarkExportBundle else {
-            evaluationHistory = []
-            evaluationMetricCards = []
-            evaluationSamplePreview = []
-            if selectedEvaluationHistoryJobID.isEmpty == false {
-                selectedEvaluationHistoryJobID = ""
-            }
-            return
-        }
-
-        let exportedHistory = benchmarkExportBundle.evaluationHistoryEntries().map(Self.makeEvaluationHistoryEntryState)
+        let exportedHistory = benchmarkExportBundle?
+            .evaluationHistoryEntries()
+            .map(Self.makeEvaluationHistoryEntryState) ?? []
         let exportedJobIDs = Set(exportedHistory.map(\.jobID))
         let pendingHistory = pendingEvaluationSummaryRows.values
             .compactMap { rows -> RuntimeEvaluationHistoryEntryState? in
@@ -8976,12 +8968,14 @@ public final class RuntimeViewModel {
             selectedEvaluationHistoryJobID = selectedHistoryJobID
         }
 
-        let exportedRows = benchmarkExportBundle.evaluationSummaryCSVRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID)
+        let exportedRows = benchmarkExportBundle?
+            .evaluationSummaryCSVRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID) ?? []
         let selectedRows = exportedRows.isEmpty
             ? (pendingEvaluationSummaryRows[selectedHistoryJobID] ?? [])
             : exportedRows
         evaluationMetricCards = selectedRows.map(Self.makeEvaluationMetricCardState)
-        evaluationSamplePreview = benchmarkExportBundle.evaluationSampleRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID)
+        evaluationSamplePreview = (benchmarkExportBundle?
+            .evaluationSampleRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID) ?? [])
             .prefix(6)
             .map(Self.makeEvaluationSamplePreviewState)
     }
