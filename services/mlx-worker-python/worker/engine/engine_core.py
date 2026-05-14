@@ -3,18 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 import json
 
-
-def _whitespace_token_count(text: str) -> int:
-    token_count = 0
-    in_token = False
-    for character in text:
-        if character.isspace():
-            in_token = False
-        elif not in_token:
-            token_count += 1
-            in_token = True
-    return token_count
-
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.registry import WorkerRegistry
@@ -22,6 +10,7 @@ from worker.runtime.mlx_text_runtime import RuntimeToolCallEvent, RuntimeTokenEv
 from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
 from worker.runtime.runtime_utils import callable_accepts_kwarg as _callable_accepts_kwarg
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
+from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
 
 _ENGINE_STOP_CONTRACT_CACHE_FIELD = "_melix.engine.resolved_text_stop_contract_cache"
 
