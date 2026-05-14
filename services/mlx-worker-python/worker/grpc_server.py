@@ -46,6 +46,7 @@ from worker.productization.evaluation_final_result import (
     materialize_hf_evaluation_dataset,
     materialize_local_evaluation_dataset,
 )
+from worker.model_load_trust import ModelLoadTrustRejection
 from worker.registry import DiskStreamingUnsupported, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError, AudioProcessorValidationError
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
@@ -126,7 +127,19 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
                 pin_on_load=request.pin_on_load,
                 memory_budget_bytes=request.memory_budget_bytes,
                 disk_streaming_mode=request.disk_streaming_mode,
+                load_trust=request.load_trust if request.HasField("load_trust") else None,
             )
+        except ModelLoadTrustRejection as exc:
+            response = runtime_pb2.LoadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="unsafe_load_rejected",
+                    message=str(exc),
+                    details=exc.details,
+                ),
+            )
+            response.load_trust.CopyFrom(exc.policy)
+            return response
         except MemoryBudgetExceeded as exc:
             return runtime_pb2.LoadModelResponse(
                 ok=False,
@@ -194,6 +207,7 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
             resolved_capabilities=self._registry.capabilities(),
         )
         response.residency.CopyFrom(loaded.residency)
+        response.load_trust.CopyFrom(loaded.load_trust)
         return response
 
     def UnloadModel(self, request, context):

@@ -142,8 +142,8 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         self.title = title
         let resolvedDefaultModelID = Self.trimmed(defaultModelID)
         self.defaultModelID = resolvedDefaultModelID
-        self.servedModelIDs = Self.normalizedServedModelIDs(
-            servedModelIDs.isEmpty ? [resolvedDefaultModelID] : servedModelIDs,
+        self.servedModelIDs = MelixServerModelRosterNormalizer.normalizedOrDefault(
+            servedModelIDs,
             defaultModelID: resolvedDefaultModelID
         )
         self.host = host
@@ -235,25 +235,6 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         try container.encode(lastKnownModelStateText, forKey: .lastKnownModelStateText)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
-    }
-
-    private static func normalizedServedModelIDs(
-        _ modelIDs: [String],
-        defaultModelID: String
-    ) -> [String] {
-        var normalized: [String] = []
-        var seen: Set<String> = []
-        for modelID in modelIDs.map(trimmed).filter({ !$0.isEmpty }) {
-            guard seen.insert(modelID).inserted else {
-                continue
-            }
-            normalized.append(modelID)
-        }
-        let defaultModelID = trimmed(defaultModelID)
-        if !defaultModelID.isEmpty, !seen.contains(defaultModelID) {
-            normalized.insert(defaultModelID, at: 0)
-        }
-        return normalized
     }
 
     private static func trimmed(_ value: String) -> String {

@@ -2400,6 +2400,8 @@ def test_serving_diagnostics_queue_probe_script_emits_metrics(
     assert metrics["event_count"] == 10.0
     assert metrics["retained_count"] == 4.0
     assert metrics["dropped_count"] == 6.0
+    assert "serialization_elapsed_ms_mean" in metrics
+    assert metrics["serialization_checksum"] == 30.0
 
 
 def test_load_probe_registry_uses_absolute_cache_key_without_resolving(
@@ -3436,7 +3438,8 @@ def test_run_head_verification_skips_standalone_test_when_coverage_replays_tests
 ) -> None:
     commands: list[str] = []
 
-    def fake_run_command(command: str, *, cwd: Path) -> dict[str, object]:
+    def fake_run_command(command: str, *, cwd: Path, env=None) -> dict[str, object]:
+        _ = env
         commands.append(command)
         assert cwd == tmp_path
         return {

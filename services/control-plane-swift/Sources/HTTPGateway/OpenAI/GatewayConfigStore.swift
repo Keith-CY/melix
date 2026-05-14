@@ -50,7 +50,7 @@ public enum GatewayConfigValidationError: Error, Equatable, Sendable {
         case .defaultModelNotServed:
             return "Gateway config default model must be included in the served model roster."
         case .duplicateServedModelID:
-            return "Gateway config served model identifiers must be unique."
+            return "Gateway config served model identifiers must be unique; repeated IDs are rejected at the gateway API boundary instead of silently deduplicated."
         case .invalidRateLimit:
             return "Gateway config requires a positive rate limit."
         case .invalidTimeout:

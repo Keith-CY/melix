@@ -78,9 +78,10 @@ def test_gate_blocks_when_full_test_command_fails(monkeypatch, tmp_path: Path) -
 
 def test_gate_allows_untracked_files(monkeypatch, tmp_path: Path) -> None:
     commands: list[str] = []
-    subprocess.check_call(["git", "init"], cwd=tmp_path, stdout=subprocess.DEVNULL)
+    git_env = pre_commit_gate._git_env()
+    subprocess.check_call(["git", "init"], cwd=tmp_path, stdout=subprocess.DEVNULL, env=git_env)
     (tmp_path / "tracked.py").write_text("print('tracked')\n", encoding="utf-8")
-    subprocess.check_call(["git", "add", "tracked.py"], cwd=tmp_path)
+    subprocess.check_call(["git", "add", "tracked.py"], cwd=tmp_path, env=git_env)
     (tmp_path / "local-probe.py").write_text("print('local')\n", encoding="utf-8")
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
     monkeypatch.setattr(pre_commit_gate, "pre_commit_base_ref", lambda root: None)
@@ -198,7 +199,7 @@ def test_performance_probe_failure_writes_traceback(monkeypatch, tmp_path: Path)
         lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
     )
     monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
-    monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref: destination.mkdir())
+    monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref, **kwargs: destination.mkdir())
 
     def fail_probe(**kwargs):
         raise RuntimeError("probe exploded")
@@ -245,16 +246,17 @@ def test_performance_probe_runs_with_scrubbed_git_environment(monkeypatch, tmp_p
         lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
     )
     monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
-    monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref: destination.mkdir())
+    monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref, **kwargs: destination.mkdir())
     observed_env: dict[str, str | None] = {}
     observed_base_root: str | None = None
     observed_base_root_exists = False
 
     def run_probe(**kwargs):
         nonlocal observed_base_root, observed_base_root_exists
+        env = kwargs["env"]
         for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
-            observed_env[name] = pre_commit_gate.os.environ.get(name)
-        observed_base_root = pre_commit_gate.os.environ.get("MELIX_CHANGED_SCOPE_BASE_ROOT")
+            observed_env[name] = env.get(name)
+        observed_base_root = env.get("MELIX_CHANGED_SCOPE_BASE_ROOT")
         observed_base_root_exists = (
             observed_base_root is not None and Path(observed_base_root).is_dir()
         )
@@ -408,17 +410,19 @@ def test_head_comparison_snapshot_scrubs_outer_git_environment(monkeypatch, tmp_
 
     pre_commit_gate.export_head_comparison_snapshot(source_repo, head_repo, base_ref)
 
-    with pre_commit_gate.scrubbed_git_environment():
-        head_commit_subject = subprocess.check_output(
-            ["git", "log", "-1", "--format=%s"],
-            cwd=head_repo,
-            text=True,
-        ).strip()
-        source_commit_subject = subprocess.check_output(
-            ["git", "log", "-1", "--format=%s"],
-            cwd=source_repo,
-            text=True,
-        ).strip()
+    git_env = pre_commit_gate.scrubbed_git_environment()
+    head_commit_subject = subprocess.check_output(
+        ["git", "log", "-1", "--format=%s"],
+        cwd=head_repo,
+        text=True,
+        env=git_env,
+    ).strip()
+    source_commit_subject = subprocess.check_output(
+        ["git", "log", "-1", "--format=%s"],
+        cwd=source_repo,
+        text=True,
+        env=git_env,
+    ).strip()
     assert head_commit_subject == "base snapshot"
     assert source_commit_subject == "base"
     assert (head_repo / "tracked.py").read_text(encoding="utf-8") == "new\n"
@@ -475,7 +479,7 @@ def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path
 
     monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", export_head)
 
-    def export_base(root: Path, destination: Path, base_ref: str) -> None:
+    def export_base(root: Path, destination: Path, base_ref: str, **kwargs) -> None:
         observed_base_refs.append(base_ref)
         destination.mkdir()
 

@@ -13,10 +13,22 @@ public enum SessionLifecycleSmokeCommand {
         if let reportBuilder {
             report = try await reportBuilder(options.serverSessionID, options.modelID, environment)
         } else {
-            let client = clientBuilder?(environment) ?? MelixLocalRuntimeFactory.makeClient(environment: environment)
+            let client: any ControlPlaneXPCClient
+            let flushMetrics: @Sendable () async -> Void
+            if let clientBuilder {
+                client = clientBuilder(environment)
+                flushMetrics = {}
+            } else {
+                let context = MelixLocalRuntimeFactory.makeContext(environment: environment)
+                client = LocalControlPlaneXPCClient(service: context.service)
+                flushMetrics = {
+                    await context.metricsStore.flushExport()
+                }
+            }
             let runner = SessionLifecycleSmokeRunner(
                 client: client,
-                metricsPath: environment["MELIX_CONTROL_PLANE_METRICS_PATH"] ?? ""
+                metricsPath: environment["MELIX_CONTROL_PLANE_METRICS_PATH"] ?? "",
+                flushMetrics: flushMetrics
             )
             report = try await runner.run(
                 serverSessionID: options.serverSessionID,

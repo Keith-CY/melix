@@ -279,6 +279,8 @@ private actor ModelIdleSweepScheduler {
         servedModelIDs: [String],
         idleTimeoutSeconds: UInt32
     ) {
+        // The in-flight flag is a circuit breaker: request traffic can keep
+        // scheduling, but only one sweep should hold worker/catalog resources.
         guard idleTimeoutSeconds > 0, servedModelIDs.isEmpty == false, sweepInFlight == false else {
             return
         }
@@ -289,7 +291,7 @@ private actor ModelIdleSweepScheduler {
         }
         self.lastSweepStartedAt = startedAt
         sweepInFlight = true
-        Task {
+        Task.detached(priority: .background) { [modelCatalog, workerRegistry, metricsStore, servedModelIDs, idleTimeoutSeconds] in
             _ = await OnDemandModelLoader.sweepIdleModels(
                 servedModelIDs: servedModelIDs,
                 idleTimeoutSeconds: idleTimeoutSeconds,
@@ -297,7 +299,7 @@ private actor ModelIdleSweepScheduler {
                 workerRegistry: workerRegistry,
                 metricsStore: metricsStore
             )
-            self.markSweepFinished()
+            await self.markSweepFinished()
         }
     }
 
@@ -1994,7 +1996,6 @@ public struct OpenAIHandler: Sendable {
             servedModelIDs: roster.servedModelIDs,
             idleTimeoutSeconds: roster.modelIdleTimeoutSeconds
         )
-        _ = endpoint
         return resolvedModelID
     }
 
@@ -2050,6 +2051,8 @@ public struct OpenAIHandler: Sendable {
             let modelID = translated.modelID
             await modelCatalog.beginRequest(modelID: modelID)
             defer {
+                // `defer` cannot await; finish asynchronously so non-stream
+                // aggregation always releases request activity on this model.
                 Task { [modelCatalog, modelID] in
                     await modelCatalog.finishRequest(modelID: modelID)
                 }

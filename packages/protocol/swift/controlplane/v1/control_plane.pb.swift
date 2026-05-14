@@ -377,6 +377,48 @@ public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.Ca
 
 }
 
+public enum Melix_Controlplane_V1_ModelLoadTrustMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case modelLoadTrustDefaultSafe // = 1
+  case modelLoadTrustTrustRemoteCode // = 2
+  case modelLoadTrustNotApplicable // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .modelLoadTrustDefaultSafe
+    case 2: self = .modelLoadTrustTrustRemoteCode
+    case 3: self = .modelLoadTrustNotApplicable
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .modelLoadTrustDefaultSafe: return 1
+    case .modelLoadTrustTrustRemoteCode: return 2
+    case .modelLoadTrustNotApplicable: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_ModelLoadTrustMode] = [
+    .unspecified,
+    .modelLoadTrustDefaultSafe,
+    .modelLoadTrustTrustRemoteCode,
+    .modelLoadTrustNotApplicable,
+  ]
+
+}
+
 public enum Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -4454,6 +4496,11 @@ public struct Melix_Controlplane_V1_ModelSettings: @unchecked Sendable {
     set {_uniqueStorage()._multimodalCacheBudgetBytes = newValue}
   }
 
+  public var loadTrustMode: Melix_Controlplane_V1_ModelLoadTrustMode {
+    get {_storage._loadTrustMode}
+    set {_uniqueStorage()._loadTrustMode = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4469,6 +4516,34 @@ public struct Melix_Controlplane_V1_AdaptiveThinkingPolicy: Sendable {
   public var mode: String = String()
 
   public var budgetTokens: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_ModelLoadTrustPolicy: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var requestedMode: Melix_Controlplane_V1_ModelLoadTrustMode = .unspecified
+
+  public var effectiveMode: Melix_Controlplane_V1_ModelLoadTrustMode = .unspecified
+
+  public var policySource: String = String()
+
+  public var customLoaderRequired: Bool = false
+
+  public var customLoaderDetectionSource: String = String()
+
+  public var blockReason: String = String()
+
+  public var requiresReloadForTrustChange: Bool = false
+
+  public var routeClass: Melix_Controlplane_V1_WorkerRouteClass = .unspecified
+
+  public var loaderFamily: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5649,6 +5724,15 @@ public struct Melix_Controlplane_V1_ModelSummary: @unchecked Sendable {
     get {_storage._runtimeMode}
     set {_uniqueStorage()._runtimeMode = newValue}
   }
+
+  public var loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy {
+    get {_storage._loadTrust ?? Melix_Controlplane_V1_ModelLoadTrustPolicy()}
+    set {_uniqueStorage()._loadTrust = newValue}
+  }
+  /// Returns true if `loadTrust` has been explicitly set.
+  public var hasLoadTrust: Bool {_storage._loadTrust != nil}
+  /// Clears the value of `loadTrust`. Subsequent reads from it will return its default value.
+  public mutating func clearLoadTrust() {_uniqueStorage()._loadTrust = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -6956,6 +7040,10 @@ extension Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf._ProtoNamePr
 
 extension Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0\u{1}WORKER_ROUTE_PYTHON_OCR\0\u{1}WORKER_ROUTE_PYTHON_VLM\0\u{1}WORKER_ROUTE_PYTHON_TRANSCRIPTION\0\u{1}WORKER_ROUTE_PYTHON_SPEECH\0\u{1}WORKER_ROUTE_PYTHON_IMAGE\0")
+}
+
+extension Melix_Controlplane_V1_ModelLoadTrustMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_LOAD_TRUST_MODE_UNSPECIFIED\0\u{1}MODEL_LOAD_TRUST_DEFAULT_SAFE\0\u{1}MODEL_LOAD_TRUST_TRUST_REMOTE_CODE\0\u{1}MODEL_LOAD_TRUST_NOT_APPLICABLE\0")
 }
 
 extension Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
@@ -13080,7 +13168,7 @@ extension Melix_Controlplane_V1_ImportPreset: SwiftProtobuf.Message, SwiftProtob
 
 extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSettings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration_mode\0\u{3}acceleration_profile_id\0\u{1}ext\0\u{3}adaptive_thinking\0\u{3}disk_streaming_mode\0\u{3}memory_budget_bytes\0\u{3}cache_mode\0\u{3}cache_memory_budget_bytes\0\u{3}cache_memory_budget_pct\0\u{3}cache_block_size_tokens\0\u{3}cache_directory\0\u{3}multimodal_cache_budget_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration_mode\0\u{3}acceleration_profile_id\0\u{1}ext\0\u{3}adaptive_thinking\0\u{3}disk_streaming_mode\0\u{3}memory_budget_bytes\0\u{3}cache_mode\0\u{3}cache_memory_budget_bytes\0\u{3}cache_memory_budget_pct\0\u{3}cache_block_size_tokens\0\u{3}cache_directory\0\u{3}multimodal_cache_budget_bytes\0\u{3}load_trust_mode\0")
 
   fileprivate class _StorageClass {
     var _alias: String = String()
@@ -13100,6 +13188,7 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
     var _cacheBlockSizeTokens: UInt32 = 0
     var _cacheDirectory: String = String()
     var _multimodalCacheBudgetBytes: UInt64 = 0
+    var _loadTrustMode: Melix_Controlplane_V1_ModelLoadTrustMode = .unspecified
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -13127,6 +13216,7 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
       _cacheBlockSizeTokens = source._cacheBlockSizeTokens
       _cacheDirectory = source._cacheDirectory
       _multimodalCacheBudgetBytes = source._multimodalCacheBudgetBytes
+      _loadTrustMode = source._loadTrustMode
     }
   }
 
@@ -13162,6 +13252,7 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
         case 15: try { try decoder.decodeSingularUInt32Field(value: &_storage._cacheBlockSizeTokens) }()
         case 16: try { try decoder.decodeSingularStringField(value: &_storage._cacheDirectory) }()
         case 17: try { try decoder.decodeSingularUInt64Field(value: &_storage._multimodalCacheBudgetBytes) }()
+        case 18: try { try decoder.decodeSingularEnumField(value: &_storage._loadTrustMode) }()
         default: break
         }
       }
@@ -13225,6 +13316,9 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
       if _storage._multimodalCacheBudgetBytes != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._multimodalCacheBudgetBytes, fieldNumber: 17)
       }
+      if _storage._loadTrustMode != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._loadTrustMode, fieldNumber: 18)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -13251,6 +13345,7 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
         if _storage._cacheBlockSizeTokens != rhs_storage._cacheBlockSizeTokens {return false}
         if _storage._cacheDirectory != rhs_storage._cacheDirectory {return false}
         if _storage._multimodalCacheBudgetBytes != rhs_storage._multimodalCacheBudgetBytes {return false}
+        if _storage._loadTrustMode != rhs_storage._loadTrustMode {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -13290,6 +13385,76 @@ extension Melix_Controlplane_V1_AdaptiveThinkingPolicy: SwiftProtobuf.Message, S
   public static func ==(lhs: Melix_Controlplane_V1_AdaptiveThinkingPolicy, rhs: Melix_Controlplane_V1_AdaptiveThinkingPolicy) -> Bool {
     if lhs.mode != rhs.mode {return false}
     if lhs.budgetTokens != rhs.budgetTokens {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ModelLoadTrustPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ModelLoadTrustPolicy"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}requested_mode\0\u{3}effective_mode\0\u{3}policy_source\0\u{3}custom_loader_required\0\u{3}custom_loader_detection_source\0\u{3}block_reason\0\u{3}requires_reload_for_trust_change\0\u{3}route_class\0\u{3}loader_family\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.requestedMode) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.effectiveMode) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.policySource) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.customLoaderRequired) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.customLoaderDetectionSource) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.blockReason) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.requiresReloadForTrustChange) }()
+      case 8: try { try decoder.decodeSingularEnumField(value: &self.routeClass) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.loaderFamily) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.requestedMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.requestedMode, fieldNumber: 1)
+    }
+    if self.effectiveMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.effectiveMode, fieldNumber: 2)
+    }
+    if !self.policySource.isEmpty {
+      try visitor.visitSingularStringField(value: self.policySource, fieldNumber: 3)
+    }
+    if self.customLoaderRequired != false {
+      try visitor.visitSingularBoolField(value: self.customLoaderRequired, fieldNumber: 4)
+    }
+    if !self.customLoaderDetectionSource.isEmpty {
+      try visitor.visitSingularStringField(value: self.customLoaderDetectionSource, fieldNumber: 5)
+    }
+    if !self.blockReason.isEmpty {
+      try visitor.visitSingularStringField(value: self.blockReason, fieldNumber: 6)
+    }
+    if self.requiresReloadForTrustChange != false {
+      try visitor.visitSingularBoolField(value: self.requiresReloadForTrustChange, fieldNumber: 7)
+    }
+    if self.routeClass != .unspecified {
+      try visitor.visitSingularEnumField(value: self.routeClass, fieldNumber: 8)
+    }
+    if !self.loaderFamily.isEmpty {
+      try visitor.visitSingularStringField(value: self.loaderFamily, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ModelLoadTrustPolicy, rhs: Melix_Controlplane_V1_ModelLoadTrustPolicy) -> Bool {
+    if lhs.requestedMode != rhs.requestedMode {return false}
+    if lhs.effectiveMode != rhs.effectiveMode {return false}
+    if lhs.policySource != rhs.policySource {return false}
+    if lhs.customLoaderRequired != rhs.customLoaderRequired {return false}
+    if lhs.customLoaderDetectionSource != rhs.customLoaderDetectionSource {return false}
+    if lhs.blockReason != rhs.blockReason {return false}
+    if lhs.requiresReloadForTrustChange != rhs.requiresReloadForTrustChange {return false}
+    if lhs.routeClass != rhs.routeClass {return false}
+    if lhs.loaderFamily != rhs.loaderFamily {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -15382,7 +15547,7 @@ extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{1}residency\0\u{3}cache_policy\0\u{3}runtime_mode\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{1}residency\0\u{3}cache_policy\0\u{3}runtime_mode\0\u{3}load_trust\0")
 
   fileprivate class _StorageClass {
     var _modelID: String = String()
@@ -15402,6 +15567,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
     var _residency: Melix_Controlplane_V1_ResidencySummary? = nil
     var _cachePolicy: Melix_Controlplane_V1_CachePolicySummary? = nil
     var _runtimeMode: String = String()
+    var _loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -15429,6 +15595,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
       _residency = source._residency
       _cachePolicy = source._cachePolicy
       _runtimeMode = source._runtimeMode
+      _loadTrust = source._loadTrust
     }
   }
 
@@ -15464,6 +15631,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
         case 15: try { try decoder.decodeSingularMessageField(value: &_storage._residency) }()
         case 16: try { try decoder.decodeSingularMessageField(value: &_storage._cachePolicy) }()
         case 17: try { try decoder.decodeSingularStringField(value: &_storage._runtimeMode) }()
+        case 18: try { try decoder.decodeSingularMessageField(value: &_storage._loadTrust) }()
         default: break
         }
       }
@@ -15527,6 +15695,9 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
       if !_storage._runtimeMode.isEmpty {
         try visitor.visitSingularStringField(value: _storage._runtimeMode, fieldNumber: 17)
       }
+      try { if let v = _storage._loadTrust {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 18)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -15553,6 +15724,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
         if _storage._residency != rhs_storage._residency {return false}
         if _storage._cachePolicy != rhs_storage._cachePolicy {return false}
         if _storage._runtimeMode != rhs_storage._runtimeMode {return false}
+        if _storage._loadTrust != rhs_storage._loadTrust {return false}
         return true
       }
       if !storagesAreEqual {return false}

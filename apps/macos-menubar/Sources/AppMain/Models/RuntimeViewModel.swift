@@ -7142,6 +7142,15 @@ public final class RuntimeViewModel {
         await refreshBenchmarkHistory(notify: true)
     }
 
+    public func refreshDiagnosticsHistory() async {
+        let preferredStage = preferredDiagnosticsStage
+        let benchmarkPresentationMode = selectedBenchmarkPresentationMode
+        await refreshBenchmarkHistory(notify: false)
+        preferredDiagnosticsStage = preferredStage
+        selectedBenchmarkPresentationMode = benchmarkPresentationMode
+        notifyStateChanged()
+    }
+
     public func exportSelectedBenchmarkCSV() async {
         let startedAt = Date()
         if let cliWorkflowRunner {
@@ -9912,6 +9921,9 @@ public final class RuntimeViewModel {
         _ projection: GatewayConfigProjection,
         for session: DesktopServerSessionState
     ) -> Bool {
+        // Config-file projections can lag behind explicit operator edits.
+        // Keep local roster intent unless the defaults still match, while an
+        // empty local roster is treated as bootstrap state that can be filled.
         let localDefaultModelID = session.defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let projectedDefaultModelID = projection.defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard localDefaultModelID.isEmpty == false else {

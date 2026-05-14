@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from worker.productization import serving_diagnostics as serving_diagnostics_module
 from worker.productization.serving_diagnostics import (
     BoundedServingDiagnosticsEventQueue,
     ServingDiagnosticsComparisonError,
@@ -212,6 +213,23 @@ def test_serving_diagnostics_event_instances_use_slots_for_debug_queue() -> None
 
     assert hasattr(event, "__dict__") is False
     assert event.to_dict()["attributes"] == {"token": "***"}
+    with pytest.raises(AttributeError):
+        event.status = "mutated"  # type: ignore[misc]
+
+
+def test_serving_diagnostics_queue_snapshot_uses_slots_for_debug_queue() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-snapshot-slots",
+        phase="decode",
+        event_index=1,
+        status="completed",
+    )
+    queue = BoundedServingDiagnosticsEventQueue(max_events=1)
+    queue.append(event)
+    queue_snapshot = queue.snapshot()
+
+    assert hasattr(queue_snapshot, "__dict__") is False
+    assert queue_snapshot.events == (event,)
 
 
 def test_serving_diagnostics_default_event_attributes_reuse_empty_mapping() -> None:
@@ -233,6 +251,28 @@ def test_serving_diagnostics_default_event_attributes_reuse_empty_mapping() -> N
     assert first.attributes is second.attributes
     with pytest.raises(TypeError):
         first.attributes["late"] = "mutation"  # type: ignore[index]
+
+
+def test_serving_diagnostics_empty_event_attributes_skip_stable_json_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-empty-fast-path",
+        phase="decode",
+        event_index=3,
+        status="completed",
+    )
+
+    def fail_stable_json_object(_: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("empty event attributes should not call _stable_json_object")
+
+    monkeypatch.setattr(
+        serving_diagnostics_module,
+        "_stable_json_object",
+        fail_stable_json_object,
+    )
+
+    assert event.to_dict()["attributes"] == {}
 
 
 def test_serving_diagnostics_bounded_queue_serializes_append_during_snapshot() -> None:

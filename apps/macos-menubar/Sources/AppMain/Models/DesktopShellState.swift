@@ -1,4 +1,5 @@
 import Foundation
+import MelixCLICore
 
 public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendable {
     case chat = "Chat"
@@ -514,7 +515,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         set {
             let resolvedDefaultModelID = Self.trimmed(newValue)
             defaultModelID = resolvedDefaultModelID
-            servedModelIDs = Self.normalizedServedModelIDs(
+            servedModelIDs = MelixServerModelRosterNormalizer.normalized(
                 [resolvedDefaultModelID],
                 defaultModelID: resolvedDefaultModelID
             )
@@ -565,8 +566,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         self.title = title
         let resolvedDefaultModelID = Self.trimmed(modelID)
         self.defaultModelID = resolvedDefaultModelID
-        self.servedModelIDs = Self.normalizedServedModelIDs(
-            servedModelIDs.isEmpty ? [resolvedDefaultModelID] : servedModelIDs,
+        self.servedModelIDs = MelixServerModelRosterNormalizer.normalizedOrDefault(
+            servedModelIDs,
             defaultModelID: resolvedDefaultModelID
         )
         self.host = host
@@ -607,25 +608,6 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
 
     private static func trimmed(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func normalizedServedModelIDs(
-        _ modelIDs: [String],
-        defaultModelID: String
-    ) -> [String] {
-        var normalized: [String] = []
-        var seen: Set<String> = []
-        for modelID in modelIDs.map(Self.trimmed).filter({ !$0.isEmpty }) {
-            guard seen.insert(modelID).inserted else {
-                continue
-            }
-            normalized.append(modelID)
-        }
-        let defaultModelID = Self.trimmed(defaultModelID)
-        if !defaultModelID.isEmpty, !seen.contains(defaultModelID) {
-            normalized.insert(defaultModelID, at: 0)
-        }
-        return normalized
     }
 
     public var baseURL: String {
@@ -740,7 +722,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         let decodedDefaultModelID = try container.decodeIfPresent(String.self, forKey: .defaultModelID)
             ?? (try container.decodeIfPresent(String.self, forKey: .modelID) ?? "")
         defaultModelID = Self.trimmed(decodedDefaultModelID)
-        servedModelIDs = Self.normalizedServedModelIDs(
+        servedModelIDs = MelixServerModelRosterNormalizer.normalized(
             try container.decodeIfPresent([String].self, forKey: .servedModelIDs)
                 ?? (defaultModelID.isEmpty ? [] : [defaultModelID]),
             defaultModelID: defaultModelID

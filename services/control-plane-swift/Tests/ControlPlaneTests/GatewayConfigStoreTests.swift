@@ -114,6 +114,33 @@ struct GatewayConfigStoreTests {
         #expect(listener.updatedAtUnixMs == 1_717_171_717_000)
     }
 
+    @Test("apply rejects duplicate served model identifiers at the gateway boundary")
+    func applyRejectsDuplicateServedModelIdentifiersAtTheGatewayBoundary() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-duplicates-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayConfigStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+            defaults: [:]
+        )
+
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "localhost"
+        command.port = 18080
+        command.defaultModelID = "melix-dev-text"
+        command.servedModelIds = ["melix-dev-text", "melix-dev-text"]
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+
+        await #expect(throws: GatewayConfigValidationError.duplicateServedModelID) {
+            try await store.apply(command: command)
+        }
+        #expect(GatewayConfigValidationError.duplicateServedModelID.message.contains("gateway API boundary"))
+    }
+
     @Test("summary marks restart required when the requested active listener differs from the runtime binding")
     func summaryMarksRestartRequiredWhenTheRequestedActiveListenerDiffersFromTheRuntimeBinding() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory

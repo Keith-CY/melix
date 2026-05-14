@@ -202,6 +202,7 @@ public actor ModelCatalog {
         dispatchHandle: String,
         pinRequested: Bool = false,
         workerResidency: Melix_Worker_V1_ResidencyInfo? = nil,
+        loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy? = nil,
         reason: String? = nil
     ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
@@ -230,6 +231,10 @@ public actor ModelCatalog {
                 for: workerResidency.effectiveDiskStreamingMode
             )
         }
+        if let loadTrust {
+            model.loadTrust = loadTrust
+            model.loadTrust.requiresReloadForTrustChange = false
+        }
         models[id] = model
 
         if loadedState == .modelWarm || loadedState == .modelPinned {
@@ -244,7 +249,8 @@ public actor ModelCatalog {
     public func recordLoadFailed(
         id: String,
         reason: String = "load_failed",
-        memoryBudgetEvidence: MemoryBudgetEvidence? = nil
+        memoryBudgetEvidence: MemoryBudgetEvidence? = nil,
+        loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy? = nil
     ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
@@ -258,6 +264,9 @@ public actor ModelCatalog {
         model.state = .modelFailed
         model.pinned = false
         model = synchronized(model)
+        if let loadTrust {
+            model.loadTrust = loadTrust
+        }
         models[id] = model
         dispatchHandles.removeValue(forKey: id)
         return model
@@ -344,7 +353,13 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
+        let isLoaded = dispatchHandles[id] != nil
         model.settings = settings
+        model.loadTrust = ModelLoadTrustPolicyResolver.reloadAwarePolicy(
+            current: model.loadTrust,
+            settings: settings,
+            isLoaded: isLoaded
+        )
         touchModel(id: id, transitionReason: "settings_updated")
         model = synchronized(model)
         models[id] = model
@@ -1832,6 +1847,9 @@ public actor ModelCatalog {
         }
         if source.settings.multimodalCacheBudgetBytes > 0 {
             merged.settings.multimodalCacheBudgetBytes = source.settings.multimodalCacheBudgetBytes
+        }
+        if source.settings.loadTrustMode != .unspecified {
+            merged.settings.loadTrustMode = source.settings.loadTrustMode
         }
         merged.settings.ext.merge(source.settings.ext) { _, new in new }
         return merged

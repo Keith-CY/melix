@@ -16,6 +16,7 @@ import threading
 import time
 import tracemalloc
 import types
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -254,6 +255,7 @@ def run_probe_job(
     probe_id: str,
     base_repo: str | Path,
     head_repo: str | Path,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, object], bool]:
     probes = {probe.probe_id: probe for probe in load_probe_registry(registry_path)}
     probe = probes.get(probe_id)
@@ -261,16 +263,16 @@ def run_probe_job(
         raise ValueError(f"unknown probe id: {probe_id}")
 
     _log_progress(f"{probe_id}: starting head verification")
-    head_verification = _run_head_verification(probe=probe, repo_root=Path(head_repo))
+    head_verification = _run_head_verification(probe=probe, repo_root=Path(head_repo), env=env)
     _log_progress(
         f"{probe_id}: head verification completed "
         f"test_ok={head_verification['test']['ok']} coverage_ok={head_verification['coverage']['ok']}"
     )
     _log_progress(f"{probe_id}: starting base probe")
-    base_probe = _run_probe_impl(probe=probe, repo_root=Path(base_repo), repo_label="base")
+    base_probe = _run_probe_impl(probe=probe, repo_root=Path(base_repo), repo_label="base", env=env)
     _log_progress(f"{probe_id}: base probe completed ok={base_probe['ok']}")
     _log_progress(f"{probe_id}: starting head probe")
-    head_probe = _run_probe_impl(probe=probe, repo_root=Path(head_repo), repo_label="head")
+    head_probe = _run_probe_impl(probe=probe, repo_root=Path(head_repo), repo_label="head", env=env)
     _log_progress(f"{probe_id}: head probe completed ok={head_probe['ok']}")
     success = (
         head_verification["test"]["ok"]
@@ -455,9 +457,14 @@ def write_report_outputs(
     return outputs
 
 
-def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, object]:
+def _run_head_verification(
+    *,
+    probe: ProbeDefinition,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, object]:
     if probe.coverage_replays_tests:
-        coverage_result = _run_command(probe.coverage_command, cwd=repo_root)
+        coverage_result = _run_command(probe.coverage_command, cwd=repo_root, env=env)
         test_result = {
             "command": probe.test_command,
             "ok": coverage_result["ok"],
@@ -467,9 +474,9 @@ def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[s
             "coverage_pct": None,
         }
         return {"test": test_result, "coverage": coverage_result}
-    test_result = _run_command(probe.test_command, cwd=repo_root)
+    test_result = _run_command(probe.test_command, cwd=repo_root, env=env)
     coverage_result = (
-        _run_command(probe.coverage_command, cwd=repo_root)
+        _run_command(probe.coverage_command, cwd=repo_root, env=env)
         if test_result["ok"]
         else {
             "command": probe.coverage_command,
@@ -483,7 +490,12 @@ def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[s
     return {"test": test_result, "coverage": coverage_result}
 
 
-def _run_command(command: str, *, cwd: Path) -> dict[str, object]:
+def _run_command(
+    command: str,
+    *,
+    cwd: Path,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, object]:
     command_summary = _summarize_command(command)
     _log_progress(f"starting command in {cwd}: {command_summary}")
     started = time.perf_counter()
@@ -495,6 +507,7 @@ def _run_command(command: str, *, cwd: Path) -> dict[str, object]:
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
+        env=None if env is None else dict(env),
     )
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
@@ -540,10 +553,16 @@ def _run_command(command: str, *, cwd: Path) -> dict[str, object]:
     }
 
 
-def _run_probe_impl(*, probe: ProbeDefinition, repo_root: Path, repo_label: str) -> dict[str, object]:
+def _run_probe_impl(
+    *,
+    probe: ProbeDefinition,
+    repo_root: Path,
+    repo_label: str,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, object]:
     started = time.perf_counter()
     try:
-        metrics = _dispatch_probe_impl(probe=probe, repo_root=repo_root)
+        metrics = _dispatch_probe_impl(probe=probe, repo_root=repo_root, env=env)
         return {
             "repo_label": repo_label,
             "ok": True,
@@ -560,7 +579,12 @@ def _run_probe_impl(*, probe: ProbeDefinition, repo_root: Path, repo_label: str)
         }
 
 
-def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, float]:
+def _dispatch_probe_impl(
+    *,
+    probe: ProbeDefinition,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, float]:
     if probe.probe_impl == "benchmark_evaluation_report":
         return _probe_benchmark_evaluation_report(repo_root)
     if probe.probe_impl == "benchmark_export_run_scan":
@@ -590,16 +614,22 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
     if probe.probe_impl == "pr_scoped_performance_registry_cache":
         return _probe_pr_scoped_performance_registry_cache(repo_root)
     if probe.probe_impl == "command_json":
-        return _probe_command_json(probe=probe, repo_root=repo_root)
+        return _probe_command_json(probe=probe, repo_root=repo_root, env=env)
     raise ValueError(f"unsupported probe implementation: {probe.probe_impl}")
 
 
-def _probe_command_json(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, float]:
+def _probe_command_json(
+    *,
+    probe: ProbeDefinition,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, float]:
     if not probe.probe_command:
         raise ValueError("command_json probes require a non-empty probe_command")
     completed = _run_command(
         probe.probe_command,
         cwd=repo_root,
+        env=env,
     )
     if completed["returncode"] != 0:
         raise RuntimeError(

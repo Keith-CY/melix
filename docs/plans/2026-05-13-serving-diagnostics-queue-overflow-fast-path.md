@@ -2,12 +2,19 @@
 
 ## Scope
 
-This Python-only slice optimizes the debug serving diagnostics event queue after
-it reaches its configured bound. The queue is append-only for a request bundle,
-so once the first event has been dropped every later append is also an overflow.
-The implementation can reuse that state instead of rechecking the current deque
-length on each saturated append. The queue object also uses explicit slots so
-this high-frequency debug buffer does not carry a per-instance dictionary.
+This Python-only slice optimizes the debug serving diagnostics event queue and
+the high-frequency event objects it stores. After the queue reaches its
+configured bound, every later append is also an overflow, so the queue can reuse
+that state instead of rechecking the current deque length on each saturated
+append. The queue object, event objects, and snapshots use explicit slots so the
+debug buffer does not carry unnecessary per-instance dictionaries.
+
+This follow-up slice keeps the same immutable `ServingDiagnosticsEvent` public
+contract but supplies a module-cached local-binding initializer for the frozen
+slots dataclass. The registered probe constructs thousands of events per sample,
+so avoiding the generated initializer's repeated global `object.__setattr__`
+lookups targets the dominant local Linux cost without changing serialized
+diagnostics payloads.
 
 ## Affected Paths
 
@@ -23,6 +30,7 @@ The affected path is covered by the existing
 `test_command`, `coverage_command`, and `probe_command` values and reports:
 
 - `elapsed_ms_mean` (`lower_is_better`)
+- `serialization_elapsed_ms_mean` (`lower_is_better`)
 - `dropped_count` (`informational`)
 - `retained_count` (`informational`)
 

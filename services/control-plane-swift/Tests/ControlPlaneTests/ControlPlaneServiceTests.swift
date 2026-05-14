@@ -957,6 +957,50 @@ struct ControlPlaneServiceTests {
         #expect(draftModelUnsupported.error.code == ServingDefaultsValidationError.speculativeDraftModelUnsupported.code)
     }
 
+    @Test("execute validates speculative serving defaults against the default model only")
+    func executeValidatesSpeculativeServingDefaultsAgainstTheDefaultModelOnly() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-speculative-serving-defaults-default-only-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        var speculativeReadyTextModel = ModelCatalog.devTextModel()
+        speculativeReadyTextModel.settings.defaultAccelerationMode = .unspecified
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: [speculativeReadyTextModel, ModelCatalog.devOCRModel()]),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewaySupportsSpeculativeDefaults: true
+        )
+        _ = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                host: "127.0.0.1",
+                port: 11_434,
+                defaultModelID: "melix-dev-text",
+                servedModelIDs: ["melix-dev-text", "melix-dev-ocr"],
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        )
+
+        let response = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.3,
+                topP: 0.91,
+                maxTokens: 384,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-text",
+                numDraftTokens: 6
+            )
+        )
+
+        #expect(response.ok)
+    }
+
     @Test("execute surfaces serving defaults persistence failures with typed metrics")
     func executeSurfacesServingDefaultsPersistenceFailuresWithTypedMetrics() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -2842,6 +2886,7 @@ struct ControlPlaneServiceTests {
                     "multimodal_cache_budget_bytes": "2048",
                     "default_acceleration_mode": "speculative_decode",
                     "acceleration_profile_id": "draft-q4",
+                    "trust_remote_code": "true",
                 ]
             )
         )
@@ -2860,6 +2905,38 @@ struct ControlPlaneServiceTests {
         #expect(response.model.model.settings.multimodalCacheBudgetBytes == 2_048)
         #expect(response.model.model.settings.defaultAccelerationMode == .speculativeDecode)
         #expect(response.model.model.settings.accelerationProfileID == "draft-q4")
+        #expect(response.model.model.settings.loadTrustMode == .modelLoadTrustTrustRemoteCode)
+    }
+
+    @Test("execute normalizes and clears model-load trust policy settings")
+    func executeNormalizesAndClearsModelLoadTrustPolicySettings() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let defaultSafe = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["load_trust_mode": "default-safe"]
+            )
+        )
+        let trusted = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["model_load_trust_mode": "trust_remote_code"]
+            )
+        )
+        let cleared = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["trust_remote_code": ""]
+            )
+        )
+
+        #expect(defaultSafe.ok)
+        #expect(defaultSafe.model.model.settings.loadTrustMode == .modelLoadTrustDefaultSafe)
+        #expect(trusted.ok)
+        #expect(trusted.model.model.settings.loadTrustMode == .modelLoadTrustTrustRemoteCode)
+        #expect(cleared.ok)
+        #expect(cleared.model.model.settings.loadTrustMode == .unspecified)
     }
 
     @Test("execute normalizes cache mode labels and clears cache policy settings")
@@ -3404,7 +3481,18 @@ struct ControlPlaneServiceTests {
             }(),
         ])
 
-        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        var sourceModel = ModelCatalog.devTextModel()
+        sourceModel.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        sourceModel.loadTrust = {
+            var policy = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+            policy.requestedMode = .modelLoadTrustTrustRemoteCode
+            policy.effectiveMode = .modelLoadTrustTrustRemoteCode
+            policy.policySource = "model_settings"
+            policy.routeClass = .workerRoutePythonTextCompatibility
+            policy.loaderFamily = "mlx_lm"
+            return policy
+        }()
+        let catalog = ModelCatalog(seedModels: [sourceModel])
         let service = ControlPlaneService(
             modelCatalog: catalog,
             workerRegistry: WorkerRegistry(
@@ -3438,6 +3526,8 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.ext["melix.adapter_weights_path"] == "/tmp/melix-train/weights/adapters.safetensors")
         #expect(derived.settings.ext["melix.derived_model_alias"] == "Runtime Alias")
         #expect(derived.settings.ext["melix.derived_from_model_id"] == "melix-dev-text")
+        #expect(derived.settings.loadTrustMode == .unspecified)
+        #expect(derived.hasLoadTrust == false)
     }
 
     @Test("execute prunes removed derived models from the catalog after remove-derived completes")

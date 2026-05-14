@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -64,18 +63,11 @@ class GateError(RuntimeError):
     pass
 
 
-@contextmanager
-def scrubbed_git_environment(extra_env: Mapping[str, str] | None = None):
-    original_env = dict(os.environ)
-    os.environ.clear()
-    os.environ.update(scrub_git_local_env(env=original_env))
+def scrubbed_git_environment(extra_env: Mapping[str, str] | None = None) -> dict[str, str]:
+    env = scrub_git_local_env(env=os.environ)
     if extra_env:
-        os.environ.update(extra_env)
-    try:
-        yield
-    finally:
-        os.environ.clear()
-        os.environ.update(original_env)
+        env.update(extra_env)
+    return env
 
 
 def _env_flag(env: Mapping[str, str], name: str) -> bool:
@@ -117,7 +109,11 @@ def resolve_host_gate(env: Mapping[str, str] | None = None) -> HostGate:
 
 
 def run_git(root: Path, args: list[str]) -> str:
-    return subprocess.check_output(["git", *args], cwd=root, text=True)
+    return subprocess.check_output(["git", *args], cwd=root, text=True, env=_git_env())
+
+
+def _git_env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
 
 
 def repo_root() -> Path:
@@ -159,7 +155,7 @@ def unstaged_tracked_files(root: Path) -> list[str]:
 def run_shell_command(command: str, cwd: Path) -> CommandResult:
     print(f"[pre-commit] running: {command}", flush=True)
     started = time.perf_counter()
-    completed = subprocess.run(command, cwd=cwd, shell=True, env=scrub_git_local_env())
+    completed = subprocess.run(command, cwd=cwd, shell=True, env=scrubbed_git_environment())
     elapsed = time.perf_counter() - started
     print(
         f"[pre-commit] completed rc={completed.returncode} elapsed={elapsed:.1f}s: {command}",
@@ -173,12 +169,19 @@ def run_shell_command(command: str, cwd: Path) -> CommandResult:
     )
 
 
-def export_git_snapshot(root: Path, destination: Path, ref: str) -> None:
+def export_git_snapshot(
+    root: Path,
+    destination: Path,
+    ref: str,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     with subprocess.Popen(
         ["git", "archive", "--format=tar", ref],
         cwd=root,
         stdout=subprocess.PIPE,
+        env=None if env is None else dict(env),
     ) as archive:
         assert archive.stdout is not None
         extract = subprocess.run(
@@ -197,15 +200,30 @@ def export_head_snapshot(root: Path, destination: Path) -> None:
     export_git_snapshot(root, destination, "HEAD")
 
 
-def export_base_snapshot(root: Path, destination: Path, base_ref: str) -> None:
-    export_git_snapshot(root, destination, base_ref)
+def export_base_snapshot(
+    root: Path,
+    destination: Path,
+    base_ref: str,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> None:
+    export_git_snapshot(root, destination, base_ref, env=env)
 
 
-def export_index_snapshot(root: Path, destination: Path) -> None:
+def export_index_snapshot(
+    root: Path,
+    destination: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     prefix = os.fspath(destination) + os.sep
     try:
-        subprocess.check_call(["git", "checkout-index", "--all", "--force", f"--prefix={prefix}"], cwd=root)
+        subprocess.check_call(
+            ["git", "checkout-index", "--all", "--force", f"--prefix={prefix}"],
+            cwd=root,
+            env=None if env is None else dict(env),
+        )
     except subprocess.CalledProcessError as exc:
         raise GateError(f"git checkout-index snapshot failed with exit {exc.returncode}") from exc
 
@@ -221,43 +239,45 @@ def _remove_worktree_path(path: Path) -> None:
 
 def export_head_comparison_snapshot(root: Path, destination: Path, base_ref: str | None) -> None:
     if base_ref is None:
-        export_index_snapshot(root, destination)
+        export_index_snapshot(root, destination, env=scrubbed_git_environment())
         return
 
     try:
-        with scrubbed_git_environment():
-            export_base_snapshot(root, destination, base_ref)
-            subprocess.check_call(["git", "init"], cwd=destination, stdout=subprocess.DEVNULL)
-            subprocess.check_call(
-                ["git", "-c", "core.excludesfile=/dev/null", "add", "-A", "-f", "--", "."],
-                cwd=destination,
-                stdout=subprocess.DEVNULL,
-            )
-            subprocess.check_call(
-                [
-                    "git",
-                    "-c",
-                    "user.email=pre-commit@melix.local",
-                    "-c",
-                    "user.name=Melix Pre Commit",
-                    "commit",
-                    "--no-verify",
-                    "-m",
-                    "base snapshot",
-                ],
-                cwd=destination,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            tracked_output = subprocess.check_output(["git", "ls-files", "-z"], cwd=destination)
-            for raw_path in tracked_output.split(b"\0"):
-                if raw_path:
-                    _remove_worktree_path(destination / os.fsdecode(raw_path))
-            export_index_snapshot(root, destination)
-            added_output = run_git(root, ["diff", "--cached", "--name-only", "--diff-filter=A", base_ref, "--"])
-            added_paths = [line.strip() for line in added_output.splitlines() if line.strip()]
-            if added_paths:
-                subprocess.check_call(["git", "add", "-N", "--", *added_paths], cwd=destination)
+        git_env = scrubbed_git_environment()
+        export_base_snapshot(root, destination, base_ref, env=git_env)
+        subprocess.check_call(["git", "init"], cwd=destination, stdout=subprocess.DEVNULL, env=git_env)
+        subprocess.check_call(
+            ["git", "-c", "core.excludesfile=/dev/null", "add", "-A", "-f", "--", "."],
+            cwd=destination,
+            stdout=subprocess.DEVNULL,
+            env=git_env,
+        )
+        subprocess.check_call(
+            [
+                "git",
+                "-c",
+                "user.email=pre-commit@melix.local",
+                "-c",
+                "user.name=Melix Pre Commit",
+                "commit",
+                "--no-verify",
+                "-m",
+                "base snapshot",
+            ],
+            cwd=destination,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=git_env,
+        )
+        tracked_output = subprocess.check_output(["git", "ls-files", "-z"], cwd=destination, env=git_env)
+        for raw_path in tracked_output.split(b"\0"):
+            if raw_path:
+                _remove_worktree_path(destination / os.fsdecode(raw_path))
+        export_index_snapshot(root, destination, env=git_env)
+        added_output = run_git(root, ["diff", "--cached", "--name-only", "--diff-filter=A", base_ref, "--"])
+        added_paths = [line.strip() for line in added_output.splitlines() if line.strip()]
+        if added_paths:
+            subprocess.check_call(["git", "add", "-N", "--", *added_paths], cwd=destination, env=git_env)
     except subprocess.CalledProcessError as exc:
         raise GateError(f"git comparison snapshot failed with exit {exc.returncode}") from exc
 
@@ -309,9 +329,9 @@ def run_performance_report(root: Path, changed_files: list[str], *, base_ref: st
             export_head_comparison_snapshot(root, head_repo, base_ref)
             base_repo = probe_temp_root / "base"
             if base_ref is None:
-                export_index_snapshot(root, base_repo)
+                export_index_snapshot(root, base_repo, env=scrubbed_git_environment())
             else:
-                export_base_snapshot(root, base_repo, base_ref)
+                export_base_snapshot(root, base_repo, base_ref, env=scrubbed_git_environment())
             probes = {probe.probe_id: probe for probe in load_probe_registry(registry_path)}
             for probe_entry in selected_probes:
                 if not isinstance(probe_entry, dict):
@@ -321,15 +341,15 @@ def run_performance_report(root: Path, changed_files: list[str], *, base_ref: st
                     continue
                 print(f"[pre-commit] running performance probe: {probe_id}", flush=True)
                 try:
-                    with scrubbed_git_environment(
-                        {"MELIX_CHANGED_SCOPE_BASE_ROOT": os.fspath(base_repo)}
-                    ):
-                        result, _success = run_probe_job(
-                            registry_path=registry_path,
-                            probe_id=probe_id,
-                            base_repo=base_repo,
-                            head_repo=head_repo,
-                        )
+                    result, _success = run_probe_job(
+                        registry_path=registry_path,
+                        probe_id=probe_id,
+                        base_repo=base_repo,
+                        head_repo=head_repo,
+                        env=scrubbed_git_environment(
+                            {"MELIX_CHANGED_SCOPE_BASE_ROOT": os.fspath(base_repo)}
+                        ),
+                    )
                     results.append(result)
                     (probes_dir / f"{probe_id}.json").write_text(
                         json.dumps(result, indent=2, sort_keys=True) + "\n",

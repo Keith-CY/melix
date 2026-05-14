@@ -964,7 +964,7 @@ private enum MelixPipelineCommandBuilder {
                 ServerSessionUpdateOptions(
                     serverSessionID: string("server_session_id", args) ?? ServerSessionRuntimeStore.defaultServerSessionID,
                     title: string("title", args) ?? "",
-                    defaultModelID: string("default_model_id", args) ?? "",
+                    defaultModelID: string("default_model_id", args) ?? string("model_id", args) ?? "",
                     servedModelIDs: try firstStringArray(["served_model_ids"], args),
                     host: string("host", args) ?? "",
                     port: try int("port", args) ?? 0,

@@ -80,9 +80,10 @@ class ResolvedVisionFamilyConfig:
         if image_token_divisor < 1:
             image_token_divisor = 1
         image_tokens = 0
+        image_multi_token_threshold = image_token_divisor * 2
         for image in prepared_request.images:
-            token_count = len(image.bytes_data) // image_token_divisor
-            image_tokens += token_count if token_count > 1 else 1
+            byte_count = len(image.bytes_data)
+            image_tokens += byte_count // image_token_divisor if byte_count >= image_multi_token_threshold else 1
 
         video_frame_token_cost = self.video_frame_token_cost
         if video_frame_token_cost < 1:

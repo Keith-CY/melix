@@ -200,6 +200,38 @@ def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
     ) + max(1, fallback_request.images[1].byte_length // 8)
 
 
+class ByteLengthTrackingImage:
+    def __init__(self, byte_length: int) -> None:
+        self.byte_length_reads = 0
+        self._byte_length = byte_length
+
+    @property
+    def byte_length(self) -> int:
+        self.byte_length_reads += 1
+        return self._byte_length
+
+
+def test_ocr_single_image_token_count_reuses_precomputed_input_bytes() -> None:
+    image = ByteLengthTrackingImage(byte_length=128)
+    request = PreparedVisionRequest(
+        prompt_text="extract the receipt",
+        images=[image],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=128,
+        preprocess_peak_memory_bytes=128,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    runtime = DeterministicOCRRuntime()
+
+    assert runtime.prompt_token_count(request) == len(request.prompt_text.split()) + 16
+    assert image.byte_length_reads == 0
+    assert image.byte_length == 128
+    assert image.byte_length_reads == 1
+
+
 def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest.MonkeyPatch) -> None:
     class SplitTrackingText(str):
         split_calls = 0
