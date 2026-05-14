@@ -43,6 +43,13 @@ The registered probe now uses a `0.95` validation ratio so the PR-scoped report
 exercises the complement path. The registry command also uses `python3` for the
 scheduled Linux runner.
 
+## 2026-05-14 follow-up: split streaming branch specialization
+
+Keep the same registered high-ratio probe and specialize the final original-order
+streaming pass into separate high-ratio and low-ratio loops. This removes the
+per-sample `validation_indices is None` branch from the hot loop while preserving
+the same sorted digest selection and output ordering contracts.
+
 ## Success metrics
 
 - Focused pytest passes for the touched training dataset behavior and PR-scoped registry checks.
