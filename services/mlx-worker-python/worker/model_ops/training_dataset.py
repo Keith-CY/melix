@@ -1750,24 +1750,27 @@ def _deterministic_validation_split(
         )
         for index, sample in enumerate(samples)
     )
-    if train_count < validation_count:
-        train_indices = {index for _, index in heapq.nlargest(train_count, ranked_samples)}
-        validation_indices: set[int] | None = None
-    else:
-        validation_indices = {index for _, index in heapq.nsmallest(validation_count, ranked_samples)}
-        train_indices = set()
     train_samples: list[dict[str, Any]] = []
     validation_samples: list[dict[str, Any]] = []
-    for index, sample in enumerate(samples):
-        if validation_indices is None:
+    if train_count < validation_count:
+        train_indices = {index for _, index in heapq.nlargest(train_count, ranked_samples)}
+        train_append = train_samples.append
+        validation_append = validation_samples.append
+        for index, sample in enumerate(samples):
             if index in train_indices:
-                train_samples.append(sample)
+                train_append(sample)
             else:
-                validation_samples.append(sample)
-        elif index in validation_indices:
-            validation_samples.append(sample)
+                validation_append(sample)
+        return train_samples, validation_samples
+
+    validation_indices = {index for _, index in heapq.nsmallest(validation_count, ranked_samples)}
+    train_append = train_samples.append
+    validation_append = validation_samples.append
+    for index, sample in enumerate(samples):
+        if index in validation_indices:
+            validation_append(sample)
         else:
-            train_samples.append(sample)
+            train_append(sample)
     return train_samples, validation_samples
 
 
