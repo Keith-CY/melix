@@ -2808,18 +2808,22 @@ def _coerce_string_list(value: object) -> list[str]:
 
 
 def _parse_response_json(response_text: str) -> dict[str, object]:
-    stripped = response_text.strip()
-    if stripped.startswith("```"):
-        newline_index = stripped.find("\n")
+    response_start = 0
+    response_length = len(response_text)
+    while response_start < response_length and response_text[response_start].isspace():
+        response_start += 1
+
+    if response_text.startswith("```", response_start):
+        newline_index = response_text.find("\n", response_start)
         if newline_index >= 0:
-            parsed, end_index = _JSON_DECODER.raw_decode(stripped, newline_index + 1)
-            trailing = stripped[end_index:].strip()
+            parsed, end_index = _JSON_DECODER.raw_decode(response_text, newline_index + 1)
+            trailing = response_text[end_index:].strip()
             if trailing and trailing != "```":
-                raise json.JSONDecodeError("Extra data", stripped, end_index)
+                raise json.JSONDecodeError("Extra data", response_text, end_index)
             if not isinstance(parsed, dict):
                 raise ValueError("LLM response must be a JSON object")
             return parsed
-    parsed = json.loads(stripped)
+    parsed = json.loads(response_text)
     if not isinstance(parsed, dict):
         raise ValueError("LLM response must be a JSON object")
     return parsed
