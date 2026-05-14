@@ -107,21 +107,12 @@ struct DesktopPolishSmokeTests {
         #expect(viewModel.desktopBannerState?.title == "Download Recovery Available")
         #expect(viewModel.desktopSignalStates.contains(where: { $0.title == "Update available: 0.2.0" && $0.isDismissible }))
 
-        try await waitForDesktopPolishCondition("download queue should refresh before persistence") {
-            if viewModel.downloadQueue.isEmpty {
-                return false
-            }
-            viewModel.selectToolSection(.downloads)
-            return true
-        }
-        try await waitForDesktopPolishCondition("operator session should persist queue state") {
-            guard let restoredState = try? operatorSessionStore.load() else {
-                return false
-            }
-            viewModel.selectToolSection(.downloads)
-            return restoredState.downloadQueue.isEmpty == false
-                && restoredState.selectedToolSection == .downloads
-        }
+        viewModel.selectToolSection(.downloads)
+        await viewModel.refreshDownloadQueueState()
+        _ = try requireDesktopPolishPersistedQueue(
+            from: operatorSessionStore,
+            expectedSection: .downloads
+        )
 
         let persistedUIData = try Data(contentsOf: melixHome.operatorSessionFileURL)
         let persistedUIPayload = try #require(
@@ -309,21 +300,27 @@ private func hostedDesktopPolishViewHasSubviews<Content: View>(_ rootView: Conte
     return view.subviews.isEmpty == false
 }
 
-@MainActor
-private func waitForDesktopPolishCondition(
-    _ description: String,
-    timeout: Duration = .seconds(5),
-    pollInterval: Duration = .milliseconds(10),
-    condition: @MainActor @escaping () -> Bool
-) async throws {
-    let deadline = ContinuousClock.now + timeout
-    while ContinuousClock.now < deadline {
-        if condition() {
-            return
-        }
-        try await Task.sleep(for: pollInterval)
+private func requireDesktopPolishPersistedQueue(
+    from store: OperatorSessionStore,
+    expectedSection: DesktopToolSection
+) throws -> OperatorSessionState {
+    guard let restoredState = try store.load() else {
+        throw NSError(domain: "DesktopPolishSmokeTests", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: "operator session should exist after queue refresh",
+        ])
     }
-    throw NSError(domain: "DesktopPolishSmokeTests", code: 1, userInfo: [
-        NSLocalizedDescriptionKey: description,
-    ])
+
+    guard restoredState.downloadQueue.isEmpty == false,
+          restoredState.selectedToolSection == expectedSection
+    else {
+        throw NSError(domain: "DesktopPolishSmokeTests", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: """
+            operator session should persist queue state \
+            (queue_count=\(restoredState.downloadQueue.count), \
+            selected_tool_section=\(restoredState.selectedToolSection.rawValue))
+            """,
+        ])
+    }
+
+    return restoredState
 }
