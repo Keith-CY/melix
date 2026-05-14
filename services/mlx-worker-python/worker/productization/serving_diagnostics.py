@@ -17,13 +17,14 @@ SERVING_DIAGNOSTICS_REQUEST_SCHEMA_VERSION = "melix.serving_diagnostics.request_
 SERVING_DIAGNOSTICS_EVENT_SCHEMA_VERSION = "melix.serving_diagnostics.event.v1"
 SERVING_DIAGNOSTICS_COMPARISON_SCHEMA_VERSION = "melix.serving_diagnostics.comparison.v1"
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
+_SET_FROZEN_ATTR = object.__setattr__
 
 
 class ServingDiagnosticsComparisonError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ServingDiagnosticsQueueSnapshot:
     events: tuple[ServingDiagnosticsEvent, ...]
     dropped_count: int
@@ -137,7 +138,7 @@ class ServingDiagnosticsRequestSummary:
         }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ServingDiagnosticsEvent:
     request_id: str
     phase: str
@@ -145,6 +146,23 @@ class ServingDiagnosticsEvent:
     status: str
     duration_ms: float = 0.0
     attributes: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
+
+    def __init__(
+        self,
+        request_id: str,
+        phase: str,
+        event_index: int,
+        status: str,
+        duration_ms: float = 0.0,
+        attributes: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES,
+    ) -> None:
+        set_attr = _SET_FROZEN_ATTR
+        set_attr(self, "request_id", request_id)
+        set_attr(self, "phase", phase)
+        set_attr(self, "event_index", event_index)
+        set_attr(self, "status", status)
+        set_attr(self, "duration_ms", duration_ms)
+        set_attr(self, "attributes", attributes)
 
     def to_dict(self) -> dict[str, object]:
         attributes = self.attributes

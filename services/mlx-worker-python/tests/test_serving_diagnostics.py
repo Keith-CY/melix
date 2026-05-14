@@ -213,6 +213,23 @@ def test_serving_diagnostics_event_instances_use_slots_for_debug_queue() -> None
 
     assert hasattr(event, "__dict__") is False
     assert event.to_dict()["attributes"] == {"token": "***"}
+    with pytest.raises(AttributeError):
+        event.status = "mutated"  # type: ignore[misc]
+
+
+def test_serving_diagnostics_queue_snapshot_uses_slots_for_debug_queue() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-snapshot-slots",
+        phase="decode",
+        event_index=1,
+        status="completed",
+    )
+    queue = BoundedServingDiagnosticsEventQueue(max_events=1)
+    queue.append(event)
+    queue_snapshot = queue.snapshot()
+
+    assert hasattr(queue_snapshot, "__dict__") is False
+    assert queue_snapshot.events == (event,)
 
 
 def test_serving_diagnostics_default_event_attributes_reuse_empty_mapping() -> None:
