@@ -54,6 +54,12 @@ Required identity fields:
 - `command`
 - `artifact_root`
 
+Git identity resolution must prefer explicit `MELIX_GIT_COMMIT`,
+`MELIX_GIT_BRANCH`, and `MELIX_GIT_DIRTY` overrides when present. When probing a
+repository path directly, the probe must ignore Git local environment variables
+such as `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` inherited from hooks or
+wrapper processes so the identity describes the requested repository root.
+
 Required target and input fields:
 
 - `target_model_id`

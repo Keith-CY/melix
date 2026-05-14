@@ -310,8 +310,29 @@ N/A: documentation-only contract update; no executable runtime path changed.
 
 ## Current Status
 
-As of this contract, Melix has the initial registry, observation, and
-`agentic_tool_trace` data-foundation anchors. The unified tool runtime is not
-complete until the child issues above land with current local verification
-evidence. Issue #674 should therefore remain open while #675, #678, and #681
-remain open.
+As of PR #875, Melix has shipped the first executable issue #674 slice:
+
+- PR #857 added the worker-owned built-in registry contract and deterministic
+  `ToolConfig` receipts.
+- PR #860 added the shared observation contract with redaction, byte-limit,
+  timeout, failure, and replay metadata.
+- PR #875 added the deterministic local adapter runtime for all six built-in
+  tools and reused it across SFT `agentic_tool_trace` replay, benchmark request
+  rows, evaluation sample JSONL artifacts, report aggregation, and RL alignment
+  trace rows.
+
+The issue #674 closure evidence is therefore:
+
+| Requirement | Evidence |
+| --- | --- |
+| Canonical Melix plan or spec exists | This spec and `docs/plans/2026-05-12-unified-agentic-tool-runtime-execution.md` govern the shipped slice. |
+| Milestone 1 has executable scope, tests, metrics, and gaps | Issue #675 records the registry/observation file scope, focused tests, metrics, and known gaps; PRs #857 and #860 implemented the contracts. |
+| Milestone 2 has executable scope, tests, metrics, and gaps | Issue #678 records the deterministic adapter file scope, focused tests, metrics, and known gaps; PR #875 implemented fixture-backed adapters for `image_crop`, `layout_parse`, `text_search`, `image_search`, `visit`, and `local_compute`. |
+| Milestone 3 has executable scope, tests, metrics, and gaps | Issue #681 records evaluation, benchmark, report, and rollout routing scope; PR #875 persisted shared tool evidence and metrics in those paths. |
+| Behavior changes report local verification and changed-scope coverage | PR #875 reported focused pytest commands, compile checks, PR evidence validation, changed-scope coverage of 97 percent for the runtime slice, and 100 percent for the follow-up performance-probe fix. |
+| Benchmark and evaluation claims are artifact-backed | PR #875 persisted tool registry receipts, tool calls, observations, and `agentic_tool.*` metrics in benchmark and evaluation JSONL payloads and aggregated them in the benchmark/evaluation report path. |
+
+The remaining known gaps are intentionally outside the issue #674 deterministic
+local runtime closure: network-backed search or visit providers, unsafe
+arbitrary Python execution, importing upstream CUDA training infrastructure, and
+online GRPO optimization beyond the local evidence harness.

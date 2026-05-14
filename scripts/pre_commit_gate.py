@@ -28,6 +28,7 @@ from worker.productization.pr_scoped_performance import (  # noqa: E402
     run_probe_job,
     write_report_outputs,
 )
+from worker.productization.git_env import scrub_git_local_env  # noqa: E402
 
 
 MEMORY_THRESHOLD_BYTES = 128 * 1024**3
@@ -120,7 +121,7 @@ def unstaged_tracked_files(root: Path) -> list[str]:
 def run_shell_command(command: str, cwd: Path) -> CommandResult:
     print(f"[pre-commit] running: {command}", flush=True)
     started = time.perf_counter()
-    completed = subprocess.run(command, cwd=cwd, shell=True)
+    completed = subprocess.run(command, cwd=cwd, shell=True, env=scrub_git_local_env())
     elapsed = time.perf_counter() - started
     print(
         f"[pre-commit] completed rc={completed.returncode} elapsed={elapsed:.1f}s: {command}",

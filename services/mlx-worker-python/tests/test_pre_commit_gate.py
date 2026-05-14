@@ -6,6 +6,8 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HOOK_PATH = REPO_ROOT / ".githooks" / "pre-commit"
@@ -93,6 +95,28 @@ def test_gate_allows_untracked_files(monkeypatch, tmp_path: Path) -> None:
 
     assert pre_commit_gate.run_gate(tmp_path, env={}, command_runner=command_runner) == 0
     assert commands == ["make swift-test", "make py-test", "make integration-test"]
+
+
+def test_run_shell_command_scrubs_git_hook_environment(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GIT_DIR", "/tmp/melix-hook-git-dir")
+    monkeypatch.setenv("GIT_WORK_TREE", "/tmp/melix-hook-work-tree")
+    monkeypatch.setenv("GIT_INDEX_FILE", "/tmp/melix-hook-index")
+
+    command = (
+        f"{sys.executable} -c "
+        "'import os, sys; "
+        "sys.exit(any(os.environ.get(name) for name in "
+        "(\"GIT_DIR\", \"GIT_WORK_TREE\", \"GIT_INDEX_FILE\")))'"
+    )
+
+    result = pre_commit_gate.run_shell_command(command, tmp_path)
+
+    assert result.ok is True
+
+
+def test_scrub_git_local_env_requires_keyword_env() -> None:
+    with pytest.raises(TypeError):
+        pre_commit_gate.scrub_git_local_env({"GIT_DIR": "/tmp/melix-hook-git-dir"})  # type: ignore[misc]
 
 
 def test_gate_blocks_when_unstaged_tracked_files_are_present(monkeypatch, tmp_path: Path) -> None:
