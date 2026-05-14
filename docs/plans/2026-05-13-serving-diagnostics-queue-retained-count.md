@@ -3,9 +3,9 @@
 ## Scope
 
 This plan now tracks the next small serving diagnostics queue slice: keep the debug queue
-append path on local references while preserving bounded append/drop semantics. The change
-avoids repeated instance attribute reads for the deque and retained count during the per-event
-hot path, including the saturated drop path.
+append path on an explicit lock acquire/release block while preserving bounded append/drop
+semantics. The change avoids the per-event context-manager dispatch on the hottest append path
+while still releasing the lock through a `finally` guard.
 
 ## Linux-only constraint
 
