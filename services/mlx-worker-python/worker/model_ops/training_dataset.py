@@ -1739,23 +1739,32 @@ def _deterministic_validation_split(
             message="Automatic validation split requires at least two samples.",
         )
 
-    validation_count = int(round(len(samples) * validation_ratio))
-    validation_count = max(1, min(len(samples) - 1, validation_count))
-    ranked = heapq.nsmallest(
-        validation_count,
+    sample_count = len(samples)
+    validation_count = int(round(sample_count * validation_ratio))
+    validation_count = max(1, min(sample_count - 1, validation_count))
+    train_count = sample_count - validation_count
+    ranked_samples = (
         (
-            (
-                _canonical_sample_digest(sample),
-                index,
-            )
-            for index, sample in enumerate(samples)
-        ),
+            _canonical_sample_digest(sample),
+            index,
+        )
+        for index, sample in enumerate(samples)
     )
-    validation_indices = {index for _, index in ranked}
+    if train_count < validation_count:
+        train_indices = {index for _, index in heapq.nlargest(train_count, ranked_samples)}
+        validation_indices: set[int] | None = None
+    else:
+        validation_indices = {index for _, index in heapq.nsmallest(validation_count, ranked_samples)}
+        train_indices = set()
     train_samples: list[dict[str, Any]] = []
     validation_samples: list[dict[str, Any]] = []
     for index, sample in enumerate(samples):
-        if index in validation_indices:
+        if validation_indices is None:
+            if index in train_indices:
+                train_samples.append(sample)
+            else:
+                validation_samples.append(sample)
+        elif index in validation_indices:
             validation_samples.append(sample)
         else:
             train_samples.append(sample)

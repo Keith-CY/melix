@@ -1893,6 +1893,36 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
         sample for index, sample in enumerate(split_samples) if index in full_sort_indices
     ]
 
+    high_ratio_validation_indices = {
+        index
+        for _, index in sorted(
+            (
+                training_dataset_module._canonical_sample_digest(sample),
+                index,
+            )
+            for index, sample in enumerate(split_samples)
+        )[:36]
+    }
+    nlargest_calls = []
+    real_nlargest = training_dataset_module.heapq.nlargest
+
+    def counting_nlargest(count, iterable):
+        nlargest_calls.append(count)
+        return real_nlargest(count, iterable)
+
+    monkeypatch.setattr(training_dataset_module.heapq, "nlargest", counting_nlargest)
+    high_ratio_train_split, high_ratio_validation_split = training_dataset_module._deterministic_validation_split(
+        split_samples,
+        0.9,
+    )
+    assert nlargest_calls == [4]
+    assert high_ratio_train_split == [
+        sample for index, sample in enumerate(split_samples) if index not in high_ratio_validation_indices
+    ]
+    assert high_ratio_validation_split == [
+        sample for index, sample in enumerate(split_samples) if index in high_ratio_validation_indices
+    ]
+
     assert training_dataset_module._sample_token_counts({}, "chat_messages") == (0, 0)
     assert training_dataset_module._sample_token_counts(
         {"text": "hello world"},

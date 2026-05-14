@@ -30,6 +30,19 @@ The probe builds a deterministic synthetic prompt/completion dataset, calls `_de
 - `validation_count` stable structural metric
 - `checksum` stable structural metric
 
+## 2026-05-14 follow-up: high validation ratio complement selection
+
+For high automatic validation ratios, the validation set is most of the dataset and
+`heapq.nsmallest(validation_count, ...)` keeps a large heap. Select the smaller
+complement instead: when `train_count < validation_count`, choose the largest
+`train_count` digest/index pairs with `heapq.nlargest(...)`, then stream the
+original samples once to preserve the existing output order contract. Low-ratio
+splits keep the existing `nsmallest(...)` path.
+
+The registered probe now uses a `0.95` validation ratio so the PR-scoped report
+exercises the complement path. The registry command also uses `python3` for the
+scheduled Linux runner.
+
 ## Success metrics
 
 - Focused pytest passes for the touched training dataset behavior and PR-scoped registry checks.
