@@ -262,6 +262,7 @@ struct CoreUtilityTests {
         let store = MetricsStore(exportPath: exportURL.path)
 
         await store.set(12.5, forKey: "scheduler.queue_delay_ms")
+        await store.flushExport()
         let data = try Data(contentsOf: exportURL)
         let payload = try #require(
             JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -269,6 +270,41 @@ struct CoreUtilityTests {
         let values = try #require(payload["values"] as? [String: Double])
 
         #expect(values["scheduler.queue_delay_ms"] == 12.5)
+    }
+
+    @Test("metrics store throttles export writes and can flush latest values")
+    func metricsStoreThrottlesExportWritesAndCanFlushLatestValues() async throws {
+        let exportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = MetricsStore(exportPath: exportURL.path, exportMinimumInterval: 60)
+
+        await store.set(1, forKey: "http.stream_event_count")
+        let firstData = try Data(contentsOf: exportURL)
+        let firstPayload = try #require(
+            JSONSerialization.jsonObject(with: firstData) as? [String: Any]
+        )
+        let firstValues = try #require(firstPayload["values"] as? [String: Double])
+        #expect(firstValues["http.stream_event_count"] == 1)
+
+        await store.set(2, forKey: "http.stream_event_count")
+        let throttledData = try Data(contentsOf: exportURL)
+        let throttledPayload = try #require(
+            JSONSerialization.jsonObject(with: throttledData) as? [String: Any]
+        )
+        let throttledValues = try #require(throttledPayload["values"] as? [String: Double])
+        #expect(throttledValues["http.stream_event_count"] == 1)
+
+        let snapshot = await store.snapshot()
+        #expect(snapshot.values["http.stream_event_count"] == 2)
+
+        await store.flushExport()
+        let flushedData = try Data(contentsOf: exportURL)
+        let flushedPayload = try #require(
+            JSONSerialization.jsonObject(with: flushedData) as? [String: Any]
+        )
+        let flushedValues = try #require(flushedPayload["values"] as? [String: Double])
+        #expect(flushedValues["http.stream_event_count"] == 2)
     }
 
     @Test("admission gate serializes active requests and admits the next queued request")

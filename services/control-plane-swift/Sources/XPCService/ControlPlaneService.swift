@@ -378,7 +378,8 @@ public actor ControlPlaneService {
                 modelID: normalized.model,
                 modelCatalog: modelCatalog,
                 workerRegistry: workerRegistry,
-                metricsStore: metricsStore
+                metricsStore: metricsStore,
+                evictBeforeReadyHandle: true
             )
         } catch OnDemandModelLoadError.runtimeCacheMissing {
             throw ControlPlaneChatExecutionError.requestFailed(

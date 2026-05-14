@@ -2,11 +2,10 @@
 
 ## Scope
 
-This slice optimizes only the Python serving diagnostics debug event queue append path.
-`BoundedServingDiagnosticsEventQueue.append(...)` keeps the same bounded-queue semantics:
-append returns `False` once the fixed queue capacity has been reached, the oldest event is
-dropped by the underlying bounded deque, and snapshots still report retained events plus the
-accumulated dropped-event count.
+This plan now tracks the next small serving diagnostics queue slice: avoid per-event empty
+attribute dictionary allocation when debug queue events are created without attributes. The
+change keeps bounded-queue append/drop semantics unchanged and preserves `to_dict()` output for
+empty attributes.
 
 ## Linux-only constraint
 

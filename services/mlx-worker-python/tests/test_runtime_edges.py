@@ -193,6 +193,20 @@ def test_worker_registry_multimodal_request_kind_uses_expected_membership() -> N
         assert WorkerRegistry._is_multimodal_request_kind(runtime_kind) is False
 
 
+def test_worker_registry_capabilities_advertise_vlm_cooperative_text_step() -> None:
+    registry = build_registry()
+
+    capabilities = registry.capabilities()
+
+    assert any(
+        capability.name == "melix.vlm.text_only_step_cooperative"
+        and capability.metadata["supported"] == "true"
+        and capability.metadata["experimental"] == "true"
+        and capability.metadata["default_enabled"] == "false"
+        for capability in capabilities.ext
+    )
+
+
 def test_worker_registry_sparse_model_request_fast_path_preserves_semantics(tmp_path: Path) -> None:
     sparse = common_pb2.ModelSpec(model_id="melix-dev-text")
     empty = common_pb2.ModelSpec()
@@ -454,6 +468,33 @@ def test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes() ->
     assert applicable_loaded.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE
     assert applicable_stats.last_model_load_trust_policy_resolution_ms >= 0.0
 
+def test_worker_registry_closes_runtime_model_on_unload() -> None:
+    class ClosingRuntime:
+        runtime_name = "closing-runtime"
+
+        def __init__(self) -> None:
+            self.closed_models: list[dict[str, str]] = []
+
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id}
+
+        def estimate_resident_bytes(self, model_spec):
+            _ = model_spec
+            return 1024
+
+        def close_loaded_model(self, loaded_model) -> None:
+            self.closed_models.append(loaded_model)
+
+    runtime = ClosingRuntime()
+    registry = WorkerRegistry(runtime=runtime)  # type: ignore[arg-type]
+
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    assert registry.unload_model(loaded.handle) is True
+    assert runtime.closed_models == [loaded.runtime_model]
+    assert registry.unload_model(loaded.handle) is False
+
+
 
 def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = build_registry()
@@ -523,6 +564,27 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             temp_media_artifact_bytes=96,
             temp_media_cleanup_latency_ms=1.25,
             temp_media_cleanup_failure_count=1,
+            multimodal_decode_mode="text_only_batch_generator",
+            multimodal_fallback_reason="",
+            multimodal_decode_sync_mode="executor_batch_generator",
+            text_batch_generator_submitted_request_count=2,
+            text_batch_generator_completed_request_count=1,
+            text_batch_generator_step_count=16,
+            text_batch_generator_generated_token_count=31,
+            text_batch_generator_peak_active_batch_size=2,
+            text_batch_generator_queue_wait_ms_total=3.5,
+            text_batch_generator_insert_ms_total=4.5,
+            text_batch_generator_executor_step_ms_total=120.25,
+            text_batch_generator_next_ms_total=118.75,
+            text_batch_generator_emit_ms_total=5.25,
+            text_batch_generator_active_batch_size=1,
+            text_batch_generator_generated_response_count=31,
+            text_batch_generator_failed_request_count=1,
+            text_batch_generator_prepare_ms_total=6.5,
+            text_batch_generator_first_response_ms_total=11.5,
+            text_batch_generator_first_visible_ms_total=12.5,
+            text_batch_generator_first_visible_token_index_total=2,
+            text_batch_generator_first_empty_segment_count=1,
         ),
     )
     vision_stats = registry.runtime_stats()
@@ -539,6 +601,27 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert vision_stats.last_temp_media_artifact_bytes == 96
     assert vision_stats.last_temp_media_cleanup_latency_ms == 1.25
     assert vision_stats.last_temp_media_cleanup_failure_count == 1
+    assert vision_stats.last_multimodal_decode_mode == "text_only_batch_generator"
+    assert vision_stats.last_multimodal_fallback_reason == ""
+    assert vision_stats.last_multimodal_decode_sync_mode == "executor_batch_generator"
+    assert vision_stats.text_batch_generator_submitted_request_count == 2
+    assert vision_stats.text_batch_generator_completed_request_count == 1
+    assert vision_stats.text_batch_generator_step_count == 16
+    assert vision_stats.text_batch_generator_generated_token_count == 31
+    assert vision_stats.text_batch_generator_peak_active_batch_size == 2
+    assert vision_stats.text_batch_generator_queue_wait_ms_total == 3.5
+    assert vision_stats.text_batch_generator_insert_ms_total == 4.5
+    assert vision_stats.text_batch_generator_executor_step_ms_total == 120.25
+    assert vision_stats.text_batch_generator_next_ms_total == 118.75
+    assert vision_stats.text_batch_generator_emit_ms_total == 5.25
+    assert vision_stats.text_batch_generator_active_batch_size == 1
+    assert vision_stats.text_batch_generator_generated_response_count == 31
+    assert vision_stats.text_batch_generator_failed_request_count == 1
+    assert vision_stats.text_batch_generator_prepare_ms_total == 6.5
+    assert vision_stats.text_batch_generator_first_response_ms_total == 11.5
+    assert vision_stats.text_batch_generator_first_visible_ms_total == 12.5
+    assert vision_stats.text_batch_generator_first_visible_token_index_total == 2
+    assert vision_stats.text_batch_generator_first_empty_segment_count == 1
 
     registry.record_transcription_probe(
         SimpleNamespace(
@@ -552,6 +635,8 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     )
     transcription_stats = registry.runtime_stats()
     assert transcription_stats.last_probe_kind == "transcription"
+    assert transcription_stats.text_batch_generator_step_count == 0
+    assert transcription_stats.text_batch_generator_failed_request_count == 0
     assert transcription_stats.last_transcription_latency_ms == 9.0
     assert transcription_stats.last_audio_duration_seconds == 0.75
     assert transcription_stats.last_audio_chunk_count == 4

@@ -84,9 +84,7 @@ enum MelixControlPlaneBootstrap {
             socketPath: bootstrapEnvironment.swiftTextWorkerSocketPath
         )
         let pythonCompatibilityClient = PythonBridgeWorkerClient(
-            socketPath: bootstrapEnvironment.pythonWorkerSocketPath,
-            repoRoot: bootstrapEnvironment.repoRoot,
-            processEnvironment: ProcessInfo.processInfo.environment
+            socketPath: bootstrapEnvironment.pythonWorkerSocketPath
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: swiftTextWorkerClient,

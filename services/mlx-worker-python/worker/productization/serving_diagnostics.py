@@ -5,8 +5,10 @@ import math
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 
@@ -14,6 +16,7 @@ SERVING_DIAGNOSTICS_MANIFEST_SCHEMA_VERSION = "melix.serving_diagnostics.manifes
 SERVING_DIAGNOSTICS_REQUEST_SCHEMA_VERSION = "melix.serving_diagnostics.request_summary.v1"
 SERVING_DIAGNOSTICS_EVENT_SCHEMA_VERSION = "melix.serving_diagnostics.event.v1"
 SERVING_DIAGNOSTICS_COMPARISON_SCHEMA_VERSION = "melix.serving_diagnostics.comparison.v1"
+_EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 
 
 class ServingDiagnosticsComparisonError(ValueError):
@@ -135,7 +138,7 @@ class ServingDiagnosticsEvent:
     event_index: int
     status: str
     duration_ms: float = 0.0
-    attributes: dict[str, object] = field(default_factory=dict)
+    attributes: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -404,7 +407,7 @@ def _safe_artifact_id(value: str) -> str:
     return stripped
 
 
-def _stable_json_object(payload: dict[str, object]) -> dict[str, object]:
+def _stable_json_object(payload: Mapping[str, object]) -> dict[str, object]:
     return {
         str(key): _stable_json_value(value)
         for key, value in sorted(payload.items(), key=lambda item: str(item[0]))

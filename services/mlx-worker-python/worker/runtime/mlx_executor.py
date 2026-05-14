@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
+import sys
 from threading import Event, Lock, get_ident
 import time
 from typing import Any, Callable, Iterable, Iterator, TypeVar
@@ -112,6 +113,39 @@ class MLXRuntimeExecutor:
             # do not release the owner thread until producer teardown finishes.
             future.result()
 
+    def iterate_cooperatively(self, producer: Callable[[], Iterable[T]]) -> Iterator[T]:
+        """Yield items by running each producer step on the owner thread.
+
+        Unlike ``iterate()``, this does not hold the single-owner executor for
+        the full lifetime of a streaming generator. It is intended for MLX
+        token-step producers that can safely suspend at yield boundaries and
+        resume later on the same owner thread.
+        """
+        producer_iter: Iterator[T] | None = None
+
+        def next_item() -> T:
+            nonlocal producer_iter
+            if producer_iter is None:
+                producer_iter = iter(producer())
+            return next(producer_iter)
+
+        def close_iter() -> None:
+            if producer_iter is None:
+                return
+            close = getattr(producer_iter, "close", None)
+            if callable(close):
+                close()
+
+        try:
+            while True:
+                try:
+                    yield self.run(next_item)
+                except StopIteration:
+                    break
+        finally:
+            if producer_iter is not None:
+                self.run(close_iter)
+
     def synchronize(self) -> None:
         self.run(self._synchronize_on_owner)
 
@@ -190,9 +224,20 @@ class MLXRuntimeExecutor:
         except ModuleNotFoundError:
             return None, self._stream_context_factory, self._synchronize_fn
 
-        stream = mx.new_stream(mx.gpu)
-        mx.set_default_stream(stream)
+        new_thread_local_stream = getattr(mx, "new_thread_local_stream", None)
+        default_device = getattr(mx, "default_device", None)
+        if callable(new_thread_local_stream) and callable(default_device):
+            stream = new_thread_local_stream(default_device())
+        else:
+            stream = mx.new_stream(mx.gpu)
+            mx.set_default_stream(stream)
+        self._install_generation_stream(stream)
         return stream, mx.stream, mx.synchronize
+
+    def _install_generation_stream(self, stream: Any) -> None:
+        generate_module = sys.modules.get("mlx_lm.generate")
+        if generate_module is not None:
+            generate_module.generation_stream = stream
 
     def _stream_context(self):
         if self._stream is None or self._stream_context_factory is None:

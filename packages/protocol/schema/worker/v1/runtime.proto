@@ -114,8 +114,29 @@ message RuntimeStats {
   bool last_speech_streaming_enabled = 44;
   uint32 last_speech_streaming_interval_ms = 45;
   double last_speech_first_audio_latency_ms = 46;
-  double last_model_load_trust_policy_resolution_ms = 47;
-  uint64 model_load_trust_blocked_count = 48;
+  string last_multimodal_decode_mode = 47;
+  string last_multimodal_fallback_reason = 48;
+  string last_multimodal_decode_sync_mode = 49;
+  uint64 text_batch_generator_submitted_request_count = 50;
+  uint64 text_batch_generator_completed_request_count = 51;
+  uint64 text_batch_generator_step_count = 52;
+  uint64 text_batch_generator_generated_token_count = 53;
+  uint64 text_batch_generator_peak_active_batch_size = 54;
+  double text_batch_generator_queue_wait_ms_total = 55;
+  double text_batch_generator_insert_ms_total = 56;
+  double text_batch_generator_executor_step_ms_total = 57;
+  double text_batch_generator_next_ms_total = 58;
+  double text_batch_generator_emit_ms_total = 59;
+  uint64 text_batch_generator_active_batch_size = 60;
+  uint64 text_batch_generator_generated_response_count = 61;
+  uint64 text_batch_generator_failed_request_count = 62;
+  double text_batch_generator_prepare_ms_total = 63;
+  double text_batch_generator_first_response_ms_total = 64;
+  double text_batch_generator_first_visible_ms_total = 65;
+  uint64 text_batch_generator_first_visible_token_index_total = 66;
+  uint64 text_batch_generator_first_empty_segment_count = 67;
+  double last_model_load_trust_policy_resolution_ms = 68;
+  uint64 model_load_trust_blocked_count = 69;
 }
 
 message GetRuntimeStatsRequest {}
