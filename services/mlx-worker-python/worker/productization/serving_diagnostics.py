@@ -17,6 +17,8 @@ SERVING_DIAGNOSTICS_REQUEST_SCHEMA_VERSION = "melix.serving_diagnostics.request_
 SERVING_DIAGNOSTICS_EVENT_SCHEMA_VERSION = "melix.serving_diagnostics.event.v1"
 SERVING_DIAGNOSTICS_COMPARISON_SCHEMA_VERSION = "melix.serving_diagnostics.comparison.v1"
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
+_JSON_COMPACT_SEPARATORS = (",", ":")
+_JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
 _SET_FROZEN_ATTR = object.__setattr__
 
 
@@ -473,5 +475,7 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 def _write_jsonl(path: Path, rows: Any) -> None:
     with path.open("w", encoding="utf-8") as handle:
+        encode = _JSONL_ENCODER.encode
+        write = handle.write
         for row in rows:
-            handle.write(json.dumps(row, sort_keys=True) + "\n")
+            write(encode(row) + "\n")
