@@ -39,7 +39,7 @@ This starts the default real backend path. Deterministic execution remains avail
 3. Confirm that the control plane exposes the expected local models.
 
 ```bash
-curl -sS http://127.0.0.1:11434/v1/models
+curl -sS http://127.0.0.1:12436/v1/models
 ```
 
 4. Run the reproducible Phase 6 metrics command.

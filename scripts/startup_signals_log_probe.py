@@ -25,8 +25,8 @@ def _write_logs(root: Path) -> dict[str, str | int]:
     control_plane_stderr.write_text(noise + "fatal error: control plane crashed\n", encoding="utf-8")
     worker_stderr.write_text(noise + "Traceback: worker bootstrap failed\n", encoding="utf-8")
     return {
-        "http_port": 11434,
-        "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+        "http_port": 12436,
+        "ready_probe_url": "http://127.0.0.1:12436/v1/models",
         "control_plane_stderr_path": str(control_plane_stderr),
         "python_worker_stderr_path": str(worker_stderr),
     }

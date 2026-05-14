@@ -52,7 +52,7 @@ def build_homebrew_service_specs(
     repo_root: str | Path,
     bin_dir: str | Path,
     home_dir: str | Path | None = None,
-    http_port: int = 11434,
+    http_port: int = 12436,
     service_instance_name: str = DEFAULT_HOMEBREW_SERVICE_INSTANCE_NAME,
     swift_backend_mode: str = "swift",
     python_backend_mode: str = "auto",

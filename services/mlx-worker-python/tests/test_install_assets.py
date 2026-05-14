@@ -98,7 +98,7 @@ def test_build_launch_agent_specs_capture_expected_commands_and_environment(tmp_
     control_spec = specs["io.melix.control-plane"]
     assert control_spec.environment["MELIX_REPO_ROOT"] == str(repo_root)
     assert control_spec.environment["MELIX_HOME"] == str(layout.melix_home_dir)
-    assert control_spec.environment["MELIX_HTTP_PORT"] == "11434"
+    assert control_spec.environment["MELIX_HTTP_PORT"] == "12436"
     assert control_spec.environment["MELIX_MANAGED_MODEL_ROOT"] == str(layout.managed_models_dir)
     assert control_spec.environment["MELIX_AUDIO_RUNTIME_PACK_ROOT"] == str(layout.audio_runtime_packs_dir)
     assert control_spec.environment["MELIX_GATEWAY_CONFIG_STORE_PATH"] == str(

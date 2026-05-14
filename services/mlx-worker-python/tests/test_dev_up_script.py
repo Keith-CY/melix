@@ -83,7 +83,7 @@ def make_layout(dev_up, tmp_path: Path):
         gateway_config_store_path=tmp_path / "home/config/gateway-config.json",
         gateway_serving_defaults_store_path=tmp_path / "home/config/gateway-serving-defaults.json",
         image_defaults_store_path=tmp_path / "home/config/image-defaults.json",
-        http_port="11434",
+        http_port="12436",
         python_backend_mode="deterministic",
         swift_text_worker_backend_mode="swift",
         python_bridge_executable=None,
@@ -1169,7 +1169,7 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     assert "Swift launch mode: prefer-built" in output
     assert any(kind == "spawn" for kind, _ in calls)
     assert any(kind == "wait" for kind, _ in calls)
-    assert ("http", "11434") in calls
+    assert ("http", "12436") in calls
     wait_calls = [payload for kind, payload in calls if kind == "wait"]
     assert len(wait_calls) == 2
     assert all(payload["python_executable"] == bridge_python for payload in wait_calls)
