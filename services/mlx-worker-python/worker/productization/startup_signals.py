@@ -8,20 +8,20 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 
-PORT_CONFLICT_PATTERNS = [
+PORT_CONFLICT_PATTERNS = (
     "address already in use",
     "eaddrinuse",
     "bind() failed",
     "port is already in use",
-]
-CRASH_PATTERNS = [
+)
+CRASH_PATTERNS = (
     "fatal error",
     "traceback",
     "uncaught",
     "assertion failed",
     "terminated",
     "abort trap",
-]
+)
 _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
 
 
@@ -216,7 +216,7 @@ def classify_startup_failure(
     error_lower = error_text.lower()
     primary_log_path = str(manifest.get("control_plane_stderr_path", ""))
 
-    if any(pattern in error_lower for pattern in PORT_CONFLICT_PATTERNS):
+    if _contains_any(error_lower, PORT_CONFLICT_PATTERNS):
         summary = f"Configured HTTP port {http_port} is already in use."
         detail = (
             f"The control plane could not bind to {ready_probe_url}. "
@@ -224,7 +224,7 @@ def classify_startup_failure(
         )
         excerpt = error_text
         classification = "host_port_conflict"
-    elif any(pattern in error_lower for pattern in CRASH_PATTERNS):
+    elif _contains_any(error_lower, CRASH_PATTERNS):
         summary = "Control plane crashed before startup completed."
         detail = f"Melix never reached {ready_probe_url}. Inspect the control-plane logs for the crash cause."
         excerpt = error_text
@@ -234,9 +234,9 @@ def classify_startup_failure(
             manifest.get("control_plane_stderr_path"),
             manifest.get("control_plane_stdout_path"),
         )
-        combined_control_plane = f"{error_lower}\n{control_plane_excerpt.lower()}"
+        control_plane_lower = control_plane_excerpt.lower()
 
-        if any(pattern in combined_control_plane for pattern in PORT_CONFLICT_PATTERNS):
+        if _contains_any(control_plane_lower, PORT_CONFLICT_PATTERNS):
             summary = f"Configured HTTP port {http_port} is already in use."
             detail = (
                 f"The control plane could not bind to {ready_probe_url}. "
@@ -244,7 +244,7 @@ def classify_startup_failure(
             )
             excerpt = control_plane_excerpt
             classification = "host_port_conflict"
-        elif control_plane_excerpt and any(pattern in combined_control_plane for pattern in CRASH_PATTERNS):
+        elif control_plane_excerpt and _contains_any(control_plane_lower, CRASH_PATTERNS):
             summary = "Control plane crashed before startup completed."
             detail = f"Melix never reached {ready_probe_url}. Inspect the control-plane logs for the crash cause."
             excerpt = control_plane_excerpt
@@ -257,7 +257,7 @@ def classify_startup_failure(
                 manifest.get("swift_text_worker_stdout_path"),
             )
             combined_worker = worker_excerpt_value.lower()
-            if worker_excerpt_value and any(pattern in combined_worker for pattern in CRASH_PATTERNS):
+            if worker_excerpt_value and _contains_any(combined_worker, CRASH_PATTERNS):
                 primary_log_path = str(
                     manifest.get("python_worker_stderr_path")
                     or manifest.get("swift_text_worker_stderr_path")
@@ -282,6 +282,13 @@ def classify_startup_failure(
         primary_log_path=primary_log_path,
         log_excerpt=excerpt,
     )
+
+
+def _contains_any(value: str, patterns: tuple[str, ...]) -> bool:
+    for pattern in patterns:
+        if pattern in value:
+            return True
+    return False
 
 
 def _log_excerpt(*paths: object) -> str:
