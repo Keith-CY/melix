@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections import defaultdict
 from functools import lru_cache
 from statistics import NormalDist
 
@@ -82,7 +83,7 @@ def build_category_breakdown(
     *,
     rows: tuple[dict[str, object], ...],
 ) -> dict[str, dict[str, object]]:
-    category_totals: dict[str, list[int]] = {}
+    category_totals: defaultdict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
     for row in rows:
         try:
             raw_category_label = row["category_label"]
@@ -91,15 +92,10 @@ def build_category_breakdown(
         category_label = str(raw_category_label).strip()
         if not category_label:
             continue
-        base_correct = 1 if row.get("base_correct", False) else 0
-        target_correct = 1 if row.get("target_correct", False) else 0
-        totals = category_totals.get(category_label)
-        if totals is None:
-            category_totals[category_label] = [1, base_correct, target_correct]
-            continue
+        totals = category_totals[category_label]
         totals[0] += 1
-        totals[1] += base_correct
-        totals[2] += target_correct
+        totals[1] += 1 if row.get("base_correct", False) else 0
+        totals[2] += 1 if row.get("target_correct", False) else 0
 
     breakdown: dict[str, dict[str, object]] = {}
     for category_label, totals in sorted(category_totals.items()):
