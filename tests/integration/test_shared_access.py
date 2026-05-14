@@ -43,8 +43,10 @@ def test_shared_access_accepts_known_api_keys_and_rejects_unknown_keys() -> None
         accepted_status, accepted_payload = _request_json(stack.models_url(), headers={"x-api-key": "sk-codex"})
         metrics = _wait_for_metrics(
             stack.control_plane_metrics_path,
-            "shared_access.rejected_request_count",
-            minimum=2,
+            {
+                "shared_access.accepted_client_count": 1,
+                "shared_access.rejected_request_count": 2,
+            },
         )
         values = metrics["values"]
 
@@ -97,8 +99,7 @@ def test_shared_access_disabled_rejects_api_keys_but_keeps_local_trust() -> None
         local_status, local_payload = _request_json(stack.models_url())
         metrics = _wait_for_metrics(
             stack.control_plane_metrics_path,
-            "shared_access.rejected_request_count",
-            minimum=1,
+            {"shared_access.rejected_request_count": 1},
         )
         values = metrics["values"]
 
@@ -214,9 +215,8 @@ def _request_json(url: str, headers: dict[str, str] | None = None) -> tuple[int,
 
 def _wait_for_metrics(
     metrics_path: Path,
-    key: str,
+    expected: dict[str, float],
     *,
-    minimum: float,
     timeout_seconds: float = 10.0,
 ) -> dict[str, object]:
     deadline = time.time() + timeout_seconds
@@ -224,7 +224,10 @@ def _wait_for_metrics(
         if metrics_path.exists():
             payload = read_metrics_export(metrics_path)
             values = payload.get("values", {})
-            if isinstance(values, dict) and float(values.get(key, 0)) >= minimum:
+            if isinstance(values, dict) and all(
+                float(values.get(key, 0)) >= minimum for key, minimum in expected.items()
+            ):
                 return payload
         time.sleep(0.1)
-    raise AssertionError(f"timed out waiting for metric {key}")
+    expected_summary = ", ".join(f"{key}>={minimum:g}" for key, minimum in expected.items())
+    raise AssertionError(f"timed out waiting for metrics: {expected_summary}")

@@ -57,6 +57,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
     private let metricsPath: String
     private let now: @Sendable () -> Double
     private let sleep: @Sendable (TimeInterval) async throws -> Void
+    private let flushMetrics: @Sendable () async -> Void
 
     public init(
         client: any ControlPlaneXPCClient,
@@ -65,12 +66,14 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         sleep: @escaping @Sendable (TimeInterval) async throws -> Void = { seconds in
             let nanoseconds = UInt64(max(seconds, 0) * 1_000_000_000)
             try await Task.sleep(nanoseconds: nanoseconds)
-        }
+        },
+        flushMetrics: @escaping @Sendable () async -> Void = {}
     ) {
         self.client = client
         self.metricsPath = metricsPath
         self.now = now
         self.sleep = sleep
+        self.flushMetrics = flushMetrics
     }
 
     public func run(
@@ -151,6 +154,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         )
         let restartAssistant = try await collectAssistantText(from: restartExecution)
 
+        await flushMetrics()
         var metrics = readExportedMetrics()
         metrics["lifecycle.pause_ack_ms"] = pauseAckMS
         metrics["lifecycle.idle_to_light_sleep_ms"] = idleToSleepMS
