@@ -106,6 +106,38 @@ def _bundle(*, ttft_ms: float, tokens_per_second: float, accuracy: float) -> dic
     }
 
 
+def test_load_report_input_accepts_batch_run_summary_bundle(tmp_path: Path) -> None:
+    summary = {
+        "schema_version": "melix.batch.run_summary.v1",
+        "run_id": "batch-1",
+        "status": "succeeded",
+        "models": [
+            {
+                "model_index": "01",
+                "repo_id": "mlx-community/Smoke-4bit",
+                "status": "succeeded",
+                "benchmark_job_id": "bench-1",
+                "evaluation_job_id": "eval-1",
+                "duration_seconds": 2.5,
+                "metric_fields": {
+                    "bench.smoke.tokens_per_second": 12.5,
+                    "eval.event_extraction.semantic_f1": 0.9,
+                },
+            }
+        ],
+    }
+    (tmp_path / "run-summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+    bundle = load_report_input(tmp_path)
+
+    assert bundle["export_schema_version"] == "melix.batch.summary_bundle.v1"
+    assert bundle["batch_run_summary"] == summary
+    report = build_benchmark_evaluation_report(baseline=bundle, candidate=bundle)
+    metrics = {row["metric"]: row for row in report["metrics"]}
+    assert metrics["bench.smoke.tokens_per_second"]["status"] == "ok"
+    assert metrics["eval.event_extraction.semantic_f1"]["status"] == "ok"
+
+
 def _run_evidence(
     *,
     run_id: str,
@@ -774,6 +806,78 @@ def test_evaluation_sample_collector_finalizes_mean_metrics_directly(
     assert metrics == {"eval.sample.smoke.sample_render_ms_mean": 4.0}
 
 
+def test_evaluation_sample_collector_aggregates_agentic_tool_metrics() -> None:
+    metrics: dict[str, object] = {}
+
+    _collect_evaluation_sample_probe_metrics(
+        metrics,
+        [
+            {
+                "suite_id": "agentic",
+                "agentic_tool_metrics": {
+                    "agentic_tool.call_count": 2.0,
+                    "agentic_tool.completed_count": 2.0,
+                    "agentic_tool.observation_emitted_bytes": 40.0,
+                },
+            },
+            {
+                "suite_id": "agentic",
+                "agentic_tool_metrics": {
+                    "agentic_tool.call_count": 4.0,
+                    "agentic_tool.completed_count": 3.0,
+                    "agentic_tool.failed_count": 1.0,
+                    "agentic_tool.observation_emitted_bytes": 80.0,
+                },
+            },
+        ],
+    )
+
+    assert metrics["eval.sample.agentic.agentic_tool.call_count_mean"] == 3.0
+    assert metrics["eval.sample.agentic.agentic_tool.completed_count_mean"] == 2.5
+    assert metrics["eval.sample.agentic.agentic_tool.failed_count_mean"] == 1.0
+    assert metrics["eval.sample.agentic.agentic_tool.observation_emitted_bytes_mean"] == 60.0
+
+
+def test_benchmark_probe_collector_aggregates_agentic_tool_metrics() -> None:
+    metrics: dict[str, object] = {}
+
+    _collect_benchmark_probe_metrics(
+        metrics,
+        [
+            {
+                "suite_id": "agentic",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "agentic_tool_metrics": {
+                    "agentic_tool.call_count": 1.0,
+                    "agentic_tool.completed_count": 1.0,
+                    "agentic_tool.observation_emitted_bytes": 20.0,
+                },
+            },
+            {
+                "suite_id": "agentic",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "agentic_tool_metrics": {
+                    "agentic_tool.call_count": 3.0,
+                    "agentic_tool.completed_count": 2.0,
+                    "agentic_tool.failed_count": 1.0,
+                    "agentic_tool.observation_emitted_bytes": 40.0,
+                },
+            },
+        ],
+        prefix="bench.context",
+    )
+
+    label = "agentic.ctx64.gen16.b1"
+    assert metrics[f"bench.context.{label}.agentic_tool.call_count_mean"] == 2.0
+    assert metrics[f"bench.context.{label}.agentic_tool.completed_count_mean"] == 1.5
+    assert metrics[f"bench.context.{label}.agentic_tool.failed_count_mean"] == 1.0
+    assert metrics[f"bench.context.{label}.agentic_tool.observation_emitted_bytes_mean"] == 30.0
+
+
 def test_probe_collectors_use_expected_sparse_row_scan_strategy() -> None:
     class NoContainsDict(dict[str, object]):
         def __contains__(self, key: object) -> bool:
@@ -1268,6 +1372,9 @@ def test_report_builder_adds_contract_sections_from_run_evidence() -> None:
     assert report["comparison"]["comparison_validity"] == "valid"
     assert report["gate_result"]["overall_result"] == "fail"
     assert report["gate_result"]["required_telemetry_present"] is True
+    assert report["gate_result"]["evidence_validity_metrics"]["required_evidence_present"] == 1.0
+    assert report["gate_result"]["evidence_validity_metrics"]["required_probe_phases_present"] == 1.0
+    assert report["gate_result"]["evidence_validity_metrics"]["required_telemetry_present"] == 1.0
     assert any(
         row["metric"] == "probe.serving_benchmark.runtime.decode.duration_ms_mean"
         and row["result"] == "fail"
@@ -1359,6 +1466,34 @@ def test_report_verifier_rejects_missing_required_sections() -> None:
     assert "probe_summary.baseline.probe_count must be positive" in errors
     assert "telemetry_summary.candidate must be a non-empty list" in errors
     assert "gate_result.overall_result must be pass, fail, or informational" in errors
+
+
+def test_report_gate_fails_missing_evidence_instead_of_downgrading_to_informational() -> None:
+    report = build_benchmark_evaluation_report(baseline={}, candidate={})
+
+    assert report["gate_result"]["overall_result"] == "fail"
+    assert report["gate_result"]["required_evidence_present"] is False
+    assert report["gate_result"]["required_probe_phases_present"] is False
+    assert report["gate_result"]["required_telemetry_present"] is False
+    assert {
+        failure["metric"] for failure in report["gate_result"]["blocking_failures"]
+    } == {
+        "evidence.source_evidence_ids",
+        "evidence.probe_timeline",
+        "evidence.telemetry_summary",
+    }
+    assert report["gate_result"]["evidence_validity_metrics"] == {
+        "source_evidence_count": 0,
+        "required_evidence_present": 0.0,
+        "required_probe_phases_present": 0.0,
+        "required_telemetry_present": 0.0,
+        "known_gap_count": 5.0,
+        "blocking_failure_count": 3.0,
+    }
+    errors = validate_report_payload(report)
+    assert "source_evidence_ids must be a non-empty list" in errors
+    assert "probe_summary.baseline.probe_count must be positive" in errors
+    assert "telemetry_summary.baseline must be a non-empty list" in errors
 
 
 def test_report_verifier_reports_field_level_shape_errors() -> None:

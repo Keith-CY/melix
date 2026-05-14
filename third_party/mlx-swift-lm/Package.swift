@@ -29,7 +29,7 @@ let package = Package(
         .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.31.3")),
         .package(
             url: "https://github.com/huggingface/swift-transformers",
-            .upToNextMinor(from: "1.2.0")
+            .upToNextMinor(from: "1.3.2")
         ),
     ],
     targets: [

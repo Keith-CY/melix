@@ -1,15 +1,15 @@
-# Bench Eval Batch Run Foundation
+# Bench Eval Batch Run Productization
 
 ## Goal
 
-Add the first durable foundation for operator benchmark plus evaluation batch
-runs: a documented `melix batch run --dry-run` command that normalizes model
-lists, resolves effective run configuration, writes initial planning artifacts,
-and prints a compact operator summary without starting any runtime work.
+Productize operator benchmark plus evaluation batch runs: support dry-run
+planning, non-dry-run per-model execution, durable manifests, status
+inspection, resume/missing-only workflows, failure attribution, and
+operator-visible summary bundles.
 
 ## Governing Issues
 
-This slice advances the first recommended execution group:
+This slice advances the full `[Bench/Eval]` issue tree rooted at #745:
 
 - #746 Define the canonical batch run contract and artifact shape
 - #770 Define manifest schema and status lifecycle
@@ -19,9 +19,11 @@ This slice advances the first recommended execution group:
 - #775 Define resume and subset selection contract
 - #768 Add terminal progress summary format
 - #850 Document the batch-run operator quickstart
-
-Follow-up execution, resume, health, reporting, and UX work remains tracked in
-the existing sub-issues under #745, #769, #793, #817, and #837.
+- #755-#768 Execute per-model benchmark/evaluation/export pipelines
+- #769-#792 Persist manifests, status, recovery, and resume
+- #793-#816 Gate runtime health, classify failures, and record isolation policy
+- #817-#836 Produce report/evidence bundles and load mixed-status fixtures
+- #837-#852 Improve terminal progress, actionable failures, and config visibility
 
 ## Scope
 
@@ -29,7 +31,7 @@ the existing sub-issues under #745, #769, #793, #817, and #837.
   planning semantics.
 - Add a written plan for the foundation slice.
 - Add a new `melix batch run` CLI command surface.
-- Support `--dry-run` as the only executable mode in this slice.
+- Support `--dry-run` planning and non-dry-run execution.
 - Parse text model lists while preserving duplicate entries.
 - Support explicit `index|repo_id` model entries and auto-indexed repo-only
   entries.
@@ -38,25 +40,25 @@ the existing sub-issues under #745, #769, #793, #817, and #837.
 - Support subset planning through `--start-index` and `--max-models`, where
   `--start-index` is a 1-based model-list position independent of display
   model indexes.
-- Write `effective-config.json` and `manifest.jsonl` to both temporary and
-  operator output roots.
-- Print a compact terminal plan summary.
-- Cover parser and runner behavior with targeted Swift tests.
+- Write `effective-config.json`, `manifest.jsonl`, `RUN_SUMMARY.md`,
+  `run-summary.json`, `run-summary.csv`, and `index.html` to operator-visible
+  roots.
+- Print compact terminal progress for dry-run, execution, status, and resume.
+- Add `melix batch status` and `melix batch resume`.
+- Cover parser, runner, manifest, report, status, partial failure, and resume
+  behavior with targeted Swift tests.
 
 ## Non-Goals
 
-- Running Hugging Face reachability checks.
-- Starting or restarting Melix runtime stacks.
-- Dispatching benchmark or evaluation jobs.
-- Resuming partial runs from prior manifests.
-- Producing final CSV, Markdown, or evidence bundles.
-- Adding Window UI surfaces.
+- Adding a Window UI surface.
+- Replacing canonical `bench` or `eval` semantics.
+- Embedding raw judge/provider secrets in batch configs or artifacts.
 
 ## Architecture
 
-The CLI owns the planning surface for this foundation slice. It does not create
-new benchmark or evaluation semantics; it records how existing `bench` and
-`eval` work will be orchestrated in later slices.
+The CLI owns the batch orchestration surface. It does not create new benchmark
+or evaluation semantics; it dispatches existing `bench` and `eval` commands and
+records their outputs in a batch manifest.
 
 `BatchRunPlanner` builds an immutable `BatchRunPlan` by resolving:
 
@@ -75,6 +77,30 @@ new benchmark or evaluation semantics; it records how existing `bench` and
 - `effective-config.json`
 - `manifest.jsonl`
 
+`BatchRunExecutor` owns non-dry-run execution. It stages one output and
+temporary directory per model, dispatches the existing CLI product commands via
+the configured `melix_cli`, writes command receipts under each model directory,
+updates `manifest.jsonl` incrementally, exports CSV/JSONL artifacts as soon as
+job ids are known, and copies raw artifact paths into the model bundle when the
+child command reports them.
+
+`BatchRunManifestStore` is the crash-safe source of truth for status and resume.
+It loads and rewrites JSONL rows without relying on summary prose. Manifest
+updates align rows by the stable model identity tuple `model_index`, `repo_id`,
+and `source_line` so duplicate operator-requested rows remain independent.
+
+`BatchRunReporter` writes operator-visible summary artifacts:
+
+- `RUN_SUMMARY.md`
+- `run-summary.json`
+- `run-summary.csv`
+- `index.html`
+
+`BatchRunResumePlanner` rebuilds a model list from the manifest when necessary
+and preserves run id, artifact roots, judge, benchmark, and evaluation settings
+from `effective-config.json`. The recovered model list preserves original
+source-line positions so resume identity aligns with existing manifest rows.
+
 The temporary run directory remains the working source for future execution.
 The operator output directory receives a copy immediately so an interrupted run
 still leaves inspectable evidence outside transient worker state.
@@ -82,37 +108,64 @@ still leaves inspectable evidence outside transient worker state.
 ## Metrics And Success Targets
 
 - Model-list parsing preserves duplicates and records source line numbers.
+- Per-model artifact slugs include source line numbers to prevent collisions
+  for duplicate explicit indexes and repo ids.
 - Dry-run planning writes one manifest row per selected model.
 - `effective-config.json` records selected and total model counts.
 - Subset selection is deterministic for `--start-index` and `--max-models`.
 - Dry-run command completion does not require a running Melix development
   stack, network access, or local model downloads.
-- Non-dry-run execution returns a clear unsupported-mode error until the
-  execution sub-issues land.
+- Non-dry-run execution updates manifest status after every stage.
+- Each dispatched command records stdout, stderr, exit code, duration, and a
+  JSON receipt; exit code is the success contract, while exit-zero stderr is
+  retained as warning evidence.
+- Summary artifacts are present in `output_root` after completion or resume.
+- Status inspection reads `manifest.jsonl` directly.
+- Resume eval-only reruns missing evaluation/export work without rerunning
+  benchmark stages.
+- Resume-generated model lists preserve source-line identity for rows preceded
+  by comments or blank lines.
+- Failure classification persists both model-level and step-level category and
+  recoverability.
+
+Performance probes and success metrics:
+
+- Manifest write overhead target: one atomic JSONL rewrite per stage, bounded by
+  selected model count and acceptable for operator-scale sweeps.
+- Command receipt overhead target: one stdout file, one stderr file, and one
+  JSON receipt including exit code per dispatched child command.
+- Progress latency target: terminal progress lines are produced at every
+  model/stage boundary instead of only after the full sweep.
+- Recovery target: `melix batch status` and `melix batch resume --dry-run` work
+  from only `--temp-root` or only `--output-root` when the manifest exists.
 
 ## Verification
 
-- Swift parser test for `melix batch run --dry-run` option decoding.
-- Swift runner test for dry-run artifact generation and subset selection.
+- Swift parser tests for `melix batch run`, `melix batch status`, and
+  `melix batch resume` option decoding.
+- Swift runner tests for dry-run artifact generation and subset selection.
+- Swift runner tests for non-dry-run benchmark/evaluation/export dispatch,
+  manifest updates, summary artifacts, status rendering, partial failure
+  attribution, and eval-only resume.
+- Swift runner tests for duplicate explicit model rows and exit-zero stderr
+  warning handling.
 - `git diff --check`.
-- Targeted Swift test invocation for the touched CLI tests.
+- `xcrun swift build --product melix`.
+- Targeted Swift test invocation for the touched CLI tests when the local Swift
+  toolchain provides the `Testing` module.
 
 ## Rollout
 
-This command is safe to expose behind the required `--dry-run` flag because it
-only performs local validation and artifact writes. Operator runbooks can begin
-using it to inspect batch plans before the execution, resume, and reporting
-slices are implemented.
+The dry-run path remains safe for local plan inspection because it only performs
+local validation and artifact writes. The non-dry-run path should be launched
+with isolated `MELIX_HOME`, runtime dir, service instance, and HTTP port as
+documented in `AGENTS.md`.
 
 ## Known Follow-Ups
 
-- Implement per-model hub preflight and staging directories beyond planned
-  manifest paths.
-- Dispatch `bench run` and `eval run` per model.
-- Persist in-progress and terminal manifest status updates.
-- Resume missing benchmark or evaluation work from existing manifests.
-- Produce final terminal, Markdown, CSV, JSONL, and downloadable evidence
-  bundles.
+- Add a Window UI surface if the product later needs one.
+- Add richer HTML charts once stable benchmark/evaluation metric families are
+  finalized.
 
 ## Issue 752 Config Schema Slice
 

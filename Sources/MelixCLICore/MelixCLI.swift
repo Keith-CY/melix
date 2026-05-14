@@ -1,7 +1,66 @@
 import CryptoKit
+import Darwin
 import Foundation
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
+
+public struct SettingsShowOptions: Equatable, Sendable {
+    public let json: Bool
+    public let overrides: [String: String]
+
+    public init(json: Bool = false, overrides: [String: String] = [:]) {
+        self.json = json
+        self.overrides = overrides
+    }
+}
+
+public struct SettingsSetOptions: Equatable, Sendable {
+    public let key: String
+    public let value: String
+    public let json: Bool
+
+    public init(key: String, value: String, json: Bool = false) {
+        self.key = key
+        self.value = value
+        self.json = json
+    }
+}
+
+public struct SettingsValidateOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct SettingsResetOptions: Equatable, Sendable {
+    public let key: String
+    public let json: Bool
+
+    public init(key: String, json: Bool = false) {
+        self.key = key
+        self.json = json
+    }
+}
+
+public struct DiscoveryJSONOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct CapabilitiesOptions: Equatable, Sendable {
+    public let json: Bool
+    public let modelQuery: String
+
+    public init(json: Bool = false, modelQuery: String = "") {
+        self.json = json
+        self.modelQuery = modelQuery
+    }
+}
 
 enum MelixQuantizationAllowedValues {
     static let quantizationModes = ["ptq", "qat"]
@@ -32,6 +91,8 @@ public struct LoraTrainOptions: Equatable, Sendable {
     public let targetRepo: String
     public let trainingMode: String
     public let parameters: [String: String]
+    public let preflightFitCheck: Bool
+    public let allowMemoryRisk: Bool
     public let json: Bool
 
     public init(
@@ -42,6 +103,8 @@ public struct LoraTrainOptions: Equatable, Sendable {
         targetRepo: String = "",
         trainingMode: String = "",
         parameters: [String: String] = [:],
+        preflightFitCheck: Bool = false,
+        allowMemoryRisk: Bool = false,
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -51,6 +114,8 @@ public struct LoraTrainOptions: Equatable, Sendable {
         self.targetRepo = targetRepo
         self.trainingMode = trainingMode
         self.parameters = parameters
+        self.preflightFitCheck = preflightFitCheck
+        self.allowMemoryRisk = allowMemoryRisk
         self.json = json
     }
 }
@@ -287,10 +352,19 @@ public struct LoraResumeOptions: Equatable, Sendable {
 
 public struct EstimateImportOptions: Equatable, Sendable {
     public let repoID: String
+    public let targetKind: String
+    public let targetInputs: [String: String]
     public let json: Bool
 
-    public init(repoID: String, json: Bool = false) {
+    public init(
+        repoID: String,
+        targetKind: String = "import",
+        targetInputs: [String: String] = [:],
+        json: Bool = false
+    ) {
         self.repoID = repoID
+        self.targetKind = targetKind
+        self.targetInputs = targetInputs
         self.json = json
     }
 }
@@ -452,9 +526,13 @@ public struct EvalRunOptions: Equatable, Sendable {
     public let parameters: [String: String]
     public let evalPromptID: String
     public let evalPromptRevisionID: String
+    public let evalPrompt: String
+    public let evalPromptFile: String
     public let semanticJudgeRemoteServerID: String
     public let semanticJudgeModelID: String
     public let remoteParallelism: UInt32
+    public let preflightFitCheck: Bool
+    public let allowMemoryRisk: Bool
     public let json: Bool
 
     public init(
@@ -472,9 +550,13 @@ public struct EvalRunOptions: Equatable, Sendable {
         parameters: [String: String] = [:],
         evalPromptID: String = "",
         evalPromptRevisionID: String = "",
+        evalPrompt: String = "",
+        evalPromptFile: String = "",
         semanticJudgeRemoteServerID: String = "",
         semanticJudgeModelID: String = "",
         remoteParallelism: UInt32 = 0,
+        preflightFitCheck: Bool = false,
+        allowMemoryRisk: Bool = false,
         json: Bool = false
     ) {
         let normalizedRemoteTargets = remoteTargets
@@ -509,9 +591,13 @@ public struct EvalRunOptions: Equatable, Sendable {
         self.parameters = parameters
         self.evalPromptID = evalPromptID
         self.evalPromptRevisionID = evalPromptRevisionID
+        self.evalPrompt = evalPrompt
+        self.evalPromptFile = evalPromptFile
         self.semanticJudgeRemoteServerID = semanticJudgeRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.semanticJudgeModelID = semanticJudgeModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.remoteParallelism = remoteParallelism
+        self.preflightFitCheck = preflightFitCheck
+        self.allowMemoryRisk = allowMemoryRisk
         self.json = json
     }
 }
@@ -666,15 +752,33 @@ public struct ServerSnapshotOptions: Equatable, Sendable {
 
 public struct ServerControlOptions: Equatable, Sendable {
     public let serverSessionID: String
+    public let serverTitle: String
+    public let modelID: String
+    public let host: String
+    public let port: Int
+    public let rateLimitPerMinute: Int
+    public let timeoutSeconds: Int
     public let json: Bool
 
     public init(
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        serverTitle: String = "",
+        modelID: String = "",
+        host: String = "",
+        port: Int = 0,
+        rateLimitPerMinute: Int = 0,
+        timeoutSeconds: Int = 0,
         json: Bool = false
     ) {
         self.serverSessionID = serverSessionID.isEmpty
             ? ServerSessionRuntimeStore.defaultServerSessionID
             : serverSessionID
+        self.serverTitle = serverTitle
+        self.modelID = modelID
+        self.host = host
+        self.port = port
+        self.rateLimitPerMinute = rateLimitPerMinute
+        self.timeoutSeconds = timeoutSeconds
         self.json = json
     }
 }
@@ -1348,6 +1452,139 @@ public struct PipelineRunOptions: Equatable, Sendable {
     }
 }
 
+public struct URIInspectOptions: Equatable, Sendable {
+    public let uri: String
+    public let json: Bool
+
+    public init(uri: String, json: Bool = false) {
+        self.uri = uri
+        self.json = json
+    }
+}
+
+public struct URIImportOptions: Equatable, Sendable {
+    public let uri: String
+    public let modelID: String
+    public let revision: String
+    public let dryRun: Bool
+    public let json: Bool
+
+    public init(
+        uri: String,
+        modelID: String = "",
+        revision: String = "",
+        dryRun: Bool = false,
+        json: Bool = false
+    ) {
+        self.uri = uri
+        self.modelID = modelID
+        self.revision = revision
+        self.dryRun = dryRun
+        self.json = json
+    }
+}
+
+public struct RecipeListOptions: Equatable, Sendable {
+    public let task: String
+    public let json: Bool
+
+    public init(task: String = "", json: Bool = false) {
+        self.task = task
+        self.json = json
+    }
+}
+
+public struct RecipeShowOptions: Equatable, Sendable {
+    public let recipeID: String
+    public let version: String
+    public let json: Bool
+
+    public init(recipeID: String, version: String = "", json: Bool = false) {
+        self.recipeID = recipeID
+        self.version = version
+        self.json = json
+    }
+}
+
+public struct RecipeValidateOptions: Equatable, Sendable {
+    public let target: String
+    public let json: Bool
+
+    public init(target: String, json: Bool = false) {
+        self.target = target
+        self.json = json
+    }
+}
+
+public struct RecipePlanOptions: Equatable, Sendable {
+    public let recipeID: String
+    public let version: String
+    public let values: [String: String]
+    public let outputPath: String
+    public let json: Bool
+
+    public init(
+        recipeID: String,
+        version: String = "",
+        values: [String: String] = [:],
+        outputPath: String = "",
+        json: Bool = false
+    ) {
+        self.recipeID = recipeID
+        self.version = version
+        self.values = values
+        self.outputPath = outputPath
+        self.json = json
+    }
+}
+
+public struct RecipeApplyOptions: Equatable, Sendable {
+    public let recipeID: String
+    public let version: String
+    public let values: [String: String]
+    public let dryRun: Bool
+    public let resume: Bool
+    public let fromStepID: String
+    public let json: Bool
+
+    public init(
+        recipeID: String,
+        version: String = "",
+        values: [String: String] = [:],
+        dryRun: Bool = false,
+        resume: Bool = false,
+        fromStepID: String = "",
+        json: Bool = false
+    ) {
+        self.recipeID = recipeID
+        self.version = version
+        self.values = values
+        self.dryRun = dryRun
+        self.resume = resume
+        self.fromStepID = fromStepID
+        self.json = json
+    }
+}
+
+public struct RecipeInitOptions: Equatable, Sendable {
+    public let sourceURI: String
+    public let task: String
+    public let outputPath: String
+    public let json: Bool
+
+    public init(
+        sourceURI: String,
+        task: String,
+        outputPath: String = "",
+        json: Bool = false
+    ) {
+        self.sourceURI = sourceURI
+        self.task = task
+        self.outputPath = outputPath
+        self.json = json
+    }
+}
+
 public enum MelixCLIOutputFormat: String, Equatable, Sendable {
     case legacy
     case jsonV1 = "json-v1"
@@ -1373,6 +1610,15 @@ public struct MelixCLIInvocation: Equatable, Sendable {
 }
 
 public enum MelixCLICommand: Equatable, Sendable {
+    case settingsShow(SettingsShowOptions)
+    case settingsSet(SettingsSetOptions)
+    case settingsValidate(SettingsValidateOptions)
+    case settingsReset(SettingsResetOptions)
+    case info(DiscoveryJSONOptions)
+    case capabilities(CapabilitiesOptions)
+    case instructions(DiscoveryJSONOptions)
+    case schema(DiscoveryJSONOptions)
+    case configMetadata(DiscoveryJSONOptions)
     case doctor(DoctorOptions)
     case system(SystemOptions)
     case monitor(MonitorOptions)
@@ -1394,6 +1640,14 @@ public enum MelixCLICommand: Equatable, Sendable {
     case datasetList(DatasetListOptions)
     case datasetHubDownload(DatasetHubDownloadOptions)
     case datasetRemove(DatasetRemoveOptions)
+    case uriInspect(URIInspectOptions)
+    case uriImport(URIImportOptions)
+    case recipesList(RecipeListOptions)
+    case recipesShow(RecipeShowOptions)
+    case recipesValidate(RecipeValidateOptions)
+    case recipesPlan(RecipePlanOptions)
+    case recipesApply(RecipeApplyOptions)
+    case recipesInit(RecipeInitOptions)
     case modelRootsList(ModelRootsListOptions)
     case modelRootsAdd(ModelRootsMutateOptions)
     case modelRootsRemove(ModelRootsMutateOptions)
@@ -1455,6 +1709,8 @@ public enum MelixCLICommand: Equatable, Sendable {
     case evalExportSamplesJSONL(EvalExportOptions)
     case evalReport(RunReportOptions)
     case batchRun(BatchRunOptions)
+    case batchStatus(BatchStatusOptions)
+    case batchResume(BatchResumeOptions)
     case runsList(RunsListOptions)
     case runsShow(RunsShowOptions)
     case runsExport(RunsExportOptions)
@@ -1520,6 +1776,18 @@ public enum MelixCLIParser {
         }
         let tail = Array(arguments.dropFirst())
         switch group {
+        case "settings":
+            return try parseSettings(tail)
+        case "info":
+            return try parseInfo(tail)
+        case "capabilities":
+            return try parseCapabilities(tail)
+        case "instructions":
+            return try parseInstructions(tail)
+        case "schema":
+            return try parseSchema(tail)
+        case "config":
+            return try parseConfig(tail)
         case "doctor":
             return try parseDoctor(tail)
         case "system":
@@ -1542,6 +1810,10 @@ public enum MelixCLIParser {
             return try parseModel(tail)
         case "dataset":
             return try parseDataset(tail)
+        case "uri":
+            return try parseURI(tail)
+        case "recipes":
+            return try parseRecipes(tail)
         case "server":
             return try parseServer(tail)
         case "remote-server":
@@ -1569,6 +1841,15 @@ public enum MelixCLIParser {
 
     public static let usageText = """
     Usage:
+      melix settings show --json [--override KEY=VALUE ...]
+      melix settings set KEY VALUE [--json]
+      melix settings validate [--json]
+      melix settings reset KEY [--json]
+      melix info --json
+      melix capabilities --json [--model-query MODEL]
+      melix instructions --json
+      melix schema --json
+      melix config metadata --json
       melix doctor [--json]
       melix system --json
       melix monitor [--from PATH] [--json]
@@ -1576,6 +1857,12 @@ public enum MelixCLIParser {
       melix debug bundle RUN_OR_JOB_ID [--from PATH] [--output PATH] [--json]
       melix estimate import HF_REPO [--json]
       melix estimate import --repo-id HF_REPO [--json]
+      melix estimate benchmark HF_REPO [--context-length N] [--batch-size N] [--json]
+      melix estimate benchmark --repo-id HF_REPO [--context-length N] [--batch-size N] [--json]
+      melix estimate eval HF_REPO [--context TEXT] [--context-length N] [--dataset URI] [--sample-size N] [--json]
+      melix estimate eval --repo-id HF_REPO [--context TEXT] [--context-length N] [--dataset URI] [--sample-size N] [--json]
+      melix estimate train HF_REPO [--dataset URI] [--lora NAME_OR_PATH] [--batch-size N] [--json]
+      melix estimate train --model HF_REPO [--dataset URI] [--lora NAME_OR_PATH] [--batch-size N] [--json]
       melix convert --model-id MODEL_ID [--output-dir PATH] [--target-format FORMAT] [--json]
       melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--quantization-mode (ptq|qat)] [--source-artifact-kind (base_model|merged_adapter|adapter_export)] [--source-artifact-path PATH] [--quantization-backend (manifest_only|mlx_lm_convert)] [--mlx-lm-q-bits N] [--mlx-lm-q-group-size N] [--mlx-lm-q-mode (affine|mxfp4|nvfp4|mxfp8)] [--calibration-dataset-uri PATH] [--quality-delta N] [--latency-delta N] [--local-inference-smoke-mode (structural|runtime_generate)] [--local-inference-smoke-prompt TEXT] [--json]
       melix upload --model-id MODEL_ID --target-repo REPO [--output-dir PATH] [--artifact-path PATH] [--artifact-kind KIND] [--artifact-manifest-path PATH] [--publish-backend BACKEND] [--local-publish-root PATH] [--json]
@@ -1591,6 +1878,14 @@ public enum MelixCLIParser {
       melix dataset list [--json]
       melix dataset hub download --repo-id HF_DATASET [--revision REV] [--hf-token TOKEN] [--json]
       melix dataset remove --repo-id HF_DATASET [--revision REV | --snapshot-id SHA] [--json]
+      melix uri inspect URI [--json]
+      melix uri import URI [--model-id MODEL_ID] [--revision REV] [--dry-run] [--json]
+      melix recipes list [--task TASK] [--json]
+      melix recipes show RECIPE_ID [--version VERSION] [--json]
+      melix recipes validate PATH_OR_ID [--json]
+      melix recipes plan RECIPE_ID [--version VERSION] [--set KEY=VALUE ...] [--output PATH] [--json]
+      melix recipes apply RECIPE_ID [--version VERSION] [--set KEY=VALUE ...] [--dry-run] [--resume] [--from-step STEP_ID] [--json]
+      melix recipes init --from URI --task TASK [--output PATH] [--json]
       melix model roots list [--json]
       melix model roots add --path PATH [--json]
       melix model roots remove --path PATH [--json]
@@ -1602,7 +1897,7 @@ public enum MelixCLIParser {
       melix server session update --server-session-id ID [--title TITLE] [--model-id MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
       melix server session remove --server-session-id ID [--json]
       melix server session select --server-session-id ID [--json]
-      melix server start [--server-session-id ID] [--json]
+      melix server start [TITLE] [--model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--server-session-id ID] [--json]
       melix server pause [--server-session-id ID] [--json]
       melix server resume [--server-session-id ID] [--json]
       melix server wake [--server-session-id ID] [--json]
@@ -1615,7 +1910,7 @@ public enum MelixCLIParser {
       melix remote-server test --remote-server-id ID [--model MODEL] [--json]
       melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
-      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
+      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--preflight-fit-check] [--allow-memory-risk] [--json]
       melix alignment train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --algorithm dpo|orpo|cpo|grpo|rlhf [--target-repo REPO] [--source-adapter-path PATH] [--grpo-candidate-count N] [--candidate-generation-mode scored_trace|runtime_generate] [--candidate-scoring-mode dataset_score|seed_overlap_proxy|reward_model] [--candidate-generation-max-tokens N] [--reference-model-path PATH] [--reward-model-manifest-path PATH] [--kl-penalty N] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--json]
         note: --source-adapter-path is the upstream/base LoRA adapter to carry into GRPO/RLHF output; it is not checkpoint resumption.
       melix lora dataset inspect --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
@@ -1636,7 +1931,7 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt TEXT | --eval-prompt-file PATH | --eval-prompt-id ID [--eval-prompt-revision REV]] [--preflight-fit-check] [--allow-memory-risk] [--json]
       melix eval prompt list [--json]
       melix eval prompt show --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt create --prompt-id ID --title TITLE --system-prompt-file PATH [--json]
@@ -1652,7 +1947,9 @@ public enum MelixCLIParser {
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
       melix eval report --from PATH [--format markdown|json]
-      melix batch run --models PATH [--config PATH] [--run-id ID] [--output-root PATH] [--temp-root PATH] [--start-index N] [--max-models N] [--judge-remote-server-id ID] [--judge-model MODEL] [--bench-suite SUITE] [--bench-context-length N] [--bench-generation-length N] [--bench-batch-size N] [--bench-repeats N] [--bench-sample-size N] [--bench-batch-factor N] [--eval-suite SUITE] [--eval-dataset-id ID] [--eval-scoring-mode MODE] [--eval-sample-size N] [--eval-batch-factor N] [--continue-on-failure true|false] [--restart-stack-per-model true|false] [--preflight] --dry-run [--json]
+      melix batch run --models PATH [--config PATH] [--run-id ID] [--output-root PATH] [--temp-root PATH] [--start-index N] [--max-models N] [--judge-remote-server-id ID] [--judge-model MODEL] [--bench-suite SUITE] [--bench-context-length N] [--bench-generation-length N] [--bench-batch-size N] [--bench-repeats N] [--bench-sample-size N] [--bench-batch-factor N] [--eval-suite SUITE] [--eval-dataset-id ID] [--eval-scoring-mode MODE] [--eval-sample-size N] [--eval-batch-factor N] [--continue-on-failure true|false] [--restart-stack-per-model true|false] [--preflight] [--dry-run] [--json]
+      melix batch status [--run-id ID] [--output-root PATH] [--temp-root PATH] [--json]
+      melix batch resume [--run-id ID] [--output-root PATH] [--temp-root PATH] [--models PATH] [--config PATH] [--eval-only] [--missing-only true|false] [--continue-on-failure true|false] [--dry-run] [--json]
       melix runs list [--from PATH] [--json]
       melix runs show RUN_ID [--from PATH] [--json]
       melix runs export RUN_ID --format json|md [--from PATH] [--output PATH]
@@ -1718,6 +2015,111 @@ public enum MelixCLIParser {
         return ""
     }
 
+    private static func parseSettings(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(Self.usageText)
+        }
+        let tail = Array(arguments.dropFirst())
+        switch action {
+        case "show":
+            let values = try ArgumentCursor(arguments: tail).parse(multiValueOptions: ["--override"])
+            guard values.flags.contains("--json") else {
+                throw MelixCLIError.usage("melix settings show requires --json.")
+            }
+            var overrides: [String: String] = [:]
+            for rawOverride in values.multi["--override", default: []] {
+                let parts = rawOverride.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                guard parts.count == 2, parts[0].isEmpty == false else {
+                    throw MelixCLIError.usage("--override must use KEY=VALUE.")
+                }
+                overrides[String(parts[0])] = String(parts[1])
+            }
+            return .settingsShow(.init(json: true, overrides: overrides))
+        case "set":
+            var positional: [String] = []
+            var optionArguments: [String] = []
+            for token in tail {
+                if token == "--json" {
+                    optionArguments.append(token)
+                } else if token.hasPrefix("--") {
+                    throw MelixCLIError.usage(Self.usageText)
+                } else {
+                    positional.append(token)
+                }
+            }
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            guard positional.count == 2 else {
+                throw MelixCLIError.missingRequired("KEY and VALUE are required for melix settings set.")
+            }
+            return .settingsSet(.init(key: positional[0], value: positional[1], json: values.flags.contains("--json")))
+        case "validate":
+            let values = try ArgumentCursor(arguments: tail).parse()
+            return .settingsValidate(.init(json: values.flags.contains("--json")))
+        case "reset":
+            var positional: [String] = []
+            var optionArguments: [String] = []
+            for token in tail {
+                if token == "--json" {
+                    optionArguments.append(token)
+                } else if token.hasPrefix("--") {
+                    throw MelixCLIError.usage(Self.usageText)
+                } else {
+                    positional.append(token)
+                }
+            }
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            guard positional.count == 1 else {
+                throw MelixCLIError.missingRequired("KEY is required for melix settings reset.")
+            }
+            return .settingsReset(.init(key: positional[0], json: values.flags.contains("--json")))
+        default:
+            throw MelixCLIError.usage(Self.usageText)
+        }
+    }
+
+    private static func parseInfo(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard values.flags.contains("--json") else {
+            throw MelixCLIError.usage("melix info requires --json.")
+        }
+        return .info(.init(json: true))
+    }
+
+    private static func parseCapabilities(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard values.flags.contains("--json") else {
+            throw MelixCLIError.usage("melix capabilities requires --json.")
+        }
+        return .capabilities(.init(json: true, modelQuery: values.single["--model-query"] ?? ""))
+    }
+
+    private static func parseInstructions(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard values.flags.contains("--json") else {
+            throw MelixCLIError.usage("melix instructions requires --json.")
+        }
+        return .instructions(.init(json: true))
+    }
+
+    private static func parseSchema(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard values.flags.contains("--json") else {
+            throw MelixCLIError.usage("melix schema requires --json.")
+        }
+        return .schema(.init(json: true))
+    }
+
+    private static func parseConfig(_ arguments: [String]) throws -> MelixCLICommand {
+        guard arguments.first == "metadata" else {
+            throw MelixCLIError.usage(Self.usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        guard values.flags.contains("--json") else {
+            throw MelixCLIError.usage("melix config metadata requires --json.")
+        }
+        return .configMetadata(.init(json: true))
+    }
+
     private static func parseDoctor(_ arguments: [String]) throws -> MelixCLICommand {
         let values = try ArgumentCursor(arguments: arguments).parse()
         return .doctor(.init(json: values.flags.contains("--json")))
@@ -1774,7 +2176,7 @@ public enum MelixCLIParser {
             throw MelixCLIError.usage(Self.usageText)
         }
         switch action {
-        case "import":
+        case "import", "benchmark", "eval", "train":
             var optionArguments = Array(arguments.dropFirst())
             var repoID = ""
             if let positionalRepoID = optionArguments.first, positionalRepoID.hasPrefix("--") == false {
@@ -1784,18 +2186,50 @@ public enum MelixCLIParser {
             let values = try ArgumentCursor(arguments: optionArguments).parse()
             if let optionRepoID = values.single["--repo-id"], optionRepoID.isEmpty == false {
                 if repoID.isEmpty == false, repoID != optionRepoID {
-                    throw MelixCLIError.usage("melix estimate import accepts only one Hugging Face repo id.")
+                    throw MelixCLIError.usage("melix estimate \(action) accepts only one Hugging Face repo id.")
                 }
                 repoID = optionRepoID
             }
+            if let modelRepoID = values.single["--model"], modelRepoID.isEmpty == false {
+                if repoID.isEmpty == false, repoID != modelRepoID {
+                    throw MelixCLIError.usage("melix estimate \(action) accepts only one Hugging Face repo id.")
+                }
+                repoID = modelRepoID
+            }
             repoID = repoID.trimmingCharacters(in: .whitespacesAndNewlines)
             guard repoID.isEmpty == false else {
-                throw MelixCLIError.missingRequired("HF_REPO or --repo-id is required for melix estimate import.")
+                throw MelixCLIError.missingRequired("HF_REPO or --repo-id is required for melix estimate \(action).")
             }
-            return .estimateImport(.init(repoID: repoID, json: values.flags.contains("--json")))
+            return .estimateImport(.init(
+                repoID: repoID,
+                targetKind: normalizedEstimateTargetKind(action),
+                targetInputs: estimateTargetInputs(values),
+                json: values.flags.contains("--json")
+            ))
         default:
             throw MelixCLIError.usage(Self.usageText)
         }
+    }
+
+    private static func normalizedEstimateTargetKind(_ action: String) -> String {
+        action
+    }
+
+    private static func estimateTargetInputs(_ values: ParsedArguments) -> [String: String] {
+        var inputs: [String: String] = [:]
+        for option in [
+            "--context",
+            "--context-length",
+            "--dataset",
+            "--lora",
+            "--batch-size",
+            "--sample-size",
+        ] {
+            if let value = values.single[option], value.isEmpty == false {
+                inputs[normalizedParameterKey(option)] = value
+            }
+        }
+        return inputs
     }
 
     private static func parseConvert(_ arguments: [String]) throws -> MelixCLICommand {
@@ -2103,6 +2537,160 @@ public enum MelixCLIParser {
         }
     }
 
+    private static func parseURI(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        var optionArguments = Array(arguments.dropFirst())
+        switch action {
+        case "inspect":
+            let uri = try extractPositionalValue(
+                from: &optionArguments,
+                label: "URI",
+                command: "melix uri inspect"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .uriInspect(.init(uri: uri, json: values.flags.contains("--json")))
+        case "import":
+            let uri = try extractPositionalValue(
+                from: &optionArguments,
+                label: "URI",
+                command: "melix uri import"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .uriImport(
+                .init(
+                    uri: uri,
+                    modelID: values.single["--model-id"] ?? "",
+                    revision: values.single["--revision"] ?? "",
+                    dryRun: values.flags.contains("--dry-run"),
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseRecipes(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        var optionArguments = Array(arguments.dropFirst())
+        switch action {
+        case "list":
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .recipesList(
+                .init(
+                    task: values.single["--task"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "show":
+            let recipeID = try extractPositionalValue(
+                from: &optionArguments,
+                label: "RECIPE_ID",
+                command: "melix recipes show"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .recipesShow(
+                .init(
+                    recipeID: recipeID,
+                    version: values.single["--version"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "validate":
+            let target = try extractPositionalValue(
+                from: &optionArguments,
+                label: "PATH_OR_ID",
+                command: "melix recipes validate"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .recipesValidate(.init(target: target, json: values.flags.contains("--json")))
+        case "plan":
+            let recipeID = try extractPositionalValue(
+                from: &optionArguments,
+                label: "RECIPE_ID",
+                command: "melix recipes plan"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse(multiValueOptions: ["--set"])
+            return .recipesPlan(
+                .init(
+                    recipeID: recipeID,
+                    version: values.single["--version"] ?? "",
+                    values: try keyValueMap(from: values.multi["--set"] ?? [], option: "--set"),
+                    outputPath: values.single["--output"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "apply":
+            let recipeID = try extractPositionalValue(
+                from: &optionArguments,
+                label: "RECIPE_ID",
+                command: "melix recipes apply"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse(multiValueOptions: ["--set"])
+            return .recipesApply(
+                .init(
+                    recipeID: recipeID,
+                    version: values.single["--version"] ?? "",
+                    values: try keyValueMap(from: values.multi["--set"] ?? [], option: "--set"),
+                    dryRun: values.flags.contains("--dry-run"),
+                    resume: values.flags.contains("--resume"),
+                    fromStepID: values.single["--from-step"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "init":
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            guard let sourceURI = values.single["--from"], sourceURI.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--from is required for melix recipes init.")
+            }
+            guard let task = values.single["--task"], task.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--task is required for melix recipes init.")
+            }
+            return .recipesInit(
+                .init(
+                    sourceURI: sourceURI,
+                    task: task,
+                    outputPath: values.single["--output"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func extractPositionalValue(
+        from arguments: inout [String],
+        label: String,
+        command: String
+    ) throws -> String {
+        guard let first = arguments.first, first.hasPrefix("--") == false else {
+            throw MelixCLIError.missingRequired("\(label) is required for \(command).")
+        }
+        arguments.removeFirst()
+        let value = first.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.isEmpty == false else {
+            throw MelixCLIError.missingRequired("\(label) is required for \(command).")
+        }
+        return value
+    }
+
+    private static func keyValueMap(from rawValues: [String], option: String) throws -> [String: String] {
+        var values: [String: String] = [:]
+        for rawValue in rawValues {
+            let parts = rawValue.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, parts[0].isEmpty == false else {
+                throw MelixCLIError.usage("\(option) must use KEY=VALUE.")
+            }
+            values[String(parts[0])] = String(parts[1])
+        }
+        return values
+    }
+
     private static func parseServer(_ arguments: [String]) throws -> MelixCLICommand {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
@@ -2110,14 +2698,15 @@ public enum MelixCLIParser {
         if action == "session" {
             return try parseServerSession(Array(arguments.dropFirst()))
         }
+        if action == "start" {
+            return try parseServerStart(Array(arguments.dropFirst()))
+        }
         let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
         let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
         let json = values.flags.contains("--json")
         switch action {
         case "snapshot":
             return .serverSnapshot(.init(json: json))
-        case "start":
-            return .serverStart(.init(serverSessionID: serverSessionID, json: json))
         case "pause":
             return .serverPause(.init(serverSessionID: serverSessionID, json: json))
         case "resume":
@@ -2157,6 +2746,39 @@ public enum MelixCLIParser {
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseServerStart(_ arguments: [String]) throws -> MelixCLICommand {
+        let serverTitle: String
+        let optionArguments: [String]
+        if let first = arguments.first, first.hasPrefix("--") == false {
+            serverTitle = first
+            optionArguments = Array(arguments.dropFirst())
+        } else {
+            serverTitle = ""
+            optionArguments = arguments
+        }
+        let values = try ArgumentCursor(arguments: optionArguments).parse()
+        let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
+        let json = values.flags.contains("--json")
+        return .serverStart(.init(
+            serverSessionID: serverSessionID,
+            serverTitle: serverTitle,
+            modelID: values.single["--model"] ?? values.single["--model-id"] ?? "",
+            host: values.single["--host"] ?? "",
+            port: try parseIntValue(values.single["--port"], option: "--port", defaultValue: 0) ?? 0,
+            rateLimitPerMinute: try parseIntValue(
+                values.single["--rate-limit-per-minute"],
+                option: "--rate-limit-per-minute",
+                defaultValue: 0
+            ) ?? 0,
+            timeoutSeconds: try parseIntValue(
+                values.single["--timeout-seconds"],
+                option: "--timeout-seconds",
+                defaultValue: 0
+            ) ?? 0,
+            json: json
+        ))
     }
 
     private static func parseServerSession(_ arguments: [String]) throws -> MelixCLICommand {
@@ -2684,6 +3306,8 @@ public enum MelixCLIParser {
                     targetRepo: values.single["--target-repo"] ?? "",
                     trainingMode: trainingMode,
                     parameters: parameters,
+                    preflightFitCheck: values.flags.contains("--preflight-fit-check"),
+                    allowMemoryRisk: values.flags.contains("--allow-memory-risk"),
                     json: values.flags.contains("--json")
                 )
             )
@@ -3221,6 +3845,7 @@ public enum MelixCLIParser {
             let suites = (values.multi["--suite"] ?? []).isEmpty && scoringMode == "event_extraction_weighted_f1"
                 ? ["event_extraction"]
                 : (values.multi["--suite"] ?? [])
+            try validateEvalPromptOptions(values)
             return .evalRun(
                 EvalRunOptions(
                     modelID: modelID,
@@ -3237,9 +3862,13 @@ public enum MelixCLIParser {
                     parameters: try parseEvalParameters(values),
                     evalPromptID: values.single["--eval-prompt-id"] ?? "",
                     evalPromptRevisionID: values.single["--eval-prompt-revision"] ?? "",
+                    evalPrompt: values.single["--eval-prompt"] ?? "",
+                    evalPromptFile: values.single["--eval-prompt-file"] ?? "",
                     semanticJudgeRemoteServerID: semanticJudgeRemoteServerID,
                     semanticJudgeModelID: semanticJudgeModelID,
                     remoteParallelism: UInt32(values.single["--remote-parallelism"] ?? "") ?? 0,
+                    preflightFitCheck: values.flags.contains("--preflight-fit-check"),
+                    allowMemoryRisk: values.flags.contains("--allow-memory-risk"),
                     json: values.flags.contains("--json")
                 )
             )
@@ -3328,6 +3957,40 @@ public enum MelixCLIParser {
                     dryRun: values.flags.contains("--dry-run"),
                     json: values.flags.contains("--json"),
                     explicitOptions: explicitOptions
+                )
+            )
+        case "status":
+            return .batchStatus(
+                BatchStatusOptions(
+                    runID: values.single["--run-id"] ?? "",
+                    outputRoot: values.single["--output-root"] ?? "",
+                    tempRoot: values.single["--temp-root"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "resume":
+            let continueOnFailure = try parseRequiredBooleanValue(
+                values.single["--continue-on-failure"],
+                option: "--continue-on-failure",
+                defaultValue: true
+            )
+            let missingOnly = try parseRequiredBooleanValue(
+                values.single["--missing-only"],
+                option: "--missing-only",
+                defaultValue: true
+            )
+            return .batchResume(
+                BatchResumeOptions(
+                    runID: values.single["--run-id"] ?? "",
+                    outputRoot: values.single["--output-root"] ?? "",
+                    tempRoot: values.single["--temp-root"] ?? "",
+                    modelListPath: values.single["--models"] ?? "",
+                    configPath: values.single["--config"] ?? "",
+                    evalOnly: values.flags.contains("--eval-only"),
+                    missingOnly: missingOnly,
+                    continueOnFailure: continueOnFailure,
+                    dryRun: values.flags.contains("--dry-run"),
+                    json: values.flags.contains("--json")
                 )
             )
         default:
@@ -3629,6 +4292,39 @@ public enum MelixCLIParser {
             parameters["hf_dataset_revision"] = values.single["--hf-dataset-revision"] ?? parsedRef.revision
         }
         return parameters
+    }
+
+    private static func validateEvalPromptOptions(_ values: ParsedArguments) throws {
+        let hasInlinePrompt = values.single["--eval-prompt"] != nil
+        let hasPromptFile = values.single["--eval-prompt-file"] != nil
+        let inlinePrompt = values.single["--eval-prompt"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptFile = values.single["--eval-prompt-file"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptID = values.single["--eval-prompt-id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptRevision = values.single["--eval-prompt-revision"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard hasInlinePrompt == false || hasPromptFile == false else {
+            throw MelixCLIError.usage("--eval-prompt and --eval-prompt-file are mutually exclusive.")
+        }
+        if hasInlinePrompt {
+            guard inlinePrompt.isEmpty == false else {
+                throw MelixCLIError.usage("--eval-prompt must contain non-empty text.")
+            }
+        }
+        if hasPromptFile {
+            guard promptFile.isEmpty == false else {
+                throw MelixCLIError.usage("--eval-prompt-file must be a non-empty path.")
+            }
+        }
+        if hasInlinePrompt || hasPromptFile {
+            guard promptID.isEmpty else {
+                throw MelixCLIError.usage("--eval-prompt and --eval-prompt-file cannot be combined with --eval-prompt-id.")
+            }
+            guard promptRevision.isEmpty else {
+                throw MelixCLIError.usage("--eval-prompt-revision requires --eval-prompt-id.")
+            }
+        }
+        if promptRevision.isEmpty == false && promptID.isEmpty {
+            throw MelixCLIError.usage("--eval-prompt-revision requires --eval-prompt-id.")
+        }
     }
 
     private static func parseEvaluationSourceConfiguration(
@@ -3973,6 +4669,7 @@ private struct ArgumentCursor {
         "--resume",
         "--dry-run",
         "--follow",
+        "--eval-only",
     ]
 
     let arguments: [String]
@@ -4011,6 +4708,32 @@ private struct ArgumentCursor {
 
 public typealias MelixCLICommandExecutor = @Sendable ([String]) async throws -> String
 
+public struct MelixCLIProcessResult: Equatable, Sendable {
+    public let stdout: String
+    public let stderr: String
+    public let exitCode: Int32
+
+    public init(stdout: String, stderr: String, exitCode: Int32) {
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exitCode = exitCode
+    }
+}
+
+public enum MelixCLIProcessFailureMessage {
+    public static func make(stdout: String, stderr: String, exitCode: Int32) -> String {
+        let stderrMessage = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stderrMessage.isEmpty {
+            return stderrMessage
+        }
+        let stdoutMessage = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stdoutMessage.isEmpty {
+            return stdoutMessage
+        }
+        return "Subprocess exited with status \(exitCode)."
+    }
+}
+
 public struct MelixCLIProcessExecutor: Sendable {
     public let baseCommand: [String]
     public let environment: [String: String]
@@ -4027,10 +4750,23 @@ public struct MelixCLIProcessExecutor: Sendable {
     }
 
     public func run(arguments: [String]) async throws -> String {
+        let result = try await runDetailed(arguments: arguments)
+        guard result.exitCode == 0 else {
+            let message = MelixCLIProcessFailureMessage.make(
+                stdout: result.stdout,
+                stderr: result.stderr,
+                exitCode: result.exitCode
+            )
+            throw MelixCLIError.runtime(message)
+        }
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public func runDetailed(arguments: [String]) async throws -> MelixCLIProcessResult {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    continuation.resume(returning: try runSync(arguments: arguments))
+                    continuation.resume(returning: try runDetailedSync(arguments: arguments))
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -4038,7 +4774,7 @@ public struct MelixCLIProcessExecutor: Sendable {
         }
     }
 
-    private func runSync(arguments: [String]) throws -> String {
+    private func runDetailedSync(arguments: [String]) throws -> MelixCLIProcessResult {
         guard let executable = baseCommand.first else {
             throw MelixCLIError.runtime("The melix subprocess command is not configured.")
         }
@@ -4060,11 +4796,7 @@ public struct MelixCLIProcessExecutor: Sendable {
         let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
         let stdoutText = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
-        guard process.terminationStatus == 0 else {
-            let message = stderrText.isEmpty ? stdoutText : stderrText
-            throw MelixCLIError.runtime(message.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        return stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return MelixCLIProcessResult(stdout: stdoutText, stderr: stderrText, exitCode: process.terminationStatus)
     }
 }
 
@@ -4072,6 +4804,7 @@ public actor MelixCLIRunner {
     private static let defaultSpeculativeNumDraftTokens = 4
     private static let memoryFitSafetyThresholdFraction = 0.60
     private static let memoryFitSchemaVersion = "melix.memory_fit_receipt.v1"
+    private static let diskFitSafetyMultiplier = 1.10
 
     private let client: any ControlPlaneXPCClient
     private let operatorSessionStore: any MelixOperatorSessionStoring
@@ -4169,7 +4902,8 @@ public actor MelixCLIRunner {
 
     private func makeMemoryFitReceipt(
         repoID: String,
-        targetKind: String
+        targetKind: String,
+        targetInputs: [String: String] = [:]
     ) async throws -> MemoryFitReceipt {
         let hubCardStart = DispatchTime.now()
         let card = try await getHubModelCard(repoID: repoID)
@@ -4182,13 +4916,13 @@ public actor MelixCLIRunner {
         let totalUnifiedMemoryBytes = ProcessInfo.processInfo.physicalMemory
         let safetyThresholdFraction = Self.memoryFitSafetyThresholdFraction
         let safetyThresholdBytes = UInt64(Double(totalUnifiedMemoryBytes) * safetyThresholdFraction)
-        let unknownFields = memoryFitUnknownFields(card)
-        let assumptions = [
-            "ProcessInfo.physicalMemory is treated as Apple Silicon total unified memory.",
-            "estimated_active_memory_bytes reuses Hub estimated_resident_bytes.",
-            "estimated_disk_usage_bytes reuses Hub estimated_artifact_bytes.",
-            "fit_status and recommended_action reuse the model-ops Hub local-fit policy.",
-        ]
+        let availableDiskBytes = availableDiskCapacityBytes(near: MelixHome(environment: environment).managedModelRootURL)
+        let diskFitStatus = memoryFitDiskStatus(
+            estimatedDiskUsageBytes: card.estimatedArtifactBytes,
+            availableDiskBytes: availableDiskBytes
+        )
+        let unknownFields = orderedUnique(memoryFitUnknownFields(card) + memoryFitRunUnknownFields(for: targetKind))
+        let assumptions = memoryFitAssumptions(targetKind: targetKind)
         let receiptElapsedMS = elapsedMilliseconds(since: receiptStart)
         let probe: [String: Any] = [
             "name": "cli.memory_fit.\(targetKind)",
@@ -4211,9 +4945,12 @@ public actor MelixCLIRunner {
             "total_unified_memory_bytes": NSNumber(value: totalUnifiedMemoryBytes),
             "estimated_active_memory_bytes": NSNumber(value: card.estimatedResidentBytes),
             "estimated_disk_usage_bytes": NSNumber(value: card.estimatedArtifactBytes),
+            "available_disk_bytes": NSNumber(value: availableDiskBytes),
+            "disk_fit_status": diskFitStatus,
             "safety_threshold": safetyThreshold,
             "assumptions": assumptions,
             "unknown_fields": unknownFields,
+            "target_inputs": targetInputs,
             "parameter_count": NSNumber(value: card.parameterCount),
             "quantization_summary": card.quantizationSummary,
             "probe": probe,
@@ -4228,10 +4965,72 @@ public actor MelixCLIRunner {
             totalUnifiedMemoryBytes: totalUnifiedMemoryBytes,
             estimatedActiveMemoryBytes: card.estimatedResidentBytes,
             estimatedDiskUsageBytes: card.estimatedArtifactBytes,
+            availableDiskBytes: availableDiskBytes,
+            diskFitStatus: diskFitStatus,
             safetyThresholdFraction: safetyThresholdFraction,
             unknownFields: unknownFields,
             assumptions: assumptions
         )
+    }
+
+    private func availableDiskCapacityBytes(near url: URL) -> UInt64 {
+        let fileManager = FileManager.default
+        var probeURL = url
+        while fileManager.fileExists(atPath: probeURL.path) == false {
+            let parentURL = probeURL.deletingLastPathComponent()
+            if parentURL.path == probeURL.path {
+                probeURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                break
+            }
+            probeURL = parentURL
+        }
+        if let values = try? probeURL.resourceValues(forKeys: [
+            .volumeAvailableCapacityForImportantUsageKey,
+            .volumeAvailableCapacityKey,
+        ]) {
+            if let importantCapacity = values.volumeAvailableCapacityForImportantUsage, importantCapacity > 0 {
+                return UInt64(importantCapacity)
+            }
+            if let volumeCapacity = values.volumeAvailableCapacity, volumeCapacity > 0 {
+                return UInt64(volumeCapacity)
+            }
+        }
+        if let attributes = try? fileManager.attributesOfFileSystem(forPath: probeURL.path),
+           let systemFreeSize = attributes[.systemFreeSize] as? NSNumber,
+           systemFreeSize.int64Value > 0
+        {
+            return UInt64(systemFreeSize.int64Value)
+        }
+        return 0
+    }
+
+    private func memoryFitDiskStatus(estimatedDiskUsageBytes: UInt64, availableDiskBytes: UInt64) -> String {
+        guard estimatedDiskUsageBytes > 0, availableDiskBytes > 0 else {
+            return "unknown"
+        }
+        return Double(availableDiskBytes) >= Double(estimatedDiskUsageBytes) * Self.diskFitSafetyMultiplier
+            ? "good"
+            : "blocked"
+    }
+
+    private func memoryFitAssumptions(targetKind: String) -> [String] {
+        var assumptions = [
+            "ProcessInfo.physicalMemory is treated as Apple Silicon total unified memory.",
+            "estimated_active_memory_bytes reuses Hub estimated_resident_bytes.",
+            "estimated_disk_usage_bytes reuses Hub estimated_artifact_bytes.",
+            "fit_status and recommended_action reuse the model-ops Hub local-fit policy.",
+        ]
+        switch targetKind {
+        case "benchmark":
+            assumptions.append("Benchmark KV-cache and activation overhead are not separately modeled yet.")
+        case "eval":
+            assumptions.append("Evaluation context, KV-cache, dataset-cache, and judge overhead are not separately modeled yet.")
+        case "train":
+            assumptions.append("Training optimizer state, LoRA adapter memory, activations, and dataset-cache overhead are not separately modeled yet.")
+        default:
+            break
+        }
+        return assumptions
     }
 
     private func memoryFitUnknownFields(_ card: Melix_Controlplane_V1_HubModelCard) -> [String] {
@@ -4254,18 +5053,44 @@ public actor MelixCLIRunner {
         return fields
     }
 
+    private func memoryFitRunUnknownFields(for targetKind: String) -> [String] {
+        switch targetKind {
+        case "benchmark":
+            return ["kv_cache_bytes", "activation_bytes"]
+        case "eval":
+            return ["kv_cache_bytes", "activation_bytes", "dataset_cache_bytes", "judge_memory_bytes"]
+        case "train":
+            return ["optimizer_state_bytes", "lora_adapter_bytes", "activation_bytes", "dataset_cache_bytes"]
+        default:
+            return []
+        }
+    }
+
+    private func orderedUnique(_ values: [String]) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for value in values where seen.insert(value).inserted {
+            result.append(value)
+        }
+        return result
+    }
+
     private func normalizedFitStatus(_ status: String) -> String {
         let trimmed = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed.isEmpty ? "unknown" : trimmed
     }
 
-    private func enforceMemoryFitPreflight(_ receipt: MemoryFitReceipt, allowMemoryRisk: Bool) throws {
+    private func enforceMemoryFitPreflight(
+        _ receipt: MemoryFitReceipt,
+        allowMemoryRisk: Bool,
+        commandName: String
+    ) throws {
         guard ["blocked", "heavy"].contains(receipt.fitStatus), !allowMemoryRisk else {
             return
         }
         let reasons = receipt.reasons.isEmpty ? "No reason was provided." : receipt.reasons.joined(separator: " ")
         throw MelixCLIError.runtime(
-            "Memory fit preflight blocked benchmark for \(receipt.repoID): fit_status=\(receipt.fitStatus), estimated_active_memory_bytes=\(formatBinaryBytes(receipt.estimatedActiveMemoryBytes)), estimated_disk_usage_bytes=\(formatBinaryBytes(receipt.estimatedDiskUsageBytes)). Pass --allow-memory-risk to run anyway. Reasons: \(reasons)"
+            "Memory fit preflight blocked \(commandName) for \(receipt.repoID): fit_status=\(receipt.fitStatus), estimated_active_memory_bytes=\(formatBinaryBytes(receipt.estimatedActiveMemoryBytes)), estimated_disk_usage_bytes=\(formatBinaryBytes(receipt.estimatedDiskUsageBytes)). Pass --allow-memory-risk to run anyway. Reasons: \(reasons)"
         )
     }
 
@@ -4440,7 +5265,11 @@ public actor MelixCLIRunner {
                 throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix bench run --repo-id targets.")
             }
             let receipt = try await makeMemoryFitReceipt(repoID: options.hfRepoID, targetKind: "benchmark")
-            try enforceMemoryFitPreflight(receipt, allowMemoryRisk: options.allowMemoryRisk)
+            try enforceMemoryFitPreflight(
+                receipt,
+                allowMemoryRisk: options.allowMemoryRisk,
+                commandName: "benchmark"
+            )
             parameters.merge(try receipt.benchmarkParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
         }
         if !options.modelID.isEmpty {
@@ -4549,10 +5378,74 @@ public actor MelixCLIRunner {
             try await primeConfiguredRegistryRootsIfNeeded()
         }
         switch command {
+        case .settingsShow(let options):
+            let store = MelixRuntimeSettingsStore(
+                melixHome: MelixHome(environment: environment),
+                environment: environment
+            )
+            let payload = try store.effectiveSettings(overrides: options.overrides)
+            return try prettyJSON(payload)
+        case .settingsSet(let options):
+            let store = MelixRuntimeSettingsStore(
+                melixHome: MelixHome(environment: environment),
+                environment: environment
+            )
+            let payload = try store.set(key: options.key, value: options.value)
+            return options.json ? try prettyJSON(payload) : "Updated \(options.key).\n"
+        case .settingsValidate(let options):
+            let store = MelixRuntimeSettingsStore(
+                melixHome: MelixHome(environment: environment),
+                environment: environment
+            )
+            let payload = store.validate()
+            return options.json ? try prettyJSON(payload) : ((payload["valid"] as? Bool) == true ? "Runtime settings are valid.\n" : "Runtime settings are invalid.\n")
+        case .settingsReset(let options):
+            let store = MelixRuntimeSettingsStore(
+                melixHome: MelixHome(environment: environment),
+                environment: environment
+            )
+            let payload = try store.reset(key: options.key)
+            return options.json ? try prettyJSON(payload) : "Reset \(options.key).\n"
+        case .info:
+            let payload = MelixRuntimeDiscoveryBuilder(environment: environment).infoPayload()
+            return try prettyJSON(payload)
+        case .capabilities(let options):
+            let payload = MelixRuntimeDiscoveryBuilder(environment: environment)
+                .capabilitiesPayload(modelQuery: options.modelQuery)
+            return try prettyJSON(payload)
+        case .instructions:
+            let payload = MelixRuntimeDiscoveryBuilder(environment: environment).instructionsPayload()
+            return try prettyJSON(payload)
+        case .schema:
+            let payload = MelixRuntimeDiscoveryBuilder(environment: environment).schemaPayload()
+            return try prettyJSON(payload)
+        case .configMetadata:
+            let payload = MelixRuntimeDiscoveryBuilder(environment: environment).configMetadataPayload()
+            return try prettyJSON(payload)
+        case .uriInspect(let options):
+            return try runURIInspect(options)
+        case .uriImport(let options):
+            return try await runURIImport(options)
+        case .recipesList(let options):
+            return try runRecipesList(options)
+        case .recipesShow(let options):
+            return try runRecipesShow(options)
+        case .recipesValidate(let options):
+            return try runRecipesValidate(options)
+        case .recipesPlan(let options):
+            return try runRecipesPlan(options)
+        case .recipesApply(let options):
+            return try await runRecipesApply(options)
+        case .recipesInit(let options):
+            return try runRecipesInit(options)
         case .pipelineRun(let options):
             return try await runPipeline(options)
         case .batchRun(let options):
             return try await runBatch(options)
+        case .batchStatus(let options):
+            return try runBatchStatus(options)
+        case .batchResume(let options):
+            return try await runBatchResume(options)
         case .doctor(let options):
             let report = try await client.runDoctor()
             let systemPayload = makeSystemPayload()
@@ -4590,7 +5483,11 @@ public actor MelixCLIRunner {
             }
             return result.bundleRoot.path + "\n"
         case .estimateImport(let options):
-            let receipt = try await makeMemoryFitReceipt(repoID: options.repoID, targetKind: "import")
+            let receipt = try await makeMemoryFitReceipt(
+                repoID: options.repoID,
+                targetKind: options.targetKind,
+                targetInputs: options.targetInputs
+            )
             return options.json ? try prettyJSON(receipt.payload) : renderMemoryFitReceipt(receipt)
         case .convert(let options):
             let result = try await performModelOperation(
@@ -4843,9 +5740,8 @@ public actor MelixCLIRunner {
         case .serverSessionCreate(let options):
             var createdID = ""
             let state = try mutateOperatorState { current in
-                let nextIndex = current.serverSessions.count + 1
                 let created = MelixOperatorServerSessionState(
-                    id: "server-session-\(nextIndex)",
+                    id: nextGeneratedServerSessionID(in: current.serverSessions),
                     title: options.title,
                     modelID: options.modelID,
                     host: options.host,
@@ -4928,8 +5824,9 @@ public actor MelixCLIRunner {
             }
             return renderServerSessions(state)
         case .serverStart(let options):
-            guard let configuredSession = try configuredServerSessionIfAvailable(id: options.serverSessionID) else {
-                let snapshot = try await client.startServerSession(serverSessionID: options.serverSessionID)
+            let targetServerSessionID = try upsertServerSessionForStartIfNeeded(options)
+            guard let configuredSession = try configuredServerSessionIfAvailable(id: targetServerSessionID) else {
+                let snapshot = try await client.startServerSession(serverSessionID: targetServerSessionID)
                 return try renderServerSnapshot(snapshot, json: options.json)
             }
             let serverSnapshot = try await client.serverSnapshot()
@@ -5140,6 +6037,18 @@ public actor MelixCLIRunner {
             return renderRegistrySnapshot(result.manifestJson)
         case .loraTrain(let options):
             var ext = options.parameters
+            if options.preflightFitCheck {
+                guard options.modelID.trimmingCharacters(in: .whitespacesAndNewlines).contains("/") else {
+                    throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix lora train --model-id Hugging Face repo targets.")
+                }
+                let receipt = try await makeMemoryFitReceipt(repoID: options.modelID, targetKind: "train")
+                try enforceMemoryFitPreflight(
+                    receipt,
+                    allowMemoryRisk: options.allowMemoryRisk,
+                    commandName: "training"
+                )
+                ext.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
+            }
             ext["adapter_name"] = options.adapterName
             ext["dataset_source_kind"] = options.datasetSourceKind
             if !options.datasetURI.isEmpty {
@@ -6007,7 +6916,7 @@ public actor MelixCLIRunner {
             return options.remoteServerID.isEmpty
         case .evalRun(let options):
             return Self.effectiveRemoteTargetOptions(for: options).isEmpty
-        case .batchRun:
+        case .batchRun, .batchStatus, .batchResume:
             return false
         default:
             return false
@@ -6268,6 +7177,80 @@ public actor MelixCLIRunner {
         }
     }
 
+    private func upsertServerSessionForStartIfNeeded(_ options: ServerControlOptions) throws -> String {
+        let title = options.serverTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelID = options.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = options.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasShortcutConfiguration = title.isEmpty == false
+            || modelID.isEmpty == false
+            || host.isEmpty == false
+            || options.port > 0
+            || options.rateLimitPerMinute > 0
+            || options.timeoutSeconds > 0
+        guard hasShortcutConfiguration else {
+            return options.serverSessionID
+        }
+        guard title.isEmpty == false else {
+            throw MelixCLIError.missingRequired("TITLE is required when passing --model, --host, --port, --rate-limit-per-minute, or --timeout-seconds to melix server start.")
+        }
+        guard modelID.isEmpty == false else {
+            throw MelixCLIError.missingRequired("--model is required when starting a titled server session.")
+        }
+
+        var resolvedID = ""
+        let state = try mutateOperatorState { current in
+            if let index = current.serverSessions.firstIndex(where: { $0.id == title || $0.title == title }) {
+                var session = current.serverSessions[index]
+                session.title = title
+                session.modelID = modelID
+                if host.isEmpty == false {
+                    session.host = host
+                }
+                if options.port > 0 {
+                    session.port = options.port
+                }
+                if options.rateLimitPerMinute > 0 {
+                    session.rateLimitPerMinute = options.rateLimitPerMinute
+                }
+                if options.timeoutSeconds > 0 {
+                    session.timeoutSeconds = options.timeoutSeconds
+                }
+                session.updatedAt = Date()
+                current.serverSessions[index] = session
+                current.selectedServerSessionID = session.id
+                resolvedID = session.id
+            } else {
+                let created = MelixOperatorServerSessionState(
+                    id: nextGeneratedServerSessionID(in: current.serverSessions),
+                    title: title,
+                    modelID: modelID,
+                    host: host.isEmpty ? "127.0.0.1" : host,
+                    port: options.port > 0 ? options.port : 8080,
+                    rateLimitPerMinute: options.rateLimitPerMinute > 0 ? options.rateLimitPerMinute : 120,
+                    timeoutSeconds: options.timeoutSeconds > 0 ? options.timeoutSeconds : 120,
+                    lifecycle: .draft
+                )
+                current.serverSessions.append(created)
+                current.selectedServerSessionID = created.id
+                resolvedID = created.id
+            }
+        }
+        guard resolvedID.isEmpty == false,
+              state.serverSessions.contains(where: { $0.id == resolvedID }) else {
+            throw MelixCLIError.runtime("Server session titled \(title) could not be created.")
+        }
+        return resolvedID
+    }
+
+    private func nextGeneratedServerSessionID(in sessions: [MelixOperatorServerSessionState]) -> String {
+        let existingIDs = Set(sessions.map(\.id))
+        var index = 1
+        while existingIDs.contains("server-session-\(index)") {
+            index += 1
+        }
+        return "server-session-\(index)"
+    }
+
     private func markServerSessionUnavailable(
         id: String,
         message: String,
@@ -6480,6 +7463,76 @@ public actor MelixCLIRunner {
         }
     }
 
+    private func loadTrustListLabel(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
+        let policy = ModelCatalogPresentation.loadTrustPolicy(for: model)
+        let label: String
+        switch policy.effectiveMode {
+        case .modelLoadTrustDefaultSafe:
+            label = "safe"
+        case .modelLoadTrustTrustRemoteCode:
+            label = "trust"
+        case .modelLoadTrustNotApplicable:
+            label = "n/a"
+        case .unspecified:
+            label = "-"
+        case .UNRECOGNIZED:
+            label = "?"
+        }
+        return policy.requiresReloadForTrustChange ? "\(label)*" : label
+    }
+
+    private func loadTrustDetailLines(_ model: Melix_Controlplane_V1_ModelSummary) -> [String] {
+        let policy = ModelCatalogPresentation.loadTrustPolicy(for: model)
+        var lines = [
+            "load_trust_requested=\(ModelCatalogPresentation.loadTrustModeIdentifier(policy.requestedMode))",
+            "load_trust_effective=\(ModelCatalogPresentation.loadTrustModeIdentifier(policy.effectiveMode))",
+            "load_trust_policy_source=\(policy.policySource)",
+            "load_trust_custom_loader_required=\(policy.customLoaderRequired ? "true" : "false")",
+            "load_trust_requires_reload=\(policy.requiresReloadForTrustChange ? "true" : "false")",
+        ]
+        let route = ModelCatalogPresentation.workerRouteIdentifier(for: policy.routeClass)
+        if route != "unspecified" {
+            lines.append("load_trust_route_class=\(route)")
+        }
+        if !policy.loaderFamily.isEmpty {
+            lines.append("load_trust_loader_family=\(policy.loaderFamily)")
+        }
+        if !policy.customLoaderDetectionSource.isEmpty {
+            lines.append("load_trust_detection=\(policy.customLoaderDetectionSource)")
+        }
+        if !policy.blockReason.isEmpty {
+            lines.append("load_trust_block_reason=\(policy.blockReason)")
+        }
+        return lines
+    }
+
+    private func makeModelLoadTrustPayload(_ model: Melix_Controlplane_V1_ModelSummary) -> [String: Any] {
+        let policy = ModelCatalogPresentation.loadTrustPolicy(for: model)
+        var payload: [String: Any] = [
+            "receipt_present": model.hasLoadTrust,
+            "requested_mode": ModelCatalogPresentation.loadTrustModeIdentifier(policy.requestedMode),
+            "effective_mode": ModelCatalogPresentation.loadTrustModeIdentifier(policy.effectiveMode),
+            "policy_source": policy.policySource,
+            "custom_loader_required": policy.customLoaderRequired,
+            "requires_reload_for_trust_change": policy.requiresReloadForTrustChange,
+        ]
+
+        let route = ModelCatalogPresentation.workerRouteIdentifier(for: policy.routeClass)
+        if route != "unspecified" {
+            payload["route_class"] = route
+        }
+        if !policy.loaderFamily.isEmpty {
+            payload["loader_family"] = policy.loaderFamily
+        }
+        if !policy.customLoaderDetectionSource.isEmpty {
+            payload["custom_loader_detection_source"] = policy.customLoaderDetectionSource
+        }
+        if !policy.blockReason.isEmpty {
+            payload["block_reason"] = policy.blockReason
+        }
+        return payload
+    }
+
     private func renderModelList(_ models: [Melix_Controlplane_V1_ModelSummary]) -> String {
         guard models.isEmpty == false else {
             return "No models found.\n"
@@ -6489,7 +7542,7 @@ public actor MelixCLIRunner {
         // terminals. Columns separated by two spaces. Consumers that need
         // the column-boundary-stable JSON shape should pass ``--json``;
         // this renderer is for human reading.
-        let header = ["MODEL_ID", "KIND", "STATE", "STATUS", "RUNTIME"]
+        let header = ["MODEL_ID", "KIND", "STATE", "STATUS", "RUNTIME", "TRUST"]
         let dataRows = models
             .sorted { $0.modelID < $1.modelID }
             .map { model in
@@ -6499,6 +7552,7 @@ public actor MelixCLIRunner {
                     modelStateLabel(model.state),
                     ModelRuntimeAvailability.runtimeStatus(for: model),
                     runtimeModeLabel(model),
+                    loadTrustListLabel(model),
                 ]
             }
         let allRows = [header] + dataRows
@@ -6532,7 +7586,7 @@ public actor MelixCLIRunner {
     }
 
     private func renderModelSummary(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
-        "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\t\(runtimeModeLabel(model))\n"
+        "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\t\(runtimeModeLabel(model))\t\(loadTrustListLabel(model))\n"
     }
 
     private func renderModelInfo(
@@ -6562,6 +7616,7 @@ public actor MelixCLIRunner {
             if !restoreCommand.isEmpty {
                 lines.append("restore_command=\(restoreCommand)")
             }
+            lines.append(contentsOf: loadTrustDetailLines(snapshotModel))
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -6611,6 +7666,8 @@ public actor MelixCLIRunner {
             "total_unified_memory_bytes=\(formatBinaryBytes(receipt.totalUnifiedMemoryBytes))",
             "estimated_active_memory_bytes=\(formatBinaryBytes(receipt.estimatedActiveMemoryBytes))",
             "estimated_disk_usage_bytes=\(formatBinaryBytes(receipt.estimatedDiskUsageBytes))",
+            "available_disk_bytes=\(formatBinaryBytes(receipt.availableDiskBytes))",
+            "disk_fit_status=\(receipt.diskFitStatus)",
             "safety_threshold_fraction=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), receipt.safetyThresholdFraction))",
             "recommended_action=\(receipt.recommendedAction)",
             "reasons=\(receipt.reasons.joined(separator: " | "))",
@@ -6708,6 +7765,7 @@ public actor MelixCLIRunner {
             // into a first-class summary field so operators see at a glance
             // whether a loaded model is fused or adapter-backed.
             "runtime_mode": model.runtimeMode,
+            "load_trust": makeModelLoadTrustPayload(model),
         ]
         let activationMode = model.settings.ext["melix.activation_mode"] ?? ""
         if !activationMode.isEmpty {
@@ -6750,6 +7808,7 @@ public actor MelixCLIRunner {
             for (key, value) in ModelRuntimeAvailability.publicMetadata(for: snapshotModel) {
                 payload[key] = value
             }
+            payload["load_trust"] = makeModelLoadTrustPayload(snapshotModel)
         }
         return payload
     }
@@ -7761,7 +8820,45 @@ public actor MelixCLIRunner {
         options: EvalRunOptions,
         suites: [String]
     ) async throws -> [ControlPlaneEvaluationResult] {
-        let remoteTargetOptions = Self.effectiveRemoteTargetOptions(for: options)
+        var baseParameters = options.parameters
+        if options.preflightFitCheck {
+            guard options.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix eval run --repo-id targets.")
+            }
+            let receipt = try await makeMemoryFitReceipt(repoID: options.hfRepoID, targetKind: "eval")
+            try enforceMemoryFitPreflight(
+                receipt,
+                allowMemoryRisk: options.allowMemoryRisk,
+                commandName: "evaluation"
+            )
+            baseParameters.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
+        }
+        let effectiveOptions = EvalRunOptions(
+            modelID: options.modelID,
+            hfRepoID: options.hfRepoID,
+            remoteServerID: options.remoteServerID,
+            remoteModelID: options.remoteModelID,
+            remoteTargets: options.remoteTargets,
+            suites: options.suites,
+            datasetID: options.datasetID,
+            sampleSize: options.sampleSize,
+            source: options.source,
+            fieldMapping: options.fieldMapping,
+            profile: options.profile,
+            parameters: baseParameters,
+            evalPromptID: options.evalPromptID,
+            evalPromptRevisionID: options.evalPromptRevisionID,
+            evalPrompt: options.evalPrompt,
+            evalPromptFile: options.evalPromptFile,
+            semanticJudgeRemoteServerID: options.semanticJudgeRemoteServerID,
+            semanticJudgeModelID: options.semanticJudgeModelID,
+            remoteParallelism: options.remoteParallelism,
+            preflightFitCheck: options.preflightFitCheck,
+            allowMemoryRisk: options.allowMemoryRisk,
+            json: options.json
+        )
+        let adHocPrompt = try adHocEvaluationPromptSystemPrompt(effectiveOptions)
+        let remoteTargetOptions = Self.effectiveRemoteTargetOptions(for: effectiveOptions)
         let resolvedRemoteTargets: [ControlPlaneEvaluationRequest.RemoteTarget?] = try remoteTargetOptions.isEmpty
             ? [nil]
             : remoteTargetOptions.map {
@@ -7772,25 +8869,25 @@ public actor MelixCLIRunner {
             }
         var suiteParameters: [String: [String: String]] = [:]
         for suiteID in suites {
-            suiteParameters[suiteID] = try evaluationParameters(options: options, suiteID: suiteID)
+            suiteParameters[suiteID] = try evaluationParameters(options: effectiveOptions, suiteID: suiteID, adHocPrompt: adHocPrompt)
         }
 
         var plannedRequests: [PlannedEvaluationRequest] = []
         for remoteTarget in resolvedRemoteTargets {
             for suiteID in suites {
-                let usesCustomSource = options.source.kind != .builtinPackage
-                let parameters = suiteParameters[suiteID] ?? options.parameters
+                let usesCustomSource = effectiveOptions.source.kind != .builtinPackage
+                let parameters = suiteParameters[suiteID] ?? effectiveOptions.parameters
                 let request = ControlPlaneEvaluationRequest(
-                    modelID: options.modelID,
-                    hfRepoID: options.hfRepoID,
+                    modelID: effectiveOptions.modelID,
+                    hfRepoID: effectiveOptions.hfRepoID,
                     suiteID: suiteID,
                     datasetID: usesCustomSource
-                        ? options.datasetID
-                        : (options.datasetID.isEmpty ? Self.defaultEvaluationDatasetID(for: suiteID) : options.datasetID),
-                    sampleSize: options.sampleSize,
-                    source: options.source,
-                    fieldMapping: options.fieldMapping,
-                    profile: options.profile,
+                        ? effectiveOptions.datasetID
+                        : (effectiveOptions.datasetID.isEmpty ? Self.defaultEvaluationDatasetID(for: suiteID) : effectiveOptions.datasetID),
+                    sampleSize: effectiveOptions.sampleSize,
+                    source: effectiveOptions.source,
+                    fieldMapping: effectiveOptions.fieldMapping,
+                    profile: effectiveOptions.profile,
                     parameters: parameters,
                     remoteTarget: remoteTarget
                 )
@@ -7808,7 +8905,7 @@ public actor MelixCLIRunner {
             return collected
         }
 
-        let requestedParallelism = Int(options.remoteParallelism)
+        let requestedParallelism = Int(effectiveOptions.remoteParallelism)
         let maxParallelism = requestedParallelism > 0 ? requestedParallelism : plannedRequests.count
         return try await runEvaluationRequestsConcurrently(
             plannedRequests,
@@ -7816,13 +8913,18 @@ public actor MelixCLIRunner {
         )
     }
 
-    private func evaluationParameters(options: EvalRunOptions, suiteID: String) throws -> [String: String] {
+    private func evaluationParameters(options: EvalRunOptions, suiteID: String, adHocPrompt: String) throws -> [String: String] {
         var parameters = options.parameters
+        if adHocPrompt.isEmpty == false {
+            parameters.merge(
+                try adHocEvaluationPromptParameters(systemPrompt: adHocPrompt, suiteID: suiteID, options: options)
+            ) { _, new in new }
+        }
         let usesEventPrompt = suiteID == "event_extraction"
             || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
             || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
             || options.evalPromptID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        if usesEventPrompt {
+        if usesEventPrompt && adHocPrompt.isEmpty {
             guard suiteID == "event_extraction"
                 || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
                 || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
@@ -7924,6 +9026,71 @@ public actor MelixCLIRunner {
             "eval_prompt_title": snapshot.title,
             "eval_prompt_system_prompt": snapshot.systemPrompt,
             "eval_prompt_examples_json": try EvaluationPromptStore.examplesJSONString(snapshot.examples),
+        ]
+    }
+
+    private func adHocEvaluationPromptSystemPrompt(_ options: EvalRunOptions) throws -> String {
+        let hasInlinePrompt = options.evalPrompt.isEmpty == false
+        let hasPromptFile = options.evalPromptFile.isEmpty == false
+        let inlinePrompt = options.evalPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let promptFile = options.evalPromptFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard hasInlinePrompt == false || hasPromptFile == false else {
+            throw MelixCLIError.usage("--eval-prompt and --eval-prompt-file are mutually exclusive.")
+        }
+        guard hasInlinePrompt || hasPromptFile else {
+            return ""
+        }
+        if hasInlinePrompt {
+            guard inlinePrompt.isEmpty == false else {
+                throw MelixCLIError.usage("--eval-prompt must contain non-empty text.")
+            }
+        }
+        if hasPromptFile {
+            guard promptFile.isEmpty == false else {
+                throw MelixCLIError.usage("--eval-prompt-file must be a non-empty path.")
+            }
+        }
+        guard options.evalPromptID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MelixCLIError.usage("--eval-prompt and --eval-prompt-file cannot be combined with --eval-prompt-id.")
+        }
+        guard options.evalPromptRevisionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MelixCLIError.usage("--eval-prompt-revision requires --eval-prompt-id.")
+        }
+        if promptFile.isEmpty == false {
+            let prompt = try String(contentsOfFile: promptFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard prompt.isEmpty == false else {
+                throw MelixCLIError.usage("--eval-prompt-file must contain non-empty UTF-8 text.")
+            }
+            return prompt
+        }
+        return inlinePrompt
+    }
+
+    private func adHocEvaluationPromptParameters(
+        systemPrompt: String,
+        suiteID: String,
+        options: EvalRunOptions
+    ) throws -> [String: String] {
+        let scoringMode = options.parameters["scoring_mode"]?.isEmpty == false
+            ? options.parameters["scoring_mode"] ?? ""
+            : options.profile.scoringMode
+        let contentHash = try EvaluationPromptStore.contentHash(
+            taskKind: suiteID,
+            scoringMode: scoringMode,
+            systemPrompt: systemPrompt
+        )
+        return [
+            "prompt_id": "ad-hoc.evaluation.prompt",
+            "prompt_revision_id": "ad-hoc",
+            "prompt_content_hash": contentHash,
+            "prompt_title": "Ad Hoc Evaluation Prompt",
+            "eval_prompt_id": "ad-hoc.evaluation.prompt",
+            "eval_prompt_revision_id": "ad-hoc",
+            "eval_prompt_content_hash": contentHash,
+            "eval_prompt_title": "Ad Hoc Evaluation Prompt",
+            "eval_prompt_system_prompt": systemPrompt,
+            "eval_prompt_examples_json": "[]",
         ]
     }
 
@@ -8434,9 +9601,6 @@ public actor MelixCLIRunner {
     }
 
     private func runBatch(_ options: BatchRunOptions) async throws -> String {
-        guard options.dryRun else {
-            throw MelixCLIError.runtime("melix batch run currently supports --dry-run only; execution is tracked in #755 and follow-up issues.")
-        }
         let plan = try BatchRunPlanner.makePlan(options: options, environment: environment)
         try BatchRunArtifacts.writeFoundationArtifacts(plan: plan)
         if plan.config.preflight {
@@ -8448,17 +9612,78 @@ public actor MelixCLIRunner {
                     "Batch preflight blocked run \(plan.config.runID) before execution. \(blockerList)"
                 )
             }
-            if options.json {
+            if options.dryRun, options.json {
                 var payload = BatchRunArtifacts.effectiveConfigPayload(plan: plan)
                 payload["preflight_result"] = report.payload(plan: plan)
                 return try prettyJSON(payload)
             }
-            return BatchRunArtifacts.renderPreflightTextSummary(plan: plan, report: report)
+            if options.dryRun {
+                return BatchRunArtifacts.renderPreflightTextSummary(plan: plan, report: report)
+            }
         }
-        if options.json {
+        if options.dryRun, options.json {
             return try prettyJSON(BatchRunArtifacts.effectiveConfigPayload(plan: plan))
         }
-        return BatchRunArtifacts.renderTextSummary(plan: plan)
+        if options.dryRun {
+            return BatchRunArtifacts.renderTextSummary(plan: plan)
+        }
+        let executor = BatchRunExecutor(plan: plan, commandExecutor: makeBatchSubprocessExecutor(plan: plan))
+        let result = try await executor.execute()
+        if options.json {
+            return try prettyJSON(result.summary.payload())
+        }
+        return BatchRunReporter.renderRunText(summary: result.summary, progressLines: result.progressLines)
+    }
+
+    private func runBatchStatus(_ options: BatchStatusOptions) throws -> String {
+        let resolution = try BatchRunStatusResolver.resolve(options: options, environment: environment)
+        let records = try BatchRunManifestStore.loadRecords(manifestPath: resolution.manifestPath)
+        let summary = BatchRunManifestStore.summarize(
+            records: records,
+            runID: resolution.runID,
+            tempRoot: resolution.tempRoot,
+            outputRoot: resolution.outputRoot,
+            manifestPath: resolution.manifestPath
+        )
+        if options.json {
+            return try prettyJSON(summary.payload())
+        }
+        return BatchRunReporter.renderStatusText(summary: summary)
+    }
+
+    private func runBatchResume(_ options: BatchResumeOptions) async throws -> String {
+        let (plan, records) = try BatchRunResumePlanner.makePlan(options: options, environment: environment)
+        let mode = BatchRunResumeMode(evalOnly: options.evalOnly, missingOnly: options.missingOnly)
+        if options.dryRun {
+            return try BatchRunResumePlanner.renderDryRun(plan: plan, records: records, mode: mode, json: options.json)
+        }
+        let executor = BatchRunExecutor(plan: plan, commandExecutor: makeBatchSubprocessExecutor(plan: plan))
+        let result = try await executor.execute(existingRecords: records, resumeMode: mode)
+        if options.json {
+            return try prettyJSON(result.summary.payload())
+        }
+        return BatchRunReporter.renderRunText(summary: result.summary, progressLines: result.progressLines)
+    }
+
+    private func makeBatchSubprocessExecutor(plan: BatchRunPlan) -> BatchRunSubprocessExecutor {
+        { arguments, extraEnvironment, workingDirectory in
+            let baseCommand = plan.config.cliPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? ["melix"]
+                : [plan.config.cliPath]
+            let executor = MelixCLIProcessExecutor(
+                baseCommand: baseCommand,
+                environment: ProcessInfo.processInfo.environment
+                    .merging(self.environment) { _, new in new }
+                    .merging(extraEnvironment) { _, new in new },
+                workingDirectory: workingDirectory
+            )
+            do {
+                let result = try await executor.runDetailed(arguments: arguments)
+                return BatchRunSubprocessResult(stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode)
+            } catch {
+                return BatchRunSubprocessResult(stdout: "", stderr: error.localizedDescription, exitCode: -1)
+            }
+        }
     }
 
     private func buildBatchPreflightReport(plan: BatchRunPlan) async throws -> BatchRunPreflightReport {
@@ -8470,7 +9695,8 @@ public actor MelixCLIRunner {
             name: "repo_root",
             path: config.repoRoot,
             blockedDetail: "Melix repository root does not exist: \(config.repoRoot).",
-            readyDetail: "Melix repository root exists."
+            readyDetail: "Melix repository root exists.",
+            category: "runtime_config"
         ))
         checks.append(executableCheck(
             name: "cli",
@@ -8478,6 +9704,8 @@ public actor MelixCLIRunner {
             blockedDetail: "Melix CLI build artifact is missing or not executable: \(config.cliPath). Build with xcrun swift build --product melix or set MELIX_CLI.",
             readyDetail: "Melix CLI build artifact is executable."
         ))
+        checks.append(contentsOf: stackProductChecks(config: config))
+        checks.append(isolatedRuntimeConfigCheck(config: config))
         checks.append(portCheck(config.httpPort))
         checks.append(directoryWritableCheck(name: "melix_home", path: config.melixHome))
         checks.append(directoryWritableCheck(name: "runtime_dir", path: config.runtimeDir))
@@ -8505,13 +9733,28 @@ public actor MelixCLIRunner {
         name: String,
         path: String,
         blockedDetail: String,
-        readyDetail: String
+        readyDetail: String,
+        category: String = "filesystem"
     ) -> BatchRunPreflightCheck {
         var isDirectory = ObjCBool(false)
         if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
-            return .init(name: name, status: "ready", detail: readyDetail, actionable: "")
+            return .init(
+                name: name,
+                status: "ready",
+                detail: readyDetail,
+                actionable: "",
+                category: category,
+                metadata: ["path": path]
+            )
         }
-        return .init(name: name, status: "blocked", detail: blockedDetail, actionable: "Create the directory or provide the correct path.")
+        return .init(
+            name: name,
+            status: "blocked",
+            detail: blockedDetail,
+            actionable: "Create the directory or provide the correct path.",
+            category: category,
+            metadata: ["path": path]
+        )
     }
 
     private func directoryWritableCheck(name: String, path: String) -> BatchRunPreflightCheck {
@@ -8524,10 +9767,19 @@ public actor MelixCLIRunner {
                     name: name,
                     status: status,
                     detail: "\(name) exists at \(path).",
-                    actionable: status == "ready" ? "" : "Fix permissions or choose a writable directory."
+                    actionable: status == "ready" ? "" : "Fix permissions or choose a writable directory.",
+                    category: "runtime_config",
+                    metadata: ["path": path]
                 )
             }
-            return .init(name: name, status: "blocked", detail: "\(name) is not a directory: \(path).", actionable: "Choose a directory path.")
+            return .init(
+                name: name,
+                status: "blocked",
+                detail: "\(name) is not a directory: \(path).",
+                actionable: "Choose a directory path.",
+                category: "runtime_config",
+                metadata: ["path": path]
+            )
         }
 
         var ancestor = url.deletingLastPathComponent()
@@ -8539,7 +9791,9 @@ public actor MelixCLIRunner {
                         name: name,
                         status: "blocked",
                         detail: "\(name) cannot be created because an ancestor is not a directory: \(ancestor.path).",
-                        actionable: "Choose a path under an existing writable directory."
+                        actionable: "Choose a path under an existing writable directory.",
+                        category: "runtime_config",
+                        metadata: ["path": path, "ancestor": ancestor.path]
                     )
                 }
                 let status = FileManager.default.isWritableFile(atPath: ancestor.path) ? "ready" : "blocked"
@@ -8547,7 +9801,9 @@ public actor MelixCLIRunner {
                     name: name,
                     status: status,
                     detail: "\(name) does not exist yet; nearest existing directory is \(ancestor.path).",
-                    actionable: status == "ready" ? "The batch runner will create this directory when it writes artifacts." : "Fix ancestor permissions or choose a writable directory."
+                    actionable: status == "ready" ? "The batch runner will create this directory when it writes artifacts." : "Fix ancestor permissions or choose a writable directory.",
+                    category: "runtime_config",
+                    metadata: ["path": path, "ancestor": ancestor.path]
                 )
             }
             let next = ancestor.deletingLastPathComponent()
@@ -8560,7 +9816,9 @@ public actor MelixCLIRunner {
             name: name,
             status: "blocked",
             detail: "\(name) does not exist and no parent directory could be found for \(path).",
-            actionable: "Create the parent directory or choose a path under an existing writable directory."
+            actionable: "Create the parent directory or choose a path under an existing writable directory.",
+            category: "runtime_config",
+            metadata: ["path": path]
         )
     }
 
@@ -8571,21 +9829,167 @@ public actor MelixCLIRunner {
         readyDetail: String
     ) -> BatchRunPreflightCheck {
         if FileManager.default.isExecutableFile(atPath: path) {
-            return .init(name: name, status: "ready", detail: readyDetail, actionable: "")
+            return .init(
+                name: name,
+                status: "ready",
+                detail: readyDetail,
+                actionable: "",
+                category: "runtime_products",
+                metadata: ["path": path]
+            )
         }
-        return .init(name: name, status: "blocked", detail: blockedDetail, actionable: "Build or point to the executable before launching a sweep.")
+        return .init(
+            name: name,
+            status: "blocked",
+            detail: blockedDetail,
+            actionable: "Build or point to the executable before launching a sweep.",
+            category: "runtime_products",
+            metadata: ["path": path]
+        )
+    }
+
+    private func stackProductChecks(config: BatchRunEffectiveConfig) -> [BatchRunPreflightCheck] {
+        let repoRoot = URL(fileURLWithPath: config.repoRoot)
+        let products = [
+            ("control_plane", ".build/debug/MelixControlPlaneService", true),
+            ("python_worker_entrypoint", "services/mlx-worker-python/worker", false),
+        ]
+        return products.map { name, relativePath, requiresExecutable in
+            let path = repoRoot.appendingPathComponent(relativePath).path
+            var isDirectory = ObjCBool(false)
+            let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            let isUsable = exists && (!requiresExecutable || FileManager.default.isExecutableFile(atPath: path))
+            if isUsable {
+                return .init(
+                    name: name,
+                    status: "ready",
+                    detail: "Required stack product \(relativePath) is present.",
+                    actionable: "",
+                    category: "runtime_products",
+                    metadata: [
+                        "path": path,
+                        "requires_executable": String(requiresExecutable),
+                    ]
+                )
+            }
+            return .init(
+                name: name,
+                status: "warning",
+                detail: "Required stack product \(relativePath) is not present yet.",
+                actionable: "Build runtime prerequisites before execution, for example with make bootstrap or xcrun swift build --product melix.",
+                category: "runtime_products",
+                metadata: [
+                    "path": path,
+                    "exists": String(exists),
+                    "requires_executable": String(requiresExecutable),
+                ]
+            )
+        }
+    }
+
+    private func isolatedRuntimeConfigCheck(config: BatchRunEffectiveConfig) -> BatchRunPreflightCheck {
+        let defaultRuntimeDir = URL(fileURLWithPath: config.repoRoot)
+            .appendingPathComponent(".runtime/sidecars/\(config.serviceInstanceName)", isDirectory: true)
+            .path
+        let defaultHome = URL(fileURLWithPath: config.repoRoot)
+            .appendingPathComponent(".runtime/home-\(config.serviceInstanceName)", isDirectory: true)
+            .path
+        var blockers: [String] = []
+        if config.serviceInstanceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            blockers.append("service instance name is empty")
+        }
+        let bareDefaultPorts = Set(["11434", "12436"])
+        if config.serviceInstanceName == "default" || bareDefaultPorts.contains(config.httpPort) {
+            blockers.append("batch mode must not use the bare default Melix stack")
+        }
+        if config.runtimeDir == config.repoRoot || config.runtimeDir == "." || config.runtimeDir == "/" {
+            blockers.append("runtime dir is not isolated")
+        }
+        if config.melixHome == FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".melix", isDirectory: true)
+            .path
+        {
+            blockers.append("MELIX_HOME points at shared operator state")
+        }
+        let metadata = [
+            "service_instance_name": config.serviceInstanceName,
+            "http_port": config.httpPort,
+            "bare_default_ports": bareDefaultPorts.sorted().joined(separator: ","),
+            "runtime_dir": config.runtimeDir,
+            "melix_home": config.melixHome,
+            "default_runtime_dir": defaultRuntimeDir,
+            "default_melix_home": defaultHome,
+        ]
+        if blockers.isEmpty {
+            return .init(
+                name: "isolated_runtime_config",
+                status: "ready",
+                detail: "Batch runtime config uses named instance \(config.serviceInstanceName), port \(config.httpPort), isolated runtime dir, and isolated MELIX_HOME.",
+                actionable: "",
+                category: "runtime_config",
+                metadata: metadata
+            )
+        }
+        return .init(
+            name: "isolated_runtime_config",
+            status: "blocked",
+            detail: blockers.joined(separator: "; "),
+            actionable: "Use a named batch instance, non-default HTTP port, worktree-local runtime dir, and worktree-local MELIX_HOME.",
+            category: "runtime_config",
+            metadata: metadata
+        )
     }
 
     private func portCheck(_ value: String) -> BatchRunPreflightCheck {
-        guard let port = Int(value), (1...65535).contains(port) else {
+        guard let port = Int(value), (1024...65535).contains(port) else {
             return .init(
                 name: "http_port",
                 status: "blocked",
                 detail: "Invalid MELIX_HTTP_PORT value: \(value).",
-                actionable: "Use a TCP port between 1 and 65535."
+                actionable: "Use a TCP port between 1024 and 65535.",
+                category: "runtime_config",
+                metadata: ["http_port": value]
             )
         }
-        return .init(name: "http_port", status: "ready", detail: "HTTP port \(port) is valid.", actionable: "")
+        if isTCPPortListening(port) {
+            return .init(
+                name: "http_port",
+                status: "blocked",
+                detail: "HTTP port \(port) is already in use.",
+                actionable: "Choose an unused MELIX_HTTP_PORT for this batch instance.",
+                category: "runtime_config",
+                metadata: ["http_port": value]
+            )
+        }
+        return .init(
+            name: "http_port",
+            status: "ready",
+            detail: "HTTP port \(port) is valid and no listener is currently detected.",
+            actionable: "",
+            category: "runtime_config",
+            metadata: ["http_port": value]
+        )
+    }
+
+    private func isTCPPortListening(_ port: Int) -> Bool {
+        let socketFD = socket(AF_INET, SOCK_STREAM, 0)
+        guard socketFD >= 0 else {
+            return false
+        }
+        defer { close(socketFD) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(port).bigEndian
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                Darwin.connect(socketFD, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return result == 0
     }
 
     private func diskCheck(path: String, fileManager: FileManager) -> BatchRunPreflightCheck {
@@ -8612,22 +10016,37 @@ public actor MelixCLIRunner {
                 available = nil
             }
             guard let available, available > 0 else {
-                return .init(
-                    name: "disk",
-                    status: "warning",
-                    detail: "Could not determine available disk capacity near \(path).",
-                    actionable: "Confirm there is enough free disk before a long sweep."
-                )
-            }
+            return .init(
+                name: "disk",
+                status: "warning",
+                detail: "Could not determine available disk capacity near \(path).",
+                actionable: "Confirm there is enough free disk before a long sweep.",
+                category: "resource",
+                metadata: ["path": path]
+            )
+        }
             let availableBytes = UInt64(max(0, available))
             let detail = "Available capacity near \(path): \(formatBinaryBytes(availableBytes))."
-            return .init(name: "disk", status: "ready", detail: detail, actionable: "")
+            return .init(
+                name: "disk",
+                status: "ready",
+                detail: detail,
+                actionable: "",
+                category: "resource",
+                metadata: [
+                    "path": path,
+                    "available_bytes": String(availableBytes),
+                    "available_gib": String(format: "%.2f", Double(availableBytes) / 1_073_741_824.0),
+                ]
+            )
         } catch {
             return .init(
                 name: "disk",
                 status: "warning",
                 detail: "Could not read available disk capacity near \(path): \(error.localizedDescription)",
-                actionable: "Confirm there is enough free disk before a long sweep."
+                actionable: "Confirm there is enough free disk before a long sweep.",
+                category: "resource",
+                metadata: ["path": path]
             )
         }
     }
@@ -8646,24 +10065,49 @@ public actor MelixCLIRunner {
         let actionable = status == "ready"
             ? ""
             : "Confirm required models and datasets can be downloaded or materialized before a long sweep."
-        return .init(name: "cache_state", status: status, detail: detail, actionable: actionable)
+        return .init(
+            name: "cache_state",
+            status: status,
+            detail: detail,
+            actionable: actionable,
+            category: "cache",
+            metadata: [
+                "model_cache": modelCacheRoot.path,
+                "model_cache_exists": String(modelCacheExists),
+                "dataset_cache": datasetCacheRoot.path,
+                "dataset_cache_exists": String(datasetCacheExists),
+            ]
+        )
     }
 
     private func preflightModelChecks(plan: BatchRunPlan) -> [BatchRunPreflightCheck] {
-        plan.selectedModels.map { model in
+        let duplicateCounts = Dictionary(grouping: plan.models, by: \.repoID)
+            .mapValues(\.count)
+        return plan.selectedModels.map { model -> BatchRunPreflightCheck in
             if model.repoID.contains("/") {
                 return .init(
                     name: "model_repo:\(model.index)",
                     status: "ready",
                     detail: "\(model.repoID) has a Hugging Face repo-shaped id.",
-                    actionable: ""
+                    actionable: "",
+                    category: "model_resolution",
+                    metadata: [
+                        "repo_id": model.repoID,
+                        "source_line": String(model.sourceLine),
+                        "duplicate_count": String(duplicateCounts[model.repoID, default: 1]),
+                    ]
                 )
             }
             return .init(
                 name: "model_repo:\(model.index)",
                 status: "blocked",
                 detail: "\(model.repoID) is not a Hugging Face repo id.",
-                actionable: "Use owner/repo model ids in the model list."
+                actionable: "Use owner/repo model ids in the model list.",
+                category: "model_resolution",
+                metadata: [
+                    "repo_id": model.repoID,
+                    "source_line": String(model.sourceLine),
+                ]
             )
         }
     }
@@ -8675,7 +10119,9 @@ public actor MelixCLIRunner {
                 name: "dataset",
                 status: "blocked",
                 detail: "Evaluation dataset id is empty.",
-                actionable: "Set --eval-dataset-id or eval_dataset_id."
+                actionable: "Set --eval-dataset-id or eval_dataset_id.",
+                category: "dataset",
+                metadata: ["dataset_id": datasetID]
             )
         }
         let repoRootFixture = URL(fileURLWithPath: config.repoRoot)
@@ -8688,7 +10134,13 @@ public actor MelixCLIRunner {
                 name: "dataset",
                 status: "ready",
                 detail: "Fixture dataset \(datasetID) is packaged at \(repoRootFixture.path).",
-                actionable: ""
+                actionable: "",
+                category: "dataset",
+                metadata: [
+                    "dataset_id": datasetID,
+                    "fixture_path": repoRootFixture.path,
+                    "source": "repo_fixture",
+                ]
             )
         }
 
@@ -8699,14 +10151,26 @@ public actor MelixCLIRunner {
                 name: "dataset",
                 status: "warning",
                 detail: "Dataset \(datasetID) was not found in repo fixtures; managed dataset cache exists at \(managedRoot.path).",
-                actionable: "Confirm the dataset is materialized before a long sweep."
+                actionable: "Confirm the dataset is materialized before a long sweep.",
+                category: "dataset",
+                metadata: [
+                    "dataset_id": datasetID,
+                    "managed_cache": managedRoot.path,
+                    "source": "managed_cache",
+                ]
             )
         }
         return .init(
             name: "dataset",
             status: "blocked",
             detail: "Dataset \(datasetID) was not found in repo fixtures or managed dataset cache.",
-            actionable: "Download or package the evaluation dataset before running the sweep."
+            actionable: "Download or package the evaluation dataset before running the sweep.",
+            category: "dataset",
+            metadata: [
+                "dataset_id": datasetID,
+                "fixture_path": repoRootFixture.path,
+                "managed_cache": managedRoot.path,
+            ]
         )
     }
 
@@ -8717,7 +10181,9 @@ public actor MelixCLIRunner {
                 name: "judge",
                 status: "blocked",
                 detail: "Semantic judge remote-server id is empty.",
-                actionable: "Set --judge-remote-server-id or judge_remote_server_id."
+                actionable: "Set --judge-remote-server-id or judge_remote_server_id.",
+                category: "judge",
+                metadata: ["remote_server_id": judgeID]
             )
         }
         let melixHome = isolatedMelixHome(config: config)
@@ -8726,7 +10192,12 @@ public actor MelixCLIRunner {
                 name: "judge",
                 status: "blocked",
                 detail: "Remote server \(judgeID) was not found in MELIX_HOME=\(config.melixHome).",
-                actionable: "Configure the judge with melix remote-server add before launching a long run."
+                actionable: "Configure the judge with melix remote-server add before launching a long run.",
+                category: "judge",
+                metadata: [
+                    "remote_server_id": judgeID,
+                    "melix_home": config.melixHome,
+                ]
             )
         }
         let apiKey = try RemoteServerAPIKeyStore(melixHome: melixHome)
@@ -8738,7 +10209,9 @@ public actor MelixCLIRunner {
                 name: "judge",
                 status: "blocked",
                 detail: "Remote server \(judgeID) has no API key configured.",
-                actionable: "Store the judge API key with melix remote-server add/update."
+                actionable: "Store the judge API key with melix remote-server add/update.",
+                category: "judge",
+                metadata: ["remote_server_id": judgeID]
             )
         }
         let modelID = config.judgeModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -8749,14 +10222,22 @@ public actor MelixCLIRunner {
                 name: "judge",
                 status: "blocked",
                 detail: "Remote server \(judgeID) has no judge model configured.",
-                actionable: "Set --judge-model or configure a default remote model."
+                actionable: "Set --judge-model or configure a default remote model.",
+                category: "judge",
+                metadata: ["remote_server_id": judgeID]
             )
         }
         return .init(
             name: "judge",
             status: "ready",
             detail: "Remote server \(judgeID) is configured for model \(modelID).",
-            actionable: ""
+            actionable: "",
+            category: "judge",
+            metadata: [
+                "remote_server_id": judgeID,
+                "model_id": modelID,
+                "provider_kind": server.providerKind,
+            ]
         )
     }
 
@@ -8771,7 +10252,8 @@ public actor MelixCLIRunner {
                 name: name,
                 status: "blocked",
                 detail: "\(name) preflight check failed: \(error.localizedDescription)",
-                actionable: "Fix the reported configuration or state and rerun preflight."
+                actionable: "Fix the reported configuration or state and rerun preflight.",
+                category: "preflight_exception"
             )
         }
     }
@@ -8801,11 +10283,17 @@ private struct MemoryFitReceipt {
     let totalUnifiedMemoryBytes: UInt64
     let estimatedActiveMemoryBytes: UInt64
     let estimatedDiskUsageBytes: UInt64
+    let availableDiskBytes: UInt64
+    let diskFitStatus: String
     let safetyThresholdFraction: Double
     let unknownFields: [String]
     let assumptions: [String]
 
     func benchmarkParameters(schemaVersion: String) throws -> [String: String] {
+        try runParameters(schemaVersion: schemaVersion)
+    }
+
+    func runParameters(schemaVersion: String) throws -> [String: String] {
         [
             "memory_fit_schema_version": schemaVersion,
             "memory_fit_target_kind": targetKind,
@@ -8813,6 +10301,8 @@ private struct MemoryFitReceipt {
             "memory_fit_status": fitStatus,
             "memory_fit_estimated_active_memory_bytes": String(estimatedActiveMemoryBytes),
             "memory_fit_estimated_disk_usage_bytes": String(estimatedDiskUsageBytes),
+            "memory_fit_available_disk_bytes": String(availableDiskBytes),
+            "memory_fit_disk_status": diskFitStatus,
             "memory_fit_total_unified_memory_bytes": String(totalUnifiedMemoryBytes),
             "memory_fit_safety_threshold_fraction": String(
                 format: "%.2f",

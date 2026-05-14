@@ -15,6 +15,8 @@ Keep the shipped worker protocol stable and extend the Python request-local stre
   - Add byte-fallback decoding state.
   - Add generated-token/logprob counters and effective-config metrics.
   - Add empty thinking sentinel and unclosed reasoning recovery heuristics.
+  - Treat `<|channel>thought...<channel|>` as a hidden reasoning channel with
+    the same suppression, sentinel, and EOS recovery behavior as `<think>`.
 - Modify `services/mlx-worker-python/worker/runtime/mlx_text_runtime.py`
   - Add optional token metadata fields to `RuntimeTokenEvent`.
   - Normalize chat-template history so non-leading system/developer messages are merged into one leading system block before template rendering.
@@ -60,7 +62,9 @@ Keep the shipped worker protocol stable and extend the Python request-local stre
 
 - Streamed and non-streamed byte-fallback Unicode fixtures render the same visible text.
 - Runtime token metadata reports equal generated-token/logprob counts under cumulative multi-token flushes.
-- Disabled reasoning and empty thinking-off sentinels emit no reasoning delta and no visible reasoning leakage.
+- Disabled reasoning and empty thinking-off sentinels emit no reasoning delta
+  and no visible reasoning leakage, including pipe-style thought-channel
+  markers.
 - Malformed unclosed reasoning channels preserve recoverable visible answer tails at EOS.
 - Dict/object tool-call arguments remain serialized only at the schema boundary.
 - Native tool/parser effective config is present in completion metrics before first response completion.

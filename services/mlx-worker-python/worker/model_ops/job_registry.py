@@ -264,7 +264,11 @@ class ModelOpsJobRegistry:
     ) -> None:
         for manifest_path in manifest_paths:
             payload = self._read_manifest_dict(manifest_path)
-            if not payload or str(payload.get("operation", "")).strip() != operation:
+            if payload:
+                raw_operation = payload.get("operation", "")
+                if raw_operation != operation and str(raw_operation).strip() != operation:
+                    continue
+            else:
                 continue
 
             job_id = self._resolved_job_id(manifest_path, payload)

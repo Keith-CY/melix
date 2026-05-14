@@ -743,6 +743,121 @@ struct RequestCoordinatorTests {
         _ = try await consumer.value
     }
 
+    @Test("VLM generic generate does not block dispatch on cache observability refresh")
+    func vlmGenericGenerateDoesNotBlockDispatchOnCacheObservabilityRefresh() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var model = ModelCatalog.devVLMModel()
+        model.modelID = "melix-vlm-observability"
+        model.routeClass = .workerRoutePythonVlm
+        model.settings.ext["melix.capability.route_kind"] = WorkerRouteKind.pythonVLM.rawValue
+        model.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        model.settings.ext["melix.vlm.execution_mode"] = "text_backed"
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "\(model.modelID)::python")
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-observability",
+                modelID: model.modelID,
+                messages: [makeWorkerTextMessage("Answer briefly.")]
+            )
+        )
+        let consumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in execution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        for _ in 0..<100 {
+            if await workerClient.generatedRequestIDs.isEmpty == false {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(await workerClient.generatedRequestIDs == ["req-vlm-observability"])
+        #expect(await workerClient.runtimeStatsCallCount == 0)
+        #expect(await workerClient.cacheStatsCallCount == 0)
+
+        await workerClient.emitToken(requestID: "req-vlm-observability", text: "done")
+        await workerClient.finish(requestID: "req-vlm-observability")
+        _ = try await consumer.value
+
+        #expect(await workerClient.runtimeStatsCallCount == 2)
+        #expect(await workerClient.cacheStatsCallCount == 1)
+        let metrics = await metricsStore.snapshot()
+        #expect(metrics.values["cache.memory_bytes"] == 0)
+        #expect(metrics.values["python_worker.generation_stream_owner_mode_code"] == 0)
+    }
+
+    @Test("warm VLM requests reuse recent worker dispatch readiness")
+    func warmVLMRequestsReuseRecentWorkerDispatchReadiness() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var model = ModelCatalog.devVLMModel()
+        model.modelID = "melix-vlm-dispatch-cache"
+        model.routeClass = .workerRoutePythonVlm
+        model.settings.ext["melix.capability.route_kind"] = WorkerRouteKind.pythonVLM.rawValue
+        model.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        model.settings.ext["melix.vlm.execution_mode"] = "text_backed"
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "\(model.modelID)::python")
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let first = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-dispatch-cache-1",
+                modelID: model.modelID,
+                messages: [makeWorkerTextMessage("First.")]
+            )
+        )
+        let firstConsumer = Task {
+            for try await _ in first.stream {}
+        }
+        await workerClient.emitToken(requestID: "req-vlm-dispatch-cache-1", text: "one")
+        await workerClient.finish(requestID: "req-vlm-dispatch-cache-1")
+        _ = await firstConsumer.result
+
+        let second = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-dispatch-cache-2",
+                modelID: model.modelID,
+                messages: [makeWorkerTextMessage("Second.")]
+            )
+        )
+        let secondConsumer = Task {
+            for try await _ in second.stream {}
+        }
+        await workerClient.emitToken(requestID: "req-vlm-dispatch-cache-2", text: "two")
+        await workerClient.finish(requestID: "req-vlm-dispatch-cache-2")
+        _ = await secondConsumer.result
+
+        #expect(await workerClient.dispatchReadinessCheckCount == 1)
+        let metrics = await metricsStore.snapshot()
+        #expect(metrics.values["control_plane.worker_connect_cache_hit_count", default: 0] == 1)
+    }
+
     @Test("video-bearing VLM requests stay dispatchable during ingress-only rollout")
     func videoBearingVLMRequestsStayDispatchableDuringIngressOnlyRollout() async throws {
         let workerClient = BlockingWorkerClient()
@@ -901,6 +1016,29 @@ struct RequestCoordinatorTests {
             response.stats.generationStreamOwnerMode = "executor_owned_no_stream"
             response.stats.workerThreadInitLatencyMs = 4
             response.stats.streamSyncFallbackCount = 2
+            response.stats.lastModelLoadTrustPolicyResolutionMs = 1.25
+            response.stats.modelLoadTrustBlockedCount = 3
+            response.stats.lastMultimodalDecodeMode = "text_only_batch_generator"
+            response.stats.lastMultimodalFallbackReason = ""
+            response.stats.lastMultimodalDecodeSyncMode = "executor_batch_generator"
+            response.stats.textBatchGeneratorSubmittedRequestCount = 2
+            response.stats.textBatchGeneratorCompletedRequestCount = 1
+            response.stats.textBatchGeneratorStepCount = 16
+            response.stats.textBatchGeneratorGeneratedTokenCount = 31
+            response.stats.textBatchGeneratorPeakActiveBatchSize = 2
+            response.stats.textBatchGeneratorQueueWaitMsTotal = 3.5
+            response.stats.textBatchGeneratorInsertMsTotal = 4.5
+            response.stats.textBatchGeneratorExecutorStepMsTotal = 120.25
+            response.stats.textBatchGeneratorNextMsTotal = 118.75
+            response.stats.textBatchGeneratorEmitMsTotal = 5.25
+            response.stats.textBatchGeneratorActiveBatchSize = 1
+            response.stats.textBatchGeneratorGeneratedResponseCount = 31
+            response.stats.textBatchGeneratorFailedRequestCount = 1
+            response.stats.textBatchGeneratorPrepareMsTotal = 6.5
+            response.stats.textBatchGeneratorFirstResponseMsTotal = 11.5
+            response.stats.textBatchGeneratorFirstVisibleMsTotal = 12.5
+            response.stats.textBatchGeneratorFirstVisibleTokenIndexTotal = 2
+            response.stats.textBatchGeneratorFirstEmptySegmentCount = 1
             return response
         }())
         await workerClient.setCacheStatsResponse({
@@ -953,6 +1091,257 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 2)
         #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 4)
         #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 2)
+        #expect(metrics.values["worker.model_load_trust_policy_resolution_ms", default: -1] == 1.25)
+        #expect(metrics.values["worker.model_load_trust_blocked_count", default: -1] == 3)
+        #expect(metrics.values["vision.multimodal_decode_mode_code", default: -1] == 7)
+        #expect(metrics.values["vision.multimodal_fallback_reason_code", default: -1] == 0)
+        #expect(metrics.values["vision.multimodal_decode_sync_mode_code", default: -1] == 4)
+        #expect(metrics.values["vision.text_batch_generator.submitted_request_count", default: -1] == 2)
+        #expect(metrics.values["vision.text_batch_generator.completed_request_count", default: -1] == 1)
+        #expect(metrics.values["vision.text_batch_generator.step_count", default: -1] == 16)
+        #expect(metrics.values["vision.text_batch_generator.generated_token_count", default: -1] == 31)
+        #expect(metrics.values["vision.text_batch_generator.peak_active_batch_size", default: -1] == 2)
+        #expect(metrics.values["vision.text_batch_generator.queue_wait_ms_total", default: -1] == 3.5)
+        #expect(metrics.values["vision.text_batch_generator.insert_ms_total", default: -1] == 4.5)
+        #expect(metrics.values["vision.text_batch_generator.executor_step_ms_total", default: -1] == 120.25)
+        #expect(metrics.values["vision.text_batch_generator.next_ms_total", default: -1] == 118.75)
+        #expect(metrics.values["vision.text_batch_generator.emit_ms_total", default: -1] == 5.25)
+        #expect(metrics.values["vision.text_batch_generator.active_batch_size", default: -1] == 1)
+        #expect(metrics.values["vision.text_batch_generator.generated_response_count", default: -1] == 31)
+        #expect(metrics.values["vision.text_batch_generator.failed_request_count", default: -1] == 1)
+        #expect(metrics.values["vision.text_batch_generator.prepare_ms_total", default: -1] == 6.5)
+        #expect(metrics.values["vision.text_batch_generator.first_response_ms_total", default: -1] == 11.5)
+        #expect(metrics.values["vision.text_batch_generator.first_visible_ms_total", default: -1] == 12.5)
+        #expect(metrics.values["vision.text_batch_generator.first_visible_token_index_total", default: -1] == 2)
+        #expect(metrics.values["vision.text_batch_generator.first_empty_segment_count", default: -1] == 1)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_requested_capacity", default: -1] == 2)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity", default: -1] == 1)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled", default: -1] == 0)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_count", default: -1] == 1)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 2)
+    }
+
+    @Test("text-only cooperative python VLM requests can enter multimodal continuous batch admission")
+    func textOnlyCooperativePythonVLMRequestsCanEnterMultimodalContinuousBatchAdmission() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        var model = ModelCatalog.devVLMModel()
+        model.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        model.settings.ext["melix.vlm.text_only_step_cooperative"] = "true"
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution1 = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-text-batch-1",
+                modelID: "melix-dev-vlm",
+                messages: [makeWorkerTextMessage("Explain cooperative VLM batching.")],
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "2",
+                    "melix.gateway.prefill_batch_size": "2",
+                    "melix.gateway.completion_batch_size": "2",
+                    "melix.vlm.text_only_step_cooperative": "true",
+                ]
+            )
+        )
+        let consumer1 = Task {
+            do {
+                for try await _ in execution1.stream {
+                }
+            } catch {
+            }
+        }
+
+        let execution2 = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-text-batch-2",
+                modelID: "melix-dev-vlm",
+                messages: [makeWorkerTextMessage("Explain cooperative VLM batching.")],
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "2",
+                    "melix.gateway.prefill_batch_size": "2",
+                    "melix.gateway.completion_batch_size": "2",
+                    "melix.vlm.text_only_step_cooperative": "true",
+                ]
+            )
+        )
+        let consumer2 = Task {
+            do {
+                for try await _ in execution2.stream {
+                }
+            } catch {
+            }
+        }
+
+        let generatedIDs = await waitForGeneratedRequests(
+            workerClient: workerClient,
+            requestIDs: ["req-vlm-text-batch-1", "req-vlm-text-batch-2"]
+        )
+        let metrics = await metricsStore.snapshot()
+
+        #expect(Set(generatedIDs).isSuperset(of: ["req-vlm-text-batch-1", "req-vlm-text-batch-2"]))
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_requested_capacity", default: -1] == 2)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity", default: -1] == 2)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled", default: -1] == 1)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 0)
+
+        #expect(try await coordinator.cancel(requestID: "req-vlm-text-batch-1"))
+        #expect(try await coordinator.cancel(requestID: "req-vlm-text-batch-2"))
+        _ = await consumer1.result
+        _ = await consumer2.result
+    }
+
+    @Test("text-only Python VLM batch-generator requests can enter multimodal continuous-batch admission")
+    func textOnlyPythonVLMBatchGeneratorRequestsCanEnterMultimodalContinuousBatchAdmission() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        var model = ModelCatalog.devVLMModel()
+        model.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution1 = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-bg-batch-1",
+                modelID: "melix-dev-vlm",
+                messages: [makeWorkerTextMessage("Explain batch generator VLM batching.")],
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "2",
+                    "melix.gateway.prefill_batch_size": "2",
+                    "melix.gateway.completion_batch_size": "2",
+                    "melix.vlm.text_only_batch_generator": "true",
+                ]
+            )
+        )
+        let consumer1 = Task {
+            do {
+                for try await _ in execution1.stream {
+                }
+            } catch {
+            }
+        }
+
+        let execution2 = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-bg-batch-2",
+                modelID: "melix-dev-vlm",
+                messages: [makeWorkerTextMessage("Explain batch generator VLM batching.")],
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "2",
+                    "melix.gateway.prefill_batch_size": "2",
+                    "melix.gateway.completion_batch_size": "2",
+                    "melix.vlm.text_only_batch_generator": "true",
+                ]
+            )
+        )
+        let consumer2 = Task {
+            do {
+                for try await _ in execution2.stream {
+                }
+            } catch {
+            }
+        }
+
+        let generatedIDs = await waitForGeneratedRequests(
+            workerClient: workerClient,
+            requestIDs: ["req-vlm-bg-batch-1", "req-vlm-bg-batch-2"]
+        )
+        let metrics = await metricsStore.snapshot()
+
+        #expect(Set(generatedIDs).isSuperset(of: ["req-vlm-bg-batch-1", "req-vlm-bg-batch-2"]))
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_requested_capacity", default: -1] == 2)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity", default: -1] == 2)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled", default: -1] == 1)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 0)
+
+        #expect(try await coordinator.cancel(requestID: "req-vlm-bg-batch-1"))
+        #expect(try await coordinator.cancel(requestID: "req-vlm-bg-batch-2"))
+        _ = await consumer1.result
+        _ = await consumer2.result
+    }
+
+    @Test("python VLM requests with media do not use cooperative text batching")
+    func pythonVLMRequestsWithMediaDoNotUseCooperativeTextBatching() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        var model = ModelCatalog.devVLMModel()
+        model.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        model.settings.ext["melix.vlm.text_only_step_cooperative"] = "true"
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-image-not-batchable",
+                modelID: "melix-dev-vlm",
+                messages: [makeWorkerVisionMessage(text: "Summarize.", imageBytes: Data("vision fixture".utf8))],
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "2",
+                    "melix.gateway.prefill_batch_size": "2",
+                    "melix.gateway.completion_batch_size": "2",
+                    "melix.vlm.text_only_step_cooperative": "true",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        let generatedIDs = await waitForGeneratedRequests(
+            workerClient: workerClient,
+            requestIDs: ["req-vlm-image-not-batchable"]
+        )
+        let metrics = await metricsStore.snapshot()
+
+        #expect(generatedIDs == ["req-vlm-image-not-batchable"])
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_requested_capacity", default: -1] == 2)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity", default: -1] == 1)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled", default: -1] == 0)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 2)
+
+        #expect(try await coordinator.cancel(requestID: "req-vlm-image-not-batchable"))
+        _ = await consumer.result
     }
 
     @Test("python speech requests publish speech streaming metrics")
@@ -2752,6 +3141,67 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["http.stream_first_event_ms", default: -1] >= 0)
     }
 
+    @Test("first token delivery is not blocked by scheduler progress publishing")
+    func firstTokenDeliveryIsNotBlockedBySchedulerProgressPublishing() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let gate = DelayedSchedulerEventGate()
+        let streamRecorder = WorkerStreamEventRecorder()
+        let schedulerReadModel = SchedulerReadModel(
+            metricsStore: metricsStore,
+            eventPublisher: { event in
+                guard event.requestID == "req-first-token-fast-delivery",
+                      event.requestProgress.phase == .requestDecoding
+                else {
+                    return
+                }
+                await gate.wait()
+            }
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-first-token-fast-delivery")
+        )
+        let collector = Task {
+            var iterator = execution.stream.makeAsyncIterator()
+            if let event = try await iterator.next() {
+                await streamRecorder.append(event)
+            }
+        }
+        defer { collector.cancel() }
+
+        await workerClient.emitToken(requestID: "req-first-token-fast-delivery", text: "fast")
+        let deliveredBeforeProgressPublisherFinished = await waitForRecordedWorkerEvent(
+            streamRecorder,
+            matching: { event in
+                guard case .tokenDelta(let delta) = event.payload else {
+                    return false
+                }
+                return delta.text == "fast"
+            },
+            attempts: 50
+        )
+        await gate.open()
+        await workerClient.finishDecode(requestID: "req-first-token-fast-delivery")
+        _ = await collector.result
+
+        #expect(deliveredBeforeProgressPublisherFinished != nil)
+        #expect(await metricsStore.value(forKey: "http.ttfd_ms") >= 0)
+        #expect(
+            await waitForMetricValue(
+                metricsStore,
+                key: "http.stream_event_count",
+                atLeast: 1
+            ) >= 1
+        )
+    }
+
     @Test("reasoning budget overflow truncates streamed reasoning and closes the request explicitly")
     func reasoningBudgetOverflowTruncatesStreamedReasoningAndClosesTheRequestExplicitly() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -3179,6 +3629,9 @@ private actor PhaseAwareWorkerClient:
     private(set) var generatedRequests: [Melix_Worker_V1_GenerateRequest] = []
     private var runtimeStatsResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
     private var cacheStatsResponse = Melix_Worker_V1_GetCacheStatsResponse()
+    private(set) var runtimeStatsCallCount = 0
+    private(set) var cacheStatsCallCount = 0
+    private(set) var dispatchReadinessCheckCount = 0
 
     func setRuntimeStatsResponse(_ response: Melix_Worker_V1_GetRuntimeStatsResponse) {
         runtimeStatsResponse = response
@@ -3189,7 +3642,8 @@ private actor PhaseAwareWorkerClient:
     }
 
     func canDispatchRequests() async -> Bool {
-        true
+        dispatchReadinessCheckCount += 1
+        return true
     }
 
     func generate(
@@ -3296,11 +3750,13 @@ private actor PhaseAwareWorkerClient:
     }
 
     func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
-        runtimeStatsResponse
+        runtimeStatsCallCount += 1
+        return runtimeStatsResponse
     }
 
     func cacheStats() async throws -> Melix_Worker_V1_GetCacheStatsResponse {
-        cacheStatsResponse
+        cacheStatsCallCount += 1
+        return cacheStatsResponse
     }
 
     func emitPrefillStarted(
@@ -3619,6 +4075,46 @@ private actor ToolCallingWorkerClient: WorkerRoutingClient {
     }
 }
 
+private actor DelayedSchedulerEventGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        guard !isOpen else {
+            return
+        }
+        isOpen = true
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+}
+
+private actor WorkerStreamEventRecorder {
+    private var events: [Melix_Worker_V1_ExecuteEvent] = []
+
+    func append(_ event: Melix_Worker_V1_ExecuteEvent) {
+        events.append(event)
+    }
+
+    func first(
+        matching predicate: @Sendable (Melix_Worker_V1_ExecuteEvent) -> Bool
+    ) -> Melix_Worker_V1_ExecuteEvent? {
+        events.first(where: predicate)
+    }
+}
+
 private enum TestWorkerFailure: Error, Equatable {
     case streamFailed
     case generateFailed
@@ -3799,6 +4295,36 @@ private func waitForProgress(
     return nil
 }
 
+private func waitForRecordedWorkerEvent(
+    _ recorder: WorkerStreamEventRecorder,
+    matching predicate: @escaping @Sendable (Melix_Worker_V1_ExecuteEvent) -> Bool,
+    attempts: Int = 100
+) async -> Melix_Worker_V1_ExecuteEvent? {
+    for _ in 0..<(attempts * waitAttemptsMultiplier) {
+        if let event = await recorder.first(matching: predicate) {
+            return event
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return nil
+}
+
+private func waitForMetricValue(
+    _ metricsStore: MetricsStore,
+    key: String,
+    atLeast minimumValue: Double,
+    attempts: Int = 100
+) async -> Double {
+    for _ in 0..<(attempts * waitAttemptsMultiplier) {
+        let value = await metricsStore.value(forKey: key)
+        if value >= minimumValue {
+            return value
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return await metricsStore.value(forKey: key)
+}
+
 private func waitForPrefillRequest(
     workerClient: PhaseAwareWorkerClient,
     attempts: Int = 100
@@ -3842,4 +4368,21 @@ private func waitForDecodeRequests(
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
     return await workerClient.decodeRequestIDs()
+}
+
+private func waitForGeneratedRequests(
+    workerClient: PhaseAwareWorkerClient,
+    requestIDs: [String],
+    attempts: Int = 100
+) async -> [String] {
+    let effectiveAttempts = attempts * waitAttemptsMultiplier
+    let expected = Set(requestIDs)
+    for _ in 0..<effectiveAttempts {
+        let observed = await workerClient.generatedRequestIDs
+        if Set(observed).isSuperset(of: expected) {
+            return observed
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return await workerClient.generatedRequestIDs
 }

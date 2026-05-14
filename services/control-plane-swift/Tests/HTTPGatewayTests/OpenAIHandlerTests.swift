@@ -765,6 +765,66 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/chat/completions skips registry sync for catalog-resident warm models")
+    func postChatCompletionsSkipsRegistrySyncForCatalogResidentWarmModels() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-warm-no-registry", seq: 1, finishReason: "stop", assistantText: "ready"),
+        ])
+        let modelOpsClient = ScriptedRegistryModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = #"{"model_registry":{"models":[],"roots":[]}}"#
+                return event
+            }(),
+        ])
+        let registry = WorkerRegistry(
+            defaultTextClient: workerClient,
+            modelOperationsClient: modelOpsClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: registry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-warm-no-registry" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let generated = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("data: [DONE]"))
+        #expect(generated.execution.modelHandle == "melix-dev-text::local")
+        #expect(await modelOpsClient.lastConvertRequest == nil)
+    }
+
     @Test("POST /v1/chat/completions forwards OpenAI tools and emits SDK-compatible tool deltas")
     func postChatCompletionsForwardsOpenAIToolsAndToolDeltas() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -857,7 +917,10 @@ struct OpenAIHandlerTests {
 
     @Test("POST /v1/chat/completions lazy-loads text-only VLM requests through the Python VLM route")
     func postChatCompletionsLazyLoadsTextOnlyVLMRequestsThroughPythonVLMRoute() async throws {
-        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devVLMModel()])
+        var vlmModel = ModelCatalog.devVLMModel()
+        vlmModel.settings.ext["melix.vlm.text_only_step_cooperative"] = "true"
+        vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
         let textClient = ScriptedWorkerClient(events: [])
         let vlmClient = ScriptedWorkerClient(
             events: [
@@ -918,6 +981,80 @@ struct OpenAIHandlerTests {
         #expect(loadRequest.model.modelKind == "vlm")
         #expect(loadRequest.model.ext["melix.capability.route_kind"] == "python_vlm")
         #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_step_cooperative"] == "true")
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(await textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions copies imported VLM batch-generator metadata by route metadata")
+    func postChatCompletionsCopiesImportedVLMBatchGeneratorMetadataByRouteMetadata() async throws {
+        var vlmModel = ModelCatalog.devVLMModel()
+        vlmModel.modelID = "imported-gemma-vlm"
+        vlmModel.routeClass = .workerRouteSwiftText
+        vlmModel.settings.ext["melix.capability.route_kind"] = "python_vlm"
+        vlmModel.settings.ext["melix.model_path"] = "/tmp/imported-gemma-vlm"
+        vlmModel.settings.ext["melix.vlm.text_only_step_cooperative"] = "false"
+        vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
+        let textClient = ScriptedWorkerClient(events: [])
+        let vlmClient = ScriptedWorkerClient(
+            events: [
+                makeTokenEvent(requestID: "req-http-imported-vlm-text", seq: 1, text: "vlm"),
+                makeCompletedEvent(
+                    requestID: "req-http-imported-vlm-text",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "vlm"
+                ),
+            ],
+            loadModelHandle: "imported-gemma-vlm::python"
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: vlmClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-imported-vlm-text" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "imported-gemma-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_step_cooperative"] == nil)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(generateRequest.sampling.temperature == 0)
+        #expect(generateRequest.sampling.topP == 1)
+        #expect(generateRequest.sampling.topK == 0)
         #expect(await textClient.lastGenerateRequest == nil)
     }
 
@@ -1782,6 +1919,11 @@ struct OpenAIHandlerTests {
             response.stats.generationStreamOwnerMode = "executor_owned"
             response.stats.workerThreadInitLatencyMs = 7
             response.stats.streamSyncFallbackCount = 0
+            response.stats.lastModelLoadTrustPolicyResolutionMs = 0.75
+            response.stats.modelLoadTrustBlockedCount = 1
+            response.stats.lastMultimodalDecodeMode = "native_quantized"
+            response.stats.lastMultimodalFallbackReason = ""
+            response.stats.lastMultimodalDecodeSyncMode = "executor_stream"
             return response
         }()
         let vlmClient = ScriptedWorkerClient(
@@ -1888,6 +2030,12 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 1)
         #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 7)
         #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 0)
+        #expect(metrics.values["worker.model_load_trust_policy_resolution_ms", default: -1] == 0.75)
+        #expect(metrics.values["worker.model_load_trust_blocked_count", default: -1] == 1)
+        #expect(metrics.values["vision.multimodal_decode_mode_code", default: -1] == 3)
+        #expect(metrics.values["vision.multimodal_fallback_reason_code", default: -1] == 0)
+        #expect(metrics.values["vision.multimodal_decode_sync_mode_code", default: -1] == 1)
+        #expect(metrics.values["vision.text_batch_generator.step_count", default: -1] == 0)
     }
 
     @Test("chat completions translator preserves recovery metadata on worker requests")
@@ -3255,6 +3403,10 @@ struct OpenAIHandlerTests {
         #expect(textMetadata["melix.capability.class"] as? String == "text")
         #expect(textMetadata["melix.capability.supported_tasks"] as? String == "generate")
         #expect(textMetadata["melix.capability.supported_modalities"] as? String == "text")
+        #expect(textMetadata["melix.load_trust.requested_mode"] as? String == "default_safe")
+        #expect(textMetadata["melix.load_trust.effective_mode"] as? String == "not_applicable")
+        #expect(textMetadata["melix.load_trust.policy_source"] as? String == "not_applicable")
+        #expect(textMetadata["melix.load_trust.receipt_present"] as? String == "false")
         #expect(textMetadata["melix.model_path"] == nil)
         #expect(imageMetadata["melix.display_name"] as? String == "Melix Image")
         #expect(imageMetadata["melix.capability.class"] as? String == "image_generation")
@@ -4182,9 +4334,6 @@ struct OpenAIHandlerTests {
             response.stats.lastSpeechLatencyMs = 12
             response.stats.lastAudioOutputBytes = UInt64(envelopeBytes.count + pcmChunk.count)
             response.stats.lastAudioChunkCount = 1
-            response.stats.lastSpeechStreamingEnabled = true
-            response.stats.lastSpeechStreamingIntervalMs = 30
-            response.stats.lastSpeechFirstAudioLatencyMs = 4.5
             return response
         }())
 
@@ -6460,6 +6609,53 @@ struct OpenAIHandlerTests {
         #expect(failedJob.recipe.prompt == "timeout")
     }
 
+    @Test("image generate maps unknown deadline failures into deadline_exceeded")
+    func imageGenerateMapsUnknownDeadlineFailure() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setThrownFailure(
+            WorkerClientError.requestFailed(code: "UNKNOWN", message: "deadline exceeded before response headers")
+        )
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel,
+            environment: ["MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS": "600"]
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-generate-unknown-timeout",
+              "model": "melix-dev-image",
+              "prompt": "timeout"
+            }
+            """.data(using: .utf8)
+        )
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let failedJob = try #require(await imageJobReadModel.job(requestID: "image-generate-unknown-timeout"))
+
+        #expect(response.statusCode == 504)
+        #expect(payload.contains("\"code\":\"deadline_exceeded\""))
+        #expect(failedJob.state == .imageJobFailed)
+        #expect(failedJob.error.code == "deadline_exceeded")
+        #expect(failedJob.progress.stage == "timed_out")
+    }
+
     @Test("image endpoints fall back to request mapped jobs when worker job identifiers drift")
     func imageEndpointsFallBackToRequestMappedJobsWhenWorkerJobIdentifiersDrift() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -6713,6 +6909,167 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"python_model_operations\":false"))
         #expect(payload.contains("\"python_transcription\":false"))
         #expect(payload.contains("\"python_speech\":false"))
+    }
+
+    @Test("GET discovery endpoints expose machine readable local runtime contracts")
+    func getDiscoveryEndpointsExposeMachineReadableLocalRuntimeContracts() async throws {
+        let metricsStore = MetricsStore()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-discovery-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data(
+            """
+            [project]
+            version-control = "ignored"
+            version = "7.8.9"
+            """.utf8
+        ).write(to: root.appendingPathComponent("pyproject.toml"))
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var qwen = warmModel()
+        qwen.modelID = "mlx-community/Qwen3.5-9B-MLX-4bit"
+        qwen.kind = "text"
+        qwen.settings.ext["melix.hf_repo_id"] = "mlx-community/Qwen3.5-9B-MLX-4bit"
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [qwen, warmEmbeddingModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_434),
+            environment: [
+                "MELIX_HOME": "/tmp/melix-discovery-home",
+                "MELIX_HTTP_PORT": "12434",
+                "MELIX_REPO_ROOT": root.path,
+            ]
+        )
+
+        let wellKnownResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/.well-known/melix.json", headers: [:], body: Data())
+        )
+        let wellKnown = try await jsonPayload(from: wellKnownResponse.body)
+        let links = try #require(wellKnown["links"] as? [String: Any])
+        let features = try #require(wellKnown["features"] as? [String])
+        #expect(wellKnownResponse.statusCode == 200)
+        #expect(wellKnown["schema_version"] as? String == "melix.discovery.info.v1")
+        #expect(wellKnown["version"] as? String == "7.8.9")
+        #expect(links["capabilities"] as? String == "/api/capabilities")
+        #expect(features.contains("runtime_settings"))
+
+        let capabilitiesResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/api/capabilities", headers: [:], body: Data())
+        )
+        let capabilities = try await jsonPayload(from: capabilitiesResponse.body)
+        let models = try #require(capabilities["models"] as? [[String: Any]])
+        #expect(capabilitiesResponse.statusCode == 200)
+        #expect(capabilities["schema_version"] as? String == "melix.discovery.capabilities.v1")
+        #expect((capabilities["supported_tasks"] as? [String])?.contains("text-generation") == true)
+        #expect(models.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-4bit" })
+
+        let instructionsResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/api/instructions", headers: [:], body: Data())
+        )
+        let instructions = try await jsonPayload(from: instructionsResponse.body)
+        #expect(instructionsResponse.statusCode == 200)
+        #expect(instructions["schema_version"] as? String == "melix.discovery.instructions.v1")
+        #expect((instructions["areas"] as? [[String: Any]])?.contains { $0["id"] as? String == "settings" } == true)
+
+        let metadataResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/api/config-metadata", headers: [:], body: Data())
+        )
+        let metadata = try await jsonPayload(from: metadataResponse.body)
+        #expect(metadataResponse.statusCode == 200)
+        #expect(metadata["schema_version"] as? String == "melix.discovery.config_metadata.v1")
+        #expect((metadata["settings"] as? [[String: Any]])?.contains { $0["key"] as? String == "max_concurrent_jobs" } == true)
+        #expect(await metricsStore.value(forKey: "operator.discovery_well_known_latency_ms") >= 0)
+        #expect(await metricsStore.value(forKey: "operator.discovery_capabilities_latency_ms") >= 0)
+        #expect(await metricsStore.value(forKey: "operator.discovery_instructions_latency_ms") >= 0)
+        #expect(await metricsStore.value(forKey: "operator.discovery_config_metadata_latency_ms") >= 0)
+    }
+
+    @Test("runtime discovery contracts expose stable aliases links metadata and onboarding endpoints")
+    func runtimeDiscoveryContractsExposeStableAliasesLinksMetadataAndOnboardingEndpoints() throws {
+        let layout = MelixPathLayout(environment: ["MELIX_HOME": "/tmp/melix-contract-home"])
+        let metadata = MelixRuntimeDiscoveryContracts.runtimeSettingsMetadata(layout: layout)
+        let links = MelixRuntimeDiscoveryContracts.discoveryLinks(baseURL: "/v1/melix/")
+        let instructions = MelixRuntimeDiscoveryContracts.instructionsPayload()
+        let schema = MelixRuntimeDiscoveryContracts.schemaPayload(repoRootPath: "/tmp/melix-repo")
+        let configMetadata = MelixRuntimeDiscoveryContracts.configMetadataPayload(layout: layout)
+        let onboarding = APIOnboardingSnapshotSource().summary()
+
+        #expect(metadata.count == MelixRuntimeDiscoveryContracts.runtimeSettingDefinitions.count)
+        #expect(metadata.contains { $0["key"] as? String == "auto_cleanup_policy" && $0["default"] as? String == "manual" })
+        #expect(metadata.contains { ($0["default"] as? String)?.contains("/tmp/melix-contract-home/models/default-managed") == true })
+        #expect(links["well_known"] == "/v1/melix/.well-known/melix.json")
+        #expect(links["config_metadata"] == "/v1/melix/api/config-metadata")
+        #expect((instructions["areas"] as? [[String: Any]])?.contains { $0["id"] as? String == "updates" } == true)
+        #expect((schema["schemas"] as? [[String: Any]])?.contains { $0["id"] as? String == "plans" } == true)
+        #expect(configMetadata["schema_version"] as? String == "melix.discovery.config_metadata.v1")
+
+        let blankAlias = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: "  ")
+        #expect(blankAlias["status"] as? String == "not_requested")
+        for query in ["/tmp/model", "~/model", "./model", "../model", "file:///tmp/model"] {
+            let alias = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: query)
+            #expect(alias["status"] as? String == "local_path_passthrough")
+            #expect((alias["suggestions"] as? [[String: Any]])?.isEmpty == true)
+        }
+        let fullModelID = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: "owner/model")
+        #expect(fullModelID["status"] as? String == "valid_full_model_id")
+        let noMatch = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: "owner/model with space")
+        #expect(noMatch["status"] as? String == "no_match")
+        let qwen8Bit = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: "qwen35_9b_mlx_8bit")
+        #expect((qwen8Bit["suggestions"] as? [[String: Any]])?.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-8bit" } == true)
+        let qwen26B = MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: "qwen35_26b_mlx_4bit")
+        #expect((qwen26B["suggestions"] as? [[String: Any]])?.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-26B-MLX-4bit" } == true)
+
+        let localService = try #require(onboarding.surfaces.first { $0.surfaceID == "local_service" })
+        #expect(localService.endpointIds.contains("well_known"))
+        #expect(localService.endpointIds.contains("capabilities"))
+        #expect(localService.endpointIds.contains("instructions"))
+        #expect(localService.endpointIds.contains("config_metadata"))
+        let endpointIDs = Set(onboarding.endpoints.map(\.endpointID))
+        #expect(endpointIDs.isSuperset(of: ["well_known", "capabilities", "instructions", "config_metadata"]))
+    }
+
+    @Test("GET capabilities discovery renders all model residency states")
+    func getCapabilitiesDiscoveryRendersAllModelResidencyStates() async throws {
+        let stateCases: [(String, Melix_Controlplane_V1_ModelState, String)] = [
+            ("melix-warm", .modelWarm, "warm"),
+            ("melix-pinned", .modelPinned, "pinned"),
+            ("melix-unloaded", .modelUnloaded, "unloaded"),
+            ("melix-loading", .modelLoading, "loading"),
+            ("melix-discovered", .modelDiscovered, "discovered"),
+            ("melix-failed", .modelFailed, "failed"),
+            ("melix-evicting", .modelEvicting, "evicting"),
+            ("melix-unknown", .UNRECOGNIZED(99), "unknown"),
+        ]
+        let models = stateCases.map { modelID, state, _ in
+            var model = ModelCatalog.devTextModel()
+            model.modelID = modelID
+            model.state = state
+            return model
+        }
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: models),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/api/capabilities", headers: [:], body: Data())
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let discoveredModels = try #require(payload["models"] as? [[String: Any]])
+
+        #expect(response.statusCode == 200)
+        for (modelID, _, discoveryState) in stateCases {
+            #expect(discoveredModels.contains { model in
+                model["model_id"] as? String == modelID && model["state"] as? String == discoveryState
+            })
+        }
     }
 
     @Test("POST /v1/embeddings returns 503 when the embedding worker throws")
@@ -7418,7 +7775,7 @@ struct OpenAIHandlerTests {
               "workflow_node_id": "node-handler",
               "session_id": "session-handler",
               "messages": [
-                { "role": "assistant", "content": "<think>hidden prior turn</think>Visible prior answer." },
+                { "role": "assistant", "content": "<think>hidden prior turn</think><|tool_call>call:github_auth:github_auth_check()<tool_call|>Visible prior answer." },
                 { "role": "user", "content": "Continue the tool result." }
               ]
             }
@@ -7443,9 +7800,11 @@ struct OpenAIHandlerTests {
         #expect(generated?.execution.ext["melix.preset_id"] == "deep_reasoning")
         #expect(generated?.execution.ext["melix.workflow"] == "tool_followup")
         #expect(generated?.execution.ext["melix.reasoning.history_strip_count"] == "1")
+        #expect(generated?.execution.ext["melix.tool_call_history_strip_count"] == "1")
         #expect(metrics.values["http.preset_shaped_count", default: 0] == 1)
         #expect(metrics.values["http.workflow_shaped_count", default: 0] == 1)
         #expect(metrics.values["http.reasoning_history_strip_count", default: 0] == 1)
+        #expect(metrics.values["http.tool_call_history_strip_count", default: 0] == 1)
         #expect(metrics.values["http.shaping_ms", default: -1] >= 0)
     }
 

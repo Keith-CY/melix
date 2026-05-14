@@ -93,6 +93,8 @@ def test_dataset_catalog_inferred_split_and_config_preserves_legacy_helpers() ->
     assert catalog._inferred_config("custom/validation-00000.parquet") == "custom"
     assert catalog._inferred_split_and_config("data/train-00000-of-00001.jsonl") == ("train", "default")
     assert catalog._inferred_split_and_config("custom\\test.json") == ("test", "custom")
+    assert catalog._inferred_split_and_config("validation/shard-00000.jsonl") == ("validation", "default")
+    assert catalog._inferred_split_and_config("data/shard-00000.jsonl") == ("", "default")
     assert catalog._inferred_split_and_config("README.md") == ("", "default")
     assert catalog._inferred_split_and_config("") == ("", "default")
 
@@ -223,6 +225,91 @@ def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     rows = read_hf_dataset_snapshot_rows(snapshot_dir, split="train", limit=1)
 
     assert rows == [{"prompt": "first", "answer": "a"}]
+
+
+def test_dataset_catalog_json_row_reader_limit_uses_incremental_decode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    json_path = tmp_path / "preview.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {"prompt": "first", "answer": "a"},
+                    {"prompt": "second", "answer": "b"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        catalog.json,
+        "loads",
+        lambda _payload: (_ for _ in ()).throw(
+            AssertionError("limited canonical JSON previews should not fully decode")
+        ),
+    )
+
+    assert catalog._read_rows_from_file(json_path, limit=1) == [
+        {"prompt": "first", "answer": "a"}
+    ]
+
+
+def test_dataset_catalog_limited_json_text_helper_edges() -> None:
+    assert catalog._limited_rows_from_json_text("[]", limit=0) == []
+    assert catalog._limited_rows_from_json_text("{}", limit=1) is None
+    assert catalog._limited_rows_from_json_text("  []", limit=1) == []
+    assert catalog._limited_rows_from_json_text("[", limit=1) is None
+    assert catalog._limited_rows_from_json_text("[invalid", limit=1) is None
+    assert catalog._limited_rows_from_json_text("[1]", limit=1) == []
+    assert catalog._limited_rows_from_json_text("[1 x", limit=1) is None
+    assert catalog._limited_rows_from_json_text(
+        '[{"prompt":"first"}, {"prompt":"second"}]', limit=2
+    ) == [{"prompt": "first"}, {"prompt": "second"}]
+    assert catalog._limited_rows_from_json_text(
+        '{"data" : [{"prompt":"first"}]}', limit=1
+    ) == [{"prompt": "first"}]
+    assert catalog._json_text_first_array_start("") is None
+    assert catalog._json_text_first_array_start("1") is None
+    assert catalog._json_text_first_array_start('{"rows" []}') is None
+    assert catalog._json_text_first_array_start('{"rows" }') is None
+    assert catalog._json_text_first_array_start('{  }') is None
+    assert catalog._json_text_first_array_start('{invalid') is None
+    assert catalog._json_text_first_array_start('{1: 2}') is None
+    assert catalog._json_text_first_array_start('{"metadata": bad}') is None
+    assert catalog._json_text_first_array_start('{"metadata": 1 , "rows": []}') is not None
+    assert catalog._json_text_first_array_start('{"metadata": 1 x}') is None
+    assert catalog._json_text_first_array_start("{") is None
+    assert catalog._json_text_first_array_start('{"items": []}') is None
+
+
+def test_dataset_catalog_limited_json_text_reuses_shared_decoder(monkeypatch: pytest.MonkeyPatch) -> None:
+    raw_decode_calls = 0
+    original_decoder = catalog._JSON_DECODER
+
+    class CountingDecoder:
+        def raw_decode(self, text: str, index: int = 0):
+            nonlocal raw_decode_calls
+            raw_decode_calls += 1
+            return original_decoder.raw_decode(text, index)
+
+    monkeypatch.setattr(catalog, "_JSON_DECODER", CountingDecoder())
+
+    assert catalog._limited_rows_from_json_text(
+        '{"metadata":{"name":"probe"},"rows":[{"prompt":"first"},{"prompt":"second"}]}',
+        limit=1,
+    ) == [{"prompt": "first"}]
+    assert raw_decode_calls == 4
+
+
+def test_dataset_catalog_limited_json_text_reuses_shared_row_array_keys() -> None:
+    assert catalog._JSON_ROW_ARRAY_KEYS == frozenset({"rows", "data"})
+    assert catalog._limited_rows_from_json_text(
+        '{"metadata":{"name":"probe"},"data":[{"prompt":"first"},{"prompt":"second"}]}',
+        limit=1,
+    ) == [{"prompt": "first"}]
 
 
 class _FakeColumnarBatch:
@@ -572,6 +659,22 @@ def test_dataset_catalog_path_split_matching_avoids_temporary_path_construction(
     assert catalog._path_matches_split(Path("custom/test.arrow"), "test") is True
     assert catalog._path_matches_split(Path("train_dir/part-00000.parquet"), "train") is True
     assert catalog._path_matches_split(Path("custom/eval.jsonl"), "train") is False
+    assert catalog._path_matches_split(Path("custom/train."), "train") is False
+
+
+def test_dataset_catalog_split_matching_skips_stem_for_direct_prefix_hits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stem_calls: list[str] = []
+    monkeypatch.setattr(
+        catalog,
+        "_string_stem",
+        lambda name: stem_calls.append(name) or name,
+    )
+
+    assert catalog._path_matches_split(Path("data/validation-00000.jsonl"), "validation") is True
+    assert catalog._path_matches_split(Path("train_dir/part-00000.parquet"), "train") is True
+    assert stem_calls == []
 
 
 def test_dataset_catalog_string_stem_matches_pathlib_for_split_names() -> None:

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
-from dataclasses import dataclass, field
+from collections import deque
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 
@@ -12,10 +16,61 @@ SERVING_DIAGNOSTICS_MANIFEST_SCHEMA_VERSION = "melix.serving_diagnostics.manifes
 SERVING_DIAGNOSTICS_REQUEST_SCHEMA_VERSION = "melix.serving_diagnostics.request_summary.v1"
 SERVING_DIAGNOSTICS_EVENT_SCHEMA_VERSION = "melix.serving_diagnostics.event.v1"
 SERVING_DIAGNOSTICS_COMPARISON_SCHEMA_VERSION = "melix.serving_diagnostics.comparison.v1"
+_EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
+_SET_FROZEN_ATTR = object.__setattr__
 
 
 class ServingDiagnosticsComparisonError(ValueError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class ServingDiagnosticsQueueSnapshot:
+    events: tuple[ServingDiagnosticsEvent, ...]
+    dropped_count: int
+
+
+class BoundedServingDiagnosticsEventQueue:
+    __slots__ = (
+        "_dropped_count",
+        "_events",
+        "_is_saturated",
+        "_lock",
+        "_max_events",
+        "_retained_count",
+    )
+
+    def __init__(self, *, max_events: int = 256) -> None:
+        self._max_events = max(int(max_events), 1)
+        self._events: deque[ServingDiagnosticsEvent] = deque(maxlen=self._max_events)
+        self._dropped_count = 0
+        self._is_saturated = False
+        self._retained_count = 0
+        self._lock = threading.Lock()
+
+    def append(self, event: ServingDiagnosticsEvent) -> bool:
+        lock = self._lock
+        lock.acquire()
+        try:
+            events = self._events
+            if self._is_saturated:
+                self._dropped_count += 1
+                events.append(event)
+                return False
+            events.append(event)
+            retained_count = self._retained_count + 1
+            self._retained_count = retained_count
+            self._is_saturated = retained_count >= self._max_events
+            return True
+        finally:
+            lock.release()
+
+    def snapshot(self) -> ServingDiagnosticsQueueSnapshot:
+        with self._lock:
+            return ServingDiagnosticsQueueSnapshot(
+                events=tuple(self._events),
+                dropped_count=self._dropped_count,
+            )
 
 
 @dataclass(frozen=True)
@@ -83,24 +138,48 @@ class ServingDiagnosticsRequestSummary:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ServingDiagnosticsEvent:
     request_id: str
     phase: str
     event_index: int
     status: str
     duration_ms: float = 0.0
-    attributes: dict[str, object] = field(default_factory=dict)
+    attributes: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
+
+    def __init__(
+        self,
+        request_id: str,
+        phase: str,
+        event_index: int,
+        status: str,
+        duration_ms: float = 0.0,
+        attributes: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES,
+    ) -> None:
+        set_attr = _SET_FROZEN_ATTR
+        set_attr(self, "request_id", request_id)
+        set_attr(self, "phase", phase)
+        set_attr(self, "event_index", event_index)
+        set_attr(self, "status", status)
+        set_attr(self, "duration_ms", duration_ms)
+        set_attr(self, "attributes", attributes)
 
     def to_dict(self) -> dict[str, object]:
+        attributes = self.attributes
+        event_index = self.event_index
+        duration_ms = self.duration_ms
         return {
             "schema_version": SERVING_DIAGNOSTICS_EVENT_SCHEMA_VERSION,
             "request_id": self.request_id,
             "phase": self.phase,
-            "event_index": int(self.event_index),
+            "event_index": event_index
+            if type(event_index) is int
+            else int(event_index),
             "status": self.status,
-            "duration_ms": float(self.duration_ms),
-            "attributes": _stable_json_object(self.attributes),
+            "duration_ms": duration_ms
+            if type(duration_ms) is float
+            else float(duration_ms),
+            "attributes": {} if not attributes else _stable_json_object(attributes),
         }
 
 
@@ -172,7 +251,7 @@ def write_serving_diagnostics_bundle(
     effective_config: dict[str, object],
     model_refs: dict[str, object],
     request_summary: ServingDiagnosticsRequestSummary,
-    events: tuple[ServingDiagnosticsEvent, ...],
+    events: tuple[ServingDiagnosticsEvent, ...] | ServingDiagnosticsQueueSnapshot,
     diagnostics_mode: str,
 ) -> dict[str, Path]:
     if request_summary.prefill_chunk_size:
@@ -187,6 +266,7 @@ def write_serving_diagnostics_bundle(
     request_summary_path = bundle_root / "request-summary.json"
     events_path = bundle_root / "events.jsonl"
 
+    event_rows, dropped_event_count = _event_rows_and_dropped_count(events)
     manifest = {
         "schema_version": SERVING_DIAGNOSTICS_MANIFEST_SCHEMA_VERSION,
         "bundle_id": bundle_id,
@@ -200,6 +280,8 @@ def write_serving_diagnostics_bundle(
         "model_id": request_summary.model_id,
         "runtime_kind": request_summary.runtime_kind,
         "acceleration_mode": request_summary.acceleration_mode,
+        "event_count": len(event_rows),
+        "dropped_event_count": dropped_event_count,
         "artifacts": {
             "effective_config": "effective-config.json",
             "request_summary": "request-summary.json",
@@ -210,7 +292,7 @@ def write_serving_diagnostics_bundle(
     _write_json(manifest_path, manifest)
     _write_json(effective_config_path, _stable_json_object(effective_config))
     _write_json(request_summary_path, request_summary.to_dict())
-    _write_jsonl(events_path, (event.to_dict() for event in events))
+    _write_jsonl(events_path, (event.to_dict() for event in event_rows))
     return {
         "bundle_root": bundle_root,
         "manifest": manifest_path,
@@ -323,6 +405,14 @@ def _comparison_phase_rows(
     return rows
 
 
+def _event_rows_and_dropped_count(
+    events: tuple[ServingDiagnosticsEvent, ...] | ServingDiagnosticsQueueSnapshot,
+) -> tuple[tuple[ServingDiagnosticsEvent, ...], int]:
+    if isinstance(events, ServingDiagnosticsQueueSnapshot):
+        return events.events, events.dropped_count
+    return events, 0
+
+
 def _required_metric_value(run: ServingEvidenceRun, metric_name: str) -> float:
     if metric_name not in run.metrics:
         raise ServingDiagnosticsComparisonError(
@@ -348,7 +438,7 @@ def _safe_artifact_id(value: str) -> str:
     return stripped
 
 
-def _stable_json_object(payload: dict[str, object]) -> dict[str, object]:
+def _stable_json_object(payload: Mapping[str, object]) -> dict[str, object]:
     return {
         str(key): _stable_json_value(value)
         for key, value in sorted(payload.items(), key=lambda item: str(item[0]))

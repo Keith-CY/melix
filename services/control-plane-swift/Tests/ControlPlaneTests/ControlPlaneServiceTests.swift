@@ -553,7 +553,7 @@ struct ControlPlaneServiceTests {
         #expect(response.ok)
         #expect(listener.servedModelID == "")
         #expect(listener.requestedHost == "127.0.0.1")
-        #expect(listener.requestedPort == 11_434)
+        #expect(listener.requestedPort == UInt32(MelixGatewayDefaults.port))
     }
 
     @Test("execute rejects gateway config target mismatches and typed payload validation failures")
@@ -2842,6 +2842,7 @@ struct ControlPlaneServiceTests {
                     "multimodal_cache_budget_bytes": "2048",
                     "default_acceleration_mode": "speculative_decode",
                     "acceleration_profile_id": "draft-q4",
+                    "trust_remote_code": "true",
                 ]
             )
         )
@@ -2860,6 +2861,38 @@ struct ControlPlaneServiceTests {
         #expect(response.model.model.settings.multimodalCacheBudgetBytes == 2_048)
         #expect(response.model.model.settings.defaultAccelerationMode == .speculativeDecode)
         #expect(response.model.model.settings.accelerationProfileID == "draft-q4")
+        #expect(response.model.model.settings.loadTrustMode == .modelLoadTrustTrustRemoteCode)
+    }
+
+    @Test("execute normalizes and clears model-load trust policy settings")
+    func executeNormalizesAndClearsModelLoadTrustPolicySettings() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let defaultSafe = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["load_trust_mode": "default-safe"]
+            )
+        )
+        let trusted = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["model_load_trust_mode": "trust_remote_code"]
+            )
+        )
+        let cleared = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["trust_remote_code": ""]
+            )
+        )
+
+        #expect(defaultSafe.ok)
+        #expect(defaultSafe.model.model.settings.loadTrustMode == .modelLoadTrustDefaultSafe)
+        #expect(trusted.ok)
+        #expect(trusted.model.model.settings.loadTrustMode == .modelLoadTrustTrustRemoteCode)
+        #expect(cleared.ok)
+        #expect(cleared.model.model.settings.loadTrustMode == .unspecified)
     }
 
     @Test("execute normalizes cache mode labels and clears cache policy settings")
@@ -3404,7 +3437,18 @@ struct ControlPlaneServiceTests {
             }(),
         ])
 
-        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        var sourceModel = ModelCatalog.devTextModel()
+        sourceModel.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        sourceModel.loadTrust = {
+            var policy = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+            policy.requestedMode = .modelLoadTrustTrustRemoteCode
+            policy.effectiveMode = .modelLoadTrustTrustRemoteCode
+            policy.policySource = "model_settings"
+            policy.routeClass = .workerRoutePythonTextCompatibility
+            policy.loaderFamily = "mlx_lm"
+            return policy
+        }()
+        let catalog = ModelCatalog(seedModels: [sourceModel])
         let service = ControlPlaneService(
             modelCatalog: catalog,
             workerRegistry: WorkerRegistry(
@@ -3438,6 +3482,8 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.ext["melix.adapter_weights_path"] == "/tmp/melix-train/weights/adapters.safetensors")
         #expect(derived.settings.ext["melix.derived_model_alias"] == "Runtime Alias")
         #expect(derived.settings.ext["melix.derived_from_model_id"] == "melix-dev-text")
+        #expect(derived.settings.loadTrustMode == .unspecified)
+        #expect(derived.hasLoadTrust == false)
     }
 
     @Test("execute prunes removed derived models from the catalog after remove-derived completes")

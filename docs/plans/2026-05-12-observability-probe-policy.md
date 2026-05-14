@@ -25,7 +25,11 @@ Melix observability has five modes:
 | `debug` | Explicit local diagnostics | Bounded detailed traces | Write detailed bundles only for the opted-in session |
 
 `MELIX_PROBE_MODE` is the common environment override. Invalid values fall back
-to a production-safe default.
+to `minimal`, the production-safe default. Empty or missing values also resolve
+to `minimal`; operators must set `MELIX_PROBE_MODE=off` explicitly when they
+want to disable even lightweight health telemetry. Diagnostics payloads set
+`fallback_applied: true` only when a non-empty unrecognized value was provided
+and Melix substituted `minimal`.
 
 ## Probe Inventory And Retention Policy
 
@@ -338,6 +342,9 @@ Executable units:
   specific debug environment variable is enabled.
 - CI isolation: PR-scoped probe commands run from `infra/perf/pr_scoped_probes.json`
   and are not imported by serving hot path modules.
+- Debug queue event overhead: high-volume debug diagnostics should keep bounded
+  queue event objects slot-backed so saturation probes measure append/drop
+  semantics without per-event instance dictionaries.
 
 ## Acceptance Metrics For Follow-Up Issues
 

@@ -959,6 +959,12 @@ def _vlm_capability_metadata(
         **_vision_capability_metadata(family_id),
         **resolved_family.capability_metadata(),
         "melix.vlm.backend_id": _normalized(metadata.get("melix.vlm.backend_id", "")) or "mlx_vlm",
+        "melix.vlm.text_only_step_cooperative": _normalized(
+            metadata.get("melix.vlm.text_only_step_cooperative", "")
+        ) or "false",
+        "melix.vlm.text_only_batch_generator": _normalized(
+            metadata.get("melix.vlm.text_only_batch_generator", "")
+        ) or "false",
         "melix.multimodal_adapter_hash": (
             _normalized(metadata.get("melix.multimodal_adapter_hash", ""))
             or resolved_family.multimodal_adapter_hash

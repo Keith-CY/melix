@@ -153,6 +153,77 @@ def test_resolve_built_product_falls_back_to_sorted_triple_debug_candidates(
     assert module._resolve_built_product(tmp_path / "missing-build-root", "melix-menubar") is None
 
 
+def test_resolve_built_product_returns_lex_first_triple_without_sorting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    expected = build_root / "arm64-apple-macosx/debug/melix-menubar"
+    later = build_root / "x86_64-apple-macosx/debug/melix-menubar"
+    for binary in (later, expected):
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        module,
+        "sorted",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("lexicographically first triple should avoid sorting fallback candidates")
+        ),
+        raising=False,
+    )
+
+    assert module._resolve_built_product(build_root, "melix-menubar") == expected
+
+
+def test_resolve_built_product_skips_non_dirs_and_entry_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    expected = build_root / "arm64-apple-macosx/debug/melix-menubar"
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    expected.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    class FakeEntry:
+        def __init__(self, name: str, is_dir_result: bool | None) -> None:
+            self.name = name
+            self._is_dir_result = is_dir_result
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            if self._is_dir_result is None:
+                raise OSError("synthetic entry failure")
+            return self._is_dir_result
+
+    class FakeScandir:
+        def __enter__(self):
+            return iter(
+                (
+                    FakeEntry("broken-entry", None),
+                    FakeEntry("not-a-directory", False),
+                    FakeEntry("arm64-apple-macosx", True),
+                )
+            )
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    monkeypatch.setattr(module.os, "scandir", lambda path: FakeScandir())
+
+    assert module._resolve_built_product(build_root, "melix-menubar") == expected
+
+
+def test_resolve_built_product_returns_none_without_triple_directories(tmp_path: Path) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    build_root.mkdir()
+    (build_root / "README.txt").write_text("not a build triple\n", encoding="utf-8")
+
+    assert module._resolve_built_product(build_root, "melix-menubar") is None
+
+
 def test_resolve_built_cli_binary_falls_back_with_scandir_without_path_glob(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

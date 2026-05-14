@@ -70,6 +70,7 @@ class PreparedVisionRequest:
     preprocess_peak_memory_bytes: int
     prompt_hash_hex: str = ""
     multimodal_hash_hex: str = ""
+    chat_messages: tuple[dict[str, object], ...] = ()
 
     @property
     def contains_video(self) -> bool:
@@ -225,7 +226,8 @@ def _parse_image_reference(uri: str) -> ParsedImageReference:
 
     parsed = urlparse(uri)
     if parsed.scheme in {"http", "https", "file"}:
-        decoded_path = unquote(parsed.path)
+        parsed_path = parsed.path
+        decoded_path = parsed_path if "%" not in parsed_path else unquote(parsed_path)
         path = Path(decoded_path)
     else:
         decoded_path = uri
@@ -242,17 +244,19 @@ def _parse_image_reference(uri: str) -> ParsedImageReference:
 
 def _path_from_uri(uri: str | ParsedImageReference) -> Path:
     reference = uri if isinstance(uri, ParsedImageReference) else _parse_image_reference(uri)
-    if reference.parsed.scheme in {"", "file"}:
+    scheme = reference.parsed.scheme
+    if scheme == "" or scheme == "file":
         candidate = reference.path
         if not candidate.exists():
             raise MultimodalPreprocessError(f"Missing local image input: {reference.raw}")
         return candidate
-    raise MultimodalPreprocessError(f"Unsupported image URI scheme: {reference.parsed.scheme}")
+    raise MultimodalPreprocessError(f"Unsupported image URI scheme: {scheme}")
 
 
 def _bytes_from_image_uri(uri: str) -> tuple[bytes, str, str, str, str]:
     reference = _parse_image_reference(uri)
-    if reference.parsed.scheme in {"", "file"}:
+    scheme = reference.parsed.scheme
+    if scheme == "" or scheme == "file":
         path = reference.path
         try:
             bytes_data = path.read_bytes()
@@ -265,9 +269,9 @@ def _bytes_from_image_uri(uri: str) -> tuple[bytes, str, str, str, str]:
             reference.format,
             reference.filename,
         )
-    if reference.parsed.scheme in {"http", "https"}:
+    if scheme == "http" or scheme == "https":
         return _fetch_remote_image(reference)
-    raise MultimodalPreprocessError(f"Unsupported image URI scheme: {reference.parsed.scheme}")
+    raise MultimodalPreprocessError(f"Unsupported image URI scheme: {scheme}")
 
 
 def _fetch_remote_image(uri: str | ParsedImageReference) -> tuple[bytes, str, str, str, str]:

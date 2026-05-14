@@ -11,6 +11,7 @@ import worker.model_ops.hub_catalog as hub_catalog_module
 from worker.model_ops.hub_catalog import (
     HubCatalog,
     HubCatalogError,
+    _bytes_per_parameter,
     _is_mlx_compatible,
     _local_fit_evidence,
     _quantization_summary,
@@ -40,6 +41,14 @@ def test_quantization_summary_preserves_alias_order_from_lowered_tags() -> None:
         _quantization_summary(["2-bit", "3bit", "8-bit", "float32", "bf16"])
         == "2-bit, 3-bit, 8-bit, fp32, bf16"
     )
+
+
+def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tags() -> None:
+    assert _bytes_per_parameter([], lowered_tags={"family", "float32", "4-bit"}) == 0.5
+    assert _bytes_per_parameter([], lowered_tags={"family", "8bit"}) == 1.0
+    assert _bytes_per_parameter([], lowered_tags={"family", "3-bit", "8bit"}) == 0.375
+    assert _bytes_per_parameter([], lowered_tags={"family", "foo4", "bitbar"}) == 2.0
+    assert _bytes_per_parameter(["adapter", "2bit-mlx"], lowered_tags=None) == 0.25
 
 
 class FakeHTTPResponse:
@@ -622,6 +631,30 @@ def test_size_hint_bytes_skips_direct_hint_parser_when_card_model_size_missing(
 
     assert hub_catalog_module._size_hint_bytes({"cardData": {}, "readme": "Model size: 7 MB"}) == 0
     assert calls == [("Model size: 7 MB", False)]
+
+
+def test_size_hint_bytes_preserves_combined_marker_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    def tracked(text: str, *, allow_bare: bool) -> int:
+        calls.append((text, allow_bare))
+        return 5 * MB
+
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", tracked)
+
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "description": "Model size:",
+                "readme": "5 MB",
+                "cardData": {"description": "operator note"},
+            }
+        )
+        == 5 * MB
+    )
+    assert calls == [("Model size:\n5 MB\noperator note", False)]
 
 
 def test_size_hint_bytes_uses_direct_card_model_size_without_regex(

@@ -1,0 +1,41 @@
+{
+  "schema_version": "melix.tool_call_eval_dataset.v1",
+  "dataset_id": "tool-call-system-prompts.v1",
+  "version": "2026-05-13",
+  "sample_count": 26,
+  "dimensions": [
+    "basic_instruction_following",
+    "tool_schema_and_argument_fidelity",
+    "agent_control_and_negative_constraints"
+  ],
+  "risk_coverage": [
+    "must_call_tool",
+    "no_markdown_or_prose",
+    "no_reasoning_leak",
+    "json_only_public_text",
+    "schema_required_argument",
+    "schema_argument_fidelity",
+    "parallel_tool_use",
+    "parameter_extraction",
+    "forbidden_tool",
+    "tool_overuse",
+    "no_matching_tool",
+    "missing_required_user_parameter",
+    "tool_hallucination"
+  ],
+  "runtime_validation": {
+    "default": "execute_agentic_tool_calls",
+    "case_skip_field": "skip_runtime_validation",
+    "skip_reason": "Some argument extraction cases intentionally validate provider argument fidelity for future tools before a deterministic local adapter exists."
+  },
+  "toolset_version": "melix.agentic_tools.builtin.v1",
+  "parser": "qwen",
+  "parser_contract_version": "melix.tool_parser.qwen.v1",
+  "ci_provider": "fixture",
+  "local_provider": "hermes",
+  "local_model": "unsloth/gemma-4-31b-8bit",
+  "external_calibration": [
+    "BFCL",
+    "ToolBench"
+  ]
+}

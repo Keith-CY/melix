@@ -36,6 +36,7 @@ Step-by-step operating procedures for specific workflows. Use these when you nee
 | [Agent UI Walkthrough](runbooks/agent-ui-walkthrough.md) | Browser-based walkthrough workflow for substantial UI/UX changes before App implementation |
 | [Local Stack](runbooks/phase-1-local-stack.md) | Runtime layout, environment exports, and alternate startup modes |
 | [Benchmark, Matrix & LoRA](runbooks/benchmark-matrix-evaluation-and-lora.md) | Full operator guide: benchmarking, matrix runs, evaluation, and LoRA fine-tuning |
+| [Workflow Recipes And URI Inspection](runbooks/workflow-recipes.md) | Built-in workflow recipes, URI inspection, planning, and pipeline-backed apply |
 | [LoRA Adapter Workflow](runbooks/phase-8-lora-adapter-workflow.md) | Training, activating, publishing, and removing LoRA adapters |
 | [Local Install](runbooks/phase-8-local-install.md) | Install Melix as a persistent local service via launch agent |
 | [Homebrew Install](runbooks/homebrew-install.md) | Install and manage Melix through Homebrew |
@@ -58,6 +59,8 @@ These are the authoritative interface and architecture definitions. Do not move 
 | [Control Plane Protocol](control-plane-protocol.md) | The typed protocol between the control plane and worker surfaces |
 | [Worker RPC Schema](worker-rpc-schema.md) | RPC message shapes and worker communication contracts |
 | [Benchmark & Evaluation Contract](benchmark-evaluation-contract.md) | Benchmark and evaluation data formats, output contracts, and artifact shapes |
+| [Agentic Trajectory Dataset Contract](agentic-trajectory-dataset-contract.md) | Shared trajectory package, validation, and provenance contract for LoRA, RL, benchmark, and evaluation alignment work |
+| [Unified Agentic Tool Runtime Contract](unified-agentic-tool-runtime-contract.md) | Shared tool registry, observation, replay, rollout, benchmark, and evaluation contracts for OpenSearch-VL alignment |
 | [Evidence, Telemetry & Report Contract](evidence-telemetry-report-contract.md) | Run evidence, probe timeline, Apple Silicon telemetry, report, and release-gate source-of-truth rules |
 | [Repository Skeleton](repo-skeleton.md) | Directory layout and conventions for the Melix repository |
 

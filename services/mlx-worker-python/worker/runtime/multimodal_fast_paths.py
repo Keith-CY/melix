@@ -266,8 +266,10 @@ def fast_path_probe_signature(
     loaded_model: Any,
     prepared_request: PreparedVisionRequest,
 ) -> tuple[str, ...]:
-    metadata_items: tuple[tuple[str, str], ...] = ()
+    top_level_repr = "()"
+    metadata_repr = "()"
     if isinstance(loaded_model, dict):
+        top_level_repr = _top_level_signature_repr(loaded_model)
         metadata_pairs: list[tuple[str, str]] = []
         nested_metadata = loaded_model.get("metadata", {})
         nested_metadata_is_dict = isinstance(nested_metadata, dict)
@@ -285,18 +287,28 @@ def fast_path_probe_signature(
                     normalized = nested_normalized
             if normalized:
                 metadata_pairs.append((key, normalized))
-        metadata_items = tuple(metadata_pairs)
-    top_level_items: tuple[tuple[str, str], ...] = ()
-    if isinstance(loaded_model, dict):
-        top_level_items = tuple(
-            (key, str(loaded_model.get(key, "")))
-            for key in _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED
-        )
+        metadata_repr = _signature_pairs_repr(metadata_pairs)
     return (
         prepared_request.multimodal_hash_hex,
-        repr(top_level_items),
-        repr(metadata_items),
+        top_level_repr,
+        metadata_repr,
     )
+
+
+def _top_level_signature_repr(loaded_model: dict[str, Any]) -> str:
+    return _signature_pairs_repr(
+        (key, str(loaded_model.get(key, "")))
+        for key in _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED
+    )
+
+
+def _signature_pairs_repr(pairs: Any) -> str:
+    chunks = [f"({key!r}, {value!r})" for key, value in pairs]
+    if not chunks:
+        return "()"
+    if len(chunks) == 1:
+        return f"({chunks[0]},)"
+    return "(" + ", ".join(chunks) + ")"
 
 
 def _loaded_metadata(loaded_model: Any) -> dict[str, str]:

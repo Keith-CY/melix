@@ -1,0 +1,441 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+import pytest
+
+
+MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "omlx_melix_compare_benchmark.py"
+MODULE_SPEC = importlib.util.spec_from_file_location("omlx_melix_compare_benchmark", MODULE_PATH)
+assert MODULE_SPEC is not None
+assert MODULE_SPEC.loader is not None
+bench = importlib.util.module_from_spec(MODULE_SPEC)
+sys.modules[MODULE_SPEC.name] = bench
+MODULE_SPEC.loader.exec_module(bench)
+
+
+def test_parse_header_values_rejects_malformed_header() -> None:
+    assert bench.parse_header_values(["Authorization: Bearer local"]) == {
+        "Authorization": "Bearer local"
+    }
+    with pytest.raises(ValueError, match="Header must use"):
+        bench.parse_header_values(["Authorization"])
+
+
+def test_parse_sse_data_lines_extracts_content_usage_and_done() -> None:
+    lines = [
+        b"data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n",
+        b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n",
+        b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}\n",
+        b"data: [DONE]\n",
+    ]
+
+    content, chunk_count, usage, saw_done = bench.parse_sse_data_lines(lines)
+
+    assert content == "hello"
+    assert chunk_count == 2
+    assert usage == {"prompt_tokens": 10, "completion_tokens": 2}
+    assert saw_done is True
+
+
+def test_build_prompt_supports_saturating_decode_style() -> None:
+    prompt = bench.build_prompt(
+        128,
+        cache_profile="cold_unique",
+        request_key="request-1",
+        prompt_style="saturating",
+    )
+
+    assert "Do not conclude, summarize, or stop early" in prompt
+    assert "MELIX-OMLX-BENCH-request-1" in prompt
+
+
+def test_preflight_requires_target_model_to_be_listed(monkeypatch: pytest.MonkeyPatch) -> None:
+    endpoint = bench.EndpointConfig(
+        name="melix",
+        base_url="http://127.0.0.1:12434/v1",
+        model="target-model",
+        headers={},
+    )
+
+    monkeypatch.setattr(
+        bench,
+        "request_json",
+        lambda *args, **kwargs: (
+            200,
+            {"data": [{"id": "other-model", "object": "model"}]},
+        ),
+    )
+
+    result = bench.preflight_endpoint(endpoint, timeout_seconds=1.0)
+
+    assert result["status_code"] == 200
+    assert result["model_listed"] is False
+    assert result["ok"] is False
+
+
+def test_preflight_wait_retries_until_target_model_is_listed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = bench.EndpointConfig(
+        name="melix",
+        base_url="http://127.0.0.1:12434/v1",
+        model="target-model",
+        headers={},
+    )
+    responses = iter([
+        (200, {"data": [{"id": "other-model", "object": "model"}]}),
+        (200, {"data": [{"id": "target-model", "object": "model"}]}),
+    ])
+    sleeps: list[float] = []
+
+    monkeypatch.setattr(bench, "request_json", lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(bench.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    preflight = bench.preflight_endpoints(
+        [endpoint],
+        timeout_seconds=1.0,
+        wait_seconds=5.0,
+        retry_interval_seconds=0.25,
+    )
+
+    assert len(preflight) == 1
+    assert preflight[0]["ok"] is True
+    assert preflight[0]["model_listed"] is True
+    assert preflight[0]["attempt_count"] == 2
+    assert sleeps == [0.25]
+
+
+def test_summarize_observations_computes_latency_and_group_throughput() -> None:
+    rows = [
+        bench.RequestObservation(
+            endpoint="melix",
+            model="model",
+            scenario_id="s1",
+            group_id="g1",
+            prompt_token_target=1024,
+            prompt_token_source="usage",
+            max_tokens=32,
+            concurrency=2,
+            cache_profile="cold_unique",
+            repeat_index=0,
+            request_index=0,
+            status="ok",
+            http_status=200,
+            error="",
+            ttft_ms=100.0,
+            total_ms=300.0,
+            decode_ms=200.0,
+            completion_tokens=20.0,
+            completion_token_source="usage",
+            prompt_tokens=100.0,
+            streamed_chunks=5,
+            completion_chars=80,
+            decode_tokens_per_second=100.0,
+            group_elapsed_ms=400.0,
+        ),
+        bench.RequestObservation(
+            endpoint="melix",
+            model="model",
+            scenario_id="s1",
+            group_id="g1",
+            prompt_token_target=1024,
+            prompt_token_source="usage",
+            max_tokens=32,
+            concurrency=2,
+            cache_profile="cold_unique",
+            repeat_index=0,
+            request_index=1,
+            status="ok",
+            http_status=200,
+            error="",
+            ttft_ms=120.0,
+            total_ms=340.0,
+            decode_ms=220.0,
+            completion_tokens=20.0,
+            completion_token_source="usage",
+            prompt_tokens=100.0,
+            streamed_chunks=5,
+            completion_chars=80,
+            decode_tokens_per_second=90.0,
+            group_elapsed_ms=400.0,
+        ),
+    ]
+
+    summaries = bench.summarize_observations(rows)
+
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert summary.request_count == 2
+    assert summary.success_count == 2
+    assert summary.error_count == 0
+    assert summary.median_ttft_ms == 110.0
+    assert summary.median_decode_tokens_per_second == 95.0
+    assert summary.median_aggregate_output_tokens_per_second == 100.0
+    assert summary.prompt_style == "concise"
+
+
+def test_comparison_hints_flags_melix_regressions() -> None:
+    summaries = [
+        bench.ScenarioSummary(
+            endpoint="melix",
+            model="model",
+            prompt_token_target=1024,
+            max_tokens=64,
+            concurrency=4,
+            cache_profile="cold_unique",
+            request_count=4,
+            success_count=4,
+            error_count=0,
+            error_rate=0.0,
+            median_ttft_ms=200.0,
+            p95_ttft_ms=240.0,
+            median_total_ms=600.0,
+            p95_total_ms=650.0,
+            median_decode_tokens_per_second=30.0,
+            median_aggregate_output_tokens_per_second=80.0,
+            median_completion_tokens=64.0,
+        ),
+        bench.ScenarioSummary(
+            endpoint="omlx",
+            model="model",
+            prompt_token_target=1024,
+            max_tokens=64,
+            concurrency=4,
+            cache_profile="cold_unique",
+            request_count=4,
+            success_count=4,
+            error_count=0,
+            error_rate=0.0,
+            median_ttft_ms=120.0,
+            p95_ttft_ms=140.0,
+            median_total_ms=350.0,
+            p95_total_ms=390.0,
+            median_decode_tokens_per_second=60.0,
+            median_aggregate_output_tokens_per_second=160.0,
+            median_completion_tokens=64.0,
+        ),
+    ]
+
+    hints = bench.comparison_hints(summaries)
+
+    assert {hint["area"] for hint in hints} == {
+        "ttft",
+        "end_to_end_latency",
+        "decode_throughput",
+        "continuous_batching",
+    }
+
+
+def test_metrics_snapshot_adds_multimodal_batching_hint(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "control-plane-metrics.json"
+    metrics_path.write_text(
+        json.dumps({
+            "updated_at_unix_ms": 123,
+            "values": {
+                "scheduler.multimodal_continuous_batch_enabled": 0,
+                "scheduler.multimodal_continuous_batch_requested_capacity": 2,
+                "scheduler.multimodal_continuous_batch_effective_capacity": 1,
+                "scheduler.multimodal_continuous_batch_blocked_count": 4,
+                "scheduler.multimodal_continuous_batch_blocked_reason_code": 2,
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    snapshot = bench.load_metrics_snapshot(metrics_path)
+    hints = bench.enrich_hints_with_metrics([], snapshot)
+
+    assert snapshot["ok"] is True
+    assert len(hints) == 1
+    assert hints[0]["severity"] == "high"
+    assert hints[0]["melix_requested_batch_capacity"] == 2
+    assert hints[0]["melix_effective_batch_capacity"] == 1
+    assert hints[0]["melix_blocked_reason_code"] == 2
+    assert "cooperative text-only token-step batching" in hints[0]["melix_blocked_reason"]
+
+
+def test_markdown_summary_lists_text_batch_generator_metrics() -> None:
+    markdown = bench.render_markdown_summary(
+        [],
+        [],
+        preflight=[],
+        warmups=[],
+        metrics_snapshot={
+            "ok": True,
+            "values": {
+                "vision.text_batch_generator.step_count": 16,
+                "vision.text_batch_generator.first_visible_token_index_total": 2,
+                "vision.text_batch_generator.first_empty_segment_count": 0,
+                "vision.text_batch_generator.next_ms_total": 120.5,
+                "vision.text_batch_generator.emit_ms_total": 4.25,
+            },
+        },
+        dry_run=False,
+    )
+
+    assert "`vision.text_batch_generator.step_count` | 16.00" in markdown
+    assert "`vision.text_batch_generator.first_visible_token_index_total` | 2.00" in markdown
+    assert "`vision.text_batch_generator.first_empty_segment_count` | 0.00" in markdown
+    assert "`vision.text_batch_generator.next_ms_total` | 120.50" in markdown
+    assert "`vision.text_batch_generator.emit_ms_total` | 4.25" in markdown
+
+
+def test_dry_run_writes_artifacts_without_export(tmp_path: Path) -> None:
+    args = bench.build_arg_parser().parse_args(
+        [
+            "--model",
+            "local-model",
+            "--dry-run",
+            "--run-id",
+            "test-run",
+            "--staging-root",
+            str(tmp_path),
+            "--no-export",
+            "--json",
+        ]
+    )
+    bench.validate_args(args)
+
+    result = bench.run_benchmark(args)
+
+    staging_dir = tmp_path / "test-run"
+    assert result["observation_count"] == 0
+    assert (staging_dir / "manifest.json").exists()
+    assert (staging_dir / "summary.md").exists()
+    manifest = json.loads((staging_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["dry_run"] is True
+    assert manifest["scenario_count"] == 3
+    assert manifest["warmup_count"] == 0
+    assert "warmups" not in manifest["artifacts"]
+
+
+def test_warmups_are_written_separately_from_summaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_preflight(endpoint: bench.EndpointConfig, *, timeout_seconds: float) -> dict[str, object]:
+        return {
+            "endpoint": endpoint.name,
+            "base_url": endpoint.base_url,
+            "status_code": 200,
+            "ok": True,
+            "model": endpoint.model,
+            "model_listed": True,
+            "model_count": 1,
+            "models": [endpoint.model],
+            "error": None,
+        }
+
+    def fake_run_group(
+        endpoint: bench.EndpointConfig,
+        scenario: bench.BenchmarkScenario,
+        *,
+        include_usage: bool,
+        temperature: float,
+        timeout_seconds: float,
+    ) -> list[bench.RequestObservation]:
+        return [
+            bench.RequestObservation(
+                endpoint=endpoint.name,
+                model=endpoint.model,
+                scenario_id=scenario.scenario_id,
+                group_id=f"{endpoint.name}-{scenario.scenario_id}",
+                prompt_token_target=scenario.prompt_token_target,
+                prompt_token_source="usage",
+                max_tokens=scenario.max_tokens,
+                concurrency=scenario.concurrency,
+                cache_profile=scenario.cache_profile,
+                repeat_index=scenario.repeat_index,
+                request_index=0,
+                status="ok",
+                http_status=200,
+                error="",
+                ttft_ms=10.0 if scenario.scenario_id.startswith("warmup") else 100.0,
+                total_ms=20.0 if scenario.scenario_id.startswith("warmup") else 200.0,
+                decode_ms=10.0,
+                completion_tokens=5.0,
+                completion_token_source="usage",
+                prompt_tokens=20.0,
+                streamed_chunks=1,
+                completion_chars=20,
+                decode_tokens_per_second=500.0,
+                group_elapsed_ms=20.0,
+            )
+        ]
+
+    monkeypatch.setattr(bench, "preflight_endpoint", fake_preflight)
+    monkeypatch.setattr(bench, "run_group", fake_run_group)
+    args = bench.build_arg_parser().parse_args(
+        [
+            "--model",
+            "local-model",
+            "--run-id",
+            "warm-run",
+            "--staging-root",
+            str(tmp_path),
+            "--no-export",
+            "--warmup-requests",
+            "1",
+            "--repeats",
+            "1",
+        ]
+    )
+    bench.validate_args(args)
+
+    result = bench.run_benchmark(args)
+
+    staging_dir = tmp_path / "warm-run"
+    manifest = json.loads((staging_dir / "manifest.json").read_text(encoding="utf-8"))
+    summary = json.loads((staging_dir / "summary.json").read_text(encoding="utf-8"))
+    warmups = (staging_dir / "warmups.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    observations = (staging_dir / "observations.jsonl").read_text(encoding="utf-8").strip().splitlines()
+
+    assert result["warmup_count"] == 2
+    assert result["observation_count"] == 2
+    assert manifest["warmup_count"] == 2
+    assert manifest["warmup_settings"] == {
+        "max_tokens": 8,
+        "prompt_style": "concise",
+        "prompt_token_target": 128,
+        "request_count_per_endpoint": 1,
+    }
+    assert manifest["scenario_settings"] == {"prompt_style": "concise"}
+    assert manifest["artifacts"]["warmups"] == "warmups.jsonl"
+    assert len(warmups) == 2
+    assert len(observations) == 2
+    assert len(summary["warmups"]) == 2
+    assert all(json.loads(line)["scenario_id"].startswith("warmup") for line in warmups)
+    assert {
+        (item["cache_profile"], item["prompt_token_target"], item["max_tokens"], item["prompt_style"])
+        for item in summary["summaries"]
+    } == {("cold_unique", 1024, 128, "concise")}
+
+
+def test_validate_args_rejects_invalid_warmup_values() -> None:
+    args = bench.build_arg_parser().parse_args(["--model", "m", "--warmup-requests", "-1"])
+    with pytest.raises(ValueError, match="--warmup-requests"):
+        bench.validate_args(args)
+
+    args = bench.build_arg_parser().parse_args(["--model", "m", "--warmup-prompt-token-target", "0"])
+    with pytest.raises(ValueError, match="--warmup-prompt-token-target"):
+        bench.validate_args(args)
+
+    args = bench.build_arg_parser().parse_args(["--model", "m", "--warmup-max-tokens", "0"])
+    with pytest.raises(ValueError, match="--warmup-max-tokens"):
+        bench.validate_args(args)
+
+
+def test_validate_args_rejects_invalid_preflight_wait_values() -> None:
+    args = bench.build_arg_parser().parse_args(["--model", "m", "--preflight-wait-seconds", "-1"])
+    with pytest.raises(ValueError, match="--preflight-wait-seconds"):
+        bench.validate_args(args)
+
+    args = bench.build_arg_parser().parse_args([
+        "--model",
+        "m",
+        "--preflight-retry-interval-seconds",
+        "0",
+    ])
+    with pytest.raises(ValueError, match="--preflight-retry-interval-seconds"):
+        bench.validate_args(args)

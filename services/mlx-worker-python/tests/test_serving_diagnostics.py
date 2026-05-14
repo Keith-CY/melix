@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
 
+from worker.productization import serving_diagnostics as serving_diagnostics_module
 from worker.productization.serving_diagnostics import (
+    BoundedServingDiagnosticsEventQueue,
     ServingDiagnosticsComparisonError,
     ServingDiagnosticsEvent,
     ServingDiagnosticsRequestSummary,
@@ -116,6 +119,246 @@ def test_serving_diagnostics_bundle_writes_stable_layout_and_prefill_fields(
             "attributes": {"cache_hit_tokens": 96, "prefill_chunk_size": 64},
         }
     ]
+
+
+def test_serving_diagnostics_bounded_queue_drops_oldest_without_blocking(
+    tmp_path: Path,
+) -> None:
+    queue = BoundedServingDiagnosticsEventQueue(max_events=2)
+    assert queue.append(
+        ServingDiagnosticsEvent(request_id="req-queue", phase="prefill", event_index=0, status="completed")
+    ) is True
+    assert queue.append(
+        ServingDiagnosticsEvent(request_id="req-queue", phase="decode", event_index=1, status="completed")
+    ) is True
+    assert queue.append(
+        ServingDiagnosticsEvent(request_id="req-queue", phase="decode", event_index=2, status="completed")
+    ) is False
+    snapshot = queue.snapshot()
+    assert snapshot.dropped_count == 1
+    assert [event.event_index for event in snapshot.events] == [1, 2]
+
+    summary = ServingDiagnosticsRequestSummary(
+        request_id="req-queue",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-queue",
+        invocation={},
+        effective_config={},
+        model_refs={},
+        request_summary=summary,
+        events=snapshot,
+        diagnostics_mode="debug",
+    )
+
+    manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
+    assert manifest["public_performance_claim_eligible"] is False
+    assert manifest["event_count"] == 2
+    assert manifest["dropped_event_count"] == 1
+    event_rows = [
+        json.loads(line)
+        for line in paths["events"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["event_index"] for row in event_rows] == [1, 2]
+
+
+def test_serving_diagnostics_queue_append_uses_retained_count_without_len() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-retained-count",
+        phase="decode",
+        event_index=0,
+        status="completed",
+    )
+
+    class NoLenBuffer:
+        def __init__(self) -> None:
+            self.events: list[ServingDiagnosticsEvent] = []
+
+        def __len__(self) -> int:
+            raise AssertionError(
+                "append should use the retained counter, not len(_events)"
+            )  # pragma: no cover
+
+        def append(self, queued_event: ServingDiagnosticsEvent) -> None:
+            self.events.append(queued_event)
+
+    queue = BoundedServingDiagnosticsEventQueue(max_events=2)
+    buffer = NoLenBuffer()
+    queue._events = buffer  # type: ignore[assignment]
+
+    assert queue.append(event) is True
+    assert buffer.events == [event]
+
+
+def test_serving_diagnostics_event_instances_use_slots_for_debug_queue() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-slots",
+        phase="decode",
+        event_index=1,
+        status="completed",
+        duration_ms=0.25,
+        attributes={"token": "***"},
+    )
+
+    assert hasattr(event, "__dict__") is False
+    assert event.to_dict()["attributes"] == {"token": "***"}
+    with pytest.raises(AttributeError):
+        event.status = "mutated"  # type: ignore[misc]
+
+
+def test_serving_diagnostics_queue_snapshot_uses_slots_for_debug_queue() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-snapshot-slots",
+        phase="decode",
+        event_index=1,
+        status="completed",
+    )
+    queue = BoundedServingDiagnosticsEventQueue(max_events=1)
+    queue.append(event)
+    queue_snapshot = queue.snapshot()
+
+    assert hasattr(queue_snapshot, "__dict__") is False
+    assert queue_snapshot.events == (event,)
+
+
+def test_serving_diagnostics_default_event_attributes_reuse_empty_mapping() -> None:
+    first = ServingDiagnosticsEvent(
+        request_id="req-empty-1",
+        phase="decode",
+        event_index=1,
+        status="completed",
+    )
+    second = ServingDiagnosticsEvent(
+        request_id="req-empty-2",
+        phase="decode",
+        event_index=2,
+        status="completed",
+    )
+
+    assert first.attributes == {}
+    assert first.to_dict()["attributes"] == {}
+    assert first.attributes is second.attributes
+    with pytest.raises(TypeError):
+        first.attributes["late"] = "mutation"  # type: ignore[index]
+
+
+def test_serving_diagnostics_empty_event_attributes_skip_stable_json_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-empty-fast-path",
+        phase="decode",
+        event_index=3,
+        status="completed",
+    )
+
+    def fail_stable_json_object(_: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("empty event attributes should not call _stable_json_object")
+
+    monkeypatch.setattr(
+        serving_diagnostics_module,
+        "_stable_json_object",
+        fail_stable_json_object,
+    )
+
+    assert event.to_dict()["attributes"] == {}
+
+
+def test_serving_diagnostics_event_to_dict_preserves_numeric_coercion() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-numeric-coercion",
+        phase="decode",
+        event_index=True,
+        status="completed",
+        duration_ms=3,
+    )
+
+    payload = event.to_dict()
+
+    assert payload["event_index"] == 1
+    assert type(payload["event_index"]) is int
+    assert payload["duration_ms"] == 3.0
+    assert type(payload["duration_ms"]) is float
+
+
+def test_serving_diagnostics_bounded_queue_serializes_append_during_snapshot() -> None:
+    first_event = ServingDiagnosticsEvent(
+        request_id="req-concurrent",
+        phase="prefill",
+        event_index=0,
+        status="completed",
+    )
+    second_event = ServingDiagnosticsEvent(
+        request_id="req-concurrent",
+        phase="decode",
+        event_index=1,
+        status="completed",
+    )
+
+    class InstrumentedBuffer:
+        def __init__(self) -> None:
+            self._events = [first_event]
+            self.iteration_started = threading.Event()
+            self.release_iteration = threading.Event()
+
+        def __len__(self) -> int:
+            return len(self._events)
+
+        def append(self, event: ServingDiagnosticsEvent) -> None:
+            if self.iteration_started.is_set() and not self.release_iteration.is_set():
+                raise AssertionError("append entered while snapshot iteration was active")
+            self._events.append(event)
+
+        def __iter__(self):
+            self.iteration_started.set()
+            assert self.release_iteration.wait(timeout=2.0)
+            return iter(tuple(self._events))
+
+    queue = BoundedServingDiagnosticsEventQueue(max_events=8)
+    instrumented = InstrumentedBuffer()
+    queue._events = instrumented  # type: ignore[assignment]
+    errors: list[BaseException] = []
+    snapshots: list[tuple[int, ...]] = []
+
+    def capture_snapshot() -> None:
+        try:
+            snapshot = queue.snapshot()
+            snapshots.append(tuple(event.event_index for event in snapshot.events))
+        except BaseException as exc:  # pragma: no cover - propagated below
+            errors.append(exc)
+
+    def append_event() -> None:
+        try:
+            assert queue.append(second_event) is True
+        except BaseException as exc:  # pragma: no cover - propagated below
+            errors.append(exc)
+
+    snapshot_thread = threading.Thread(target=capture_snapshot)
+    snapshot_thread.start()
+    assert instrumented.iteration_started.wait(timeout=2.0)
+
+    append_thread = threading.Thread(target=append_event)
+    append_thread.start()
+    instrumented.release_iteration.set()
+    snapshot_thread.join(timeout=2.0)
+    append_thread.join(timeout=2.0)
+
+    assert snapshot_thread.is_alive() is False
+    assert append_thread.is_alive() is False
+    assert errors == []
+    assert snapshots == [(0,)]
+    assert [event.event_index for event in instrumented._events] == [0, 1]
 
 
 def test_serving_diagnostics_summary_defaults_throughput_to_float_zero() -> None:

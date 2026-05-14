@@ -18,22 +18,14 @@ RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
 _SIZE_HINT_KB = 1024
 _SIZE_HINT_MB = _SIZE_HINT_KB * 1024
 _SIZE_HINT_GB = _SIZE_HINT_MB * 1024
+_SIZE_HINT_MULTIPLIERS = {
+    "kb": _SIZE_HINT_KB,
+    "mb": _SIZE_HINT_MB,
+    "gb": _SIZE_HINT_GB,
+}
 
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
-_QUANTIZATION_ALIASES = (
-    ("2-bit", frozenset(("2bit", "2-bit"))),
-    ("3-bit", frozenset(("3bit", "3-bit"))),
-    ("4-bit", frozenset(("4bit", "4-bit"))),
-    ("8-bit", frozenset(("8bit", "8-bit"))),
-    ("mixed-precision", frozenset(("mixed-precision", "mixed_precision"))),
-    ("optiq", frozenset(("optiq",))),
-    ("fp32", frozenset(("fp32", "float32", "f32"))),
-    ("bf16", frozenset(("bf16",))),
-    ("fp16", frozenset(("fp16", "float16"))),
-)
-
-
 @dataclass(frozen=True)
 class HubModelSummaryRecord:
     repo_id: str
@@ -364,18 +356,20 @@ def _sibling_files(value: Any) -> list[str]:
 
 
 def _model_name(repo_id: str) -> str:
-    if "/" not in repo_id:
+    separator_index = repo_id.find("/")
+    if separator_index < 0:
         return repo_id
-    return repo_id.split("/", 1)[1]
+    return repo_id[separator_index + 1 :]
 
 
 def _author(payload: dict[str, Any], repo_id: str) -> str:
     author = _string(payload.get("author"))
     if author:
         return author
-    if "/" not in repo_id:
+    separator_index = repo_id.find("/")
+    if separator_index < 0:
         return ""
-    return repo_id.split("/", 1)[0]
+    return repo_id[:separator_index]
 
 
 def _license_from_tags(tags: list[str]) -> str:
@@ -613,29 +607,28 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
             else 0
         )
 
+    if not (
+        _may_contain_model_marker(description_text)
+        or _may_contain_model_marker(readme_text)
+        or _may_contain_model_marker(card_description_text)
+    ):
+        return 0
     text = "\n".join(
         text
         for text in (description_text, readme_text, card_description_text)
         if text
     )
-    if not _may_contain_model_marker(text):
-        return 0
     return _size_hint_from_text(text, allow_bare=False)
 
 
 def _direct_size_hint_from_text(text: str) -> int:
-    parts = text.split()
+    parts = text.split(maxsplit=2)
     if len(parts) != 2:
         return 0
     value_text, unit_text = parts
     unit = unit_text.lower()
-    if unit == "kb":
-        multiplier = _SIZE_HINT_KB
-    elif unit == "mb":
-        multiplier = _SIZE_HINT_MB
-    elif unit == "gb":
-        multiplier = _SIZE_HINT_GB
-    else:
+    multiplier = _SIZE_HINT_MULTIPLIERS.get(unit)
+    if multiplier is None:
         return 0
     try:
         value = float(value_text)
@@ -652,13 +645,7 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
     if not match:
         return 0
     value = float(match.group(1))
-    unit = match.group(2).lower()
-    if unit == "kb":
-        multiplier = _SIZE_HINT_KB
-    elif unit == "mb":
-        multiplier = _SIZE_HINT_MB
-    else:
-        multiplier = _SIZE_HINT_GB
+    multiplier = _SIZE_HINT_MULTIPLIERS[match.group(2).lower()]
     return int(value * multiplier)
 
 
@@ -697,25 +684,53 @@ def _estimated_resident_bytes(
 
 def _bytes_per_parameter(tags: list[str], *, lowered_tags: set[str] | None = None) -> float:
     lowered = _normalized_lowered_tags(tags, lowered_tags)
-    joined = " ".join(lowered)
-    if "2bit" in joined or "2-bit" in joined:
-        return 0.25
-    if "3bit" in joined or "3-bit" in joined:
+    has_3bit = False
+    has_4bit = False
+    has_8bit = False
+    has_fp32 = False
+    for tag in lowered:
+        if "2bit" in tag or "2-bit" in tag:
+            return 0.25
+        if not has_3bit and ("3bit" in tag or "3-bit" in tag):
+            has_3bit = True
+        if not has_4bit and ("4bit" in tag or "4-bit" in tag):
+            has_4bit = True
+        if not has_8bit and ("8bit" in tag or "8-bit" in tag):
+            has_8bit = True
+        if not has_fp32 and ("fp32" in tag or "float32" in tag or "f32" in tag):
+            has_fp32 = True
+    if has_3bit:
         return 0.375
-    if "4bit" in joined or "4-bit" in joined:
+    if has_4bit:
         return 0.5
-    if "8bit" in joined or "8-bit" in joined:
+    if has_8bit:
         return 1.0
-    if "fp32" in joined or "float32" in joined or "f32" in joined:
+    if has_fp32:
         return 4.0
-    if "bf16" in joined or "fp16" in joined or "float16" in joined:
-        return 2.0
     return 2.0
 
 
 def _quantization_summary(tags: list[str], *, lowered_tags: set[str] | None = None) -> str:
     lowered = _normalized_lowered_tags(tags, lowered_tags)
-    values = [label for label, aliases in _QUANTIZATION_ALIASES if lowered.intersection(aliases)]
+    values: list[str] = []
+    if "2bit" in lowered or "2-bit" in lowered:
+        values.append("2-bit")
+    if "3bit" in lowered or "3-bit" in lowered:
+        values.append("3-bit")
+    if "4bit" in lowered or "4-bit" in lowered:
+        values.append("4-bit")
+    if "8bit" in lowered or "8-bit" in lowered:
+        values.append("8-bit")
+    if "mixed-precision" in lowered or "mixed_precision" in lowered:
+        values.append("mixed-precision")
+    if "optiq" in lowered:
+        values.append("optiq")
+    if "fp32" in lowered or "float32" in lowered or "f32" in lowered:
+        values.append("fp32")
+    if "bf16" in lowered:
+        values.append("bf16")
+    if "fp16" in lowered or "float16" in lowered:
+        values.append("fp16")
     return ", ".join(values)
 
 

@@ -31,8 +31,11 @@ Metrics:
 1. Preserve parser behavior for complete fenced JSON, partially fenced JSON, and plain JSON responses.
 2. Replace the fallback `splitlines()`/join path with index-based trimming so large partially fenced
    responses avoid allocating a full line list.
-3. Keep the slice local to the parser, regression tests, probe script, and PR-scoped probe registry.
-4. Verify locally on Linux with the registered focused test command, coverage command, and registered probe.
+3. Follow up by parsing fenced JSON directly with a shared `json.JSONDecoder.raw_decode(...)`
+   starting at the post-fence offset. This preserves permissive handling for partially fenced
+   responses while avoiding the large substring copy previously needed before `json.loads(...)`.
+4. Keep the slice local to the parser, regression tests, probe script, and PR-scoped probe registry.
+5. Verify locally on Linux with the registered focused test command, coverage command, and registered probe.
 
 ## Acceptance Criteria
 

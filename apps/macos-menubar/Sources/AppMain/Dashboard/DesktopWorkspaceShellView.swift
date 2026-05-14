@@ -3891,15 +3891,17 @@ struct DesktopDiagnosticsToolSectionView: View {
         if viewModel.selectedBenchmarkPresentationMode == .matrix {
             return .matrix
         }
+        if viewModel.selectedEvaluationMode == .compare
+            || viewModel.selectedEvaluationHistoryJobID.isEmpty == false
+            || viewModel.selectedEvaluationSemanticJudgeRemoteServerID.isEmpty == false
+            || viewModel.evaluationSemanticJudgeModelID.isEmpty == false {
+            return .evaluation
+        }
         if viewModel.benchmarkHistory.isEmpty == false {
             return .benchmark
         }
         if viewModel.benchmarkMatrixHistory.isEmpty == false {
             return .matrix
-        }
-        if viewModel.selectedEvaluationMode == .compare
-            || viewModel.selectedEvaluationHistoryJobID.isEmpty == false {
-            return .evaluation
         }
         if viewModel.evaluationHistory.isEmpty == false
             && viewModel.benchmarkHistory.isEmpty
@@ -4000,7 +4002,15 @@ struct DesktopDiagnosticsToolSectionView: View {
 
     func refreshDiagnosticsHistoryIfNeeded() async {
         if viewModel.benchmarkHistory.isEmpty && viewModel.benchmarkMatrixHistory.isEmpty && viewModel.evaluationHistory.isEmpty {
-            await viewModel.refreshBenchmarkHistory()
+            switch Self.initialStage(for: viewModel) {
+            case .benchmark:
+                await viewModel.refreshBenchmarkHistory()
+            case .matrix:
+                viewModel.selectedBenchmarkPresentationMode = .matrix
+                await viewModel.refreshBenchmarkHistory()
+            case .evaluation:
+                await viewModel.refreshEvaluationHistory()
+            }
         }
     }
 

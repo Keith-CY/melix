@@ -185,6 +185,10 @@ class EvaluationSample:
     raw_response_chars: int = 0
     extracted_result_chars: int = 0
     failure_stage: str = ""
+    agentic_tool_registry: dict[str, object] | None = None
+    agentic_tool_calls: tuple[dict[str, object], ...] = ()
+    agentic_tool_observations: tuple[dict[str, object], ...] = ()
+    agentic_tool_metrics: dict[str, float] | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -224,6 +228,16 @@ class EvaluationSample:
             "extracted_result_chars": self.extracted_result_chars,
             "failure_stage": self.failure_stage,
         }
+        if self.agentic_tool_registry:
+            payload["agentic_tool_registry"] = dict(self.agentic_tool_registry)
+        if self.agentic_tool_calls:
+            payload["agentic_tool_calls"] = [dict(call) for call in self.agentic_tool_calls]
+        if self.agentic_tool_observations:
+            payload["agentic_tool_observations"] = [
+                dict(observation) for observation in self.agentic_tool_observations
+            ]
+        if self.agentic_tool_metrics:
+            payload["agentic_tool_metrics"] = dict(self.agentic_tool_metrics)
         if self.category_label:
             payload["category_label"] = self.category_label
         if self.subject_label:
@@ -618,6 +632,10 @@ def build_evaluation_sample_record(
     raw_response_chars: int | None = None,
     extracted_result_chars: int | None = None,
     failure_stage: str = "",
+    agentic_tool_registry: dict[str, object] | None = None,
+    agentic_tool_calls: tuple[dict[str, object], ...] = (),
+    agentic_tool_observations: tuple[dict[str, object], ...] = (),
+    agentic_tool_metrics: dict[str, float] | None = None,
 ) -> EvaluationSample:
     return EvaluationSample(
         schema_version=_EVALUATION_SAMPLE_SCHEMA_VERSION,
@@ -663,6 +681,10 @@ def build_evaluation_sample_record(
             else extracted_result_chars
         ),
         failure_stage=failure_stage,
+        agentic_tool_registry=dict(agentic_tool_registry or {}),
+        agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
+        agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
+        agentic_tool_metrics=dict(agentic_tool_metrics or {}),
     )
 
 

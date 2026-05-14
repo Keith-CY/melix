@@ -10,6 +10,12 @@ from typing import Any
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, runtime_pb2
 
 from worker.engine.request_state import RequestState
+from worker.model_load_trust import (
+    ModelLoadTrustRejection,
+    default_not_applicable_load_trust_policy,
+    load_kwargs_for_policy,
+    resolve_model_load_trust_policy,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
 from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRuntime
@@ -23,12 +29,13 @@ from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.mlx_vlm_runtime import MLXVLMRuntime
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
+from worker.runtime.runtime_utils import callable_accepts_kwarg
 
 
 _MULTIMODAL_REQUEST_KINDS = frozenset({"ocr", "vlm", "transcription", "speech", "image"})
 
 
-@dataclass
+@dataclass(slots=True)
 class LoadedModel:
     handle: str
     spec: common_pb2.ModelSpec
@@ -37,6 +44,7 @@ class LoadedModel:
     estimated_resident_bytes: int
     runtime_kind: str
     residency: common_pb2.ResidencyInfo
+    load_trust: common_pb2.ModelLoadTrustPolicy
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
 
@@ -147,6 +155,28 @@ class WorkerRegistry:
         self._last_speech_streaming_enabled = False
         self._last_speech_streaming_interval_ms = 0
         self._last_speech_first_audio_latency_ms = 0.0
+        self._last_multimodal_decode_mode = ""
+        self._last_multimodal_fallback_reason = ""
+        self._last_multimodal_decode_sync_mode = ""
+        self._has_multimodal_decode_probe = False
+        self._text_batch_generator_submitted_request_count = 0
+        self._text_batch_generator_completed_request_count = 0
+        self._text_batch_generator_step_count = 0
+        self._text_batch_generator_generated_token_count = 0
+        self._text_batch_generator_peak_active_batch_size = 0
+        self._text_batch_generator_queue_wait_ms_total = 0.0
+        self._text_batch_generator_insert_ms_total = 0.0
+        self._text_batch_generator_executor_step_ms_total = 0.0
+        self._text_batch_generator_next_ms_total = 0.0
+        self._text_batch_generator_emit_ms_total = 0.0
+        self._text_batch_generator_active_batch_size = 0
+        self._text_batch_generator_generated_response_count = 0
+        self._text_batch_generator_failed_request_count = 0
+        self._text_batch_generator_prepare_ms_total = 0.0
+        self._text_batch_generator_first_response_ms_total = 0.0
+        self._text_batch_generator_first_visible_ms_total = 0.0
+        self._text_batch_generator_first_visible_token_index_total = 0
+        self._text_batch_generator_first_empty_segment_count = 0
         self._last_audio_model_load_latency_ms = 0.0
         self._last_audio_backend_unavailable_count = 0
         self._last_voice_fallback_count = 0
@@ -162,6 +192,12 @@ class WorkerRegistry:
         self._last_image_artifact_publish_ms = 0.0
         self._last_image_output_bytes = 0
         self._last_image_peak_memory_bytes = 0
+        self._last_model_load_trust_policy_resolution_ms = 0.0
+        self._model_load_trust_blocked_count = 0
+        self._default_text_load_trust_policy = default_not_applicable_load_trust_policy(
+            runtime_kind="text",
+            runtime=self.runtime,
+        )
 
     def capabilities(self) -> common_pb2.RuntimeCapabilities:
         return common_pb2.RuntimeCapabilities(
@@ -188,6 +224,16 @@ class WorkerRegistry:
                 supports_speech=True,
                 supports_image_generation=True,
             ),
+            ext=[
+                common_pb2.Capability(
+                    name="melix.vlm.text_only_step_cooperative",
+                    metadata={
+                        "supported": "true",
+                        "experimental": "true",
+                        "default_enabled": "false",
+                    },
+                )
+            ],
         )
 
     def load_model(
@@ -196,21 +242,65 @@ class WorkerRegistry:
         pin_on_load: bool = False,
         memory_budget_bytes: int = 0,
         disk_streaming_mode: int = common_pb2.DISK_STREAMING_MODE_UNSPECIFIED,
+        load_trust: common_pb2.ModelLoadTrustPolicy | None = None,
     ) -> LoadedModel:
         resolved = self._resolved_model_spec(model_spec)
-        requested_disk_streaming_mode = self._effective_disk_streaming_mode_request(
-            resolved,
-            request_mode=disk_streaming_mode,
-        )
-        if requested_disk_streaming_mode in {
-            common_pb2.DISK_STREAMING_PREFER_DISK,
-            common_pb2.DISK_STREAMING_REQUIRE_DISK,
-        }:
+        has_settings = resolved.HasField("settings")
+        if disk_streaming_mode != common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
+            requested_disk_streaming_mode = disk_streaming_mode
+        elif has_settings:
+            requested_disk_streaming_mode = resolved.settings.disk_streaming_mode
+            if requested_disk_streaming_mode == common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
+                requested_disk_streaming_mode = common_pb2.DISK_STREAMING_DISABLED
+        else:
+            requested_disk_streaming_mode = common_pb2.DISK_STREAMING_DISABLED
+        if (
+            requested_disk_streaming_mode == common_pb2.DISK_STREAMING_PREFER_DISK
+            or requested_disk_streaming_mode == common_pb2.DISK_STREAMING_REQUIRE_DISK
+        ):
             raise DiskStreamingUnsupported(
                 model_id=resolved.model_id,
                 requested_mode=requested_disk_streaming_mode,
             )
-        runtime_kind, runtime = self._runtime_for_model(resolved)
+        load_trust_policy: common_pb2.ModelLoadTrustPolicy | None = None
+        if resolved.model_kind == "text":
+            runtime_kind = "text"
+            runtime = self.runtime
+            if (
+                load_trust is None
+                and self._default_text_load_trust_policy is not None
+                and resolved.route_class == common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
+                and not has_settings
+            ):
+                load_trust_policy = self._default_text_load_trust_policy
+        else:
+            runtime_kind, runtime = self._runtime_for_model(resolved)
+        trust_remote_code = False
+        if load_trust_policy is None:
+            trust_started_at = time.monotonic()
+            record_trust_latency = True
+            try:
+                load_trust_policy = resolve_model_load_trust_policy(
+                    resolved,
+                    request_policy=load_trust,
+                    runtime_kind=runtime_kind,
+                    runtime=runtime,
+                )
+                record_trust_latency = (
+                    load_trust_policy.effective_mode != common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+                )
+                trust_remote_code = (
+                    load_trust_policy.effective_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+                )
+            except ModelLoadTrustRejection:
+                with self._lock:
+                    self._model_load_trust_blocked_count += 1
+                raise
+            finally:
+                if record_trust_latency:
+                    latency_ms = (time.monotonic() - trust_started_at) * 1000.0
+                    with self._lock:
+                        self._last_model_load_trust_policy_resolution_ms = latency_ms
         estimated = runtime.estimate_resident_bytes(resolved)
         with self._lock:
             existing_resident_bytes = self._loaded_model_resident_bytes + self._reserved_model_resident_bytes
@@ -238,19 +328,29 @@ class WorkerRegistry:
             )
 
         try:
-            runtime_model = runtime.load_model(resolved)
-            residency = self._loaded_residency(
-                resolved,
-                pin_on_load=pin_on_load,
-                effective_disk_streaming_mode=requested_disk_streaming_mode,
-            )
+            if trust_remote_code:
+                runtime_model = self._load_runtime_model(
+                    runtime,
+                    resolved,
+                    load_trust_policy=load_trust_policy,
+                )
+            else:
+                runtime_model = runtime.load_model(resolved)
+            if not has_settings and not pin_on_load:
+                residency = self._default_loaded_residency(requested_disk_streaming_mode)
+            else:
+                residency = self._loaded_residency(
+                    resolved,
+                    pin_on_load=pin_on_load,
+                    effective_disk_streaming_mode=requested_disk_streaming_mode,
+                )
         except Exception:
             with self._lock:
-                self._reserved_model_resident_bytes = max(0, self._reserved_model_resident_bytes - estimated)
+                self._reserved_model_resident_bytes -= estimated
             raise
 
         with self._lock:
-            self._reserved_model_resident_bytes = max(0, self._reserved_model_resident_bytes - estimated)
+            self._reserved_model_resident_bytes -= estimated
             handle = f"{resolved.model_id}::{self._next_model_handle}"
             self._next_model_handle += 1
             loaded = LoadedModel(
@@ -261,11 +361,12 @@ class WorkerRegistry:
                 estimated_resident_bytes=estimated,
                 runtime_kind=runtime_kind,
                 residency=residency,
+                load_trust=load_trust_policy,
             )
             self._loaded_models[handle] = loaded
             self._invalidate_loaded_model_order_locked()
             self._loaded_model_resident_bytes += estimated
-            if runtime_kind in {"transcription", "speech"}:
+            if runtime_kind == "transcription" or runtime_kind == "speech":
                 self._last_audio_model_load_latency_ms = float(getattr(runtime_model, "load_latency_ms", 0.0))
             return loaded
 
@@ -303,7 +404,11 @@ class WorkerRegistry:
                 return False
             self._invalidate_loaded_model_order_locked()
             self._loaded_model_resident_bytes = max(0, self._loaded_model_resident_bytes - loaded.estimated_resident_bytes)
+        close_loaded_model = getattr(loaded.runtime, "close_loaded_model", None)
+        if callable(close_loaded_model):
+            close_loaded_model(loaded.runtime_model)
             return True
+        return True
 
     def _invalidate_loaded_model_order_locked(self) -> None:
         self._sorted_loaded_model_handles = None
@@ -463,6 +568,7 @@ class WorkerRegistry:
             last_speech_streaming_enabled = self._last_speech_streaming_enabled
             last_speech_streaming_interval_ms = self._last_speech_streaming_interval_ms
             last_speech_first_audio_latency_ms = self._last_speech_first_audio_latency_ms
+            multimodal_decode_probe = self._multimodal_decode_probe_locked() if self._has_multimodal_decode_probe else None
             last_audio_model_load_latency_ms = self._last_audio_model_load_latency_ms
             last_audio_backend_unavailable_count = self._last_audio_backend_unavailable_count
             last_voice_fallback_count = self._last_voice_fallback_count
@@ -478,6 +584,8 @@ class WorkerRegistry:
             last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
             last_image_output_bytes = self._last_image_output_bytes
             last_image_peak_memory_bytes = self._last_image_peak_memory_bytes
+            last_model_load_trust_policy_resolution_ms = self._last_model_load_trust_policy_resolution_ms
+            model_load_trust_blocked_count = self._model_load_trust_blocked_count
         mlx_executor_snapshot = self._mlx_executor.snapshot()
         stats = runtime_pb2.RuntimeStats(
             worker_state="draining" if self._draining else "idle",
@@ -522,6 +630,12 @@ class WorkerRegistry:
             worker_thread_init_latency_ms=mlx_executor_snapshot.worker_thread_init_latency_ms,
             stream_sync_fallback_count=mlx_executor_snapshot.stream_sync_fallback_count,
         )
+        if last_model_load_trust_policy_resolution_ms:
+            stats.last_model_load_trust_policy_resolution_ms = last_model_load_trust_policy_resolution_ms
+        if model_load_trust_blocked_count:
+            stats.model_load_trust_blocked_count = model_load_trust_blocked_count
+        if multimodal_decode_probe is not None:
+            self._apply_multimodal_decode_probe(stats, multimodal_decode_probe)
         stats.model_resident_bytes = model_resident_bytes
         stats.cache_resident_bytes = cache_resident_bytes
         stats.kv_cache_bytes = kv_cache_bytes
@@ -567,6 +681,80 @@ class WorkerRegistry:
     def runtime_for_loaded_model(self, loaded_model: LoadedModel) -> Any:
         return loaded_model.runtime
 
+    def _multimodal_decode_probe_locked(self) -> tuple[str, str, str, int, int, int, int, int, float, float, float, float, float, int, int, int, float, float, float, int, int]:
+        return (
+            self._last_multimodal_decode_mode,
+            self._last_multimodal_fallback_reason,
+            self._last_multimodal_decode_sync_mode,
+            self._text_batch_generator_submitted_request_count,
+            self._text_batch_generator_completed_request_count,
+            self._text_batch_generator_step_count,
+            self._text_batch_generator_generated_token_count,
+            self._text_batch_generator_peak_active_batch_size,
+            self._text_batch_generator_queue_wait_ms_total,
+            self._text_batch_generator_insert_ms_total,
+            self._text_batch_generator_executor_step_ms_total,
+            self._text_batch_generator_next_ms_total,
+            self._text_batch_generator_emit_ms_total,
+            self._text_batch_generator_active_batch_size,
+            self._text_batch_generator_generated_response_count,
+            self._text_batch_generator_failed_request_count,
+            self._text_batch_generator_prepare_ms_total,
+            self._text_batch_generator_first_response_ms_total,
+            self._text_batch_generator_first_visible_ms_total,
+            self._text_batch_generator_first_visible_token_index_total,
+            self._text_batch_generator_first_empty_segment_count,
+        )
+
+    @staticmethod
+    def _apply_multimodal_decode_probe(
+        stats: runtime_pb2.RuntimeStats,
+        probe: tuple[str, str, str, int, int, int, int, int, float, float, float, float, float, int, int, int, float, float, float, int, int],
+    ) -> None:
+        (
+            stats.last_multimodal_decode_mode,
+            stats.last_multimodal_fallback_reason,
+            stats.last_multimodal_decode_sync_mode,
+            stats.text_batch_generator_submitted_request_count,
+            stats.text_batch_generator_completed_request_count,
+            stats.text_batch_generator_step_count,
+            stats.text_batch_generator_generated_token_count,
+            stats.text_batch_generator_peak_active_batch_size,
+            stats.text_batch_generator_queue_wait_ms_total,
+            stats.text_batch_generator_insert_ms_total,
+            stats.text_batch_generator_executor_step_ms_total,
+            stats.text_batch_generator_next_ms_total,
+            stats.text_batch_generator_emit_ms_total,
+            stats.text_batch_generator_active_batch_size,
+            stats.text_batch_generator_generated_response_count,
+            stats.text_batch_generator_failed_request_count,
+            stats.text_batch_generator_prepare_ms_total,
+            stats.text_batch_generator_first_response_ms_total,
+            stats.text_batch_generator_first_visible_ms_total,
+            stats.text_batch_generator_first_visible_token_index_total,
+            stats.text_batch_generator_first_empty_segment_count,
+        ) = probe
+
+    def _clear_text_batch_generator_probe_locked(self) -> None:
+        self._text_batch_generator_submitted_request_count = 0
+        self._text_batch_generator_completed_request_count = 0
+        self._text_batch_generator_step_count = 0
+        self._text_batch_generator_generated_token_count = 0
+        self._text_batch_generator_peak_active_batch_size = 0
+        self._text_batch_generator_queue_wait_ms_total = 0.0
+        self._text_batch_generator_insert_ms_total = 0.0
+        self._text_batch_generator_executor_step_ms_total = 0.0
+        self._text_batch_generator_next_ms_total = 0.0
+        self._text_batch_generator_emit_ms_total = 0.0
+        self._text_batch_generator_active_batch_size = 0
+        self._text_batch_generator_generated_response_count = 0
+        self._text_batch_generator_failed_request_count = 0
+        self._text_batch_generator_prepare_ms_total = 0.0
+        self._text_batch_generator_first_response_ms_total = 0.0
+        self._text_batch_generator_first_visible_ms_total = 0.0
+        self._text_batch_generator_first_visible_token_index_total = 0
+        self._text_batch_generator_first_empty_segment_count = 0
+
     def record_vision_probe(self, runtime_kind: str, probe: Any) -> None:
         with self._lock:
             self._last_probe_kind = runtime_kind
@@ -582,6 +770,68 @@ class WorkerRegistry:
             self._last_speech_streaming_enabled = False
             self._last_speech_streaming_interval_ms = 0
             self._last_speech_first_audio_latency_ms = 0.0
+            self._last_multimodal_decode_mode = str(getattr(probe, "multimodal_decode_mode", "baseline"))
+            self._last_multimodal_fallback_reason = str(
+                getattr(probe, "multimodal_fallback_reason", "not_reported")
+            )
+            self._last_multimodal_decode_sync_mode = str(
+                getattr(probe, "multimodal_decode_sync_mode", "baseline")
+            )
+            self._text_batch_generator_submitted_request_count = int(
+                getattr(probe, "text_batch_generator_submitted_request_count", 0)
+            )
+            self._text_batch_generator_completed_request_count = int(
+                getattr(probe, "text_batch_generator_completed_request_count", 0)
+            )
+            self._text_batch_generator_step_count = int(
+                getattr(probe, "text_batch_generator_step_count", 0)
+            )
+            self._text_batch_generator_generated_token_count = int(
+                getattr(probe, "text_batch_generator_generated_token_count", 0)
+            )
+            self._text_batch_generator_peak_active_batch_size = int(
+                getattr(probe, "text_batch_generator_peak_active_batch_size", 0)
+            )
+            self._text_batch_generator_queue_wait_ms_total = float(
+                getattr(probe, "text_batch_generator_queue_wait_ms_total", 0.0)
+            )
+            self._text_batch_generator_insert_ms_total = float(
+                getattr(probe, "text_batch_generator_insert_ms_total", 0.0)
+            )
+            self._text_batch_generator_executor_step_ms_total = float(
+                getattr(probe, "text_batch_generator_executor_step_ms_total", 0.0)
+            )
+            self._text_batch_generator_next_ms_total = float(
+                getattr(probe, "text_batch_generator_next_ms_total", 0.0)
+            )
+            self._text_batch_generator_emit_ms_total = float(
+                getattr(probe, "text_batch_generator_emit_ms_total", 0.0)
+            )
+            self._text_batch_generator_active_batch_size = int(
+                getattr(probe, "text_batch_generator_active_batch_size", 0)
+            )
+            self._text_batch_generator_generated_response_count = int(
+                getattr(probe, "text_batch_generator_generated_response_count", 0)
+            )
+            self._text_batch_generator_failed_request_count = int(
+                getattr(probe, "text_batch_generator_failed_request_count", 0)
+            )
+            self._text_batch_generator_prepare_ms_total = float(
+                getattr(probe, "text_batch_generator_prepare_ms_total", 0.0)
+            )
+            self._text_batch_generator_first_response_ms_total = float(
+                getattr(probe, "text_batch_generator_first_response_ms_total", 0.0)
+            )
+            self._text_batch_generator_first_visible_ms_total = float(
+                getattr(probe, "text_batch_generator_first_visible_ms_total", 0.0)
+            )
+            self._text_batch_generator_first_visible_token_index_total = int(
+                getattr(probe, "text_batch_generator_first_visible_token_index_total", 0)
+            )
+            self._text_batch_generator_first_empty_segment_count = int(
+                getattr(probe, "text_batch_generator_first_empty_segment_count", 0)
+            )
+            self._has_multimodal_decode_probe = True
             self._last_video_effective_frame_count = int(getattr(probe, "video_effective_frame_count", 0))
             self._last_video_requested_frame_budget = int(getattr(probe, "video_requested_frame_budget", 0))
             self._last_video_window_ms = int(getattr(probe, "video_window_ms", 0))
@@ -609,6 +859,11 @@ class WorkerRegistry:
             self._last_speech_streaming_enabled = False
             self._last_speech_streaming_interval_ms = 0
             self._last_speech_first_audio_latency_ms = 0.0
+            self._last_multimodal_decode_mode = ""
+            self._last_multimodal_fallback_reason = ""
+            self._last_multimodal_decode_sync_mode = ""
+            self._has_multimodal_decode_probe = False
+            self._clear_text_batch_generator_probe_locked()
             self._last_language_fallback_count = int(getattr(probe, "language_fallback_count", 0))
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
@@ -639,6 +894,11 @@ class WorkerRegistry:
             self._last_speech_first_audio_latency_ms = float(
                 getattr(probe, "first_audio_latency_ms", 0.0)
             )
+            self._last_multimodal_decode_mode = ""
+            self._last_multimodal_fallback_reason = ""
+            self._last_multimodal_decode_sync_mode = ""
+            self._has_multimodal_decode_probe = False
+            self._clear_text_batch_generator_probe_locked()
             self._last_voice_fallback_count = int(getattr(probe, "voice_fallback_count", 0))
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
@@ -675,6 +935,11 @@ class WorkerRegistry:
             self._last_speech_streaming_enabled = False
             self._last_speech_streaming_interval_ms = 0
             self._last_speech_first_audio_latency_ms = 0.0
+            self._last_multimodal_decode_mode = ""
+            self._last_multimodal_fallback_reason = ""
+            self._last_multimodal_decode_sync_mode = ""
+            self._has_multimodal_decode_probe = False
+            self._clear_text_batch_generator_probe_locked()
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
             self._last_video_window_ms = 0
@@ -724,6 +989,20 @@ class WorkerRegistry:
         if model_spec.model_kind == "image":
             return "image", self.image_generation_runtime
         return "text", self.runtime
+
+    @staticmethod
+    def _load_runtime_model(
+        runtime: Any,
+        model_spec: common_pb2.ModelSpec,
+        *,
+        load_trust_policy: common_pb2.ModelLoadTrustPolicy,
+    ) -> Any:
+        load_kwargs = load_kwargs_for_policy(load_trust_policy)
+        if load_kwargs and callable_accepts_kwarg(runtime.load_model, "trust_remote_code"):
+            return runtime.load_model(model_spec, **load_kwargs)
+        if load_kwargs:
+            raise RuntimeError("Runtime cannot honor trust_remote_code.")
+        return runtime.load_model(model_spec)
 
     @staticmethod
     def _audio_backend_id_for_model(model_spec: common_pb2.ModelSpec) -> str:
@@ -787,6 +1066,15 @@ class WorkerRegistry:
         residency.pin_requested = pin_on_load or model_spec.settings.pin_on_load
         residency.pinned = residency.state == common_pb2.RESIDENCY_STATE_PINNED
         residency.ttl_seconds = model_spec.settings.ttl_seconds
+        residency.transition_reason = "load_model"
+        residency.effective_disk_streaming_mode = effective_disk_streaming_mode
+        return residency
+
+    @staticmethod
+    def _default_loaded_residency(effective_disk_streaming_mode: int) -> common_pb2.ResidencyInfo:
+        residency = common_pb2.ResidencyInfo()
+        residency.state = common_pb2.RESIDENCY_STATE_WARM
+        residency.policy = common_pb2.MEMORY_RESIDENCY_EVICTABLE
         residency.transition_reason = "load_model"
         residency.effective_disk_streaming_mode = effective_disk_streaming_mode
         return residency

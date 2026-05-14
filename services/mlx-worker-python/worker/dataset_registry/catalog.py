@@ -35,6 +35,8 @@ _SPLIT_ALIASES = {
     "dev": "validation",
     "test": "test",
 }
+_JSON_DECODER = json.JSONDecoder()
+_JSON_ROW_ARRAY_KEYS = frozenset({"rows", "data"})
 
 
 @dataclass(frozen=True)
@@ -545,7 +547,12 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
                         break
         return rows
     if suffix == ".json":
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        json_text = path.read_text(encoding="utf-8")
+        if limit is not None:
+            limited_rows = _limited_rows_from_json_text(json_text, limit=limit)
+            if limited_rows is not None:
+                return limited_rows
+        payload = json.loads(json_text)
         return _rows_from_json_payload(payload, limit=limit)
     if suffix == ".csv":
         rows: list[dict[str, Any]] = []
@@ -622,6 +629,89 @@ def _limit_rows(rows: list[dict[str, Any]], limit: int | None) -> list[dict[str,
     if limit is None:
         return rows
     return rows[:limit]
+
+
+def _limited_rows_from_json_text(json_text: str, *, limit: int) -> list[dict[str, Any]] | None:
+    if limit <= 0:
+        return []
+    cursor = _json_text_first_array_start(json_text)
+    if cursor is None:
+        return None
+    rows: list[dict[str, Any]] = []
+    decoder = _JSON_DECODER
+    text_length = len(json_text)
+    cursor += 1
+    while cursor < text_length:
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if cursor >= text_length or json_text[cursor] == "]":
+            return rows
+        try:
+            value, cursor = decoder.raw_decode(json_text, cursor)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(value, dict):
+            rows.append(value)
+            if len(rows) >= limit:
+                return rows
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if cursor < text_length and json_text[cursor] == ",":
+            cursor += 1
+            continue
+        if cursor < text_length and json_text[cursor] == "]":
+            return rows
+        return None
+    return None
+
+
+def _json_text_first_array_start(json_text: str) -> int | None:
+    cursor = 0
+    text_length = len(json_text)
+    while cursor < text_length and json_text[cursor].isspace():
+        cursor += 1
+    if cursor >= text_length:
+        return None
+    if json_text[cursor] == "[":
+        return cursor
+    if json_text[cursor] != "{":
+        return None
+
+    decoder = _JSON_DECODER
+    cursor += 1
+    while cursor < text_length:
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if cursor >= text_length or json_text[cursor] == "}":
+            return None
+        try:
+            key, cursor = decoder.raw_decode(json_text, cursor)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(key, str):
+            return None
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if cursor >= text_length or json_text[cursor] != ":":
+            return None
+        cursor += 1
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if key in _JSON_ROW_ARRAY_KEYS and cursor < text_length and json_text[cursor] == "[":
+            return cursor
+        try:
+            _, cursor = decoder.raw_decode(json_text, cursor)
+        except json.JSONDecodeError:
+            return None
+        while cursor < text_length and json_text[cursor].isspace():
+            cursor += 1
+        if cursor < text_length and json_text[cursor] == ",":
+            cursor += 1
+            continue
+        if cursor < text_length and json_text[cursor] == "}":
+            return None
+        return None
+    return None
 
 
 def _append_limited_dict_rows(
@@ -774,14 +864,14 @@ def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
         return "", "default"
     filename = parts[-1]
     stem = filename.rsplit(".", 1)[0]
-    candidates = [stem]
-    candidates.extend(part for part in parts[:-1] if part not in {"data", "default"})
-    split = ""
-    for candidate in candidates:
-        prefix = candidate.split("-", 1)[0].split("_", 1)[0].lower()
-        if prefix in _SPLIT_ALIASES:
-            split = _SPLIT_ALIASES[prefix]
-            break
+    split = _split_alias_from_candidate(stem)
+    if not split:
+        for candidate in parts[:-1]:
+            if candidate in {"data", "default"}:
+                continue
+            split = _split_alias_from_candidate(candidate)
+            if split:
+                break
     if len(parts) < 2:
         return split, "default"
     first = parts[0]
@@ -790,18 +880,29 @@ def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
     return split, first
 
 
+def _split_alias_from_candidate(candidate: str) -> str:
+    prefix = candidate.split("-", 1)[0].split("_", 1)[0].lower()
+    return _SPLIT_ALIASES.get(prefix, "")
+
+
 def _path_matches_split(relative_path: Path, split: str) -> bool:
     normalized_split = split.lower()
     split_dash_prefix = f"{normalized_split}-"
     split_underscore_prefix = f"{normalized_split}_"
     for part in relative_path.parts:
         lowered = part.lower()
-        stem = _string_stem(part).lower()
         if (
             lowered == normalized_split
             or lowered.startswith(split_dash_prefix)
             or lowered.startswith(split_underscore_prefix)
-            or stem == normalized_split
+        ):
+            return True
+        dot_index = lowered.rfind(".")
+        if dot_index <= 0 or dot_index == len(lowered) - 1:
+            continue
+        stem = lowered[:dot_index]
+        if (
+            stem == normalized_split
             or stem.startswith(split_dash_prefix)
             or stem.startswith(split_underscore_prefix)
         ):

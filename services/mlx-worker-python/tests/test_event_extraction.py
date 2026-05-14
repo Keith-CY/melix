@@ -139,6 +139,36 @@ def test_parse_response_json_trims_closing_fence_with_trailing_space() -> None:
     assert event_extraction_module._parse_response_json(response) == {"events": []}
 
 
+def test_parse_response_json_accepts_leading_whitespace_before_fence() -> None:
+    response = '  \n```json\n{"events": [{"event_type": "handoff"}]}\n```'
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "handoff"}]
+    }
+
+
+def test_parse_response_json_accepts_unfenced_json_without_pretrim_copy() -> None:
+    response = '  {"events": [{"event_type": "pickup"}]}  '
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "pickup"}]
+    }
+
+
+def test_parse_response_json_rejects_trailing_text_after_fenced_json() -> None:
+    response = '```json\n{"events": []}\ntrailing text'
+
+    with pytest.raises(json.JSONDecodeError, match="Extra data"):
+        event_extraction_module._parse_response_json(response)
+
+
+def test_parse_response_json_rejects_fenced_non_object_payload() -> None:
+    response = "```json\n[]"
+
+    with pytest.raises(ValueError, match="JSON object"):
+        event_extraction_module._parse_response_json(response)
+
+
 def test_local_event_extraction_parse_errors_keep_raw_response_for_diagnostics(tmp_path: Path) -> None:
     source = tmp_path / "top200_final.jsonl"
     _write_jsonl(

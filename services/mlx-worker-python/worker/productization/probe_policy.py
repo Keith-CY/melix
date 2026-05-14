@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Mapping
 
@@ -17,26 +17,23 @@ class ProbeMode(StrEnum):
     DEBUG = "debug"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ProbePolicy:
     mode: ProbeMode = ProbeMode.MINIMAL
     source_value: str = ""
     fallback_applied: bool = False
+    telemetry_enabled: bool = field(init=False, repr=False, compare=False)
+    evidence_enabled: bool = field(init=False, repr=False, compare=False)
 
-    @property
-    def telemetry_enabled(self) -> bool:
-        return self.mode in {
-            ProbeMode.SAMPLED,
-            ProbeMode.EVIDENCE,
-            ProbeMode.DEBUG,
-        }
-
-    @property
-    def evidence_enabled(self) -> bool:
-        return self.mode in {
-            ProbeMode.EVIDENCE,
-            ProbeMode.DEBUG,
-        }
+    def __post_init__(self) -> None:
+        mode = self.mode
+        evidence_enabled = mode is ProbeMode.EVIDENCE or mode is ProbeMode.DEBUG
+        object.__setattr__(
+            self,
+            "telemetry_enabled",
+            mode is ProbeMode.SAMPLED or evidence_enabled,
+        )
+        object.__setattr__(self, "evidence_enabled", evidence_enabled)
 
     @property
     def no_op_reason(self) -> str:

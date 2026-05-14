@@ -536,6 +536,95 @@ def test_mlx_lm_runner_routes_alignment_rl_to_scored_trace_backend(tmp_path: Pat
     assert result.metrics.policy_update_trace_path.endswith("policy_updates.jsonl")
 
 
+def test_mlx_lm_runner_alignment_rl_reuses_agentic_tool_runtime(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "grpo", "grpo_candidate_count": "2"},
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Use tools before choosing.",
+                "tool_calls": [
+                    {
+                        "id": "visit-1",
+                        "name": "visit",
+                        "arguments": {"url": "fixture://doc"},
+                    }
+                ],
+                "tool_fixture_context": {
+                    "pages": {"fixture://doc": {"title": "Doc", "text": "Helpful source."}},
+                },
+                "candidates": [
+                    {"text": "Tool-backed answer.", "score": 0.9},
+                    {"text": "Guess.", "score": 0.1},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo-tools",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="prompt_candidate",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().train(request)
+    trace_rows = [
+        json.loads(line)
+        for line in Path(result.metrics.policy_update_trace_path).read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert trace_rows[0]["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
+    assert trace_rows[0]["agentic_tool_calls"][0]["name"] == "visit"
+    assert trace_rows[0]["agentic_tool_observations"][0]["payload"]["text"] == "Helpful source."
+    assert trace_rows[0]["agentic_tool_metrics"]["agentic_tool.call_count"] == 1.0
+    assert trace_rows[0]["turns"][0]["tool_call"]["id"] == "visit-1"
+
+
+def test_alignment_rl_tool_helpers_cover_empty_and_rlhf_paths() -> None:
+    from worker.model_ops.rl_alignment_training import (
+        _agentic_tool_run_for_sample,
+        _attach_agentic_tool_run,
+        _rlhf_policy_updates,
+    )
+
+    row: dict[str, object] = {}
+    _attach_agentic_tool_run(row, None)
+    assert row == {}
+    assert _agentic_tool_run_for_sample({"tool_calls": "not-a-list"}) is None
+
+    result = _rlhf_policy_updates(
+        [
+            {
+                "prompt": "Read page.",
+                "response": "Done.",
+                "reward_score": 0.8,
+                "tool_calls": [
+                    {"id": "visit-1", "name": "visit", "arguments": {"url": "fixture://doc"}}
+                ],
+                "tool_context": {
+                    "pages": {"fixture://doc": {"title": "Doc", "text": "RLHF page."}},
+                },
+            }
+        ]
+    )
+
+    assert result.trace_rows[0]["agentic_tool_calls"][0]["name"] == "visit"
+    assert result.trace_rows[0]["agentic_tool_observations"][0]["payload"]["text"] == "RLHF page."
+
+
 def test_mlx_lm_runner_alignment_rl_preserves_source_adapter_artifacts(tmp_path: Path) -> None:
     config = training_config_module.normalize_training_config(
         source_model=_text_model(model_path=str(tmp_path / "base-model")),

@@ -1,8 +1,8 @@
-# Multimodal Fast-Path Signature Top-Level Key Cache
+# Multimodal Fast-Path Signature Serialization Cache
 
 ## Goal
 
-Avoid per-call sorting of the fixed top-level model metadata keys used by `fast_path_probe_signature(...)` while preserving the existing stable signature representation.
+Avoid materializing intermediate tuple objects before serializing the fixed top-level model metadata and accepted nested metadata pairs used by `fast_path_probe_signature(...)`, while preserving the existing stable tuple-repr-compatible signature strings.
 
 ## Scope
 
@@ -18,7 +18,7 @@ This is a Python runtime helper slice and can be verified on Linux with focused 
 
 ## Performance probe
 
-Register `multimodal-fast-path-signature-top-level-key-cache` in the PR-scoped performance registry. The probe repeatedly calls `fast_path_probe_signature(...)` against a representative loaded VLM model dictionary and prepared vision request, recording:
+Use the registered `multimodal-fast-path-signature-top-level-key-cache` PR-scoped probe. The probe repeatedly calls `fast_path_probe_signature(...)` against a representative loaded VLM model dictionary and prepared vision request, recording:
 
 - `elapsed_ms_mean` (lower is better)
 - `peak_bytes_mean` (lower is better)

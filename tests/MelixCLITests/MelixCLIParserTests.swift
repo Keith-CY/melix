@@ -15,6 +15,85 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("--hf-dataset-revision overrides a revision embedded in --dataset-ref"))
         #expect(MelixCLIParser.usageText.contains("melix runs list [--from PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix bench report --from PATH [--format markdown|json]"))
+        #expect(MelixCLIParser.usageText.contains("melix settings show --json [--override KEY=VALUE ...]"))
+        #expect(MelixCLIParser.usageText.contains("melix info --json"))
+        #expect(MelixCLIParser.usageText.contains("melix capabilities --json [--model-query MODEL]"))
+        #expect(MelixCLIParser.usageText.contains("melix config metadata --json"))
+        #expect(MelixCLIParser.usageText.contains("melix uri inspect URI [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix recipes plan RECIPE_ID"))
+    }
+
+    @Test("parses runtime settings and machine readable discovery commands")
+    func parsesRuntimeSettingsAndDiscoveryCommands() throws {
+        let cases: [([String], String)] = [
+            (["settings", "show", "--json"], "settings.show"),
+            (["settings", "show", "--json", "--override", "max_concurrent_jobs=8"], "settings.show"),
+            (["settings", "set", "max_concurrent_jobs", "6"], "settings.set"),
+            (["settings", "validate"], "settings.validate"),
+            (["settings", "reset", "max_concurrent_jobs"], "settings.reset"),
+            (["info", "--json"], "info"),
+            (["capabilities", "--json"], "capabilities"),
+            (["capabilities", "--json", "--model-query", "qwen35_9b_mlx_4bit"], "capabilities"),
+            (["instructions", "--json"], "instructions"),
+            (["schema", "--json"], "schema"),
+            (["config", "metadata", "--json"], "config.metadata"),
+        ]
+
+        for (arguments, expectedID) in cases {
+            let command = try MelixCLIParser.parse(arguments)
+            #expect(MelixCLICommandCodec.commandID(for: command) == expectedID)
+            #expect(try MelixCLIParser.parse(MelixCLICommandCodec.arguments(for: command)) == command)
+        }
+
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["settings", "show"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["settings", "set", "max_concurrent_jobs"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["settings", "reset"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["info"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["config", "unknown", "--json"])
+        }
+    }
+
+    @Test("rejects malformed runtime settings and discovery commands")
+    func rejectsMalformedRuntimeSettingsAndDiscoveryCommands() {
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["settings"])
+        }
+        #expect(throws: MelixCLIError.missingValue("--override")) {
+            _ = try MelixCLIParser.parse(["settings", "show", "--json", "--override"])
+        }
+        #expect(throws: MelixCLIError.usage("--override must use KEY=VALUE.")) {
+            _ = try MelixCLIParser.parse(["settings", "show", "--json", "--override", "=8"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["settings", "set", "max_concurrent_jobs", "--bad"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["settings", "set", "max_concurrent_jobs", "--jsno", "6"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["settings", "reset", "eval_sample_size", "--bad"])
+        }
+        #expect(throws: MelixCLIError.usage("melix capabilities requires --json.")) {
+            _ = try MelixCLIParser.parse(["capabilities"])
+        }
+        #expect(throws: MelixCLIError.usage("melix instructions requires --json.")) {
+            _ = try MelixCLIParser.parse(["instructions"])
+        }
+        #expect(throws: MelixCLIError.usage("melix schema requires --json.")) {
+            _ = try MelixCLIParser.parse(["schema"])
+        }
+        #expect(throws: MelixCLIError.usage("melix config metadata requires --json.")) {
+            _ = try MelixCLIParser.parse(["config", "metadata"])
+        }
     }
 
     @Test("documents and parses remote server direct target commands")
@@ -679,6 +758,31 @@ struct MelixCLIParserTests {
         #expect(preflightBenchArguments.contains("--allow-memory-risk"))
         #expect(try MelixCLIParser.parse(preflightBenchArguments) == preflightBenchCommand)
 
+        let titledServerStartCommand = MelixCLICommand.serverStart(
+            .init(
+                serverTitle: "Gemma 31B",
+                modelID: "mlx-community/gemma-4-31b-it-4bit",
+                host: "127.0.0.1",
+                port: 12434,
+                rateLimitPerMinute: 60,
+                timeoutSeconds: 240,
+                json: true
+            )
+        )
+        let titledServerStartArguments = try MelixCLICommandCodec.arguments(for: titledServerStartCommand)
+        #expect(titledServerStartArguments == [
+            "server",
+            "start",
+            "Gemma 31B",
+            "--model", "mlx-community/gemma-4-31b-it-4bit",
+            "--host", "127.0.0.1",
+            "--port", "12434",
+            "--rate-limit-per-minute", "60",
+            "--timeout-seconds", "240",
+            "--json",
+        ])
+        #expect(try MelixCLIParser.parse(titledServerStartArguments) == titledServerStartCommand)
+
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -698,6 +802,7 @@ struct MelixCLIParserTests {
                     "schema_path": schemaPath.path,
                     "hints_path": hintsPath.path,
                 ],
+                evalPromptFile: "/tmp/eval-prompt.txt",
                 json: true
             )
         )
@@ -706,6 +811,8 @@ struct MelixCLIParserTests {
         #expect(evalArguments.contains(schemaPath.path))
         #expect(evalArguments.contains("--hints"))
         #expect(evalArguments.contains(hintsPath.path))
+        #expect(evalArguments.contains("--eval-prompt-file"))
+        #expect(evalArguments.contains("/tmp/eval-prompt.txt"))
         #expect(evalArguments.contains("--output-schema-json") == false)
         guard case .evalRun(let parsedEvalOptions) = try MelixCLIParser.parse(evalArguments) else {
             Issue.record("Expected evalRun command from codec arguments")
@@ -723,6 +830,7 @@ struct MelixCLIParserTests {
         #expect(parsedEvalOptions.parameters["hints_size_bytes"] == "30")
         #expect(parsedEvalOptions.parameters["hints_format"] == "text")
         #expect(parsedEvalOptions.parameters["evaluation_hints_text"] == "Return the normalized answer.")
+        #expect(parsedEvalOptions.evalPromptFile == "/tmp/eval-prompt.txt")
         #expect(parsedEvalOptions.json)
     }
 
@@ -731,6 +839,9 @@ struct MelixCLIParserTests {
         let allCommands: [(MelixCLICommand, String)] = [
             (.doctor(.init()), "doctor"),
             (.estimateImport(.init(repoID: "mlx/qwen", json: true)), "estimate.import"),
+            (.estimateImport(.init(repoID: "mlx/qwen", targetKind: "benchmark", json: true)), "estimate.benchmark"),
+            (.estimateImport(.init(repoID: "mlx/qwen", targetKind: "eval", json: true)), "estimate.eval"),
+            (.estimateImport(.init(repoID: "mlx/qwen", targetKind: "train", json: true)), "estimate.train"),
             (.convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)), "convert"),
             (.quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", localInferenceSmokeMode: "runtime_generate", localInferenceSmokePrompt: "smoke", json: true)), "quantize"),
             (.upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)), "upload"),
@@ -746,6 +857,14 @@ struct MelixCLIParserTests {
             (.datasetList(.init(json: true)), "dataset.list"),
             (.datasetHubDownload(.init(repoID: "org/dataset", revision: "main", json: true)), "dataset.hub.download"),
             (.datasetRemove(.init(repoID: "org/dataset", revision: "main", snapshotID: "abc123", json: true)), "dataset.remove"),
+            (.uriInspect(.init(uri: "hf://model/org/model", json: true)), "uri.inspect"),
+            (.uriImport(.init(uri: "hf://model/org/model", modelID: "model", revision: "main", dryRun: true, json: true)), "uri.import"),
+            (.recipesList(.init(task: "import", json: true)), "recipes.list"),
+            (.recipesShow(.init(recipeID: "import.hf-mlx-model", version: "1", json: true)), "recipes.show"),
+            (.recipesValidate(.init(target: "import.hf-mlx-model", json: true)), "recipes.validate"),
+            (.recipesPlan(.init(recipeID: "import.hf-mlx-model", version: "1", values: ["repo_id": "org/model", "model_id": "model"], outputPath: "/tmp/plan.json", json: true)), "recipes.plan"),
+            (.recipesApply(.init(recipeID: "benchmark.eval.smoke", version: "1", values: ["model_id": "model"], dryRun: true, resume: true, fromStepID: "benchmark", json: true)), "recipes.apply"),
+            (.recipesInit(.init(sourceURI: "hf://model/org/model", task: "import", outputPath: "/tmp/import.recipe.json", json: true)), "recipes.init"),
             (.modelRootsList(.init(json: true)), "model.roots.list"),
             (.modelRootsAdd(.init(path: "/models", json: true)), "model.roots.add"),
             (.modelRootsRemove(.init(path: "/models", json: true)), "model.roots.remove"),
@@ -753,11 +872,12 @@ struct MelixCLIParserTests {
             (.modelRootsRescan(.init(json: true)), "model.roots.rescan"),
             (.serverSnapshot(.init(json: true)), "server.snapshot"),
             (.serverSessionList(.init(json: true)), "server.session.list"),
-            (.serverSessionCreate(.init(title: "Server", modelID: "model", host: "127.0.0.1", port: 12436, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)), "server.session.create"),
+            (.serverSessionCreate(.init(title: "Server", modelID: "model", host: MelixGatewayDefaults.host, port: MelixGatewayDefaults.port, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)), "server.session.create"),
             (.serverSessionUpdate(.init(serverSessionID: "server-session-1", title: "Server", modelID: "model", host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)), "server.session.update"),
             (.serverSessionRemove(.init(serverSessionID: "server-session-1", json: true)), "server.session.remove"),
             (.serverSessionSelect(.init(serverSessionID: "server-session-1", json: true)), "server.session.select"),
             (.serverStart(.init(serverSessionID: "server-session-1", json: true)), "server.start"),
+            (.serverStart(.init(serverTitle: "Gemma 31B", modelID: "mlx-community/gemma-4-31b-it-4bit", host: "127.0.0.1", port: 12434, json: true)), "server.start"),
             (.serverPause(.init(serverSessionID: "server-session-1", json: true)), "server.pause"),
             (.serverResume(.init(serverSessionID: "server-session-1", json: true)), "server.resume"),
             (.serverWake(.init(serverSessionID: "server-session-1", json: true)), "server.wake"),
@@ -771,7 +891,7 @@ struct MelixCLIParserTests {
             (.chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
             (.chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
             (.loraList(.init(modelID: "model", json: true)), "lora.list"),
-            (.loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)), "lora.train"),
+            (.loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], preflightFitCheck: true, allowMemoryRisk: true, json: true)), "lora.train"),
             (.alignmentTrain(.init(modelID: "model", datasetURI: "/tmp/preference.jsonl", adapterName: "aligned", algorithm: "dpo", json: true)), "alignment.train"),
             (.loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl", json: true)), "lora.dataset.inspect"),
             (.loraDatasetBuild(.init(modelID: "model", datasetURI: "/tmp/data.jsonl", outputDir: "/tmp/out", json: true)), "lora.dataset.build"),
@@ -791,7 +911,7 @@ struct MelixCLIParserTests {
             (.benchMatrixList(.init(json: true)), "bench.matrix.list"),
             (.benchMatrixExportSummaryCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix.csv", json: true)), "bench.matrix.export-summary-csv"),
             (.benchMatrixExportRequestsCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix-requests.csv", json: true)), "bench.matrix.export-requests-csv"),
-            (.evalRun(.init(modelID: "model", suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, source: .localCSV(path: "/tmp/eval.csv"), fieldMapping: .init(systemPath: "system", inputTextPath: "input", targetPath: "target", sampleIDPath: "id"), profile: .init(profileType: "final_result", resultKind: "text", extractionMode: "heuristic_final", threshold: 0.75, outputSchemaJSON: "{\"type\":\"string\"}", ignoredPaths: ["meta"]), parameters: ["batch_factor": "1"], json: true)), "eval.run"),
+            (.evalRun(.init(hfRepoID: "model/repo", suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, source: .localCSV(path: "/tmp/eval.csv"), fieldMapping: .init(systemPath: "system", inputTextPath: "input", targetPath: "target", sampleIDPath: "id"), profile: .init(profileType: "final_result", resultKind: "text", extractionMode: "heuristic_final", threshold: 0.75, outputSchemaJSON: "{\"type\":\"string\"}", ignoredPaths: ["meta"]), parameters: ["batch_factor": "1"], preflightFitCheck: true, allowMemoryRisk: true, json: true)), "eval.run"),
             (.evalRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", suites: ["event_extraction"], datasetID: "top200", sampleSize: 3, source: .localJSONL(path: "/tmp/top200.jsonl"), fieldMapping: .init(inputTextPath: "dialogue", targetPath: "events", sampleIDPath: "dialogue_id"), profile: .init(scoringMode: "event_extraction_weighted_f1"), evalPromptID: "event-prod", evalPromptRevisionID: "rev-1", json: true)), "eval.run"),
             (.evalPromptList(.init(json: true)), "eval.prompt.list"),
             (.evalPromptShow(.init(promptID: "event-prod", revisionID: "rev-1", json: true)), "eval.prompt.show"),
@@ -821,6 +941,9 @@ struct MelixCLIParserTests {
         let supportedCommands: [MelixCLICommand] = [
             .doctor(.init(json: true)),
             .estimateImport(.init(repoID: "mlx/qwen", json: true)),
+            .estimateImport(.init(repoID: "mlx/qwen", targetKind: "benchmark", json: true)),
+            .estimateImport(.init(repoID: "mlx/qwen", targetKind: "eval", json: true)),
+            .estimateImport(.init(repoID: "mlx/qwen", targetKind: "train", json: true)),
             .convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)),
             .quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", quantizationMode: "ptq", sourceArtifactKind: "base_model", sourceArtifactPath: "/tmp/model", calibrationDatasetURI: "/tmp/calibration", qualityDelta: "-0.01", latencyDelta: "-0.2", localInferenceSmokeMode: "runtime_generate", localInferenceSmokePrompt: "smoke", json: true)),
             .upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)),
@@ -829,12 +952,20 @@ struct MelixCLIParserTests {
             .datasetList(.init(json: true)),
             .datasetHubDownload(.init(repoID: "org/dataset", revision: "main", json: true)),
             .datasetRemove(.init(repoID: "org/dataset", revision: "main", snapshotID: "abc123", json: true)),
+            .uriInspect(.init(uri: "hf://model/org/model", json: true)),
+            .uriImport(.init(uri: "hf://model/org/model", modelID: "model", revision: "main", dryRun: true, json: true)),
+            .recipesList(.init(task: "import", json: true)),
+            .recipesShow(.init(recipeID: "import.hf-mlx-model", version: "1", json: true)),
+            .recipesValidate(.init(target: "import.hf-mlx-model", json: true)),
+            .recipesPlan(.init(recipeID: "import.hf-mlx-model", version: "1", values: ["repo_id": "org/model", "model_id": "model"], outputPath: "/tmp/plan.json", json: true)),
+            .recipesApply(.init(recipeID: "benchmark.eval.smoke", version: "1", values: ["model_id": "model"], dryRun: true, resume: true, fromStepID: "benchmark", json: true)),
+            .recipesInit(.init(sourceURI: "hf://model/org/model", task: "import", outputPath: "/tmp/import.recipe.json", json: true)),
             .modelRootsList(.init(json: true)),
             .modelRootsAdd(.init(path: "/models", json: true)),
             .modelRootsRemove(.init(path: "/models", json: true)),
             .modelRootsMove(.init(path: "/models", index: 1, json: true)),
             .modelRootsRescan(.init(json: true)),
-            .serverSessionCreate(.init(title: "Server", modelID: "model", host: "127.0.0.1", port: 12436, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)),
+            .serverSessionCreate(.init(title: "Server", modelID: "model", host: MelixGatewayDefaults.host, port: MelixGatewayDefaults.port, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)),
             .serverSessionUpdate(.init(serverSessionID: "server-session-1", title: "Server", modelID: "model", host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)),
             .serverSessionRemove(.init(serverSessionID: "server-session-1", json: true)),
             .serverSessionSelect(.init(serverSessionID: "server-session-1", json: true)),
@@ -903,7 +1034,6 @@ struct MelixCLIParserTests {
         let unsupported: [MelixCLICommand] = [
             .modelList(.init()),
             .loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl")),
-            .evalCompare(.init(modelID: "base", targetModelIDs: ["target"])),
         ]
         for command in unsupported {
             do {
@@ -944,6 +1074,35 @@ struct MelixCLIParserTests {
         #expect(optionOptions.json == false)
     }
 
+    @Test("parses estimate benchmark eval and train receipts")
+    func parsesEstimateRunTargetReceipts() throws {
+        let cases: [(String, String, [String], String, String)] = [
+            ("benchmark", "benchmark", ["--context-length", "4096"], "context_length", "4096"),
+            ("eval", "eval", ["--context", "event dialog", "--dataset", "top200"], "dataset", "top200"),
+            ("train", "train", ["--model", "mlx-community/Qwen3.5-9B-MLX-4bit", "--dataset", "alpaca", "--lora", "adapter"], "lora", "adapter"),
+        ]
+        for (action, targetKind, extraArguments, inputKey, inputValue) in cases {
+            let command = try MelixCLIParser.parse([
+                "estimate",
+                action,
+                action == "train" ? "" : "--repo-id", action == "train" ? "" : "mlx-community/Qwen3.5-9B-MLX-4bit",
+            ].filter { $0.isEmpty == false } + extraArguments + [
+                "--json",
+            ])
+            guard case .estimateImport(let options) = command else {
+                Issue.record("Expected estimateImport command for \(action)")
+                continue
+            }
+
+            #expect(options.repoID == "mlx-community/Qwen3.5-9B-MLX-4bit")
+            #expect(options.targetKind == targetKind)
+            #expect(options.targetInputs[inputKey] == inputValue)
+            #expect(options.json)
+            #expect(MelixCLICommandCodec.commandID(for: command) == "estimate.\(targetKind)")
+            #expect(try MelixCLIParser.parse(MelixCLICommandCodec.arguments(for: command)) == command)
+        }
+    }
+
     @Test("estimate import rejects missing conflicting and unknown inputs")
     func estimateImportRejectsInvalidInputs() throws {
         try assertError(
@@ -971,10 +1130,11 @@ struct MelixCLIParserTests {
         try assertError(
             for: [
                 "estimate",
-                "train",
-                "--model", "mlx-community/Qwen3.5-9B-MLX-4bit",
+                "eval",
+                "--repo-id", "mlx-community/Qwen3.5-9B-MLX-4bit",
+                "--model", "mlx-community/Qwen3.5-9B-MLX-8bit",
             ],
-            equals: .usage(MelixCLIParser.usageText)
+            equals: .usage("melix estimate eval accepts only one Hugging Face repo id.")
         )
     }
 
@@ -1121,6 +1281,178 @@ struct MelixCLIParserTests {
         #expect(removeOptions.revision == "main")
         #expect(removeOptions.snapshotID == "abc123")
         #expect(removeOptions.json)
+    }
+
+    @Test("parses uri resolver commands")
+    func parsesURIResolverCommands() throws {
+        let inspect = try MelixCLIParser.parse([
+            "uri",
+            "inspect",
+            "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--json",
+        ])
+        let importCommand = try MelixCLIParser.parse([
+            "uri",
+            "import",
+            "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--model-id", "qwen35-08b",
+            "--revision", "refs/pr/1",
+            "--dry-run",
+            "--json",
+        ])
+        let importFromRevisionURI = try MelixCLIParser.parse([
+            "uri",
+            "import",
+            "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit@refs/pr/2",
+            "--dry-run",
+            "--json",
+        ])
+
+        #expect(
+            inspect ==
+                .uriInspect(
+                    .init(
+                        uri: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        json: true
+                    )
+                )
+        )
+        #expect(
+            importFromRevisionURI ==
+                .uriImport(
+                    .init(
+                        uri: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit@refs/pr/2",
+                        dryRun: true,
+                        json: true
+                    )
+                )
+        )
+        #expect(
+            importCommand ==
+                .uriImport(
+                    .init(
+                        uri: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        modelID: "qwen35-08b",
+                        revision: "refs/pr/1",
+                        dryRun: true,
+                        json: true
+                    )
+                )
+        )
+
+        #expect(throws: MelixCLIError.missingRequired("URI is required for melix uri inspect.")) {
+            try MelixCLIParser.parse(["uri", "inspect", "--json"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("URI is required for melix uri import.")) {
+            try MelixCLIParser.parse(["uri", "import", "--json"])
+        }
+    }
+
+    @Test("parses workflow recipe catalog commands")
+    func parsesWorkflowRecipeCatalogCommands() throws {
+        let list = try MelixCLIParser.parse([
+            "recipes",
+            "list",
+            "--task", "import",
+            "--json",
+        ])
+        let show = try MelixCLIParser.parse([
+            "recipes",
+            "show",
+            "import.hf-mlx-model",
+            "--version", "1",
+            "--json",
+        ])
+        let validate = try MelixCLIParser.parse([
+            "recipes",
+            "validate",
+            "import.hf-mlx-model",
+            "--json",
+        ])
+        let plan = try MelixCLIParser.parse([
+            "recipes",
+            "plan",
+            "import.hf-mlx-model",
+            "--set", "repo_id=mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--set", "model_id=qwen35-08b",
+            "--output", "/tmp/recipe-plan.json",
+            "--json",
+        ])
+        let apply = try MelixCLIParser.parse([
+            "recipes",
+            "apply",
+            "benchmark.eval.smoke",
+            "--version", "1",
+            "--set", "model_id=qwen35-08b",
+            "--dry-run",
+            "--resume",
+            "--from-step", "benchmark",
+            "--json",
+        ])
+        let initCommand = try MelixCLIParser.parse([
+            "recipes",
+            "init",
+            "--from", "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--task", "import",
+            "--output", "/tmp/import.recipe.json",
+            "--json",
+        ])
+
+        #expect(list == .recipesList(.init(task: "import", json: true)))
+        #expect(show == .recipesShow(.init(recipeID: "import.hf-mlx-model", version: "1", json: true)))
+        #expect(validate == .recipesValidate(.init(target: "import.hf-mlx-model", json: true)))
+        #expect(
+            plan ==
+                .recipesPlan(
+                    .init(
+                        recipeID: "import.hf-mlx-model",
+                        values: [
+                            "repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                            "model_id": "qwen35-08b",
+                        ],
+                        outputPath: "/tmp/recipe-plan.json",
+                        json: true
+                    )
+                )
+        )
+        #expect(
+            apply ==
+                .recipesApply(
+                    .init(
+                        recipeID: "benchmark.eval.smoke",
+                        version: "1",
+                        values: ["model_id": "qwen35-08b"],
+                        dryRun: true,
+                        resume: true,
+                        fromStepID: "benchmark",
+                        json: true
+                    )
+                )
+        )
+        #expect(
+            initCommand ==
+                .recipesInit(
+                    .init(
+                        sourceURI: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        task: "import",
+                        outputPath: "/tmp/import.recipe.json",
+                        json: true
+                    )
+                )
+        )
+
+        #expect(throws: MelixCLIError.missingRequired("RECIPE_ID is required for melix recipes show.")) {
+            try MelixCLIParser.parse(["recipes", "show", "--json"])
+        }
+        #expect(throws: MelixCLIError.usage("--set must use KEY=VALUE.")) {
+            try MelixCLIParser.parse(["recipes", "plan", "import.hf-mlx-model", "--set", "=bad"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--from is required for melix recipes init.")) {
+            try MelixCLIParser.parse(["recipes", "init", "--task", "import"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--task is required for melix recipes init.")) {
+            try MelixCLIParser.parse(["recipes", "init", "--from", "hf://model/org/repo"])
+        }
     }
 
     @Test("parses model import command and rejects missing import path")
@@ -1306,6 +1638,17 @@ struct MelixCLIParserTests {
             "--server-session-id", "server-session-2",
             "--json",
         ])
+        let titledStartCommand = try MelixCLIParser.parse([
+            "server",
+            "start",
+            "Gemma 31B",
+            "--model", "mlx-community/gemma-4-31b-it-4bit",
+            "--host", "127.0.0.1",
+            "--port", "12434",
+            "--rate-limit-per-minute", "60",
+            "--timeout-seconds", "240",
+            "--json",
+        ])
         let resumeCommand = try MelixCLIParser.parse([
             "server",
             "resume",
@@ -1326,6 +1669,10 @@ struct MelixCLIParserTests {
             Issue.record("Expected serverStart command")
             return
         }
+        guard case .serverStart(let titledStartOptions) = titledStartCommand else {
+            Issue.record("Expected titled serverStart command")
+            return
+        }
         guard case .serverResume(let resumeOptions) = resumeCommand else {
             Issue.record("Expected serverResume command")
             return
@@ -1341,6 +1688,14 @@ struct MelixCLIParserTests {
 
         #expect(startOptions.serverSessionID == "server-session-2")
         #expect(startOptions.json)
+        #expect(titledStartOptions.serverSessionID == "server-session-1")
+        #expect(titledStartOptions.serverTitle == "Gemma 31B")
+        #expect(titledStartOptions.modelID == "mlx-community/gemma-4-31b-it-4bit")
+        #expect(titledStartOptions.host == "127.0.0.1")
+        #expect(titledStartOptions.port == 12434)
+        #expect(titledStartOptions.rateLimitPerMinute == 60)
+        #expect(titledStartOptions.timeoutSeconds == 240)
+        #expect(titledStartOptions.json)
         #expect(resumeOptions.serverSessionID == "server-session-3")
         #expect(!resumeOptions.json)
         #expect(wakeOptions.serverSessionID == "server-session-4")
@@ -1434,6 +1789,8 @@ struct MelixCLIParserTests {
             "--max-seq-length", "4096",
             "--response-only",
             "--gradient-checkpointing",
+            "--preflight-fit-check",
+            "--allow-memory-risk",
             "--json",
         ])
 
@@ -1462,6 +1819,8 @@ struct MelixCLIParserTests {
         #expect(options.parameters["max_seq_length"] == "4096")
         #expect(options.parameters["response_only"] == "true")
         #expect(options.parameters["gradient_checkpointing"] == "true")
+        #expect(options.preflightFitCheck)
+        #expect(options.allowMemoryRisk)
         #expect(options.json)
     }
 
@@ -2105,6 +2464,8 @@ struct MelixCLIParserTests {
     @Test("parses batch run dry-run foundation options")
     func parsesBatchRunDryRunFoundationOptions() throws {
         #expect(MelixCLIParser.usageText.contains("melix batch run --models PATH"))
+        #expect(MelixCLIParser.usageText.contains("melix batch status"))
+        #expect(MelixCLIParser.usageText.contains("melix batch resume"))
 
         let command = try MelixCLIParser.parse([
             "batch", "run",
@@ -2157,6 +2518,53 @@ struct MelixCLIParserTests {
         #expect(options.preflight)
         #expect(options.dryRun)
         #expect(options.json)
+    }
+
+    @Test("parses batch status and resume commands")
+    func parsesBatchStatusAndResumeCommands() throws {
+        let status = try MelixCLIParser.parse([
+            "batch", "status",
+            "--run-id", "run-1",
+            "--output-root", "/tmp/out",
+            "--temp-root", "/tmp/tmp",
+            "--json",
+        ])
+        guard case .batchStatus(let statusOptions) = status else {
+            Issue.record("Expected batchStatus command")
+            return
+        }
+        #expect(statusOptions.runID == "run-1")
+        #expect(statusOptions.outputRoot == "/tmp/out")
+        #expect(statusOptions.tempRoot == "/tmp/tmp")
+        #expect(statusOptions.json)
+
+        let resume = try MelixCLIParser.parse([
+            "batch", "resume",
+            "--run-id", "run-1",
+            "--output-root", "/tmp/out",
+            "--temp-root", "/tmp/tmp",
+            "--models", "/tmp/models.txt",
+            "--config", "/tmp/batch.yaml",
+            "--eval-only",
+            "--missing-only", "false",
+            "--continue-on-failure", "false",
+            "--dry-run",
+            "--json",
+        ])
+        guard case .batchResume(let resumeOptions) = resume else {
+            Issue.record("Expected batchResume command")
+            return
+        }
+        #expect(resumeOptions.runID == "run-1")
+        #expect(resumeOptions.outputRoot == "/tmp/out")
+        #expect(resumeOptions.tempRoot == "/tmp/tmp")
+        #expect(resumeOptions.modelListPath == "/tmp/models.txt")
+        #expect(resumeOptions.configPath == "/tmp/batch.yaml")
+        #expect(resumeOptions.evalOnly)
+        #expect(resumeOptions.missingOnly == false)
+        #expect(resumeOptions.continueOnFailure == false)
+        #expect(resumeOptions.dryRun)
+        #expect(resumeOptions.json)
     }
 
     @Test("parses bench list and export-csv commands")
@@ -2476,6 +2884,8 @@ struct MelixCLIParserTests {
             "--batch-factor", "2",
             "--seed", "7",
             "--few-shot", "4",
+            "--preflight-fit-check",
+            "--allow-memory-risk",
             "--json",
         ])
 
@@ -2493,6 +2903,8 @@ struct MelixCLIParserTests {
         #expect(options.parameters["batch_factor"] == "2")
         #expect(options.parameters["seed"] == "7")
         #expect(options.parameters["few_shot"] == "4")
+        #expect(options.preflightFitCheck)
+        #expect(options.allowMemoryRisk)
         #expect(options.json)
     }
 
@@ -2602,6 +3014,90 @@ struct MelixCLIParserTests {
         #expect(options.parameters["hints_size_bytes"] == "24")
         #expect(options.parameters["hints_format"] == "markdown")
         #expect(options.parameters["evaluation_hints_text"] == "Prefer integer answers.")
+    }
+
+    @Test("parses eval run with ad hoc prompt text and file")
+    func parsesEvalRunWithAdHocPromptInputs() throws {
+        let promptTextCommand = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--suite", "mmlu",
+            "--eval-prompt", "Answer using the provided rubric.",
+        ])
+        let promptFileCommand = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--suite", "gsm8k",
+            "--eval-prompt-file", "/tmp/eval-prompt.txt",
+        ])
+
+        guard case .evalRun(let promptTextOptions) = promptTextCommand else {
+            Issue.record("Expected evalRun command")
+            return
+        }
+        guard case .evalRun(let promptFileOptions) = promptFileCommand else {
+            Issue.record("Expected evalRun command")
+            return
+        }
+
+        #expect(promptTextOptions.evalPrompt == "Answer using the provided rubric.")
+        #expect(promptTextOptions.evalPromptFile.isEmpty)
+        #expect(promptFileOptions.evalPrompt.isEmpty)
+        #expect(promptFileOptions.evalPromptFile == "/tmp/eval-prompt.txt")
+    }
+
+    @Test("eval run ad hoc prompt parser rejects ambiguous prompt choices")
+    func evalRunAdHocPromptParserRejectsAmbiguousPromptChoices() throws {
+        try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--eval-prompt", "Prompt",
+                "--eval-prompt-file", "/tmp/prompt.txt",
+            ],
+            equals: .usage("--eval-prompt and --eval-prompt-file are mutually exclusive.")
+        )
+        try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--eval-prompt", "Prompt",
+                "--eval-prompt-id", "event-prod",
+            ],
+            equals: .usage("--eval-prompt and --eval-prompt-file cannot be combined with --eval-prompt-id.")
+        )
+        try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--eval-prompt-file", "/tmp/prompt.txt",
+                "--eval-prompt-revision", "rev-1",
+            ],
+            equals: .usage("--eval-prompt-revision requires --eval-prompt-id.")
+        )
+        try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--eval-prompt-revision", "rev-1",
+            ],
+            equals: .usage("--eval-prompt-revision requires --eval-prompt-id.")
+        )
+        try assertError(
+            for: [
+                "eval", "run",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--eval-prompt", "   ",
+            ],
+            equals: .usage("--eval-prompt must contain non-empty text.")
+        )
     }
 
     @Test("eval run schema file parser surfaces reproducibility input errors")

@@ -114,6 +114,47 @@ def test_benchmark_suite_catalog_materializes_curated_hf_suite_and_reuses_cache(
     assert first.metadata()["source_kind"] == "hf_dataset"
 
 
+def test_benchmark_text_cases_preserve_agentic_tool_fixture_contract() -> None:
+    definition = BenchmarkSuiteDefinition(
+        task_kind="text-generation",
+        suite_id="agentic",
+        title="Agentic",
+        dataset_path="dataset/agentic",
+        dataset_name="default",
+        dataset_revision="main",
+        dataset_split="train",
+        prompt_feature="prompt",
+        text_feature="",
+        image_feature="",
+        source_image_feature="",
+        mask_feature="",
+        default_prompt="",
+        default_sample_size=1,
+        default_batch_factor=1,
+    )
+
+    cases = benchmark_suites._suite_cases(
+        definition,
+        rows=[
+            {
+                "prompt": "Find the receipt total.",
+                "tool_calls": [
+                    {"id": "call-1", "name": "visit", "arguments": {"url": "fixture://receipt"}}
+                ],
+                "tool_context": {
+                    "pages": {"fixture://receipt": {"text": "Total is 42."}},
+                },
+            }
+        ],
+        sample_size=1,
+        batch_factor=1,
+    )
+
+    assert cases[0].prompt == "Find the receipt total."
+    assert cases[0].tool_calls[0]["name"] == "visit"
+    assert cases[0].tool_fixture_context["pages"]["fixture://receipt"]["text"] == "Total is 42."
+
+
 def test_load_materialized_rows_streams_without_read_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rows_path = tmp_path / "rows.jsonl"
     rows_path.write_text(

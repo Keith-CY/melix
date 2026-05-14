@@ -58,6 +58,7 @@ def make_layout(tmp_path: Path):
         http_port="12436",
         python_backend_mode="deterministic",
         swift_text_worker_backend_mode="deterministic",
+        python_bridge_executable=None,
         uv_cache_dir=tmp_path / "uv-cache",
         swift_home=tmp_path / "swift-home",
         clang_module_cache_path=tmp_path / "module-cache",

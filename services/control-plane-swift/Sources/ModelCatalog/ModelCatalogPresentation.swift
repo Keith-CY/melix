@@ -55,7 +55,98 @@ public enum ModelCatalogPresentation {
             metadata["melix.capability.supported_modalities"] = supportedModalities
         }
 
+        for (key, value) in loadTrustPublicMetadata(for: model) {
+            metadata[key] = value
+        }
+
         return metadata.isEmpty ? nil : metadata
+    }
+
+    public static func loadTrustPolicy(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Controlplane_V1_ModelLoadTrustPolicy {
+        if model.hasLoadTrust {
+            return model.loadTrust
+        }
+
+        var policy = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        policy.requestedMode = requestedLoadTrustMode(for: model.settings)
+        policy.routeClass = model.routeClass
+        policy.loaderFamily = workerRouteIdentifier(for: model.routeClass)
+        policy.customLoaderDetectionSource = "not_loaded"
+
+        if routeExecutesCustomPythonLoader(model.routeClass) {
+            policy.effectiveMode = policy.requestedMode
+            policy.policySource = policySource(for: model.settings)
+        } else {
+            policy.effectiveMode = .modelLoadTrustNotApplicable
+            policy.policySource = "not_applicable"
+        }
+
+        return policy
+    }
+
+    public static func loadTrustPublicMetadata(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String: String] {
+        let policy = loadTrustPolicy(for: model)
+        var metadata: [String: String] = [
+            "melix.load_trust.receipt_present": model.hasLoadTrust ? "true" : "false",
+            "melix.load_trust.requested_mode": loadTrustModeIdentifier(policy.requestedMode),
+            "melix.load_trust.effective_mode": loadTrustModeIdentifier(policy.effectiveMode),
+            "melix.load_trust.policy_source": policy.policySource,
+            "melix.load_trust.custom_loader_required": policy.customLoaderRequired ? "true" : "false",
+            "melix.load_trust.requires_reload": policy.requiresReloadForTrustChange ? "true" : "false",
+        ]
+
+        let route = workerRouteIdentifier(for: policy.routeClass)
+        if route != "unspecified" {
+            metadata["melix.load_trust.route_class"] = route
+        }
+        if !policy.loaderFamily.isEmpty {
+            metadata["melix.load_trust.loader_family"] = policy.loaderFamily
+        }
+        if !policy.customLoaderDetectionSource.isEmpty {
+            metadata["melix.load_trust.custom_loader_detection_source"] = policy.customLoaderDetectionSource
+        }
+        if !policy.blockReason.isEmpty {
+            metadata["melix.load_trust.block_reason"] = policy.blockReason
+        }
+
+        return metadata
+    }
+
+    public static func loadTrustModeIdentifier(
+        _ mode: Melix_Controlplane_V1_ModelLoadTrustMode
+    ) -> String {
+        switch mode {
+        case .modelLoadTrustDefaultSafe:
+            return "default_safe"
+        case .modelLoadTrustTrustRemoteCode:
+            return "trust_remote_code"
+        case .modelLoadTrustNotApplicable:
+            return "not_applicable"
+        case .unspecified:
+            return "unspecified"
+        case .UNRECOGNIZED(let rawValue):
+            return "unrecognized_\(rawValue)"
+        }
+    }
+
+    public static func workerRouteIdentifier(
+        for routeClass: Melix_Controlplane_V1_WorkerRouteClass
+    ) -> String {
+        if let route = WorkerRouteKind(routeClass: routeClass) {
+            return route.metadataIdentifier
+        }
+        switch routeClass {
+        case .unspecified:
+            return "unspecified"
+        case .UNRECOGNIZED(let rawValue):
+            return "unrecognized_\(rawValue)"
+        default:
+            return "unspecified"
+        }
     }
 
     public static func publicRegistryMetadata(from metadata: [String: String]) -> [String: String] {
@@ -129,5 +220,41 @@ public enum ModelCatalogPresentation {
         value?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
+    }
+
+    private static func requestedLoadTrustMode(
+        for settings: Melix_Controlplane_V1_ModelSettings
+    ) -> Melix_Controlplane_V1_ModelLoadTrustMode {
+        switch settings.loadTrustMode {
+        case .modelLoadTrustDefaultSafe, .modelLoadTrustTrustRemoteCode:
+            return settings.loadTrustMode
+        default:
+            return .modelLoadTrustDefaultSafe
+        }
+    }
+
+    private static func policySource(
+        for settings: Melix_Controlplane_V1_ModelSettings
+    ) -> String {
+        switch settings.loadTrustMode {
+        case .modelLoadTrustDefaultSafe, .modelLoadTrustTrustRemoteCode:
+            return "model_settings"
+        default:
+            return "default_safe"
+        }
+    }
+
+    private static func routeExecutesCustomPythonLoader(
+        _ routeClass: Melix_Controlplane_V1_WorkerRouteClass
+    ) -> Bool {
+        switch routeClass {
+        case .workerRoutePythonTextCompatibility,
+             .workerRoutePythonModelOperations,
+             .workerRoutePythonOcr,
+             .workerRoutePythonVlm:
+            return true
+        default:
+            return false
+        }
     }
 }

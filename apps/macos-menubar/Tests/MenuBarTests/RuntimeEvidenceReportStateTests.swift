@@ -13,7 +13,7 @@ struct RuntimeEvidenceReportStateTests {
 
         #expect(report.schemaVersion == "melix.benchmark_evaluation_report.v1")
         #expect(report.reportID == "report-desktop-fixture")
-        #expect(report.summaryItems.map(\.id) == ["status", "gate", "runs", "hardware"])
+        #expect(report.summaryItems.map(\.id) == ["status", "gate", "runs", "evidence-validity", "hardware"])
         #expect(report.runRows.map(\.statusText).contains("Completed"))
         #expect(report.runRows.map(\.statusText).contains("Failed"))
         #expect(report.runRows.map(\.statusText).contains("Fallback"))
@@ -25,6 +25,10 @@ struct RuntimeEvidenceReportStateTests {
                 && row.powerText.contains("17.50 W avg")
                 && row.failureText.contains("powermetrics_failed")
         })
+        #expect(report.evidenceValidityRows.contains {
+            $0.id == "required_evidence_present" && $0.valueText == "1.0000"
+        })
+        #expect(report.summaryItems.first { $0.id == "evidence-validity" }?.value == "Present")
         #expect(report.processRows.contains { row in
             row.roleText == "Primary Runtime"
                 && row.nameText == "mlx-runner"
@@ -44,6 +48,7 @@ struct RuntimeEvidenceReportStateTests {
 
         #expect(report.reportKindText == "Unknown")
         #expect(report.summaryItems.first?.value == "Unknown")
+        #expect(report.summaryItems.first { $0.id == "evidence-validity" }?.value == "Missing")
         #expect(report.metricRows.map(\.metric) == ["alpha.metric", "zeta.metric"])
         #expect(report.metricRows.first?.baselineText == "-")
         #expect(report.metricRows.first?.deltaText == "-")
@@ -726,7 +731,15 @@ private func makeStructuredEvidenceReportJSON() -> String {
         ],
         "required_evidence_present": true,
         "required_probe_phases_present": true,
-        "required_telemetry_present": true
+        "required_telemetry_present": true,
+        "evidence_validity_metrics": {
+          "source_evidence_count": 2.0,
+          "required_evidence_present": 1.0,
+          "required_probe_phases_present": 1.0,
+          "required_telemetry_present": 1.0,
+          "known_gap_count": 0.0,
+          "blocking_failure_count": 1.0
+        }
       },
       "artifacts": {
         "evidence_json_path": "/tmp/evidence.json",
@@ -826,7 +839,12 @@ private func makeEmptyStructuredEvidenceReportJSON() -> String {
         "blocking_failures": [],
         "required_evidence_present": false,
         "required_probe_phases_present": false,
-        "required_telemetry_present": false
+        "required_telemetry_present": false,
+        "evidence_validity_metrics": {
+          "required_evidence_present": 0.0,
+          "required_probe_phases_present": 0.0,
+          "required_telemetry_present": 0.0
+        }
       },
       "artifacts": {
         "evidence_json_path": "",

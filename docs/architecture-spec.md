@@ -427,12 +427,13 @@ These flows should be backed by the same runtime metadata model used by the cont
 ### Agentic Tool Runtime
 
 Agentic training replay, online rollout, benchmark, and evaluation must share one
-worker-owned tool registry contract. The initial built-in registry lives in the
-Python worker runtime and exports deterministic OpenAI-compatible function
-schemas plus Melix `ToolConfig` metadata for image crop, layout parsing, text
-search, image search, visit, and local compute tools. The registry is a contract
-boundary only: concrete adapters and evaluation routing are layered on top in
-separate implementation slices.
+worker-owned tool registry contract. The built-in registry lives in the Python
+worker runtime and exports deterministic OpenAI-compatible function schemas plus
+Melix `ToolConfig` metadata for image crop, layout parsing, text search, image
+search, visit, and local compute tools. The deterministic local adapter runtime
+executes those six tools in fixture-backed mode and projects the same evidence
+shape into SFT replay, RL alignment trace rows, benchmark request rows, and
+evaluation sample JSONL artifacts.
 
 Tool observations must cross the same worker-owned boundary before they are
 persisted into training traces, benchmark artifacts, or evaluation evidence. The

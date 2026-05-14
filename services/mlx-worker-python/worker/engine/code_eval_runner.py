@@ -47,19 +47,12 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     if closing >= 0:
         opening = normalized.rfind("```", 0, closing)
         if opening >= 0:
-            trailing_start = closing + 3
-            fence_count: int | None = None
-            if trailing_start < len(normalized):
-                fence_count = normalized.count("```")
-                if fence_count % 2:
-                    closing = opening
-                    opening = normalized.rfind("```", 0, closing)
             if opening >= 0:
                 content_start = _code_block_content_start(normalized, opening + 3)
                 candidate = normalized[content_start:closing].strip()
-                if candidate or (
-                    fence_count if fence_count is not None else normalized.count("```")
-                ) % 2 == 0:
+                if candidate:
+                    return candidate, "parsed_code_block"
+                if normalized.count("```") % 2 == 0:
                     return candidate, "parsed_code_block"
                 closing = opening
                 opening = normalized.rfind("```", 0, closing)
@@ -289,37 +282,70 @@ def _load_payload_file(
     return payload
 
 
+_CODE_EVAL_PAYLOAD_STRING_KEYS = (
+    "compile_status",
+    "runtime_status",
+    "timeout_status",
+    "test_status",
+    "failure_detail",
+)
+_CODE_EVAL_PAYLOAD_INT_KEYS = ("tests_passed", "tests_total")
+_REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS = (
+    "runtime_status",
+    "timeout_status",
+    "test_status",
+    "failure_detail",
+)
+_CODE_EVAL_PAYLOAD_KEY_TOKENS = {
+    key: json.dumps(key, separators=(",", ":")).encode("utf-8")
+    for key in (*_CODE_EVAL_PAYLOAD_STRING_KEYS, *_CODE_EVAL_PAYLOAD_INT_KEYS)
+}
+
+
+_JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
+
+
+def _json_object_payload_bounds(payload_bytes: bytes) -> tuple[int, int] | None:
+    payload_length = len(payload_bytes)
+    start = 0
+    while start < payload_length and payload_bytes[start] in _JSON_PAYLOAD_WHITESPACE:
+        start += 1
+    if start >= payload_length or payload_bytes[start] != ord("{"):
+        return None
+
+    end = payload_length - 1
+    while end > start and payload_bytes[end] in _JSON_PAYLOAD_WHITESPACE:
+        end -= 1
+    if payload_bytes[end] != ord("}"):
+        return None
+    return start, end
+
+
 def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
-    stripped = payload_bytes.strip()
-    if not stripped.startswith(b"{") or not stripped.endswith(b"}"):
+    if _json_object_payload_bounds(payload_bytes) is None:
         return None
 
     payload: dict[str, object] = {}
-    for key in (
-        "compile_status",
-        "runtime_status",
-        "timeout_status",
-        "test_status",
-        "failure_detail",
-    ):
+    for key in _CODE_EVAL_PAYLOAD_STRING_KEYS:
         value = _extract_json_string_field(payload_bytes, key)
         if value is not None:
             payload[key] = value
 
-    for key in ("tests_passed", "tests_total"):
+    for key in _CODE_EVAL_PAYLOAD_INT_KEYS:
         value = _extract_json_int_field(payload_bytes, key)
         if value is None:
             return None
         payload[key] = value
 
-    required_string_keys = ("runtime_status", "timeout_status", "test_status", "failure_detail")
-    if all(key in payload for key in required_string_keys):
+    if all(key in payload for key in _REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS):
         return payload
     return None
 
 
 def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:
-    key_token = json.dumps(key, separators=(",", ":")).encode("utf-8")
+    key_token = _CODE_EVAL_PAYLOAD_KEY_TOKENS.get(key)
+    if key_token is None:
+        key_token = json.dumps(key, separators=(",", ":")).encode("utf-8")
     key_index = payload_bytes.find(key_token)
     if key_index < 0:
         return None
@@ -360,17 +386,24 @@ def _extract_json_int_field(payload_bytes: bytes, key: str) -> int | None:
         return None
     cursor = start
     payload_length = len(payload_bytes)
+    sign = 1
     if cursor < payload_length and payload_bytes[cursor] == ord("-"):
+        sign = -1
         cursor += 1
-    digit_start = cursor
-    while cursor < payload_length and ord("0") <= payload_bytes[cursor] <= ord("9"):
+    if cursor >= payload_length:
+        return None
+    value = 0
+    digit_count = 0
+    while cursor < payload_length:
+        digit = payload_bytes[cursor] - ord("0")
+        if digit < 0 or digit > 9:
+            break
+        value = (value * 10) + digit
+        digit_count += 1
         cursor += 1
-    if cursor == digit_start:
+    if digit_count == 0:
         return None
-    try:
-        return int(payload_bytes[start:cursor])
-    except ValueError:  # pragma: no cover - digit scan above should prevent this.
-        return None
+    return sign * value
 
 
 def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:

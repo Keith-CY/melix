@@ -167,7 +167,7 @@ def test_bootstrap_interval_sums_replicates_without_per_replicate_mean_helper_ca
         bootstrap_seed=13,
     )
 
-    assert mean_lengths == [8, 8]
+    assert mean_lengths == [8]
     assert evidence["bootstrap"] == {
         "method": "paired_bootstrap_percentile",
         "confidence_level": 0.9,
@@ -203,6 +203,32 @@ def test_bootstrap_interval_short_circuits_constant_outcomes_without_sampling(
         "iterations": 1000,
         "seed": 17,
     }
+    assert evidence["analytical"]["lower_bound"] == 1.0
+    assert evidence["analytical"]["upper_bound"] == 1.0
+
+
+def test_build_paired_statistical_evidence_reuses_constant_scan_between_intervals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    equality_scan_lengths: list[int] = []
+    original_all_values_equal = statistical_evidence_module._all_values_equal
+
+    def tracking_all_values_equal(values: tuple[float, ...]) -> bool:
+        equality_scan_lengths.append(len(values))
+        return original_all_values_equal(values)
+
+    monkeypatch.setattr(statistical_evidence_module, "_all_values_equal", tracking_all_values_equal)
+
+    evidence = build_paired_statistical_evidence(
+        paired_outcomes=(1, 1, 1, 1, 1),
+        confidence_level=0.95,
+        bootstrap_iterations=1000,
+        bootstrap_seed=17,
+    )
+
+    assert equality_scan_lengths == [5]
+    assert evidence["bootstrap"]["lower_bound"] == 1.0
+    assert evidence["bootstrap"]["upper_bound"] == 1.0
     assert evidence["analytical"]["lower_bound"] == 1.0
     assert evidence["analytical"]["upper_bound"] == 1.0
 

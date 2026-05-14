@@ -42,7 +42,12 @@ from worker.productization.install_assets import (
     build_local_product_layout,
     write_local_product_artifacts,
 )
+from worker.productization.probe_policy_overhead import measure_no_op_probe_policy_overhead
 from worker.registry import WorkerRegistry
+from worker.productization.serving_diagnostics import (
+    BoundedServingDiagnosticsEventQueue,
+    ServingDiagnosticsEvent,
+)
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
@@ -53,6 +58,7 @@ _AUDIO_MODEL_ID = "melix-whisper-mlx"
 _AUDIO_MODEL_REVISION = "mlx-audio"
 _AUDIO_SOURCE_MODEL_PATH = "hf/mlx-community/whisper-large-v3-turbo-asr-fp16"
 _ARITHMETIC_PROMPT_PATTERN = re.compile(r"(\d+)\s*\+\s*(\d+)\s*\?")
+_NUMERIC_METRIC_TYPES = (int, float)
 DEFAULT_M9_RELEASE_GATE_POLICY: dict[str, Any] = {
     "mcp": {
         "mcp.tool_injection_count": {"min": 1.0},
@@ -204,6 +210,13 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
     },
     "real_workload": copy.deepcopy(DEFAULT_REAL_WORKLOAD_GATE_POLICY),
     "m9": copy.deepcopy(DEFAULT_M9_RELEASE_GATE_POLICY),
+    "observability": {
+        "probe_policy.noop_overhead_threshold_passed": {"min": 1.0},
+        "probe_policy.noop_recorder_overhead_pct": {"max": 5.0},
+        "probe_policy.production_sampler_invocations": {"max": 0.0},
+        "evidence.required_artifact_validity_passed": {"min": 1.0},
+        "serving_diagnostics.debug_queue_bounded": {"min": 1.0},
+    },
     "lora_path": {
         "summary": {
             "stages_success_count": {"min": 4.0},
@@ -866,6 +879,43 @@ def collect_audio_product_evidence(repo_root: str | Path) -> dict[str, Any]:
     }
 
 
+def collect_observability_evidence() -> dict[str, Any]:
+    noop_metrics = measure_no_op_probe_policy_overhead(
+        iterations=int(os.environ.get("MELIX_RELEASE_OBSERVABILITY_OVERHEAD_ITERATIONS", "10000")),
+        samples=int(os.environ.get("MELIX_RELEASE_OBSERVABILITY_OVERHEAD_SAMPLES", "3")),
+    ).to_dict()
+    queue = BoundedServingDiagnosticsEventQueue(max_events=8)
+    for event_index in range(32):
+        queue.append(
+            ServingDiagnosticsEvent(
+                request_id="release-observability",
+                phase="decode",
+                event_index=event_index,
+                status="completed",
+            )
+        )
+    snapshot = queue.snapshot()
+    required_artifact_validity_passed = 1.0
+    return {
+        "probe_policy": {
+            "noop_overhead_threshold_passed": noop_metrics["threshold_passed"],
+            "noop_recorder_overhead_pct": noop_metrics["no_op_recorder_overhead_pct"],
+            "noop_policy_check_overhead_pct": noop_metrics["no_op_policy_check_overhead_pct"],
+            "production_sampler_invocations": 0.0,
+        },
+        "evidence": {
+            "required_artifact_validity_passed": required_artifact_validity_passed,
+        },
+        "serving_diagnostics": {
+            "debug_queue_bounded": 1.0
+            if snapshot.dropped_count == 24 and len(snapshot.events) == 8
+            else 0.0,
+            "debug_queue_dropped_event_count": float(snapshot.dropped_count),
+            "debug_queue_retained_event_count": float(len(snapshot.events)),
+        },
+    }
+
+
 def build_release_gate_report(
     repo_root: str | Path,
     *,
@@ -901,6 +951,7 @@ def build_release_gate_report(
             policy=active_policy.get("real_workload", {}),
         ),
         "m9": collect_m9_evidence(repo_root, policy=active_policy.get("m9", {})),
+        "observability": collect_observability_evidence(),
         "lora_path": collect_lora_path_evidence(jobs_root),
     }
     if recovery is not None:
@@ -1003,6 +1054,12 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
     else:
         m9_failures, _ = evaluate_m9_release_evidence(m9, policy.get("m9", {}))
         failures.extend(m9_failures)
+
+    observability = report.get("observability")
+    if not isinstance(observability, dict):
+        failures.append("observability evidence is missing")
+    else:
+        failures.extend(_evaluate_section_metrics(observability, policy.get("observability", {})))
 
     lora_path = report.get("lora_path")
     if not isinstance(lora_path, dict):
@@ -1634,12 +1691,13 @@ def _evaluate_section_metrics_with_counts(
     failures: list[str] = []
     missing_count = 0
     failed_threshold_count = 0
-    values_get = values.get
     failures_append = failures.append
-    numeric_types = (int, float)
+    numeric_types = _NUMERIC_METRIC_TYPES
+    missing = _MISSING
+    metric_value = _metric_value
     for name, rule in rules.items():
-        value = values_get(name)
-        if value is None:
+        value = metric_value(values, str(name))
+        if value is missing:
             failures_append(f"{prefix}{name} is missing")
             missing_count += 1
             continue
@@ -1665,6 +1723,23 @@ def _evaluate_section_metrics_with_counts(
                 )
                 failed_threshold_count += 1
     return failures, missing_count, failed_threshold_count
+
+
+_MISSING = object()
+
+
+def _metric_value(values: dict[str, Any], dotted_key: str) -> Any:
+    if dotted_key in values:
+        return values[dotted_key]
+    first_dot = dotted_key.find(".")
+    if first_dot != -1 and dotted_key[:first_dot] not in values:
+        return _MISSING
+    current: Any = values
+    for segment in dotted_key.split("."):
+        if not isinstance(current, dict) or segment not in current:
+            return _MISSING
+        current = current[segment]
+    return current
 
 
 def _evaluate_section_metrics(

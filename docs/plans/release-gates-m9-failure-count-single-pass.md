@@ -21,6 +21,7 @@ This slice is Python-only and can be verified on Linux with focused pytest, chan
 
 - Replace the suffix-based post-processing loop over `section_failures` with a counted section evaluator that returns missing and threshold-failure counts alongside the ordered failure strings.
 - Preserve failure ordering, metric names, and summary values exactly while avoiding failure-string suffix scans in `evaluate_m9_release_evidence(...)`.
+- Follow-up slice: keep flat metric-key lookup as the fast path and short-circuit dotted nested lookup when the first segment is absent from the metrics map. This preserves nested metric compatibility while avoiding `split(".")` list allocation for flat M9 policy misses.
 
 ## Probe definition
 

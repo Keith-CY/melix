@@ -95,6 +95,8 @@ struct MelixCLIRunnerTests {
         #expect((payload["total_unified_memory_bytes"] as? NSNumber)?.uint64Value ?? 0 > 0)
         #expect((payload["estimated_active_memory_bytes"] as? NSNumber)?.uint64Value == 44_000_000_000)
         #expect((payload["estimated_disk_usage_bytes"] as? NSNumber)?.uint64Value == 22_000_000_000)
+        #expect((payload["available_disk_bytes"] as? NSNumber)?.uint64Value ?? 0 > 0)
+        #expect(["good", "blocked", "unknown"].contains(payload["disk_fit_status"] as? String ?? ""))
         #expect(payload["recommended_action"] as? String == "Use --allow-memory-risk only when the Mac is otherwise idle.")
         #expect((payload["assumptions"] as? [String])?.isEmpty == false)
         #expect((payload["unknown_fields"] as? [String])?.contains("parameter_count") == true)
@@ -131,7 +133,49 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("total_unified_memory_bytes=\(ProcessInfo.processInfo.physicalMemory)") == false)
         #expect(output.contains("estimated_active_memory_bytes=8.38 GB"))
         #expect(output.contains("estimated_disk_usage_bytes=4.66 GB"))
+        #expect(output.contains("available_disk_bytes="))
+        #expect(output.contains("disk_fit_status="))
         #expect(output.contains("recommended_action=Run import normally."))
+    }
+
+    @Test("estimate benchmark eval and train include target-specific unknowns")
+    func estimateRunTargetsIncludeTaskSpecificUnknowns() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setHubModelCard(
+            makeHubModelCard(
+                repoID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+                localFitStatus: "good",
+                localFitReasons: ["Estimated resident memory fits the comfort budget."],
+                estimatedArtifactBytes: 5_000_000_000,
+                estimatedResidentBytes: 9_000_000_000,
+                recommendedAction: "Run normally."
+            )
+        )
+
+        for (targetKind, expectedUnknown) in [
+            ("benchmark", "kv_cache_bytes"),
+            ("eval", "judge_memory_bytes"),
+            ("train", "optimizer_state_bytes"),
+        ] {
+            let output = try await MelixCLIRunner(client: client).run(
+                .estimateImport(.init(
+                    repoID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+                    targetKind: targetKind,
+                    targetInputs: ["dataset": "top200"],
+                    json: true
+                ))
+            )
+            let payload = try #require(parseJSONObject(output))
+            let unknownFields = try #require(payload["unknown_fields"] as? [String])
+            let assumptions = try #require(payload["assumptions"] as? [String])
+            let targetInputs = try #require(payload["target_inputs"] as? [String: Any])
+
+            #expect(payload["target_kind"] as? String == targetKind)
+            #expect((payload["probe"] as? [String: Any])?["name"] as? String == "cli.memory_fit.\(targetKind)")
+            #expect(targetInputs["dataset"] as? String == "top200")
+            #expect(unknownFields.contains(expectedUnknown))
+            #expect(assumptions.contains { $0.contains("not separately modeled yet") })
+        }
     }
 
     @Test("estimate import reports unknown fields when Hub fit evidence is sparse")
@@ -278,6 +322,300 @@ struct MelixCLIRunnerTests {
         #expect(error["code"] as? String == "missing_required")
         #expect(error["message"] as? String == "--message is required for melix chat run.")
         #expect(metrics["melix.cli.parse_ms"] as? Double == 0.25)
+    }
+
+    @Test("settings show resolves precedence and reports source metadata")
+    func settingsShowResolvesPrecedenceAndReportsSourceMetadata() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectRoot.appendingPathComponent(".melix", isDirectory: true), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try writeJSONObjectForTest(
+            [
+                "model_cache_path": "/user/models",
+                "max_concurrent_jobs": 2,
+                "benchmark_repeats": 1,
+            ],
+            to: melixHome.appendingPathComponent("runtime_settings.json")
+        )
+        try writeJSONObjectForTest(
+            [
+                "max_concurrent_jobs": 4,
+                "artifact_path": "/project/artifacts",
+            ],
+            to: projectRoot
+                .appendingPathComponent(".melix", isDirectory: true)
+                .appendingPathComponent("runtime_settings.json")
+        )
+
+        let output = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "MELIX_PROJECT_ROOT": projectRoot.path,
+                "MELIX_MAX_CONCURRENT_JOBS": "6",
+            ]
+        ).run(.settingsShow(.init(json: true, overrides: ["max_concurrent_jobs": "8"])))
+        let payload = try #require(parseJSONObject(output))
+        let settings = try #require(payload["settings"] as? [String: Any])
+        let maxJobs = try #require(settings["max_concurrent_jobs"] as? [String: Any])
+        let artifactPath = try #require(settings["artifact_path"] as? [String: Any])
+        let modelCache = try #require(settings["model_cache_path"] as? [String: Any])
+        let metrics = try #require(payload["metrics"] as? [String: Any])
+
+        #expect(payload["schema_version"] as? String == "melix.runtime_settings.effective.v1")
+        #expect((maxJobs["value"] as? NSNumber)?.intValue == 8)
+        #expect(maxJobs["source"] as? String == "cli_flag")
+        #expect(maxJobs["source_detail"] as? String == "--override max_concurrent_jobs")
+        #expect(artifactPath["value"] as? String == "/project/artifacts")
+        #expect(artifactPath["source"] as? String == "project_settings")
+        #expect(modelCache["value"] as? String == "/user/models")
+        #expect(modelCache["source"] as? String == "user_settings")
+        #expect((metrics["settings_resolve_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+    }
+
+    @Test("settings set validate and reset mutate only the user settings file")
+    func settingsSetValidateAndResetMutateOnlyUserSettingsFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "MELIX_PROJECT_ROOT": projectRoot.path,
+            ]
+        )
+
+        let setOutput = try await runner.run(.settingsSet(.init(key: "eval_sample_size", value: "25", json: true)))
+        let setPayload = try #require(parseJSONObject(setOutput))
+        #expect(setPayload["key"] as? String == "eval_sample_size")
+        #expect((setPayload["value"] as? NSNumber)?.intValue == 25)
+        #expect(setPayload["source"] as? String == "user_settings")
+
+        let validateOutput = try await runner.run(.settingsValidate(.init(json: true)))
+        let validatePayload = try #require(parseJSONObject(validateOutput))
+        let metrics = try #require(validatePayload["metrics"] as? [String: Any])
+        #expect(validatePayload["valid"] as? Bool == true)
+        #expect((metrics["settings_validate_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+
+        let resetOutput = try await runner.run(.settingsReset(.init(key: "eval_sample_size", json: true)))
+        let resetPayload = try #require(parseJSONObject(resetOutput))
+        #expect(resetPayload["removed"] as? Bool == true)
+
+        let showOutput = try await runner.run(.settingsShow(.init(json: true)))
+        let showPayload = try #require(parseJSONObject(showOutput))
+        let settings = try #require(showPayload["settings"] as? [String: Any])
+        let evalSampleSize = try #require(settings["eval_sample_size"] as? [String: Any])
+        #expect(evalSampleSize["source"] as? String == "default")
+    }
+
+    @Test("settings validation reports invalid documents keys and values")
+    func settingsValidationReportsInvalidDocumentsKeysAndValues() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let projectSettingsDir = projectRoot.appendingPathComponent(".melix", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectSettingsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try writeJSONObjectForTest(
+            [
+                "max_concurrent_jobs": "many",
+                "unknown_setting": true,
+            ],
+            to: melixHome.appendingPathComponent("runtime_settings.json")
+        )
+        try Data("[1,2,3]".utf8).write(
+            to: projectSettingsDir.appendingPathComponent("runtime_settings.json")
+        )
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "MELIX_PROJECT_ROOT": projectRoot.path,
+            ]
+        )
+        let output = try await runner.run(.settingsValidate(.init(json: true)))
+        let payload = try #require(parseJSONObject(output))
+        let errors = try #require(payload["errors"] as? [[String: Any]])
+
+        #expect(payload["valid"] as? Bool == false)
+        #expect(errors.contains { $0["key"] as? String == "max_concurrent_jobs" })
+        #expect(errors.contains { $0["key"] as? String == "unknown_setting" })
+        #expect(errors.contains { ($0["message"] as? String)?.contains("invalidDocument") == true })
+    }
+
+    @Test("settings mutation commands reject unknown keys invalid values and malformed stores")
+    func settingsMutationCommandsRejectUnknownKeysInvalidValuesAndMalformedStores() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let environment = [
+            "MELIX_HOME": melixHome.path,
+            "MELIX_PROJECT_ROOT": projectRoot.path,
+        ]
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient(), environment: environment)
+
+        await #expect(throws: MelixRuntimeSettingsError.unknownKey("missing_key")) {
+            _ = try await runner.run(.settingsSet(.init(key: "missing_key", value: "1", json: true)))
+        }
+        await #expect(throws: MelixRuntimeSettingsError.invalidValue(key: "max_concurrent_jobs", expectedType: "int", value: "many")) {
+            _ = try await runner.run(.settingsSet(.init(key: "max_concurrent_jobs", value: "many", json: true)))
+        }
+        await #expect(throws: MelixRuntimeSettingsError.invalidValue(key: "max_concurrent_jobs", expectedType: "int", value: "2.5")) {
+            _ = try await runner.run(.settingsSet(.init(key: "max_concurrent_jobs", value: "2.5", json: true)))
+        }
+        await #expect(throws: MelixRuntimeSettingsError.unknownKey("missing_key")) {
+            _ = try await runner.run(.settingsReset(.init(key: "missing_key", json: true)))
+        }
+
+        let settingsPath = melixHome.appendingPathComponent("runtime_settings.json")
+        try Data("[1,2,3]".utf8).write(to: settingsPath)
+        await #expect(throws: MelixRuntimeSettingsError.invalidDocument(path: settingsPath.path)) {
+            _ = try await runner.run(.settingsShow(.init(json: true)))
+        }
+    }
+
+    @Test("info discovery reads local update channel receipts without network")
+    func infoDiscoveryReadsLocalUpdateChannelReceiptsWithoutNetwork() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        let channelPath = root.appendingPathComponent("channel.json")
+        try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try writeJSONObjectForTest(
+            [
+                "latest_known_version": "999.0.0",
+                "update_channel": "nightly",
+            ],
+            to: channelPath
+        )
+
+        let output = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "MELIX_PROJECT_ROOT": projectRoot.path,
+                "MELIX_UPDATE_CHANNEL_PATH": channelPath.path,
+                "MELIX_INSTALL_METHOD": "homebrew",
+            ]
+        ).run(.info(.init(json: true)))
+        let payload = try #require(parseJSONObject(output))
+        let update = try #require(payload["update"] as? [String: Any])
+
+        #expect(update["status"] as? String == "ok")
+        #expect(update["latest_known_version"] as? String == "999.0.0")
+        #expect(update["update_available"] as? Bool == true)
+        #expect(update["update_channel"] as? String == "nightly")
+        #expect(update["install_method"] as? String == "homebrew")
+        #expect(update["suggested_update_command"] as? [String] == [])
+    }
+
+    @Test("discovery commands expose machine readable info capabilities instructions schema and config metadata")
+    func discoveryCommandsExposeMachineReadablePayloads() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let projectRoot = root.appendingPathComponent("project", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "MELIX_PROJECT_ROOT": projectRoot.path,
+                "MELIX_UPDATE_CHANNEL_PATH": root.appendingPathComponent("missing-channel.json").path,
+            ]
+        )
+
+        let info = try #require(parseJSONObject(try await runner.run(.info(.init(json: true)))))
+        let update = try #require(info["update"] as? [String: Any])
+        let localPaths = try #require(info["local_paths"] as? [String: Any])
+        let infoMetrics = try #require(info["metrics"] as? [String: Any])
+        #expect(info["schema_version"] as? String == "melix.discovery.info.v1")
+        #expect(update["installed_version"] as? String != nil)
+        #expect(update["latest_known_version"] as? String == "")
+        #expect(update["install_method"] as? String != nil)
+        #expect(update["suggested_update_command"] as? [String] != nil)
+        #expect(update["status"] as? String == "unavailable")
+        #expect(localPaths["melix_home"] as? String == melixHome.path)
+        let projectSettingsPath = projectRoot
+            .appendingPathComponent(".melix", isDirectory: true)
+            .appendingPathComponent("runtime_settings.json")
+            .path
+        #expect(localPaths["project_settings"] as? String == projectSettingsPath)
+        #expect((infoMetrics["discovery_build_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+
+        let capabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "qwen35_9b_mlx_4bit")))))
+        let alias = try #require(capabilities["model_alias_discovery"] as? [String: Any])
+        let suggestions = try #require(alias["suggestions"] as? [[String: Any]])
+        #expect(capabilities["schema_version"] as? String == "melix.discovery.capabilities.v1")
+        #expect((capabilities["supported_tasks"] as? [String])?.contains("text-generation") == true)
+        #expect(suggestions.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-4bit" })
+
+        let fullIDCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "mlx-community/Qwen3.5-9B-MLX-4bit")))))
+        let fullIDAlias = try #require(fullIDCapabilities["model_alias_discovery"] as? [String: Any])
+        #expect(fullIDAlias["status"] as? String == "valid_full_model_id")
+        #expect((fullIDAlias["suggestions"] as? [[String: Any]])?.isEmpty == true)
+
+        let localPathCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "/tmp/local-model")))))
+        let localPathAlias = try #require(localPathCapabilities["model_alias_discovery"] as? [String: Any])
+        #expect(localPathAlias["status"] as? String == "local_path_passthrough")
+        #expect((localPathAlias["suggestions"] as? [[String: Any]])?.isEmpty == true)
+
+        for query in ["~/local-model", "./local-model", "../local-model", "file:///tmp/local-model"] {
+            let payload = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: query)))))
+            let alias = try #require(payload["model_alias_discovery"] as? [String: Any])
+            #expect(alias["status"] as? String == "local_path_passthrough")
+        }
+
+        let notRequestedCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true)))))
+        let notRequestedAlias = try #require(notRequestedCapabilities["model_alias_discovery"] as? [String: Any])
+        #expect(notRequestedAlias["status"] as? String == "not_requested")
+
+        let noMatchCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "not a/model id")))))
+        let noMatchAlias = try #require(noMatchCapabilities["model_alias_discovery"] as? [String: Any])
+        #expect(noMatchAlias["status"] as? String == "no_match")
+
+        let qwen8BitCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "qwen35_9b_mlx_8bit")))))
+        let qwen8BitAlias = try #require(qwen8BitCapabilities["model_alias_discovery"] as? [String: Any])
+        let qwen8BitSuggestions = try #require(qwen8BitAlias["suggestions"] as? [[String: Any]])
+        #expect(qwen8BitSuggestions.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-8bit" })
+
+        let qwen26BCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "qwen35_26b_mlx_4bit")))))
+        let qwen26BAlias = try #require(qwen26BCapabilities["model_alias_discovery"] as? [String: Any])
+        let qwen26BSuggestions = try #require(qwen26BAlias["suggestions"] as? [[String: Any]])
+        #expect(qwen26BSuggestions.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-26B-MLX-4bit" })
+
+        let instructions = try #require(parseJSONObject(try await runner.run(.instructions(.init(json: true)))))
+        #expect(instructions["schema_version"] as? String == "melix.discovery.instructions.v1")
+        #expect((instructions["areas"] as? [[String: Any]])?.contains { $0["id"] as? String == "settings" } == true)
+
+        let schema = try #require(parseJSONObject(try await runner.run(.schema(.init(json: true)))))
+        #expect(schema["schema_version"] as? String == "melix.discovery.schema.v1")
+        #expect((schema["schemas"] as? [[String: Any]])?.contains { ($0["path"] as? String)?.contains("packages/protocol/schema") == true } == true)
+
+        let metadata = try #require(parseJSONObject(try await runner.run(.configMetadata(.init(json: true)))))
+        #expect(metadata["schema_version"] as? String == "melix.discovery.config_metadata.v1")
+        #expect((metadata["settings"] as? [[String: Any]])?.contains { $0["key"] as? String == "memory_pressure_threshold" } == true)
     }
 
     @Test("json metric patching rejects missing placeholders")
@@ -529,6 +867,13 @@ struct MelixCLIRunnerTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try "#!/usr/bin/env bash\n".write(to: cliPath, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cliPath.path)
+        let controlPlanePath = repoRoot.appendingPathComponent(".build/debug/MelixControlPlaneService")
+        try "#!/usr/bin/env bash\n".write(to: controlPlanePath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: controlPlanePath.path)
+        try FileManager.default.createDirectory(
+            at: repoRoot.appendingPathComponent("services/mlx-worker-python/worker", isDirectory: true),
+            withIntermediateDirectories: true
+        )
         try "{}\n".write(to: fixtureRoot.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
         try "{}\n".write(to: fixtureRoot.appendingPathComponent("samples.jsonl"), atomically: true, encoding: .utf8)
         try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
@@ -581,8 +926,32 @@ struct MelixCLIRunnerTests {
         let runtime = try #require(report["runtime"] as? [String: Any])
         #expect(runtime["melix_home"] as? String == melixHome.path)
         let checks = try #require(report["checks"] as? [[String: Any]])
-        #expect(checks.contains { $0["name"] as? String == "model_repo:01" && $0["status"] as? String == "ready" })
-        #expect(checks.contains { $0["name"] as? String == "cache_state" })
+        let checkByName = Dictionary(uniqueKeysWithValues: checks.compactMap { check -> (String, [String: Any])? in
+            guard let name = check["name"] as? String else {
+                return nil
+            }
+            return (name, check)
+        })
+        let isolatedRuntimeCheck = try #require(checkByName["isolated_runtime_config"])
+        #expect(isolatedRuntimeCheck["status"] as? String == "ready")
+        let isolatedMetadata = try #require(isolatedRuntimeCheck["metadata"] as? [String: Any])
+        #expect(isolatedMetadata["bare_default_ports"] as? String == "11434,12436")
+        let controlPlaneCheck = try #require(checkByName["control_plane"])
+        #expect(controlPlaneCheck["status"] as? String == "ready")
+        #expect((try #require(controlPlaneCheck["metadata"] as? [String: Any]))["requires_executable"] as? String == "true")
+        let modelCheck = try #require(checkByName["model_repo:01"])
+        #expect(modelCheck["status"] as? String == "ready")
+        #expect(modelCheck["category"] as? String == "model_resolution")
+        let modelMetadata = try #require(modelCheck["metadata"] as? [String: Any])
+        #expect(modelMetadata["duplicate_count"] as? String == "1")
+        let cacheCheck = try #require(checkByName["cache_state"])
+        #expect(cacheCheck["category"] as? String == "cache")
+        let datasetCheck = try #require(checkByName["dataset"])
+        #expect(datasetCheck["category"] as? String == "dataset")
+        #expect((try #require(datasetCheck["metadata"] as? [String: Any]))["source"] as? String == "repo_fixture")
+        let judgeCheck = try #require(checkByName["judge"])
+        #expect(judgeCheck["category"] as? String == "judge")
+        #expect((try #require(judgeCheck["metadata"] as? [String: Any]))["model_id"] as? String == "gpt-test")
 
         let effectiveConfig = try #require(try parseJSONFile(tempRoot.appendingPathComponent("effective-config.json").path))
         #expect(effectiveConfig["preflight"] as? Bool == true)
@@ -606,6 +975,13 @@ struct MelixCLIRunnerTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try "#!/usr/bin/env bash\n".write(to: cliPath, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cliPath.path)
+        let controlPlanePath = repoRoot.appendingPathComponent(".build/debug/MelixControlPlaneService")
+        try "#!/usr/bin/env bash\n".write(to: controlPlanePath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: controlPlanePath.path)
+        try FileManager.default.createDirectory(
+            at: repoRoot.appendingPathComponent("services/mlx-worker-python/worker", isDirectory: true),
+            withIntermediateDirectories: true
+        )
         try "{}\n".write(to: fixtureRoot.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
         try "{}\n".write(to: fixtureRoot.appendingPathComponent("samples.jsonl"), atomically: true, encoding: .utf8)
         try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
@@ -615,6 +991,7 @@ struct MelixCLIRunnerTests {
             "MELIX_REPO_ROOT": repoRoot.path,
             "MELIX_HOME": melixHome.path,
             "MELIX_CLI": cliPath.path,
+            "MELIX_HTTP_PORT": "12445",
         ])
         let message = try await requireRuntimeError {
             _ = try await runner.run(.batchRun(.init(
@@ -633,6 +1010,80 @@ struct MelixCLIRunnerTests {
         let report = try #require(try parseJSONFile(tempRoot.appendingPathComponent("preflight-report.json").path))
         #expect(report["status"] as? String == "blocked")
         #expect(report["blocker_count"] as? Int == 1)
+        let checks = try #require(report["checks"] as? [[String: Any]])
+        let judgeCheck = try #require(checks.first { $0["name"] as? String == "judge" })
+        #expect(judgeCheck["category"] as? String == "judge")
+        let metadata = try #require(judgeCheck["metadata"] as? [String: Any])
+        #expect(metadata["remote_server_id"] as? String == "missing-judge")
+        #expect(metadata["melix_home"] as? String == melixHome.path)
+    }
+
+    @Test("batch preflight blocks bare default batch port")
+    func batchPreflightBlocksBareDefaultBatchPort() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let repoRoot = root.appendingPathComponent("repo")
+        let cliPath = repoRoot.appendingPathComponent(".build/debug/melix")
+        let fixtureRoot = repoRoot
+            .appendingPathComponent("services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.top20.v1", isDirectory: true)
+        let melixHome = root.appendingPathComponent("home")
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        try FileManager.default.createDirectory(at: cliPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: repoRoot.appendingPathComponent("services/mlx-worker-python/worker", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "#!/usr/bin/env bash\n".write(to: cliPath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cliPath.path)
+        let controlPlanePath = repoRoot.appendingPathComponent(".build/debug/MelixControlPlaneService")
+        try "#!/usr/bin/env bash\n".write(to: controlPlanePath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: controlPlanePath.path)
+        try "{}\n".write(to: fixtureRoot.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+        try "{}\n".write(to: fixtureRoot.appendingPathComponent("samples.jsonl"), atomically: true, encoding: .utf8)
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_REPO_ROOT": repoRoot.path,
+            "MELIX_HOME": melixHome.path,
+            "MELIX_CLI": cliPath.path,
+        ])
+        _ = try await runner.run(.remoteServerAdd(.init(
+            remoteServerID: "judge",
+            title: "Judge",
+            providerPreset: .custom,
+            providerKind: "openai-compatible",
+            baseURL: "https://judge.example/v1",
+            defaultModelID: "gpt-test",
+            apiKey: "sk-test-secret",
+            json: true
+        )))
+
+        let message = try await requireRuntimeError {
+            _ = try await runner.run(.batchRun(.init(
+                modelListPath: modelList.path,
+                runID: "preflight-default-port",
+                outputRoot: outputRoot.path,
+                tempRoot: tempRoot.path,
+                judgeRemoteServerID: "judge",
+                judgeModelID: "gpt-test",
+                preflight: true,
+                dryRun: true
+            )))
+        }
+
+        #expect(message.contains("batch mode must not use the bare default Melix stack"))
+        let report = try #require(try parseJSONFile(tempRoot.appendingPathComponent("preflight-report.json").path))
+        let checks = try #require(report["checks"] as? [[String: Any]])
+        let isolatedRuntimeCheck = try #require(checks.first { $0["name"] as? String == "isolated_runtime_config" })
+        #expect(isolatedRuntimeCheck["status"] as? String == "blocked")
+        let metadata = try #require(isolatedRuntimeCheck["metadata"] as? [String: Any])
+        #expect(metadata["http_port"] as? String == "12436")
+        #expect(metadata["bare_default_ports"] as? String == "11434,12436")
     }
 
     @Test("batch failure classifier separates runtime and model failures")
@@ -696,6 +1147,256 @@ struct MelixCLIRunnerTests {
             _ = try await runner.run(.batchRun(.init(modelListPath: "", configPath: secretConfig.path, dryRun: true)))
         }
         #expect(secretMessage == "Unsupported batch config key 'judge_api_key' at line 2. Batch configs must reference stored credentials by id instead of embedding raw secrets.")
+    }
+
+    @Test("batch run executes benchmark evaluation exports and writes reports")
+    func batchRunExecutesBenchmarkEvaluationExportsAndWritesReports() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        let fakeCLI = root.appendingPathComponent("fake-melix")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+        try writeFakeBatchCLI(fakeCLI)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        let output = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "batch-ok",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test"
+        )))
+
+        #expect(output.contains("Melix batch run complete"))
+        #expect(output.contains("[1/1] benchmark succeeded 01"))
+        #expect(output.contains("[1/1] semantic judge heartbeat judge/gpt-test"))
+        #expect(output.contains("[1/1] evaluation succeeded 01"))
+        #expect(output.contains("status=succeeded"))
+
+        let summary = try #require(try parseJSONFile(outputRoot.appendingPathComponent("run-summary.json").path))
+        #expect(summary["schema_version"] as? String == "melix.batch.run_summary.v1")
+        #expect(summary["status"] as? String == "succeeded")
+        #expect(summary["succeeded_models"] as? Int == 1)
+        #expect(FileManager.default.fileExists(atPath: outputRoot.appendingPathComponent("RUN_SUMMARY.md").path))
+        #expect(FileManager.default.fileExists(atPath: outputRoot.appendingPathComponent("run-summary.csv").path))
+        #expect(FileManager.default.fileExists(atPath: outputRoot.appendingPathComponent("index.html").path))
+
+        let manifestLines = try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8)
+            .split(separator: "\n")
+        let entry = try #require(parseJSONObject(String(manifestLines[0])))
+        #expect(entry["status"] as? String == "succeeded")
+        #expect(entry["benchmark_job_id"] as? String == "bench-01")
+        #expect(entry["evaluation_job_id"] as? String == "eval-01")
+        #expect((entry["metric_fields"] as? [String: Any])?["bench.smoke.tokens_per_second"] as? Double == 12.5)
+        let steps = try #require(entry["steps"] as? [String: Any])
+        let benchmark = try #require(steps["benchmark"] as? [String: Any])
+        #expect(benchmark["status"] as? String == "succeeded")
+        let exports = try #require(steps["exports"] as? [String: Any])
+        #expect(exports["status"] as? String == "succeeded")
+        #expect(FileManager.default.fileExists(atPath: entry["benchmark_csv_path"] as? String ?? ""))
+        #expect(FileManager.default.fileExists(atPath: entry["evaluation_summary_csv_path"] as? String ?? ""))
+
+        let statusText = try await runner.run(.batchStatus(.init(tempRoot: tempRoot.path)))
+        #expect(statusText.contains("Melix batch status"))
+        #expect(statusText.contains("[01] succeeded mlx-community/Qwen3.5-9B-MLX-4bit"))
+        let statusJSON = try parseJSONObject(try await runner.run(.batchStatus(.init(tempRoot: tempRoot.path, json: true))))
+        #expect(statusJSON?["status"] as? String == "succeeded")
+    }
+
+    @Test("batch run isolates duplicate explicit model rows by source line")
+    func batchRunIsolatesDuplicateExplicitModelRowsBySourceLine() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        let fakeCLI = root.appendingPathComponent("fake-melix")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try """
+        A|mlx-community/Duplicate-4bit
+        A|mlx-community/Duplicate-4bit
+        """.write(to: modelList, atomically: true, encoding: .utf8)
+        try writeFakeBatchCLI(fakeCLI)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        let output = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "batch-duplicates",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test"
+        )))
+
+        #expect(output.contains("[1/2] DONE A status=succeeded"))
+        #expect(output.contains("[2/2] DONE A status=succeeded"))
+        let manifestLines = try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8)
+            .split(separator: "\n")
+        #expect(manifestLines.count == 2)
+        let entries = try manifestLines.map { try #require(parseJSONObject(String($0))) }
+        #expect(entries.map { $0["source_line"] as? Int } == [1, 2])
+        #expect(entries.allSatisfy { $0["status"] as? String == "succeeded" })
+        let modelDirs = entries.compactMap { $0["model_dir"] as? String }
+        #expect(Set(modelDirs).count == 2)
+        #expect(modelDirs.allSatisfy { $0.contains("-line-") })
+        #expect(modelDirs.allSatisfy { FileManager.default.fileExists(atPath: $0) })
+        let commandDirs = modelDirs.map { URL(fileURLWithPath: $0).appendingPathComponent("commands", isDirectory: true) }
+        #expect(commandDirs.allSatisfy { FileManager.default.fileExists(atPath: $0.appendingPathComponent("benchmark-1.json").path) })
+
+        let summary = try #require(try parseJSONFile(outputRoot.appendingPathComponent("run-summary.json").path))
+        #expect(summary["succeeded_models"] as? Int == 2)
+    }
+
+    @Test("batch run treats successful stderr as captured evidence")
+    func batchRunTreatsSuccessfulStderrAsCapturedEvidence() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        let fakeCLI = root.appendingPathComponent("fake-melix")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+        try writeFakeBatchCLI(fakeCLI, warnBench: true)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        _ = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "batch-stderr-warning",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test"
+        )))
+
+        let manifestLine = try #require(try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8).split(separator: "\n").first)
+        let entry = try #require(parseJSONObject(String(manifestLine)))
+        #expect(entry["status"] as? String == "succeeded")
+        let steps = try #require(entry["steps"] as? [String: Any])
+        let benchmark = try #require(steps["benchmark"] as? [String: Any])
+        #expect(benchmark["status"] as? String == "succeeded")
+        #expect((benchmark["message"] as? String)?.contains("stderr captured") == true)
+        let receiptPath = try #require(benchmark["artifact_path"] as? String)
+        let receipt = try #require(try parseJSONFile(receiptPath))
+        #expect(receipt["exit_code"] as? Int == 0)
+        let stderrPath = try #require(benchmark["stderr_path"] as? String)
+        let stderr = try String(contentsOfFile: stderrPath, encoding: .utf8)
+        #expect(stderr.contains("bench warning"))
+    }
+
+    @Test("batch run records partial success and failure attribution")
+    func batchRunRecordsPartialSuccessAndFailureAttribution() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        let fakeCLI = root.appendingPathComponent("fake-melix")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "mlx-community/Qwen3.5-9B-MLX-4bit\n".write(to: modelList, atomically: true, encoding: .utf8)
+        try writeFakeBatchCLI(fakeCLI, failEval: true)
+
+        let runner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        let output = try await runner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "batch-partial",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test",
+            continueOnFailure: true
+        )))
+
+        #expect(output.contains("status=partial_success"))
+        let summary = try #require(try parseJSONFile(outputRoot.appendingPathComponent("run-summary.json").path))
+        #expect(summary["status"] as? String == "partial_success")
+        #expect(summary["partial_success_models"] as? Int == 1)
+        let manifestLine = try #require(try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8).split(separator: "\n").first)
+        let entry = try #require(parseJSONObject(String(manifestLine)))
+        #expect(entry["status"] as? String == "partial_success")
+        #expect(entry["failure_category"] as? String == "judge_failure")
+        #expect(entry["recoverability"] as? String == "operator_action_required")
+    }
+
+    @Test("batch resume eval-only reruns missing evaluation")
+    func batchResumeEvalOnlyRerunsMissingEvaluation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let modelList = root.appendingPathComponent("models.txt")
+        let tempRoot = root.appendingPathComponent("tmp-run")
+        let outputRoot = root.appendingPathComponent("downloads")
+        let fakeCLI = root.appendingPathComponent("fake-melix")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try """
+        # resume keeps this source line stable
+        mlx-community/Qwen3.5-9B-MLX-4bit
+        """.write(to: modelList, atomically: true, encoding: .utf8)
+        try writeFakeBatchCLI(fakeCLI, failEval: true)
+
+        let failingRunner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        _ = try await failingRunner.run(.batchRun(.init(
+            modelListPath: modelList.path,
+            runID: "batch-resume",
+            outputRoot: outputRoot.path,
+            tempRoot: tempRoot.path,
+            judgeRemoteServerID: "judge",
+            judgeModelID: "gpt-test",
+            continueOnFailure: true
+        )))
+
+        try writeFakeBatchCLI(fakeCLI, failEval: false)
+        let resumeRunner = MelixCLIRunner(environment: [
+            "HOME": root.path,
+            "MELIX_CLI": fakeCLI.path,
+            "MELIX_HTTP_PORT": "12444",
+        ])
+        let dryRun = try await resumeRunner.run(.batchResume(.init(
+            tempRoot: tempRoot.path,
+            evalOnly: true,
+            dryRun: true
+        )))
+        #expect(dryRun.contains("Melix batch resume dry-run"))
+        #expect(dryRun.contains("RESUME 01 mlx-community/Qwen3.5-9B-MLX-4bit"))
+
+        let output = try await resumeRunner.run(.batchResume(.init(
+            tempRoot: tempRoot.path,
+            evalOnly: true
+        )))
+        #expect(output.contains("resume eval-only 01"))
+        #expect(output.contains("status=succeeded"))
+        let summary = try #require(try parseJSONFile(outputRoot.appendingPathComponent("run-summary.json").path))
+        #expect(summary["status"] as? String == "succeeded")
+        let manifestLine = try #require(try String(contentsOf: tempRoot.appendingPathComponent("manifest.jsonl"), encoding: .utf8).split(separator: "\n").first)
+        let entry = try #require(parseJSONObject(String(manifestLine)))
+        #expect(entry["status"] as? String == "succeeded")
+        #expect(entry["source_line"] as? Int == 2)
+        #expect(entry["evaluation_job_id"] as? String == "eval-01")
+        let recoveredModelList = try String(contentsOf: tempRoot.appendingPathComponent("resume-models.txt"), encoding: .utf8)
+        #expect(recoveredModelList.split(separator: "\n", omittingEmptySubsequences: false).first?.isEmpty == true)
     }
 
     @Test("json metric patching preserves user artifact strings that look like the old sentinel")
@@ -3365,6 +4066,156 @@ struct MelixCLIRunnerTests {
         #expect(reusedTokenCall.ext["melix.hf_token"] == "hf_secret_token")
     }
 
+    @Test("uri inspect classifies huggingface local and ambiguous sources")
+    func uriInspectClassifiesSources() async throws {
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+        let hfOutput = try await runner.run(.uriInspect(.init(uri: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit", json: true)))
+        let hfPayload = try #require(parseJSONObject(hfOutput))
+        let hfCandidates = try #require(hfPayload["candidates"] as? [[String: Any]])
+        #expect(hfCandidates.first?["kind"] as? String == "hf_model_repo")
+        #expect(hfCandidates.first?["repo_id"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect((hfPayload["metrics"] as? [String: Any])?["uri.candidate_count"] as? Double == 1)
+
+        let ambiguousOutput = try await runner.run(.uriInspect(.init(uri: "org/repo", json: true)))
+        let ambiguousPayload = try #require(parseJSONObject(ambiguousOutput))
+        #expect(ambiguousPayload["candidate_count"] as? Int == 2)
+        #expect(ambiguousPayload["ambiguity_count"] as? Int == 1)
+
+        let datasetURLPayload = try #require(parseJSONObject(try await runner.run(.uriInspect(.init(
+            uri: "https://huggingface.co/datasets/org/repo/tree/refs/pr/2?download=1",
+            json: true
+        )))))
+        let datasetURLCandidate = try #require((datasetURLPayload["candidates"] as? [[String: Any]])?.first)
+        #expect(datasetURLCandidate["kind"] as? String == "hf_dataset_repo")
+        #expect(datasetURLCandidate["repo_id"] as? String == "org/repo")
+        #expect(datasetURLCandidate["revision"] as? String == "refs/pr/2")
+        #expect(datasetURLCandidate["normalized_locator"] as? String == "hf://dataset/org/repo@refs/pr/2")
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-uri-inspect-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "{}".write(to: root.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
+        try Data([0]).write(to: root.appendingPathComponent("model.safetensors"))
+        try "{}".write(to: root.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+
+        let localOutput = try await runner.run(.uriInspect(.init(uri: root.path, json: true)))
+        let localPayload = try #require(parseJSONObject(localOutput))
+        let localCandidates = try #require(localPayload["candidates"] as? [[String: Any]])
+        let localKinds = Set(localCandidates.compactMap { $0["kind"] as? String })
+        #expect(localKinds.contains("local_mlx_model_directory"))
+        #expect(localKinds.contains("local_dataset_package"))
+        #expect(localPayload["ambiguity_count"] as? Int == 1)
+
+        let unresolvedOutput = try await runner.run(.uriImport(.init(uri: root.appendingPathComponent("missing").path, dryRun: true, json: true)))
+        let unresolvedPayload = try #require(parseJSONObject(unresolvedOutput))
+        #expect(unresolvedPayload["status"] as? String == "unresolved")
+    }
+
+    @Test("workflow recipes list show validate and plan")
+    func workflowRecipesListShowValidateAndPlan() async throws {
+        let outputRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-recipe-plan-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputRoot) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": outputRoot.path]
+        )
+        let listPayload = try #require(parseJSONObject(try await runner.run(.recipesList(.init(task: "model_import", json: true)))))
+        let recipes = try #require(listPayload["recipes"] as? [[String: Any]])
+        #expect(recipes.contains { $0["id"] as? String == "import.hf-mlx-model" })
+
+        let showPayload = try #require(parseJSONObject(try await runner.run(.recipesShow(.init(recipeID: "import.hf-mlx-model", json: true)))))
+        #expect(showPayload["schema_version"] as? String == "melix.workflow_recipe.v1")
+        #expect(showPayload["recipe_digest"] as? String != "")
+
+        let validatePayload = try #require(parseJSONObject(try await runner.run(.recipesValidate(.init(target: "import.hf-mlx-model", json: true)))))
+        #expect(validatePayload["valid"] as? Bool == true)
+
+        let pipelineURL = outputRoot.appendingPathComponent("planned.pipeline.json")
+        let planPayload = try #require(parseJSONObject(try await runner.run(.recipesPlan(
+            .init(
+                recipeID: "import.hf-mlx-model",
+                values: ["repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
+                outputPath: pipelineURL.path,
+                json: true
+            )
+        ))))
+        let pipeline = try #require(planPayload["pipeline"] as? [String: Any])
+        let steps = try #require(pipeline["steps"] as? [[String: Any]])
+        #expect(pipeline["schema_version"] as? String == "melix.pipeline.v1")
+        #expect(steps.map { $0["command"] as? String } == ["estimate.import", "model.hub.download", "model.roots.rescan"])
+        #expect(FileManager.default.fileExists(atPath: pipelineURL.path))
+    }
+
+    @Test("workflow recipe apply dry run writes pipeline receipts")
+    func workflowRecipeApplyDryRunWritesPipelineReceipts() async throws {
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-recipe-apply-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: melixHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: melixHome) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": melixHome.path]
+        )
+        let output = try await runner.run(.recipesApply(
+            .init(
+                recipeID: "import.hf-mlx-model",
+                values: ["repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
+                dryRun: true,
+                json: true
+            )
+        ))
+        let payload = try #require(parseJSONObject(output))
+        #expect(payload["schema_version"] as? String == "melix.pipeline.run.v1")
+        #expect(payload["status"] as? String == "planned")
+        let recipe = try #require(payload["recipe"] as? [String: Any])
+        #expect(recipe["id"] as? String == "import.hf-mlx-model")
+        let steps = try #require(payload["steps"] as? [[String: Any]])
+        #expect(steps.count == 3)
+        let receiptDir = try #require(payload["receipt_dir"] as? String)
+        #expect(FileManager.default.fileExists(atPath: receiptDir))
+        #expect((payload["metrics"] as? [String: Any])?["recipe.apply_start_ms"] as? Double != nil)
+        #expect((payload["metrics"] as? [String: Any])?["recipe.apply_retained_runs"] as? Int == 1)
+
+        let recipeRoot = melixHome
+            .appendingPathComponent("workflow-recipes", isDirectory: true)
+            .appendingPathComponent("import.hf-mlx-model", isDirectory: true)
+        for _ in 0..<22 {
+            _ = try await runner.run(.recipesApply(
+                .init(
+                    recipeID: "import.hf-mlx-model",
+                    values: ["repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
+                    dryRun: true,
+                    json: true
+                )
+            ))
+        }
+        let runDirectories = try FileManager.default.contentsOfDirectory(
+            at: recipeRoot,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        ).filter { url in
+            UUID(uuidString: url.lastPathComponent) != nil
+        }
+        #expect(runDirectories.count == 20)
+    }
+
+    @Test("workflow recipe init rejects unmatched tasks")
+    func workflowRecipeInitRejectsUnmatchedTasks() async throws {
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+
+        await #expect(throws: MelixCLIError.runtime("No workflow recipe matches task missing_task.")) {
+            try await runner.run(.recipesInit(.init(
+                sourceURI: "hf://model/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                task: "missing_task",
+                json: true
+            )))
+        }
+    }
+
     @Test("dataset remove forwards safe snapshot selector")
     func datasetRemoveForwardsSafeSnapshotSelector() async throws {
         let client = StubControlPlaneXPCClient()
@@ -4201,18 +5052,31 @@ struct MelixCLIRunnerTests {
         // Seed a mix of base, fused, and adapter-backed models to prove the
         // list renderer distinguishes all three via the runtime_mode column.
         await client.setServerSnapshot(makeServerSnapshot(models: [
-            makeModelSummary(id: "melix-base-text", kind: "text"),
+            makeModelSummary(
+                id: "melix-base-text",
+                kind: "text",
+                routeClass: .workerRouteSwiftText
+            ),
             makeModelSummary(
                 id: "melix-base-text-lora-fused",
                 kind: "text",
                 runtimeMode: "fused_derived_model",
-                activationMode: "fused_derived_model"
+                activationMode: "fused_derived_model",
+                routeClass: .workerRoutePythonTextCompatibility
             ),
             makeModelSummary(
                 id: "melix-base-text-lora-runtime",
                 kind: "text",
                 runtimeMode: "adapter_backed_runtime",
-                activationMode: "adapter_backed_runtime"
+                activationMode: "adapter_backed_runtime",
+                routeClass: .workerRoutePythonTextCompatibility,
+                loadTrust: makeLoadTrustPolicy(
+                    requested: .modelLoadTrustTrustRemoteCode,
+                    effective: .modelLoadTrustTrustRemoteCode,
+                    policySource: "model_settings",
+                    routeClass: .workerRoutePythonTextCompatibility,
+                    loaderFamily: "mlx_lm"
+                )
             ),
         ]))
         let store = MelixOperatorSessionStore(
@@ -4241,6 +5105,16 @@ struct MelixCLIRunnerTests {
         #expect(byID["melix-base-text-lora-fused"]?["runtime_mode"] as? String == "fused_derived_model")
         #expect(byID["melix-base-text-lora-runtime"]?["runtime_mode"] as? String == "adapter_backed_runtime")
         #expect(byID["melix-base-text-lora-runtime"]?["activation_mode"] as? String == "adapter_backed_runtime")
+        let baseTrust = try #require(byID["melix-base-text"]?["load_trust"] as? [String: Any])
+        let fusedTrust = try #require(byID["melix-base-text-lora-fused"]?["load_trust"] as? [String: Any])
+        let runtimeTrust = try #require(byID["melix-base-text-lora-runtime"]?["load_trust"] as? [String: Any])
+        #expect(baseTrust["effective_mode"] as? String == "not_applicable")
+        #expect(fusedTrust["requested_mode"] as? String == "default_safe")
+        #expect(fusedTrust["effective_mode"] as? String == "default_safe")
+        #expect(fusedTrust["receipt_present"] as? Bool == false)
+        #expect(runtimeTrust["requested_mode"] as? String == "trust_remote_code")
+        #expect(runtimeTrust["effective_mode"] as? String == "trust_remote_code")
+        #expect(runtimeTrust["receipt_present"] as? Bool == true)
         // Base models have no activation_mode in settings.ext so the field
         // is omitted from the payload rather than blank-strung.
         #expect(byID["melix-base-text"]?["activation_mode"] == nil)
@@ -4259,18 +5133,19 @@ struct MelixCLIRunnerTests {
         #expect(header.contains("STATE"))
         #expect(header.contains("STATUS"))
         #expect(header.contains("RUNTIME"))
+        #expect(header.contains("TRUST"))
         // Each short-form runtime tag appears exactly once on a data row.
         // Use ``hasPrefix`` on the model_id + trailing space to unambiguously
         // pick each row even if another id were a superstring.
         let dataRows = lines.dropFirst()
         let baseRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text ") && $0.hasSuffix("-") })
+            dataRows.first(where: { $0.hasPrefix("melix-base-text ") && $0.hasSuffix("-  n/a") })
         )
         let fusedRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") && $0.hasSuffix("fused") })
+            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") && $0.hasSuffix("fused    safe") })
         )
         let adapterRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") && $0.hasSuffix("adapter") })
+            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") && $0.hasSuffix("adapter  trust") })
         )
         // The first column is padded to the widest model_id
         // ("melix-base-text-lora-runtime" = 28 chars); assert the "KIND"
@@ -4437,6 +5312,64 @@ struct MelixCLIRunnerTests {
         #expect(payload["model_path"] as? String == "/tmp/hf-cache/models--mlx-community--Qwen3-0.6B-4bit/snapshots/missing")
         #expect(payload["registry_descriptor_path"] as? String == "/tmp/melix-managed/huggingface/mlx-community/Qwen3-0.6B-4bit/main")
         #expect(payload["restore_command"] as? String == "melix model hub download --repo-id mlx-community/Qwen3-0.6B-4bit --revision main")
+    }
+
+    @Test("model inspect surfaces model-load trust receipt details")
+    func modelInspectSurfacesModelLoadTrustReceiptDetails() async throws {
+        var trustedModel = makeModelSummary(
+            id: "mlx-community/Custom-Loader-4bit",
+            kind: "text",
+            routeClass: .workerRoutePythonTextCompatibility,
+            loadTrust: makeLoadTrustPolicy(
+                requested: .modelLoadTrustTrustRemoteCode,
+                effective: .modelLoadTrustDefaultSafe,
+                policySource: "model_settings",
+                customLoaderRequired: true,
+                customLoaderDetectionSource: "config_json:auto_map",
+                blockReason: "custom_loader_requires_trust_remote_code",
+                requiresReloadForTrustChange: true,
+                routeClass: .workerRoutePythonTextCompatibility,
+                loaderFamily: "mlx_lm"
+            )
+        )
+        trustedModel.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [trustedModel]))
+        await client.setModelInfo(
+            modelID: "mlx-community/Custom-Loader-4bit",
+            info: {
+                var info = Melix_Controlplane_V1_ModelInfo()
+                info.ok = true
+                info.modelKind = "text"
+                info.supportedTasks = ["generate"]
+                return info
+            }()
+        )
+        let runner = MelixCLIRunner(client: client)
+
+        let textOutput = try await runner.run(
+            .modelInspect(.init(modelID: "mlx-community/Custom-Loader-4bit", json: false))
+        )
+        let jsonOutput = try await runner.run(
+            .modelInspect(.init(modelID: "mlx-community/Custom-Loader-4bit", json: true))
+        )
+        let jsonData = try #require(jsonOutput.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: jsonData) as? [String: Any])
+        let loadTrust = try #require(payload["load_trust"] as? [String: Any])
+
+        #expect(textOutput.contains("load_trust_requested=trust_remote_code"))
+        #expect(textOutput.contains("load_trust_effective=default_safe"))
+        #expect(textOutput.contains("load_trust_custom_loader_required=true"))
+        #expect(textOutput.contains("load_trust_requires_reload=true"))
+        #expect(textOutput.contains("load_trust_detection=config_json:auto_map"))
+        #expect(textOutput.contains("load_trust_block_reason=custom_loader_requires_trust_remote_code"))
+        #expect(loadTrust["requested_mode"] as? String == "trust_remote_code")
+        #expect(loadTrust["effective_mode"] as? String == "default_safe")
+        #expect(loadTrust["custom_loader_required"] as? Bool == true)
+        #expect(loadTrust["requires_reload_for_trust_change"] as? Bool == true)
+        #expect(loadTrust["custom_loader_detection_source"] as? String == "config_json:auto_map")
+        #expect(loadTrust["block_reason"] as? String == "custom_loader_requires_trust_remote_code")
     }
 
     @Test("model load and chat run map missing cache errors to the stable CLI code")
@@ -4684,6 +5617,208 @@ struct MelixCLIRunnerTests {
         #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
         #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(servingDefaultsCall.numDraftTokens == 4)
+    }
+
+    @Test("server start shortcut creates a titled session and starts the generated id")
+    func serverStartShortcutCreatesTitledSessionAndStartsGeneratedID() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: modelID, kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
+
+        _ = try await runner.run(
+            .serverStart(
+                .init(
+                    serverTitle: "Gemma 31B",
+                    modelID: modelID,
+                    host: "127.0.0.1",
+                    port: 12434,
+                    rateLimitPerMinute: 60,
+                    timeoutSeconds: 240
+                )
+            )
+        )
+
+        let state = try #require(try store.load())
+        let session = try #require(state.serverSessions.first)
+        let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
+        let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
+        let startedAction = try #require(await client.lastServerAction)
+
+        #expect(state.selectedServerSessionID == "server-session-1")
+        #expect(session.id == "server-session-1")
+        #expect(session.title == "Gemma 31B")
+        #expect(session.modelID == modelID)
+        #expect(session.host == "127.0.0.1")
+        #expect(session.port == 12434)
+        #expect(session.rateLimitPerMinute == 60)
+        #expect(session.timeoutSeconds == 240)
+        #expect(gatewayConfigCall.serverSessionID == "server-session-1")
+        #expect(gatewayConfigCall.servedModelID == modelID)
+        #expect(gatewayConfigCall.port == 12434)
+        #expect(servingDefaultsCall.serverSessionID == "server-session-1")
+        #expect(startedAction == .start("server-session-1"))
+    }
+
+    @Test("server start shortcut reuses an existing titled session")
+    func serverStartShortcutReusesExistingTitledSession() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let originalModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let updatedModelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: originalModelID, kind: "text"),
+            makeModelSummary(id: updatedModelID, kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedServerSessionID: "server-session-1",
+                serverSessions: [
+                    .init(
+                        id: "server-session-1",
+                        title: "Qwen Dev",
+                        modelID: originalModelID,
+                        host: "127.0.0.1",
+                        port: 8080
+                    ),
+                ]
+            )
+        )
+
+        _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .serverStart(
+                .init(
+                    serverTitle: "Qwen Dev",
+                    modelID: updatedModelID,
+                    host: "0.0.0.0",
+                    port: 12435,
+                    rateLimitPerMinute: 90,
+                    timeoutSeconds: 300
+                )
+            )
+        )
+
+        let state = try #require(try store.load())
+        let session = try #require(state.serverSessions.first)
+        let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
+        let startedAction = try #require(await client.lastServerAction)
+
+        #expect(state.serverSessions.count == 1)
+        #expect(state.selectedServerSessionID == "server-session-1")
+        #expect(session.id == "server-session-1")
+        #expect(session.title == "Qwen Dev")
+        #expect(session.modelID == updatedModelID)
+        #expect(session.host == "0.0.0.0")
+        #expect(session.port == 12435)
+        #expect(session.rateLimitPerMinute == 90)
+        #expect(session.timeoutSeconds == 300)
+        #expect(gatewayConfigCall.serverSessionID == "server-session-1")
+        #expect(gatewayConfigCall.servedModelID == updatedModelID)
+        #expect(gatewayConfigCall.port == 12435)
+        #expect(startedAction == .start("server-session-1"))
+    }
+
+    @Test("server start shortcut allocates the first available generated id")
+    func serverStartShortcutAllocatesFirstAvailableGeneratedID() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: modelID, kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedServerSessionID: "server-session-3",
+                serverSessions: [
+                    .init(
+                        id: "server-session-1",
+                        title: "Existing One",
+                        modelID: modelID
+                    ),
+                    .init(
+                        id: "server-session-3",
+                        title: "Existing Three",
+                        modelID: modelID
+                    ),
+                ]
+            )
+        )
+
+        _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .serverStart(
+                .init(
+                    serverTitle: "Gemma 31B",
+                    modelID: modelID,
+                    port: 12434
+                )
+            )
+        )
+
+        let state = try #require(try store.load())
+        let created = try #require(state.serverSessions.first(where: { $0.title == "Gemma 31B" }))
+        let startedAction = try #require(await client.lastServerAction)
+
+        #expect(created.id == "server-session-2")
+        #expect(state.selectedServerSessionID == "server-session-2")
+        #expect(startedAction == .start("server-session-2"))
+    }
+
+    @Test("server start shortcut requires title and model arguments")
+    func serverStartShortcutRequiresTitleAndModelArguments() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            operatorSessionStore: MelixOperatorSessionStore(
+                melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+            )
+        )
+
+        await #expect(throws: MelixCLIError.missingRequired("TITLE is required when passing --model, --host, --port, --rate-limit-per-minute, or --timeout-seconds to melix server start.")) {
+            _ = try await runner.run(.serverStart(.init(modelID: "mlx-community/gemma-4-31b-it-4bit")))
+        }
+        await #expect(throws: MelixCLIError.missingRequired("--model is required when starting a titled server session.")) {
+            _ = try await runner.run(.serverStart(.init(serverTitle: "Gemma 31B")))
+        }
     }
 
     @Test("server start falls back to model info when the snapshot omits an imported model")
@@ -5429,6 +6564,86 @@ struct MelixCLIRunnerTests {
 
         #expect(call.ext["target_repo"] == nil)
         #expect(output == #"{"job_id":"job-1","status":"completed"}"#)
+    }
+
+    @Test("lora train memory fit preflight blocks unsafe Hub model targets")
+    func loraTrainMemoryFitPreflightBlocksUnsafeHubModelTargets() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setHubModelCard(
+            makeHubModelCard(
+                repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                localFitStatus: "blocked",
+                localFitReasons: ["Estimated resident memory exceeds the safety threshold."],
+                estimatedArtifactBytes: 24_000_000_000,
+                estimatedResidentBytes: 48_000_000_000,
+                recommendedAction: "Choose a smaller training base model."
+            )
+        )
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraTrain(
+                    .init(
+                        modelID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                        datasetURI: "/tmp/datasets/alpaca.jsonl",
+                        adapterName: "demo-adapter",
+                        preflightFitCheck: true
+                    )
+                )
+            )
+            Issue.record("Expected memory fit preflight to block LoRA training.")
+        } catch let error as MelixCLIError {
+            guard case .runtime(let message) = error else {
+                Issue.record("Expected runtime error.")
+                return
+            }
+            #expect(message.contains("blocked training"))
+            #expect(message.contains("fit_status=blocked"))
+            #expect(message.contains("--allow-memory-risk"))
+        }
+
+        #expect(await client.lastModelOperationCall == nil)
+    }
+
+    @Test("lora train memory risk override stores fit receipt in operation ext")
+    func loraTrainMemoryRiskOverrideStoresFitReceiptParameters() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setHubModelCard(
+            makeHubModelCard(
+                repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                localFitStatus: "heavy",
+                localFitReasons: ["Estimated resident memory exceeds the comfort budget."],
+                estimatedArtifactBytes: 22_000_000_000,
+                estimatedResidentBytes: 44_000_000_000,
+                recommendedAction: "Train only on an idle high-memory Mac."
+            )
+        )
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/train_lora/job-fit"))
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .loraTrain(
+                .init(
+                    modelID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                    datasetURI: "/tmp/datasets/alpaca.jsonl",
+                    adapterName: "demo-adapter",
+                    preflightFitCheck: true,
+                    allowMemoryRisk: true
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        let receiptJSON = try #require(call.ext["memory_fit_receipt_json"])
+        let receipt = try #require(parseJSONObject(receiptJSON))
+
+        #expect(call.operation == "train_lora")
+        #expect(call.ext["memory_fit_schema_version"] == "melix.memory_fit_receipt.v1")
+        #expect(call.ext["memory_fit_target_kind"] == "train")
+        #expect(call.ext["memory_fit_status"] == "heavy")
+        #expect(call.ext["memory_fit_estimated_active_memory_bytes"] == "44000000000")
+        #expect((UInt64(call.ext["memory_fit_available_disk_bytes"] ?? "") ?? 0) > 0)
+        #expect(["good", "blocked", "unknown"].contains(call.ext["memory_fit_disk_status"] ?? ""))
+        #expect((receipt["unknown_fields"] as? [String])?.contains("optimizer_state_bytes") == true)
+        #expect((receipt["probe"] as? [String: Any])?["name"] as? String == "cli.memory_fit.train")
     }
 
     @Test("alignment train forwards algorithm and alignment-specific parameters")
@@ -6252,6 +7467,7 @@ struct MelixCLIRunnerTests {
         )
 
         let output = try await executor.run(arguments: ["runner-arg"])
+        let detailed = try await executor.runDetailed(arguments: ["runner-arg"])
         let components = output.split(separator: ":", maxSplits: 2).map(String.init)
 
         #expect(components.count == 3)
@@ -6261,6 +7477,9 @@ struct MelixCLIRunnerTests {
             root.resolvingSymlinksInPath().path
         )
         #expect(components[2] == "runner-arg")
+        #expect(detailed.exitCode == 0)
+        #expect(detailed.stderr == "")
+        #expect(detailed.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == output)
     }
 
     @Test("process executor surfaces subprocess failures and rejects empty commands")
@@ -6280,6 +7499,9 @@ struct MelixCLIRunnerTests {
         } catch let error as MelixCLIError {
             #expect(error == .runtime("subprocess boom"))
         }
+        let failedDetails = try await failingExecutor.runDetailed(arguments: [])
+        #expect(failedDetails.exitCode == 3)
+        #expect(failedDetails.stderr == "subprocess boom")
 
         let misconfiguredExecutor = MelixCLIProcessExecutor(baseCommand: [])
 
@@ -6862,6 +8084,8 @@ struct MelixCLIRunnerTests {
         #expect(benchRequest.parameters["memory_fit_status"] == "heavy")
         #expect(benchRequest.parameters["memory_fit_estimated_active_memory_bytes"] == "44000000000")
         #expect(benchRequest.parameters["memory_fit_estimated_disk_usage_bytes"] == "22000000000")
+        #expect((UInt64(benchRequest.parameters["memory_fit_available_disk_bytes"] ?? "") ?? 0) > 0)
+        #expect(["good", "blocked", "unknown"].contains(benchRequest.parameters["memory_fit_disk_status"] ?? ""))
         #expect(benchRequest.parameters["memory_fit_safety_threshold_fraction"] == "0.60")
         #expect(receipt["target_kind"] as? String == "benchmark")
         #expect(receipt["fit_status"] as? String == "heavy")
@@ -7323,6 +8547,173 @@ struct MelixCLIRunnerTests {
         let firstJob = try #require(firstRun["job"] as? [String: Any])
         #expect(firstJob["job_id"] as? String == "eval-1")
         #expect(firstJob["suite_id"] as? String == "mmlu")
+    }
+
+    @Test("eval run memory fit preflight blocks unsafe direct Hugging Face targets")
+    func evalRunMemoryFitPreflightBlocksUnsafeHFRepo() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setHubModelCard(
+            makeHubModelCard(
+                repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                localFitStatus: "blocked",
+                localFitReasons: ["Estimated resident memory exceeds the safety threshold."],
+                estimatedArtifactBytes: 24_000_000_000,
+                estimatedResidentBytes: 48_000_000_000,
+                recommendedAction: "Choose a smaller evaluation target."
+            )
+        )
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .evalRun(
+                    .init(
+                        hfRepoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                        suites: ["mmlu"],
+                        preflightFitCheck: true
+                    )
+                )
+            )
+            Issue.record("Expected memory fit preflight to block evaluation.")
+        } catch let error as MelixCLIError {
+            guard case .runtime(let message) = error else {
+                Issue.record("Expected runtime error.")
+                return
+            }
+            #expect(message.contains("blocked evaluation"))
+            #expect(message.contains("fit_status=blocked"))
+            #expect(message.contains("--allow-memory-risk"))
+        }
+
+        #expect(await client.evaluationRequests.isEmpty)
+    }
+
+    @Test("eval run memory risk override stores the fit receipt in request parameters")
+    func evalRunMemoryRiskOverrideStoresFitReceiptParameters() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setHubModelCard(
+            makeHubModelCard(
+                repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                localFitStatus: "heavy",
+                localFitReasons: ["Estimated resident memory exceeds the comfort budget."],
+                estimatedArtifactBytes: 22_000_000_000,
+                estimatedResidentBytes: 44_000_000_000,
+                recommendedAction: "Evaluate only on an idle high-memory Mac."
+            )
+        )
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-fit",
+                suiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                metricName: "eval.mmlu.accuracy",
+                metricValue: 0.5
+            ),
+        ])
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalRun(
+                .init(
+                    hfRepoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
+                    suites: ["mmlu"],
+                    preflightFitCheck: true,
+                    allowMemoryRisk: true
+                )
+            )
+        )
+        let request = try #require(await client.evaluationRequests.first)
+        let receiptJSON = try #require(request.parameters["memory_fit_receipt_json"])
+        let receipt = try #require(parseJSONObject(receiptJSON))
+
+        #expect(request.hfRepoID == "mlx-community/Qwen3.6-35B-A3B-4bit")
+        #expect(request.parameters["memory_fit_schema_version"] == "melix.memory_fit_receipt.v1")
+        #expect(request.parameters["memory_fit_target_kind"] == "eval")
+        #expect(request.parameters["memory_fit_status"] == "heavy")
+        #expect(request.parameters["memory_fit_estimated_active_memory_bytes"] == "44000000000")
+        #expect((UInt64(request.parameters["memory_fit_available_disk_bytes"] ?? "") ?? 0) > 0)
+        #expect(["good", "blocked", "unknown"].contains(request.parameters["memory_fit_disk_status"] ?? ""))
+        #expect((receipt["unknown_fields"] as? [String])?.contains("judge_memory_bytes") == true)
+        #expect((receipt["probe"] as? [String: Any])?["name"] as? String == "cli.memory_fit.eval")
+    }
+
+    @Test("eval run forwards ad hoc prompt to every evaluation suite")
+    func evalRunForwardsAdHocPromptToEveryEvaluationSuite() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-adhoc-mmlu",
+                suiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                metricName: "eval.mmlu.accuracy",
+                metricValue: 0.75
+            ),
+            makeEvaluationRunResult(
+                jobID: "eval-adhoc-event",
+                suiteID: "event_extraction",
+                datasetID: "top200.event-extraction.top20.v1",
+                metricName: "eval.event_extraction.overall_weighted_f1",
+                metricValue: 0.5
+            ),
+        ])
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["mmlu", "event_extraction"],
+                    evalPrompt: "Use this one-off evaluation rubric.",
+                    json: true
+                )
+            )
+        )
+
+        let requests = await client.evaluationRequests
+        #expect(requests.count == 2)
+        for request in requests {
+            #expect(request.parameters["eval_prompt_system_prompt"] == "Use this one-off evaluation rubric.")
+            #expect(request.parameters["eval_prompt_id"] == "ad-hoc.evaluation.prompt")
+            #expect(request.parameters["eval_prompt_revision_id"] == "ad-hoc")
+            #expect(request.parameters["eval_prompt_title"] == "Ad Hoc Evaluation Prompt")
+            #expect(request.parameters["eval_prompt_examples_json"] == "[]")
+            #expect(request.parameters["prompt_id"] == "ad-hoc.evaluation.prompt")
+            #expect(request.parameters["prompt_revision_id"] == "ad-hoc")
+            #expect(request.parameters["eval_prompt_content_hash"]?.hasPrefix("sha256:") == true)
+        }
+    }
+
+    @Test("eval run reads ad hoc prompt from file")
+    func evalRunReadsAdHocPromptFromFile() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-adhoc-eval-prompt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        let promptFile = temporaryRoot.appendingPathComponent("prompt.txt")
+        try "  Apply the file-backed rubric.\n".write(to: promptFile, atomically: true, encoding: .utf8)
+
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-adhoc-file",
+                suiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                metricName: "eval.mmlu.accuracy",
+                metricValue: 0.75
+            ),
+        ])
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["mmlu"],
+                    evalPromptFile: promptFile.path,
+                    json: true
+                )
+            )
+        )
+
+        let request = try #require((await client.evaluationRequests).first)
+        #expect(request.parameters["eval_prompt_system_prompt"] == "Apply the file-backed rubric.")
+        #expect(request.parameters["eval_prompt_id"] == "ad-hoc.evaluation.prompt")
     }
 
     @Test("eval run defaults event extraction to the built in top20 dataset")
@@ -8074,6 +9465,31 @@ struct MelixCLIRunnerTests {
         #expect(Bool(true))
     }
 
+    @Test("diagnostics probe policy uses safe defaults unless debug mode is requested")
+    func diagnosticsProbePolicyPayloadUsesSafeDefaults() {
+        let emptyPolicy = MelixDiagnosticsStore.probePolicyPayload(environment: [:])
+        #expect(emptyPolicy["mode"] as? String == "minimal")
+        #expect(emptyPolicy["fallback_applied"] as? Bool == false)
+        #expect(emptyPolicy["detailed_telemetry_enabled"] as? Bool == false)
+        #expect(emptyPolicy["debug_artifacts_enabled"] as? Bool == false)
+
+        let invalidPolicy = MelixDiagnosticsStore.probePolicyPayload(
+            environment: ["MELIX_PROBE_MODE": "unexpected"]
+        )
+        #expect(invalidPolicy["mode"] as? String == "minimal")
+        #expect(invalidPolicy["fallback_applied"] as? Bool == true)
+        #expect(invalidPolicy["detailed_telemetry_enabled"] as? Bool == false)
+        #expect(invalidPolicy["debug_artifacts_enabled"] as? Bool == false)
+
+        let debugPolicy = MelixDiagnosticsStore.probePolicyPayload(
+            environment: ["MELIX_PROBE_MODE": "debug"]
+        )
+        #expect(debugPolicy["mode"] as? String == "debug")
+        #expect(debugPolicy["fallback_applied"] as? Bool == false)
+        #expect(debugPolicy["detailed_telemetry_enabled"] as? Bool == true)
+        #expect(debugPolicy["debug_artifacts_enabled"] as? Bool == true)
+    }
+
     @Test("lora list fails when the server snapshot has no models")
     func loraListFailsWhenServerSnapshotIsEmpty() async throws {
         let client = StubControlPlaneXPCClient()
@@ -8138,6 +9554,7 @@ struct MelixCLIRunnerTests {
                 "MELIX_HOME": root.path,
                 "MELIX_API_KEY": "sk-secret-env",
                 "MELIX_LOGS_DIR": root.appendingPathComponent("logs").path,
+                "MELIX_PROBE_MODE": "debug",
             ]
         )
 
@@ -8275,6 +9692,11 @@ struct MelixCLIRunnerTests {
         let bundleEnv = try String(contentsOf: bundleOutputRoot.appendingPathComponent("redacted-env.json"), encoding: .utf8)
         let bundleCommand = try String(contentsOf: bundleOutputRoot.appendingPathComponent("command.txt"), encoding: .utf8)
         let bundleConfig = try String(contentsOf: bundleOutputRoot.appendingPathComponent("effective-config.json"), encoding: .utf8)
+        let bundleManifestData = try Data(contentsOf: bundleOutputRoot.appendingPathComponent("manifest.json"))
+        let bundleManifest = try #require(
+            JSONSerialization.jsonObject(with: bundleManifestData) as? [String: Any]
+        )
+        let probePolicy = try #require(bundleManifest["probe_policy"] as? [String: Any])
         #expect(bundleLogs.contains("sk-secret-log") == false)
         #expect(bundleEnv.contains("sk-secret-env") == false)
         #expect(bundleCommand.contains("hidden-prompt-token") == false)
@@ -8282,6 +9704,10 @@ struct MelixCLIRunnerTests {
         #expect(bundleConfig.contains("sk-secret-header") == false)
         #expect(bundleConfig.contains("sk-secret-path") == false)
         #expect(bundleEnv.contains("<redacted:"))
+        #expect(probePolicy["mode"] as? String == "debug")
+        #expect(bundleManifest["debug_artifact_policy"] as? String == "explicit_cli_command")
+        #expect(bundleManifest["debug_jsonl_enabled"] as? Bool == true)
+        #expect(bundleManifest["debug_jsonl_event_limit"] as? Int == 256)
 
         let emptyList = try await runner.run(.runsList(.init(sourcePath: root.appendingPathComponent("missing").path)))
         #expect(emptyList == "No run records found.\n")
@@ -9307,16 +10733,46 @@ private func makeModelSummary(
     id: String,
     kind: String,
     runtimeMode: String = "",
-    activationMode: String = ""
+    activationMode: String = "",
+    routeClass: Melix_Controlplane_V1_WorkerRouteClass = .unspecified,
+    loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy? = nil
 ) -> Melix_Controlplane_V1_ModelSummary {
     var model = Melix_Controlplane_V1_ModelSummary()
     model.modelID = id
     model.kind = kind
     model.runtimeMode = runtimeMode
+    model.routeClass = routeClass
     if !activationMode.isEmpty {
         model.settings.ext["melix.activation_mode"] = activationMode
     }
+    if let loadTrust {
+        model.loadTrust = loadTrust
+    }
     return model
+}
+
+private func makeLoadTrustPolicy(
+    requested: Melix_Controlplane_V1_ModelLoadTrustMode,
+    effective: Melix_Controlplane_V1_ModelLoadTrustMode,
+    policySource: String,
+    customLoaderRequired: Bool = false,
+    customLoaderDetectionSource: String = "",
+    blockReason: String = "",
+    requiresReloadForTrustChange: Bool = false,
+    routeClass: Melix_Controlplane_V1_WorkerRouteClass = .unspecified,
+    loaderFamily: String = ""
+) -> Melix_Controlplane_V1_ModelLoadTrustPolicy {
+    var policy = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+    policy.requestedMode = requested
+    policy.effectiveMode = effective
+    policy.policySource = policySource
+    policy.customLoaderRequired = customLoaderRequired
+    policy.customLoaderDetectionSource = customLoaderDetectionSource
+    policy.blockReason = blockReason
+    policy.requiresReloadForTrustChange = requiresReloadForTrustChange
+    policy.routeClass = routeClass
+    policy.loaderFamily = loaderFamily
+    return policy
 }
 
 private func makeHubModelCard(
@@ -10203,4 +11659,60 @@ private func makeEvaluationCompareResult(
     }
 
     return ControlPlaneEvaluationResult(job: job, results: results)
+}
+
+private func writeFakeBatchCLI(_ path: URL, failEval: Bool = false, warnBench: Bool = false) throws {
+    let failEvalLiteral = failEval ? "1" : "0"
+    let warnBenchLiteral = warnBench ? "1" : "0"
+    let script = """
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "${MELIX_BATCH_MODEL_DIR}/fake-raw"
+    printf '{"raw": true}\\n' > "${MELIX_BATCH_MODEL_DIR}/fake-raw/raw.json"
+    if [[ "$1 $2" == "bench run" ]]; then
+      if [[ "\(warnBenchLiteral)" == "1" ]]; then
+        printf 'bench warning for %s\\n' "${MELIX_BATCH_MODEL_INDEX}" >&2
+      fi
+      printf '{"job_id":"bench-01","metrics":{"bench.smoke.tokens_per_second":12.5},"output_dir":"%s"}\\n' "${MELIX_BATCH_MODEL_DIR}/fake-raw"
+      exit 0
+    fi
+    if [[ "$1 $2" == "bench export-csv" ]]; then
+      output=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --output) output="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      mkdir -p "$(dirname "$output")"
+      printf 'job_id,metric,value\\nbench-01,bench.smoke.tokens_per_second,12.5\\n' > "$output"
+      printf '{"output":"%s"}\\n' "$output"
+      exit 0
+    fi
+    if [[ "$1 $2" == "eval run" ]]; then
+      if [[ "\(failEvalLiteral)" == "1" ]]; then
+        printf 'Semantic judge remote server returned 401 unauthorized\\n' >&2
+        exit 2
+      fi
+      printf '{"job_id":"eval-01","metrics":{"eval.event_extraction.semantic_f1":0.9},"output_dir":"%s"}\\n' "${MELIX_BATCH_MODEL_DIR}/fake-raw"
+      exit 0
+    fi
+    if [[ "$1 $2" == "eval export-summary-csv" || "$1 $2" == "eval export-samples-csv" || "$1 $2" == "eval export-samples-jsonl" ]]; then
+      output=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --output) output="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      mkdir -p "$(dirname "$output")"
+      printf 'job_id,metric,value\\neval-01,eval.event_extraction.semantic_f1,0.9\\n' > "$output"
+      printf '{"output":"%s"}\\n' "$output"
+      exit 0
+    fi
+    printf 'unexpected fake melix command: %s\\n' "$*" >&2
+    exit 64
+    """
+    try script.write(to: path, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
 }

@@ -4,6 +4,24 @@ import MelixControlPlaneCore
 public enum MelixCLICommandCodec {
     public static func commandID(for command: MelixCLICommand) -> String {
         switch command {
+        case .settingsShow:
+            return "settings.show"
+        case .settingsSet:
+            return "settings.set"
+        case .settingsValidate:
+            return "settings.validate"
+        case .settingsReset:
+            return "settings.reset"
+        case .info:
+            return "info"
+        case .capabilities:
+            return "capabilities"
+        case .instructions:
+            return "instructions"
+        case .schema:
+            return "schema"
+        case .configMetadata:
+            return "config.metadata"
         case .doctor:
             return "doctor"
         case .system:
@@ -14,8 +32,8 @@ public enum MelixCLICommandCodec {
             return "logs"
         case .debugBundle:
             return "debug.bundle"
-        case .estimateImport:
-            return "estimate.import"
+        case .estimateImport(let options):
+            return "estimate.\(options.targetKind)"
         case .convert:
             return "convert"
         case .quantize:
@@ -46,6 +64,22 @@ public enum MelixCLICommandCodec {
             return "dataset.hub.download"
         case .datasetRemove:
             return "dataset.remove"
+        case .uriInspect:
+            return "uri.inspect"
+        case .uriImport:
+            return "uri.import"
+        case .recipesList:
+            return "recipes.list"
+        case .recipesShow:
+            return "recipes.show"
+        case .recipesValidate:
+            return "recipes.validate"
+        case .recipesPlan:
+            return "recipes.plan"
+        case .recipesApply:
+            return "recipes.apply"
+        case .recipesInit:
+            return "recipes.init"
         case .modelRootsList:
             return "model.roots.list"
         case .modelRootsAdd:
@@ -168,6 +202,10 @@ public enum MelixCLICommandCodec {
             return "eval.report"
         case .batchRun:
             return "batch.run"
+        case .batchStatus:
+            return "batch.status"
+        case .batchResume:
+            return "batch.resume"
         case .runsList:
             return "runs.list"
         case .runsShow:
@@ -194,6 +232,37 @@ public enum MelixCLICommandCodec {
         var arguments: [String]
         let json: Bool
         switch command {
+        case .settingsShow(let options):
+            arguments = ["settings", "show"]
+            for key in options.overrides.keys.sorted() {
+                appendOption("--override", value: "\(key)=\(options.overrides[key] ?? "")", into: &arguments)
+            }
+            json = options.json
+        case .settingsSet(let options):
+            arguments = ["settings", "set", options.key, options.value]
+            json = options.json
+        case .settingsValidate(let options):
+            arguments = ["settings", "validate"]
+            json = options.json
+        case .settingsReset(let options):
+            arguments = ["settings", "reset", options.key]
+            json = options.json
+        case .info(let options):
+            arguments = ["info"]
+            json = options.json
+        case .capabilities(let options):
+            arguments = ["capabilities"]
+            appendOption("--model-query", value: options.modelQuery, into: &arguments)
+            json = options.json
+        case .instructions(let options):
+            arguments = ["instructions"]
+            json = options.json
+        case .schema(let options):
+            arguments = ["schema"]
+            json = options.json
+        case .configMetadata(let options):
+            arguments = ["config", "metadata"]
+            json = options.json
         case .doctor(let options):
             arguments = ["doctor"]
             json = options.json
@@ -217,7 +286,13 @@ public enum MelixCLICommandCodec {
             appendOption("--output", value: options.outputPath, into: &arguments)
             json = options.json
         case .estimateImport(let options):
-            arguments = ["estimate", "import", options.repoID]
+            arguments = ["estimate", options.targetKind, options.repoID]
+            appendOption("--context", value: options.targetInputs["context"], into: &arguments)
+            appendOption("--context-length", value: options.targetInputs["context_length"], into: &arguments)
+            appendOption("--dataset", value: options.targetInputs["dataset"], into: &arguments)
+            appendOption("--lora", value: options.targetInputs["lora"], into: &arguments)
+            appendOption("--batch-size", value: options.targetInputs["batch_size"], into: &arguments)
+            appendOption("--sample-size", value: options.targetInputs["sample_size"], into: &arguments)
             json = options.json
         case .convert(let options):
             arguments = ["convert"]
@@ -255,6 +330,10 @@ public enum MelixCLICommandCodec {
             appendOption("--artifact-manifest-path", value: options.artifactManifestPath, into: &arguments)
             appendOption("--publish-backend", value: options.publishBackend, into: &arguments)
             appendOption("--local-publish-root", value: options.localPublishRoot, into: &arguments)
+            json = options.json
+        case .modelInspect(let options):
+            arguments = ["model", "inspect"]
+            appendOption("--model-id", value: options.modelID, into: &arguments)
             json = options.json
         case .modelImport(let options):
             arguments = ["model", "import"]
@@ -338,7 +417,16 @@ public enum MelixCLICommandCodec {
             json = options.json
         case .serverStart(let options):
             arguments = ["server", "start"]
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            if options.serverTitle.isEmpty == false {
+                arguments.append(options.serverTitle)
+            } else {
+                appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            }
+            appendOption("--model", value: options.modelID, into: &arguments)
+            appendOption("--host", value: options.host, into: &arguments)
+            appendPositiveInt("--port", value: options.port, into: &arguments)
+            appendPositiveInt("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
+            appendPositiveInt("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
             json = options.json
         case .serverPause(let options):
             arguments = ["server", "pause"]
@@ -408,6 +496,12 @@ public enum MelixCLICommandCodec {
             appendOption("--target-repo", value: options.targetRepo, into: &arguments)
             appendOption("--training-mode", value: options.trainingMode, into: &arguments)
             appendTrainingParameters(options.parameters, into: &arguments)
+            if options.preflightFitCheck {
+                arguments.append("--preflight-fit-check")
+            }
+            if options.allowMemoryRisk {
+                arguments.append("--allow-memory-risk")
+            }
             json = options.json
         case .alignmentTrain(let options):
             arguments = ["alignment", "train"]
@@ -544,9 +638,17 @@ public enum MelixCLICommandCodec {
             appendEvalParameters(options.parameters, into: &arguments)
             appendOption("--eval-prompt-id", value: options.evalPromptID, into: &arguments)
             appendOption("--eval-prompt-revision", value: options.evalPromptRevisionID, into: &arguments)
+            appendOption("--eval-prompt", value: options.evalPrompt, into: &arguments)
+            appendOption("--eval-prompt-file", value: options.evalPromptFile, into: &arguments)
             appendOption("--semantic-judge-remote-server-id", value: options.semanticJudgeRemoteServerID, into: &arguments)
             appendOption("--semantic-judge-model", value: options.semanticJudgeModelID, into: &arguments)
             appendPositiveUInt32("--remote-parallelism", value: options.remoteParallelism, into: &arguments)
+            if options.preflightFitCheck {
+                arguments.append("--preflight-fit-check")
+            }
+            if options.allowMemoryRisk {
+                arguments.append("--allow-memory-risk")
+            }
             json = options.json
         case .evalPromptList(let options):
             arguments = ["eval", "prompt", "list"]
@@ -575,6 +677,23 @@ public enum MelixCLICommandCodec {
         case .evalPromptArchive(let options):
             arguments = ["eval", "prompt", "archive"]
             appendOption("--prompt-id", value: options.promptID, into: &arguments)
+            json = options.json
+        case .evalCompare(let options):
+            arguments = ["eval", "compare"]
+            appendTarget(modelID: options.modelID, hfRepoID: options.hfRepoID, into: &arguments)
+            appendMultiOption("--target-model-id", values: options.targetModelIDs, into: &arguments)
+            appendMultiOption("--target-adapter", values: options.targetAdapterManifestPaths, into: &arguments)
+            appendMultiOption("--suite", values: options.suites, into: &arguments)
+            appendOption("--dataset-id", value: options.datasetID, into: &arguments)
+            appendPositiveUInt32("--sample-size", value: options.sampleSize, into: &arguments)
+            appendEvaluationSourceArguments(
+                source: options.source,
+                fieldMapping: options.fieldMapping,
+                profile: options.profile,
+                schemaPath: options.parameters["schema_path"],
+                into: &arguments
+            )
+            appendEvalParameters(options.parameters, into: &arguments)
             json = options.json
         case .evalExportSummaryCSV(let options):
             arguments = ["eval", "export-summary-csv"]
@@ -637,6 +756,28 @@ public enum MelixCLICommandCodec {
                 arguments.append("--dry-run")
             }
             json = options.json
+        case .batchStatus(let options):
+            arguments = ["batch", "status"]
+            appendOption("--run-id", value: options.runID, into: &arguments)
+            appendOption("--output-root", value: options.outputRoot, into: &arguments)
+            appendOption("--temp-root", value: options.tempRoot, into: &arguments)
+            json = options.json
+        case .batchResume(let options):
+            arguments = ["batch", "resume"]
+            appendOption("--run-id", value: options.runID, into: &arguments)
+            appendOption("--output-root", value: options.outputRoot, into: &arguments)
+            appendOption("--temp-root", value: options.tempRoot, into: &arguments)
+            appendOption("--models", value: options.modelListPath, into: &arguments)
+            appendOption("--config", value: options.configPath, into: &arguments)
+            if options.evalOnly {
+                arguments.append("--eval-only")
+            }
+            appendBool("--missing-only", value: options.missingOnly, defaultValue: true, force: false, into: &arguments)
+            appendBool("--continue-on-failure", value: options.continueOnFailure, defaultValue: true, force: false, into: &arguments)
+            if options.dryRun {
+                arguments.append("--dry-run")
+            }
+            json = options.json
         case .runsList(let options):
             arguments = ["runs", "list"]
             appendOption("--from", value: options.sourcePath, into: &arguments)
@@ -651,6 +792,54 @@ public enum MelixCLICommandCodec {
             appendOption("--from", value: options.sourcePath, into: &arguments)
             appendOption("--output", value: options.outputPath, into: &arguments)
             json = false
+        case .uriInspect(let options):
+            arguments = ["uri", "inspect", options.uri]
+            json = options.json
+        case .uriImport(let options):
+            arguments = ["uri", "import", options.uri]
+            appendOption("--model-id", value: options.modelID, into: &arguments)
+            if options.revision.isEmpty == false {
+                appendOption("--revision", value: options.revision, into: &arguments)
+            }
+            if options.dryRun {
+                arguments.append("--dry-run")
+            }
+            json = options.json
+        case .recipesList(let options):
+            arguments = ["recipes", "list"]
+            appendOption("--task", value: options.task, into: &arguments)
+            json = options.json
+        case .recipesShow(let options):
+            arguments = ["recipes", "show", options.recipeID]
+            appendOption("--version", value: options.version, into: &arguments)
+            json = options.json
+        case .recipesValidate(let options):
+            arguments = ["recipes", "validate", options.target]
+            json = options.json
+        case .recipesPlan(let options):
+            arguments = ["recipes", "plan", options.recipeID]
+            appendOption("--version", value: options.version, into: &arguments)
+            appendRecipeValues(options.values, into: &arguments)
+            appendOption("--output", value: options.outputPath, into: &arguments)
+            json = options.json
+        case .recipesApply(let options):
+            arguments = ["recipes", "apply", options.recipeID]
+            appendOption("--version", value: options.version, into: &arguments)
+            appendRecipeValues(options.values, into: &arguments)
+            if options.dryRun {
+                arguments.append("--dry-run")
+            }
+            if options.resume {
+                arguments.append("--resume")
+            }
+            appendOption("--from-step", value: options.fromStepID, into: &arguments)
+            json = options.json
+        case .recipesInit(let options):
+            arguments = ["recipes", "init"]
+            appendOption("--from", value: options.sourceURI, into: &arguments)
+            appendOption("--task", value: options.task, into: &arguments)
+            appendOption("--output", value: options.outputPath, into: &arguments)
+            json = options.json
         case .pipelineRun(let options):
             arguments = ["pipeline", "run"]
             appendOption("--file", value: options.filePath, into: &arguments)
@@ -688,6 +877,12 @@ public enum MelixCLICommandCodec {
         } else if remoteServerID.isEmpty == false {
             arguments.append(contentsOf: ["--remote-server-id", remoteServerID])
             appendOption("--remote-model", value: remoteModelID, into: &arguments)
+        }
+    }
+
+    private static func appendRecipeValues(_ values: [String: String], into arguments: inout [String]) {
+        for key in values.keys.sorted() {
+            appendOption("--set", value: "\(key)=\(values[key] ?? "")", into: &arguments)
         }
     }
 

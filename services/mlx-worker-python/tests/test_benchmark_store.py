@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import threading
 from pathlib import Path
 
 import pytest
@@ -15,7 +14,7 @@ from worker.productization.benchmark_schemas import (
 )
 from worker.productization.benchmark_store import BenchmarkStore
 from worker.productization.probe_policy import ProbeMode, ProbePolicy
-from telemetry_fixtures import fixture_telemetry_collector
+from telemetry_fixtures import fixture_telemetry_collector, guard_production_safe_probe_paths
 
 
 class _CountingRow:
@@ -413,22 +412,7 @@ def test_persist_serving_benchmark_default_policy_skips_heavy_telemetry(
         reason="probe policy foundation is expected from the main implementation",
     )
     monkeypatch.setenv("MELIX_PROBE_MODE", probe_mode)
-
-    def fail_heavy_sample(*args: object, **kwargs: object) -> None:
-        raise AssertionError("production-safe probe policy must not call the heavy telemetry sampler")
-
-    def fail_sleep(*args: object, **kwargs: object) -> None:
-        raise AssertionError("production-safe probe policy must not sleep during persist")
-
-    def fail_thread_start(self: threading.Thread) -> None:
-        raise AssertionError("production-safe probe policy must not start a telemetry thread")
-
-    monkeypatch.setattr(
-        "worker.productization.apple_silicon_telemetry.MacOSAppleSiliconSampler.sample",
-        fail_heavy_sample,
-    )
-    monkeypatch.setattr("worker.productization.apple_silicon_telemetry.time.sleep", fail_sleep)
-    monkeypatch.setattr(threading.Thread, "start", fail_thread_start)
+    guard_production_safe_probe_paths(monkeypatch)
 
     jobs_root = tmp_path / "bench"
     job = build_serving_benchmark_job(

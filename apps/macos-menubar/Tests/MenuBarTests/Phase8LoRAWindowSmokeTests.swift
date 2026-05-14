@@ -15,6 +15,7 @@ struct Phase8LoRAWindowSmokeTests {
     func phase8LoRAWindowSmokeEmitsCanonicalAcceptanceEvidence() async throws {
         let baseModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
         let derivedModelID = "melix-qwen35-acceptance"
+        let evaluationJobID = "phase8-eval-\(UUID().uuidString)"
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-phase8-lora-window-smoke-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -30,7 +31,8 @@ struct Phase8LoRAWindowSmokeTests {
         )
         let snapshot = phase8LoRAWindowSnapshot(
             models: [baseModel, derivedModel],
-            runtimeSessions: [phase8LoRAWindowRuntimeSession()]
+            runtimeSessions: [phase8LoRAWindowRuntimeSession()],
+            servedModelID: baseModelID
         )
 
         let directClient = FakeControlPlaneXPCClient()
@@ -76,12 +78,16 @@ struct Phase8LoRAWindowSmokeTests {
         await runnerClient.configureEvaluationResponse(
             phase8LoRAWindowCompareResult(
                 baseModelID: baseModelID,
-                derivedModelID: derivedModelID
+                derivedModelID: derivedModelID,
+                jobID: evaluationJobID
             )
         )
         await runnerClient.configureExportResult(
             ControlPlaneExportResult(
-                exportBundleJSON: phase8LoRAWindowExportBundleJSON(derivedModelID: derivedModelID)
+                exportBundleJSON: phase8LoRAWindowExportBundleJSON(
+                    derivedModelID: derivedModelID,
+                    evaluationJobID: evaluationJobID
+                )
             )
         )
 
@@ -121,6 +127,9 @@ struct Phase8LoRAWindowSmokeTests {
 
         viewModel.selectToolSection(.diagnostics)
         viewModel.updateSelectedServerSessionModelID(baseModelID)
+        if let localTarget = viewModel.diagnosticsServerTargets.first(where: { $0.kind == .localServer }) {
+            viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        }
         viewModel.selectedEvaluationModelID = baseModelID
         viewModel.selectedEvaluationMode = .compare
         viewModel.selectedEvaluationCompareTargetModelIDs = [derivedModelID]
@@ -133,13 +142,14 @@ struct Phase8LoRAWindowSmokeTests {
             foundation: viewModel.desktopFoundationState
         )
         await diagnosticsSection.runEvaluationCompare()
-        await viewModel.exportSelectedEvaluationSummaryCSV()
-        await trainingSection.removeDerivedModel()
-
-        let runnerModelOps = await runnerClient.recordedModelOperationRequests
         let runnerEvaluationRequests = await runnerClient.recordedEvaluationRequests
+        #expect(runnerEvaluationRequests.isEmpty == false)
+        #expect(runnerEvaluationRequests.last?.parameters["compare_target_model_ids"] == derivedModelID)
+        try await phase8LoRAWaitForEvaluationSelection(viewModel, jobID: evaluationJobID)
+        let lastEvaluationExport = try await phase8LoRAExportEvaluationSummary(viewModel, jobID: evaluationJobID)
         let runnerExports = await runnerClient.recordedExportOutputDirs
-        let lastEvaluationExport = try #require(viewModel.lastEvaluationExport)
+        await trainingSection.removeDerivedModel()
+        let runnerModelOps = await runnerClient.recordedModelOperationRequests
 
         let negativeTrainClient = FakeControlPlaneXPCClient()
         await negativeTrainClient.configureSnapshot(
@@ -173,14 +183,16 @@ struct Phase8LoRAWindowSmokeTests {
         await negativeActionClient.configureSnapshot(
             phase8LoRAWindowSnapshot(
                 models: [baseModel],
-                runtimeSessions: [phase8LoRAWindowRuntimeSession()]
+                runtimeSessions: [phase8LoRAWindowRuntimeSession()],
+                servedModelID: baseModelID
             )
         )
         let negativeActionRunnerClient = FakeControlPlaneXPCClient()
         await negativeActionRunnerClient.configureSnapshot(
             phase8LoRAWindowSnapshot(
                 models: [baseModel],
-                runtimeSessions: [phase8LoRAWindowRuntimeSession()]
+                runtimeSessions: [phase8LoRAWindowRuntimeSession()],
+                servedModelID: baseModelID
             )
         )
         await negativeActionRunnerClient.configureExportResult(
@@ -269,14 +281,107 @@ struct Phase8LoRAWindowSmokeTests {
     }
 }
 
+@MainActor
+private func phase8LoRAWaitForEvaluationSelection(
+    _ viewModel: RuntimeViewModel,
+    jobID: String
+) async throws {
+    try await phase8LoRAWaitForCondition("evaluation history should select returned job") {
+        viewModel.selectedEvaluationHistoryJobID == jobID
+            && viewModel.evaluationMetricCards.isEmpty == false
+    }
+    viewModel.selectEvaluationHistory(jobID: jobID)
+}
+
+@MainActor
+private func phase8LoRAExportEvaluationSummary(
+    _ viewModel: RuntimeViewModel,
+    jobID: String
+) async throws -> RuntimeEvaluationExportState {
+    try await phase8LoRAWaitForEvaluationSelection(viewModel, jobID: jobID)
+    let deadline = ContinuousClock.now + .seconds(20)
+    while ContinuousClock.now < deadline {
+        viewModel.selectEvaluationHistory(jobID: jobID)
+        await viewModel.exportSelectedEvaluationSummaryCSV()
+        if let export = viewModel.lastEvaluationExport, export.formatTitle == "summary.csv" {
+            return export
+        }
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    if let export = viewModel.lastEvaluationExport, export.formatTitle == "summary.csv" {
+        return export
+    }
+    throw NSError(domain: "Phase8LoRAWindowSmokeTests", code: 1, userInfo: [
+        NSLocalizedDescriptionKey: "evaluation summary export did not finish for \(jobID); selected=\(viewModel.selectedEvaluationHistoryJobID); metric_cards=\(viewModel.evaluationMetricCards.count); last_error=\(viewModel.lastError ?? "")",
+    ])
+}
+
+@MainActor
+private func phase8LoRAWaitForCondition(
+    _ description: String,
+    timeout: Duration = .seconds(20),
+    pollInterval: Duration = .milliseconds(25),
+    condition: @MainActor @escaping () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+    if condition() {
+        return
+    }
+    throw NSError(domain: "Phase8LoRAWindowSmokeTests", code: 1, userInfo: [
+        NSLocalizedDescriptionKey: description,
+    ])
+}
+
 private func phase8LoRAWindowSnapshot(
     models: [Melix_Controlplane_V1_ModelSummary],
-    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
+    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = [],
+    servedModelID: String = ""
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = .serverReady
     snapshot.models = models
     snapshot.runtimeSessions = runtimeSessions
+    let normalizedServedModelID = servedModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let runtimeSession = runtimeSessions.first, normalizedServedModelID.isEmpty == false {
+        var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
+        listener.serverSessionID = runtimeSession.serverSessionID
+        listener.requestedHost = "127.0.0.1"
+        listener.requestedPort = 8080
+        listener.effectiveHost = "127.0.0.1"
+        listener.effectivePort = 8080
+        listener.servedModelID = normalizedServedModelID
+        listener.rateLimitPerMinute = 60
+        listener.timeoutSeconds = 120
+        listener.source = .operatorOverride
+        listener.activeBinding = true
+        snapshot.gatewayConfig.listeners = [listener]
+
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = runtimeSession.serverSessionID
+        servingDefaults.servedModelID = normalizedServedModelID
+        servingDefaults.requestedTemperature = 0.7
+        servingDefaults.requestedTopP = 0.9
+        servingDefaults.requestedMaxTokens = 512
+        servingDefaults.requestedStreamIntervalTokens = 16
+        servingDefaults.requestedMaxConcurrentRequests = 1
+        servingDefaults.requestedPrefillBatchSize = 1
+        servingDefaults.requestedCompletionBatchSize = 1
+        servingDefaults.effectiveTemperature = 0.7
+        servingDefaults.effectiveTopP = 0.9
+        servingDefaults.effectiveMaxTokens = 512
+        servingDefaults.effectiveStreamIntervalTokens = 16
+        servingDefaults.effectiveMaxConcurrentRequests = 1
+        servingDefaults.effectivePrefillBatchSize = 1
+        servingDefaults.effectiveCompletionBatchSize = 1
+        servingDefaults.source = .operatorOverride
+        snapshot.servingDefaults.sessions = [servingDefaults]
+    }
     return snapshot
 }
 
@@ -347,10 +452,11 @@ private func phase8LoRAWindowRegistryManifest(
 
 private func phase8LoRAWindowCompareResult(
     baseModelID: String,
-    derivedModelID: String
+    derivedModelID: String,
+    jobID: String
 ) -> ControlPlaneEvaluationResult {
     var job = Melix_Controlplane_V1_EvaluationJobSummary()
-    job.jobID = "eval-compare-1"
+    job.jobID = jobID
     job.modelID = baseModelID
     job.taskKind = "text-generation"
     job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
@@ -359,7 +465,7 @@ private func phase8LoRAWindowCompareResult(
     job.sampleSize = 6
     job.scoringMode = "multiple_choice_accuracy"
     job.status = "completed"
-    job.outputDir = "/tmp/melix/evaluation/runs/eval-compare-1"
+    job.outputDir = "/tmp/melix/evaluation/runs/\(jobID)"
     job.createdAtUnixMs = 1_712_400_000_000
     job.updatedAtUnixMs = 1_712_400_001_000
 
@@ -369,18 +475,21 @@ private func phase8LoRAWindowCompareResult(
     metric.unit = "ratio"
 
     var result = Melix_Controlplane_V1_EvaluationResultSummary()
-    result.jobID = "eval-compare-1"
+    result.jobID = jobID
     result.suiteID = "mmlu:\(derivedModelID)"
     result.datasetID = "mmlu.dev.v1"
     result.sampleSize = 6
     result.metrics = [metric]
-    result.reportPath = "/tmp/melix/evaluation/runs/eval-compare-1/\(derivedModelID)-result.json"
+    result.reportPath = "/tmp/melix/evaluation/runs/\(jobID)/\(derivedModelID)-result.json"
     return ControlPlaneEvaluationResult(job: job, results: [result])
 }
 
-private func phase8LoRAWindowExportBundleJSON(derivedModelID: String) -> String {
+private func phase8LoRAWindowExportBundleJSON(
+    derivedModelID: String,
+    evaluationJobID: String
+) -> String {
     makeBenchmarkExportBundleJSON()
-        .replacingOccurrences(of: "eval-newer", with: "eval-compare-1")
+        .replacingOccurrences(of: "eval-newer", with: evaluationJobID)
         .replacingOccurrences(of: "melix-dev-text-lora", with: derivedModelID)
 }
 

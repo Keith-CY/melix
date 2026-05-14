@@ -39,6 +39,8 @@ make integration-test
 
 GitHub Actions runs the same gates on every PR. If you are working in a specific subsystem, add any relevant focused commands, smoke scripts, or runbook verification steps to your PR description.
 
+`make bootstrap` installs the repository git hooks by configuring `core.hooksPath=.githooks`. You can also run `make git-hooks-install` directly. On macOS hosts with at least 128 GiB of physical memory, the pre-commit hook runs the full local test gate and writes a scoped performance report under `.runtime/pre-commit-performance/`. The hook uses the repository-local `.uv-cache` and defaults `UV_PYTHON` to Python 3.12; set `MELIX_PRE_COMMIT_UV_PYTHON` when a different supported interpreter is required. The hook must scrub Git hook-local environment variables before running the full test commands so tests that create temporary repositories or inspect Git identity are evaluated against their requested working directory, not the committing worktree. A regression in that report blocks the commit unless it has been analyzed and is explicitly allowed with both `MELIX_PRE_COMMIT_ALLOW_PERF_REGRESSION=1` and `MELIX_PRE_COMMIT_PERF_REGRESSION_REASON`.
+
 ---
 
 ## Coverage & Metrics
@@ -50,6 +52,19 @@ For any change that touches executable code:
 - Include a metrics report for the changed scope.
 
 For documentation-only changes, an explicit `N/A` metrics report is acceptable.
+
+---
+
+## Observability Changes
+
+Choose the observability plane deliberately:
+
+- Runtime metrics are for production health and should reuse counters already produced by request execution.
+- Evidence-mode probes are for benchmark, evaluation, comparison, and release claims, and must preserve `run-evidence.json`, `probe_timeline`, and `telemetry_summary`.
+- Debug diagnostics are opt-in local artifacts and must stay bounded; they do not qualify as public performance evidence.
+- PR-scoped performance probes belong in `infra/perf/pr_scoped_probes.json` plus a focused script under `scripts/` when the workload is synthetic, repeated, base-vs-head, or uses monkeypatching/tracemalloc.
+
+When adding a PR-scoped performance probe, follow the existing `probe-policy-noop-overhead` entry as the minimal pattern: declare `watch_globs`, `test_command`, `coverage_command`, `probe_command`, `probe_impl`, and machine-readable metrics. Keep synthetic probe scripts out of production package manifests.
 
 ---
 

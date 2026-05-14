@@ -76,6 +76,7 @@ from worker.productization.evaluation_schemas import (
 )
 from worker.productization.evaluation_store import EvaluationStore
 from worker.productization.probe_policy import ProbePolicy
+from worker.runtime.agentic_tools import execute_agentic_tool_calls
 
 
 _SUITE_SCORE_MODES = {
@@ -120,6 +121,14 @@ _SAMPLE_PROBE_MEAN_FIELDS = (
     ("scoring_ms_mean", "scoring_ms"),
     ("raw_response_chars_mean", "raw_response_chars"),
     ("extracted_result_chars_mean", "extracted_result_chars"),
+)
+_AGENTIC_TOOL_METRIC_NAMES = (
+    "agentic_tool.call_count",
+    "agentic_tool.observation_count",
+    "agentic_tool.completed_count",
+    "agentic_tool.timeout_count",
+    "agentic_tool.failed_count",
+    "agentic_tool.observation_emitted_bytes",
 )
 
 
@@ -247,6 +256,8 @@ class EvaluationCore:
         registry: Any | None = None,
     ) -> None:
         self._jobs_root = Path(jobs_root).resolve() if jobs_root is not None else None
+        self._runs_root = self._jobs_root / "runs" if self._jobs_root is not None else None
+        self._runs_root_initialized = False
         self._store = store or EvaluationStore(probe_policy=ProbePolicy.evidence())
         self._queue_store = queue_store or BenchmarkQueueStore()
         self._registry = registry
@@ -416,8 +427,11 @@ class EvaluationCore:
         if parameters:
             job_parameters.update(parameters)
         hints_text = str(job_parameters.pop("evaluation_hints_text", "") or "").strip()
+        eval_prompt_system_prompt = str(job_parameters.pop("eval_prompt_system_prompt", "") or "").strip()
         if hints_text:
             job_parameters["hints_prompt_chars"] = str(len(hints_text))
+        if eval_prompt_system_prompt:
+            job_parameters["eval_prompt_system_prompt_chars"] = str(len(eval_prompt_system_prompt))
         runtime_evidence = EvaluationCore._runtime_evidence_for_loaded_model(loaded_model)
         job_parameters.update(runtime_evidence)
         if EvaluationCore._truthy_parameter(job_parameters, "require_live_model"):
@@ -478,6 +492,7 @@ class EvaluationCore:
                 run_root=run_root,
                 job_parameters=job_parameters,
                 hints_text=hints_text,
+                eval_prompt_system_prompt=eval_prompt_system_prompt,
                 created_at_unix_ms=created_at_unix_ms,
                 resolved_code_exec_policy=resolved_code_exec_policy,
                 resolved_seed=resolved_seed,
@@ -502,6 +517,7 @@ class EvaluationCore:
                 job_parameters=job_parameters,
                 profile=profile,
                 hints_text=hints_text,
+                eval_prompt_system_prompt=eval_prompt_system_prompt,
             )
         except BaseException:
             telemetry_session.cancel()
@@ -535,6 +551,7 @@ class EvaluationCore:
             sample_records,
             tuple(field_name for _, field_name in _SAMPLE_PROBE_MEAN_FIELDS),
         )
+        agentic_tool_metrics = self._agentic_tool_metric_totals(sample_records)
         result_metrics = {
             f"eval.{suite_id}.typed_score_mean": typed_score_mean,
             f"eval.{suite_id}.threshold_pass_rate": threshold_pass_rate,
@@ -548,6 +565,10 @@ class EvaluationCore:
             **{
                 f"eval.{suite_id}.{metric_name}": sample_probe_means[field_name]
                 for metric_name, field_name in _SAMPLE_PROBE_MEAN_FIELDS
+            },
+            **{
+                f"eval.{suite_id}.{metric_name}": value
+                for metric_name, value in agentic_tool_metrics.items()
             },
         }
         result_units = {
@@ -568,6 +589,10 @@ class EvaluationCore:
             f"eval.{suite_id}.raw_response_chars_mean": "chars",
             f"eval.{suite_id}.extracted_result_chars_mean": "chars",
         }
+        for metric_name in agentic_tool_metrics:
+            result_units[f"eval.{suite_id}.{metric_name}"] = (
+                "bytes" if metric_name.endswith("_bytes") else "count"
+            )
         if suite_id in _CODE_EVAL_SUITES:
             code_exec_pass_count = sum(
                 1
@@ -582,6 +607,9 @@ class EvaluationCore:
         if hints_text:
             result_metrics[f"eval.{suite_id}.hints_prompt_chars"] = float(len(hints_text))
             result_units[f"eval.{suite_id}.hints_prompt_chars"] = "chars"
+        if eval_prompt_system_prompt:
+            result_metrics[f"eval.{suite_id}.eval_prompt_system_prompt_chars"] = float(len(eval_prompt_system_prompt))
+            result_units[f"eval.{suite_id}.eval_prompt_system_prompt_chars"] = "chars"
 
         report_path = self._result_path(run_root if self._jobs_root is not None else dataset_root)
         output_dir = str(run_root) if self._jobs_root is not None else str(dataset_root)
@@ -1424,6 +1452,7 @@ class EvaluationCore:
         run_root: Path,
         job_parameters: dict[str, str],
         hints_text: str,
+        eval_prompt_system_prompt: str,
         created_at_unix_ms: int,
         resolved_code_exec_policy: str,
         resolved_seed: int,
@@ -1465,6 +1494,7 @@ class EvaluationCore:
                 run_root=run_root,
                 job_parameters=job_parameters,
                 hints_text=hints_text,
+                eval_prompt_system_prompt=eval_prompt_system_prompt,
                 created_at_unix_ms=created_at_unix_ms,
                 resolved_code_exec_policy=resolved_code_exec_policy,
                 resolved_seed=resolved_seed,
@@ -1513,6 +1543,7 @@ class EvaluationCore:
         run_root: Path,
         job_parameters: dict[str, str],
         hints_text: str,
+        eval_prompt_system_prompt: str,
         created_at_unix_ms: int,
         resolved_code_exec_policy: str,
         resolved_seed: int,
@@ -1553,6 +1584,7 @@ class EvaluationCore:
             seed=resolved_seed,
             job_parameters=job_parameters,
             hints_text=hints_text,
+            eval_prompt_system_prompt=eval_prompt_system_prompt,
             request_label=f"base:{resolved_model_id}",
         )
         compare_samples: list[EvaluationCompareSample] = []
@@ -1576,6 +1608,7 @@ class EvaluationCore:
                 seed=resolved_seed,
                 job_parameters=job_parameters,
                 hints_text=hints_text,
+                eval_prompt_system_prompt=eval_prompt_system_prompt,
                 request_label=f"target:{target_model_id}",
             )
             target_compare_samples = build_compare_samples(
@@ -1729,6 +1762,7 @@ class EvaluationCore:
         seed: int,
         job_parameters: dict[str, str],
         hints_text: str = "",
+        eval_prompt_system_prompt: str = "",
         request_label: str = "",
     ) -> tuple[EvaluationSample, ...]:
         sample_records_list: list[EvaluationSample] = []
@@ -1751,6 +1785,7 @@ class EvaluationCore:
                     seed=seed,
                     job_parameters=job_parameters,
                     hints_text=hints_text,
+                    eval_prompt_system_prompt=eval_prompt_system_prompt,
                     request_label=request_label,
                 )
             )
@@ -1853,16 +1888,19 @@ class EvaluationCore:
         return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_") or "dialogue"
 
     def _next_job_id(self) -> str:
-        if self._jobs_root is None:
+        runs_root = self._runs_root
+        if runs_root is None:
             return "eval-local"
-        runs_root = self._jobs_root / "runs"
-        runs_root.mkdir(parents=True, exist_ok=True)
         with self._job_id_lock:
+            if not self._runs_root_initialized:
+                runs_root.mkdir(parents=True, exist_ok=True)
+                self._runs_root_initialized = True
             next_index = self._prime_next_job_index(runs_root)
             while True:
                 job_id = f"eval-{next_index:04d}"
+                run_root = runs_root / job_id
                 try:
-                    (runs_root / job_id).mkdir(parents=False, exist_ok=False)
+                    run_root.mkdir(parents=False, exist_ok=False)
                     self._next_job_index = next_index + 1
                     return job_id
                 except FileExistsError:
@@ -1894,9 +1932,10 @@ class EvaluationCore:
         return self._next_job_index
 
     def _run_root(self, job_id: str) -> Path:
-        if self._jobs_root is None:
+        runs_root = self._runs_root
+        if runs_root is None:
             return Path.cwd()
-        return self._jobs_root / "runs" / job_id
+        return runs_root / job_id
 
     def _loaded_model_for_execution(self, model_handle: str | None):
         if not model_handle or self._registry is None:
@@ -2219,6 +2258,7 @@ class EvaluationCore:
         seed: int,
         job_parameters: dict[str, str],
         hints_text: str = "",
+        eval_prompt_system_prompt: str = "",
         request_label: str = "",
     ) -> EvaluationSample:
         system_text = EvaluationCore._system_text_for_sample(sample)
@@ -2240,6 +2280,25 @@ class EvaluationCore:
         raw_response = ""
         sample_render_ms = 0.0
         inference_ms = 0.0
+        agentic_tool_registry: dict[str, object] = {}
+        agentic_tool_calls: tuple[dict[str, object], ...] = ()
+        agentic_tool_observations: tuple[dict[str, object], ...] = ()
+        agentic_tool_metrics: dict[str, float] = {}
+        raw_tool_calls = sample.get("tool_calls")
+        if isinstance(raw_tool_calls, list) and raw_tool_calls:
+            tool_run = execute_agentic_tool_calls(
+                raw_tool_calls,
+                fixture_context=EvaluationCore._sample_tool_fixture_context(
+                    sample=sample,
+                    dataset_root=dataset_root,
+                ),
+            )
+            agentic_tool_registry = tool_run.registry_receipt
+            agentic_tool_calls = tuple(dict(call) for call in tool_run.tool_calls)
+            agentic_tool_observations = tuple(
+                dict(observation) for observation in tool_run.observations
+            )
+            agentic_tool_metrics = dict(tool_run.metrics)
         code_language = ""
         code_entry_point = ""
         code_compile_status = ""
@@ -2265,6 +2324,7 @@ class EvaluationCore:
                     dataset_root=dataset_root,
                     task_kind=task_kind,
                     hints_text=hints_text,
+                    eval_prompt_system_prompt=eval_prompt_system_prompt,
                 ),
                 expected=target,
                 result_kind=profile.result_kind,
@@ -2308,6 +2368,10 @@ class EvaluationCore:
                 raw_response_chars=len(raw_response),
                 extracted_result_chars=0,
                 failure_stage="inference",
+                agentic_tool_registry=agentic_tool_registry,
+                agentic_tool_calls=agentic_tool_calls,
+                agentic_tool_observations=agentic_tool_observations,
+                agentic_tool_metrics=agentic_tool_metrics,
             )
         extracted_result = ""
         extraction_status = ""
@@ -2440,7 +2504,31 @@ class EvaluationCore:
             raw_response_chars=len(raw_response),
             extracted_result_chars=len(extracted_result),
             failure_stage=failure_stage,
+            agentic_tool_registry=agentic_tool_registry,
+            agentic_tool_calls=agentic_tool_calls,
+            agentic_tool_observations=agentic_tool_observations,
+            agentic_tool_metrics=agentic_tool_metrics,
         )
+
+    @staticmethod
+    def _sample_tool_fixture_context(
+        *,
+        sample: dict[str, object],
+        dataset_root: Path,
+    ) -> dict[str, object]:
+        raw_context = sample.get("tool_fixture_context") or sample.get("tool_context")
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        context.setdefault("dataset_root", str(dataset_root))
+        return context
+
+    @staticmethod
+    def _agentic_tool_metric_totals(samples: tuple[EvaluationSample, ...]) -> dict[str, float]:
+        totals = {name: 0.0 for name in _AGENTIC_TOOL_METRIC_NAMES}
+        for sample in samples:
+            sample_metrics = sample.agentic_tool_metrics or {}
+            for name in _AGENTIC_TOOL_METRIC_NAMES:
+                totals[name] += float(sample_metrics.get(name, 0.0) or 0.0)
+        return {name: round(value, 4) for name, value in totals.items() if value}
 
     @staticmethod
     def _sample_label(sample: dict[str, object], key_root: str) -> str:
@@ -2554,6 +2642,7 @@ class EvaluationCore:
         dataset_root: Path | None = None,
         task_kind: str = "text-generation",
         hints_text: str = "",
+        eval_prompt_system_prompt: str = "",
     ) -> list[common_pb2.ChatMessage]:
         if scoring_mode == "pass_at_1":
             instruction = "Return only executable Python code for the requested solution. Do not include explanations."
@@ -2568,8 +2657,11 @@ class EvaluationCore:
         else:
             instruction = "Return only the final short answer. Do not include reasoning or explanation."
         resolved_system_text = instruction
+        normalized_eval_prompt_system_prompt = eval_prompt_system_prompt.strip()
+        if normalized_eval_prompt_system_prompt:
+            resolved_system_text = f"{resolved_system_text}\n\n{normalized_eval_prompt_system_prompt}"
         if system_text.strip():
-            resolved_system_text = f"{instruction}\n\n{system_text.strip()}"
+            resolved_system_text = f"{resolved_system_text}\n\n{system_text.strip()}"
         normalized_hints_text = hints_text.strip()
         if normalized_hints_text:
             resolved_system_text = f"{resolved_system_text}\n\nAdditional Hints:\n{normalized_hints_text}"
@@ -2946,11 +3038,37 @@ class EvaluationCore:
             option = EvaluationCore._extract_option_value(stripped)
             if option is not None:
                 return option
-        return re.sub(r"\s+", " ", stripped).casefold()
+        if (
+            "  " in stripped
+            or "\t" in stripped
+            or "\n" in stripped
+            or "\r" in stripped
+            or "\f" in stripped
+            or "\v" in stripped
+            or (
+                not stripped.isascii()
+                and any(character.isspace() and character != " " for character in stripped)
+            )
+        ):
+            stripped = " ".join(stripped.split())
+        return stripped.casefold()
 
     @staticmethod
     def _strip_wrapping(value: str) -> str:
-        return value.strip().strip("`").strip().strip("\"'").strip().rstrip(".")
+        stripped = value.strip()
+        if not stripped:
+            return ""
+        if stripped[0] == "`" or stripped[-1] == "`":
+            stripped = stripped.strip("`").strip()
+            if not stripped:
+                return ""
+        if stripped[0] in "\"'" or stripped[-1] in "\"'":
+            stripped = stripped.strip("\"'").strip()
+            if not stripped:
+                return ""
+        if stripped.endswith("."):
+            stripped = stripped.rstrip(".")
+        return stripped
 
     @staticmethod
     def _looks_like_numeric(value: str) -> bool:
@@ -2974,8 +3092,11 @@ class EvaluationCore:
 
     @staticmethod
     def _looks_like_option(value: str) -> bool:
-        normalized = value.strip().upper()
-        return len(normalized) == 1 and normalized.isalpha()
+        normalized = value.strip()
+        if len(normalized) != 1:
+            return False
+        upper = normalized.upper()
+        return len(upper) == 1 and upper.isalpha()
 
     @staticmethod
     def _extract_option_value(value: str) -> str | None:

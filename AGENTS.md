@@ -177,13 +177,53 @@ state from `.runtime`.
 - Before each work transaction, read the relevant docs and standards before changing code.
 - Confirm the implementation approach in plan mode before editing code. If plan mode is unavailable, create or update an explicit written plan before broad implementation.
 - For non-trivial work, start from an explicit plan under `docs/plans/` or update the active plan before broad implementation.
-- During design, do not anchor on minimal change or implementation cost. Optimize for the best end-state architecture, best practices, and the most reasonable long-term choice for Melix.
+- During design and solution evaluation, start from the best end-state architecture
+  for Melix as if time and implementation cost were not constraints. Do not
+  optimize the recommended direction for the shortest path, smallest diff, or
+  lowest-effort patch. After the best solution is identified, slice the delivery
+  into small, verifiable implementation steps.
 - During design, define the performance probes, measurement points, and success metrics for the code path being changed.
 - For material UI/UX changes, use the interactive walkthrough workflow in `docs/runbooks/agent-ui-walkthrough.md` before broad App implementation when feasible: create or update a `.runtime/walkthrough/` HTML artifact, review it with the operator in the in-app browser, record decisions in a paired runtime note, then implement after the direction is confirmed.
 - Prefer small, verifiable slices over broad speculative rewrites.
 - Do not claim completion without running the relevant verification commands and reporting the result.
 - Before any commit, ensure measured automated test coverage for the repository scope touched by the change is at least 95 percent. If coverage is not currently measurable for that scope, add or update the coverage command before committing.
 - Before any commit or handoff, include a metrics report for the changed scope. If the change is documentation-only or the path is not yet measurable, include an explicit `N/A` metrics report with the reason.
+- Before committing on a macOS host with at least 128 GiB of physical memory, the versioned pre-commit hook under `.githooks/pre-commit` must run the full local test gate (`make swift-test`, `make py-test`, and `make integration-test`) and build the scoped performance report. Install the hook with `make git-hooks-install`; `make bootstrap` also installs it.
+- The versioned pre-commit hook must use the repository-local `.uv-cache` and defaults to Python 3.12 for dependency compatibility. Set `MELIX_PRE_COMMIT_UV_PYTHON` only when a different supported interpreter is required for a local diagnosis.
+- If the pre-commit performance report shows a regression, analyze the report before proceeding. If the regression is an intentional and acceptable tradeoff, commit only with `MELIX_PRE_COMMIT_ALLOW_PERF_REGRESSION=1` and a non-empty `MELIX_PRE_COMMIT_PERF_REGRESSION_REASON`, then record that rationale in the PR or handoff. Otherwise, fix the regression and rerun the hook before committing.
+
+## Task Worktree and Pull Request Lifecycle Rules
+
+- Start every new task from a fresh worktree created from the current
+  `origin/main`. Fetch `origin/main` first, choose a task-specific branch name,
+  and avoid mixing task work into a dirty checkout or an older branch.
+- For multi-step tasks, create one focused commit for each completed step. Keep
+  commits small enough that each commit maps to a reviewable task phase and has
+  its own relevant verification or explicit `N/A` metrics note.
+- Keep the task branch current with `origin/main` throughout the task. Merge
+  `origin/main` promptly at natural boundaries and before creating or updating a
+  pull request. When `origin/main` changes while a PR is under observation,
+  merge it again before concluding the PR is ready.
+- After opening or updating a pull request, continue monitoring the PR until it
+  reaches a terminal outcome. Check code review, merge conflicts, CI status, and
+  the PR performance report comment instead of relying on a single status signal.
+- When code review appears, decide whether each comment requires a code or
+  documentation change. Reply to the review thread either way: explain the fix
+  made, or explain why no change is appropriate.
+- When conflicts appear, resolve the textual conflicts and also inspect the new
+  `origin/main` changes that caused or surround the conflict. Decide whether
+  those newly introduced behaviors should be covered, replaced, or adapted by
+  the current task, then re-verify the branch locally before pushing the
+  resolution.
+- When CI fails, treat the failing jobs as blockers. Inspect the logs, repair the
+  branch, rerun the relevant local verification when feasible, and push the fix.
+- When the performance report identifies a regression, treat it as a blocker
+  unless the report or direct probe artifacts prove it is outside the PR scope.
+  Fix in-scope regressions and document non-blocking findings in the PR.
+- Squash merge only after code review threads are resolved, any required reviewer
+  approval is present, conflicts are resolved, CI is green, the performance
+  report is acceptable, PR evidence is complete, and the branch is current with
+  `origin/main`.
 
 ## Pull Request Evidence Rules
 

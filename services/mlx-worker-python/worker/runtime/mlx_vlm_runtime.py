@@ -1,22 +1,33 @@
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import dataclass, field, replace
 import hashlib
 import importlib.util
 import logging
 import os
+from queue import Queue
 import time
 from pathlib import Path
 from threading import Event
+from threading import Condition
+from threading import Thread
 from typing import Any, Callable, Iterable
 
 from packages.protocol.python.worker.v1 import common_pb2
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
-from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
+from worker.runtime.mlx_text_runtime import (
+    RuntimeTokenEvent,
+    _bytes_value,
+    _first_present,
+    _float_tuple,
+    _int_tuple,
+)
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.runtime_utils import (
+    callable_accepts_kwarg as _callable_accepts_kwarg,
     callable_declares_kwarg as _callable_declares_kwarg,
     installed_package_version as _installed_package_version,
 )
@@ -24,7 +35,20 @@ from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 logger = logging.getLogger(__name__)
+_GEMMA4_PRESENCE_NONE = (False, False)
+_GEMMA4_PRESENCE_VISION = (True, False)
+_GEMMA4_PRESENCE_AUDIO = (False, True)
+_GEMMA4_PRESENCE_BOTH = (True, True)
 
+_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY = "melix.vlm.text_only_batch_generator"
+_TEXT_ONLY_STEP_COOPERATIVE_EXT_KEY = "melix.vlm.text_only_step_cooperative"
+_TEXT_ONLY_BATCH_DONE = object()
+_GEMMA4_OPEN_MARKER = "<|channel>thought\n"
+_GEMMA4_OPEN_MARKER_BARE = "<|channel>"
+_GEMMA4_CLOSE_MARKER = "<channel|>"
+_GEMMA4_TURN_END_MARKER = "<turn|>"
+_GEMMA4_TOOL_RESPONSE_OPEN = "<|tool_response>"
+_GEMMA4_TOOL_RESPONSE_CLOSE = "<tool_response|>"
 
 class RuntimeUnavailableError(RuntimeError):
     pass
@@ -61,6 +85,40 @@ class _Gemma4TextBackedModelShim:
         )
 
 
+class _TextOnlyVLMDecodeAdapter:
+    def __init__(self, vlm_model: Any) -> None:
+        self._vlm_model = vlm_model
+        self._language_model = getattr(vlm_model, "language_model", vlm_model)
+
+    @property
+    def layers(self):
+        model = getattr(self._language_model, "model", None)
+        if model is not None and hasattr(model, "layers"):
+            return model.layers
+        return getattr(self._language_model, "layers")
+
+    @property
+    def config(self):
+        return getattr(self._vlm_model, "config", getattr(self._language_model, "config", None))
+
+    @property
+    def args(self):
+        return getattr(self._language_model, "args", self.config)
+
+    def make_cache(self):
+        if hasattr(self._language_model, "make_cache"):
+            return self._language_model.make_cache()
+        from mlx_lm.models.cache import KVCache
+
+        return [KVCache() for _ in range(len(self.layers))]
+
+    def __call__(self, input_ids, cache=None, **kwargs):
+        if hasattr(self._vlm_model, "_set_position_state"):
+            self._vlm_model._set_position_state(input_ids)
+        result = self._language_model(input_ids, cache=cache, **kwargs)
+        return result.logits if hasattr(result, "logits") else result
+
+
 class _CallableTokenizerProcessor:
     def __init__(self, tokenizer_wrapper: Any) -> None:
         self._tokenizer_wrapper = tokenizer_wrapper
@@ -73,17 +131,410 @@ class _CallableTokenizerProcessor:
         return tokenizer(*args, **kwargs)
 
 
+class _TextOnlyBatchRequest:
+    def __init__(
+        self,
+        *,
+        loaded_model: dict[str, Any],
+        input_ids: list[int],
+        max_tokens: int,
+        detokenizer: Any,
+        stop_token_ids: set[int],
+        cancel_event: Event,
+        prompt_tokens: int,
+        started_at: float | None = None,
+        prepare_ms: float = 0.0,
+    ) -> None:
+        self.loaded_model = loaded_model
+        self.input_ids = input_ids
+        self.max_tokens = max_tokens
+        self.detokenizer = detokenizer
+        self.stop_token_ids = stop_token_ids
+        self.cancel_event = cancel_event
+        self.prompt_tokens = prompt_tokens
+        self.queue: Queue[Any] = Queue()
+        self.uid: int | None = None
+        self.started_at = started_at if started_at is not None else time.perf_counter()
+        self.prepare_ms = max(0.0, float(prepare_ms))
+        self.submitted_at = time.perf_counter()
+        self.first_token_at: float | None = None
+        self.first_generated_response_at: float | None = None
+        self.first_visible_text_at: float | None = None
+        self.empty_text_token_count_before_first_visible = 0
+        self.completion_tokens = 0
+        self.cumulative_raw_text = ""
+
+
+@dataclass
+class _TextOnlyBatchGeneratorStats:
+    submitted_request_count: int = 0
+    completed_request_count: int = 0
+    step_count: int = 0
+    generated_token_count: int = 0
+    peak_active_batch_size: int = 0
+    queue_wait_ms_total: float = 0.0
+    insert_ms_total: float = 0.0
+    executor_step_ms_total: float = 0.0
+    next_ms_total: float = 0.0
+    emit_ms_total: float = 0.0
+    active_batch_size: int = 0
+    generated_response_count: int = 0
+    failed_request_count: int = 0
+    prepare_ms_total: float = 0.0
+    first_response_ms_total: float = 0.0
+    first_visible_ms_total: float = 0.0
+    first_visible_token_index_total: int = 0
+    first_empty_segment_count: int = 0
+
+    def snapshot(self) -> "_TextOnlyBatchGeneratorStats":
+        return replace(self)
+
+
+def _text_batch_generator_stats_snapshot(scheduler: Any) -> _TextOnlyBatchGeneratorStats:
+    stats_snapshot = getattr(scheduler, "stats_snapshot", None)
+    if not callable(stats_snapshot):
+        return _TextOnlyBatchGeneratorStats()
+    stats = stats_snapshot()
+    return stats if isinstance(stats, _TextOnlyBatchGeneratorStats) else _TextOnlyBatchGeneratorStats()
+
+
+def _text_batch_generator_probe_kwargs(stats: _TextOnlyBatchGeneratorStats) -> dict[str, float | int]:
+    return {
+        "text_batch_generator_submitted_request_count": stats.submitted_request_count,
+        "text_batch_generator_completed_request_count": stats.completed_request_count,
+        "text_batch_generator_step_count": stats.step_count,
+        "text_batch_generator_generated_token_count": stats.generated_token_count,
+        "text_batch_generator_peak_active_batch_size": stats.peak_active_batch_size,
+        "text_batch_generator_queue_wait_ms_total": stats.queue_wait_ms_total,
+        "text_batch_generator_insert_ms_total": stats.insert_ms_total,
+        "text_batch_generator_executor_step_ms_total": stats.executor_step_ms_total,
+        "text_batch_generator_next_ms_total": stats.next_ms_total,
+        "text_batch_generator_emit_ms_total": stats.emit_ms_total,
+        "text_batch_generator_active_batch_size": stats.active_batch_size,
+        "text_batch_generator_generated_response_count": stats.generated_response_count,
+        "text_batch_generator_failed_request_count": stats.failed_request_count,
+        "text_batch_generator_prepare_ms_total": stats.prepare_ms_total,
+        "text_batch_generator_first_response_ms_total": stats.first_response_ms_total,
+        "text_batch_generator_first_visible_ms_total": stats.first_visible_ms_total,
+        "text_batch_generator_first_visible_token_index_total": stats.first_visible_token_index_total,
+        "text_batch_generator_first_empty_segment_count": stats.first_empty_segment_count,
+    }
+
+
+class _TextOnlyBatchGeneratorScheduler:
+    def __init__(
+        self,
+        *,
+        model: Any,
+        processor: Any,
+        adapter: _TextOnlyVLMDecodeAdapter,
+        executor: MLXRuntimeExecutor | None = None,
+        max_batch_size: int = 8,
+        wait_ms: float = 2.0,
+    ) -> None:
+        self._model = model
+        self._processor = processor
+        self._adapter = adapter
+        self._executor = executor
+        self._max_batch_size = max(1, int(max_batch_size))
+        self._wait_seconds = max(0.0, float(wait_ms) / 1000.0)
+        self._condition = Condition()
+        self._pending: list[_TextOnlyBatchRequest] = []
+        self._active_by_uid: dict[int, _TextOnlyBatchRequest] = {}
+        self._stats = _TextOnlyBatchGeneratorStats()
+        self._closed = False
+        self._thread = Thread(
+            target=self._run,
+            name="melix-vlm-text-batch-generator",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def submit(self, request: _TextOnlyBatchRequest):
+        with self._condition:
+            if self._closed:
+                request.queue.put(RuntimeError("The VLM text batch generator is closed."))
+                request.queue.put(_TEXT_ONLY_BATCH_DONE)
+                return self._drain_request(request)
+            self._stats.submitted_request_count += 1
+            self._stats.prepare_ms_total += request.prepare_ms
+            self._pending.append(request)
+            self._condition.notify()
+        return self._drain_request(request)
+
+    def stats_snapshot(self) -> _TextOnlyBatchGeneratorStats:
+        with self._condition:
+            return self._stats.snapshot()
+
+    def _drain_request(self, request: _TextOnlyBatchRequest):
+        while True:
+            item = request.queue.get()
+            if item is _TEXT_ONLY_BATCH_DONE:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+
+    def close(self) -> None:
+        with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+
+    def _run(self) -> None:
+        try:
+            while True:
+                pending: list[_TextOnlyBatchRequest] = []
+                with self._condition:
+                    while not self._closed and not self._pending and not self._active_by_uid:
+                        self._condition.wait()
+                    if self._closed:
+                        self._cancel_locked()
+                    if self._closed and not self._pending and not self._active_by_uid:
+                        return
+                    if self._pending and self._wait_seconds:
+                        self._condition.wait(timeout=self._wait_seconds)
+                    pending = self._take_pending_locked()
+                try:
+                    insert_started_at = time.perf_counter()
+                    self._run_on_executor(lambda: self._insert_pending(pending))
+                    insert_elapsed_ms = (time.perf_counter() - insert_started_at) * 1000.0
+                    step_started_at = time.perf_counter()
+                    self._run_on_executor(self._step)
+                    step_elapsed_ms = (time.perf_counter() - step_started_at) * 1000.0
+                except BaseException as exc:
+                    self._fail_requests([request for request in pending if request.uid is None], exc)
+                    raise
+                with self._condition:
+                    self._stats.insert_ms_total += insert_elapsed_ms
+                    self._stats.executor_step_ms_total += step_elapsed_ms
+        except BaseException as exc:  # pragma: no cover - defensive batch worker cleanup
+            self._fail_all(exc)
+
+    def _take_pending_locked(self) -> list[_TextOnlyBatchRequest]:
+        available_slots = self._max_batch_size - len(self._active_by_uid)
+        if available_slots <= 0 or not self._pending:
+            return []
+        taken = self._pending[:available_slots]
+        del self._pending[:available_slots]
+        return taken
+
+    def _insert_pending(self, requests: list[_TextOnlyBatchRequest]) -> None:
+        if not requests:
+            return
+        batch_generator = self._batch_generator()
+        uids = batch_generator.insert(
+            [request.input_ids for request in requests],
+            max_tokens=[request.max_tokens for request in requests],
+        )
+        for uid, request in zip(uids, requests):
+            request.uid = int(uid)
+            self._active_by_uid[int(uid)] = request
+            self._stats.queue_wait_ms_total += max(
+                0.0,
+                (time.perf_counter() - request.submitted_at) * 1000.0,
+            )
+        self._stats.active_batch_size = len(self._active_by_uid)
+        self._stats.peak_active_batch_size = max(
+            self._stats.peak_active_batch_size,
+            len(self._active_by_uid),
+        )
+
+    def _step(self) -> None:
+        if not self._active_by_uid:
+            return
+        next_started_at = time.perf_counter()
+        _prompt_responses, generation_responses = self._batch_generator().next()
+        self._stats.next_ms_total += (time.perf_counter() - next_started_at) * 1000.0
+        self._stats.step_count += 1
+        self._stats.generated_response_count += len(generation_responses or ())
+        if not generation_responses:
+            return
+        for response in generation_responses:
+            request = self._active_by_uid.get(int(response.uid))
+            if request is None:
+                continue
+            if request.cancel_event.is_set():
+                self._finish_request(request)
+                continue
+            emit_started_at = time.perf_counter()
+            self._emit_response(request, response)
+            self._stats.emit_ms_total += (time.perf_counter() - emit_started_at) * 1000.0
+            if getattr(response, "finish_reason", None):
+                self._finish_request(request)
+
+    def _emit_response(self, request: _TextOnlyBatchRequest, response: Any) -> None:
+        token_id = int(getattr(response, "token"))
+        if token_id in request.stop_token_ids:
+            self._finish_request(request)
+            return
+        now = time.perf_counter()
+        if request.first_generated_response_at is None:
+            request.first_generated_response_at = now
+            self._stats.first_response_ms_total += max(0.0, (now - request.started_at) * 1000.0)
+        if request.first_token_at is None:
+            request.first_token_at = now
+        request.detokenizer.add_token(token_id)
+        request.completion_tokens += 1
+        self._stats.generated_token_count += 1
+        text = str(getattr(request.detokenizer, "last_segment", "") or "")
+        if not text:
+            if request.first_visible_text_at is None:
+                request.empty_text_token_count_before_first_visible += 1
+            return
+        request.cumulative_raw_text += text
+        now = time.perf_counter()
+        if request.first_visible_text_at is None:
+            request.first_visible_text_at = now
+            self._stats.first_visible_ms_total += max(0.0, (now - request.started_at) * 1000.0)
+            self._stats.first_visible_token_index_total += request.completion_tokens
+            self._stats.first_empty_segment_count += request.empty_text_token_count_before_first_visible
+        generation_elapsed = max(0.0, now - (request.first_token_at or now))
+        request.queue.put(
+            RuntimeTokenEvent(
+                text=text,
+                raw_text=request.cumulative_raw_text,
+                token_ids=(token_id,),
+                token_logprobs=_float_tuple(getattr(response, "logprobs", None)),
+                prompt_tokens=request.prompt_tokens,
+                completion_tokens=request.completion_tokens,
+                prompt_tps=float(getattr(response, "prompt_tps", 0.0) or 0.0),
+                generation_tps=(request.completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
+                peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
+                finish_reason=str(getattr(response, "finish_reason", "") or "") or None,
+            )
+        )
+
+    def _finish_request(self, request: _TextOnlyBatchRequest) -> None:
+        if request.uid is not None:
+            removed = self._active_by_uid.pop(request.uid, None)
+            if removed is not None:
+                self._stats.completed_request_count += 1
+            self._stats.active_batch_size = len(self._active_by_uid)
+            request.uid = None
+        try:
+            request.detokenizer.finalize()
+            text = str(getattr(request.detokenizer, "last_segment", "") or "")
+            if text:
+                request.cumulative_raw_text += text
+                request.queue.put(
+                    RuntimeTokenEvent(
+                        text=text,
+                        raw_text=request.cumulative_raw_text,
+                        prompt_tokens=request.prompt_tokens,
+                        completion_tokens=request.completion_tokens,
+                        finish_reason="stop",
+                    )
+                )
+        finally:
+            request.queue.put(_TEXT_ONLY_BATCH_DONE)
+
+    def _fail_all(self, exc: BaseException) -> None:
+        with self._condition:
+            requests = [*self._pending, *self._active_by_uid.values()]
+            self._pending.clear()
+            self._active_by_uid.clear()
+            self._stats.active_batch_size = 0
+            self._stats.failed_request_count += len(requests)
+        for request in requests:
+            request.queue.put(exc)
+            request.queue.put(_TEXT_ONLY_BATCH_DONE)
+
+    def _fail_requests(self, requests: list[_TextOnlyBatchRequest], exc: BaseException) -> None:
+        if not requests:
+            return
+        with self._condition:
+            self._stats.failed_request_count += len(requests)
+        for request in requests:
+            request.queue.put(exc)
+            request.queue.put(_TEXT_ONLY_BATCH_DONE)
+
+    def _cancel_locked(self) -> None:
+        requests = [*self._pending, *self._active_by_uid.values()]
+        self._pending.clear()
+        self._active_by_uid.clear()
+        self._stats.active_batch_size = 0
+        for request in requests:
+            request.queue.put(_TEXT_ONLY_BATCH_DONE)
+
+    def _batch_generator(self):
+        generator = getattr(self._adapter, "_melix_batch_generator", None)
+        if generator is None:
+            from mlx_lm.generate import BatchGenerator
+            from mlx_lm.sample_utils import make_sampler
+
+            generator = BatchGenerator(
+                model=self._adapter,
+                stop_tokens=self._stop_tokens(),
+                sampler=make_sampler(temp=0.0, top_p=1.0, top_k=0),
+                prefill_batch_size=1,
+                completion_batch_size=self._max_batch_size,
+                prefill_step_size=2048,
+            )
+            self._adapter._melix_batch_generator = generator
+        return generator
+
+    def _run_on_executor(self, callback: Callable[[], Any]) -> Any:
+        if self._executor is None:
+            return callback()
+        return self._executor.run(callback)
+
+    def _stop_tokens(self) -> list[list[int]] | None:
+        tokenizer = (
+            getattr(self._processor, "tokenizer", None)
+            if hasattr(self._processor, "tokenizer")
+            else self._processor
+        )
+        token_ids = _tokenizer_stop_token_ids(tokenizer)
+        if not token_ids:
+            return None
+        return [[token_id] for token_id in token_ids]
+
+
+def _tokenizer_stop_token_ids(tokenizer: Any) -> list[int]:
+    token_ids: list[int] = []
+    for attr_name in ("eos_token_id", "eos_token_ids", "all_special_ids"):
+        try:
+            value = getattr(tokenizer, attr_name, None)
+        except Exception:
+            continue
+        if value is None:
+            continue
+        if isinstance(value, list | tuple | set):
+            token_ids.extend(int(item) for item in value if str(item).strip())
+        elif str(value).strip():
+            token_ids.append(int(value))
+    return list(dict.fromkeys(token_ids))
+
+
 def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[bool, bool]:
     has_vision = False
     has_audio = False
     for name in weight_names:
-        if not has_vision and (name.startswith("vision_tower.") or name.startswith("embed_vision.")):
-            has_vision = True
-        elif not has_audio and (name.startswith("audio_tower.") or name.startswith("embed_audio.")):
-            has_audio = True
-        if has_vision and has_audio:
-            break
-    return has_vision, has_audio
+        first_character = name[0]
+        if first_character == "v":
+            if not has_vision and name.startswith("vision_tower."):
+                if has_audio:
+                    return _GEMMA4_PRESENCE_BOTH
+                has_vision = True
+        elif first_character == "a":
+            if not has_audio and name.startswith("audio_tower."):
+                if has_vision:
+                    return _GEMMA4_PRESENCE_BOTH
+                has_audio = True
+        elif first_character == "e":
+            if not has_vision and name.startswith("embed_vision."):
+                if has_audio:
+                    return _GEMMA4_PRESENCE_BOTH
+                has_vision = True
+            elif not has_audio and name.startswith("embed_audio."):
+                if has_vision:
+                    return _GEMMA4_PRESENCE_BOTH
+                has_audio = True
+    if has_vision:
+        return _GEMMA4_PRESENCE_VISION
+    if has_audio:
+        return _GEMMA4_PRESENCE_AUDIO
+    return _GEMMA4_PRESENCE_NONE
 
 
 def _mlx_peak_memory_gb(mx_module: Any) -> float:
@@ -95,6 +546,198 @@ def _mlx_peak_memory_gb(mx_module: Any) -> float:
     if callable(metal_get_peak_memory):
         return float(metal_get_peak_memory() / 1_000_000_000)
     return 0.0
+
+
+def _isolated_streaming_detokenizer(processor: Any) -> Any | None:
+    detokenizer = getattr(processor, "detokenizer", None)
+    if detokenizer is None:
+        return None
+    try:
+        cloned = copy(detokenizer)
+    except Exception:
+        return None
+    if cloned is detokenizer:
+        return None
+    reset = getattr(cloned, "reset", None)
+    add_token = getattr(cloned, "add_token", None)
+    finalize = getattr(cloned, "finalize", None)
+    if not callable(reset) or not callable(add_token) or not callable(finalize):
+        return None
+    reset()
+    return cloned
+
+
+def _supports_isolated_streaming_detokenizer(processor: Any) -> bool:
+    return _isolated_streaming_detokenizer(processor) is not None
+
+
+def _matching_prefix_len(source: str, marker: str) -> int:
+    limit = min(len(source), len(marker) - 1)
+    for length in range(limit, 0, -1):
+        if marker.startswith(source[-length:]):
+            return length
+    return 0
+
+
+def _tokenizer_streaming_detokenizer(tokenizer: Any) -> Any | None:
+    detokenizer = getattr(tokenizer, "detokenizer", None)
+    if detokenizer is not None:
+        try:
+            cloned = copy(detokenizer)
+        except Exception:
+            cloned = detokenizer
+        if cloned is not None and cloned is not detokenizer:
+            reset = getattr(cloned, "reset", None)
+            add_token = getattr(cloned, "add_token", None)
+            finalize = getattr(cloned, "finalize", None)
+            if callable(reset) and callable(add_token) and callable(finalize):
+                reset()
+                return cloned
+    try:
+        from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer
+    except Exception:
+        return None
+    try:
+        detokenizer = NaiveStreamingDetokenizer(tokenizer)
+    except Exception:
+        return None
+    reset = getattr(detokenizer, "reset", None)
+    if callable(reset):
+        reset()
+    return detokenizer
+
+
+class _Gemma4TextOnlyStreamingParser:
+    def __init__(self, tokenizer: Any, detokenizer: Any | None) -> None:
+        self._tokenizer = tokenizer
+        self._detokenizer = detokenizer
+        self._buffer = ""
+        self._in_thought = False
+        self.text = ""
+        self.last_segment = ""
+
+    def reset(self) -> None:
+        self._buffer = ""
+        self._in_thought = False
+        self.text = ""
+        self.last_segment = ""
+        reset = getattr(self._detokenizer, "reset", None)
+        if callable(reset):
+            reset()
+
+    def add_token(self, token: int) -> None:
+        if self._detokenizer is not None:
+            self._detokenizer.add_token(token)
+            decoded = str(getattr(self._detokenizer, "last_segment", "") or "")
+        else:
+            decoded = str(self._tokenizer.decode([token]) or "")
+        self.last_segment = self._consume_text(decoded)
+        self.text += self.last_segment
+
+    def finalize(self) -> None:
+        decoded = ""
+        finalize = getattr(self._detokenizer, "finalize", None)
+        if callable(finalize):
+            finalize()
+            decoded = str(getattr(self._detokenizer, "last_segment", "") or "")
+        self.last_segment = self._consume_text(decoded, final=True)
+        if self._buffer:
+            self.last_segment += self._buffer
+            self._buffer = ""
+        if self._in_thought:
+            self.last_segment += "</think>\n"
+            self._in_thought = False
+        self.text += self.last_segment
+
+    @staticmethod
+    def _find_next_marker(source: str, markers: tuple[str, ...]) -> tuple[int | None, str | None]:
+        next_index: int | None = None
+        next_marker: str | None = None
+        for marker in markers:
+            index = source.find(marker)
+            if index >= 0 and (next_index is None or index < next_index):
+                next_index = index
+                next_marker = marker
+        return next_index, next_marker
+
+    def _consume_text(self, decoded: str, *, final: bool = False) -> str:
+        source = self._buffer + decoded
+        self._buffer = ""
+        if not source:
+            return ""
+
+        markers = (
+            _GEMMA4_OPEN_MARKER,
+            _GEMMA4_OPEN_MARKER_BARE,
+            _GEMMA4_CLOSE_MARKER,
+            _GEMMA4_TURN_END_MARKER,
+            _GEMMA4_TOOL_RESPONSE_OPEN,
+            _GEMMA4_TOOL_RESPONSE_CLOSE,
+        )
+        parts: list[str] = []
+        position = 0
+        while position < len(source):
+            marker_index: int | None = None
+            marker_value: str | None = None
+            for marker in markers:
+                index = source.find(marker, position)
+                if index >= 0 and (marker_index is None or index < marker_index):
+                    marker_index = index
+                    marker_value = marker
+
+            if marker_index is None or marker_value is None:
+                remainder = source[position:]
+                if not final:
+                    keep = max(_matching_prefix_len(remainder, marker) for marker in markers)
+                    if keep:
+                        parts.append(remainder[:-keep])
+                        self._buffer = remainder[-keep:]
+                    else:
+                        parts.append(remainder)
+                else:
+                    parts.append(remainder)
+                break
+
+            if not final and marker_value == _GEMMA4_OPEN_MARKER_BARE:
+                suffix = source[marker_index:]
+                if len(suffix) < len(_GEMMA4_OPEN_MARKER) and _GEMMA4_OPEN_MARKER.startswith(suffix):
+                    parts.append(source[position:marker_index])
+                    self._buffer = suffix
+                    return "".join(parts)
+
+            parts.append(source[position:marker_index])
+            advance = len(marker_value)
+            if marker_value in (_GEMMA4_OPEN_MARKER, _GEMMA4_OPEN_MARKER_BARE):
+                if not self._in_thought:
+                    parts.append("<think>\n")
+                    self._in_thought = True
+                after = marker_index + advance
+                if marker_value == _GEMMA4_OPEN_MARKER_BARE:
+                    if source.startswith("thought\n", after):
+                        advance += len("thought\n")
+                    elif source.startswith("thought", after):
+                        advance += len("thought")
+            elif marker_value == _GEMMA4_CLOSE_MARKER and self._in_thought:
+                parts.append("</think>\n")
+                self._in_thought = False
+
+            position = marker_index + advance
+
+        return "".join(parts)
+
+
+def _text_only_streaming_decoder(processor: Any, loaded_model: Any) -> Any | None:
+    tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+    metadata = dict(loaded_model.get("metadata", {})) if isinstance(loaded_model, dict) else {}
+    model_type = str(
+        getattr(getattr(loaded_model.get("model") if isinstance(loaded_model, dict) else None, "config", None), "model_type", "")
+        or ""
+    ).lower()
+    if metadata.get("vision_family_id", "").strip() == "gemma4-v1" or model_type.startswith("gemma4"):
+        detokenizer = _tokenizer_streaming_detokenizer(tokenizer)
+        if detokenizer is not None or callable(getattr(tokenizer, "decode", None)):
+            return _Gemma4TextOnlyStreamingParser(tokenizer, detokenizer)
+    return _isolated_streaming_detokenizer(processor)
 
 
 def _gemma4_loaded_execution_mode(model: Any, processor: Any) -> str:
@@ -240,20 +883,22 @@ class AutoMLXVLMBackend:
         self._drafter_cache[cache_key] = drafter
         return drafter
 
-    def load_model(self, model_spec):
+    def load_model(self, model_spec, *, trust_remote_code: bool = False):
         if not self._available:
             raise RuntimeUnavailableError("mlx-vlm is not installed") from self._error
         self._ensure_runtime()
+        if trust_remote_code and not _callable_accepts_kwarg(self.load_fn, "trust_remote_code"):
+            raise RuntimeError("mlx-vlm loader cannot honor trust_remote_code.")
         metadata = dict(model_spec.ext)
         metadata["mlx_version"] = _installed_package_version("mlx")
         metadata["mlx_lm_version"] = _installed_package_version("mlx-lm")
         metadata["mlx_vlm_version"] = _installed_package_version("mlx-vlm")
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
         try:
-            model, processor = self.load_fn(
-                model_spec.model_path,
-                revision=model_spec.revision or "main",
-            )
+            load_kwargs: dict[str, Any] = {"revision": model_spec.revision or "main"}
+            if trust_remote_code:
+                load_kwargs["trust_remote_code"] = True
+            model, processor = self.load_fn(model_spec.model_path, **load_kwargs)
             if self._should_attempt_gemma4_text_backed_fallback(model_spec):
                 execution_mode = _gemma4_loaded_execution_mode(model, processor)
         except Exception as exc:
@@ -264,7 +909,20 @@ class AutoMLXVLMBackend:
                 original_error=exc,
             )
         metadata["melix.vlm.execution_mode"] = execution_mode
+        metadata["melix.vlm.text_only_step_cooperative"] = (
+            "true"
+            if self.generate_step_fn is not None and _supports_isolated_streaming_detokenizer(processor)
+            else "false"
+        )
+        metadata[_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY] = "false"
         family_config = resolve_vision_family_config(dict(model_spec.ext))
+        capability_metadata = family_config.capability_metadata()
+        capability_metadata["melix.vlm.text_only_step_cooperative"] = metadata[
+            "melix.vlm.text_only_step_cooperative"
+        ]
+        capability_metadata[_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY] = metadata[
+            _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY
+        ]
         return {
             "model_id": model_spec.model_id,
             "model_kind": model_spec.model_kind,
@@ -278,7 +936,7 @@ class AutoMLXVLMBackend:
             "processor": processor,
             "metadata": metadata,
             "_vision_family_config": family_config,
-            **family_config.capability_metadata(),
+            **capability_metadata,
         }
 
     @staticmethod
@@ -452,13 +1110,35 @@ class MLXVLMRuntime:
     def runtime_name(self) -> str:
         return getattr(self._backend, "runtime_name", "mlx-vlm-unavailable")
 
-    def load_model(self, model_spec):
-        if self._executor is None:
+    @property
+    def supports_trust_policy(self) -> bool:
+        explicit_support = getattr(self._backend, "supports_trust_policy", None)
+        if explicit_support is not None:
+            return bool(explicit_support)
+        runtime_name = self.runtime_name.strip().lower().replace("-", "_")
+        return runtime_name in {"mlx_vlm", "mlx_vlm_unavailable"}
+
+    def load_model(self, model_spec, *, trust_remote_code: bool = False):
+        def load_backend():
+            if _callable_accepts_kwarg(self._backend.load_model, "trust_remote_code"):
+                return self._backend.load_model(model_spec, trust_remote_code=trust_remote_code)
+            if trust_remote_code:
+                raise RuntimeError("VLM runtime backend cannot honor trust_remote_code.")
             return self._backend.load_model(model_spec)
-        return self._executor.run(lambda: self._backend.load_model(model_spec))
+
+        if self._executor is None:
+            return load_backend()
+        return self._executor.run(load_backend)
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))
+
+    def close_loaded_model(self, loaded_model) -> None:
+        if not isinstance(loaded_model, dict):
+            return
+        scheduler = loaded_model.pop("_melix_text_only_batch_generator_scheduler", None)
+        if isinstance(scheduler, _TextOnlyBatchGeneratorScheduler):
+            scheduler.close()
 
     def render_prompt(
         self,
@@ -495,7 +1175,11 @@ class MLXVLMRuntime:
         metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
         family_config = self._family_config(loaded_model)
-        has_non_text_media = self._contains_non_text_media(messages)
+        prompt_text, has_non_text_media = self._prompt_text_and_media_presence(messages)
+        include_chat_messages = (
+            bool(execution_ext)
+            and self._truthy_ext(execution_ext, _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY)
+        )
         if execution_mode == "text_backed":
             if has_non_text_media:
                 prepared = family_config.shape_request(prepare_vision_request(messages))
@@ -515,6 +1199,8 @@ class MLXVLMRuntime:
                     messages,
                     family_config=family_config,
                     started_at=started_at,
+                    prompt_text=prompt_text,
+                    include_chat_messages=include_chat_messages,
                 )
         else:
             if has_non_text_media:
@@ -524,6 +1210,8 @@ class MLXVLMRuntime:
                     messages,
                     family_config=family_config,
                     started_at=started_at,
+                    prompt_text=prompt_text,
+                    include_chat_messages=include_chat_messages,
                 )
         self._record_fast_path_probe(loaded_model, prepared)
         return prepared
@@ -544,7 +1232,6 @@ class MLXVLMRuntime:
         execution_ext: dict[str, str] | None = None,
         acceleration_policy: common_pb2.AccelerationPolicy | None = None,
     ):
-        _ = execution_ext
         metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
         speculative_fallback_reason = ""
@@ -579,6 +1266,61 @@ class MLXVLMRuntime:
             return
 
         prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        text_only_batch_generator_unsupported_reason = (
+            self._text_only_batch_generator_unsupported_reason(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                sampling=sampling,
+                execution_ext=execution_ext,
+            )
+        )
+        if self._can_use_text_only_batch_generator(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            sampling=sampling,
+            execution_ext=execution_ext,
+        ):
+            yield from self._generate_text_only_batch_generator_events(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                sampling=sampling,
+                cancel_event=cancel_event,
+                prompt_tokens=prompt_tokens,
+            )
+            return
+        if self._can_use_text_only_step_fast_path(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+        ):
+
+            def text_only_backend_events():
+                # Must run on the executor-owned thread so the MLX runtime is
+                # initialized inside the same stream ownership context used for
+                # the subsequent token generation work.
+                self._backend._ensure_runtime()
+                if cancel_event.is_set():
+                    return
+                yield from self._generate_text_only_step_events(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    sampling=sampling,
+                    cancel_event=cancel_event,
+                    prompt_tokens=prompt_tokens,
+                    speculative_fallback_reason=speculative_fallback_reason,
+                    text_only_batch_generator_unsupported_reason=(
+                        text_only_batch_generator_unsupported_reason
+                    ),
+                )
+
+            event_iterable = (
+                text_only_backend_events()
+                if self._executor is None
+                else self._executor.iterate_cooperatively(text_only_backend_events)
+            )
+            for event in event_iterable:
+                yield event
+            return
+
         temp_media_session = self._temp_media_session_factory(
             temp_root=self._temp_root,
             prefix="melix-vlm-",
@@ -627,6 +1369,7 @@ class MLXVLMRuntime:
                 started_at = time.perf_counter()
                 first_token_at: float | None = None
                 completion_tokens = 0
+                cumulative_raw_text = ""
                 for response in self._backend.stream_generate_fn(
                     loaded_model["model"],
                     loaded_model["processor"],
@@ -638,6 +1381,7 @@ class MLXVLMRuntime:
                     text = str(getattr(response, "text", "") or "")
                     if not text:
                         continue
+                    cumulative_raw_text += text
                     now = time.perf_counter()
                     if first_token_at is None:
                         first_token_at = now
@@ -660,6 +1404,29 @@ class MLXVLMRuntime:
                     )
                     yield RuntimeTokenEvent(
                         text=text,
+                        raw_text=cumulative_raw_text,
+                        token_ids=_int_tuple(
+                            _first_present(
+                                getattr(response, "token_ids", None),
+                                getattr(response, "tokens", None),
+                                getattr(response, "token", None),
+                                getattr(response, "token_id", None),
+                            )
+                        ),
+                        token_logprobs=_float_tuple(
+                            _first_present(
+                                getattr(response, "token_logprobs", None),
+                                getattr(response, "logprobs", None),
+                                getattr(response, "logprob", None),
+                            )
+                        ),
+                        token_bytes=_bytes_value(
+                            _first_present(
+                                getattr(response, "token_bytes", None),
+                                getattr(response, "byte_fallback_bytes", None),
+                            )
+                        ),
+                        parser_observation=str(getattr(response, "parser_observation", "") or ""),
                         prompt_tokens=int(getattr(response, "prompt_tokens", 0) or prompt_tokens),
                         completion_tokens=completion_tokens,
                         prompt_tps=float(getattr(response, "prompt_tps", 0.0) or 0.0),
@@ -816,8 +1583,10 @@ class MLXVLMRuntime:
         mask = inputs.get("attention_mask")
         prompt_tokens = int(getattr(input_ids, "shape", [0, prompt_tokens])[-1] or prompt_tokens)
 
-        detokenizer = loaded_model["processor"].detokenizer
-        detokenizer.reset()
+        detokenizer = _isolated_streaming_detokenizer(loaded_model["processor"])
+        if detokenizer is None:
+            detokenizer = loaded_model["processor"].detokenizer
+            detokenizer.reset()
         first_token_at: float | None = None
         completion_tokens = 0
         for token, _logprobs in self._backend.generate_step_fn(
@@ -871,6 +1640,335 @@ class MLXVLMRuntime:
             speculative_draft_model_configured=True,
         )
 
+    def _generate_text_only_step_events(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+        cancel_event: Event,
+        prompt_tokens: int,
+        speculative_fallback_reason: str,
+        text_only_batch_generator_unsupported_reason: str = "",
+    ):
+        import mlx.core as mx
+        from mlx_vlm.utils import prepare_inputs
+
+        started_at = time.perf_counter()
+        formatted_prompt = self._backend.apply_chat_template_fn(
+            loaded_model["processor"],
+            loaded_model["model"].config,
+            prepared_request.prompt_text,
+            num_images=0,
+        )
+        add_special_tokens = (
+            getattr(loaded_model["processor"], "chat_template", None) is None
+            if getattr(loaded_model["model"].config, "model_type", "") in ["gemma3", "gemma3n", "gemma4"]
+            else True
+        )
+        inputs = prepare_inputs(
+            loaded_model["processor"],
+            prompts=[formatted_prompt],
+            add_special_tokens=add_special_tokens,
+            return_tensors="mlx",
+        )
+        input_ids = inputs["input_ids"]
+        mask = inputs.get("attention_mask")
+        prompt_tokens = int(getattr(input_ids, "shape", [0, prompt_tokens])[-1] or prompt_tokens)
+
+        detokenizer = _isolated_streaming_detokenizer(loaded_model["processor"])
+        if detokenizer is None:
+            raise RuntimeError("The VLM processor does not expose an isolated streaming detokenizer.")
+        tokenizer = (
+            loaded_model["processor"].tokenizer
+            if hasattr(loaded_model["processor"], "tokenizer")
+            else loaded_model["processor"]
+        )
+        stopping_criteria = getattr(tokenizer, "stopping_criteria", None)
+        first_token_at: float | None = None
+        completion_tokens = 0
+        cumulative_raw_text = ""
+        peak_memory_gb: float | None = None
+
+        def cached_peak_memory_gb() -> float:
+            nonlocal peak_memory_gb
+            if peak_memory_gb is None:
+                peak_memory_gb = _mlx_peak_memory_gb(mx)
+            return peak_memory_gb
+
+        for token, logprobs in self._backend.generate_step_fn(
+            input_ids,
+            loaded_model["model"],
+            None,
+            mask,
+            max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
+            temperature=float(getattr(sampling, "temperature", 0.0)),
+            top_p=float(getattr(sampling, "top_p", 1.0)),
+            top_k=int(getattr(sampling, "top_k", 0)),
+            prefill_step_size=None,
+        ):
+            if cancel_event.is_set():
+                return
+            if first_token_at is None:
+                first_token_at = time.perf_counter()
+                self._last_probe = replace(
+                    self._last_probe,
+                    preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+                    preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+                    preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+                    first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
+                    video_effective_frame_count=prepared_request.effective_video_frame_count,
+                    video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+                    video_window_ms=prepared_request.effective_video_window_ms,
+                    cache_identity="",
+                    cache_scope_id="",
+                    cache_hit=False,
+                    multimodal_decode_mode="text_only_step",
+                    multimodal_fallback_reason=text_only_batch_generator_unsupported_reason or "not_reported",
+                    multimodal_decode_sync_mode="executor_step",
+                )
+
+            token_values = token if isinstance(token, list) else [token]
+            for token_value in token_values:
+                try:
+                    token_id = int(token_value)
+                except (TypeError, ValueError):
+                    continue
+                if callable(stopping_criteria) and stopping_criteria(token_id):
+                    return
+                detokenizer.add_token(token_id)
+                completion_tokens += 1
+                text = str(getattr(detokenizer, "last_segment", "") or "")
+                if not text:
+                    continue
+                cumulative_raw_text += text
+                now = time.perf_counter()
+                generation_elapsed = max(0.0, now - (first_token_at or now))
+                yield RuntimeTokenEvent(
+                    text=text,
+                    raw_text=cumulative_raw_text,
+                    token_ids=(token_id,),
+                    token_logprobs=_float_tuple(logprobs),
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    prompt_tps=0.0,
+                    generation_tps=(completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
+                    peak_memory=cached_peak_memory_gb(),
+                    finish_reason="stop",
+                    speculative_fallback_count=1 if speculative_fallback_reason else None,
+                    speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
+                    speculative_draft_model_configured=False if speculative_fallback_reason else None,
+                )
+
+        detokenizer.finalize()
+        text = str(getattr(detokenizer, "last_segment", "") or "")
+        if not text:
+            return
+        cumulative_raw_text += text
+        finished_at = time.perf_counter()
+        generation_elapsed = max(0.0, finished_at - (first_token_at or finished_at))
+        yield RuntimeTokenEvent(
+            text=text,
+            raw_text=cumulative_raw_text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            prompt_tps=0.0,
+            generation_tps=(completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
+            peak_memory=cached_peak_memory_gb(),
+            finish_reason="stop",
+            speculative_fallback_count=1 if speculative_fallback_reason else None,
+            speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
+            speculative_draft_model_configured=False if speculative_fallback_reason else None,
+        )
+
+    def _can_use_text_only_step_fast_path(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+    ) -> bool:
+        return (
+            self._backend.generate_step_fn is not None
+            and not prepared_request.images
+            and not prepared_request.videos
+            and _supports_isolated_streaming_detokenizer(loaded_model["processor"])
+        )
+
+    def _can_use_text_only_batch_generator(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+        execution_ext: dict[str, str] | None,
+    ) -> bool:
+        return not self._text_only_batch_generator_unsupported_reason(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            sampling=sampling,
+            execution_ext=execution_ext,
+        )
+
+    @staticmethod
+    def _text_only_template_messages(prepared_request: PreparedVisionRequest) -> list[dict[str, object]]:
+        if prepared_request.chat_messages:
+            return [dict(message) for message in prepared_request.chat_messages]
+        return [{"role": "user", "content": prepared_request.prompt_text}]
+
+    @staticmethod
+    def _text_only_tokenizer_prompt(processor: Any, prepared_request: PreparedVisionRequest) -> str | None:
+        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+        apply_chat_template = getattr(tokenizer, "apply_chat_template", None)
+        if not callable(apply_chat_template):
+            return None
+        messages = MLXVLMRuntime._text_only_template_messages(prepared_request)
+        try:
+            prompt = apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        except TypeError:
+            return None
+        except ValueError:
+            return None
+        return prompt if isinstance(prompt, str) else None
+
+    def _text_only_batch_generator_unsupported_reason(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+        execution_ext: dict[str, str] | None,
+    ) -> str:
+        if not self._truthy_ext(execution_ext, _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY):
+            return "text_only_batch_generator_not_enabled"
+        if prepared_request.images or prepared_request.videos:
+            return "media_inputs_present"
+        if _text_only_streaming_decoder(loaded_model["processor"], loaded_model) is None:
+            return "isolated_detokenizer_unavailable"
+        if not self._sampling_is_greedy(sampling):
+            return "non_greedy_sampling"
+        return ""
+
+    @staticmethod
+    def _truthy_ext(execution_ext: dict[str, str] | None, key: str) -> bool:
+        value = str((execution_ext or {}).get(key, "") or "").strip().lower()
+        return value in {"1", "true", "yes", "on", "enabled"}
+
+    def _generate_text_only_batch_generator_events(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+        cancel_event: Event,
+        prompt_tokens: int,
+    ):
+        from mlx_vlm.utils import prepare_inputs
+
+        started_at = time.perf_counter()
+        formatted_prompt = self._text_only_tokenizer_prompt(
+            loaded_model["processor"],
+            prepared_request,
+        )
+        if formatted_prompt is None:
+            formatted_prompt = self._backend.apply_chat_template_fn(
+                loaded_model["processor"],
+                loaded_model["model"].config,
+                prepared_request.prompt_text,
+                num_images=0,
+            )
+        add_special_tokens = (
+            getattr(loaded_model["processor"], "chat_template", None) is None
+            if getattr(loaded_model["model"].config, "model_type", "") in ["gemma3", "gemma3n", "gemma4"]
+            else True
+        )
+        inputs = self._run_on_executor(
+            lambda: prepare_inputs(
+                loaded_model["processor"],
+                prompts=[formatted_prompt],
+                add_special_tokens=add_special_tokens,
+                return_tensors="mlx",
+            )
+        )
+        prepare_ms = max(0.0, (time.perf_counter() - started_at) * 1000.0)
+        input_ids = inputs["input_ids"][0].tolist()
+        prompt_tokens = len(input_ids) or prompt_tokens
+        detokenizer = _text_only_streaming_decoder(loaded_model["processor"], loaded_model)
+        if detokenizer is None:
+            raise RuntimeError("The VLM processor does not expose an isolated streaming detokenizer.")
+        tokenizer = (
+            loaded_model["processor"].tokenizer
+            if hasattr(loaded_model["processor"], "tokenizer")
+            else loaded_model["processor"]
+        )
+        scheduler = self._text_only_batch_generator_scheduler(loaded_model)
+        request = _TextOnlyBatchRequest(
+            loaded_model=loaded_model,
+            input_ids=input_ids,
+            max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
+            detokenizer=detokenizer,
+            stop_token_ids=set(_tokenizer_stop_token_ids(tokenizer)),
+            cancel_event=cancel_event,
+            prompt_tokens=prompt_tokens,
+            started_at=started_at,
+            prepare_ms=prepare_ms,
+        )
+        first_event = True
+        for event in scheduler.submit(request):
+            if first_event:
+                first_event = False
+                scheduler_stats = _text_batch_generator_stats_snapshot(scheduler)
+                self._last_probe = replace(
+                    self._last_probe,
+                    preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+                    preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+                    preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+                    first_token_latency_ms=max(0.0, (time.perf_counter() - started_at) * 1000.0),
+                    video_effective_frame_count=prepared_request.effective_video_frame_count,
+                    video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+                    video_window_ms=prepared_request.effective_video_window_ms,
+                    cache_identity="",
+                    cache_scope_id="",
+                    cache_hit=False,
+                    multimodal_decode_mode="text_only_batch_generator",
+                    multimodal_fallback_reason="not_reported",
+                    multimodal_decode_sync_mode="executor_batch_generator",
+                    **_text_batch_generator_probe_kwargs(scheduler_stats),
+                )
+            yield event
+        if not first_event:
+            self._last_probe = replace(
+                self._last_probe,
+                **_text_batch_generator_probe_kwargs(
+                    _text_batch_generator_stats_snapshot(scheduler)
+                ),
+            )
+
+    def _text_only_batch_generator_scheduler(self, loaded_model) -> _TextOnlyBatchGeneratorScheduler:
+        scheduler_key = "_melix_text_only_batch_generator_scheduler"
+        scheduler = loaded_model.get(scheduler_key)
+        if isinstance(scheduler, _TextOnlyBatchGeneratorScheduler):
+            return scheduler
+        adapter = _TextOnlyVLMDecodeAdapter(loaded_model["model"])
+        scheduler = _TextOnlyBatchGeneratorScheduler(
+            model=loaded_model["model"],
+            processor=loaded_model["processor"],
+            adapter=adapter,
+            executor=self._executor,
+            max_batch_size=8,
+            wait_ms=2.0,
+        )
+        loaded_model[scheduler_key] = scheduler
+        return scheduler
+
+    def _run_on_executor(self, callback: Callable[[], Any]) -> Any:
+        if self._executor is None:
+            return callback()
+        return self._executor.run(callback)
+
     @staticmethod
     def _mtp_speculative_requested(acceleration_policy: common_pb2.AccelerationPolicy | None) -> bool:
         if acceleration_policy is None:
@@ -923,7 +2021,7 @@ class MLXVLMRuntime:
         temperature = float(getattr(sampling, "temperature", 0.0) or 0.0)
         top_p = cls._effective_top_p(sampling)
         top_k = int(getattr(sampling, "top_k", 0) or 0)
-        return abs(temperature) < 1e-9 and abs(top_p - 1.0) < 1e-9 and top_k == 0
+        return abs(temperature) < 1e-9 and abs(top_p - 1.0) < 1e-9 and top_k in {0, 1}
 
     @staticmethod
     def _effective_top_p(sampling) -> float:
@@ -1009,11 +2107,14 @@ class MLXVLMRuntime:
         *,
         signature: tuple[str, ...] | None = None,
     ) -> None:
-        fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
-        self._last_fast_path_signature = signature or fast_path_probe_signature(
+        signature = signature or fast_path_probe_signature(
             loaded_model,
             prepared_request,
         )
+        if self._last_fast_path_signature == signature and not prepared_request.images and not prepared_request.videos:
+            return
+        fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
+        self._last_fast_path_signature = signature
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,
@@ -1081,24 +2182,25 @@ class MLXVLMRuntime:
         return family_config
 
     @staticmethod
-    def _prompt_text_from_messages(messages) -> str:
+    def _prompt_text_and_media_presence(messages) -> tuple[str, bool]:
         prompt_segments: list[str] = []
+        has_non_text_media = False
         for message in messages:
             for part in message.parts:
                 text = str(getattr(part, "text", "") or "").strip()
                 if text:
                     prompt_segments.append(text)
-        return "\n".join(prompt_segments).strip()
+                if not has_non_text_media:
+                    if getattr(part, "image_bytes", b"") or getattr(part, "image_uri", ""):
+                        has_non_text_media = True
+                    elif getattr(part, "video_bytes", b"") or getattr(part, "video_uri", ""):
+                        has_non_text_media = True
+        return "\n".join(prompt_segments).strip(), has_non_text_media
 
     @staticmethod
-    def _contains_non_text_media(messages) -> bool:
-        for message in messages:
-            for part in message.parts:
-                if getattr(part, "image_bytes", b"") or getattr(part, "image_uri", ""):
-                    return True
-                if getattr(part, "video_bytes", b"") or getattr(part, "video_uri", ""):
-                    return True
-        return False
+    def _prompt_text_from_messages(messages) -> str:
+        prompt_text, _ = MLXVLMRuntime._prompt_text_and_media_presence(messages)
+        return prompt_text
 
     @staticmethod
     def _replace_prompt_text(
@@ -1121,8 +2223,16 @@ class MLXVLMRuntime:
         *,
         family_config,
         started_at: float,
+        prompt_text: str | None = None,
+        include_chat_messages: bool = False,
     ) -> PreparedVisionRequest:
-        prompt_text = MLXVLMRuntime._prompt_text_from_messages(messages)
+        if prompt_text is None:
+            prompt_text = MLXVLMRuntime._prompt_text_from_messages(messages)
+        chat_messages = (
+            MLXVLMRuntime._chat_messages_for_text_only_template(messages)
+            if include_chat_messages
+            else ()
+        )
         prepared = PreparedVisionRequest(
             prompt_text=prompt_text,
             images=[],
@@ -1131,6 +2241,7 @@ class MLXVLMRuntime:
             preprocess_latency_ms=max(0.0, (time.perf_counter() - started_at) * 1000.0),
             preprocess_input_bytes=len(prompt_text.encode("utf-8")),
             preprocess_peak_memory_bytes=0,
+            chat_messages=chat_messages,
         )
         prepared = family_config.shape_request(prepared)
         prompt_hash_hex = hashlib.sha256(prepared.prompt_text.encode("utf-8")).hexdigest()
@@ -1138,6 +2249,20 @@ class MLXVLMRuntime:
             prepared,
             prompt_hash_hex=prompt_hash_hex,
             multimodal_hash_hex=prompt_hash_hex,
+        )
+
+    @staticmethod
+    def _chat_messages_for_text_only_template(messages) -> tuple[dict[str, object], ...]:
+        return tuple(
+            {
+                "role": str(getattr(message, "role", "user") or "user"),
+                "content": " ".join(
+                    str(getattr(part, "text", "") or "").strip()
+                    for part in getattr(message, "parts", ())
+                    if str(getattr(part, "text", "") or "").strip()
+                ),
+            }
+            for message in messages
         )
 
     @staticmethod

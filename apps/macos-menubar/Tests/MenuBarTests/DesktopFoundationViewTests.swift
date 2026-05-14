@@ -385,7 +385,7 @@ struct DesktopFoundationViewTests {
         listener.requestedHost = "0.0.0.0"
         listener.requestedPort = 18080
         listener.effectiveHost = "127.0.0.1"
-        listener.effectivePort = 11_434
+        listener.effectivePort = UInt32(MelixGatewayDefaults.port)
         listener.servedModelID = desktopTestReadyModelID
         listener.rateLimitPerMinute = 240
         listener.timeoutSeconds = 90
@@ -2264,7 +2264,7 @@ struct DesktopFoundationViewTests {
             title: "Primary Session",
             modelID: "melix-dev-text",
             effectiveHost: "127.0.0.1",
-            effectivePort: 11_434,
+            effectivePort: 12_436,
             authMode: .apiKeys,
             authTokenHint: "desktop-agent",
             sharedAccessState: .enabled,

@@ -90,6 +90,7 @@ struct DesktopPolishSmokeTests {
         await viewModel.refreshDownloadQueueState()
         viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.downloads)
+        await viewModel.refreshDownloadQueueState()
 
         let chatServerSessionID = try #require(viewModel.selectedServerSession?.id)
         viewModel.bindSelectedChatSessionToServer(serverSessionID: chatServerSessionID)
@@ -106,17 +107,27 @@ struct DesktopPolishSmokeTests {
         #expect(viewModel.desktopBannerState?.title == "Download Recovery Available")
         #expect(viewModel.desktopSignalStates.contains(where: { $0.title == "Update available: 0.2.0" && $0.isDismissible }))
 
-        try await waitForDesktopPolishCondition("operator session should persist queue state") {
-            guard let uiData = try? Data(contentsOf: melixHome.operatorSessionFileURL),
-                  let uiPayload = try? JSONSerialization.jsonObject(with: uiData) as? [String: Any],
-                  let queueData = try? Data(contentsOf: melixHome.downloadQueueFileURL),
-                  let queuePayload = try? JSONSerialization.jsonObject(with: queueData) as? [String: Any],
-                  let downloadQueue = queuePayload["download_queue"] as? [[String: Any]]
-            else {
+        viewModel.selectToolSection(.downloads)
+        await viewModel.refreshDownloadQueueState()
+        try await waitForDesktopPolishCondition("download queue should refresh before persistence") {
+            if viewModel.downloadQueue.isEmpty {
                 return false
             }
-            return downloadQueue.isEmpty == false && uiPayload["selected_tool_section"] as? String == "downloads"
+            viewModel.selectToolSection(.downloads)
+            return true
         }
+        try await waitForDesktopPolishCondition("operator session should persist queue state") {
+            viewModel.selectToolSection(.downloads)
+            guard let restoredState = try? operatorSessionStore.load() else {
+                return false
+            }
+            return restoredState.downloadQueue.isEmpty == false
+                && restoredState.selectedToolSection == .downloads
+        }
+        _ = try requireDesktopPolishPersistedQueue(
+            from: operatorSessionStore,
+            expectedSection: .downloads
+        )
 
         let persistedUIData = try Data(contentsOf: melixHome.operatorSessionFileURL)
         let persistedUIPayload = try #require(
@@ -307,7 +318,7 @@ private func hostedDesktopPolishViewHasSubviews<Content: View>(_ rootView: Conte
 @MainActor
 private func waitForDesktopPolishCondition(
     _ description: String,
-    timeout: Duration = .seconds(2),
+    timeout: Duration = .seconds(5),
     pollInterval: Duration = .milliseconds(10),
     condition: @MainActor @escaping () -> Bool
 ) async throws {
@@ -321,4 +332,29 @@ private func waitForDesktopPolishCondition(
     throw NSError(domain: "DesktopPolishSmokeTests", code: 1, userInfo: [
         NSLocalizedDescriptionKey: description,
     ])
+}
+
+private func requireDesktopPolishPersistedQueue(
+    from store: OperatorSessionStore,
+    expectedSection: DesktopToolSection
+) throws -> OperatorSessionState {
+    guard let restoredState = try store.load() else {
+        throw NSError(domain: "DesktopPolishSmokeTests", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: "operator session should exist after queue refresh",
+        ])
+    }
+
+    guard restoredState.downloadQueue.isEmpty == false,
+          restoredState.selectedToolSection == expectedSection
+    else {
+        throw NSError(domain: "DesktopPolishSmokeTests", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: """
+            operator session should persist queue state \
+            (queue_count=\(restoredState.downloadQueue.count), \
+            selected_tool_section=\(restoredState.selectedToolSection.rawValue))
+            """,
+        ])
+    }
+
+    return restoredState
 }

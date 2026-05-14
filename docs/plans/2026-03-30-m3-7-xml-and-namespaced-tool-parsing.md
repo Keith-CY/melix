@@ -49,6 +49,11 @@ The worker parser should also treat the `<|tool_call>...<tool_call|>` marker as
 a recoverable XML-family fallback when tool parsing is enabled, so raw tool
 markup is not exposed as assistant text.
 
+The pipe-call fallback accepts action-qualified names that extend a declared
+tool name with `.`, `:`, or `/`, normalizing those calls back to the declared
+OpenAI tool name before streaming deltas. Empty argument parentheses may contain
+whitespace and are canonicalized to `{}` for downstream JSON consumers.
+
 ### Probes And Metrics
 
 - `http.openai_chat_tools_request_count`

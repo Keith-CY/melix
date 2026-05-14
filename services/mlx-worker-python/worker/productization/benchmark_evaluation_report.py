@@ -72,6 +72,14 @@ _EVALUATION_SAMPLE_PROBE_KEYS = (
     "raw_response_chars",
     "extracted_result_chars",
 )
+_AGENTIC_TOOL_METRIC_KEYS = (
+    "agentic_tool.call_count",
+    "agentic_tool.observation_count",
+    "agentic_tool.completed_count",
+    "agentic_tool.timeout_count",
+    "agentic_tool.failed_count",
+    "agentic_tool.observation_emitted_bytes",
+)
 _MATRIX_SUMMARY_METRIC_KEYS = (
     "request_latency_mean_ms",
     "request_latency_p95_ms",
@@ -252,6 +260,8 @@ def load_report_input(path: str | Path) -> dict[str, object]:
         bundle_path = input_path / "benchmark-evaluation-export.json"
         if not bundle_path.is_file():
             bundle_path = input_path / "export-bundle.json"
+        if not bundle_path.is_file() and (input_path / "run-summary.json").is_file():
+            return _load_batch_run_summary_bundle(input_path)
         input_path = bundle_path
     if not input_path.is_file():
         raise ValueError(f"report input is missing: {input_path}")
@@ -262,6 +272,64 @@ def load_report_input(path: str | Path) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError(f"report input must be a JSON object: {input_path}")
     return payload
+
+
+def _load_batch_run_summary_bundle(bundle_root: Path) -> dict[str, object]:
+    summary_path = bundle_root / "run-summary.json"
+    try:
+        summary = json.loads(summary_path.read_bytes())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"batch run summary could not be decoded: {summary_path}") from exc
+    if not isinstance(summary, dict):
+        raise ValueError(f"batch run summary must be a JSON object: {summary_path}")
+    models = _dict_list(summary.get("models", []))
+    benchmark_results: list[dict[str, object]] = []
+    evaluation_summary_rows: list[dict[str, object]] = []
+    for model in models:
+        metrics = model.get("metric_fields", {})
+        if not isinstance(metrics, dict):
+            metrics = {}
+        benchmark_metrics = [
+            {"name": str(name), "value": value}
+            for name, value in metrics.items()
+            if str(name).startswith("bench.") and _float_or_none(value) is not None
+        ]
+        if benchmark_metrics:
+            benchmark_results.append(
+                {
+                    "job_id": model.get("benchmark_job_id", ""),
+                    "suite": "batch",
+                    "model_index": model.get("model_index", ""),
+                    "repo_id": model.get("repo_id", ""),
+                    "metrics": benchmark_metrics,
+                }
+            )
+        for name, value in metrics.items():
+            metric_name = str(name)
+            metric_value = _float_or_none(value)
+            if not metric_name.startswith("eval.") or metric_value is None:
+                continue
+            parts = metric_name.split(".")
+            suite_id = parts[1] if len(parts) > 2 else "batch"
+            score_name = ".".join(parts[2:]) if len(parts) > 2 else metric_name
+            evaluation_summary_rows.append(
+                {
+                    "job_id": model.get("evaluation_job_id", ""),
+                    "suite_id": suite_id,
+                    "dataset_id": "batch",
+                    "primary_score_name": score_name,
+                    "primary_score_value": metric_value,
+                    "sample_size": None,
+                    "failure_count": 1 if model.get("status") == "failed" else 0,
+                    "duration_seconds": model.get("duration_seconds"),
+                }
+            )
+    return {
+        "export_schema_version": "melix.batch.summary_bundle.v1",
+        "batch_run_summary": summary,
+        "benchmark_results": benchmark_results,
+        "evaluation_summary_rows": evaluation_summary_rows,
+    }
 
 
 def build_benchmark_evaluation_report(
@@ -621,6 +689,12 @@ def validate_report_payload(report: dict[str, object]) -> list[str]:
         ):
             if not isinstance(gate_result.get(field_name), bool):
                 errors.append(f"gate_result.{field_name} must be boolean")
+        if (
+            gate_result.get("required_evidence_present") is False
+            or gate_result.get("required_probe_phases_present") is False
+            or gate_result.get("required_telemetry_present") is False
+        ) and not _dict_rows(gate_result.get("blocking_failures")):
+            errors.append("gate_result.blocking_failures must explain missing required evidence")
 
     return errors
 
@@ -1010,11 +1084,16 @@ def _gate_result(
         isinstance(telemetry_summary.get(side), list) and bool(telemetry_summary.get(side))
         for side in ("baseline", "candidate")
     )
+    missing_required_failures = _missing_required_evidence_failures(
+        required_evidence_present=required_evidence_present,
+        required_probe_phases_present=required_probe_phases_present,
+        required_telemetry_present=required_telemetry_present,
+        known_gaps=known_gaps,
+    )
+    blocking_failures.extend(missing_required_failures)
     if blocking_failures:
         overall_result = "fail"
-    elif not (
-        required_evidence_present and required_probe_phases_present and required_telemetry_present
-    ) or informational_rows:
+    elif informational_rows:
         overall_result = "informational"
     else:
         overall_result = "pass"
@@ -1027,6 +1106,49 @@ def _gate_result(
         "required_evidence_present": required_evidence_present,
         "required_probe_phases_present": required_probe_phases_present,
         "required_telemetry_present": required_telemetry_present,
+        "evidence_validity_metrics": {
+            "source_evidence_count": len(source_evidence_ids),
+            "required_evidence_present": 1.0 if required_evidence_present else 0.0,
+            "required_probe_phases_present": 1.0 if required_probe_phases_present else 0.0,
+            "required_telemetry_present": 1.0 if required_telemetry_present else 0.0,
+            "known_gap_count": float(len(known_gaps)),
+            "blocking_failure_count": float(len(blocking_failures)),
+        },
+    }
+
+
+def _missing_required_evidence_failures(
+    *,
+    required_evidence_present: bool,
+    required_probe_phases_present: bool,
+    required_telemetry_present: bool,
+    known_gaps: list[str],
+) -> list[dict[str, object]]:
+    failures: list[dict[str, object]] = []
+    if not required_evidence_present:
+        failures.append(_missing_evidence_failure("source_evidence_ids", "required source evidence is missing"))
+    if not required_probe_phases_present:
+        failures.append(_missing_evidence_failure("probe_timeline", "required probe timeline is missing"))
+    if not required_telemetry_present:
+        failures.append(_missing_evidence_failure("telemetry_summary", "required telemetry summary is missing"))
+    if failures and known_gaps:
+        for failure in failures:
+            failure["known_gaps"] = list(known_gaps)
+    return failures
+
+
+def _missing_evidence_failure(field_name: str, message: str) -> dict[str, object]:
+    return {
+        "metric": f"evidence.{field_name}",
+        "result": "fail",
+        "status": "missing",
+        "direction": "required",
+        "gate_policy": {"required": True},
+        "baseline": None,
+        "current": None,
+        "delta": None,
+        "delta_percent": None,
+        "message": message,
     }
 
 
@@ -1855,6 +1977,23 @@ def _collect_benchmark_probe_metrics(
                     key=key,
                     value=value,
                 )
+        raw_tool_metrics = row.get("agentic_tool_metrics")
+        if isinstance(raw_tool_metrics, dict):
+            if not label:
+                label = _benchmark_probe_label(
+                    row,
+                    label_cache=label_cache,
+                    matrix_label_cache=matrix_label_cache,
+                )
+            for key in _AGENTIC_TOOL_METRIC_KEYS:
+                value = _float_or_none(raw_tool_metrics.get(key))
+                if value is not None:
+                    _update_probe_aggregate_pairs(
+                        aggregate_pairs,
+                        label=label,
+                        key=key,
+                        value=value,
+                    )
     metrics.update(_finalize_probe_aggregates(aggregate_pairs, prefix=prefix))
 
 
@@ -1888,6 +2027,16 @@ def _collect_evaluation_sample_probe_metrics(
             failure_stage_counts[(suite_id, failure_stage)] = (
                 failure_stage_counts.get((suite_id, failure_stage), 0) + 1
             )
+        raw_tool_metrics = row.get("agentic_tool_metrics")
+        if isinstance(raw_tool_metrics, dict):
+            for key in _AGENTIC_TOOL_METRIC_KEYS:
+                value = _float_or_none(raw_tool_metrics.get(key))
+                if value is not None:
+                    aggregate_key = (suite_id, key)
+                    aggregates_by_suite_and_key[aggregate_key] = _update_numeric_aggregate(
+                        aggregates_by_suite_and_key.get(aggregate_key),
+                        value,
+                    )
     for (suite_id, key), aggregate in aggregates_by_suite_and_key.items():
         total, count = aggregate
         metrics[f"eval.sample.{suite_id}.{key}_mean"] = total / count

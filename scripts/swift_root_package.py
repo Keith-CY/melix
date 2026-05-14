@@ -83,7 +83,7 @@ def swift_package_environment(
     layout.module_cache_path.mkdir(parents=True, exist_ok=True)
     layout.scratch_path.mkdir(parents=True, exist_ok=True)
 
-    environment = dict(base_env or os.environ.copy())
+    environment = _without_git_environment(base_env or os.environ.copy())
     environment["HOME"] = str(layout.home)
     environment["CLANG_MODULE_CACHE_PATH"] = str(layout.module_cache_path)
     return environment
@@ -144,3 +144,7 @@ def root_package_swift_command(
         arguments,
         toolchain_slug=toolchain_slug,
     )
+
+
+def _without_git_environment(environment: dict[str, str]) -> dict[str, str]:
+    return {key: value for key, value in environment.items() if not key.startswith("GIT_")}

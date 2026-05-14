@@ -810,6 +810,40 @@ def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_par
     assert payload_path.read_bytes_calls == 1
 
 
+def test_load_payload_file_fast_path_reuses_precomputed_key_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload_path = _BytesOnlyPayloadPath(
+        json.dumps(
+            {
+                "compile_status": "compiled",
+                "failure_detail": "",
+                "runtime_status": "ok",
+                "test_status": "passed",
+                "tests_passed": 2,
+                "tests_total": 2,
+                "timeout_status": "ok",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+
+    def fail_json_dumps(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("known code-eval payload keys should use cached tokens")
+
+    monkeypatch.setattr(code_eval_runner.json, "dumps", fail_json_dumps)
+
+    assert code_eval_runner._load_payload_file(payload_path) == {
+        "compile_status": "compiled",
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 2,
+        "tests_total": 2,
+        "timeout_status": "ok",
+    }
+    with pytest.raises(AssertionError, match="known code-eval payload keys"):
+        code_eval_runner._json_field_value_start(b'{"other":1}', "other")
+
+
 def test_load_payload_file_fast_path_falls_back_for_escaped_fields(tmp_path: Path) -> None:
     payload_path = tmp_path / "payload.json"
     payload_path.write_text(
@@ -838,11 +872,16 @@ def test_load_payload_file_fast_path_falls_back_for_escaped_fields(tmp_path: Pat
 
 
 def test_payload_fast_path_field_extractors_cover_malformed_edges() -> None:
+    assert code_eval_runner._json_object_payload_bounds(b' \n {"runtime_status":"ok"}\t ') == (3, 25)
+    assert code_eval_runner._json_object_payload_bounds(b"   ") is None
+    assert code_eval_runner._json_object_payload_bounds(b' {"runtime_status":"ok"] ') is None
     assert code_eval_runner._json_field_value_start(b'{"runtime_status" : "ok"}', "runtime_status") == 20
     assert code_eval_runner._json_field_value_start(b'{"runtime_status" "ok"}', "runtime_status") is None
     assert code_eval_runner._json_field_value_start(b'{"runtime_status": ', "runtime_status") is None
     assert code_eval_runner._extract_json_string_field(b'{"failure_detail":"oops}', "failure_detail") is None
     assert code_eval_runner._extract_json_int_field(b'{"tests_passed":-7}', "tests_passed") == -7
+    assert code_eval_runner._extract_json_int_field(b'{"tests_total":12345}', "tests_total") == 12345
+    assert code_eval_runner._extract_json_int_field(b'{"tests_total":-}', "tests_total") is None
     assert code_eval_runner._extract_json_int_field(b'{"tests_total": }', "tests_total") is None
 
 

@@ -1846,7 +1846,10 @@ public final class RuntimeViewModel {
     public private(set) var lastModelOperation: RuntimeModelOperationState?
     public private(set) var loraWorkflowStatus: RuntimeLoraWorkflowStatusState?
     public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = [] {
-        didSet { refreshModelRegistryEntries() }
+        didSet {
+            refreshModelRegistryEntries()
+            persistOperatorSessionState()
+        }
     }
     public private(set) var modelRegistryEntries: [RuntimeRegistryEntryState] = []
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
@@ -1867,6 +1870,7 @@ public final class RuntimeViewModel {
     public private(set) var evaluationMetricCards: [RuntimeEvaluationMetricCardState] = []
     public private(set) var evaluationSamplePreview: [RuntimeEvaluationSamplePreviewState] = []
     public private(set) var lastEvaluationExport: RuntimeEvaluationExportState?
+    private var pendingEvaluationSummaryRows: [String: [ControlPlaneEvaluationSummaryCSVRow]] = [:]
     public private(set) var evidenceReport: RuntimeEvidenceReportState?
     public private(set) var evidenceReportLoadError = ""
     public private(set) var evidenceReportOpenError = ""
@@ -3331,6 +3335,7 @@ public final class RuntimeViewModel {
     public func selectToolSection(_ section: DesktopToolSection) {
         selectedSurface = .tools
         selectedToolSection = section
+        persistOperatorSessionState(force: true)
         notifyStateChanged()
     }
 
@@ -7125,6 +7130,15 @@ public final class RuntimeViewModel {
         await refreshBenchmarkHistory(notify: true)
     }
 
+    public func refreshDiagnosticsHistory() async {
+        let preferredStage = preferredDiagnosticsStage
+        let benchmarkPresentationMode = selectedBenchmarkPresentationMode
+        await refreshBenchmarkHistory(notify: false)
+        preferredDiagnosticsStage = preferredStage
+        selectedBenchmarkPresentationMode = benchmarkPresentationMode
+        notifyStateChanged()
+    }
+
     public func exportSelectedBenchmarkCSV() async {
         let startedAt = Date()
         if let cliWorkflowRunner {
@@ -7486,6 +7500,7 @@ public final class RuntimeViewModel {
                     )
                 )
                 selectedEvaluationHistoryJobID = payloads.first?.job.jobID ?? ""
+                rememberPendingEvaluationResults(payloads)
                 clearCLIWorkflowFailure()
                 await metrics.record(
                     name: "menu.ops_eval_ms",
@@ -7522,6 +7537,7 @@ public final class RuntimeViewModel {
                         )
                     )
                     evaluationJobID = results.first?.job.jobID ?? ""
+                    rememberPendingEvaluationResults(results)
                 } else {
                     let results = try await operatorCommandRunner.runEvaluations(
                         .init(
@@ -7542,8 +7558,10 @@ public final class RuntimeViewModel {
                         )
                     )
                     evaluationJobID = results.first?.job.jobID ?? ""
+                    rememberPendingEvaluationResults(results)
                 }
             } else {
+                var results: [ControlPlaneEvaluationResult] = []
                 for suiteID in suites {
                     let result = try await client.runEvaluation(
                         makeEvaluationRequest(
@@ -7559,7 +7577,9 @@ public final class RuntimeViewModel {
                     if evaluationJobID.isEmpty {
                         evaluationJobID = result.job.jobID
                     }
+                    results.append(result)
                 }
+                rememberPendingEvaluationResults(results)
             }
             await metrics.record(
                 name: "menu.ops_eval_ms",
@@ -7570,6 +7590,10 @@ public final class RuntimeViewModel {
                 jobID: evaluationJobID
             )
             await refreshEvaluationHistory(notify: false)
+            if evaluationJobID.isEmpty == false {
+                selectedEvaluationHistoryJobID = evaluationJobID
+                rebuildEvaluationDerivedState()
+            }
         } catch {
             recordLocalError(String(describing: error))
         }
@@ -7831,6 +7855,7 @@ public final class RuntimeViewModel {
                 .sorted { $0.modelID < $1.modelID }
             refreshModelRegistryEntries()
         }
+        persistOperatorSessionState(force: true)
         refreshLoraSelectionState()
     }
 
@@ -8329,6 +8354,7 @@ public final class RuntimeViewModel {
     }
 
     private static func defaultLocalServerPort(sessionOffset: Int) -> Int {
+        // The first local server uses the default gateway port; later sessions increment by one.
         MelixGatewayDefaults.port + max(0, sessionOffset)
     }
 
@@ -8447,13 +8473,13 @@ public final class RuntimeViewModel {
         )
     }
 
-    private func persistOperatorSessionState() {
+    private func persistOperatorSessionState(force: Bool = false) {
         guard operatorStateRestored else {
             return
         }
 
         let state = currentOperatorSessionState()
-        guard state != lastPersistedOperatorSessionState else {
+        guard force || state != lastPersistedOperatorSessionState else {
             return
         }
 
@@ -8936,17 +8962,23 @@ public final class RuntimeViewModel {
     }
 
     private func rebuildEvaluationDerivedState() {
-        guard let benchmarkExportBundle else {
-            evaluationHistory = []
-            evaluationMetricCards = []
-            evaluationSamplePreview = []
-            if selectedEvaluationHistoryJobID.isEmpty == false {
-                selectedEvaluationHistoryJobID = ""
+        let exportedHistory = benchmarkExportBundle?
+            .evaluationHistoryEntries()
+            .map(Self.makeEvaluationHistoryEntryState) ?? []
+        let exportedJobIDs = Set(exportedHistory.map(\.jobID))
+        let pendingHistory = pendingEvaluationSummaryRows.values
+            .compactMap { rows -> RuntimeEvaluationHistoryEntryState? in
+                guard let row = rows.first, exportedJobIDs.contains(row.jobID) == false else {
+                    return nil
+                }
+                return Self.makeEvaluationHistoryEntryState(fromPendingSummaryRow: row)
             }
-            return
+        evaluationHistory = (exportedHistory + pendingHistory).sorted {
+            if $0.createdAtUnixMS == $1.createdAtUnixMS {
+                return $0.jobID < $1.jobID
+            }
+            return $0.createdAtUnixMS > $1.createdAtUnixMS
         }
-
-        evaluationHistory = benchmarkExportBundle.evaluationHistoryEntries().map(Self.makeEvaluationHistoryEntryState)
         if evaluationHistory.contains(where: { $0.jobID == selectedEvaluationHistoryJobID }) == false {
             selectedEvaluationHistoryJobID = evaluationHistory.first?.jobID ?? ""
         }
@@ -8955,11 +8987,95 @@ public final class RuntimeViewModel {
             selectedEvaluationHistoryJobID = selectedHistoryJobID
         }
 
-        let selectedRows = benchmarkExportBundle.evaluationSummaryCSVRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID)
+        let exportedRows = benchmarkExportBundle?
+            .evaluationSummaryCSVRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID) ?? []
+        let selectedRows = exportedRows.isEmpty
+            ? (pendingEvaluationSummaryRows[selectedHistoryJobID] ?? [])
+            : exportedRows
         evaluationMetricCards = selectedRows.map(Self.makeEvaluationMetricCardState)
-        evaluationSamplePreview = benchmarkExportBundle.evaluationSampleRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID)
+        evaluationSamplePreview = (benchmarkExportBundle?
+            .evaluationSampleRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID) ?? [])
             .prefix(6)
             .map(Self.makeEvaluationSamplePreviewState)
+    }
+
+    private func rememberPendingEvaluationResults(_ results: [ControlPlaneEvaluationResult]) {
+        for result in results {
+            let rows = Self.pendingEvaluationSummaryRows(from: result)
+            guard rows.isEmpty == false else {
+                continue
+            }
+            pendingEvaluationSummaryRows[result.job.jobID] = rows
+        }
+    }
+
+    private func rememberPendingEvaluationResults(_ payloads: [MelixCLIEvaluationRunPayload]) {
+        for payload in payloads {
+            let rows = Self.pendingEvaluationSummaryRows(from: payload)
+            guard rows.isEmpty == false else {
+                continue
+            }
+            pendingEvaluationSummaryRows[payload.job.jobID] = rows
+        }
+    }
+
+    private static func pendingEvaluationSummaryRows(
+        from result: ControlPlaneEvaluationResult
+    ) -> [ControlPlaneEvaluationSummaryCSVRow] {
+        let job = result.job
+        return result.results.compactMap { summary in
+            let metric = summary.metrics.first
+            let scoreName = metric?.name ?? ""
+            guard scoreName.isEmpty == false else {
+                return nil
+            }
+            return ControlPlaneEvaluationSummaryCSVRow(
+                jobID: job.jobID,
+                modelID: job.modelID,
+                taskKind: job.taskKind.isEmpty ? "text-generation" : job.taskKind,
+                sourceRepo: job.sourceRepo,
+                suiteID: summary.suiteID.isEmpty ? job.suiteID : summary.suiteID,
+                datasetID: summary.datasetID.isEmpty ? job.datasetID : summary.datasetID,
+                sampleSize: summary.sampleSize > 0 ? Int(summary.sampleSize) : Int(job.sampleSize),
+                primaryScoreName: scoreName,
+                primaryScoreValue: metric?.value ?? 0,
+                extractionSuccessCount: 0,
+                validationSuccessCount: 0,
+                scoredSampleCount: 0,
+                failureCount: 0,
+                durationSeconds: 0,
+                createdAtUnixMS: job.createdAtUnixMs
+            )
+        }
+    }
+
+    private static func pendingEvaluationSummaryRows(
+        from payload: MelixCLIEvaluationRunPayload
+    ) -> [ControlPlaneEvaluationSummaryCSVRow] {
+        payload.results.compactMap { summary in
+            let metric = summary.metrics.first
+            let scoreName = metric?.name ?? ""
+            guard scoreName.isEmpty == false else {
+                return nil
+            }
+            return ControlPlaneEvaluationSummaryCSVRow(
+                jobID: payload.job.jobID,
+                modelID: payload.job.modelID,
+                taskKind: payload.job.taskKind.isEmpty ? "text-generation" : payload.job.taskKind,
+                sourceRepo: payload.job.sourceRepo,
+                suiteID: summary.suiteID.isEmpty ? payload.job.suiteID : summary.suiteID,
+                datasetID: summary.datasetID.isEmpty ? payload.job.datasetID : summary.datasetID,
+                sampleSize: summary.sampleSize > 0 ? summary.sampleSize : payload.job.sampleSize,
+                primaryScoreName: scoreName,
+                primaryScoreValue: metric?.value ?? 0,
+                extractionSuccessCount: 0,
+                validationSuccessCount: 0,
+                scoredSampleCount: 0,
+                failureCount: 0,
+                durationSeconds: 0,
+                createdAtUnixMS: payload.job.createdAtUnixMS
+            )
+        }
     }
 
     private func resolvedBenchmarkModelID() -> String {
@@ -9480,17 +9596,56 @@ public final class RuntimeViewModel {
         }
         do {
             let exportDirectory = try Self.ensureEvaluationExportDirectory()
+            let selectedJobIDBeforeRefresh = selectedEvaluationHistoryJobID.isEmpty
+                ? selectedEvaluationHistoryEntry?.jobID
+                : selectedEvaluationHistoryJobID
             let bundle: ControlPlaneBenchmarkExportBundle
-            if let operatorCommandRunner {
-                bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
-            } else {
-                let export = try await client.exportResults(outputDir: exportDirectory.path)
-                bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            do {
+                if let operatorCommandRunner {
+                    bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
+                } else {
+                    let export = try await client.exportResults(outputDir: exportDirectory.path)
+                    bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+                }
+            } catch {
+                if try await exportPendingEvaluationSummaryIfAvailable(
+                    selectedJobID: selectedJobIDBeforeRefresh,
+                    formatTitle: formatTitle,
+                    fileName: fileName,
+                    exportDirectory: exportDirectory,
+                    startedAt: startedAt
+                ) {
+                    notifyStateChanged()
+                    return
+                }
+                throw error
             }
             applyBenchmarkExportBundle(bundle)
+            let pendingSelectedJobID = selectedJobIDBeforeRefresh.flatMap { jobID -> String? in
+                let trimmedJobID = jobID.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard pendingEvaluationSummaryRows[trimmedJobID]?.isEmpty == false else {
+                    return nil
+                }
+                return trimmedJobID
+            }
+            if let pendingSelectedJobID,
+               bundle.evaluationSummaryCSVRows(jobID: pendingSelectedJobID).isEmpty {
+                selectedEvaluationHistoryJobID = pendingSelectedJobID
+                rebuildEvaluationDerivedState()
+            }
             let selectedJobID = selectedEvaluationHistoryJobID.isEmpty ? nil : selectedEvaluationHistoryJobID
             let (rowCount, payload) = builder(bundle, selectedJobID)
             guard rowCount > 0 else {
+                if try await exportPendingEvaluationSummaryIfAvailable(
+                    selectedJobID: selectedJobID,
+                    formatTitle: formatTitle,
+                    fileName: fileName,
+                    exportDirectory: exportDirectory,
+                    startedAt: startedAt
+                ) {
+                    notifyStateChanged()
+                    return
+                }
                 recordLocalError(missingRowsMessage)
                 notifyStateChanged()
                 return
@@ -9510,6 +9665,37 @@ public final class RuntimeViewModel {
             recordLocalError(String(describing: error))
         }
         notifyStateChanged()
+    }
+
+    private func exportPendingEvaluationSummaryIfAvailable(
+        selectedJobID: String?,
+        formatTitle: String,
+        fileName: String,
+        exportDirectory: URL,
+        startedAt: Date
+    ) async throws -> Bool {
+        guard formatTitle == "summary.csv",
+              let selectedJobID,
+              let rows = pendingEvaluationSummaryRows[selectedJobID],
+              rows.isEmpty == false
+        else {
+            return false
+        }
+
+        let outputURL = exportDirectory.appendingPathComponent(fileName)
+        try Self.evaluationSummaryCSV(rows: rows)
+            .write(to: outputURL, atomically: true, encoding: .utf8)
+        selectedEvaluationHistoryJobID = selectedJobID
+        lastEvaluationExport = RuntimeEvaluationExportState(
+            outputPath: outputURL.path,
+            rowCount: rows.count,
+            formatTitle: formatTitle
+        )
+        await metrics.record(
+            name: "menu.eval_export_csv_ms",
+            valueMs: Date().timeIntervalSince(startedAt) * 1_000
+        )
+        return true
     }
 
     private func upsert(model: Melix_Controlplane_V1_ModelSummary) {
@@ -12100,6 +12286,29 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func makeEvaluationHistoryEntryState(
+        fromPendingSummaryRow row: ControlPlaneEvaluationSummaryCSVRow
+    ) -> RuntimeEvaluationHistoryEntryState {
+        RuntimeEvaluationHistoryEntryState(
+            id: "\(row.jobID):\(row.suiteID)",
+            jobID: row.jobID,
+            modelID: row.modelID,
+            taskKind: row.taskKind,
+            taskTitle: benchmarkTaskTitle(for: row.taskKind),
+            sourceRepo: row.sourceRepo,
+            suiteID: row.suiteID,
+            suiteTitle: evaluationSuiteTitle(for: row.suiteID),
+            datasetID: row.datasetID,
+            sampleSizeText: String(row.sampleSize),
+            scoringModeText: "",
+            statusText: humanizeStatus("completed"),
+            metricCountText: "1 metrics",
+            createdAtText: benchmarkTimestampLabel(row.createdAtUnixMS),
+            createdAtUnixMS: row.createdAtUnixMS,
+            reportPath: ""
+        )
+    }
+
     private static func makeEvaluationMetricCardState(
         from row: ControlPlaneEvaluationSummaryCSVRow
     ) -> RuntimeEvaluationMetricCardState {
@@ -12799,6 +13008,56 @@ public final class RuntimeViewModel {
         let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
             .replacingOccurrences(of: "/", with: "-")
         return "melix-evaluation-samples-\(sanitizedJobID).jsonl"
+    }
+
+    private static func evaluationSummaryCSV(rows: [ControlPlaneEvaluationSummaryCSVRow]) -> String {
+        let header = "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,primary_score_name,primary_score_value,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"
+        guard rows.isEmpty == false else {
+            return header + "\n"
+        }
+        let body = rows.map { row in
+            [
+                row.jobID,
+                row.modelID,
+                row.taskKind,
+                row.sourceRepo,
+                row.suiteID,
+                row.datasetID,
+                String(row.sampleSize),
+                row.primaryScoreName,
+                String(row.primaryScoreValue),
+                String(row.extractionSuccessCount),
+                String(row.validationSuccessCount),
+                String(row.scoredSampleCount),
+                String(row.failureCount),
+                Self.optionalCSVNumber(row.effectThreshold),
+                row.verdict,
+                Self.optionalCSVNumber(row.bootstrapLowerBound),
+                Self.optionalCSVNumber(row.bootstrapUpperBound),
+                Self.optionalCSVNumber(row.analyticalLowerBound),
+                Self.optionalCSVNumber(row.analyticalUpperBound),
+                String(row.durationSeconds),
+                String(row.createdAtUnixMS),
+            ]
+            .map(Self.csvField)
+            .joined(separator: ",")
+        }
+        return ([header] + body).joined(separator: "\n") + "\n"
+    }
+
+    private static func csvField(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        if escaped.contains(",") || escaped.contains("\n") || escaped.contains("\"") {
+            return "\"\(escaped)\""
+        }
+        return escaped
+    }
+
+    private static func optionalCSVNumber(_ value: Double?) -> String {
+        guard let value else {
+            return ""
+        }
+        return String(value)
     }
 
     private static func canRedoImageJob(_ job: Melix_Controlplane_V1_ImageJobSummary) -> Bool {

@@ -20,6 +20,10 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
         RequestStreamAssembler._PIPE_TOOL_OPEN[:index]
         for index in range(1, len(RequestStreamAssembler._PIPE_TOOL_OPEN))
     )
+    pipe_channel_prefixes = tuple(
+        RequestStreamAssembler._PIPE_CHANNEL_OPEN[:index]
+        for index in range(1, len(RequestStreamAssembler._PIPE_CHANNEL_OPEN))
+    )
 
     tool_enabled = RequestStreamAssembler(
         request_id="req-prefixes-tools",
@@ -35,11 +39,16 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
     )
 
     assert tool_enabled._structural_tag_prefixes == (
-        think_prefixes + tool_prefixes + pipe_tool_prefixes
+        think_prefixes + pipe_channel_prefixes + tool_prefixes + pipe_tool_prefixes
+    )
+    assert (
+        tool_enabled._structural_open_tags
+        is RequestStreamAssembler._TOOL_PARSER_STRUCTURAL_OPEN_TAGS
     )
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_enabled._structural_tag_prefixes_reversed == (
-        tuple(reversed(pipe_tool_prefixes))
+        tuple(reversed(pipe_channel_prefixes))
+        + tuple(reversed(pipe_tool_prefixes))
         + tuple(reversed(tool_prefixes))
         + tuple(reversed(think_prefixes))
     )
@@ -47,11 +56,15 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
         tool_enabled._structural_tag_prefixes_reversed
         is tool_enabled._structural_tag_prefixes_reversed
     )
-    assert tool_disabled._structural_tag_prefixes == think_prefixes
+    assert tool_disabled._structural_tag_prefixes == think_prefixes + pipe_channel_prefixes
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_disabled._structural_tag_prefixes is tool_disabled._structural_tag_prefixes
-    assert tool_disabled._structural_tag_prefixes is RequestStreamAssembler._THINK_PREFIXES
-    assert tool_disabled._structural_tag_prefixes_reversed is RequestStreamAssembler._THINK_PREFIXES_REVERSED
+    assert tool_disabled._structural_tag_prefixes is RequestStreamAssembler._REASONING_PREFIXES
+    assert tool_disabled._structural_open_tags is RequestStreamAssembler._REASONING_OPEN_TAGS
+    assert (
+        tool_disabled._structural_tag_prefixes_reversed
+        is RequestStreamAssembler._REASONING_PREFIXES_REVERSED
+    )
 
 
 def test_parser_mode_flags_are_computed_once_at_initialization() -> None:
@@ -67,6 +80,7 @@ def test_parser_mode_flags_are_computed_once_at_initialization() -> None:
     assert assembler._tool_parsing_enabled is True
     assert assembler._request_context_mode == "tool_parser"
     assert assembler._structural_tag_prefixes is assembler._structural_tag_prefixes_value
+    assert assembler._structural_open_tags is assembler._structural_open_tags_value
 
 
 def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
@@ -79,6 +93,24 @@ def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
     assembler._buffer = '<tool_call>{"name":"search","arguments":{}}</tool_call><think>later</think>'
 
     assert assembler._next_structural_tag() == (RequestStreamAssembler._TOOL_OPEN, 0)
+
+
+def test_next_structural_tag_prefers_earliest_pipe_channel_tag() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-channel-first",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    assembler._buffer = (
+        "lead<|channel>thought hidden<channel|>"
+        '<tool_call>{"name":"search","arguments":{}}</tool_call>'
+    )
+
+    assert assembler._next_structural_tag() == (
+        RequestStreamAssembler._PIPE_CHANNEL_OPEN,
+        4,
+    )
 
 
 def test_plain_buffer_without_tag_marker_flushes_without_structural_scans(monkeypatch) -> None:
@@ -100,6 +132,42 @@ def test_plain_buffer_without_tag_marker_flushes_without_structural_scans(monkey
         "plain text chunk without markup"
     ]
     assert completed.assistant_text == "plain text chunk without markup"
+    assert completed.metrics["stream_prefix_hold_chars"] == 0
+    assert completed.metrics["stream_short_reply_flush_count"] == 0
+
+
+def test_plain_token_metadata_keeps_fast_path_and_metrics(monkeypatch) -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-no-marker-token-fast-path",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    def fail_structural_scan() -> None:
+        raise AssertionError("plain token metadata should not force structural scans")
+
+    monkeypatch.setattr(assembler, "_next_structural_tag", fail_structural_scan)
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="plain metadata chunk",
+            token_ids=(10, 11),
+            token_logprobs=(-0.1, -0.2),
+            parser_observation="flush_tokens=2",
+        )
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == [
+        "plain metadata chunk"
+    ]
+    assert [delta.parser_observation for delta in deltas if delta.content_text] == [
+        "flush_tokens=2"
+    ]
+    assert completed.assistant_text == "plain metadata chunk"
+    assert completed.metrics["generated_token_count"] == 2
+    assert completed.metrics["logprob_entry_count"] == 2
+    assert completed.metrics["stream_interval_delta_flush_count"] == 1
     assert completed.metrics["stream_prefix_hold_chars"] == 0
     assert completed.metrics["stream_short_reply_flush_count"] == 0
 
@@ -127,6 +195,7 @@ def test_token_byte_delta_decodes_complete_ascii_without_incremental_decoder(mon
 
     assert [delta.content_text for delta in deltas] == ["hello ", "world"]
     assert completed.assistant_text == "hello world"
+    assert completed.raw_text == "hello world"
     assert completed.metrics["generated_token_count"] == 2
     assert completed.metrics["byte_fallback_decode_error_count"] == 0
     assert decoder_calls == 0
@@ -155,9 +224,28 @@ def test_token_byte_delta_preserves_split_multibyte_sequence(monkeypatch) -> Non
 
     assert [delta.content_text for delta in deltas] == ["€"]
     assert completed.assistant_text == "€"
+    assert completed.raw_text == "€"
     assert completed.metrics["generated_token_count"] == 2
     assert completed.metrics["byte_fallback_merge_count"] == 1
     assert decoder_calls == 2
+
+
+def test_token_byte_raw_parts_materialize_before_raw_text_delta() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-token-byte-then-raw-text",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    first = assembler.accept(StreamFragment(token_bytes=b"hello "))
+    second = assembler.accept(StreamFragment(raw_text="hello world"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in first + second] == ["hello ", "world"]
+    assert completed.assistant_text == "hello world"
+    assert completed.raw_text == "hello world"
+    assert completed.metrics["non_monotonic_stream_count"] == 0
 
 
 def test_plain_buffer_with_marker_still_holds_partial_structural_prefix() -> None:
@@ -180,6 +268,161 @@ def test_plain_buffer_with_marker_still_holds_partial_structural_prefix() -> Non
     assert [delta.tool_call.tool_name for delta in second if delta.tool_call] == ["search"]
     assert completed.assistant_text == "alpha"
     assert completed.metrics["stream_prefix_hold_chars"] == len("<tool_ca")
+
+
+def test_harmony_thought_channel_is_suppressed_from_public_content() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-harmony-thought",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    first = assembler.accept(
+        StreamFragment(raw_text='<|channel>thought\n<channel|>\n{"output":"pwd"}')
+    )
+    second = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                '<|channel>thought\n<channel|>\n{"output":"pwd"}'
+                "<|channel>final\n<channel|>\nDone."
+            )
+        )
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in first if delta.content_text] == []
+    assert [delta.content_text for delta in second if delta.content_text] == ["\nDone."]
+    assert completed.assistant_text == "\nDone."
+    assert completed.reasoning_text == ""
+    assert completed.metrics["harmony_channel_hidden_count"] == 1
+    assert completed.metrics["suppressed_reasoning_count"] == 1
+    assert completed.metrics["harmony_channel_markup_leak_count"] == 0
+
+
+def test_harmony_analysis_channel_is_reasoning_when_enabled() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-harmony-analysis",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="<|channel>analysis\n<channel|>\nPlan.<|channel>final\n<channel|>\nAnswer."
+        )
+    )
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["\nPlan."]
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["\nAnswer."]
+    assert completed.reasoning_text == "\nPlan."
+    assert completed.assistant_text == "\nAnswer."
+    assert completed.metrics["harmony_channel_hidden_count"] == 1
+
+
+def test_harmony_channel_partial_prefix_is_held() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-harmony-channel-prefix",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    first = assembler.accept(StreamFragment(raw_text="alpha<|chan"))
+    second = assembler.accept(
+        StreamFragment(raw_text="alpha<|channel>final\n<channel|>\nomega")
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in first if delta.content_text] == ["alpha"]
+    assert [delta.content_text for delta in second if delta.content_text] == ["\nomega"]
+    assert completed.assistant_text == "alpha\nomega"
+    assert completed.metrics["stream_prefix_hold_chars"] == len("<|chan")
+
+
+def test_unknown_harmony_channel_is_dropped_without_public_markup_leak() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-harmony-unknown",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="<|channel>debug\n<channel|>\nsecret"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == []
+    assert completed.assistant_text == ""
+    assert completed.metrics["harmony_channel_unknown_count"] == 1
+    assert completed.metrics["harmony_channel_markup_leak_count"] == 0
+
+
+def test_malformed_harmony_channel_header_is_dropped_at_completion() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-harmony-malformed-header",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<|channel>thought")) == []
+    completed = assembler.completed()
+
+    assert completed.assistant_text == ""
+    assert completed.metrics["malformed_reasoning_count"] == 1
+    assert completed.metrics["harmony_channel_markup_leak_count"] == 0
+
+
+def test_harmony_hidden_channel_recovers_visible_tail_at_completion() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-harmony-recover-tail",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    assert assembler.accept(
+        StreamFragment(raw_text="<|channel>analysis\n<channel|>\nplan\n\nFinal answer")
+    ) == []
+    completed = assembler.completed()
+
+    assert completed.reasoning_text == "plan"
+    assert completed.assistant_text == "Final answer"
+    assert completed.metrics["harmony_channel_hidden_count"] == 1
+
+
+def test_harmony_channel_like_public_content_is_counted_as_leak() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-harmony-channel-like-leak",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="visible <|channelx"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == [
+        "visible <|channelx"
+    ]
+    assert completed.metrics["harmony_channel_markup_leak_count"] == 1
+
+
+def test_blank_harmony_channel_header_is_counted_as_unknown() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-harmony-blank-header",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="<|channel> \n<channel|>\nsecret"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == []
+    assert completed.metrics["harmony_channel_unknown_count"] == 1
 
 
 def test_pipe_tool_call_marker_is_parsed_without_public_markup_leak() -> None:
@@ -228,6 +471,112 @@ def test_pipe_tool_call_relaxed_object_arguments_are_parsed() -> None:
 
     assert len(calls) == 1
     assert calls[0].arguments_json_fragment == '{"command":"gh auth status"}'
+
+
+def test_pipe_tool_call_empty_parentheses_arguments_are_parsed() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-empty-parens",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="<|tool_call>call:github_auth:github_auth_check()<tool_call|>"
+        )
+    )
+    completed = assembler.completed()
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+
+    assert len(calls) == 1
+    assert calls[0].tool_name == "github_auth:github_auth_check"
+    assert calls[0].arguments_json_fragment == "{}"
+    assert completed.assistant_text == ""
+    assert completed.metrics["tool_call_markup_leak_count"] == 0
+
+
+def test_pipe_tool_call_whitespace_parentheses_arguments_are_parsed() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-tool-call-whitespace-parens",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="<|tool_call>call:github_auth:github_auth_check( \n )<tool_call|>"
+        )
+    )
+    completed = assembler.completed()
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+
+    assert len(calls) == 1
+    assert calls[0].tool_name == "github_auth:github_auth_check"
+    assert calls[0].arguments_json_fragment == "{}"
+    assert completed.metrics["malformed_tool_fragment_count"] == 0
+
+
+def test_action_qualified_tool_name_is_normalized_to_declared_openai_tool() -> None:
+    cases = (
+        (
+            "terminal.execute",
+            '<|tool_call>call:terminal.execute{"command":"pwd"}<tool_call|>',
+            "terminal",
+            '{"command":"pwd"}',
+        ),
+        (
+            "terminal:run_command",
+            '<|tool_call>call:terminal:run_command{"command":"gh auth status"}<tool_call|>',
+            "terminal",
+            '{"command":"gh auth status"}',
+        ),
+        (
+            "process/start",
+            '<|tool_call>call:process/start{"command":"npm test"}<tool_call|>',
+            "process",
+            '{"command":"npm test"}',
+        ),
+    )
+
+    for request_id, raw_text, expected_name, expected_arguments in cases:
+        assembler = RequestStreamAssembler(
+            request_id=request_id,
+            reasoning_enabled=False,
+            structured_output_mode="",
+            tool_parser_mode="xml",
+            allowed_tool_names=("terminal", "process"),
+        )
+        deltas = assembler.accept(StreamFragment(raw_text=raw_text))
+        completed = assembler.completed()
+        calls = [delta.tool_call for delta in deltas if delta.tool_call]
+
+        assert len(calls) == 1
+        assert calls[0].tool_name == expected_name
+        assert calls[0].arguments_json_fragment == expected_arguments
+        assert completed.metrics["tool_call_name_normalized_count"] == 1
+        assert completed.metrics["unknown_tool_delta_count"] == 0
+
+
+def test_unknown_tool_name_is_suppressed_when_openai_tools_are_declared() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-unknown-tool",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("terminal",),
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(raw_text="<|tool_call>call:github_auth:github_auth_check()<tool_call|>")
+    )
+    completed = assembler.completed()
+
+    assert [delta.tool_call for delta in deltas if delta.tool_call] == []
+    assert completed.assistant_text == ""
+    assert completed.metrics["unknown_tool_delta_count"] == 1
+    assert completed.metrics["tool_call_markup_leak_count"] == 0
 
 
 def test_pipe_tool_call_relaxed_object_arguments_preserve_quoted_commas() -> None:
@@ -437,8 +786,46 @@ def test_partial_structural_tag_suffix_ignores_complete_or_unknown_markers() -> 
     assembler._buffer = "answer <thi"
     assert assembler._partial_structural_tag_suffix() == "<thi"
 
+    assembler._buffer = "answer <|channel>tho"
+    assert assembler._partial_structural_tag_suffix() == "<|channel>tho"
+
     assembler._buffer = "answer <xml"
     assert assembler._partial_structural_tag_suffix() == ""
+
+    assembler._buffer = "answer"
+    assert assembler._partial_structural_tag_suffix() == ""
+
+
+def test_partial_pipe_reasoning_marker_is_suppressed_at_completion() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-pipe-reasoning-leak",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="visible <|channel>tho"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas] == ["visible "]
+    assert completed.assistant_text == "visible "
+    assert completed.metrics["malformed_reasoning_count"] == 1
+    assert completed.metrics["harmony_channel_markup_leak_count"] == 0
+
+
+def test_json_structured_output_partial_pipe_reasoning_prefix_counts_as_leak() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-json-partial-pipe-reasoning-prefix",
+        reasoning_enabled=False,
+        structured_output_mode="json_schema",
+        tool_parser_mode="",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<|channel>tho hidden preamble")) == []
+    completed = assembler.completed()
+
+    assert completed.assistant_text == ""
+    assert completed.metrics["reasoning_leak_count"] == 1
 
 
 def test_partial_structural_tag_suffix_checks_all_prefixes_in_one_endswith_call() -> None:
@@ -977,6 +1364,46 @@ def test_empty_thinking_block_is_suppressed_as_thinking_off_sentinel() -> None:
     assert completed.metrics["reasoning_leak_count"] == 0
 
 
+def test_pipe_reasoning_channel_is_suppressed_and_visible_tail_emitted() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-pipe-reasoning-channel",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(raw_text="<|channel>thought\ninternal plan<channel|>READY")
+    )
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == []
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["READY"]
+    assert completed.assistant_text == "READY"
+    assert completed.reasoning_text == ""
+    assert completed.metrics["suppressed_reasoning_count"] == 1
+    assert completed.metrics["reasoning_parser_bypassed_count"] == 1
+    assert completed.metrics["reasoning_leak_count"] == 0
+
+
+def test_empty_pipe_reasoning_channel_is_suppressed_as_thinking_off_sentinel() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-empty-pipe-reasoning-sentinel",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="<|channel>thought\n<channel|>READY"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["READY"]
+    assert completed.assistant_text == "READY"
+    assert completed.reasoning_text == ""
+    assert completed.metrics["empty_thinking_sentinel_count"] == 1
+    assert completed.metrics["reasoning_leak_count"] == 0
+
+
 def test_unclosed_reasoning_channel_recovers_visible_answer_tail_at_eos() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-unclosed-reasoning-visible-tail",
@@ -992,6 +1419,24 @@ def test_unclosed_reasoning_channel_recovers_visible_answer_tail_at_eos() -> Non
     assert completed.assistant_text == "Final answer"
     assert completed.metrics["malformed_reasoning_count"] == 1
     assert completed.metrics["reasoning_channel_recovery_count"] == 1
+
+
+def test_unclosed_pipe_reasoning_channel_recovers_visible_answer_tail_at_eos() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-unclosed-pipe-reasoning-visible-tail",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<|channel>thought\nplan step\n\nFinal answer")) == []
+    completed = assembler.completed()
+
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == "Final answer"
+    assert completed.metrics["malformed_reasoning_count"] == 1
+    assert completed.metrics["reasoning_channel_recovery_count"] == 1
+    assert completed.metrics["reasoning_leak_count"] == 0
 
 
 def test_reasoning_disabled_request_suppresses_hidden_blocks_without_reasoning_metadata() -> None:

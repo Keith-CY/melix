@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import subprocess
@@ -31,6 +32,7 @@ KNOWN_SWIFT_MLX_CORE_VERSION_BY_PACKAGE_VERSION = {
     # matches the mlx_metal 0.31.1 wheel rather than the Swift package tag.
     "0.31.3": "0.31.1",
 }
+DEFAULT_SOCKET_DIR = Path("/tmp")
 USAGE_TEXT = """Usage: bash scripts/dev_up.sh [--prefer-built]
 
 Options:
@@ -63,6 +65,7 @@ class RuntimeLayout:
     http_port: str
     python_backend_mode: str
     swift_text_worker_backend_mode: str
+    python_bridge_executable: Path | None
     uv_cache_dir: Path
     swift_home: Path
     clang_module_cache_path: Path
@@ -91,12 +94,41 @@ def resolve_path(value: str | Path) -> Path:
     return Path(value).expanduser().resolve()
 
 
+def resolve_executable_path(value: str | Path) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return Path.cwd() / path
+
+
 def optional_parent_environment_exports(names: tuple[str, ...]) -> dict[str, str]:
     return {
         name: value.strip()
         for name in names
         if (value := os.environ.get(name, "")).strip()
     }
+
+
+def resolve_python_bridge_executable() -> Path | None:
+    configured = os.environ.get("MELIX_PYTHON_BRIDGE_EXECUTABLE", "").strip()
+    if configured:
+        return resolve_executable_path(configured)
+
+    project_environment = os.environ.get("UV_PROJECT_ENVIRONMENT", "").strip()
+    if not project_environment:
+        return None
+
+    executable_name = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    candidate = resolve_executable_path(Path(project_environment) / executable_name)
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return candidate
+    return None
+
+
+def optional_python_bridge_environment(layout: RuntimeLayout) -> dict[str, str]:
+    if layout.python_bridge_executable is None:
+        return {}
+    return {"MELIX_PYTHON_BRIDGE_EXECUTABLE": os.fspath(layout.python_bridge_executable)}
 
 
 def resolve_built_swift_product_binary(repo_root: Path, *, package_path: str, product_name: str) -> Path:
@@ -146,12 +178,75 @@ def build_swift_launch_command(
     ]
 
 
+def build_python_worker_launch_command(
+    repo_root: Path,
+    *,
+    python_executable: Path | None,
+    socket_path: Path,
+    backend_mode: str,
+) -> list[str]:
+    if python_executable is not None:
+        return [
+            os.fspath(python_executable),
+            "-m",
+            "worker.bootstrap",
+            "--socket-path",
+            os.fspath(socket_path),
+            "--backend-mode",
+            backend_mode,
+        ]
+    return [
+        "uv",
+        "run",
+        "--project",
+        os.fspath(repo_root / "services/mlx-worker-python"),
+        "--extra",
+        "mlx",
+        "python",
+        "-m",
+        "worker.bootstrap",
+        "--socket-path",
+        os.fspath(socket_path),
+        "--backend-mode",
+        backend_mode,
+    ]
+
+
+def default_worker_socket_path(
+    repo_root: Path,
+    *,
+    service_instance_name: str,
+    role: str,
+    socket_dir: Path | None = None,
+) -> Path:
+    instance = service_instance_name or "phase1"
+    repo_hash = hashlib.sha1(os.fspath(repo_root.resolve()).encode("utf-8")).hexdigest()[:10]
+    instance_slug = _short_identifier(instance, max_length=32)
+    role_slug = _short_identifier(role, max_length=16)
+    return (socket_dir or DEFAULT_SOCKET_DIR) / f"melix-{instance_slug}-{repo_hash}-{role_slug}.sock"
+
+
+def _short_identifier(value: str, *, max_length: int) -> str:
+    normalized = _normalize_service_instance_name(value) or "default"
+    if len(normalized) <= max_length:
+        return normalized
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:8]
+    prefix = normalized[: max(1, max_length - len(digest) - 1)].rstrip("-")
+    return f"{prefix}-{digest}"
+
+
+def _configured_path(name: str) -> Path | None:
+    value = os.environ.get(name, "").strip()
+    return Path(value).expanduser() if value else None
+
+
 def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
     service_instance_name = _normalize_service_instance_name(os.environ.get("MELIX_SERVICE_INSTANCE_NAME", ""))
     default_runtime_dir = repo_root / ".runtime" / "phase1"
     if service_instance_name:
         default_runtime_dir = repo_root / ".runtime" / "sidecars" / service_instance_name
     runtime_dir = resolve_path(os.environ.get("MELIX_RUNTIME_DIR", default_runtime_dir))
+    socket_dir = resolve_path(os.environ.get("MELIX_SOCKET_DIR", DEFAULT_SOCKET_DIR))
     default_melix_home = runtime_dir / "home"
     melix_home_value = os.environ.get("MELIX_HOME", "").strip()
     melix_home_dir = resolve_path(melix_home_value if melix_home_value else default_melix_home)
@@ -162,10 +257,20 @@ def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
         service_instance_name=service_instance_name,
         melix_home_dir=melix_home_dir,
         runtime_dir=runtime_dir,
-        python_socket_path=Path(os.environ.get("MELIX_WORKER_SOCKET_PATH", runtime_dir / "python-worker.sock")).expanduser(),
-        swift_text_worker_socket_path=Path(
-            os.environ.get("MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH", runtime_dir / "swift-text-worker.sock")
-        ).expanduser(),
+        python_socket_path=_configured_path("MELIX_WORKER_SOCKET_PATH")
+        or default_worker_socket_path(
+            repo_root,
+            service_instance_name=service_instance_name,
+            role="python",
+            socket_dir=socket_dir,
+        ),
+        swift_text_worker_socket_path=_configured_path("MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH")
+        or default_worker_socket_path(
+            repo_root,
+            service_instance_name=service_instance_name,
+            role="swift",
+            socket_dir=socket_dir,
+        ),
         managed_models_dir=Path(
             os.environ.get("MELIX_MANAGED_MODEL_ROOT", melix_home_dir / "models" / "default-managed")
         ).expanduser(),
@@ -200,6 +305,7 @@ def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
         http_port=os.environ.get("MELIX_HTTP_PORT", "12436"),
         python_backend_mode=os.environ.get("MELIX_BACKEND_MODE", "auto"),
         swift_text_worker_backend_mode=os.environ.get("MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE", "swift"),
+        python_bridge_executable=resolve_python_bridge_executable(),
         uv_cache_dir=resolve_path(os.environ.get("UV_CACHE_DIR", repo_root / ".uv-cache")),
         swift_home=resolve_path(os.environ.get("MELIX_SWIFT_HOME", repo_root / ".swift-home")),
         clang_module_cache_path=resolve_path(
@@ -215,6 +321,8 @@ def ensure_runtime_directories(layout: RuntimeLayout) -> None:
         layout.melix_home_dir / "state",
         layout.melix_home_dir / "secrets",
         layout.runtime_dir,
+        layout.python_socket_path.parent,
+        layout.swift_text_worker_socket_path.parent,
         layout.uv_cache_dir,
         layout.swift_home,
         layout.clang_module_cache_path,
@@ -328,34 +436,33 @@ def _read_dist_info_metadata_version(metadata_path: Path) -> str | None:
 
 
 def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
-    fallback_version: str | None = None
     for ancestor in metallib_path.resolve().parents:
+        fallback_version: str | None = None
         try:
             with os.scandir(ancestor) as entries:
-                dist_info_names = sorted(
-                    entry.name
-                    for entry in entries
-                    if entry.name.startswith("mlx_metal-")
-                    and entry.name.endswith(".dist-info")
-                    and entry.is_dir(follow_symlinks=False)
-                )
+                for entry in entries:
+                    if not (
+                        entry.name.startswith("mlx_metal-")
+                        and entry.name.endswith(".dist-info")
+                        and entry.is_dir(follow_symlinks=False)
+                    ):
+                        continue
+
+                    metadata_path = ancestor / entry.name / "METADATA"
+                    try:
+                        version = _read_dist_info_metadata_version(metadata_path)
+                    except OSError:
+                        version = None
+                    if version is not None:
+                        return version
+
+                    if fallback_version is None:
+                        match = re.fullmatch(r"mlx_metal-(?P<version>.+)\.dist-info", entry.name)
+                        if match:
+                            fallback_version = match.group("version")
         except OSError:
             continue
 
-        for dist_info_name in dist_info_names:
-            metadata_path = ancestor / dist_info_name / "METADATA"
-            try:
-                version = _read_dist_info_metadata_version(metadata_path)
-            except OSError:
-                continue
-            if version is not None:
-                return version
-
-        for dist_info_name in dist_info_names:
-            match = re.fullmatch(r"mlx_metal-(?P<version>.+)\.dist-info", dist_info_name)
-            if match:
-                fallback_version = match.group("version")
-                break
         if fallback_version is not None:
             return fallback_version
 
@@ -504,23 +611,33 @@ def run_wait_for_worker_ready(
     uv_cache_dir: Path,
     socket_path: Path,
     output_path: Path,
+    python_executable: Path | None = None,
 ) -> None:
     environment = os.environ.copy()
     environment["PYTHONPATH"] = f"{repo_root}:{repo_root / 'services/mlx-worker-python'}"
     environment["UV_CACHE_DIR"] = os.fspath(uv_cache_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    command = [
-        "uv",
-        "run",
-        "--project",
-        os.fspath(repo_root / "services/mlx-worker-python"),
-        "--extra",
-        "mlx",
-        "python",
-        os.fspath(repo_root / "scripts" / "wait_for_worker_ready.py"),
-        "--socket-path",
-        os.fspath(socket_path),
-    ]
+    wait_script_path = repo_root / "scripts" / "wait_for_worker_ready.py"
+    if python_executable is not None:
+        command = [
+            os.fspath(python_executable),
+            os.fspath(wait_script_path),
+            "--socket-path",
+            os.fspath(socket_path),
+        ]
+    else:
+        command = [
+            "uv",
+            "run",
+            "--project",
+            os.fspath(repo_root / "services/mlx-worker-python"),
+            "--extra",
+            "mlx",
+            "python",
+            os.fspath(wait_script_path),
+            "--socket-path",
+            os.fspath(socket_path),
+        ]
     with output_path.open("wb") as handle:
         result = subprocess.run(
             command,
@@ -574,6 +691,7 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
     }
     if layout.service_instance_name:
         exports["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
+    exports.update(optional_python_bridge_environment(layout))
     if os.environ.get(SWIFT_MLX_METALLIB_PATH_ENV, "").strip():
         exports[SWIFT_MLX_METALLIB_PATH_ENV] = os.fspath(resolve_configured_mlx_metallib())
     exports.update(optional_parent_environment_exports(SWIFT_OPTIONAL_PARENT_ENV))
@@ -619,6 +737,7 @@ def start_stack(options: DevUpOptions) -> None:
         uv_cache_dir=layout.uv_cache_dir,
         socket_path=layout.swift_text_worker_socket_path,
         output_path=layout.runtime_dir / "swift-text-worker.ready.log",
+        python_executable=layout.python_bridge_executable,
     )
 
     python_worker_pid = spawn_background_process(
@@ -635,21 +754,12 @@ def start_stack(options: DevUpOptions) -> None:
             "MELIX_MODEL_OPS_JOBS_ROOT": os.fspath(layout.model_ops_jobs_root),
             "MELIX_EVALUATION_JOBS_ROOT": os.fspath(layout.evaluation_jobs_root),
         },
-        command=[
-            "uv",
-            "run",
-            "--project",
-            os.fspath(repo_root / "services/mlx-worker-python"),
-            "--extra",
-            "mlx",
-            "python",
-            "-m",
-            "worker.bootstrap",
-            "--socket-path",
-            os.fspath(layout.python_socket_path),
-            "--backend-mode",
-            layout.python_backend_mode,
-        ],
+        command=build_python_worker_launch_command(
+            repo_root,
+            python_executable=layout.python_bridge_executable,
+            socket_path=layout.python_socket_path,
+            backend_mode=layout.python_backend_mode,
+        ),
     )
     write_pid_file(layout.runtime_dir / "python-worker.pid", python_worker_pid)
     run_wait_for_worker_ready(
@@ -657,6 +767,7 @@ def start_stack(options: DevUpOptions) -> None:
         uv_cache_dir=layout.uv_cache_dir,
         socket_path=layout.python_socket_path,
         output_path=layout.runtime_dir / "python-worker.ready.log",
+        python_executable=layout.python_bridge_executable,
     )
 
     control_plane_command = build_swift_launch_command(
@@ -682,6 +793,7 @@ def start_stack(options: DevUpOptions) -> None:
             "MELIX_IMAGE_DEFAULTS_STORE_PATH": os.fspath(layout.image_defaults_store_path),
             "HOME": os.fspath(layout.swift_home),
             "CLANG_MODULE_CACHE_PATH": os.fspath(layout.clang_module_cache_path),
+            **optional_python_bridge_environment(layout),
         },
         command=control_plane_command,
     )

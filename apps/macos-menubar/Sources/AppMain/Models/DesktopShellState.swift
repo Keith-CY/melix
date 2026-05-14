@@ -181,8 +181,8 @@ public struct DesktopRuntimeEndpointState: Equatable, Sendable {
         serverSessionID: "",
         serverTitle: "No Server",
         modelID: "",
-        requestedBaseURL: "http://127.0.0.1:12436/v1",
-        effectiveBaseURL: "http://127.0.0.1:12436/v1",
+        requestedBaseURL: "http://\(MelixGatewayDefaults.host):\(MelixGatewayDefaults.port)/v1",
+        effectiveBaseURL: "http://\(MelixGatewayDefaults.host):\(MelixGatewayDefaults.port)/v1",
         sharedAccessSummaryText: "No server session selected."
     )
 }

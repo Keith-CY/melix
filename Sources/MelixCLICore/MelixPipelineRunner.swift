@@ -872,6 +872,17 @@ private enum MelixPipelineCommandBuilder {
     static func command(named name: String, args: [String: Any]) throws -> MelixCLICommand {
         try validateSupportedCommand(named: name)
         switch name {
+        case "estimate.import":
+            return .estimateImport(
+                EstimateImportOptions(
+                    repoID: try requiredString("repo_id", args),
+                    targetKind: string("target_kind", args) ?? "import",
+                    targetInputs: parameters(args, excluding: [
+                        "repo_id",
+                        "target_kind",
+                    ])
+                )
+            )
         case "convert":
             return .convert(
                 ConvertOptions(
@@ -932,8 +943,22 @@ private enum MelixPipelineCommandBuilder {
                     hfToken: string("hf_token", args) ?? ""
                 )
             )
+        case "model.inspect":
+            return .modelInspect(
+                ModelInspectOptions(
+                    modelID: try requiredString("model_id", args)
+                )
+            )
         case "model.roots.rescan":
             return .modelRootsRescan(ModelRootsRescanOptions())
+        case "dataset.hub.download":
+            return .datasetHubDownload(
+                DatasetHubDownloadOptions(
+                    repoID: try requiredString("repo_id", args),
+                    revision: string("revision", args) ?? "main",
+                    hfToken: string("hf_token", args) ?? ""
+                )
+            )
         case "server.session.update":
             return .serverSessionUpdate(
                 ServerSessionUpdateOptions(
@@ -1112,6 +1137,41 @@ private enum MelixPipelineCommandBuilder {
                         "threshold",
                         "output_schema_json",
                         "ignored_paths",
+                        "eval_prompt",
+                        "eval_prompt_file",
+                        "eval_prompt_id",
+                        "eval_prompt_revision",
+                    ]),
+                    evalPromptID: string("eval_prompt_id", args) ?? "",
+                    evalPromptRevisionID: string("eval_prompt_revision", args) ?? "",
+                    evalPrompt: string("eval_prompt", args) ?? "",
+                    evalPromptFile: string("eval_prompt_file", args) ?? ""
+                )
+            )
+        case "eval.compare":
+            return .evalCompare(
+                EvalCompareOptions(
+                    modelID: string("model_id", args) ?? "",
+                    hfRepoID: string("repo_id", args) ?? "",
+                    targetModelIDs: try firstStringArray(["target_model_ids", "target_model_id"], args),
+                    targetAdapterManifestPaths: try firstStringArray(["target_adapters", "target_adapter"], args),
+                    suites: try firstStringArray(["suites", "suite"], args),
+                    datasetID: string("dataset_id", args) ?? "",
+                    sampleSize: try uint32("sample_size", args) ?? 0,
+                    source: evaluationSource(args),
+                    fieldMapping: evaluationFieldMapping(args),
+                    profile: try evaluationProfile(args),
+                    parameters: parameters(args, excluding: [
+                        "model_id",
+                        "repo_id",
+                        "target_model_ids",
+                        "target_model_id",
+                        "target_adapters",
+                        "target_adapter",
+                        "suites",
+                        "suite",
+                        "dataset_id",
+                        "sample_size",
                     ])
                 )
             )
@@ -1127,12 +1187,15 @@ private enum MelixPipelineCommandBuilder {
     }
 
     private static let supportedCommandNames: Set<String> = [
+        "estimate.import",
         "convert",
         "quantize",
         "upload",
         "model.import",
         "model.hub.download",
+        "model.inspect",
         "model.roots.rescan",
+        "dataset.hub.download",
         "server.session.update",
         "server.session.select",
         "server.start",
@@ -1147,6 +1210,7 @@ private enum MelixPipelineCommandBuilder {
         "bench.matrix.export-summary-csv",
         "bench.matrix.export-requests-csv",
         "eval.run",
+        "eval.compare",
         "eval.export-summary-csv",
         "eval.export-samples-csv",
         "eval.export-samples-jsonl",

@@ -7,6 +7,7 @@ from packaging.requirements import Requirement
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+WORKSPACE_PYPROJECT = REPO_ROOT / "pyproject.toml"
 WORKER_PYPROJECT = REPO_ROOT / "services" / "mlx-worker-python" / "pyproject.toml"
 
 
@@ -24,3 +25,21 @@ def test_worker_base_dependencies_exclude_test_and_codegen_tools() -> None:
     assert "pytest" not in runtime_dependencies
     assert "grpcio-tools" not in runtime_dependencies
     assert {"coverage", "pytest", "grpcio-tools"} <= dev_dependencies
+
+
+def test_worker_mlx_extra_isolates_pyarrow_from_synthetic_data() -> None:
+    workspace_payload = tomllib.loads(WORKSPACE_PYPROJECT.read_text(encoding="utf-8"))
+    worker_payload = tomllib.loads(WORKER_PYPROJECT.read_text(encoding="utf-8"))
+
+    runtime_dependencies = _dependency_names(worker_payload["project"]["dependencies"])
+    mlx_dependencies = worker_payload["project"]["optional-dependencies"]["mlx"]
+    mlx_dependency_names = _dependency_names(mlx_dependencies)
+    workspace_conflicts = workspace_payload["tool"]["uv"]["conflicts"]
+
+    assert "pyarrow" not in runtime_dependencies
+    assert "pyarrow>=23.0.1,<24" in mlx_dependencies
+    assert "pyarrow" in mlx_dependency_names
+    assert [
+        {"package": "melix-mlx-worker", "extra": "mlx"},
+        {"package": "melix-mlx-worker", "extra": "synthetic-data"},
+    ] in workspace_conflicts

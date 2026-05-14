@@ -22,6 +22,8 @@ This slice is Python-only under `services/mlx-worker-python` and is verifiable o
 3. Preserve unlimited behavior and the generic fallback shape for arbitrary nested list payloads.
 4. Add focused regression coverage that guards against the old full list materialization for canonical JSON arrays.
 5. Update the existing preview-limit probe to exercise a large single-file JSON payload and make the registry command use the head probe script for base-vs-head comparisons.
+6. Reuse a module-level `json.JSONDecoder` for limited JSON preview scanning so each preview call avoids reconstructing identical decoder state while preserving `raw_decode` semantics.
+7. Add regression coverage proving the limited JSON preview path routes both wrapper-object and row decoding through the shared decoder.
 
 ## Performance probe definition
 
