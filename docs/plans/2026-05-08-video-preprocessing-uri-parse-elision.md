@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reduce redundant parsing in `prepare_video_input(...)` for URI-backed video inputs when the media metadata does not provide an explicit filename.
+Reduce redundant parsing and decoding work in `prepare_video_input(...)` for URI-backed video inputs when the media metadata does not provide an explicit filename and the URI path contains no percent-encoded bytes.
 
 ## Scope
 
@@ -23,7 +23,8 @@ Use the existing registered probe `video-preprocessing-uri-byte-length-reuse` an
 Success metrics:
 
 - Preserve existing `byte_length_getattrs_per_call == 1.0`.
-- Reduce URI parse calls for a remote URI without explicit filename from two per call to one per call.
+- Keep URI parse calls at one per call for a remote URI without explicit filename.
+- Avoid calling `unquote(...)` for URI paths that do not contain percent-encoded bytes.
 - Keep behavior identical for inferred format, filename, byte length, and identity hash.
 
 ## Verification commands
@@ -32,7 +33,7 @@ Success metrics:
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_video_preprocessing.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_video_preprocessing_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_video_preprocessing_uri_probe_script_emits_metrics
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_video_preprocessing.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_video_preprocessing_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_video_preprocessing_uri_probe_script_emits_metrics
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage json -o coverage.json
-python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/video_preprocessing.py services/mlx-worker-python/tests/test_video_preprocessing.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/video_preprocessing_uri_probe.py
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python scripts/video_preprocessing_uri_probe.py
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python scripts/pr_scoped_performance_run.py --probe-id video-preprocessing-uri-byte-length-reuse --repo-root "$PWD" --base-ref origin/main --output /tmp/video-preprocessing-uri-probe.json
+python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/video_preprocessing.py services/mlx-worker-python/tests/test_video_preprocessing.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/video_preprocessing_uri_probe.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/video_preprocessing_uri_probe.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/pr_scoped_performance_run.py --registry infra/perf/pr_scoped_probes.json --probe-id video-preprocessing-uri-byte-length-reuse --base-repo <baseline-worktree> --head-repo "$PWD" --output /tmp/video-preprocessing-uri-probe.json
 ```
