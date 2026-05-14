@@ -46,6 +46,14 @@ def test_probe_policy_evidence_enabled_only_for_evidence_modes() -> None:
     assert ProbePolicy(mode=ProbeMode.DEBUG).evidence_enabled is True
 
 
+def test_probe_policy_uses_slots_for_hot_path_instances() -> None:
+    policy = ProbePolicy(mode=ProbeMode.MINIMAL)
+
+    assert not hasattr(policy, "__dict__")
+    assert policy.telemetry_enabled is False
+    assert policy.no_op_reason == "probe_mode_minimal"
+
+
 def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     metrics = measure_no_op_probe_policy_overhead(iterations=16, samples=1, threshold_pct=10_000.0)
     payload = metrics.to_dict()
