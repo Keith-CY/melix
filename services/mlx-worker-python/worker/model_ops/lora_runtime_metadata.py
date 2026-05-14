@@ -8,6 +8,8 @@ from typing import Any, Mapping
 
 from packages.protocol.python.worker.v1 import common_pb2
 
+from worker.model_ops.quantization_metadata import EXPLICIT_QUANTIZED_PROFILE_IDS
+
 
 ADAPTER_RUNTIME_BASE_REUSE_KEY = "adapter_runtime.base_reuse_key"
 ADAPTER_RUNTIME_ISOLATION_KEY = "adapter_runtime.adapter_isolation_key"
@@ -22,7 +24,6 @@ QLORA_COMPATIBILITY_STATUS = "qlora_compatibility_status"
 QUANTIZED_TARGET_MODULE_GUARD = "quantized_target_module_guard"
 
 _QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
-_EXPLICIT_QUANTIZED_PROFILE_IDS = {"quantized", "quantized_base"}
 
 
 ADAPTER_RUNTIME_EXT_KEY_MAP: tuple[tuple[str, str], ...] = (
@@ -177,7 +178,7 @@ def detect_quantized_base(source_model: common_pb2.ModelSpec) -> dict[str, objec
     profile_id = source_model.quant_profile_id.strip()
     if profile_id:
         kind = _quantized_kind_from_text(profile_id)
-        if kind != "unknown" or profile_id.lower() in _EXPLICIT_QUANTIZED_PROFILE_IDS:
+        if kind != "unknown" or profile_id.lower() in EXPLICIT_QUANTIZED_PROFILE_IDS:
             return {
                 QUANTIZED_BASE_DETECTED: True,
                 QUANTIZED_BASE_KIND: kind,
@@ -197,7 +198,7 @@ def detect_quantized_base(source_model: common_pb2.ModelSpec) -> dict[str, objec
         if not ext_value:
             continue
         kind = _quantized_kind_from_text(ext_value)
-        if kind != "unknown" or ext_value.lower() in _EXPLICIT_QUANTIZED_PROFILE_IDS:
+        if kind != "unknown" or ext_value.lower() in EXPLICIT_QUANTIZED_PROFILE_IDS:
             return {
                 QUANTIZED_BASE_DETECTED: True,
                 QUANTIZED_BASE_KIND: kind,

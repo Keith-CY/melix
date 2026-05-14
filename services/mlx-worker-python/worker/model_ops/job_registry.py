@@ -437,28 +437,24 @@ class ModelOpsJobRegistry:
 
     @staticmethod
     def _copy_adapter_runtime_row_fields(row: dict[str, Any], manifest: dict[str, Any]) -> None:
-        if (
-            _ADAPTER_RUNTIME_BASE_REUSE_MANIFEST_KEY in manifest
-            or _ADAPTER_RUNTIME_ADAPTER_ISOLATION_MANIFEST_KEY in manifest
-            or _ADAPTER_RUNTIME_SWITCH_MODE_MANIFEST_KEY in manifest
-            or _ADAPTER_RUNTIME_SHARING_POLICY_MANIFEST_KEY in manifest
-            or _ADAPTER_RUNTIME_COMPATIBILITY_STATUS_MANIFEST_KEY in manifest
+        base_reuse_key = str(manifest.get(_ADAPTER_RUNTIME_BASE_REUSE_MANIFEST_KEY, "")).strip()
+        adapter_isolation_key = str(manifest.get(_ADAPTER_RUNTIME_ADAPTER_ISOLATION_MANIFEST_KEY, "")).strip()
+        switch_mode = str(manifest.get(_ADAPTER_RUNTIME_SWITCH_MODE_MANIFEST_KEY, "")).strip()
+        sharing_policy = str(manifest.get(_ADAPTER_RUNTIME_SHARING_POLICY_MANIFEST_KEY, "")).strip()
+        compatibility_status = str(manifest.get(_ADAPTER_RUNTIME_COMPATIBILITY_STATUS_MANIFEST_KEY, "")).strip()
+        if not (
+            base_reuse_key
+            and adapter_isolation_key
+            and switch_mode
+            and sharing_policy
+            and compatibility_status
         ):
-            row[ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD] = str(
-                manifest.get(_ADAPTER_RUNTIME_BASE_REUSE_MANIFEST_KEY, "")
-            )
-            row[ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD] = str(
-                manifest.get(_ADAPTER_RUNTIME_ADAPTER_ISOLATION_MANIFEST_KEY, "")
-            )
-            row[ADAPTER_RUNTIME_SWITCH_MODE_FIELD] = str(
-                manifest.get(_ADAPTER_RUNTIME_SWITCH_MODE_MANIFEST_KEY, "")
-            )
-            row[ADAPTER_RUNTIME_SHARING_POLICY_FIELD] = str(
-                manifest.get(_ADAPTER_RUNTIME_SHARING_POLICY_MANIFEST_KEY, "")
-            )
-            row[ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD] = str(
-                manifest.get(_ADAPTER_RUNTIME_COMPATIBILITY_STATUS_MANIFEST_KEY, "")
-            )
+            return
+        row[ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD] = base_reuse_key
+        row[ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD] = adapter_isolation_key
+        row[ADAPTER_RUNTIME_SWITCH_MODE_FIELD] = switch_mode
+        row[ADAPTER_RUNTIME_SHARING_POLICY_FIELD] = sharing_policy
+        row[ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD] = compatibility_status
 
     @classmethod
     def _job_manifest(cls, job: ModelOpsJob) -> dict[str, Any]:
@@ -784,8 +780,7 @@ class ModelOpsJobRegistry:
             else:
                 status = job["status"]
 
-            adapters.append(
-                {
+            adapter = {
                     "adapter_id": f"{adapter_name or 'adapter'}@{job['job_id']}",
                     "job_id": job["job_id"],
                     "adapter_name": adapter_name,
@@ -851,27 +846,6 @@ class ModelOpsJobRegistry:
                         if removal_applied
                         else activation["component_model_path"] if activation else component_model_path
                     ),
-                    ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD: (
-                        ""
-                        if removal_applied
-                        else activation.get(ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD, "") if activation else ""
-                    ),
-                    ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD: (
-                        ""
-                        if removal_applied
-                        else activation.get(ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD, "") if activation else ""
-                    ),
-                    ADAPTER_RUNTIME_SWITCH_MODE_FIELD: (
-                        "" if removal_applied else activation.get(ADAPTER_RUNTIME_SWITCH_MODE_FIELD, "") if activation else ""
-                    ),
-                    ADAPTER_RUNTIME_SHARING_POLICY_FIELD: (
-                        "" if removal_applied else activation.get(ADAPTER_RUNTIME_SHARING_POLICY_FIELD, "") if activation else ""
-                    ),
-                    ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD: (
-                        ""
-                        if removal_applied
-                        else activation.get(ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD, "") if activation else ""
-                    ),
                     "source_adapter_job_id": activation["source_adapter_job_id"] if activation else job["job_id"],
                     "activation_duration_ms": 0.0 if removal_applied else activation["activation_duration_ms"] if activation else 0.0,
                     "exportable_state": "ready",
@@ -919,7 +893,25 @@ class ModelOpsJobRegistry:
                     ),
                     "adapter_publish_ms": float(manifest.get("adapter_publish_ms", 0.0)),
                 }
-            )
+            if activation and not removal_applied:
+                base_reuse_key = activation.get(ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD)
+                adapter_isolation_key = activation.get(ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD)
+                switch_mode = activation.get(ADAPTER_RUNTIME_SWITCH_MODE_FIELD)
+                sharing_policy = activation.get(ADAPTER_RUNTIME_SHARING_POLICY_FIELD)
+                compatibility_status = activation.get(ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD)
+                if (
+                    base_reuse_key
+                    and adapter_isolation_key
+                    and switch_mode
+                    and sharing_policy
+                    and compatibility_status
+                ):
+                    adapter[ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD] = base_reuse_key
+                    adapter[ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD] = adapter_isolation_key
+                    adapter[ADAPTER_RUNTIME_SWITCH_MODE_FIELD] = switch_mode
+                    adapter[ADAPTER_RUNTIME_SHARING_POLICY_FIELD] = sharing_policy
+                    adapter[ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD] = compatibility_status
+            adapters.append(adapter)
 
         return adapters
 

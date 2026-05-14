@@ -3972,7 +3972,44 @@ def test_adapter_backed_runtime_activation_tolerates_legacy_scalar_targets(tmp_p
         output_dir=tmp_path / "activate",
     )
 
-    assert result.manifest["quantized_target_module_guard"] == "accepted_no_targets"
+    assert result.manifest["quantized_target_module_guard"] == "accepted"
+
+
+def test_adapter_backed_runtime_activation_normalizes_legacy_csv_targets(tmp_path: Path) -> None:
+    adapter_weights_path = tmp_path / "weights" / "adapters.safetensors"
+    adapter_weights_path.parent.mkdir(parents=True, exist_ok=True)
+    adapter_weights_path.write_text("adapter", encoding="utf-8")
+    adapter_manifest_path = tmp_path / "train_lora.adapter.json"
+    adapter_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-test-text",
+                "adapter_set_hash": "adapter-legacy",
+                "adapter_name": "legacy-adapter",
+                "weights_path": str(adapter_weights_path),
+                "training_mode": "qlora",
+                "quantization_mode": "quantized_base",
+                "target_modules": " model.layers.0.self_attn.q_proj, model.layers.0.mlp.gate_proj ",
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    result = AdapterActivationPipeline().run(
+        job_id="activate-legacy",
+        request_ext={
+            "artifact_path": str(adapter_manifest_path),
+            "activation_mode": "adapter_backed_runtime",
+        },
+        source_model=_text_model(
+            model_path=str(tmp_path / "base-model"),
+            quant_profile_id="q4",
+        ),
+        output_dir=tmp_path / "activate",
+    )
+
+    assert result.manifest["quantized_target_module_guard"] == "accepted"
 
 
 def test_adapter_runtime_plan_reuses_base_and_isolates_adapters(tmp_path: Path) -> None:
@@ -4013,3 +4050,33 @@ def test_adapter_runtime_plan_reuses_base_and_isolates_adapters(tmp_path: Path) 
     assert first["adapter_runtime.adapter_isolation_key"] != second["adapter_runtime.adapter_isolation_key"]
     assert first["adapter_runtime.switch_mode"] == "base_reuse_adapter_swap"
     assert second["adapter_runtime.sharing_policy"] == "shared_base_isolated_adapter"
+
+
+def test_adapter_runtime_plan_marks_fused_activation_as_full_model_load(tmp_path: Path) -> None:
+    source_model = _text_model(model_path=str(tmp_path / "base-model"), quant_profile_id="q4")
+    adapter_scope = {
+        "adapter_scope": "model",
+        "training_surface": "model",
+        "component_model_type": "",
+        "component_family": "gemma",
+        "component_model_path": str(tmp_path / "base-model"),
+    }
+
+    runtime_fields = build_adapter_runtime_manifest_fields(
+        source_model=source_model,
+        adapter_manifest={
+            "adapter_name": "alpha",
+            "adapter_set_hash": "adapter-alpha",
+            "job_id": "train-alpha",
+        },
+        adapter_manifest_path=tmp_path / "alpha.adapter.json",
+        adapter_weights_path=str(tmp_path / "alpha" / "adapters.safetensors"),
+        activation_mode="fused_derived_model",
+        adapter_scope=adapter_scope,
+    )
+
+    assert runtime_fields["adapter_runtime.switch_mode"] == "full_model_load"
+    assert runtime_fields["adapter_runtime.sharing_policy"] == "isolated_fused_model"
+    assert runtime_fields["adapter_runtime.compatibility_status"] == "not_applicable"
+    assert len(runtime_fields["adapter_runtime.base_reuse_key"]) == 64
+    assert len(runtime_fields["adapter_runtime.adapter_isolation_key"]) == 64

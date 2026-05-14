@@ -435,6 +435,52 @@ def test_job_registry_snapshot_preserves_adapter_runtime_fields() -> None:
     assert target[ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD] == "adapter-runtime-key"
 
 
+def test_job_registry_omits_partial_adapter_runtime_fields() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps({"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"}),
+    )
+    registry.complete(train_job.job_id, adapter_manifest_path)
+
+    active_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.attach_manifest(
+        active_job.job_id,
+        json.dumps(
+            {
+                "adapter_manifest_path": adapter_manifest_path,
+                "adapter_weights_path": "/runtime/train/adapters.safetensors",
+                "adapter_set_hash": "hash-a",
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": "/runtime/activate/melix-dev-active",
+                "source_model": "melix-dev-text",
+                "activation_mode": "adapter_backed_runtime",
+                "adapter_runtime.base_reuse_key": "base-runtime-key",
+                "adapter_runtime.switch_mode": "base_reuse_adapter_swap",
+            }
+        ),
+    )
+    registry.complete(active_job.job_id, "/runtime/activate/melix-dev-active/manifest.json")
+
+    snapshot = registry.snapshot()
+    adapter = snapshot["adapters"][0]
+    derived_model = snapshot["derived_models"][0]
+    for row in (adapter, derived_model):
+        assert ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD not in row
+        assert ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD not in row
+        assert ADAPTER_RUNTIME_SWITCH_MODE_FIELD not in row
+        assert ADAPTER_RUNTIME_SHARING_POLICY_FIELD not in row
+        assert ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD not in row
+
+    target = registry.resolve_derived_model_target(derived_model_id="melix-dev-active")
+    assert target is not None
+    assert ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD not in target
+    assert ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD not in target
+
+
 def test_active_derived_model_row_cache_reuses_rows_and_invalidates() -> None:
     registry = ModelOpsJobRegistry()
     active_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")

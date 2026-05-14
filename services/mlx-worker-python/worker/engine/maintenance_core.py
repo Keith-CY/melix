@@ -82,12 +82,13 @@ class ShapedBenchmarkPrompt(str):
 
     def split(self, sep: str | None = None, maxsplit: int = -1) -> list[str]:
         if sep is None and maxsplit == -1:
+            # Preserve the shaped-token cache on the hot path; callers must treat it as read-only.
             return self._tokens
         return str(self).split(sep, maxsplit)
 
     @property
     def tokens(self) -> tuple[str, ...]:
-        return self._tokens
+        return tuple(self._tokens)
 
     @property
     def token_count(self) -> int:
