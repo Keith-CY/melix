@@ -377,6 +377,8 @@ public actor ModelCatalog {
     }
 
     public func beginRequest(modelID: String) {
+        // Every beginRequest call must be paired with exactly one finishRequest
+        // call, either via non-streaming defer cleanup or the SSE onComplete hook.
         let current = activeRequestCountByModelID[modelID] ?? 0
         activeRequestCountByModelID[modelID] = current.saturatingAdd(1)
         touchModel(id: modelID)

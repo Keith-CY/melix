@@ -9932,6 +9932,7 @@ public final class RuntimeViewModel {
         guard projection.source == .configFileImport else {
             return true
         }
+        // Bootstrap: an empty local roster means no explicit operator choice exists yet.
         return localDefaultModelID == projectedDefaultModelID || session.servedModelIDs.isEmpty
     }
 

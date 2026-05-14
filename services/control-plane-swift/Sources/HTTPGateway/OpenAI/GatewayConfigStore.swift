@@ -423,6 +423,7 @@ public actor GatewayConfigStore {
         _ rawModelIDs: [String],
         defaultModelID: String
     ) throws -> [String] {
+        // Strict path for explicit operator configuration applied at the API boundary.
         var orderedIDs = rawModelIDs.map(trimmed).filter { !$0.isEmpty }
         if orderedIDs.isEmpty {
             orderedIDs = [defaultModelID]
@@ -446,6 +447,7 @@ public actor GatewayConfigStore {
         _ rawModelIDs: [String],
         defaultModelID: String
     ) -> [String] {
+        // Lax bootstrap path for built-in/default seeding before an explicit roster exists.
         var orderedIDs: [String] = []
         var seen: Set<String> = []
         for modelID in rawModelIDs.map(trimmed).filter({ !$0.isEmpty }) {

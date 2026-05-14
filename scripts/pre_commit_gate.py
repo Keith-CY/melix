@@ -64,6 +64,7 @@ class GateError(RuntimeError):
 
 
 def scrubbed_git_environment(extra_env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return a copied env without Git hook locals that confuse nested temp-repo git commands."""
     env = scrub_git_local_env(env=os.environ)
     if extra_env:
         env.update(extra_env)
