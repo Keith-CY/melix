@@ -166,13 +166,19 @@ class ServingDiagnosticsEvent:
 
     def to_dict(self) -> dict[str, object]:
         attributes = self.attributes
+        event_index = self.event_index
+        duration_ms = self.duration_ms
         return {
             "schema_version": SERVING_DIAGNOSTICS_EVENT_SCHEMA_VERSION,
             "request_id": self.request_id,
             "phase": self.phase,
-            "event_index": int(self.event_index),
+            "event_index": event_index
+            if type(event_index) is int
+            else int(event_index),
             "status": self.status,
-            "duration_ms": float(self.duration_ms),
+            "duration_ms": duration_ms
+            if type(duration_ms) is float
+            else float(duration_ms),
             "attributes": {} if not attributes else _stable_json_object(attributes),
         }
 
