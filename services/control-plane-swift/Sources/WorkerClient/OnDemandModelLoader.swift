@@ -30,7 +30,8 @@ enum OnDemandModelLoader {
         modelCatalog: ModelCatalog,
         workerRegistry: WorkerRegistry?,
         metricsStore: MetricsStore,
-        memoryBudgetBytes: UInt64 = 0
+        memoryBudgetBytes: UInt64 = 0,
+        evictBeforeReadyHandle: Bool = false
     ) async throws -> String {
         try await ensureModelReady(
             modelID: modelID,
@@ -38,6 +39,7 @@ enum OnDemandModelLoader {
             workerRegistry: workerRegistry,
             metricsStore: metricsStore,
             memoryBudgetBytes: memoryBudgetBytes,
+            evictBeforeReadyHandle: evictBeforeReadyHandle,
             loadReason: "lazy_text_load",
             metricsPrefix: "text",
             requiresTextCapability: true
@@ -50,6 +52,7 @@ enum OnDemandModelLoader {
         workerRegistry: WorkerRegistry?,
         metricsStore: MetricsStore,
         memoryBudgetBytes: UInt64 = 0,
+        evictBeforeReadyHandle: Bool = false,
         loadReason: String = "lazy_model_load",
         metricsPrefix: String = "model",
         requiresTextCapability: Bool = false,
@@ -66,15 +69,25 @@ enum OnDemandModelLoader {
         if ModelRuntimeAvailability.isRuntimeCacheMissing(model) {
             throw OnDemandModelLoadError.runtimeCacheMissing
         }
-        _ = await evictModelsIfNeededForLoad(
-            targetModelID: modelID,
-            modelCatalog: modelCatalog,
-            workerRegistry: workerRegistry,
-            metricsStore: metricsStore
-        )
+        if evictBeforeReadyHandle {
+            _ = await evictModelsIfNeededForLoad(
+                targetModelID: modelID,
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry,
+                metricsStore: metricsStore
+            )
+        }
         if let handle = await modelCatalog.dispatchHandle(for: modelID) {
             _ = await modelCatalog.markModelUsed(id: modelID)
             return handle
+        }
+        if !evictBeforeReadyHandle {
+            _ = await evictModelsIfNeededForLoad(
+                targetModelID: modelID,
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry,
+                metricsStore: metricsStore
+            )
         }
         if requiresTextCapability,
            !supportsTextServing(model) {

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from tests.integration.helpers import LiveMelixStack, read_metrics_export, wait_for_metric_value
 
-INTERFERENCE_TRANSCRIPTION_DELAY_MS = "500"
+INTERFERENCE_TRANSCRIPTION_DELAY_MS = "1500"
 
 
 def timed_request(url: str, payload: dict[str, object], *, timeout: float = 15.0) -> tuple[float, bytes, str]:
