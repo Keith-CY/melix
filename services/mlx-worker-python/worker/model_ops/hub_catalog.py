@@ -351,18 +351,20 @@ def _sibling_files(value: Any) -> list[str]:
 
 
 def _model_name(repo_id: str) -> str:
-    if "/" not in repo_id:
+    separator_index = repo_id.find("/")
+    if separator_index < 0:
         return repo_id
-    return repo_id.split("/", 1)[1]
+    return repo_id[separator_index + 1 :]
 
 
 def _author(payload: dict[str, Any], repo_id: str) -> str:
     author = _string(payload.get("author"))
     if author:
         return author
-    if "/" not in repo_id:
+    separator_index = repo_id.find("/")
+    if separator_index < 0:
         return ""
-    return repo_id.split("/", 1)[0]
+    return repo_id[:separator_index]
 
 
 def _license_from_tags(tags: list[str]) -> str:
