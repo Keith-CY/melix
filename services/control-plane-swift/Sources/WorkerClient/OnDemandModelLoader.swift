@@ -66,16 +66,16 @@ enum OnDemandModelLoader {
         if ModelRuntimeAvailability.isRuntimeCacheMissing(model) {
             throw OnDemandModelLoadError.runtimeCacheMissing
         }
-        if let handle = await modelCatalog.dispatchHandle(for: modelID) {
-            _ = await modelCatalog.markModelUsed(id: modelID)
-            return handle
-        }
         _ = await evictModelsIfNeededForLoad(
             targetModelID: modelID,
             modelCatalog: modelCatalog,
             workerRegistry: workerRegistry,
             metricsStore: metricsStore
         )
+        if let handle = await modelCatalog.dispatchHandle(for: modelID) {
+            _ = await modelCatalog.markModelUsed(id: modelID)
+            return handle
+        }
         if requiresTextCapability,
            !supportsTextServing(model) {
             throw OnDemandModelLoadError.modelNotReady

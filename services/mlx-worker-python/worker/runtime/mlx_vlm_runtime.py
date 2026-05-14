@@ -2085,7 +2085,7 @@ class MLXVLMRuntime:
             loaded_model,
             prepared_request,
         )
-        if self._last_fast_path_signature == signature:
+        if self._last_fast_path_signature == signature and not prepared_request.images and not prepared_request.videos:
             return
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
         self._last_fast_path_signature = signature

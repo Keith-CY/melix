@@ -3335,6 +3335,7 @@ public final class RuntimeViewModel {
     public func selectToolSection(_ section: DesktopToolSection) {
         selectedSurface = .tools
         selectedToolSection = section
+        persistOperatorSessionState(force: true)
         notifyStateChanged()
     }
 
