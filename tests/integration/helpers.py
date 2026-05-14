@@ -356,8 +356,6 @@ class LiveMelixStack:
                 path.unlink(missing_ok=True)
 
     def _remove_tree(self, root: Path) -> None:
-        if not root.exists():
-            return
         root_path = os.fspath(root)
         stack: list[tuple[str, bool]] = [(root_path, False)]
         while stack:

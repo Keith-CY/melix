@@ -35,6 +35,25 @@ def test_remove_tree_uses_scandir_without_tree_materialization(
     assert not root.exists()
 
 
+def test_remove_tree_skips_initial_path_exists_stat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime-state"
+    nested = root / "state"
+    nested.mkdir(parents=True)
+    (nested / "session.json").write_text("{}", encoding="utf-8")
+
+    def fail_exists(self: Path):  # pragma: no cover - exercised only on regression
+        raise AssertionError(f"Path.exists should not be used before cleanup scan: {self}")
+
+    monkeypatch.setattr(Path, "exists", fail_exists)
+
+    _stack()._remove_tree(root)
+
+    assert not root.is_dir()
+
+
 def test_remove_tree_removes_directory_symlink_without_following_target(tmp_path: Path) -> None:
     root = tmp_path / "runtime-state"
     target = tmp_path / "shared-target"
