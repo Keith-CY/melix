@@ -213,34 +213,37 @@ class WorkerRegistry:
         load_trust: common_pb2.ModelLoadTrustPolicy | None = None,
     ) -> LoadedModel:
         resolved = self._resolved_model_spec(model_spec)
-        requested_disk_streaming_mode = self._effective_disk_streaming_mode_request(
-            resolved,
-            request_mode=disk_streaming_mode,
-        )
-        if requested_disk_streaming_mode in {
-            common_pb2.DISK_STREAMING_PREFER_DISK,
-            common_pb2.DISK_STREAMING_REQUIRE_DISK,
-        }:
+        has_settings = resolved.HasField("settings")
+        if disk_streaming_mode != common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
+            requested_disk_streaming_mode = disk_streaming_mode
+        elif has_settings:
+            requested_disk_streaming_mode = resolved.settings.disk_streaming_mode
+            if requested_disk_streaming_mode == common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
+                requested_disk_streaming_mode = common_pb2.DISK_STREAMING_DISABLED
+        else:
+            requested_disk_streaming_mode = common_pb2.DISK_STREAMING_DISABLED
+        if (
+            requested_disk_streaming_mode == common_pb2.DISK_STREAMING_PREFER_DISK
+            or requested_disk_streaming_mode == common_pb2.DISK_STREAMING_REQUIRE_DISK
+        ):
             raise DiskStreamingUnsupported(
                 model_id=resolved.model_id,
                 requested_mode=requested_disk_streaming_mode,
             )
+        load_trust_policy: common_pb2.ModelLoadTrustPolicy | None = None
         if resolved.model_kind == "text":
             runtime_kind = "text"
             runtime = self.runtime
-            uses_default_text_runtime = True
+            if (
+                load_trust is None
+                and self._default_text_load_trust_policy is not None
+                and resolved.route_class == common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
+                and not has_settings
+            ):
+                load_trust_policy = self._default_text_load_trust_policy
         else:
             runtime_kind, runtime = self._runtime_for_model(resolved)
-            uses_default_text_runtime = runtime_kind == "text" and runtime is self.runtime
-        load_trust_policy: common_pb2.ModelLoadTrustPolicy | None = None
         trust_remote_code = False
-        if (
-            load_trust is None
-            and uses_default_text_runtime
-            and resolved.route_class == common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
-            and not resolved.HasField("settings")
-        ):
-            load_trust_policy = self._default_text_load_trust_policy
         if load_trust_policy is None:
             trust_started_at = time.monotonic()
             record_trust_latency = True
@@ -301,18 +304,21 @@ class WorkerRegistry:
                 )
             else:
                 runtime_model = runtime.load_model(resolved)
-            residency = self._loaded_residency(
-                resolved,
-                pin_on_load=pin_on_load,
-                effective_disk_streaming_mode=requested_disk_streaming_mode,
-            )
+            if not has_settings and not pin_on_load:
+                residency = self._default_loaded_residency(requested_disk_streaming_mode)
+            else:
+                residency = self._loaded_residency(
+                    resolved,
+                    pin_on_load=pin_on_load,
+                    effective_disk_streaming_mode=requested_disk_streaming_mode,
+                )
         except Exception:
             with self._lock:
-                self._reserved_model_resident_bytes = max(0, self._reserved_model_resident_bytes - estimated)
+                self._reserved_model_resident_bytes -= estimated
             raise
 
         with self._lock:
-            self._reserved_model_resident_bytes = max(0, self._reserved_model_resident_bytes - estimated)
+            self._reserved_model_resident_bytes -= estimated
             handle = f"{resolved.model_id}::{self._next_model_handle}"
             self._next_model_handle += 1
             loaded = LoadedModel(
@@ -328,7 +334,7 @@ class WorkerRegistry:
             self._loaded_models[handle] = loaded
             self._invalidate_loaded_model_order_locked()
             self._loaded_model_resident_bytes += estimated
-            if runtime_kind in {"transcription", "speech"}:
+            if runtime_kind == "transcription" or runtime_kind == "speech":
                 self._last_audio_model_load_latency_ms = float(getattr(runtime_model, "load_latency_ms", 0.0))
             return loaded
 
@@ -870,6 +876,15 @@ class WorkerRegistry:
         residency.pin_requested = pin_on_load or model_spec.settings.pin_on_load
         residency.pinned = residency.state == common_pb2.RESIDENCY_STATE_PINNED
         residency.ttl_seconds = model_spec.settings.ttl_seconds
+        residency.transition_reason = "load_model"
+        residency.effective_disk_streaming_mode = effective_disk_streaming_mode
+        return residency
+
+    @staticmethod
+    def _default_loaded_residency(effective_disk_streaming_mode: int) -> common_pb2.ResidencyInfo:
+        residency = common_pb2.ResidencyInfo()
+        residency.state = common_pb2.RESIDENCY_STATE_WARM
+        residency.policy = common_pb2.MEMORY_RESIDENCY_EVICTABLE
         residency.transition_reason = "load_model"
         residency.effective_disk_streaming_mode = effective_disk_streaming_mode
         return residency
