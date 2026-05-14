@@ -887,6 +887,8 @@ class AutoMLXVLMBackend:
         if not self._available:
             raise RuntimeUnavailableError("mlx-vlm is not installed") from self._error
         self._ensure_runtime()
+        if trust_remote_code and not _callable_accepts_kwarg(self.load_fn, "trust_remote_code"):
+            raise RuntimeError("mlx-vlm loader cannot honor trust_remote_code.")
         metadata = dict(model_spec.ext)
         metadata["mlx_version"] = _installed_package_version("mlx")
         metadata["mlx_lm_version"] = _installed_package_version("mlx-lm")
@@ -894,8 +896,6 @@ class AutoMLXVLMBackend:
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
         try:
             load_kwargs: dict[str, Any] = {"revision": model_spec.revision or "main"}
-            if trust_remote_code and not _callable_accepts_kwarg(self.load_fn, "trust_remote_code"):
-                raise RuntimeError("mlx-vlm loader cannot honor trust_remote_code.")
             if trust_remote_code:
                 load_kwargs["trust_remote_code"] = True
             model, processor = self.load_fn(model_spec.model_path, **load_kwargs)
