@@ -2,7 +2,7 @@
 
 ## Scope
 
-This Python-only performance slice keeps `ResolvedVisionFamilyConfig.prompt_token_count()` behavior unchanged while reducing per-frame arithmetic in media-token accounting.
+This Python-only performance slice keeps `ResolvedVisionFamilyConfig.prompt_token_count()` behavior unchanged while reducing integer division work in image-token accounting.
 
 ## Registered Probe
 
@@ -14,7 +14,7 @@ The affected path is covered by the PR-scoped `vision-family-prompt-token-count-
 
 ## Optimization Hypothesis
 
-The current prompt token path already caches prompt whitespace scans. Remaining hot work in this probe is media token aggregation across images and video frame policies. Keeping image minimum clamping inline and aggregating video frame counts once should reduce loop work while preserving the existing minimum-one-token semantics for empty or non-positive frame policies.
+The current prompt token path already caches prompt whitespace scans. Remaining hot work in this probe is media token aggregation across images and video frame policies. This slice avoids integer division for image inputs that cannot exceed the one-token minimum, while preserving the existing minimum-one-token semantics for tiny images.
 
 ## Verification Plan
 
