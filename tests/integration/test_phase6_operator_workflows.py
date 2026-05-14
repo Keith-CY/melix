@@ -11,7 +11,7 @@ import urllib.request
 from tests.integration.helpers import LiveMelixStack, read_metrics_export, wait_for_metric_value
 from worker.productization.acceptance_metrics import build_phase6_vision_metrics_report
 
-INTERFERENCE_TRANSCRIPTION_DELAY_MS = "500"
+INTERFERENCE_TRANSCRIPTION_DELAY_MS = "1500"
 
 
 def _post_json(url: str, payload: dict[str, object], *, timeout: float = 10.0) -> tuple[int, object]:

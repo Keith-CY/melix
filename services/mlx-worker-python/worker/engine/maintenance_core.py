@@ -63,6 +63,14 @@ class ShapedBenchmarkPrompt(str):
             return list(self._tokens)
         return str(self).split(sep, maxsplit)
 
+    @property
+    def tokens(self) -> tuple[str, ...]:
+        return self._tokens
+
+    @property
+    def token_count(self) -> int:
+        return len(self._tokens)
+
 
 @dataclass(frozen=True)
 class BenchMetricSpec:
@@ -3018,7 +3026,7 @@ class MaintenanceCore:
         request_latency_ms = round((completed_at - started_at) * 1_000.0, 2)
         ttft_ms = round((first_token_time - started_at) * 1_000.0, 2)
         if prompt_tokens <= 0:
-            prompt_tokens = max(1, len(shaped_prompt.split()))
+            prompt_tokens = self._benchmark_prompt_token_count(shaped_prompt)
         if prompt_tps <= 0.0:
             prompt_tps = prompt_tokens / max(ttft_ms / 1_000.0, 0.001)
         if generation_tps <= 0.0:
@@ -3390,6 +3398,8 @@ class MaintenanceCore:
                         "native_quantized": 3.0,
                         "fallback": 4.0,
                         "mixed": 5.0,
+                        "text_only_step": 6.0,
+                        "text_only_batch_generator": 7.0,
                     },
                 ),
                 unit="code",
@@ -3408,6 +3418,10 @@ class MaintenanceCore:
                         "unsupported_family": 3.0,
                         "video_fast_path_unimplemented": 4.0,
                         "mixed": 5.0,
+                        "text_only_batch_generator_not_enabled": 6.0,
+                        "media_inputs_present": 7.0,
+                        "isolated_detokenizer_unavailable": 8.0,
+                        "non_greedy_sampling": 9.0,
                     },
                 ),
                 unit="code",
@@ -3422,6 +3436,8 @@ class MaintenanceCore:
                         "baseline": 0.0,
                         "executor_stream": 1.0,
                         "mixed": 2.0,
+                        "executor_step": 3.0,
+                        "executor_batch_generator": 4.0,
                     },
                 ),
                 unit="code",
@@ -3717,6 +3733,12 @@ class MaintenanceCore:
         if remainder:
             return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
         return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
+
+    @staticmethod
+    def _benchmark_prompt_token_count(prompt: str) -> int:
+        if isinstance(prompt, ShapedBenchmarkPrompt):
+            return max(1, prompt.token_count)
+        return max(1, len(prompt.split()))
 
     @staticmethod
     def _benchmark_execution_ext(

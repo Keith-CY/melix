@@ -48,15 +48,21 @@ class BoundedServingDiagnosticsEventQueue:
         self._lock = threading.Lock()
 
     def append(self, event: ServingDiagnosticsEvent) -> bool:
-        with self._lock:
+        lock = self._lock
+        lock.acquire()
+        try:
+            events = self._events
             if self._is_saturated:
                 self._dropped_count += 1
-                self._events.append(event)
+                events.append(event)
                 return False
-            self._events.append(event)
-            self._retained_count += 1
-            self._is_saturated = self._retained_count >= self._max_events
+            events.append(event)
+            retained_count = self._retained_count + 1
+            self._retained_count = retained_count
+            self._is_saturated = retained_count >= self._max_events
             return True
+        finally:
+            lock.release()
 
     def snapshot(self) -> ServingDiagnosticsQueueSnapshot:
         with self._lock:

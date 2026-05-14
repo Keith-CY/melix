@@ -15,20 +15,7 @@ struct SessionLifecycleSmokeRunnerTests {
         let metricsPath = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("json")
-        try Data(
-            """
-            {
-              "values": {
-                "control_plane.server_pause_ms": 4.5,
-                "control_plane.server_resume_ms": 5.5,
-                "control_plane.server_wake_ms": 6.5,
-                "control_plane.server_stop_ms": 7.5,
-                "control_plane.server_start_ms": 8.5,
-                "control_plane.server_idle_policy_ms": 9.5
-              }
-            }
-            """.utf8
-        ).write(to: metricsPath)
+        try writeLifecycleMetrics(to: metricsPath)
         defer { try? FileManager.default.removeItem(at: metricsPath) }
 
         let client = LifecycleSmokeStubClient()
@@ -57,6 +44,25 @@ struct SessionLifecycleSmokeRunnerTests {
         #expect(report.scenarios["wake"]?.assistantText.contains("Echo: wake") == true)
         #expect(report.scenarios["restart"]?.assistantText.contains("Echo: confirm restart recovery") == true)
         #expect(await client.loadedModelIDs == ["melix-dev-text"])
+    }
+
+    @Test("runner waits for delayed exported lifecycle metrics")
+    func runnerWaitsForDelayedExportedLifecycleMetrics() async throws {
+        let metricsPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        try writeLifecycleMetrics(to: metricsPath, includeServerStart: false)
+        defer { try? FileManager.default.removeItem(at: metricsPath) }
+
+        let exportDelay = LifecycleMetricsExportDelay(path: metricsPath, fillOnSleepCount: 2)
+        let report = try await SessionLifecycleSmokeRunner(
+            client: LifecycleSmokeStubClient(),
+            metricsPath: metricsPath.path,
+            sleep: { seconds in try await exportDelay.sleep(seconds) }
+        ).run()
+
+        #expect(report.metrics["control_plane.server_start_ms"] == 8.5)
+        #expect(await exportDelay.sleepCount >= 2)
     }
 
     @Test("runner fails when the server never reaches sleeping state")
@@ -291,6 +297,29 @@ private enum LifecycleSmokeChatMode: Sendable {
     case heartbeatThenCompletedEmptyAssistant
     case tokensOnly
     case noEvents
+}
+
+private actor LifecycleMetricsExportDelay {
+    private let path: URL
+    private let fillOnSleepCount: Int
+    private var count = 0
+
+    init(path: URL, fillOnSleepCount: Int) {
+        self.path = path
+        self.fillOnSleepCount = fillOnSleepCount
+    }
+
+    var sleepCount: Int {
+        count
+    }
+
+    func sleep(_ seconds: TimeInterval) async throws {
+        count += 1
+        if count == fillOnSleepCount {
+            try writeLifecycleMetrics(to: path)
+        }
+        try await Task.sleep(for: .milliseconds(Int(max(seconds, 0) * 1_000)))
+    }
 }
 
 private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
@@ -531,4 +560,22 @@ private func makeSmokeModelSummary(modelID: String) -> Melix_Controlplane_V1_Mod
     model.modelID = modelID
     model.kind = "text"
     return model
+}
+
+private func writeLifecycleMetrics(to path: URL, includeServerStart: Bool = true) throws {
+    var values: [String: Double] = [
+        "control_plane.server_pause_ms": 4.5,
+        "control_plane.server_resume_ms": 5.5,
+        "control_plane.server_wake_ms": 6.5,
+        "control_plane.server_stop_ms": 7.5,
+        "control_plane.server_idle_policy_ms": 9.5,
+    ]
+    if includeServerStart {
+        values["control_plane.server_start_ms"] = 8.5
+    }
+    let data = try JSONSerialization.data(
+        withJSONObject: ["values": values],
+        options: [.sortedKeys]
+    )
+    try data.write(to: path)
 }

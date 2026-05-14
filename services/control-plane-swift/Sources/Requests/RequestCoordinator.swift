@@ -314,6 +314,7 @@ private enum CacheRouteClass: String, Sendable {
 }
 
 private let boundarySafePrefillChunkTargetTokens: UInt32 = 16
+private let workerDispatchReadinessCacheTTLSeconds: TimeInterval = 5
 
 private struct GatewayBatchingExecutionDefaults: Sendable {
     let concurrentProcessingEnabled: Bool
@@ -605,6 +606,7 @@ public actor RequestCoordinator {
     private var restoredRouteCount: Double
     private var prefixAffinityCheckCount: Double
     private var prefixAffinityHitCount: Double
+    private var workerDispatchReadinessCheckedAt: [WorkerRouteKind: Date]
 
     public init(
         workerRegistry: WorkerRegistry,
@@ -646,6 +648,7 @@ public actor RequestCoordinator {
         self.restoredRouteCount = 0
         self.prefixAffinityCheckCount = 0
         self.prefixAffinityHitCount = 0
+        self.workerDispatchReadinessCheckedAt = [:]
     }
 
     public func resumeChatCompletion(requestID: String) async throws -> CoordinatedChatExecution {
@@ -769,7 +772,6 @@ public actor RequestCoordinator {
             )
             throw RequestCoordinatorError.workerUnavailable
         }
-        _ = await refreshWorkerCacheObservability(using: workerClient)
         await metricsStore.set(
             now().timeIntervalSince(routeStartedAt) * 1000,
             forKey: "control_plane.worker_route_ms"
@@ -779,7 +781,7 @@ public actor RequestCoordinator {
         }
 
         let connectStartedAt = now()
-        guard await workerClient.canDispatchRequests() else {
+        guard await ensureWorkerCanDispatch(workerClient, routeKind: plan.routeKind) else {
             await abortRegistry.finish(requestID: request.requestID)
             requestPlans.removeValue(forKey: request.requestID)
             _ = await schedulerReadModel.recordRejected(
@@ -912,6 +914,33 @@ public actor RequestCoordinator {
                             )
                         }
                         for outputEvent in budgetOutcome.events {
+                            var firstSemanticEventMs: Double?
+                            if !firstSemanticEventRecorded,
+                               self.isSemanticStreamEvent(outputEvent) {
+                                firstSemanticEventRecorded = true
+                                firstSemanticEventMs = now().timeIntervalSince(dispatchStartedAt) * 1000
+                            }
+
+                            var firstTokenMetrics: (
+                                metricKey: String,
+                                ttftMs: Double,
+                                followupTTFTMs: Double,
+                                shouldRecordFollowup: Bool
+                            )?
+                            if !firstDeltaRecorded, case .tokenDelta = outputEvent.payload {
+                                firstDeltaRecorded = true
+                                let observedAt = now()
+                                firstTokenMetrics = (
+                                    metricKey: isBufferedChatCompletionsResponse
+                                        ? "http.chat_completions_non_stream_time_to_first_token_ms"
+                                        : "http.ttfd_ms",
+                                    ttftMs: observedAt.timeIntervalSince(dispatchStartedAt) * 1000,
+                                    followupTTFTMs: observedAt.timeIntervalSince(requestMetricStartedAt) * 1000,
+                                    shouldRecordFollowup: !isBufferedChatCompletionsResponse
+                                )
+                                await hub.yield(outputEvent)
+                            }
+
                             await self.recordPhaseObservability(
                                 requestID: requestID,
                                 fallbackLane: plan.decodeLane,
@@ -919,30 +948,21 @@ public actor RequestCoordinator {
                                 routeKind: plan.routeKind,
                                 event: outputEvent
                             )
-                            if !firstSemanticEventRecorded,
-                               self.isSemanticStreamEvent(outputEvent) {
-                                firstSemanticEventRecorded = true
-                                let firstEventMs = now().timeIntervalSince(dispatchStartedAt) * 1000
+                            if let firstSemanticEventMs {
                                 await metricsStore.set(
-                                    firstEventMs,
+                                    firstSemanticEventMs,
                                     forKey: "http.stream_first_event_ms"
                                 )
                             }
-                            if !firstDeltaRecorded, case .tokenDelta = outputEvent.payload {
-                                firstDeltaRecorded = true
-                                let ttftMs = now().timeIntervalSince(dispatchStartedAt) * 1000
-                                let followupTTFTMs = now().timeIntervalSince(requestMetricStartedAt) * 1000
-                                let ttftMetricKey = isBufferedChatCompletionsResponse
-                                    ? "http.chat_completions_non_stream_time_to_first_token_ms"
-                                    : "http.ttfd_ms"
+                            if let firstTokenMetrics {
                                 await metricsStore.set(
-                                    ttftMs,
-                                    forKey: ttftMetricKey
+                                    firstTokenMetrics.ttftMs,
+                                    forKey: firstTokenMetrics.metricKey
                                 )
-                                if !isBufferedChatCompletionsResponse {
+                                if firstTokenMetrics.shouldRecordFollowup {
                                     await self.recordTTFTMetrics(
                                         requestID: requestID,
-                                        ttftMs: followupTTFTMs
+                                        ttftMs: firstTokenMetrics.followupTTFTMs
                                     )
                                 }
                             }
@@ -969,7 +989,9 @@ public actor RequestCoordinator {
                             }
                             eventCount += 1
                             await metricsStore.set(eventCount, forKey: "http.stream_event_count")
-                            await hub.yield(outputEvent)
+                            if firstTokenMetrics == nil {
+                                await hub.yield(outputEvent)
+                            }
                         }
                         if budgetOutcome.shouldStop {
                             _ = try? await workerClient.abort(requestID: requestID)
@@ -982,6 +1004,7 @@ public actor RequestCoordinator {
                         using: workerClient,
                         routeKind: plan.routeKind
                     )
+                    await metricsStore.flushExport()
                     let terminalPhase = await self.terminalPhase(
                         requestID: requestID,
                         fallback: .requestCompleted
@@ -996,6 +1019,7 @@ public actor RequestCoordinator {
                         using: workerClient,
                         routeKind: plan.routeKind
                     )
+                    await metricsStore.flushExport()
                     await hub.emitLifecycle(.terminalFailure(code: "transport_error", message: error.localizedDescription))
                     await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
                     await hub.finish(throwing: error)
@@ -1013,6 +1037,7 @@ public actor RequestCoordinator {
                 }
             )
         } catch let error as WorkerClientError where error == .unavailable {
+            workerDispatchReadinessCheckedAt.removeValue(forKey: plan.routeKind)
             await metricsStore.decrement("requests.inflight")
             await finishRequestTracking(requestID: request.requestID, phase: .requestFailed)
             throw RequestCoordinatorError.workerUnavailable
@@ -1030,6 +1055,26 @@ public actor RequestCoordinator {
         default:
             return false
         }
+    }
+
+    private func ensureWorkerCanDispatch(
+        _ workerClient: any WorkerClient,
+        routeKind: WorkerRouteKind
+    ) async -> Bool {
+        let checkedAt = now()
+        if let lastCheckedAt = workerDispatchReadinessCheckedAt[routeKind],
+           checkedAt.timeIntervalSince(lastCheckedAt) < workerDispatchReadinessCacheTTLSeconds {
+            await metricsStore.increment("control_plane.worker_connect_cache_hit_count")
+            return true
+        }
+
+        guard await workerClient.canDispatchRequests() else {
+            workerDispatchReadinessCheckedAt.removeValue(forKey: routeKind)
+            return false
+        }
+
+        workerDispatchReadinessCheckedAt[routeKind] = checkedAt
+        return true
     }
 
     public func cancel(requestID: String) async throws -> Bool {
@@ -1517,6 +1562,12 @@ public actor RequestCoordinator {
         )
         if routeKind.isMultimodalBackgroundRoute {
             let lane = routeKind.defaultSchedulingLane
+            let continuousBatchEligible = isContinuousBatchEligible(
+                request: request,
+                routeKind: routeKind,
+                prefillLane: lane,
+                batchingDefaults: batchingDefaults
+            )
             return SchedulingPlan(
                 translatedRequest: request,
                 routeKind: routeKind,
@@ -1527,9 +1578,23 @@ public actor RequestCoordinator {
                 cacheRouteEligible: phaseAwareEligible,
                 prefixAffinityEligible: false,
                 prefixAffinityHit: false,
-                continuousBatchEligible: false,
-                batchCohortID: "",
-                batchMaxSize: 1
+                continuousBatchEligible: continuousBatchEligible,
+                batchCohortID: continuousBatchEligible
+                    ? continuousBatchCohortID(
+                        request: request,
+                        routeKind: routeKind,
+                        prefillLane: lane,
+                        cacheRouteClass: .cold
+                    )
+                    : "",
+                batchMaxSize: continuousBatchEligible
+                    ? resolvedContinuousBatchSize(
+                        request: request,
+                        routeKind: routeKind,
+                        prefillLane: lane,
+                        batchingDefaults: batchingDefaults
+                    )
+                    : 1
             )
         }
         guard
@@ -1717,6 +1782,12 @@ public actor RequestCoordinator {
         prefillLane: String,
         batchingDefaults: GatewayBatchingExecutionDefaults
     ) -> Bool {
+        if routeKind == .pythonVLM {
+            return isCooperativePythonVLMTextOnlyBatchEligible(
+                request: request,
+                batchingDefaults: batchingDefaults
+            )
+        }
         guard routeKind == .swiftText else {
             return false
         }
@@ -1730,6 +1801,25 @@ public actor RequestCoordinator {
             return false
         }
         return prefillLane.hasPrefix("text.prefill.")
+    }
+
+    private func isCooperativePythonVLMTextOnlyBatchEligible(
+        request: TranslatedChatRequest,
+        batchingDefaults: GatewayBatchingExecutionDefaults
+    ) -> Bool {
+        guard
+            request.workerRequest.execution.ext["melix.vlm.text_only_step_cooperative"] == "true"
+                || request.workerRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true"
+        else {
+            return false
+        }
+        guard batchingDefaults.concurrentProcessingEnabled else {
+            return false
+        }
+        guard batchingDefaults.effectiveAdmissionBatchSize > 1 else {
+            return false
+        }
+        return !messagesContainNonTextMedia(request.workerRequest.messages)
     }
 
     private func resolvedContinuousBatchSize(
@@ -2170,6 +2260,50 @@ public actor RequestCoordinator {
             plan.cacheRouteClass == .cold ? 0 : 1,
             forKey: "scheduler.warm_route_preferred"
         )
+        await recordMultimodalBatchingMetrics(for: plan)
+    }
+
+    private func recordMultimodalBatchingMetrics(for plan: SchedulingPlan) async {
+        guard plan.routeKind.isMultimodalBackgroundRoute else {
+            return
+        }
+
+        let batchingDefaults = GatewayBatchingExecutionDefaults(
+            executionExt: plan.translatedRequest.workerRequest.execution.ext
+        )
+        await metricsStore.set(
+            Double(batchingDefaults.effectiveAdmissionBatchSize),
+            forKey: "scheduler.multimodal_continuous_batch_requested_capacity"
+        )
+        await metricsStore.set(
+            Double(plan.batchMaxSize),
+            forKey: "scheduler.multimodal_continuous_batch_effective_capacity"
+        )
+        await metricsStore.set(
+            plan.continuousBatchEligible ? 1 : 0,
+            forKey: "scheduler.multimodal_continuous_batch_enabled"
+        )
+        if plan.continuousBatchEligible {
+            await metricsStore.set(0, forKey: "scheduler.multimodal_continuous_batch_blocked_reason_code")
+            return
+        }
+
+        await metricsStore.increment("scheduler.multimodal_continuous_batch_blocked_count")
+        await metricsStore.set(
+            multimodalContinuousBatchBlockedReasonCode(for: plan.routeKind),
+            forKey: "scheduler.multimodal_continuous_batch_blocked_reason_code"
+        )
+    }
+
+    private func multimodalContinuousBatchBlockedReasonCode(for routeKind: WorkerRouteKind) -> Double {
+        switch routeKind {
+        case .pythonVLM:
+            return 2
+        case .pythonOCR, .pythonTranscription, .pythonSpeech, .pythonImage:
+            return 1
+        default:
+            return 0
+        }
     }
 
     private func recordRestorePlanMetrics(
@@ -2426,6 +2560,7 @@ public actor RequestCoordinator {
                 forKey: "vision.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.vlm_first_token_ms")
+            await recordPythonVLMRuntimeProbeMetrics(from: stats, metricsStore: metricsStore)
             await metricsStore.set(
                 Double(stats.lastTempMediaArtifactCount),
                 forKey: "vision.temp_media_artifact_count"
@@ -2842,6 +2977,23 @@ private func messagesContainVisionInput(
                 return true
             default:
                 return false
+            }
+        })
+    })
+}
+
+private func messagesContainNonTextMedia(
+    _ messages: [Melix_Worker_V1_ChatMessage]
+) -> Bool {
+    messages.contains(where: { message in
+        message.parts.contains(where: { part in
+            switch part.part {
+            case .text:
+                return false
+            case nil:
+                return false
+            default:
+                return true
             }
         })
     })

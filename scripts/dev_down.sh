@@ -10,8 +10,36 @@ import sys
 print(Path(sys.argv[1]).resolve())
 PY
 )"
-PYTHON_SOCKET_PATH="${MELIX_WORKER_SOCKET_PATH:-$RUNTIME_DIR/python-worker.sock}"
-SWIFT_TEXT_WORKER_SOCKET_PATH="${MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH:-$RUNTIME_DIR/swift-text-worker.sock}"
+ENV_PATH="$RUNTIME_DIR/env.sh"
+if [[ -f "$ENV_PATH" ]]; then
+  # Reuse the recorded runtime contract so callers only need MELIX_RUNTIME_DIR
+  # to stop instances that were started with automatic short socket paths.
+  # shellcheck source=/dev/null
+  source "$ENV_PATH"
+fi
+SERVICE_INSTANCE_NAME="${MELIX_SERVICE_INSTANCE_NAME:-}"
+SOCKET_DIR="${MELIX_SOCKET_DIR:-/tmp}"
+default_socket_path() {
+  python3 - "$ROOT" "$SOCKET_DIR" "$SERVICE_INSTANCE_NAME" "$1" <<'PY'
+import hashlib
+import re
+import sys
+from pathlib import Path
+
+repo_root = Path(sys.argv[1]).resolve()
+socket_dir = Path(sys.argv[2]).expanduser().resolve()
+instance = sys.argv[3].strip().lower() or "phase1"
+role = sys.argv[4]
+normalized = re.sub(r"[^a-z0-9-]+", "-", instance).strip("-") or "default"
+if len(normalized) > 32:
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:8]
+    normalized = f"{normalized[:23].rstrip('-')}-{digest}"
+repo_hash = hashlib.sha1(str(repo_root).encode("utf-8")).hexdigest()[:10]
+print(socket_dir / f"melix-{normalized}-{repo_hash}-{role}.sock")
+PY
+}
+PYTHON_SOCKET_PATH="${MELIX_WORKER_SOCKET_PATH:-$(default_socket_path python)}"
+SWIFT_TEXT_WORKER_SOCKET_PATH="${MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH:-$(default_socket_path swift)}"
 CONTROL_PLANE_METRICS_PATH="${MELIX_CONTROL_PLANE_METRICS_PATH:-$RUNTIME_DIR/control-plane-metrics.json}"
 SWIFT_TEXT_WORKER_METRICS_PATH="${MELIX_SWIFT_TEXT_WORKER_METRICS_PATH:-$RUNTIME_DIR/swift-text-worker-metrics.json}"
 PYTHON_WORKER_METRICS_PATH="${MELIX_PYTHON_WORKER_METRICS_PATH:-$RUNTIME_DIR/python-worker-metrics.json}"

@@ -7,8 +7,8 @@ import MelixWorkerProtocol
 
 @Suite("On-Demand Model Loader")
 struct OnDemandModelLoaderTests {
-    @Test("ready handles are reused and ttl-expired residents are evicted first")
-    func readyHandlesAreReusedAndTTLExpiredResidentsAreEvictedFirst() async throws {
+    @Test("ready handles are reused without warm-path eviction planning")
+    func readyHandlesAreReusedWithoutWarmPathEvictionPlanning() async throws {
         final class ClockBox: @unchecked Sendable {
             var nowUnixMs: Int64
 
@@ -60,8 +60,70 @@ struct OnDemandModelLoaderTests {
         let metrics = await metricsStore.snapshot()
 
         #expect(handle == "melix-dev-text::swift")
+        #expect(oldModel.state == .modelWarm)
+        #expect(await workerClient.unloadHandles == [])
+        #expect(await workerClient.loadRequestCount == 0)
+        #expect(metrics.values["control_plane.model_eviction_plan_count", default: 0] == 0)
+        #expect(metrics.values["control_plane.model_eviction_ttl_count", default: 0] == 0)
+        #expect(metrics.values["control_plane.model_eviction_success_count", default: 0] == 0)
+    }
+
+    @Test("lazy loads evict ttl-expired residents before contacting workers")
+    func lazyLoadsEvictTTLExpiredResidentsBeforeContactingWorkers() async throws {
+        final class ClockBox: @unchecked Sendable {
+            var nowUnixMs: Int64
+
+            init(nowUnixMs: Int64) {
+                self.nowUnixMs = nowUnixMs
+            }
+        }
+
+        let clock = ClockBox(nowUnixMs: 100_000)
+        let catalog = ModelCatalog(
+            seedModels: [
+                makeTextModel(
+                    id: "melix-old-text",
+                    state: .modelWarm,
+                    ttlSeconds: 60
+                ),
+                makeTextModel(
+                    id: "melix-dev-text",
+                    state: .modelDiscovered
+                ),
+            ],
+            nowUnixMs: { clock.nowUnixMs }
+        )
+        _ = await catalog.recordLoadSucceeded(
+            id: "melix-old-text",
+            dispatchHandle: "melix-old-text::swift",
+            reason: "seed_load"
+        )
+        clock.nowUnixMs += 61_000
+
+        let workerClient = LoaderTestingWorkerClient()
+        await workerClient.setLoadResponse(
+            ok: true,
+            handle: "melix-dev-text::swift",
+            estimatedResidentBytes: 4_096
+        )
+        await workerClient.setUnloadResponse(ok: true)
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let metricsStore = MetricsStore()
+
+        let handle = try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: "melix-dev-text",
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+
+        let oldModel = try #require(await catalog.model(id: "melix-old-text"))
+        let metrics = await metricsStore.snapshot()
+
+        #expect(handle == "melix-dev-text::swift")
         #expect(oldModel.state == .modelUnloaded)
         #expect(await workerClient.unloadHandles == ["melix-old-text::swift"])
+        #expect(await workerClient.loadRequestCount == 1)
         #expect(metrics.values["control_plane.model_eviction_plan_count"] == 1)
         #expect(metrics.values["control_plane.model_eviction_ttl_count"] == 1)
         #expect(metrics.values["control_plane.model_eviction_success_count"] == 1)
@@ -536,6 +598,32 @@ struct OnDemandModelLoaderTests {
         #expect(metrics.values["control_plane.text_load_last_budget_bytes"] == 32_768)
         #expect(metrics.values["control_plane.text_load_last_headroom_bytes"] == 2_048)
         #expect(metrics.values["control_plane.text_load_last_required_bytes"] == 34_816)
+    }
+
+    @Test("thrown worker request failures are surfaced as worker rejections")
+    func thrownWorkerRequestFailuresAreSurfacedAsWorkerRejections() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = LoaderTestingWorkerClient()
+        await workerClient.setLoadFailure(
+            WorkerClientError.requestFailed(code: "load_failed", message: "MLX load failed")
+        )
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+
+        var expectedError = Melix_Worker_V1_ErrorStatus()
+        expectedError.code = "load_failed"
+        expectedError.message = "MLX load failed"
+        await #expect(throws: OnDemandModelLoadError.workerRejected(expectedError)) {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "melix-dev-text",
+                modelCatalog: catalog,
+                workerRegistry: registry,
+                metricsStore: MetricsStore()
+            )
+        }
+
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+        #expect(model.state == .modelFailed)
+        #expect(model.residency.transitionReason == "lazy_text_load_load_failed")
     }
 
     @Test("failed lazy loads forward disk-streaming mode and preserve explicit worker rejection codes")

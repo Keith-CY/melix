@@ -2,10 +2,10 @@
 
 ## Scope
 
-This plan now tracks the next small serving diagnostics queue slice: avoid per-event empty
-attribute dictionary allocation when debug queue events are created without attributes. The
-change keeps bounded-queue append/drop semantics unchanged and preserves `to_dict()` output for
-empty attributes.
+This plan now tracks the next small serving diagnostics queue slice: keep the debug queue
+append path on an explicit lock acquire/release block while preserving bounded append/drop
+semantics. The change avoids the per-event context-manager dispatch on the hottest append path
+while still releasing the lock through a `finally` guard.
 
 ## Linux-only constraint
 

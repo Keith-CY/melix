@@ -59,7 +59,7 @@ def test_gate_skips_without_running_commands_when_host_is_not_enforced(monkeypat
 def test_gate_blocks_when_full_test_command_fails(monkeypatch, tmp_path: Path) -> None:
     commands: list[str] = []
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
-    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root: ["services/example.py"])
+    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root, **kwargs: ["services/example.py"])
     monkeypatch.setattr(pre_commit_gate, "unstaged_tracked_files", lambda root: [])
     monkeypatch.setattr(
         pre_commit_gate,
@@ -83,10 +83,11 @@ def test_gate_allows_untracked_files(monkeypatch, tmp_path: Path) -> None:
     subprocess.check_call(["git", "add", "tracked.py"], cwd=tmp_path)
     (tmp_path / "local-probe.py").write_text("print('local')\n", encoding="utf-8")
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
+    monkeypatch.setattr(pre_commit_gate, "pre_commit_base_ref", lambda root: None)
     monkeypatch.setattr(
         pre_commit_gate,
         "run_performance_report",
-        lambda root, changed_files: pre_commit_gate.PerformanceOutcome("ok", tmp_path / "report", 0),
+        lambda root, changed_files, **kwargs: pre_commit_gate.PerformanceOutcome("ok", tmp_path / "report", 0),
     )
 
     def command_runner(command: str, cwd: Path):
@@ -122,7 +123,7 @@ def test_scrub_git_local_env_requires_keyword_env() -> None:
 def test_gate_blocks_when_unstaged_tracked_files_are_present(monkeypatch, tmp_path: Path) -> None:
     commands: list[str] = []
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
-    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root: ["services/example.py"])
+    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root, **kwargs: ["services/example.py"])
     monkeypatch.setattr(pre_commit_gate, "unstaged_tracked_files", lambda root: ["scripts/pre_commit_gate.py"])
 
     def command_runner(command: str, cwd: Path):
@@ -196,8 +197,8 @@ def test_performance_probe_failure_writes_traceback(monkeypatch, tmp_path: Path)
         "load_probe_registry",
         lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
     )
-    monkeypatch.setattr(pre_commit_gate, "export_index_snapshot", lambda root, destination: destination.mkdir())
-    monkeypatch.setattr(pre_commit_gate, "export_head_snapshot", lambda root, destination: destination.mkdir())
+    monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
+    monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref: destination.mkdir())
 
     def fail_probe(**kwargs):
         raise RuntimeError("probe exploded")
@@ -243,13 +244,20 @@ def test_performance_probe_runs_with_scrubbed_git_environment(monkeypatch, tmp_p
         "load_probe_registry",
         lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
     )
-    monkeypatch.setattr(pre_commit_gate, "export_index_snapshot", lambda root, destination: destination.mkdir())
-    monkeypatch.setattr(pre_commit_gate, "export_head_snapshot", lambda root, destination: destination.mkdir())
+    monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
+    monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref: destination.mkdir())
     observed_env: dict[str, str | None] = {}
+    observed_base_root: str | None = None
+    observed_base_root_exists = False
 
     def run_probe(**kwargs):
+        nonlocal observed_base_root, observed_base_root_exists
         for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
             observed_env[name] = pre_commit_gate.os.environ.get(name)
+        observed_base_root = pre_commit_gate.os.environ.get("MELIX_CHANGED_SCOPE_BASE_ROOT")
+        observed_base_root_exists = (
+            observed_base_root is not None and Path(observed_base_root).is_dir()
+        )
         return ({"probe": {"id": "probe-one"}}, True)
 
     monkeypatch.setattr(pre_commit_gate, "run_probe_job", run_probe)
@@ -269,9 +277,231 @@ def test_performance_probe_runs_with_scrubbed_git_environment(monkeypatch, tmp_p
 
     assert outcome.status == "ok"
     assert observed_env == {"GIT_DIR": None, "GIT_WORK_TREE": None, "GIT_INDEX_FILE": None}
+    assert observed_base_root is not None
+    assert Path(observed_base_root).name == "base"
+    assert observed_base_root_exists is True
     assert pre_commit_gate.os.environ.get("GIT_DIR") == "/tmp/melix-hook-git-dir"
     assert pre_commit_gate.os.environ.get("GIT_WORK_TREE") == "/tmp/melix-hook-work-tree"
     assert pre_commit_gate.os.environ.get("GIT_INDEX_FILE") == "/tmp/melix-hook-index"
+    assert pre_commit_gate.os.environ.get("MELIX_CHANGED_SCOPE_BASE_ROOT") is None
+
+
+def test_merge_head_ref_returns_current_merge_head(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(pre_commit_gate, "run_git", lambda root, args: "abc123\n")
+
+    assert pre_commit_gate.merge_head_ref(tmp_path) == "abc123"
+
+
+def test_merge_head_ref_returns_none_outside_merge(monkeypatch, tmp_path: Path) -> None:
+    def fail_rev_parse(root: Path, args: list[str]) -> str:
+        raise subprocess.CalledProcessError(returncode=1, cmd=["git", *args])
+
+    monkeypatch.setattr(pre_commit_gate, "run_git", fail_rev_parse)
+
+    assert pre_commit_gate.merge_head_ref(tmp_path) is None
+    assert pre_commit_gate.pre_commit_base_ref(tmp_path) is None
+
+
+def test_pre_commit_base_ref_uses_head_outside_merge(monkeypatch, tmp_path: Path) -> None:
+    def fake_run_git(root: Path, args: list[str]) -> str:
+        if args[-1] == "MERGE_HEAD":
+            raise subprocess.CalledProcessError(returncode=1, cmd=["git", *args])
+        return "def456\n"
+
+    monkeypatch.setattr(pre_commit_gate, "run_git", fake_run_git)
+
+    assert pre_commit_gate.pre_commit_base_ref(tmp_path) == "def456"
+
+
+def test_staged_changed_files_compares_index_against_base_ref(monkeypatch, tmp_path: Path) -> None:
+    observed_args: list[str] = []
+
+    def fake_run_git(root: Path, args: list[str]) -> str:
+        observed_args.extend(args)
+        return "Sources/Foo.swift\nscripts/bar.py\n"
+
+    monkeypatch.setattr(pre_commit_gate, "run_git", fake_run_git)
+
+    assert pre_commit_gate.staged_changed_files(tmp_path, base_ref="merge-head") == [
+        "Sources/Foo.swift",
+        "scripts/bar.py",
+    ]
+    assert observed_args == [
+        "diff",
+        "--cached",
+        "--name-only",
+        "--diff-filter=ACDMRTUXB",
+        "merge-head",
+        "--",
+    ]
+
+
+def test_staged_changed_files_omits_base_ref_for_unborn_head(monkeypatch, tmp_path: Path) -> None:
+    observed_args: list[str] = []
+
+    def fake_run_git(root: Path, args: list[str]) -> str:
+        observed_args.extend(args)
+        return "tracked.py\n"
+
+    monkeypatch.setattr(pre_commit_gate, "run_git", fake_run_git)
+
+    assert pre_commit_gate.staged_changed_files(tmp_path, base_ref=None) == ["tracked.py"]
+    assert observed_args == [
+        "diff",
+        "--cached",
+        "--name-only",
+        "--diff-filter=ACDMRTUXB",
+    ]
+
+
+def test_head_comparison_snapshot_preserves_base_git_diff_context(tmp_path: Path) -> None:
+    source_repo = tmp_path / "repo"
+    head_repo = tmp_path / "head"
+    subprocess.check_call(["git", "init"], cwd=tmp_path, stdout=subprocess.DEVNULL)
+    source_repo.mkdir()
+    subprocess.check_call(["git", "init"], cwd=source_repo, stdout=subprocess.DEVNULL)
+    subprocess.check_call(["git", "config", "user.email", "test@example.com"], cwd=source_repo)
+    subprocess.check_call(["git", "config", "user.name", "Test User"], cwd=source_repo)
+    (source_repo / "kept.py").write_text("old\n", encoding="utf-8")
+    (source_repo / "removed.py").write_text("remove me\n", encoding="utf-8")
+    subprocess.check_call(["git", "add", "kept.py", "removed.py"], cwd=source_repo)
+    subprocess.check_call(["git", "commit", "-m", "base"], cwd=source_repo, stdout=subprocess.DEVNULL)
+    base_ref = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source_repo, text=True).strip()
+    (source_repo / "kept.py").write_text("old\nnew\n", encoding="utf-8")
+    (source_repo / "added.py").write_text("created\n", encoding="utf-8")
+    (source_repo / "removed.py").unlink()
+    subprocess.check_call(["git", "add", "--all"], cwd=source_repo)
+
+    pre_commit_gate.export_head_comparison_snapshot(source_repo, head_repo, base_ref)
+
+    assert (head_repo / "kept.py").read_text(encoding="utf-8") == "old\nnew\n"
+    assert (head_repo / "added.py").read_text(encoding="utf-8") == "created\n"
+    assert not (head_repo / "removed.py").exists()
+    diff_output = subprocess.check_output(
+        ["git", "diff", "--unified=0", "--", "kept.py", "added.py", "removed.py"],
+        cwd=head_repo,
+        text=True,
+    )
+    assert "+++ b/kept.py" in diff_output
+    assert "+new" in diff_output
+    assert "+++ b/added.py" in diff_output
+    assert "--- a/removed.py" in diff_output
+
+
+def test_head_comparison_snapshot_scrubs_outer_git_environment(monkeypatch, tmp_path: Path) -> None:
+    source_repo = tmp_path / "repo"
+    head_repo = tmp_path / "head"
+    source_repo.mkdir()
+    subprocess.check_call(["git", "init"], cwd=source_repo, stdout=subprocess.DEVNULL)
+    subprocess.check_call(["git", "config", "user.email", "test@example.com"], cwd=source_repo)
+    subprocess.check_call(["git", "config", "user.name", "Test User"], cwd=source_repo)
+    (source_repo / "tracked.py").write_text("old\n", encoding="utf-8")
+    subprocess.check_call(["git", "add", "tracked.py"], cwd=source_repo)
+    subprocess.check_call(["git", "commit", "-m", "base"], cwd=source_repo, stdout=subprocess.DEVNULL)
+    base_ref = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source_repo, text=True).strip()
+    (source_repo / "tracked.py").write_text("new\n", encoding="utf-8")
+    subprocess.check_call(["git", "add", "tracked.py"], cwd=source_repo)
+
+    monkeypatch.setenv("GIT_DIR", str(source_repo / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(source_repo))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(source_repo / ".git" / "index"))
+
+    pre_commit_gate.export_head_comparison_snapshot(source_repo, head_repo, base_ref)
+
+    with pre_commit_gate.scrubbed_git_environment():
+        head_commit_subject = subprocess.check_output(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=head_repo,
+            text=True,
+        ).strip()
+        source_commit_subject = subprocess.check_output(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=source_repo,
+            text=True,
+        ).strip()
+    assert head_commit_subject == "base snapshot"
+    assert source_commit_subject == "base"
+    assert (head_repo / "tracked.py").read_text(encoding="utf-8") == "new\n"
+
+
+def test_run_gate_uses_merge_head_as_performance_scope_base(monkeypatch, tmp_path: Path) -> None:
+    observed_staged_base: list[str] = []
+    observed_report_base: list[str] = []
+    monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
+    monkeypatch.setattr(pre_commit_gate, "pre_commit_base_ref", lambda root: "merge-head")
+    monkeypatch.setattr(pre_commit_gate, "unstaged_tracked_files", lambda root: [])
+
+    def staged(root: Path, *, base_ref: str = "HEAD") -> list[str]:
+        observed_staged_base.append(base_ref)
+        return ["services/example.py"]
+
+    def report(root: Path, changed_files: list[str], *, base_ref: str = "HEAD"):
+        observed_report_base.append(base_ref)
+        return pre_commit_gate.PerformanceOutcome("ok", tmp_path / "report", 0)
+
+    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", staged)
+    monkeypatch.setattr(pre_commit_gate, "run_performance_report", report)
+
+    def command_runner(command: str, cwd: Path):
+        return pre_commit_gate.CommandResult(command, True, 0, 0.0)
+
+    assert pre_commit_gate.run_gate(tmp_path, env={}, command_runner=command_runner) == 0
+    assert observed_staged_base == ["merge-head"]
+    assert observed_report_base == ["merge-head"]
+
+
+def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path: Path) -> None:
+    observed_base_refs: list[str] = []
+    observed_head_base_refs: list[str | None] = []
+    monkeypatch.setattr(pre_commit_gate, "_report_run_dir", lambda root: tmp_path / "run")
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "build_scope_report",
+        lambda registry_path, changed_files: {
+            "changed_files": changed_files,
+            "force_all": False,
+            "matched_probe_ids": ["probe-one"],
+            "selected_probes": [{"id": "probe-one", "name": "Probe one", "metrics": []}],
+        },
+    )
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "load_probe_registry",
+        lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
+    )
+    def export_head(root: Path, destination: Path, base_ref: str | None) -> None:
+        observed_head_base_refs.append(base_ref)
+        destination.mkdir()
+
+    monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", export_head)
+
+    def export_base(root: Path, destination: Path, base_ref: str) -> None:
+        observed_base_refs.append(base_ref)
+        destination.mkdir()
+
+    monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", export_base)
+    monkeypatch.setattr(pre_commit_gate, "run_probe_job", lambda **kwargs: ({"probe": {"id": "probe-one"}}, True))
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "build_performance_report",
+        lambda scope, probe_results: {"summary": {"status": "ok"}, "rows": []},
+    )
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "write_report_outputs",
+        lambda report, report_dir: {"markdown": report_dir / "report.md"},
+    )
+    monkeypatch.setattr(pre_commit_gate, "render_terminal_report", lambda report: "")
+
+    outcome = pre_commit_gate.run_performance_report(
+        tmp_path,
+        ["scripts/pre_commit_gate.py"],
+        base_ref="merge-head",
+    )
+
+    assert outcome.status == "ok"
+    assert observed_head_base_refs == ["merge-head"]
+    assert observed_base_refs == ["merge-head"]
 
 
 def test_shell_hook_uses_repo_cache_and_python_312_by_default(tmp_path: Path) -> None:
@@ -354,12 +584,12 @@ def test_shell_hook_honors_python_override(tmp_path: Path) -> None:
 def test_gate_blocks_performance_regression_without_override(monkeypatch, tmp_path: Path) -> None:
     report_dir = tmp_path / "report"
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
-    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root: ["services/example.py"])
+    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root, **kwargs: ["services/example.py"])
     monkeypatch.setattr(pre_commit_gate, "unstaged_tracked_files", lambda root: [])
     monkeypatch.setattr(
         pre_commit_gate,
         "run_performance_report",
-        lambda root, changed_files: pre_commit_gate.PerformanceOutcome("regression", report_dir, 1),
+        lambda root, changed_files, **kwargs: pre_commit_gate.PerformanceOutcome("regression", report_dir, 1),
     )
 
     def command_runner(command: str, cwd: Path):
@@ -371,12 +601,12 @@ def test_gate_blocks_performance_regression_without_override(monkeypatch, tmp_pa
 def test_gate_blocks_performance_regression_override_without_reason(monkeypatch, tmp_path: Path) -> None:
     report_dir = tmp_path / "report"
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
-    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root: ["services/example.py"])
+    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root, **kwargs: ["services/example.py"])
     monkeypatch.setattr(pre_commit_gate, "unstaged_tracked_files", lambda root: [])
     monkeypatch.setattr(
         pre_commit_gate,
         "run_performance_report",
-        lambda root, changed_files: pre_commit_gate.PerformanceOutcome("regression", report_dir, 1),
+        lambda root, changed_files, **kwargs: pre_commit_gate.PerformanceOutcome("regression", report_dir, 1),
     )
 
     def command_runner(command: str, cwd: Path):
@@ -398,12 +628,12 @@ def test_gate_allows_performance_regression_with_explicit_override_and_reason(
 ) -> None:
     report_dir = tmp_path / "report"
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
-    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root: ["services/example.py"])
+    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root, **kwargs: ["services/example.py"])
     monkeypatch.setattr(pre_commit_gate, "unstaged_tracked_files", lambda root: [])
     monkeypatch.setattr(
         pre_commit_gate,
         "run_performance_report",
-        lambda root, changed_files: pre_commit_gate.PerformanceOutcome("regression", report_dir, 1),
+        lambda root, changed_files, **kwargs: pre_commit_gate.PerformanceOutcome("regression", report_dir, 1),
     )
 
     def command_runner(command: str, cwd: Path):
