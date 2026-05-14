@@ -207,11 +207,32 @@ def test_serving_diagnostics_event_instances_use_slots_for_debug_queue() -> None
         event_index=1,
         status="completed",
         duration_ms=0.25,
-        attributes={"token": "ok"},
+        attributes={"token": "***"},
     )
 
     assert hasattr(event, "__dict__") is False
-    assert event.to_dict()["attributes"] == {"token": "ok"}
+    assert event.to_dict()["attributes"] == {"token": "***"}
+
+
+def test_serving_diagnostics_default_event_attributes_reuse_empty_mapping() -> None:
+    first = ServingDiagnosticsEvent(
+        request_id="req-empty-1",
+        phase="decode",
+        event_index=1,
+        status="completed",
+    )
+    second = ServingDiagnosticsEvent(
+        request_id="req-empty-2",
+        phase="decode",
+        event_index=2,
+        status="completed",
+    )
+
+    assert first.attributes == {}
+    assert first.to_dict()["attributes"] == {}
+    assert first.attributes is second.attributes
+    with pytest.raises(TypeError):
+        first.attributes["late"] = "mutation"  # type: ignore[index]
 
 
 def test_serving_diagnostics_bounded_queue_serializes_append_during_snapshot() -> None:
