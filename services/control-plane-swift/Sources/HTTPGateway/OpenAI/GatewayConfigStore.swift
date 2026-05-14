@@ -344,6 +344,19 @@ public actor GatewayConfigStore {
         )
     }
 
+    public func activeModelRosterIfConfigured(
+        runtimeBinding: GatewayRuntimeBinding
+    ) -> (defaultModelID: String, servedModelIDs: [String], modelIdleTimeoutSeconds: UInt32)? {
+        guard let record = recordsByServerSessionID[runtimeBinding.activeServerSessionID] else {
+            return nil
+        }
+        return (
+            defaultModelID: record.defaultModelID,
+            servedModelIDs: record.servedModelIDs,
+            modelIdleTimeoutSeconds: record.modelIdleTimeoutSeconds
+        )
+    }
+
     private func writeRecords() throws {
         let document = GatewayConfigDocument(
             schemaVersion: 1,

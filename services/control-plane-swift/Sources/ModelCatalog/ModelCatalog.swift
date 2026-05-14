@@ -384,16 +384,13 @@ public actor ModelCatalog {
         guard idleTimeoutSeconds > 0 else {
             return IdleSweepPlan()
         }
-        let servedIDs = Set(servedModelIDs)
         let currentNowUnixMs = nowUnixMs()
         var decisions: [EvictionDecision] = []
         var activeProtected: [String] = []
         var pinnedProtected: [String] = []
 
-        for model in models.values.sorted(by: compareRecency) {
-            guard servedIDs.contains(model.modelID), Self.isResident(model) else {
-                continue
-            }
+        let servedModels = servedModelIDs.compactMap { models[$0] }.filter(Self.isResident)
+        for model in servedModels.sorted(by: compareRecency) {
             if activeRequestCountByModelID[model.modelID, default: 0] > 0 {
                 activeProtected.append(model.modelID)
                 continue

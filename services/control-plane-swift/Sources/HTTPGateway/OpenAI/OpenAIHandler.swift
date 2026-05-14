@@ -252,9 +252,64 @@ private enum GatewayAuthorizationResolution {
     case failure(HTTPResponse)
 }
 
+private actor ModelIdleSweepScheduler {
+    private let modelCatalog: ModelCatalog
+    private let workerRegistry: WorkerRegistry?
+    private let metricsStore: MetricsStore
+    private let minimumIntervalSeconds: TimeInterval
+    private let now: @Sendable () -> Date
+    private var lastSweepStartedAt: Date?
+    private var sweepInFlight = false
+
+    init(
+        modelCatalog: ModelCatalog,
+        workerRegistry: WorkerRegistry?,
+        metricsStore: MetricsStore,
+        minimumIntervalSeconds: TimeInterval,
+        now: @escaping @Sendable () -> Date
+    ) {
+        self.modelCatalog = modelCatalog
+        self.workerRegistry = workerRegistry
+        self.metricsStore = metricsStore
+        self.minimumIntervalSeconds = minimumIntervalSeconds
+        self.now = now
+    }
+
+    func schedule(
+        servedModelIDs: [String],
+        idleTimeoutSeconds: UInt32
+    ) {
+        guard idleTimeoutSeconds > 0, servedModelIDs.isEmpty == false, sweepInFlight == false else {
+            return
+        }
+        let startedAt = now()
+        if let lastSweepStartedAt,
+           startedAt.timeIntervalSince(lastSweepStartedAt) < minimumIntervalSeconds {
+            return
+        }
+        self.lastSweepStartedAt = startedAt
+        sweepInFlight = true
+        Task {
+            _ = await OnDemandModelLoader.sweepIdleModels(
+                servedModelIDs: servedModelIDs,
+                idleTimeoutSeconds: idleTimeoutSeconds,
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry,
+                metricsStore: metricsStore
+            )
+            self.markSweepFinished()
+        }
+    }
+
+    private func markSweepFinished() {
+        sweepInFlight = false
+    }
+}
+
 public struct OpenAIHandler: Sendable {
     private static let defaultSpeechStreamIntervalMs: UInt32 = 20
     private static let maxSpeechStreamIntervalMs: UInt32 = 1_000
+    private static let modelIdleSweepDebounceSeconds: TimeInterval = 30
     private static let logger = Logger(subsystem: "Melix.ControlPlane", category: "OpenAIHandler")
 
     private let modelCatalog: ModelCatalog
@@ -279,6 +334,7 @@ public struct OpenAIHandler: Sendable {
     private let now: @Sendable () -> Date
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
+    private let idleSweepScheduler: ModelIdleSweepScheduler
 
     public init(
         modelCatalog: ModelCatalog,
@@ -328,6 +384,13 @@ public struct OpenAIHandler: Sendable {
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.sortedKeys]
+        self.idleSweepScheduler = ModelIdleSweepScheduler(
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            minimumIntervalSeconds: Self.modelIdleSweepDebounceSeconds,
+            now: now
+        )
     }
 
     private static func transientGatewayConfigStore(environment: [String: String]) -> GatewayConfigStore {
@@ -1896,13 +1959,22 @@ public struct OpenAIHandler: Sendable {
         endpoint: HTTPGatewayEndpointFamily
     ) async throws -> String {
         let startedAt = Date()
-        let catalogModels = await modelCatalog.listModels()
-        let fallbackModelID = defaultServedModelID(from: catalogModels)
-        let roster = await gatewayConfigStore.activeModelRoster(
-            runtimeBinding: gatewayRuntimeBinding,
-            fallbackDefaultModelID: fallbackModelID,
-            fallbackServedModelIDs: defaultServedModelIDs(from: catalogModels, endpoint: endpoint)
-        )
+        let roster: (defaultModelID: String, servedModelIDs: [String], modelIdleTimeoutSeconds: UInt32, explicit: Bool)
+        if let configured = await gatewayConfigStore.activeModelRosterIfConfigured(runtimeBinding: gatewayRuntimeBinding) {
+            roster = (
+                defaultModelID: configured.defaultModelID,
+                servedModelIDs: configured.servedModelIDs,
+                modelIdleTimeoutSeconds: configured.modelIdleTimeoutSeconds,
+                explicit: true
+            )
+        } else {
+            let catalogModels = await modelCatalog.listModels()
+            roster = await gatewayConfigStore.activeModelRoster(
+                runtimeBinding: gatewayRuntimeBinding,
+                fallbackDefaultModelID: defaultServedModelID(from: catalogModels),
+                fallbackServedModelIDs: defaultServedModelIDs(from: catalogModels, endpoint: endpoint)
+            )
+        }
         let trimmedRequested = requestedModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedModelID = trimmedRequested.isEmpty ? roster.defaultModelID : trimmedRequested
         let servedModelIDs = Set(roster.servedModelIDs)
@@ -1918,12 +1990,9 @@ public struct OpenAIHandler: Sendable {
             await metricsStore.increment("gateway.model_not_served_count")
             throw HTTPRequestHandlingError.modelNotServed(resolvedModelID)
         }
-        _ = await OnDemandModelLoader.sweepIdleModels(
+        await idleSweepScheduler.schedule(
             servedModelIDs: roster.servedModelIDs,
-            idleTimeoutSeconds: roster.modelIdleTimeoutSeconds,
-            modelCatalog: modelCatalog,
-            workerRegistry: workerRegistry,
-            metricsStore: metricsStore
+            idleTimeoutSeconds: roster.modelIdleTimeoutSeconds
         )
         _ = endpoint
         return resolvedModelID

@@ -5547,6 +5547,47 @@ struct MelixCLIRunnerTests {
         #expect(servingDefaultsCall.numDraftTokens == 4)
     }
 
+    @Test("server session update preserves roster when only default model changes")
+    func serverSessionUpdatePreservesRosterWhenOnlyDefaultModelChanges() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let primaryModelID = "mlx-community/Qwen3.5-27B-4bit"
+        let secondaryModelID = "mlx-community/gemma-4-31b-it-4bit"
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient(), operatorSessionStore: store)
+
+        _ = try await runner.run(
+            .serverSessionCreate(
+                .init(
+                    title: "Qwen Session",
+                    defaultModelID: primaryModelID,
+                    servedModelIDs: [primaryModelID, secondaryModelID]
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverSessionUpdate(
+                .init(
+                    serverSessionID: "server-session-1",
+                    defaultModelID: secondaryModelID
+                )
+            )
+        )
+
+        let state = try #require(try store.load())
+        let session = try #require(state.serverSessions.first)
+
+        #expect(session.defaultModelID == secondaryModelID)
+        #expect(session.servedModelIDs == [primaryModelID, secondaryModelID])
+    }
+
     @Test("server start shortcut creates a titled session and starts the generated id")
     func serverStartShortcutCreatesTitledSessionAndStartsGeneratedID() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -5672,6 +5713,63 @@ struct MelixCLIRunnerTests {
         #expect(gatewayConfigCall.servedModelIDs == [updatedModelID])
         #expect(gatewayConfigCall.port == 12435)
         #expect(startedAction == .start("server-session-1"))
+    }
+
+    @Test("server start shortcut preserves roster when only default model changes")
+    func serverStartShortcutPreservesRosterWhenOnlyDefaultModelChanges() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let originalModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let updatedDefaultID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: originalModelID, kind: "text"),
+            makeModelSummary(id: updatedDefaultID, kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedServerSessionID: "server-session-1",
+                serverSessions: [
+                    .init(
+                        id: "server-session-1",
+                        title: "Qwen Dev",
+                        defaultModelID: originalModelID,
+                        servedModelIDs: [originalModelID, updatedDefaultID],
+                        host: "127.0.0.1",
+                        port: 8080
+                    ),
+                ]
+            )
+        )
+
+        _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .serverStart(
+                .init(
+                    serverTitle: "Qwen Dev",
+                    defaultModelID: updatedDefaultID,
+                    port: 12435
+                )
+            )
+        )
+
+        let state = try #require(try store.load())
+        let session = try #require(state.serverSessions.first)
+        let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
+
+        #expect(session.defaultModelID == updatedDefaultID)
+        #expect(session.servedModelIDs == [originalModelID, updatedDefaultID])
+        #expect(gatewayConfigCall.defaultModelID == updatedDefaultID)
+        #expect(gatewayConfigCall.servedModelIDs == [originalModelID, updatedDefaultID])
     }
 
     @Test("server start shortcut allocates the first available generated id")

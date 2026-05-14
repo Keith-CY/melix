@@ -750,6 +750,27 @@ public struct ServerSnapshotOptions: Equatable, Sendable {
     }
 }
 
+private enum MelixServerModelRosterNormalizer {
+    static func normalized(
+        _ modelIDs: [String],
+        defaultModelID: String
+    ) -> [String] {
+        var ordered: [String] = []
+        var seen: Set<String> = []
+        for modelID in modelIDs.map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).filter({ !$0.isEmpty }) {
+            guard seen.insert(modelID).inserted else {
+                continue
+            }
+            ordered.append(modelID)
+        }
+        let defaultModelID = defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !defaultModelID.isEmpty, !seen.contains(defaultModelID) {
+            ordered.insert(defaultModelID, at: 0)
+        }
+        return ordered
+    }
+}
+
 public struct ServerControlOptions: Equatable, Sendable {
     public let serverSessionID: String
     public let serverTitle: String
@@ -778,18 +799,17 @@ public struct ServerControlOptions: Equatable, Sendable {
             ? ServerSessionRuntimeStore.defaultServerSessionID
             : serverSessionID
         self.serverTitle = serverTitle
-        let trimmedServedModelIDs = servedModelIDs.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty }
         let trimmedDefaultModelID = defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedDefaultModelID = trimmedDefaultModelID.isEmpty
-            ? (trimmedServedModelIDs.first ?? "")
+            ? servedModelIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? ""
             : trimmedDefaultModelID
         self.defaultModelID = resolvedDefaultModelID
-        self.servedModelIDs = Self.normalizedServedModelIDs(
-            trimmedServedModelIDs.isEmpty ? [resolvedDefaultModelID] : trimmedServedModelIDs,
-            defaultModelID: resolvedDefaultModelID
-        )
+        self.servedModelIDs = servedModelIDs.isEmpty
+            ? []
+            : Self.normalizedServedModelIDs(
+                servedModelIDs,
+                defaultModelID: resolvedDefaultModelID
+            )
         self.host = host
         self.port = port
         self.rateLimitPerMinute = rateLimitPerMinute
@@ -798,22 +818,14 @@ public struct ServerControlOptions: Equatable, Sendable {
         self.json = json
     }
 
-    fileprivate static func normalizedServedModelIDs(
+    private static func normalizedServedModelIDs(
         _ modelIDs: [String],
         defaultModelID: String
     ) -> [String] {
-        var normalized: [String] = []
-        var seen: Set<String> = []
-        for modelID in modelIDs.map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).filter({ !$0.isEmpty }) {
-            guard seen.insert(modelID).inserted else {
-                continue
-            }
-            normalized.append(modelID)
-        }
-        if !defaultModelID.isEmpty, !seen.contains(defaultModelID) {
-            normalized.insert(defaultModelID, at: 0)
-        }
-        return normalized
+        MelixServerModelRosterNormalizer.normalized(
+            modelIDs,
+            defaultModelID: defaultModelID
+        )
     }
 }
 
@@ -1357,18 +1369,10 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         _ modelIDs: [String],
         defaultModelID: String
     ) -> [String] {
-        var normalized: [String] = []
-        var seen: Set<String> = []
-        for modelID in modelIDs.map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).filter({ !$0.isEmpty }) {
-            guard seen.insert(modelID).inserted else {
-                continue
-            }
-            normalized.append(modelID)
-        }
-        if !defaultModelID.isEmpty, !seen.contains(defaultModelID) {
-            normalized.insert(defaultModelID, at: 0)
-        }
-        return normalized
+        MelixServerModelRosterNormalizer.normalized(
+            modelIDs,
+            defaultModelID: defaultModelID
+        )
     }
 }
 
@@ -1404,18 +1408,17 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
     ) {
         self.serverSessionID = serverSessionID
         self.title = title
-        let trimmedServedModelIDs = servedModelIDs.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty }
         let trimmedDefaultModelID = defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedDefaultModelID = trimmedDefaultModelID.isEmpty
-            ? (trimmedServedModelIDs.first ?? "")
+            ? servedModelIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? ""
             : trimmedDefaultModelID
         self.defaultModelID = resolvedDefaultModelID
-        self.servedModelIDs = ServerSessionCreateOptions.normalizedServedModelIDs(
-            trimmedServedModelIDs.isEmpty ? [resolvedDefaultModelID] : trimmedServedModelIDs,
-            defaultModelID: resolvedDefaultModelID
-        )
+        self.servedModelIDs = servedModelIDs.isEmpty
+            ? []
+            : MelixServerModelRosterNormalizer.normalized(
+                servedModelIDs,
+                defaultModelID: resolvedDefaultModelID
+            )
         self.host = host
         self.port = port
         self.rateLimitPerMinute = rateLimitPerMinute
@@ -5928,7 +5931,7 @@ public actor MelixCLIRunner {
                     )
                 } else if options.defaultModelID.isEmpty == false {
                     session.servedModelIDs = normalizedServedModelIDs(
-                        [options.defaultModelID],
+                        session.servedModelIDs,
                         defaultModelID: options.defaultModelID
                     )
                 }
@@ -7360,7 +7363,7 @@ public actor MelixCLIRunner {
             )
         } else if !options.defaultModelID.isEmpty {
             session.servedModelIDs = normalizedServedModelIDs(
-                [options.defaultModelID],
+                session.servedModelIDs,
                 defaultModelID: options.defaultModelID
             )
         }
@@ -7373,19 +7376,10 @@ public actor MelixCLIRunner {
         _ modelIDs: [String],
         defaultModelID: String
     ) -> [String] {
-        var ordered: [String] = []
-        var seen: Set<String> = []
-        for modelID in modelIDs.map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).filter({ !$0.isEmpty }) {
-            guard seen.insert(modelID).inserted else {
-                continue
-            }
-            ordered.append(modelID)
-        }
-        let defaultModelID = defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !defaultModelID.isEmpty, !seen.contains(defaultModelID) {
-            ordered.insert(defaultModelID, at: 0)
-        }
-        return ordered
+        MelixServerModelRosterNormalizer.normalized(
+            modelIDs,
+            defaultModelID: defaultModelID
+        )
     }
 
     private func upsertServerSessionForStartIfNeeded(_ options: ServerControlOptions) throws -> String {
