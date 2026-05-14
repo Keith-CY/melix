@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from worker.productization import serving_diagnostics as serving_diagnostics_module
 from worker.productization.serving_diagnostics import (
     BoundedServingDiagnosticsEventQueue,
     ServingDiagnosticsComparisonError,
@@ -233,6 +234,28 @@ def test_serving_diagnostics_default_event_attributes_reuse_empty_mapping() -> N
     assert first.attributes is second.attributes
     with pytest.raises(TypeError):
         first.attributes["late"] = "mutation"  # type: ignore[index]
+
+
+def test_serving_diagnostics_empty_event_attributes_skip_stable_json_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-empty-fast-path",
+        phase="decode",
+        event_index=3,
+        status="completed",
+    )
+
+    def fail_stable_json_object(_: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("empty event attributes should not call _stable_json_object")
+
+    monkeypatch.setattr(
+        serving_diagnostics_module,
+        "_stable_json_object",
+        fail_stable_json_object,
+    )
+
+    assert event.to_dict()["attributes"] == {}
 
 
 def test_serving_diagnostics_bounded_queue_serializes_append_during_snapshot() -> None:

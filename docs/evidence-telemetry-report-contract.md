@@ -233,7 +233,10 @@ include full prompts, full responses, credentials, or operator secrets.
 Debug event queues are bounded. Queue saturation drops the oldest debug events
 and increments the manifest's `dropped_event_count`; it must not block serving
 request progress. The manifest also records `event_count` for the retained
-events written to `events.jsonl`.
+events written to `events.jsonl`. Empty debug event attributes serialize as an
+empty JSON object without invoking the stable recursive attribute normalizer, so
+high-volume decode traces avoid extra per-event sorting work while preserving
+the same wire shape.
 
 Baseline-vs-accelerated comparison artifacts are written as:
 

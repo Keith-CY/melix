@@ -3703,6 +3703,12 @@
         "warn_pct": 5.0
       },
       {
+        "key": "serialization_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
         "key": "dropped_count",
         "unit": "events",
         "direction": "informational"
@@ -3710,6 +3716,11 @@
       {
         "key": "retained_count",
         "unit": "events",
+        "direction": "informational"
+      },
+      {
+        "key": "serialization_checksum",
+        "unit": "index-sum",
         "direction": "informational"
       }
     ]

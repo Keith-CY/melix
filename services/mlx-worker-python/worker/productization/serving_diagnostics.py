@@ -147,6 +147,7 @@ class ServingDiagnosticsEvent:
     attributes: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
 
     def to_dict(self) -> dict[str, object]:
+        attributes = self.attributes
         return {
             "schema_version": SERVING_DIAGNOSTICS_EVENT_SCHEMA_VERSION,
             "request_id": self.request_id,
@@ -154,7 +155,7 @@ class ServingDiagnosticsEvent:
             "event_index": int(self.event_index),
             "status": self.status,
             "duration_ms": float(self.duration_ms),
-            "attributes": _stable_json_object(self.attributes),
+            "attributes": {} if not attributes else _stable_json_object(attributes),
         }
 
 
