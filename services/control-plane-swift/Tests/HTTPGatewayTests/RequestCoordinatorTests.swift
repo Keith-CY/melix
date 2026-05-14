@@ -1016,6 +1016,8 @@ struct RequestCoordinatorTests {
             response.stats.generationStreamOwnerMode = "executor_owned_no_stream"
             response.stats.workerThreadInitLatencyMs = 4
             response.stats.streamSyncFallbackCount = 2
+            response.stats.lastModelLoadTrustPolicyResolutionMs = 1.25
+            response.stats.modelLoadTrustBlockedCount = 3
             response.stats.lastMultimodalDecodeMode = "text_only_batch_generator"
             response.stats.lastMultimodalFallbackReason = ""
             response.stats.lastMultimodalDecodeSyncMode = "executor_batch_generator"
@@ -1089,6 +1091,8 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 2)
         #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 4)
         #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 2)
+        #expect(metrics.values["worker.model_load_trust_policy_resolution_ms", default: -1] == 1.25)
+        #expect(metrics.values["worker.model_load_trust_blocked_count", default: -1] == 3)
         #expect(metrics.values["vision.multimodal_decode_mode_code", default: -1] == 7)
         #expect(metrics.values["vision.multimodal_fallback_reason_code", default: -1] == 0)
         #expect(metrics.values["vision.multimodal_decode_sync_mode_code", default: -1] == 4)
@@ -3188,9 +3192,14 @@ struct RequestCoordinatorTests {
         _ = await collector.result
 
         #expect(deliveredBeforeProgressPublisherFinished != nil)
-        let metrics = await metricsStore.snapshot()
-        #expect(metrics.values["http.ttfd_ms", default: 0] >= 0)
-        #expect(metrics.values["http.stream_event_count", default: 0] >= 1)
+        #expect(await metricsStore.value(forKey: "http.ttfd_ms") >= 0)
+        #expect(
+            await waitForMetricValue(
+                metricsStore,
+                key: "http.stream_event_count",
+                atLeast: 1
+            ) >= 1
+        )
     }
 
     @Test("reasoning budget overflow truncates streamed reasoning and closes the request explicitly")
@@ -4298,6 +4307,22 @@ private func waitForRecordedWorkerEvent(
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
     return nil
+}
+
+private func waitForMetricValue(
+    _ metricsStore: MetricsStore,
+    key: String,
+    atLeast minimumValue: Double,
+    attempts: Int = 100
+) async -> Double {
+    for _ in 0..<(attempts * waitAttemptsMultiplier) {
+        let value = await metricsStore.value(forKey: key)
+        if value >= minimumValue {
+            return value
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return await metricsStore.value(forKey: key)
 }
 
 private func waitForPrefillRequest(

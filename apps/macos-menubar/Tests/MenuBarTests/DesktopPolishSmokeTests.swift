@@ -109,6 +109,21 @@ struct DesktopPolishSmokeTests {
 
         viewModel.selectToolSection(.downloads)
         await viewModel.refreshDownloadQueueState()
+        try await waitForDesktopPolishCondition("download queue should refresh before persistence") {
+            if viewModel.downloadQueue.isEmpty {
+                return false
+            }
+            viewModel.selectToolSection(.downloads)
+            return true
+        }
+        try await waitForDesktopPolishCondition("operator session should persist queue state") {
+            viewModel.selectToolSection(.downloads)
+            guard let restoredState = try? operatorSessionStore.load() else {
+                return false
+            }
+            return restoredState.downloadQueue.isEmpty == false
+                && restoredState.selectedToolSection == .downloads
+        }
         _ = try requireDesktopPolishPersistedQueue(
             from: operatorSessionStore,
             expectedSection: .downloads
@@ -298,6 +313,25 @@ private func hostedDesktopPolishViewHasSubviews<Content: View>(_ rootView: Conte
     view.frame = NSRect(x: 0, y: 0, width: 1_200, height: 800)
     view.layoutSubtreeIfNeeded()
     return view.subviews.isEmpty == false
+}
+
+@MainActor
+private func waitForDesktopPolishCondition(
+    _ description: String,
+    timeout: Duration = .seconds(5),
+    pollInterval: Duration = .milliseconds(10),
+    condition: @MainActor @escaping () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+    throw NSError(domain: "DesktopPolishSmokeTests", code: 1, userInfo: [
+        NSLocalizedDescriptionKey: description,
+    ])
 }
 
 private func requireDesktopPolishPersistedQueue(

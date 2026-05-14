@@ -982,6 +982,7 @@ public enum BootstrapWorkerPreparation {
         spec.settings.cacheBlockSizeTokens = summary.settings.cacheBlockSizeTokens
         spec.settings.cacheDirectory = summary.settings.cacheDirectory
         spec.settings.multimodalCacheBudgetBytes = summary.settings.multimodalCacheBudgetBytes
+        spec.settings.loadTrustMode = ModelLoadTrustPolicyResolver.workerMode(from: summary.settings.loadTrustMode)
         spec.settings.ext.merge(summary.settings.ext) { _, new in new }
     }
 
@@ -1165,20 +1166,60 @@ public enum BootstrapWorkerPreparation {
         request.pinOnLoad = true
         request.warmupAfterLoad = false
         request.diskStreamingMode = model.settings.diskStreamingMode
+        request.loadTrust = bootstrapLoadTrustPolicy(for: model)
 
         let response = try await workerClient.loadModel(request: request)
         guard response.ok, !response.modelHandle.isEmpty else {
-            _ = await modelCatalog.recordLoadFailed(id: model.modelID)
+            let fallback = ModelLoadTrustPolicyResolver.controlPlanePolicy(
+                from: request.loadTrust,
+                fallback: Melix_Controlplane_V1_ModelLoadTrustPolicy()
+            )
+            _ = await modelCatalog.recordLoadFailed(
+                id: model.modelID,
+                loadTrust: ModelLoadTrustPolicyResolver.receiptForLoadFailure(
+                    response: response,
+                    fallback: fallback
+                )
+            )
             return false
         }
 
+        let fallback = ModelLoadTrustPolicyResolver.controlPlanePolicy(
+            from: request.loadTrust,
+            fallback: Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        )
         _ = await modelCatalog.recordLoadSucceeded(
             id: request.model.modelID,
             dispatchHandle: response.modelHandle,
             pinRequested: request.pinOnLoad,
-            workerResidency: response.hasResidency ? response.residency : nil
+            workerResidency: response.hasResidency ? response.residency : nil,
+            loadTrust: response.hasLoadTrust
+                ? ModelLoadTrustPolicyResolver.controlPlanePolicy(from: response.loadTrust, fallback: fallback)
+                : fallback
         )
         return true
+    }
+
+    private static func bootstrapLoadTrustPolicy(
+        for model: Melix_Worker_V1_ModelSpec
+    ) -> Melix_Worker_V1_ModelLoadTrustPolicy {
+        var policy = Melix_Worker_V1_ModelLoadTrustPolicy()
+        switch model.settings.loadTrustMode {
+        case .modelLoadTrustTrustRemoteCode:
+            policy.requestedMode = .modelLoadTrustTrustRemoteCode
+            policy.effectiveMode = .modelLoadTrustTrustRemoteCode
+            policy.policySource = ModelLoadTrustPolicyResolver.modelSettingsSource
+        case .modelLoadTrustDefaultSafe:
+            policy.requestedMode = .modelLoadTrustDefaultSafe
+            policy.effectiveMode = .modelLoadTrustDefaultSafe
+            policy.policySource = ModelLoadTrustPolicyResolver.modelSettingsSource
+        default:
+            policy.requestedMode = .modelLoadTrustDefaultSafe
+            policy.effectiveMode = .modelLoadTrustDefaultSafe
+            policy.policySource = ModelLoadTrustPolicyResolver.defaultSafeSource
+        }
+        policy.loaderFamily = "bootstrap_preload"
+        return policy
     }
 
     private static func catalogAwareModelSpec(

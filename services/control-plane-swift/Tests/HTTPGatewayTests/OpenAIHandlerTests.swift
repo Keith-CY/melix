@@ -1919,6 +1919,8 @@ struct OpenAIHandlerTests {
             response.stats.generationStreamOwnerMode = "executor_owned"
             response.stats.workerThreadInitLatencyMs = 7
             response.stats.streamSyncFallbackCount = 0
+            response.stats.lastModelLoadTrustPolicyResolutionMs = 0.75
+            response.stats.modelLoadTrustBlockedCount = 1
             response.stats.lastMultimodalDecodeMode = "native_quantized"
             response.stats.lastMultimodalFallbackReason = ""
             response.stats.lastMultimodalDecodeSyncMode = "executor_stream"
@@ -2028,6 +2030,8 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 1)
         #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 7)
         #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 0)
+        #expect(metrics.values["worker.model_load_trust_policy_resolution_ms", default: -1] == 0.75)
+        #expect(metrics.values["worker.model_load_trust_blocked_count", default: -1] == 1)
         #expect(metrics.values["vision.multimodal_decode_mode_code", default: -1] == 3)
         #expect(metrics.values["vision.multimodal_fallback_reason_code", default: -1] == 0)
         #expect(metrics.values["vision.multimodal_decode_sync_mode_code", default: -1] == 1)
@@ -3399,6 +3403,10 @@ struct OpenAIHandlerTests {
         #expect(textMetadata["melix.capability.class"] as? String == "text")
         #expect(textMetadata["melix.capability.supported_tasks"] as? String == "generate")
         #expect(textMetadata["melix.capability.supported_modalities"] as? String == "text")
+        #expect(textMetadata["melix.load_trust.requested_mode"] as? String == "default_safe")
+        #expect(textMetadata["melix.load_trust.effective_mode"] as? String == "not_applicable")
+        #expect(textMetadata["melix.load_trust.policy_source"] as? String == "not_applicable")
+        #expect(textMetadata["melix.load_trust.receipt_present"] as? String == "false")
         #expect(textMetadata["melix.model_path"] == nil)
         #expect(imageMetadata["melix.display_name"] as? String == "Melix Image")
         #expect(imageMetadata["melix.capability.class"] as? String == "image_generation")

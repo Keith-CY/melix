@@ -335,6 +335,87 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
     assert probe.multi_image_scatter_mode == "none"
 
 
+def test_mlx_vlm_runtime_forwards_trust_remote_code_when_loader_supports_it() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(
+        model_path: str,
+        *,
+        revision: str = "main",
+        trust_remote_code: bool = False,
+    ):
+        seen["load"] = (model_path, revision, trust_remote_code)
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+        )
+    )
+
+    runtime.load_model(imported_gemma4_vlm_model(), trust_remote_code=True)
+
+    assert seen["load"] == ("unsloth/gemma-4-E4B-it-MLX-8bit", "main", True)
+
+
+def test_auto_vlm_backend_rejects_trust_when_loader_cannot_accept_kwarg() -> None:
+    def fake_load(model_path: str, *, revision: str = "main"):  # pragma: no cover - must be blocked.
+        _ = model_path, revision
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    backend = AutoMLXVLMBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        apply_chat_template_fn=lambda *args, **kwargs: "",
+    )
+
+    with pytest.raises(RuntimeError, match="trust_remote_code"):
+        backend.load_model(imported_gemma4_vlm_model(), trust_remote_code=True)
+
+
+def test_mlx_vlm_runtime_rejects_trust_when_backend_cannot_accept_kwarg() -> None:
+    class LegacyBackend:
+        runtime_name = "mlx-vlm"
+
+        def load_model(self, model_spec):  # pragma: no cover - must be blocked before invocation.
+            return {"model_id": model_spec.model_id}
+
+        def estimate_resident_bytes(self, model_spec) -> int:  # pragma: no cover - not used by this test.
+            _ = model_spec
+            return 0
+
+    runtime = MLXVLMRuntime(backend=LegacyBackend())
+
+    with pytest.raises(RuntimeError, match="trust_remote_code"):
+        runtime.load_model(imported_gemma4_vlm_model(), trust_remote_code=True)
+
+
+def test_mlx_vlm_runtime_uses_explicit_trust_support_override() -> None:
+    class BackendWithExplicitSupport:
+        runtime_name = "wrapped-runtime"
+        supports_trust_policy = True
+
+        def load_model(self, model_spec):  # pragma: no cover - property checks only.
+            return {"model_id": model_spec.model_id}
+
+    class BackendWithExplicitOptOut:
+        runtime_name = "mlx-vlm"
+        supports_trust_policy = False
+
+        def load_model(self, model_spec):  # pragma: no cover - property checks only.
+            return {"model_id": model_spec.model_id}
+
+    assert MLXVLMRuntime(backend=BackendWithExplicitSupport()).supports_trust_policy is True
+    assert MLXVLMRuntime(backend=BackendWithExplicitOptOut()).supports_trust_policy is False
+    assert MLXVLMRuntime(backend=AutoMLXVLMBackend(load_fn=lambda *args, **kwargs: None)).supports_trust_policy is True
+
+
 def test_mlx_vlm_runtime_records_installed_package_versions(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_version(package_name: str) -> str:
         return {
@@ -1908,10 +1989,10 @@ def test_mlx_vlm_runtime_records_temp_media_cleanup_failures_in_probe(tmp_path: 
 
 def test_gemma4_multimodal_weight_presence_detects_text_backed_exports() -> None:
     has_vision, has_audio = _gemma4_multimodal_weight_presence(
-        {
+        (
             "language_model.model.layers.0.self_attn.q_proj.weight",
             "language_model.model.per_layer_model_projection.weight",
-        }
+        )
     )
 
     assert has_vision is False
@@ -1956,6 +2037,17 @@ def test_gemma4_multimodal_weight_presence_accepts_dict_keys_view() -> None:
     }
 
     assert _gemma4_multimodal_weight_presence(weights.keys()) == (False, True)
+    assert _gemma4_multimodal_weight_presence(
+        {
+            "embed_vision.proj.weight": object(),
+            "embed_audio.proj.weight": object(),
+        }.keys()
+    ) == (True, True)
+    assert _gemma4_multimodal_weight_presence(
+        {
+            "vision_tower.proj.weight": object(),
+        }.keys()
+    ) == (True, False)
 
 
 def test_gemma4_scaled_linear_patch_accepts_newer_language_api(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2573,17 +2665,80 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     ]
 
 
-def test_auto_mlx_vlm_backend_detects_installed_optional_mtp_api() -> None:
+def test_auto_mlx_vlm_backend_detects_installed_optional_mtp_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mlx_vlm = ModuleType("mlx_vlm")
+    fake_mlx_vlm.__path__ = []
+    fake_generate = ModuleType("mlx_vlm.generate")
+    fake_speculative = ModuleType("mlx_vlm.speculative")
+    fake_speculative.__path__ = []
+    fake_drafters = ModuleType("mlx_vlm.speculative.drafters")
+
+    def fake_load(model_path: str, *, revision: str = "main"):
+        _ = model_path, revision
+        return object(), object()
+
+    def fake_stream_generate(*_args, **_kwargs):
+        return iter(())
+
+    def fake_apply_chat_template(*_args, **_kwargs):
+        return ""
+
+    def fake_generate_step(
+        *_args,
+        draft_model=None,
+        draft_kind=None,
+        draft_block_size=None,
+        **_kwargs,
+    ):
+        _ = draft_model, draft_kind, draft_block_size
+        return iter(())
+
+    def fake_batch_generate(
+        *_args,
+        draft_model=None,
+        draft_kind=None,
+        draft_block_size=None,
+        **_kwargs,
+    ):
+        _ = draft_model, draft_kind, draft_block_size
+        return []
+
+    def fake_load_drafter(model_id: str, *, kind: str = "mtp"):
+        return {"model_id": model_id, "kind": kind}
+
+    fake_mlx_vlm.load = fake_load
+    fake_mlx_vlm.stream_generate = fake_stream_generate
+    fake_mlx_vlm.apply_chat_template = fake_apply_chat_template
+    fake_generate.generate_step = fake_generate_step
+    fake_generate.batch_generate = fake_batch_generate
+    fake_drafters.load_drafter = fake_load_drafter
+
+    monkeypatch.setitem(sys.modules, "mlx_vlm", fake_mlx_vlm)
+    monkeypatch.setitem(sys.modules, "mlx_vlm.generate", fake_generate)
+    monkeypatch.setitem(sys.modules, "mlx_vlm.speculative", fake_speculative)
+    monkeypatch.setitem(sys.modules, "mlx_vlm.speculative.drafters", fake_drafters)
+    original_find_spec = mlx_vlm_runtime_module.importlib.util.find_spec
+    monkeypatch.setattr(
+        mlx_vlm_runtime_module.importlib.util,
+        "find_spec",
+        lambda name, *args, **kwargs: object()
+        if name == "mlx_vlm"
+        else original_find_spec(name, *args, **kwargs),
+    )
+
     backend = AutoMLXVLMBackend()
-    if not getattr(backend, "_available", False):
-        pytest.skip("mlx-vlm is not installed")
 
     backend._ensure_runtime()
 
     assert backend.runtime_name == "mlx-vlm"
-    assert backend.load_fn is not None
-    assert backend.stream_generate_fn is not None
-    assert backend.apply_chat_template_fn is not None
+    assert backend.load_fn is fake_load
+    assert backend.stream_generate_fn is fake_stream_generate
+    assert backend.apply_chat_template_fn is fake_apply_chat_template
+    assert backend.generate_step_fn is fake_generate_step
+    assert backend.batch_generate_fn is fake_batch_generate
+    assert backend.load_drafter_fn is fake_load_drafter
     generate_step_support = backend.generate_step_fn is not None and (
         runtime_utils.callable_declares_kwarg(backend.generate_step_fn, "draft_model")
         and runtime_utils.callable_declares_kwarg(backend.generate_step_fn, "draft_kind")
@@ -2597,6 +2752,7 @@ def test_auto_mlx_vlm_backend_detects_installed_optional_mtp_api() -> None:
     assert backend.supports_mtp_speculative() is (
         backend.load_drafter_fn is not None and (generate_step_support or batch_generate_support)
     )
+    assert backend.supports_mtp_speculative() is True
 
 
 def test_auto_mlx_vlm_backend_load_drafter_requires_loader() -> None:

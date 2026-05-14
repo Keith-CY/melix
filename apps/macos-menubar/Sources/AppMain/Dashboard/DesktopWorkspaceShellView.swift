@@ -3890,15 +3890,17 @@ struct DesktopDiagnosticsToolSectionView: View {
         if viewModel.selectedBenchmarkPresentationMode == .matrix {
             return .matrix
         }
+        if viewModel.selectedEvaluationMode == .compare
+            || viewModel.selectedEvaluationHistoryJobID.isEmpty == false
+            || viewModel.selectedEvaluationSemanticJudgeRemoteServerID.isEmpty == false
+            || viewModel.evaluationSemanticJudgeModelID.isEmpty == false {
+            return .evaluation
+        }
         if viewModel.benchmarkHistory.isEmpty == false {
             return .benchmark
         }
         if viewModel.benchmarkMatrixHistory.isEmpty == false {
             return .matrix
-        }
-        if viewModel.selectedEvaluationMode == .compare
-            || viewModel.selectedEvaluationHistoryJobID.isEmpty == false {
-            return .evaluation
         }
         if viewModel.evaluationHistory.isEmpty == false
             && viewModel.benchmarkHistory.isEmpty

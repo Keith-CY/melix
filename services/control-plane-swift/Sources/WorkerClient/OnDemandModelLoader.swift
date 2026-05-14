@@ -105,6 +105,12 @@ enum OnDemandModelLoader {
               let workerClient = await workerRegistry.client(for: route) else {
             throw OnDemandModelLoadError.workerUnavailable
         }
+        let trustStartedAt = Date()
+        let loadTrustPolicy = ModelLoadTrustPolicyResolver.resolvePolicy(for: model, route: route)
+        await metricsStore.set(
+            Date().timeIntervalSince(trustStartedAt) * 1000,
+            forKey: "control_plane.model_load_trust_resolution_ms"
+        )
 
         _ = await modelCatalog.beginLoad(id: modelID, reason: loadReason)
         var request = Melix_Worker_V1_LoadModelRequest()
@@ -113,6 +119,7 @@ enum OnDemandModelLoader {
         request.pinOnLoad = false
         request.warmupAfterLoad = false
         request.diskStreamingMode = modelSpec.settings.diskStreamingMode
+        request.loadTrust = ModelLoadTrustPolicyResolver.workerPolicy(from: loadTrustPolicy)
 
         let startedAt = Date()
         let response: Melix_Worker_V1_LoadModelResponse
@@ -146,7 +153,11 @@ enum OnDemandModelLoader {
                 throw OnDemandModelLoadError.workerUnavailable
             }
         } catch {
-            _ = await modelCatalog.recordLoadFailed(id: modelID, reason: "\(loadReason)_failed")
+            _ = await modelCatalog.recordLoadFailed(
+                id: modelID,
+                reason: "\(loadReason)_failed",
+                loadTrust: loadTrustPolicy
+            )
             throw OnDemandModelLoadError.workerUnavailable
         }
         guard response.ok, !response.modelHandle.isEmpty else {
@@ -166,7 +177,11 @@ enum OnDemandModelLoader {
             _ = await modelCatalog.recordLoadFailed(
                 id: modelID,
                 reason: failureReason,
-                memoryBudgetEvidence: memoryBudgetEvidence
+                memoryBudgetEvidence: memoryBudgetEvidence,
+                loadTrust: ModelLoadTrustPolicyResolver.receiptForLoadFailure(
+                    response: response,
+                    fallback: loadTrustPolicy
+                )
             )
             if !response.error.code.isEmpty
                 || !response.error.message.isEmpty
@@ -181,6 +196,9 @@ enum OnDemandModelLoader {
             dispatchHandle: response.modelHandle,
             pinRequested: request.pinOnLoad,
             workerResidency: response.hasResidency ? response.residency : nil,
+            loadTrust: response.hasLoadTrust
+                ? ModelLoadTrustPolicyResolver.controlPlanePolicy(from: response.loadTrust, fallback: loadTrustPolicy)
+                : loadTrustPolicy,
             reason: loadReason
         )
 

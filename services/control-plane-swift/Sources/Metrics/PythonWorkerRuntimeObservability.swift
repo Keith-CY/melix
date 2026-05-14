@@ -19,6 +19,14 @@ func recordPythonWorkerStreamOwnershipMetrics(
         Double(stats.streamSyncFallbackCount),
         forKey: "python_worker.stream_sync_fallback_count"
     )
+    await metricsStore.set(
+        stats.lastModelLoadTrustPolicyResolutionMs,
+        forKey: "worker.model_load_trust_policy_resolution_ms"
+    )
+    await metricsStore.set(
+        Double(stats.modelLoadTrustBlockedCount),
+        forKey: "worker.model_load_trust_blocked_count"
+    )
 }
 
 func pythonWorkerGenerationStreamOwnerModeCode(_ mode: String) -> Double {

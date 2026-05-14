@@ -27,6 +27,7 @@ from worker.runtime.mlx_text_runtime import (
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.runtime_utils import (
+    callable_accepts_kwarg as _callable_accepts_kwarg,
     callable_declares_kwarg as _callable_declares_kwarg,
     installed_package_version as _installed_package_version,
 )
@@ -34,6 +35,10 @@ from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 logger = logging.getLogger(__name__)
+_GEMMA4_PRESENCE_NONE = (False, False)
+_GEMMA4_PRESENCE_VISION = (True, False)
+_GEMMA4_PRESENCE_AUDIO = (False, True)
+_GEMMA4_PRESENCE_BOTH = (True, True)
 
 _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY = "melix.vlm.text_only_batch_generator"
 _TEXT_ONLY_STEP_COOPERATIVE_EXT_KEY = "melix.vlm.text_only_step_cooperative"
@@ -509,23 +514,27 @@ def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[boo
         if first_character == "v":
             if not has_vision and name.startswith("vision_tower."):
                 if has_audio:
-                    return True, True
+                    return _GEMMA4_PRESENCE_BOTH
                 has_vision = True
         elif first_character == "a":
             if not has_audio and name.startswith("audio_tower."):
                 if has_vision:
-                    return True, True
+                    return _GEMMA4_PRESENCE_BOTH
                 has_audio = True
         elif first_character == "e":
             if not has_vision and name.startswith("embed_vision."):
                 if has_audio:
-                    return True, True
+                    return _GEMMA4_PRESENCE_BOTH
                 has_vision = True
             elif not has_audio and name.startswith("embed_audio."):
                 if has_vision:
-                    return True, True
+                    return _GEMMA4_PRESENCE_BOTH
                 has_audio = True
-    return has_vision, has_audio
+    if has_vision:
+        return _GEMMA4_PRESENCE_VISION
+    if has_audio:
+        return _GEMMA4_PRESENCE_AUDIO
+    return _GEMMA4_PRESENCE_NONE
 
 
 def _mlx_peak_memory_gb(mx_module: Any) -> float:
@@ -874,20 +883,22 @@ class AutoMLXVLMBackend:
         self._drafter_cache[cache_key] = drafter
         return drafter
 
-    def load_model(self, model_spec):
+    def load_model(self, model_spec, *, trust_remote_code: bool = False):
         if not self._available:
             raise RuntimeUnavailableError("mlx-vlm is not installed") from self._error
         self._ensure_runtime()
+        if trust_remote_code and not _callable_accepts_kwarg(self.load_fn, "trust_remote_code"):
+            raise RuntimeError("mlx-vlm loader cannot honor trust_remote_code.")
         metadata = dict(model_spec.ext)
         metadata["mlx_version"] = _installed_package_version("mlx")
         metadata["mlx_lm_version"] = _installed_package_version("mlx-lm")
         metadata["mlx_vlm_version"] = _installed_package_version("mlx-vlm")
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
         try:
-            model, processor = self.load_fn(
-                model_spec.model_path,
-                revision=model_spec.revision or "main",
-            )
+            load_kwargs: dict[str, Any] = {"revision": model_spec.revision or "main"}
+            if trust_remote_code:
+                load_kwargs["trust_remote_code"] = True
+            model, processor = self.load_fn(model_spec.model_path, **load_kwargs)
             if self._should_attempt_gemma4_text_backed_fallback(model_spec):
                 execution_mode = _gemma4_loaded_execution_mode(model, processor)
         except Exception as exc:
@@ -1099,10 +1110,25 @@ class MLXVLMRuntime:
     def runtime_name(self) -> str:
         return getattr(self._backend, "runtime_name", "mlx-vlm-unavailable")
 
-    def load_model(self, model_spec):
-        if self._executor is None:
+    @property
+    def supports_trust_policy(self) -> bool:
+        explicit_support = getattr(self._backend, "supports_trust_policy", None)
+        if explicit_support is not None:
+            return bool(explicit_support)
+        runtime_name = self.runtime_name.strip().lower().replace("-", "_")
+        return runtime_name in {"mlx_vlm", "mlx_vlm_unavailable"}
+
+    def load_model(self, model_spec, *, trust_remote_code: bool = False):
+        def load_backend():
+            if _callable_accepts_kwarg(self._backend.load_model, "trust_remote_code"):
+                return self._backend.load_model(model_spec, trust_remote_code=trust_remote_code)
+            if trust_remote_code:
+                raise RuntimeError("VLM runtime backend cannot honor trust_remote_code.")
             return self._backend.load_model(model_spec)
-        return self._executor.run(lambda: self._backend.load_model(model_spec))
+
+        if self._executor is None:
+            return load_backend()
+        return self._executor.run(load_backend)
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))
