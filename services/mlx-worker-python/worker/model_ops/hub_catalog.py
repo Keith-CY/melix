@@ -18,6 +18,11 @@ RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
 _SIZE_HINT_KB = 1024
 _SIZE_HINT_MB = _SIZE_HINT_KB * 1024
 _SIZE_HINT_GB = _SIZE_HINT_MB * 1024
+_SIZE_HINT_MULTIPLIERS = {
+    "kb": _SIZE_HINT_KB,
+    "mb": _SIZE_HINT_MB,
+    "gb": _SIZE_HINT_GB,
+}
 
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
@@ -351,18 +356,20 @@ def _sibling_files(value: Any) -> list[str]:
 
 
 def _model_name(repo_id: str) -> str:
-    if "/" not in repo_id:
+    separator_index = repo_id.find("/")
+    if separator_index < 0:
         return repo_id
-    return repo_id.split("/", 1)[1]
+    return repo_id[separator_index + 1 :]
 
 
 def _author(payload: dict[str, Any], repo_id: str) -> str:
     author = _string(payload.get("author"))
     if author:
         return author
-    if "/" not in repo_id:
+    separator_index = repo_id.find("/")
+    if separator_index < 0:
         return ""
-    return repo_id.split("/", 1)[0]
+    return repo_id[:separator_index]
 
 
 def _license_from_tags(tags: list[str]) -> str:
@@ -600,13 +607,17 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
             else 0
         )
 
+    if not (
+        _may_contain_model_marker(description_text)
+        or _may_contain_model_marker(readme_text)
+        or _may_contain_model_marker(card_description_text)
+    ):
+        return 0
     text = "\n".join(
         text
         for text in (description_text, readme_text, card_description_text)
         if text
     )
-    if not _may_contain_model_marker(text):
-        return 0
     return _size_hint_from_text(text, allow_bare=False)
 
 
@@ -616,13 +627,8 @@ def _direct_size_hint_from_text(text: str) -> int:
         return 0
     value_text, unit_text = parts
     unit = unit_text.lower()
-    if unit == "kb":
-        multiplier = _SIZE_HINT_KB
-    elif unit == "mb":
-        multiplier = _SIZE_HINT_MB
-    elif unit == "gb":
-        multiplier = _SIZE_HINT_GB
-    else:
+    multiplier = _SIZE_HINT_MULTIPLIERS.get(unit)
+    if multiplier is None:
         return 0
     try:
         value = float(value_text)
@@ -639,13 +645,7 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
     if not match:
         return 0
     value = float(match.group(1))
-    unit = match.group(2).lower()
-    if unit == "kb":
-        multiplier = _SIZE_HINT_KB
-    elif unit == "mb":
-        multiplier = _SIZE_HINT_MB
-    else:
-        multiplier = _SIZE_HINT_GB
+    multiplier = _SIZE_HINT_MULTIPLIERS[match.group(2).lower()]
     return int(value * multiplier)
 
 

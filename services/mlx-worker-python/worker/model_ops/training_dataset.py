@@ -1739,26 +1739,38 @@ def _deterministic_validation_split(
             message="Automatic validation split requires at least two samples.",
         )
 
-    validation_count = int(round(len(samples) * validation_ratio))
-    validation_count = max(1, min(len(samples) - 1, validation_count))
-    ranked = heapq.nsmallest(
-        validation_count,
+    sample_count = len(samples)
+    validation_count = int(round(sample_count * validation_ratio))
+    validation_count = max(1, min(sample_count - 1, validation_count))
+    train_count = sample_count - validation_count
+    ranked_samples = (
         (
-            (
-                _canonical_sample_digest(sample),
-                index,
-            )
-            for index, sample in enumerate(samples)
-        ),
+            _canonical_sample_digest(sample),
+            index,
+        )
+        for index, sample in enumerate(samples)
     )
-    validation_indices = {index for _, index in ranked}
     train_samples: list[dict[str, Any]] = []
     validation_samples: list[dict[str, Any]] = []
+    if train_count < validation_count:
+        train_indices = {index for _, index in heapq.nlargest(train_count, ranked_samples)}
+        train_append = train_samples.append
+        validation_append = validation_samples.append
+        for index, sample in enumerate(samples):
+            if index in train_indices:
+                train_append(sample)
+            else:
+                validation_append(sample)
+        return train_samples, validation_samples
+
+    validation_indices = {index for _, index in heapq.nsmallest(validation_count, ranked_samples)}
+    train_append = train_samples.append
+    validation_append = validation_samples.append
     for index, sample in enumerate(samples):
         if index in validation_indices:
-            validation_samples.append(sample)
+            validation_append(sample)
         else:
-            train_samples.append(sample)
+            train_append(sample)
     return train_samples, validation_samples
 
 

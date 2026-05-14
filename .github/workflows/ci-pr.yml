@@ -235,7 +235,7 @@ jobs:
         run: bash scripts/ci_progress.sh "Bootstrap" make bootstrap
 
       - name: Python tests
-        run: bash scripts/ci_progress.sh "Python tests" make py-test
+        run: bash scripts/ci_progress.sh "Python tests" make py-test-ci
 
   integration-tests:
     if: needs.ci-scope.outputs.integration_should_run == 'true'

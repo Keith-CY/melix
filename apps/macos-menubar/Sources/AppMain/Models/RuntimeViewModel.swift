@@ -3335,6 +3335,7 @@ public final class RuntimeViewModel {
     public func selectToolSection(_ section: DesktopToolSection) {
         selectedSurface = .tools
         selectedToolSection = section
+        persistOperatorSessionState(force: true)
         notifyStateChanged()
     }
 
@@ -7127,6 +7128,15 @@ public final class RuntimeViewModel {
     public func refreshBenchmarkHistory() async {
         preferredDiagnosticsStage = selectedBenchmarkPresentationMode == .matrix ? .matrix : .benchmark
         await refreshBenchmarkHistory(notify: true)
+    }
+
+    public func refreshDiagnosticsHistory() async {
+        let preferredStage = preferredDiagnosticsStage
+        let benchmarkPresentationMode = selectedBenchmarkPresentationMode
+        await refreshBenchmarkHistory(notify: false)
+        preferredDiagnosticsStage = preferredStage
+        selectedBenchmarkPresentationMode = benchmarkPresentationMode
+        notifyStateChanged()
     }
 
     public func exportSelectedBenchmarkCSV() async {

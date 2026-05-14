@@ -7459,6 +7459,76 @@ public actor MelixCLIRunner {
         }
     }
 
+    private func loadTrustListLabel(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
+        let policy = ModelCatalogPresentation.loadTrustPolicy(for: model)
+        let label: String
+        switch policy.effectiveMode {
+        case .modelLoadTrustDefaultSafe:
+            label = "safe"
+        case .modelLoadTrustTrustRemoteCode:
+            label = "trust"
+        case .modelLoadTrustNotApplicable:
+            label = "n/a"
+        case .unspecified:
+            label = "-"
+        case .UNRECOGNIZED:
+            label = "?"
+        }
+        return policy.requiresReloadForTrustChange ? "\(label)*" : label
+    }
+
+    private func loadTrustDetailLines(_ model: Melix_Controlplane_V1_ModelSummary) -> [String] {
+        let policy = ModelCatalogPresentation.loadTrustPolicy(for: model)
+        var lines = [
+            "load_trust_requested=\(ModelCatalogPresentation.loadTrustModeIdentifier(policy.requestedMode))",
+            "load_trust_effective=\(ModelCatalogPresentation.loadTrustModeIdentifier(policy.effectiveMode))",
+            "load_trust_policy_source=\(policy.policySource)",
+            "load_trust_custom_loader_required=\(policy.customLoaderRequired ? "true" : "false")",
+            "load_trust_requires_reload=\(policy.requiresReloadForTrustChange ? "true" : "false")",
+        ]
+        let route = ModelCatalogPresentation.workerRouteIdentifier(for: policy.routeClass)
+        if route != "unspecified" {
+            lines.append("load_trust_route_class=\(route)")
+        }
+        if !policy.loaderFamily.isEmpty {
+            lines.append("load_trust_loader_family=\(policy.loaderFamily)")
+        }
+        if !policy.customLoaderDetectionSource.isEmpty {
+            lines.append("load_trust_detection=\(policy.customLoaderDetectionSource)")
+        }
+        if !policy.blockReason.isEmpty {
+            lines.append("load_trust_block_reason=\(policy.blockReason)")
+        }
+        return lines
+    }
+
+    private func makeModelLoadTrustPayload(_ model: Melix_Controlplane_V1_ModelSummary) -> [String: Any] {
+        let policy = ModelCatalogPresentation.loadTrustPolicy(for: model)
+        var payload: [String: Any] = [
+            "receipt_present": model.hasLoadTrust,
+            "requested_mode": ModelCatalogPresentation.loadTrustModeIdentifier(policy.requestedMode),
+            "effective_mode": ModelCatalogPresentation.loadTrustModeIdentifier(policy.effectiveMode),
+            "policy_source": policy.policySource,
+            "custom_loader_required": policy.customLoaderRequired,
+            "requires_reload_for_trust_change": policy.requiresReloadForTrustChange,
+        ]
+
+        let route = ModelCatalogPresentation.workerRouteIdentifier(for: policy.routeClass)
+        if route != "unspecified" {
+            payload["route_class"] = route
+        }
+        if !policy.loaderFamily.isEmpty {
+            payload["loader_family"] = policy.loaderFamily
+        }
+        if !policy.customLoaderDetectionSource.isEmpty {
+            payload["custom_loader_detection_source"] = policy.customLoaderDetectionSource
+        }
+        if !policy.blockReason.isEmpty {
+            payload["block_reason"] = policy.blockReason
+        }
+        return payload
+    }
+
     private func renderModelList(_ models: [Melix_Controlplane_V1_ModelSummary]) -> String {
         guard models.isEmpty == false else {
             return "No models found.\n"
@@ -7468,7 +7538,7 @@ public actor MelixCLIRunner {
         // terminals. Columns separated by two spaces. Consumers that need
         // the column-boundary-stable JSON shape should pass ``--json``;
         // this renderer is for human reading.
-        let header = ["MODEL_ID", "KIND", "STATE", "STATUS", "RUNTIME"]
+        let header = ["MODEL_ID", "KIND", "STATE", "STATUS", "RUNTIME", "TRUST"]
         let dataRows = models
             .sorted { $0.modelID < $1.modelID }
             .map { model in
@@ -7478,6 +7548,7 @@ public actor MelixCLIRunner {
                     modelStateLabel(model.state),
                     ModelRuntimeAvailability.runtimeStatus(for: model),
                     runtimeModeLabel(model),
+                    loadTrustListLabel(model),
                 ]
             }
         let allRows = [header] + dataRows
@@ -7511,7 +7582,7 @@ public actor MelixCLIRunner {
     }
 
     private func renderModelSummary(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
-        "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\t\(runtimeModeLabel(model))\n"
+        "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\t\(runtimeModeLabel(model))\t\(loadTrustListLabel(model))\n"
     }
 
     private func renderModelInfo(
@@ -7541,6 +7612,7 @@ public actor MelixCLIRunner {
             if !restoreCommand.isEmpty {
                 lines.append("restore_command=\(restoreCommand)")
             }
+            lines.append(contentsOf: loadTrustDetailLines(snapshotModel))
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -7689,6 +7761,7 @@ public actor MelixCLIRunner {
             // into a first-class summary field so operators see at a glance
             // whether a loaded model is fused or adapter-backed.
             "runtime_mode": model.runtimeMode,
+            "load_trust": makeModelLoadTrustPayload(model),
         ]
         let activationMode = model.settings.ext["melix.activation_mode"] ?? ""
         if !activationMode.isEmpty {
@@ -7731,6 +7804,7 @@ public actor MelixCLIRunner {
             for (key, value) in ModelRuntimeAvailability.publicMetadata(for: snapshotModel) {
                 payload[key] = value
             }
+            payload["load_trust"] = makeModelLoadTrustPayload(snapshotModel)
         }
         return payload
     }

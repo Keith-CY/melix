@@ -8,6 +8,17 @@ focused tests. It keeps probe mode semantics unchanged while avoiding per-call
 temporary set allocation and repeated enum comparisons in the hot
 `telemetry_enabled` and `evidence_enabled` properties.
 
+## 2026-05-14 direct cached-field follow-up
+
+The current slice keeps the same behavior and registered probe but narrows the
+hot-path instance layout itself: `ProbePolicy` now uses dataclass slots and
+stores `telemetry_enabled` / `evidence_enabled` as direct cached fields rather
+than private fields behind property descriptors. This removes an extra Python
+function call from the default no-op policy check while retaining the cached
+boolean semantics introduced by the earlier mode-check fast path. The focused
+regression asserts that policy instances remain slotted and still expose the
+same no-op reason and telemetry behavior.
+
 ## Registered performance probe
 
 The affected path is covered by the registered PR-scoped probe

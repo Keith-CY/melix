@@ -2,11 +2,10 @@
 
 ## Scope
 
-This slice optimizes only the Python serving diagnostics debug event queue append path.
-`BoundedServingDiagnosticsEventQueue.append(...)` keeps the same bounded-queue semantics:
-append returns `False` once the fixed queue capacity has been reached, the oldest event is
-dropped by the underlying bounded deque, and snapshots still report retained events plus the
-accumulated dropped-event count.
+This plan now tracks the next small serving diagnostics queue slice: keep the debug queue
+append path on an explicit lock acquire/release block while preserving bounded append/drop
+semantics. The change avoids the per-event context-manager dispatch on the hottest append path
+while still releasing the lock through a `finally` guard.
 
 ## Linux-only constraint
 
@@ -16,6 +15,7 @@ with focused pytest, changed-scope coverage, and the registered PR-scoped perfor
 ## Touched files
 
 - `services/mlx-worker-python/worker/productization/serving_diagnostics.py`
+- `services/mlx-worker-python/tests/test_serving_diagnostics.py`
 - `docs/plans/2026-05-13-serving-diagnostics-queue-retained-count.md`
 
 ## Registered probe

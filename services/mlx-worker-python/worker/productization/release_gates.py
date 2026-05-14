@@ -1693,9 +1693,11 @@ def _evaluate_section_metrics_with_counts(
     failed_threshold_count = 0
     failures_append = failures.append
     numeric_types = _NUMERIC_METRIC_TYPES
+    missing = _MISSING
+    metric_value = _metric_value
     for name, rule in rules.items():
-        value = _metric_value(values, str(name))
-        if value is _MISSING:
+        value = metric_value(values, str(name))
+        if value is missing:
             failures_append(f"{prefix}{name} is missing")
             missing_count += 1
             continue
@@ -1729,6 +1731,9 @@ _MISSING = object()
 def _metric_value(values: dict[str, Any], dotted_key: str) -> Any:
     if dotted_key in values:
         return values[dotted_key]
+    first_dot = dotted_key.find(".")
+    if first_dot != -1 and dotted_key[:first_dot] not in values:
+        return _MISSING
     current: Any = values
     for segment in dotted_key.split("."):
         if not isinstance(current, dict) or segment not in current:

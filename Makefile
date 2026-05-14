@@ -88,7 +88,7 @@ SWIFT_TEST_SHARD_TARGETS := \
 	swift-test-control-worker \
 	swift-test-menubar
 
-.PHONY: bootstrap git-hooks-install proto proto-check swift-build-integration-prereqs swift-test $(SWIFT_TEST_SHARD_TARGETS) py-test integration-test package-smoke swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
+.PHONY: bootstrap git-hooks-install proto proto-check swift-build-integration-prereqs swift-test $(SWIFT_TEST_SHARD_TARGETS) py-test py-test-ci integration-test package-smoke swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
 
 PHASE1_METRICS_ARGS ?=
 PHASE2_METRICS_ARGS ?=
@@ -203,6 +203,14 @@ swift-test-menubar:
 py-test:
 	mkdir -p "$(UV_CACHE_DIR)"
 	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests -q
+
+py-test-ci:
+	mkdir -p "$(UV_CACHE_DIR)"
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests -q \
+		--ignore=services/mlx-worker-python/tests/test_mlx_executor.py \
+		--ignore=services/mlx-worker-python/tests/test_mlx_vlm_runtime.py
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_mlx_executor.py -q
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_mlx_vlm_runtime.py -q
 
 integration-test:
 	mkdir -p "$(UV_CACHE_DIR)"

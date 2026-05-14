@@ -33,6 +33,19 @@ struct ModelCatalogTests {
         registryBacked.settings.ext["melix.model_path"] = "/tmp/registry/model"
         registryBacked.settings.ext["melix.model_path_missing"] = "true"
         registryBacked.settings.ext["unrelated"] = "ignore"
+        registryBacked.loadTrust = {
+            var policy = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+            policy.requestedMode = .modelLoadTrustTrustRemoteCode
+            policy.effectiveMode = .modelLoadTrustDefaultSafe
+            policy.policySource = "model_settings"
+            policy.customLoaderRequired = true
+            policy.customLoaderDetectionSource = "config_json:auto_map"
+            policy.blockReason = "custom_loader_requires_trust_remote_code"
+            policy.requiresReloadForTrustChange = true
+            policy.routeClass = .workerRoutePythonTextCompatibility
+            policy.loaderFamily = "mlx_lm"
+            return policy
+        }()
         let metadata = try #require(ModelCatalogPresentation.publicAPIMetadata(for: registryBacked))
         #expect(metadata["melix.display_name"] == "Registry Text")
         #expect(metadata["melix.kind"] == "text")
@@ -42,6 +55,16 @@ struct ModelCatalogTests {
         #expect(metadata["melix.registry_provider_id"] == "hf-mirror")
         #expect(metadata["melix.model_path"] == "/tmp/registry/model")
         #expect(metadata["melix.model_path_missing"] == "true")
+        #expect(metadata["melix.load_trust.receipt_present"] == "true")
+        #expect(metadata["melix.load_trust.requested_mode"] == "trust_remote_code")
+        #expect(metadata["melix.load_trust.effective_mode"] == "default_safe")
+        #expect(metadata["melix.load_trust.policy_source"] == "model_settings")
+        #expect(metadata["melix.load_trust.custom_loader_required"] == "true")
+        #expect(metadata["melix.load_trust.custom_loader_detection_source"] == "config_json:auto_map")
+        #expect(metadata["melix.load_trust.block_reason"] == "custom_loader_requires_trust_remote_code")
+        #expect(metadata["melix.load_trust.requires_reload"] == "true")
+        #expect(metadata["melix.load_trust.route_class"] == "python_text_compatibility")
+        #expect(metadata["melix.load_trust.loader_family"] == "mlx_lm")
         #expect(metadata["unrelated"] == nil)
 
         let legacyMetadata = try #require(RegistrySnapshotSync.publicMetadata(from: registryBacked.settings.ext))
@@ -796,6 +819,35 @@ struct ModelCatalogTests {
         #expect(failed.residency.memoryBudgetBytes == 8_192)
         #expect(failed.residency.memoryHeadroomBytes == 1_024)
         #expect(failed.residency.requiredBytes == 9_216)
+    }
+
+    @Test("load trust receipts persist and loaded model setting changes require reload")
+    func loadTrustReceiptsPersistAndLoadedModelSettingChangesRequireReload() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        loadTrust.requestedMode = .modelLoadTrustDefaultSafe
+        loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        loadTrust.policySource = "default_safe"
+        loadTrust.routeClass = .workerRouteSwiftText
+        loadTrust.loaderFamily = "swift_text"
+
+        let loaded = try #require(await catalog.recordLoadSucceeded(
+            id: "melix-dev-text",
+            dispatchHandle: "melix-dev-text::swift",
+            loadTrust: loadTrust
+        ))
+        #expect(loaded.loadTrust.effectiveMode == .modelLoadTrustDefaultSafe)
+        #expect(!loaded.loadTrust.requiresReloadForTrustChange)
+
+        var settings = loaded.settings
+        settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        let updated = try #require(await catalog.updateSettings(id: "melix-dev-text", settings: settings))
+
+        #expect(updated.settings.loadTrustMode == .modelLoadTrustTrustRemoteCode)
+        #expect(updated.loadTrust.requestedMode == .modelLoadTrustTrustRemoteCode)
+        #expect(updated.loadTrust.effectiveMode == .modelLoadTrustDefaultSafe)
+        #expect(updated.loadTrust.policySource == "model_settings")
+        #expect(updated.loadTrust.requiresReloadForTrustChange)
     }
 
     @Test("explicit transition helpers handle missing models custom handles and unload failures")

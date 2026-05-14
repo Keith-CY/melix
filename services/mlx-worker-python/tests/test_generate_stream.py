@@ -470,6 +470,15 @@ def test_generate_usage_counts_prompt_tokens_only_for_missing_event_total() -> N
     assert runtime.prompt_token_count_calls == 1
 
 
+def test_whitespace_token_count_matches_split_semantics_and_reuses_shared_cache() -> None:
+    text = "  alpha\tbeta\n\u2003gamma\r\n\tdelta  "
+    engine_core_module._whitespace_token_count.cache_clear()
+
+    assert engine_core_module._whitespace_token_count(text) == len(text.split())
+    assert engine_core_module._whitespace_token_count(text) == len(text.split())
+    assert engine_core_module._whitespace_token_count.cache_info().hits == 1
+
+
 def test_generate_streams_token_and_terminal_completion_without_request_token_accumulation() -> None:
     _, inference_service, model_handle = build_services()
     original_append_token = RequestState.append_token

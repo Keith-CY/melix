@@ -156,6 +156,60 @@ def test_executor_stops_a_full_producer_when_iterator_is_closed() -> None:
     assert producer_closed.is_set()
 
 
+def test_executor_cooperative_iterator_releases_owner_between_items() -> None:
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+    checkpoints: list[tuple[str, int]] = []
+    producer_closed = Event()
+
+    def producer():
+        try:
+            checkpoints.append(("producer-1", get_ident()))
+            yield "first"
+            checkpoints.append(("producer-2", get_ident()))
+            yield "second"
+        finally:
+            producer_closed.set()
+
+    try:
+        owner_thread_id = executor.run(get_ident)
+        iterator = executor.iterate_cooperatively(producer)
+        assert next(iterator) == "first"
+        assert executor.run(lambda: "between") == "between"
+        assert next(iterator) == "second"
+        with pytest.raises(StopIteration):
+            next(iterator)
+    finally:
+        executor.shutdown()
+
+    assert checkpoints == [
+        ("producer-1", owner_thread_id),
+        ("producer-2", owner_thread_id),
+    ]
+    assert producer_closed.is_set()
+
+
+def test_executor_cooperative_iterator_closes_producer_on_early_close() -> None:
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+    producer_closed = Event()
+
+    def producer():
+        try:
+            yield "first"
+            yield "second"
+        finally:
+            producer_closed.set()
+
+    try:
+        iterator = executor.iterate_cooperatively(producer)
+        assert next(iterator) == "first"
+        iterator.close()
+        assert executor.run(lambda: "after-close") == "after-close"
+    finally:
+        executor.shutdown()
+
+    assert producer_closed.is_set()
+
+
 def test_executor_nested_run_executes_inline_on_owner_thread() -> None:
     executor = MLXRuntimeExecutor(stream_factory=lambda: object())
     try:
@@ -300,6 +354,43 @@ def test_executor_without_stream_factory_uses_discoverable_mlx_module(monkeypatc
         executor.shutdown()
 
     assert snapshot.generation_stream_owner_mode == "executor_owned"
+
+
+def test_executor_prefers_thread_local_generation_stream(monkeypatch) -> None:
+    stream = object()
+    set_default_stream_calls: list[object] = []
+    fake_mlx = ModuleType("mlx")
+    fake_core = ModuleType("mlx.core")
+    fake_core.gpu = object()
+    fake_core.default_device = lambda: "gpu-device"
+    fake_core.new_thread_local_stream = lambda device: stream
+    fake_core.new_stream = lambda device: object()
+    fake_core.set_default_stream = lambda active_stream: set_default_stream_calls.append(active_stream)
+    fake_core.synchronize = lambda active_stream=None: None
+
+    @contextmanager
+    def fake_stream_context(active_stream):
+        _ = active_stream
+        yield
+
+    fake_core.stream = fake_stream_context
+    fake_mlx.core = fake_core
+    fake_generate = ModuleType("mlx_lm.generate")
+    fake_generate.generation_stream = object()
+    monkeypatch.setitem(sys.modules, "mlx", fake_mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_core)
+    monkeypatch.setitem(sys.modules, "mlx_lm.generate", fake_generate)
+
+    executor = MLXRuntimeExecutor()
+    try:
+        assert executor.run(lambda: "ok") == "ok"
+        snapshot = executor.snapshot()
+    finally:
+        executor.shutdown()
+
+    assert snapshot.generation_stream_owner_mode == "executor_owned"
+    assert fake_generate.generation_stream is stream
+    assert set_default_stream_calls == []
 
 
 def test_executor_without_mlx_module_runs_without_stream(monkeypatch) -> None:

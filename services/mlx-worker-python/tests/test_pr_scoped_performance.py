@@ -1674,6 +1674,7 @@ def test_multimodal_image_uri_parse_probe_script_emits_metrics(capsys: pytest.Ca
     assert metrics["sample_count"] == 5.0
     assert metrics["prepared_image_count"] == 640.0
     assert metrics["urlparse_calls_mean"] == 320.0
+    assert metrics["unquote_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
@@ -2399,6 +2400,8 @@ def test_serving_diagnostics_queue_probe_script_emits_metrics(
     assert metrics["event_count"] == 10.0
     assert metrics["retained_count"] == 4.0
     assert metrics["dropped_count"] == 6.0
+    assert "serialization_elapsed_ms_mean" in metrics
+    assert metrics["serialization_checksum"] == 30.0
 
 
 def test_load_probe_registry_uses_absolute_cache_key_without_resolving(

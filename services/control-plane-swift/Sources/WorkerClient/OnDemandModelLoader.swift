@@ -30,7 +30,8 @@ enum OnDemandModelLoader {
         modelCatalog: ModelCatalog,
         workerRegistry: WorkerRegistry?,
         metricsStore: MetricsStore,
-        memoryBudgetBytes: UInt64 = 0
+        memoryBudgetBytes: UInt64 = 0,
+        evictBeforeReadyHandle: Bool = false
     ) async throws -> String {
         try await ensureModelReady(
             modelID: modelID,
@@ -38,6 +39,7 @@ enum OnDemandModelLoader {
             workerRegistry: workerRegistry,
             metricsStore: metricsStore,
             memoryBudgetBytes: memoryBudgetBytes,
+            evictBeforeReadyHandle: evictBeforeReadyHandle,
             loadReason: "lazy_text_load",
             metricsPrefix: "text",
             requiresTextCapability: true
@@ -50,6 +52,7 @@ enum OnDemandModelLoader {
         workerRegistry: WorkerRegistry?,
         metricsStore: MetricsStore,
         memoryBudgetBytes: UInt64 = 0,
+        evictBeforeReadyHandle: Bool = false,
         loadReason: String = "lazy_model_load",
         metricsPrefix: String = "model",
         requiresTextCapability: Bool = false,
@@ -66,15 +69,25 @@ enum OnDemandModelLoader {
         if ModelRuntimeAvailability.isRuntimeCacheMissing(model) {
             throw OnDemandModelLoadError.runtimeCacheMissing
         }
-        _ = await evictModelsIfNeededForLoad(
-            targetModelID: modelID,
-            modelCatalog: modelCatalog,
-            workerRegistry: workerRegistry,
-            metricsStore: metricsStore
-        )
+        if evictBeforeReadyHandle {
+            _ = await evictModelsIfNeededForLoad(
+                targetModelID: modelID,
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry,
+                metricsStore: metricsStore
+            )
+        }
         if let handle = await modelCatalog.dispatchHandle(for: modelID) {
             _ = await modelCatalog.markModelUsed(id: modelID)
             return handle
+        }
+        if !evictBeforeReadyHandle {
+            _ = await evictModelsIfNeededForLoad(
+                targetModelID: modelID,
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry,
+                metricsStore: metricsStore
+            )
         }
         if requiresTextCapability,
            !supportsTextServing(model) {
@@ -92,6 +105,12 @@ enum OnDemandModelLoader {
               let workerClient = await workerRegistry.client(for: route) else {
             throw OnDemandModelLoadError.workerUnavailable
         }
+        let trustStartedAt = Date()
+        let loadTrustPolicy = ModelLoadTrustPolicyResolver.resolvePolicy(for: model, route: route)
+        await metricsStore.set(
+            Date().timeIntervalSince(trustStartedAt) * 1000,
+            forKey: "control_plane.model_load_trust_resolution_ms"
+        )
 
         _ = await modelCatalog.beginLoad(id: modelID, reason: loadReason)
         var request = Melix_Worker_V1_LoadModelRequest()
@@ -100,13 +119,45 @@ enum OnDemandModelLoader {
         request.pinOnLoad = false
         request.warmupAfterLoad = false
         request.diskStreamingMode = modelSpec.settings.diskStreamingMode
+        request.loadTrust = ModelLoadTrustPolicyResolver.workerPolicy(from: loadTrustPolicy)
 
         let startedAt = Date()
         let response: Melix_Worker_V1_LoadModelResponse
         do {
             response = try await workerClient.loadModel(request: request)
+        } catch let workerError as WorkerClientError {
+            switch workerError {
+            case .requestFailed(let code, let message):
+                let errorStatus = workerErrorStatus(code: code, message: message)
+                let failureReason = if errorStatus.code.isEmpty {
+                    "\(loadReason)_failed"
+                } else {
+                    "\(loadReason)_\(sanitizeTransitionReasonComponent(errorStatus.code))"
+                }
+                let memoryBudgetEvidence = memoryBudgetEvidence(from: errorStatus)
+                if let memoryBudgetEvidence {
+                    await recordMemoryBudgetMetrics(
+                        memoryBudgetEvidence,
+                        metricsStore: metricsStore,
+                        metricsPrefix: metricsPrefix
+                    )
+                }
+                _ = await modelCatalog.recordLoadFailed(
+                    id: modelID,
+                    reason: failureReason,
+                    memoryBudgetEvidence: memoryBudgetEvidence
+                )
+                throw OnDemandModelLoadError.workerRejected(errorStatus)
+            case .unavailable:
+                _ = await modelCatalog.recordLoadFailed(id: modelID, reason: "\(loadReason)_failed")
+                throw OnDemandModelLoadError.workerUnavailable
+            }
         } catch {
-            _ = await modelCatalog.recordLoadFailed(id: modelID, reason: "\(loadReason)_failed")
+            _ = await modelCatalog.recordLoadFailed(
+                id: modelID,
+                reason: "\(loadReason)_failed",
+                loadTrust: loadTrustPolicy
+            )
             throw OnDemandModelLoadError.workerUnavailable
         }
         guard response.ok, !response.modelHandle.isEmpty else {
@@ -126,7 +177,11 @@ enum OnDemandModelLoader {
             _ = await modelCatalog.recordLoadFailed(
                 id: modelID,
                 reason: failureReason,
-                memoryBudgetEvidence: memoryBudgetEvidence
+                memoryBudgetEvidence: memoryBudgetEvidence,
+                loadTrust: ModelLoadTrustPolicyResolver.receiptForLoadFailure(
+                    response: response,
+                    fallback: loadTrustPolicy
+                )
             )
             if !response.error.code.isEmpty
                 || !response.error.message.isEmpty
@@ -141,6 +196,9 @@ enum OnDemandModelLoader {
             dispatchHandle: response.modelHandle,
             pinRequested: request.pinOnLoad,
             workerResidency: response.hasResidency ? response.residency : nil,
+            loadTrust: response.hasLoadTrust
+                ? ModelLoadTrustPolicyResolver.controlPlanePolicy(from: response.loadTrust, fallback: loadTrustPolicy)
+                : loadTrustPolicy,
             reason: loadReason
         )
 
@@ -235,6 +293,15 @@ enum OnDemandModelLoader {
             requiredBytes: UInt64(workerError.details["required_bytes"] ?? "") ?? 0
         )
         return evidence.isEmpty ? nil : evidence
+    }
+
+    private static func workerErrorStatus(code: String, message: String) -> Melix_Worker_V1_ErrorStatus {
+        var errorStatus = Melix_Worker_V1_ErrorStatus()
+        errorStatus.code = code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "worker_unavailable" : code
+        errorStatus.message = message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Worker bridge request failed."
+            : message
+        return errorStatus
     }
 
     private static func recordMemoryBudgetMetrics(

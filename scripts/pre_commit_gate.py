@@ -28,6 +28,7 @@ from worker.productization.pr_scoped_performance import (  # noqa: E402
     run_probe_job,
     write_report_outputs,
 )
+from worker.productization.git_env import scrub_git_local_env  # noqa: E402
 
 
 MEMORY_THRESHOLD_BYTES = 128 * 1024**3
@@ -100,7 +101,11 @@ def resolve_host_gate(env: Mapping[str, str] | None = None) -> HostGate:
 
 
 def run_git(root: Path, args: list[str]) -> str:
-    return subprocess.check_output(["git", *args], cwd=root, text=True)
+    return subprocess.check_output(["git", *args], cwd=root, text=True, env=_git_env())
+
+
+def _git_env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
 
 
 def repo_root() -> Path:
@@ -120,7 +125,7 @@ def unstaged_tracked_files(root: Path) -> list[str]:
 def run_shell_command(command: str, cwd: Path) -> CommandResult:
     print(f"[pre-commit] running: {command}", flush=True)
     started = time.perf_counter()
-    completed = subprocess.run(command, cwd=cwd, shell=True)
+    completed = subprocess.run(command, cwd=cwd, shell=True, env=scrub_git_local_env())
     elapsed = time.perf_counter() - started
     print(
         f"[pre-commit] completed rc={completed.returncode} elapsed={elapsed:.1f}s: {command}",

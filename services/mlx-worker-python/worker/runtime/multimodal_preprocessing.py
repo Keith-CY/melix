@@ -70,6 +70,7 @@ class PreparedVisionRequest:
     preprocess_peak_memory_bytes: int
     prompt_hash_hex: str = ""
     multimodal_hash_hex: str = ""
+    chat_messages: tuple[dict[str, object], ...] = ()
 
     @property
     def contains_video(self) -> bool:
@@ -225,7 +226,8 @@ def _parse_image_reference(uri: str) -> ParsedImageReference:
 
     parsed = urlparse(uri)
     if parsed.scheme in {"http", "https", "file"}:
-        decoded_path = unquote(parsed.path)
+        parsed_path = parsed.path
+        decoded_path = parsed_path if "%" not in parsed_path else unquote(parsed_path)
         path = Path(decoded_path)
     else:
         decoded_path = uri

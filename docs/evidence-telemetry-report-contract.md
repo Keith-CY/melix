@@ -54,6 +54,12 @@ Required identity fields:
 - `command`
 - `artifact_root`
 
+Git identity resolution must prefer explicit `MELIX_GIT_COMMIT`,
+`MELIX_GIT_BRANCH`, and `MELIX_GIT_DIRTY` overrides when present. When probing a
+repository path directly, the probe must ignore Git local environment variables
+such as `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` inherited from hooks or
+wrapper processes so the identity describes the requested repository root.
+
 Required target and input fields:
 
 - `target_model_id`
@@ -227,7 +233,10 @@ include full prompts, full responses, credentials, or operator secrets.
 Debug event queues are bounded. Queue saturation drops the oldest debug events
 and increments the manifest's `dropped_event_count`; it must not block serving
 request progress. The manifest also records `event_count` for the retained
-events written to `events.jsonl`.
+events written to `events.jsonl`. Empty debug event attributes serialize as an
+empty JSON object without invoking the stable recursive attribute normalizer, so
+high-volume decode traces avoid extra per-event sorting work while preserving
+the same wire shape.
 
 Baseline-vs-accelerated comparison artifacts are written as:
 

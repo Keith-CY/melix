@@ -953,6 +953,23 @@ def test_evaluate_section_metrics_counts_failure_types_without_suffix_scan() -> 
     ) == ["m9.mcp.above_max=2.00 exceeded maximum 1.00"]
 
 
+def test_metric_value_prefers_flat_keys_and_preserves_nested_lookup() -> None:
+    missing = release_gates_module._MISSING
+
+    assert release_gates_module._metric_value(
+        {"m9.section.metric": 3.0},
+        "m9.section.metric",
+    ) == 3.0
+    assert release_gates_module._metric_value(
+        {"m9": {"section": {"metric": 4.0}}},
+        "m9.section.metric",
+    ) == 4.0
+    assert release_gates_module._metric_value(
+        {"other": {"section": {"metric": 5.0}}},
+        "m9.section.metric",
+    ) is missing
+
+
 def test_run_python_json_script_sets_repo_pythonpath_entries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

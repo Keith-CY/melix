@@ -245,13 +245,14 @@ class RequestStreamAssembler:
         if (
             not self._is_json_only_structured_output_value
             and not self._buffer
-            and token_count <= 1
             and not fragment.parser_observation
             and "<" not in delta
         ):
             self._assistant_parts.append(delta)
             if raw_delta_from_token_bytes:
                 self._raw_seen_assistant_part_count += 1
+            if token_count > 1:
+                self._metrics["stream_interval_delta_flush_count"] += 1
             return [AssemblyDelta(content_text=delta, raw_text=delta)]
 
         if raw_delta_from_token_bytes:
@@ -375,6 +376,8 @@ class RequestStreamAssembler:
             return None
         had_pending = bool(self._pending_token_bytes)
         if not had_pending:
+            if token_bytes.isascii():
+                return token_bytes.decode("ascii")
             try:
                 return token_bytes.decode("utf-8")
             except UnicodeDecodeError:

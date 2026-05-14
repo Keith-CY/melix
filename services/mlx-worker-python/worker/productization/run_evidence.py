@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from worker.productization.git_env import scrub_git_local_env
+
 
 RUN_EVIDENCE_SCHEMA_VERSION = "melix.run_evidence.v1"
 TELEMETRY_SUMMARY_SCHEMA_VERSION = "melix.telemetry_summary.v1"
@@ -1713,6 +1715,7 @@ def _git_output(repo_root: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", *args],
         cwd=repo_root,
+        env=scrub_git_local_env(),
         check=True,
         capture_output=True,
         text=True,

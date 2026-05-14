@@ -633,6 +633,30 @@ def test_size_hint_bytes_skips_direct_hint_parser_when_card_model_size_missing(
     assert calls == [("Model size: 7 MB", False)]
 
 
+def test_size_hint_bytes_preserves_combined_marker_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    def tracked(text: str, *, allow_bare: bool) -> int:
+        calls.append((text, allow_bare))
+        return 5 * MB
+
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", tracked)
+
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "description": "Model size:",
+                "readme": "5 MB",
+                "cardData": {"description": "operator note"},
+            }
+        )
+        == 5 * MB
+    )
+    assert calls == [("Model size:\n5 MB\noperator note", False)]
+
+
 def test_size_hint_bytes_uses_direct_card_model_size_without_regex(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -82,6 +82,20 @@ def paligemma_vlm_model() -> common_pb2.ModelSpec:
     return model
 
 
+def text_only_vlm_request(prompt_text: str) -> PreparedVisionRequest:
+    return PreparedVisionRequest(
+        prompt_text=prompt_text,
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(prompt_text.encode("utf-8")),
+        preprocess_peak_memory_bytes=0,
+        prompt_hash_hex="1" * 64,
+        multimodal_hash_hex="2" * 64,
+    )
+
+
 def test_generate_streams_ocr_text_from_inline_image_bytes() -> None:
     runtime_service, inference_service, maintenance_core = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_ocr_model())
@@ -184,6 +198,38 @@ def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
         1,
         fallback_request.images[0].byte_length // 8,
     ) + max(1, fallback_request.images[1].byte_length // 8)
+
+
+class ByteLengthTrackingImage:
+    def __init__(self, byte_length: int) -> None:
+        self.byte_length_reads = 0
+        self._byte_length = byte_length
+
+    @property
+    def byte_length(self) -> int:
+        self.byte_length_reads += 1
+        return self._byte_length
+
+
+def test_ocr_single_image_token_count_reuses_precomputed_input_bytes() -> None:
+    image = ByteLengthTrackingImage(byte_length=128)
+    request = PreparedVisionRequest(
+        prompt_text="extract the receipt",
+        images=[image],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=128,
+        preprocess_peak_memory_bytes=128,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    runtime = DeterministicOCRRuntime()
+
+    assert runtime.prompt_token_count(request) == len(request.prompt_text.split()) + 16
+    assert image.byte_length_reads == 0
+    assert image.byte_length == 128
+    assert image.byte_length_reads == 1
 
 
 def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1771,14 +1817,16 @@ def test_bytes_from_local_image_uri_reuses_single_parsed_uri(
 ) -> None:
     image_path = tmp_path / "single-parse-image.txt"
     image_path.write_bytes(b"local image bytes")
-    calls: list[str] = []
+    parse_calls: list[str] = []
+    unquote_calls: list[str] = []
     original_urlparse = multimodal_preprocessing.urlparse
 
     def tracked_urlparse(uri: str):
-        calls.append(uri)
+        parse_calls.append(uri)
         return original_urlparse(uri)
 
     monkeypatch.setattr(multimodal_preprocessing, "urlparse", tracked_urlparse)
+    monkeypatch.setattr(multimodal_preprocessing, "unquote", unquote_calls.append)
 
     bytes_data, reference, mime_type, format_name, filename = _bytes_from_image_uri(image_path.as_uri())
 
@@ -1787,7 +1835,32 @@ def test_bytes_from_local_image_uri_reuses_single_parsed_uri(
     assert mime_type == ""
     assert format_name == "txt"
     assert filename == image_path.name
-    assert calls == [image_path.as_uri()]
+    assert parse_calls == [image_path.as_uri()]
+    assert unquote_calls == []
+
+
+def test_bytes_from_percent_encoded_local_image_uri_still_decodes_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_path = tmp_path / "encoded image.txt"
+    image_path.write_bytes(b"encoded local image bytes")
+    unquote_calls: list[str] = []
+    original_unquote = multimodal_preprocessing.unquote
+
+    def tracked_unquote(path: str) -> str:
+        unquote_calls.append(path)
+        return original_unquote(path)
+
+    monkeypatch.setattr(multimodal_preprocessing, "unquote", tracked_unquote)
+
+    bytes_data, reference, mime_type, format_name, filename = _bytes_from_image_uri(image_path.as_uri())
+
+    assert bytes_data == b"encoded local image bytes"
+    assert reference == image_path.as_uri()
+    assert mime_type == ""
+    assert format_name == "txt"
+    assert filename == image_path.name
+    assert unquote_calls == ["/" + image_path.as_uri().split("file:///")[1]]
 
 
 def test_prepare_image_part_preserves_direct_uri_helper_behavior(tmp_path: Path) -> None:
@@ -2058,6 +2131,72 @@ def test_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
     assert probe.image_feature_cache_misses == 1
     assert probe.multimodal_decode_mode == "native_quantized"
     assert probe.quantized_load_mode == "native_quantized"
+
+
+def test_vlm_runtime_text_only_fast_path_skips_temp_media_session_and_emits_tool_call() -> None:
+    session_creations = 0
+
+    def temp_media_session_factory(*args, **kwargs):
+        nonlocal session_creations
+        session_creations += 1
+        raise AssertionError("text-only VLM generation should not create a temp media session")
+
+    runtime = DeterministicVLMRuntime(temp_media_session_factory=temp_media_session_factory)
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = text_only_vlm_request("Call the tool")
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            None,
+            Event(),
+            execution_ext={
+                "melix.tool_parser.mode": "qwen",
+                "melix.tool_parser.namespaces": "tools.vision",
+            },
+        )
+    )
+    probe = runtime.last_probe_snapshot()
+
+    assert session_creations == 0
+    assert events[0].tool_name == "tools.vision"
+    assert events[0].arguments_json_fragment == '{"prompt":"Call the tool","image_count":0}'
+    assert events[1].text == "Prompt: Call the tool"
+    assert probe.temp_media_artifact_count == 0
+
+
+def test_vlm_runtime_text_only_fast_path_honors_cancel_before_token() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = text_only_vlm_request("Call the tool")
+    cancel_event = Event()
+    cancel_event.set()
+
+    assert list(runtime.generate_tokens(loaded_model, prepared, None, cancel_event)) == []
+
+
+def test_vlm_runtime_text_only_fast_path_honors_cancel_after_tool_call() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = text_only_vlm_request("Call the tool")
+    cancel_event = Event()
+    generator = runtime.generate_tokens(
+        loaded_model,
+        prepared,
+        None,
+        cancel_event,
+        execution_ext={
+            "melix.tool_parser.mode": "qwen",
+            "melix.tool_parser.namespaces": "tools.vision",
+        },
+    )
+
+    tool_call = next(generator)
+    cancel_event.set()
+
+    assert tool_call.tool_name == "tools.vision"
+    assert list(generator) == []
 
 
 def test_vlm_runtime_fast_path_signature_uses_nested_runtime_metadata() -> None:
