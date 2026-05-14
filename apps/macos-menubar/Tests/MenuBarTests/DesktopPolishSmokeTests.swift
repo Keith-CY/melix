@@ -107,6 +107,8 @@ struct DesktopPolishSmokeTests {
         #expect(viewModel.desktopBannerState?.title == "Download Recovery Available")
         #expect(viewModel.desktopSignalStates.contains(where: { $0.title == "Update available: 0.2.0" && $0.isDismissible }))
 
+        viewModel.selectToolSection(.downloads)
+        await viewModel.refreshDownloadQueueState()
         try await waitForDesktopPolishCondition("download queue should refresh before persistence") {
             if viewModel.downloadQueue.isEmpty {
                 return false
@@ -122,6 +124,10 @@ struct DesktopPolishSmokeTests {
             return restoredState.downloadQueue.isEmpty == false
                 && restoredState.selectedToolSection == .downloads
         }
+        _ = try requireDesktopPolishPersistedQueue(
+            from: operatorSessionStore,
+            expectedSection: .downloads
+        )
 
         let persistedUIData = try Data(contentsOf: melixHome.operatorSessionFileURL)
         let persistedUIPayload = try #require(
@@ -326,4 +332,29 @@ private func waitForDesktopPolishCondition(
     throw NSError(domain: "DesktopPolishSmokeTests", code: 1, userInfo: [
         NSLocalizedDescriptionKey: description,
     ])
+}
+
+private func requireDesktopPolishPersistedQueue(
+    from store: OperatorSessionStore,
+    expectedSection: DesktopToolSection
+) throws -> OperatorSessionState {
+    guard let restoredState = try store.load() else {
+        throw NSError(domain: "DesktopPolishSmokeTests", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: "operator session should exist after queue refresh",
+        ])
+    }
+
+    guard restoredState.downloadQueue.isEmpty == false,
+          restoredState.selectedToolSection == expectedSection
+    else {
+        throw NSError(domain: "DesktopPolishSmokeTests", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: """
+            operator session should persist queue state \
+            (queue_count=\(restoredState.downloadQueue.count), \
+            selected_tool_section=\(restoredState.selectedToolSection.rawValue))
+            """,
+        ])
+    }
+
+    return restoredState
 }

@@ -1451,6 +1451,10 @@ UI layers must not mix performance metrics and intelligence scores in one combin
 ## Window UI Contract
 
 The Window UI must expose separate operator surfaces for `bench` and `eval`.
+When a diagnostics surface opens with no persisted benchmark, matrix, or
+evaluation history, any automatic history refresh must follow the currently
+selected or preferred diagnostics surface. It must not reset an evaluation or
+compare entry point back to the performance surface.
 
 ### Performance Surface
 

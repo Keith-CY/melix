@@ -4001,7 +4001,15 @@ struct DesktopDiagnosticsToolSectionView: View {
 
     func refreshDiagnosticsHistoryIfNeeded() async {
         if viewModel.benchmarkHistory.isEmpty && viewModel.benchmarkMatrixHistory.isEmpty && viewModel.evaluationHistory.isEmpty {
-            await viewModel.refreshDiagnosticsHistory()
+            switch Self.initialStage(for: viewModel) {
+            case .benchmark:
+                await viewModel.refreshBenchmarkHistory()
+            case .matrix:
+                viewModel.selectedBenchmarkPresentationMode = .matrix
+                await viewModel.refreshBenchmarkHistory()
+            case .evaluation:
+                await viewModel.refreshEvaluationHistory()
+            }
         }
     }
 
