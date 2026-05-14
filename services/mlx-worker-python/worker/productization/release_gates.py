@@ -1693,9 +1693,11 @@ def _evaluate_section_metrics_with_counts(
     failed_threshold_count = 0
     failures_append = failures.append
     numeric_types = _NUMERIC_METRIC_TYPES
+    missing = _MISSING
+    metric_value = _metric_value
     for name, rule in rules.items():
-        value = _metric_value(values, str(name))
-        if value is _MISSING:
+        value = metric_value(values, str(name))
+        if value is missing:
             failures_append(f"{prefix}{name} is missing")
             missing_count += 1
             continue
