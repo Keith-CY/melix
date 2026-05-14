@@ -608,6 +608,26 @@ def test_read_mlx_metal_dist_info_version_falls_back_to_dist_info_directory_name
     assert dev_up.read_mlx_metal_dist_info_version(metallib_path) == "0.31.1"
 
 
+def test_read_mlx_metal_dist_info_version_falls_back_when_metadata_read_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    metallib_path = tmp_path / "site-packages/mlx/lib/mlx.metallib"
+    metallib_path.parent.mkdir(parents=True)
+    metallib_path.write_text("mlx", encoding="utf-8")
+    dist_info_path = tmp_path / "site-packages/mlx_metal-0.31.2.dist-info"
+    dist_info_path.mkdir()
+
+    def fail_metadata_read(metadata_path: Path) -> str | None:
+        assert metadata_path == dist_info_path / "METADATA"
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(dev_up, "_read_dist_info_metadata_version", fail_metadata_read)
+
+    assert dev_up.read_mlx_metal_dist_info_version(metallib_path) == "0.31.2"
+
+
 def test_read_mlx_metal_dist_info_version_skips_scandir_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
