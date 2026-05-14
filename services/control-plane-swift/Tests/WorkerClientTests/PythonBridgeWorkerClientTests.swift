@@ -1,4 +1,7 @@
 import Foundation
+import GRPCCore
+import GRPCNIOTransportHTTP2Posix
+import NIOPosix
 import SwiftProtobuf
 import Testing
 
@@ -23,6 +26,58 @@ struct PythonBridgeWorkerClientTests {
         let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
 
         #expect(await client.canDispatchRequests())
+    }
+
+    @Test("default initializer bridges worker RPCs over a unix domain socket without a process bridge")
+    func defaultInitializerBridgesWorkerRPCsOverUnixDomainSocket() async throws {
+        let fixture = try await LivePythonWorkerFixture.start(
+            handshakeResponse: {
+                var response = Melix_Worker_V1_HandshakeResponse()
+                response.protocolVersion = "melix.worker.v1"
+                response.runtimeVersion = "python-worker/test"
+                return response
+            }(),
+            runtimeStatsResponse: {
+                var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+                response.stats.residentBytes = 12_288
+                response.stats.lastFirstTokenLatencyMs = 27.5
+                return response
+            }(),
+            cacheStatsResponse: {
+                var response = Melix_Worker_V1_GetCacheStatsResponse()
+                response.stats.l1Bytes = 4_096
+                return response
+            }(),
+            generateEvents: [
+                makeTokenEvent(requestID: "req-python-live", seq: 1, text: "Py"),
+                makeCompletedEvent(
+                    requestID: "req-python-live",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "Py"
+                ),
+            ]
+        )
+        do {
+            let client = PythonBridgeWorkerClient(socketPath: fixture.socketPath)
+
+            #expect(await client.canDispatchRequests())
+            #expect(try await client.runtimeStats().stats.residentBytes == 12_288)
+            #expect(try await client.cacheStats().stats.l1Bytes == 4_096)
+
+            var request = Melix_Worker_V1_GenerateRequest()
+            request.execution.id.requestID = "req-python-live"
+            request.execution.modelHandle = "melix-dev-vlm::python-live"
+            let events = try await collect(try await client.generate(request: request))
+            #expect(events.count == 2)
+            #expect(events[0].tokenDelta.text == "Py")
+            #expect(events[1].completed.assistantText == "Py")
+        } catch {
+            await fixture.stop()
+            throw error
+        }
+
+        await fixture.stop()
     }
 
     @Test("bootstrap worker preparation returns nil for unknown model summaries")
@@ -187,6 +242,7 @@ struct PythonBridgeWorkerClientTests {
         runtimeResponse.stats.generationStreamOwnerMode = "executor_owned"
         runtimeResponse.stats.workerThreadInitLatencyMs = 3
         runtimeResponse.stats.streamSyncFallbackCount = 1
+        runtimeResponse.stats.textBatchGeneratorStepCount = 9
 
         var cacheResponse = Melix_Worker_V1_GetCacheStatsResponse()
         cacheResponse.stats.l1Bytes = 2_048
@@ -212,6 +268,7 @@ struct PythonBridgeWorkerClientTests {
         #expect(runtimeStats.stats.generationStreamOwnerMode == "executor_owned")
         #expect(runtimeStats.stats.workerThreadInitLatencyMs == 3)
         #expect(runtimeStats.stats.streamSyncFallbackCount == 1)
+        #expect(runtimeStats.stats.textBatchGeneratorStepCount == 9)
         #expect(cacheStats.stats.l1Bytes == 2_048)
         #expect(cacheStats.stats.blockCount == 1)
         #expect(cacheStats.stats.l1HitRate == 0.5)
@@ -1775,6 +1832,291 @@ private actor ScriptedBridgeRunner: WorkerBridgeRunning {
         try recordedCommands[.loadModel, default: []].map {
             try Melix_Worker_V1_LoadModelRequest(serializedBytes: $0.requestData)
         }
+    }
+}
+
+private final class LivePythonWorkerRuntime: @unchecked Sendable {
+    let server: GRPCServer<HTTP2ServerTransport.Posix>
+    let serveTask: Task<Void, Error>
+
+    init(
+        server: GRPCServer<HTTP2ServerTransport.Posix>,
+        serveTask: Task<Void, Error>
+    ) {
+        self.server = server
+        self.serveTask = serveTask
+    }
+}
+
+private actor LivePythonWorkerFixture {
+    let socketPath: String
+    private let eventLoopGroup: MultiThreadedEventLoopGroup
+    private var runtime: LivePythonWorkerRuntime?
+
+    private init(
+        socketPath: String,
+        eventLoopGroup: MultiThreadedEventLoopGroup,
+        runtime: LivePythonWorkerRuntime
+    ) {
+        self.socketPath = socketPath
+        self.eventLoopGroup = eventLoopGroup
+        self.runtime = runtime
+    }
+
+    static func start(
+        handshakeResponse: Melix_Worker_V1_HandshakeResponse,
+        runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse,
+        cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse,
+        generateEvents: [Melix_Worker_V1_ExecuteEvent]
+    ) async throws -> LivePythonWorkerFixture {
+        let socketPath = "/tmp/melix-python-\(UUID().uuidString.prefix(8)).sock"
+        try? FileManager.default.removeItem(atPath: socketPath)
+
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        let server = GRPCServer(
+            transport: .http2NIOPosix(
+                address: .unixDomainSocket(path: socketPath),
+                transportSecurity: .plaintext,
+                eventLoopGroup: eventLoopGroup
+            ),
+            services: [
+                PythonTestRuntimeService(
+                    handshakeResponse: handshakeResponse,
+                    runtimeStatsResponse: runtimeStatsResponse
+                ),
+                PythonTestInferenceService(generateEvents: generateEvents),
+                PythonTestCacheService(cacheStatsResponse: cacheStatsResponse),
+            ]
+        )
+        let serveTask = Task {
+            try await server.serve()
+        }
+        _ = try await server.listeningAddress
+        let runtime = LivePythonWorkerRuntime(server: server, serveTask: serveTask)
+        return LivePythonWorkerFixture(
+            socketPath: socketPath,
+            eventLoopGroup: eventLoopGroup,
+            runtime: runtime
+        )
+    }
+
+    func stop() async {
+        if let runtime {
+            self.runtime = nil
+            runtime.server.beginGracefulShutdown()
+            _ = try? await runtime.serveTask.value
+        }
+        try? await eventLoopGroup.shutdownGracefully()
+        try? FileManager.default.removeItem(atPath: socketPath)
+    }
+}
+
+private final class PythonTestRuntimeService: Melix_Worker_V1_RuntimeService.SimpleServiceProtocol, @unchecked Sendable {
+    private let handshakeResponse: Melix_Worker_V1_HandshakeResponse
+    private let runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
+
+    init(
+        handshakeResponse: Melix_Worker_V1_HandshakeResponse,
+        runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
+    ) {
+        self.handshakeResponse = handshakeResponse
+        self.runtimeStatsResponse = runtimeStatsResponse
+    }
+
+    func handshake(
+        request: Melix_Worker_V1_HandshakeRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_HandshakeResponse {
+        handshakeResponse
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        Melix_Worker_V1_LoadModelResponse()
+    }
+
+    func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        Melix_Worker_V1_UnloadModelResponse()
+    }
+
+    func warmupModel(
+        request: Melix_Worker_V1_WarmupModelRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_WarmupModelResponse {
+        Melix_Worker_V1_WarmupModelResponse()
+    }
+
+    func getRuntimeStats(
+        request: Melix_Worker_V1_GetRuntimeStatsRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        runtimeStatsResponse
+    }
+
+    func listLoadedModels(
+        request: Melix_Worker_V1_ListLoadedModelsRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
+        Melix_Worker_V1_ListLoadedModelsResponse()
+    }
+
+    func drain(
+        request: Melix_Worker_V1_DrainRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_DrainResponse {
+        Melix_Worker_V1_DrainResponse()
+    }
+
+    func shutdown(
+        request: Melix_Worker_V1_ShutdownRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_ShutdownResponse {
+        Melix_Worker_V1_ShutdownResponse()
+    }
+}
+
+private final class PythonTestCacheService: Melix_Worker_V1_CacheService.SimpleServiceProtocol, @unchecked Sendable {
+    private let cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse
+
+    init(cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse) {
+        self.cacheStatsResponse = cacheStatsResponse
+    }
+
+    func getCacheStats(
+        request: Melix_Worker_V1_GetCacheStatsRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_GetCacheStatsResponse {
+        cacheStatsResponse
+    }
+
+    func pinPrefix(
+        request: Melix_Worker_V1_PinPrefixRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_PinPrefixResponse {
+        Melix_Worker_V1_PinPrefixResponse()
+    }
+
+    func unpinPrefix(
+        request: Melix_Worker_V1_UnpinPrefixRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_UnpinPrefixResponse {
+        Melix_Worker_V1_UnpinPrefixResponse()
+    }
+
+    func saveBoundarySnapshot(
+        request: Melix_Worker_V1_SaveBoundarySnapshotRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_SaveBoundarySnapshotResponse {
+        Melix_Worker_V1_SaveBoundarySnapshotResponse()
+    }
+
+    func restoreBoundarySnapshot(
+        request: Melix_Worker_V1_RestoreBoundarySnapshotRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_RestoreBoundarySnapshotResponse {
+        Melix_Worker_V1_RestoreBoundarySnapshotResponse()
+    }
+
+    func purgeCache(
+        request: Melix_Worker_V1_PurgeCacheRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_PurgeCacheResponse {
+        Melix_Worker_V1_PurgeCacheResponse()
+    }
+}
+
+private final class PythonTestInferenceService: Melix_Worker_V1_InferenceService.SimpleServiceProtocol, @unchecked Sendable {
+    private let generateEvents: [Melix_Worker_V1_ExecuteEvent]
+
+    init(generateEvents: [Melix_Worker_V1_ExecuteEvent]) {
+        self.generateEvents = generateEvents
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest,
+        response: RPCWriter<Melix_Worker_V1_ExecuteEvent>,
+        context: ServerContext
+    ) async throws {
+        for event in generateEvents {
+            try await response.write(event)
+        }
+    }
+
+    func prefill(
+        request: Melix_Worker_V1_PrefillRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_PrefillResponse {
+        Melix_Worker_V1_PrefillResponse()
+    }
+
+    func decode(
+        request: Melix_Worker_V1_DecodeRequest,
+        response: RPCWriter<Melix_Worker_V1_ExecuteEvent>,
+        context: ServerContext
+    ) async throws {
+        _ = (request, response, context)
+    }
+
+    func abort(
+        request: Melix_Worker_V1_AbortRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_AbortResponse {
+        Melix_Worker_V1_AbortResponse()
+    }
+
+    func embed(
+        request: Melix_Worker_V1_EmbedRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_EmbedResponse {
+        Melix_Worker_V1_EmbedResponse()
+    }
+
+    func rerank(
+        request: Melix_Worker_V1_RerankRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_RerankResponse {
+        Melix_Worker_V1_RerankResponse()
+    }
+
+    func transcribe(
+        request: Melix_Worker_V1_TranscribeRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_TranscribeResponse {
+        Melix_Worker_V1_TranscribeResponse()
+    }
+
+    func speak(
+        request: Melix_Worker_V1_SpeakRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        Melix_Worker_V1_SpeakResponse()
+    }
+
+    func speakStream(
+        request: Melix_Worker_V1_SpeakRequest,
+        response: RPCWriter<Melix_Worker_V1_SpeakStreamEvent>,
+        context: ServerContext
+    ) async throws {
+        _ = (request, response, context)
+    }
+
+    func imageGenerate(
+        request: Melix_Worker_V1_ImageGenerateRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        Melix_Worker_V1_ImageGenerateResponse()
+    }
+
+    func imageEdit(
+        request: Melix_Worker_V1_ImageEditRequest,
+        context: ServerContext
+    ) async throws -> Melix_Worker_V1_ImageEditResponse {
+        Melix_Worker_V1_ImageEditResponse()
     }
 }
 

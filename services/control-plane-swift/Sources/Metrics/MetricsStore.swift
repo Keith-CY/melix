@@ -4,9 +4,20 @@ import MelixControlPlaneProtocol
 public actor MetricsStore {
     private var values: [String: Double]
     private let exportPath: String?
+    private let exportMinimumInterval: TimeInterval
+    private var lastExportedAt: Date?
+    private var pendingExportTask: Task<Void, Never>?
+    private var exportGeneration: UInt64
 
-    public init(exportPath: String? = nil) {
+    public init(
+        exportPath: String? = nil,
+        exportMinimumInterval: TimeInterval = 0.25
+    ) {
         self.exportPath = exportPath
+        self.exportMinimumInterval = max(0, exportMinimumInterval)
+        self.lastExportedAt = nil
+        self.pendingExportTask = nil
+        self.exportGeneration = 0
         self.values = [
             "requests.inflight": 0,
             "workers.connected": 0,
@@ -31,12 +42,12 @@ public actor MetricsStore {
 
     public func set(_ value: Double, forKey key: String) {
         values[key] = value
-        writeExportIfNeeded()
+        scheduleExportIfNeeded()
     }
 
     public func increment(_ key: String, by amount: Double = 1) {
         values[key, default: 0] += amount
-        writeExportIfNeeded()
+        scheduleExportIfNeeded()
     }
 
     public func value(forKey key: String) -> Double {
@@ -45,14 +56,65 @@ public actor MetricsStore {
 
     public func decrement(_ key: String, by amount: Double = 1) {
         values[key, default: 0] = max(0, values[key, default: 0] - amount)
-        writeExportIfNeeded()
+        scheduleExportIfNeeded()
     }
 
-    private func writeExportIfNeeded() {
+    public func flushExport() {
+        guard let exportPath, !exportPath.isEmpty else {
+            return
+        }
+        pendingExportTask?.cancel()
+        pendingExportTask = nil
+        exportGeneration += 1
+        writeExport(values: values, exportPath: exportPath)
+    }
+
+    private func scheduleExportIfNeeded() {
         guard let exportPath, !exportPath.isEmpty else {
             return
         }
 
+        let now = Date()
+        exportGeneration += 1
+        let generation = exportGeneration
+        let snapshot = values
+        let elapsed = lastExportedAt.map { now.timeIntervalSince($0) } ?? exportMinimumInterval
+        guard elapsed < exportMinimumInterval else {
+            pendingExportTask?.cancel()
+            pendingExportTask = nil
+            writeExport(values: snapshot, exportPath: exportPath)
+            return
+        }
+
+        guard pendingExportTask == nil else {
+            return
+        }
+
+        let delaySeconds = exportMinimumInterval - elapsed
+        let delayNanoseconds = UInt64(max(0, delaySeconds) * 1_000_000_000)
+        pendingExportTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+            guard !Task.isCancelled else {
+                return
+            }
+            await self?.flushScheduledExport(generation: generation)
+        }
+    }
+
+    private func flushScheduledExport(generation: UInt64) {
+        guard let exportPath, !exportPath.isEmpty else {
+            pendingExportTask = nil
+            return
+        }
+        pendingExportTask = nil
+        guard generation <= exportGeneration else {
+            writeExport(values: values, exportPath: exportPath)
+            return
+        }
+        writeExport(values: values, exportPath: exportPath)
+    }
+
+    private func writeExport(values: [String: Double], exportPath: String) {
         let payload: [String: Any] = [
             "updated_at_unix_ms": Int(Date().timeIntervalSince1970 * 1000),
             "values": values,
@@ -68,5 +130,6 @@ public actor MetricsStore {
             withIntermediateDirectories: true
         )
         try? data.write(to: url, options: [.atomic])
+        lastExportedAt = Date()
     }
 }

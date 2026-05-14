@@ -1718,12 +1718,14 @@ public struct OpenAIHandler: Sendable {
         guard normalized.stream || normalized.endpoint == .chatCompletions else {
             throw HTTPRequestHandlingError.streamRequired
         }
-        await RegistrySnapshotSync.syncModelsIfAvailable(
-            modelCatalog: modelCatalog,
-            workerRegistry: workerRegistry,
-            metricsStore: metricsStore,
-            rescan: true
-        )
+        if await shouldRefreshRegistryBeforeTextRequest(modelID: normalized.model) {
+            await RegistrySnapshotSync.syncModelsIfAvailable(
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry,
+                metricsStore: metricsStore,
+                rescan: true
+            )
+        }
         if let validationFailure = await endpointCompatibilityFailureResponse(
             modelID: normalized.model,
             endpoint: .textGeneration
@@ -1784,7 +1786,93 @@ public struct OpenAIHandler: Sendable {
             mcpToolCatalog: mcpToolCatalog
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
-        return translated
+        return requestWithVLMTextOnlyBatchingMetadata(
+            translated,
+            model: resolvedModel,
+            normalizedRequest: normalized
+        )
+    }
+
+    private func requestWithVLMTextOnlyBatchingMetadata(
+        _ translated: TranslatedChatRequest,
+        model: Melix_Controlplane_V1_ModelSummary?,
+        normalizedRequest: NormalizedTextRequest
+    ) -> TranslatedChatRequest {
+        guard
+            let model,
+            modelRouteKind(for: model) == .pythonVLM,
+            !normalizedRequestContainsNonTextMedia(normalizedRequest)
+        else {
+            return translated
+        }
+
+        var workerRequest = translated.workerRequest
+        if truthyModelMetadata(model.settings.ext["melix.vlm.text_only_step_cooperative"]) {
+            workerRequest.execution.ext["melix.vlm.text_only_step_cooperative"] = "true"
+        }
+        let batchGeneratorEnabled = truthyModelMetadata(model.settings.ext["melix.vlm.text_only_batch_generator"])
+        if batchGeneratorEnabled {
+            workerRequest.execution.ext["melix.vlm.text_only_batch_generator"] = "true"
+            if shouldNormalizeVLMTextOnlyBatchGeneratorSampling(
+                normalizedRequest: normalizedRequest,
+                workerRequest: workerRequest
+            ) {
+                workerRequest.sampling.topP = 1
+                workerRequest.sampling.topK = 0
+            }
+        }
+        return TranslatedChatRequest(
+            requestID: translated.requestID,
+            modelID: translated.modelID,
+            workerRequest: workerRequest,
+            stream: translated.stream
+        )
+    }
+
+    private func shouldNormalizeVLMTextOnlyBatchGeneratorSampling(
+        normalizedRequest: NormalizedTextRequest,
+        workerRequest: Melix_Worker_V1_GenerateRequest
+    ) -> Bool {
+        guard normalizedRequest.topP == nil else {
+            return false
+        }
+        guard let requestedTemperature = normalizedRequest.temperature,
+              abs(requestedTemperature) < 1e-9
+        else {
+            return false
+        }
+        return abs(Double(workerRequest.sampling.temperature)) < 1e-6
+    }
+
+    private func truthyModelMetadata(_ value: String?) -> Bool {
+        switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func normalizedRequestContainsNonTextMedia(_ request: NormalizedTextRequest) -> Bool {
+        request.messages.contains { message in
+            message.parts.contains { part in
+                switch part.part {
+                case .text:
+                    return false
+                case nil:
+                    return false
+                default:
+                    return true
+                }
+            }
+        }
+    }
+
+    private func shouldRefreshRegistryBeforeTextRequest(modelID: String) async -> Bool {
+        guard let model = await modelCatalog.model(id: modelID) else {
+            return true
+        }
+        return ModelRuntimeAvailability.isRuntimeCacheMissing(model)
     }
 
     private func nonStreamChatCompletionsResponse(
@@ -2318,10 +2406,10 @@ public struct OpenAIHandler: Sendable {
     private func modelRouteKind(
         for model: Melix_Controlplane_V1_ModelSummary
     ) -> WorkerRouteKind? {
-        if let route = WorkerRouteKind(routeClass: model.routeClass) {
+        if let route = WorkerRouteKind(metadataIdentifier: model.settings.ext["melix.capability.route_kind"]) {
             return route
         }
-        if let route = WorkerRouteKind(metadataIdentifier: model.settings.ext["melix.capability.route_kind"]) {
+        if let route = WorkerRouteKind(routeClass: model.routeClass) {
             return route
         }
         return WorkerRouteKind(capabilityIdentifier: model.settings.ext["melix.capability.class"])
@@ -2681,6 +2769,9 @@ public struct OpenAIHandler: Sendable {
         timeoutSeconds: UInt32
     ) -> Melix_Controlplane_V1_ErrorStatus {
         guard let workerError = error as? WorkerClientError else {
+            if isImageDeadlineExceeded(code: "", message: String(describing: error)) {
+                return imageDeadlineExceededError(timeoutSeconds: timeoutSeconds)
+            }
             return controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
         }
         switch workerError {
@@ -2688,12 +2779,10 @@ public struct OpenAIHandler: Sendable {
             return controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
         case let .requestFailed(code, message):
             let normalizedCode = normalizedBridgeErrorCode(code)
+            if isImageDeadlineExceeded(code: normalizedCode, message: message) {
+                return imageDeadlineExceededError(timeoutSeconds: timeoutSeconds)
+            }
             switch normalizedCode {
-            case "deadline_exceeded":
-                return controlPlaneError(
-                    code: "deadline_exceeded",
-                    message: "Image request exceeded the \(timeoutSeconds)-second creative workflow deadline."
-                )
             case "cancelled":
                 return controlPlaneError(code: "cancelled", message: message.isEmpty ? "Image request was cancelled." : message)
             case "":
@@ -2707,11 +2796,35 @@ public struct OpenAIHandler: Sendable {
         }
     }
 
+    private func imageDeadlineExceededError(timeoutSeconds: UInt32) -> Melix_Controlplane_V1_ErrorStatus {
+        controlPlaneError(
+            code: "deadline_exceeded",
+            message: "Image request exceeded the \(timeoutSeconds)-second creative workflow deadline."
+        )
+    }
+
+    private func isImageDeadlineExceeded(code: String, message: String) -> Bool {
+        let normalizedCode = normalizedBridgeErrorCode(code)
+        if normalizedCode == "deadline_exceeded" {
+            return true
+        }
+        guard normalizedCode.isEmpty || normalizedCode == "unknown" else {
+            return false
+        }
+        let normalizedMessage = message
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalizedMessage.contains("deadline")
+            || normalizedMessage.contains("timed out")
+            || normalizedMessage.contains("timeout")
+    }
+
     private func normalizedBridgeErrorCode(_ rawValue: String) -> String {
         rawValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
     }
 
     private func controlPlaneError(from workerError: Melix_Worker_V1_ErrorStatus) -> Melix_Controlplane_V1_ErrorStatus {
@@ -2896,6 +3009,7 @@ public struct OpenAIHandler: Sendable {
                 forKey: "vision.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.vlm_first_token_ms")
+            await recordPythonVLMRuntimeProbeMetrics(from: stats, metricsStore: metricsStore)
         case .pythonTranscription:
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
             await metricsStore.set(
@@ -2940,9 +3054,9 @@ public struct OpenAIHandler: Sendable {
                 Double(stats.lastVoiceFallbackCount),
                 forKey: "audio.voice_fallback_count"
             )
-            if stats.lastProbeKind == "speech" {
+            if stats.lastProbeKind == "speech" && stats.lastSpeechStreamingEnabled {
                 await metricsStore.set(
-                    stats.lastSpeechStreamingEnabled ? 1 : 0,
+                    1,
                     forKey: "audio.speech_streaming_enabled"
                 )
                 await metricsStore.set(
@@ -2979,6 +3093,7 @@ public struct OpenAIHandler: Sendable {
         default:
             break
         }
+        await metricsStore.flushExport()
     }
 
     private func estimatedTokenCount(for inputs: [String]) -> Int {

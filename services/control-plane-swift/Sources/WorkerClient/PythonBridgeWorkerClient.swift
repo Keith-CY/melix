@@ -1,4 +1,8 @@
 import Foundation
+import GRPCCore
+import GRPCNIOTransportHTTP2Posix
+import NIOCore
+import NIOPosix
 import SwiftProtobuf
 
 import MelixControlPlaneProtocol
@@ -50,6 +54,143 @@ public protocol WorkerBridgeRunning: Sendable {
     func runStream(command: BridgeCommand) async throws -> AsyncThrowingStream<String, Error>
 }
 
+public protocol PythonWorkerRPCRunning: Sendable {
+    func handshake(
+        socketPath: String,
+        request: Melix_Worker_V1_HandshakeRequest
+    ) async throws -> Melix_Worker_V1_HandshakeResponse
+
+    func loadModel(
+        socketPath: String,
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse
+
+    func unloadModel(
+        socketPath: String,
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse
+
+    func runtimeStats(
+        socketPath: String,
+        request: Melix_Worker_V1_GetRuntimeStatsRequest
+    ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse
+
+    func cacheStats(
+        socketPath: String,
+        request: Melix_Worker_V1_GetCacheStatsRequest
+    ) async throws -> Melix_Worker_V1_GetCacheStatsResponse
+
+    func generate(
+        socketPath: String,
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+
+    func prefill(
+        socketPath: String,
+        request: Melix_Worker_V1_PrefillRequest
+    ) async throws -> Melix_Worker_V1_PrefillResponse
+
+    func decode(
+        socketPath: String,
+        request: Melix_Worker_V1_DecodeRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+
+    func abort(
+        socketPath: String,
+        request: Melix_Worker_V1_AbortRequest
+    ) async throws -> Melix_Worker_V1_AbortResponse
+
+    func embed(
+        socketPath: String,
+        request: Melix_Worker_V1_EmbedRequest
+    ) async throws -> Melix_Worker_V1_EmbedResponse
+
+    func rerank(
+        socketPath: String,
+        request: Melix_Worker_V1_RerankRequest
+    ) async throws -> Melix_Worker_V1_RerankResponse
+
+    func transcribe(
+        socketPath: String,
+        request: Melix_Worker_V1_TranscribeRequest
+    ) async throws -> Melix_Worker_V1_TranscribeResponse
+
+    func speak(
+        socketPath: String,
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> Melix_Worker_V1_SpeakResponse
+
+    func speakStream(
+        socketPath: String,
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error>
+
+    func imageGenerate(
+        socketPath: String,
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse
+
+    func imageEdit(
+        socketPath: String,
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse
+
+    func getModelInfo(
+        socketPath: String,
+        request: Melix_Worker_V1_GetModelInfoRequest
+    ) async throws -> Melix_Worker_V1_GetModelInfoResponse
+
+    func convertModel(
+        socketPath: String,
+        request: Melix_Worker_V1_ConvertModelRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error>
+
+    func runDoctor(
+        socketPath: String,
+        request: Melix_Worker_V1_RunDoctorRequest
+    ) async throws -> Melix_Worker_V1_RunDoctorResponse
+
+    func searchHubModels(
+        socketPath: String,
+        request: Melix_Worker_V1_SearchHubModelsRequest
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse
+
+    func getHubModelCard(
+        socketPath: String,
+        request: Melix_Worker_V1_GetHubModelCardRequest
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse
+
+    func runBench(
+        socketPath: String,
+        request: Melix_Worker_V1_RunBenchRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error>
+
+    func runBenchMatrix(
+        socketPath: String,
+        request: Melix_Worker_V1_RunBenchMatrixRequest
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse
+
+    func runEvaluation(
+        socketPath: String,
+        request: Melix_Worker_V1_RunEvaluationRequest
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse
+
+    func exportResults(
+        socketPath: String,
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse
+
+    func submitResults(
+        socketPath: String,
+        request: Melix_Worker_V1_SubmitResultsRequest
+    ) async throws -> Melix_Worker_V1_SubmitResultsResponse
+}
+
+private enum PythonWorkerTransport: Sendable {
+    case bridge(any WorkerBridgeRunning)
+    case rpc(any PythonWorkerRPCRunning)
+}
+
 public struct PythonBridgeWorkerClient:
     WorkerRoutingClient,
     PhaseAwareWorkerClientProtocol,
@@ -60,11 +201,20 @@ public struct PythonBridgeWorkerClient:
     Sendable
 {
     private let socketPath: String
-    private let runner: any WorkerBridgeRunning
+    private let transport: PythonWorkerTransport
 
     public init(socketPath: String, runner: any WorkerBridgeRunning) {
         self.socketPath = socketPath
-        self.runner = runner
+        self.transport = .bridge(runner)
+    }
+
+    public init(socketPath: String, rpcRunner: any PythonWorkerRPCRunning) {
+        self.socketPath = socketPath
+        self.transport = .rpc(rpcRunner)
+    }
+
+    public init(socketPath: String) {
+        self.init(socketPath: socketPath, rpcRunner: GRPCPythonWorkerRunner())
     }
 
     public init(
@@ -88,11 +238,16 @@ public struct PythonBridgeWorkerClient:
         request.controlplaneInstanceID = "melix-control-plane"
 
         do {
-            _ = try await sendUnary(
-                kind: .handshake,
-                request: request,
-                as: Melix_Worker_V1_HandshakeResponse.self
-            )
+            switch transport {
+            case .bridge:
+                _ = try await sendUnary(
+                    kind: .handshake,
+                    request: request,
+                    as: Melix_Worker_V1_HandshakeResponse.self
+                )
+            case .rpc(let runner):
+                _ = try await runner.handshake(socketPath: socketPath, request: request)
+            }
             return true
         } catch {
             return false
@@ -102,193 +257,320 @@ public struct PythonBridgeWorkerClient:
     public func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
-        try await sendUnary(kind: .loadModel, request: request, as: Melix_Worker_V1_LoadModelResponse.self)
+        switch transport {
+        case .bridge:
+            return try await sendUnary(kind: .loadModel, request: request, as: Melix_Worker_V1_LoadModelResponse.self)
+        case .rpc(let runner):
+            return try await runner.loadModel(socketPath: socketPath, request: request)
+        }
     }
 
     public func unloadModel(
         request: Melix_Worker_V1_UnloadModelRequest
     ) async throws -> Melix_Worker_V1_UnloadModelResponse {
-        try await sendUnary(kind: .unloadModel, request: request, as: Melix_Worker_V1_UnloadModelResponse.self)
+        switch transport {
+        case .bridge:
+            return try await sendUnary(kind: .unloadModel, request: request, as: Melix_Worker_V1_UnloadModelResponse.self)
+        case .rpc(let runner):
+            return try await runner.unloadModel(socketPath: socketPath, request: request)
+        }
     }
 
     public func generate(
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
-        try await sendStream(kind: .generate, request: request, as: Melix_Worker_V1_ExecuteEvent.self)
+        switch transport {
+        case .bridge:
+            return try await sendStream(kind: .generate, request: request, as: Melix_Worker_V1_ExecuteEvent.self)
+        case .rpc(let runner):
+            return try await runner.generate(socketPath: socketPath, request: request)
+        }
     }
 
     public func prefill(
         request: Melix_Worker_V1_PrefillRequest
     ) async throws -> Melix_Worker_V1_PrefillResponse {
-        try await sendUnary(kind: .prefill, request: request, as: Melix_Worker_V1_PrefillResponse.self)
+        switch transport {
+        case .bridge:
+            return try await sendUnary(kind: .prefill, request: request, as: Melix_Worker_V1_PrefillResponse.self)
+        case .rpc(let runner):
+            return try await runner.prefill(socketPath: socketPath, request: request)
+        }
     }
 
     public func decode(
         request: Melix_Worker_V1_DecodeRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
-        try await sendStream(kind: .decode, request: request, as: Melix_Worker_V1_ExecuteEvent.self)
+        switch transport {
+        case .bridge:
+            return try await sendStream(kind: .decode, request: request, as: Melix_Worker_V1_ExecuteEvent.self)
+        case .rpc(let runner):
+            return try await runner.decode(socketPath: socketPath, request: request)
+        }
     }
 
     public func abort(requestID: String) async throws -> Bool {
         var request = Melix_Worker_V1_AbortRequest()
         request.requestID = requestID
 
-        let response: Melix_Worker_V1_AbortResponse = try await sendUnary(
-            kind: .abort,
-            request: request,
-            as: Melix_Worker_V1_AbortResponse.self
-        )
+        let response: Melix_Worker_V1_AbortResponse = switch transport {
+        case .bridge:
+            try await sendUnary(
+                kind: .abort,
+                request: request,
+                as: Melix_Worker_V1_AbortResponse.self
+            )
+        case .rpc(let runner):
+            try await runner.abort(socketPath: socketPath, request: request)
+        }
         return response.ok && response.found
     }
 
     public func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
-        try await sendUnary(
-            kind: .getRuntimeStats,
-            request: Melix_Worker_V1_GetRuntimeStatsRequest(),
-            as: Melix_Worker_V1_GetRuntimeStatsResponse.self
-        )
+        let request = Melix_Worker_V1_GetRuntimeStatsRequest()
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .getRuntimeStats,
+                request: request,
+                as: Melix_Worker_V1_GetRuntimeStatsResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.runtimeStats(socketPath: socketPath, request: request)
+        }
     }
 
     public func cacheStats() async throws -> Melix_Worker_V1_GetCacheStatsResponse {
-        try await sendUnary(
-            kind: .getCacheStats,
-            request: Melix_Worker_V1_GetCacheStatsRequest(),
-            as: Melix_Worker_V1_GetCacheStatsResponse.self
-        )
+        let request = Melix_Worker_V1_GetCacheStatsRequest()
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .getCacheStats,
+                request: request,
+                as: Melix_Worker_V1_GetCacheStatsResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.cacheStats(socketPath: socketPath, request: request)
+        }
     }
 
     public func embed(
         request: Melix_Worker_V1_EmbedRequest
     ) async throws -> Melix_Worker_V1_EmbedResponse {
-        try await sendUnary(kind: .embed, request: request, as: Melix_Worker_V1_EmbedResponse.self)
+        switch transport {
+        case .bridge:
+            return try await sendUnary(kind: .embed, request: request, as: Melix_Worker_V1_EmbedResponse.self)
+        case .rpc(let runner):
+            return try await runner.embed(socketPath: socketPath, request: request)
+        }
     }
 
     public func rerank(
         request: Melix_Worker_V1_RerankRequest
     ) async throws -> Melix_Worker_V1_RerankResponse {
-        try await sendUnary(kind: .rerank, request: request, as: Melix_Worker_V1_RerankResponse.self)
+        switch transport {
+        case .bridge:
+            return try await sendUnary(kind: .rerank, request: request, as: Melix_Worker_V1_RerankResponse.self)
+        case .rpc(let runner):
+            return try await runner.rerank(socketPath: socketPath, request: request)
+        }
     }
 
     public func transcribe(
         request: Melix_Worker_V1_TranscribeRequest
     ) async throws -> Melix_Worker_V1_TranscribeResponse {
-        try await sendUnary(kind: .transcribe, request: request, as: Melix_Worker_V1_TranscribeResponse.self)
+        switch transport {
+        case .bridge:
+            return try await sendUnary(kind: .transcribe, request: request, as: Melix_Worker_V1_TranscribeResponse.self)
+        case .rpc(let runner):
+            return try await runner.transcribe(socketPath: socketPath, request: request)
+        }
     }
 
     public func speak(
         request: Melix_Worker_V1_SpeakRequest
     ) async throws -> Melix_Worker_V1_SpeakResponse {
-        try await sendUnary(kind: .speak, request: request, as: Melix_Worker_V1_SpeakResponse.self)
+        switch transport {
+        case .bridge:
+            return try await sendUnary(kind: .speak, request: request, as: Melix_Worker_V1_SpeakResponse.self)
+        case .rpc(let runner):
+            return try await runner.speak(socketPath: socketPath, request: request)
+        }
     }
 
     public func speakStream(
         request: Melix_Worker_V1_SpeakRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error> {
-        try await sendStream(kind: .speakStream, request: request, as: Melix_Worker_V1_SpeakStreamEvent.self)
+        switch transport {
+        case .bridge:
+            return try await sendStream(kind: .speakStream, request: request, as: Melix_Worker_V1_SpeakStreamEvent.self)
+        case .rpc(let runner):
+            return try await runner.speakStream(socketPath: socketPath, request: request)
+        }
     }
 
     public func imageGenerate(
         request: Melix_Worker_V1_ImageGenerateRequest
     ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
-        try await sendUnary(kind: .imageGenerate, request: request, as: Melix_Worker_V1_ImageGenerateResponse.self)
+        switch transport {
+        case .bridge:
+            return try await sendUnary(kind: .imageGenerate, request: request, as: Melix_Worker_V1_ImageGenerateResponse.self)
+        case .rpc(let runner):
+            return try await runner.imageGenerate(socketPath: socketPath, request: request)
+        }
     }
 
     public func imageEdit(
         request: Melix_Worker_V1_ImageEditRequest
     ) async throws -> Melix_Worker_V1_ImageEditResponse {
-        try await sendUnary(kind: .imageEdit, request: request, as: Melix_Worker_V1_ImageEditResponse.self)
+        switch transport {
+        case .bridge:
+            return try await sendUnary(kind: .imageEdit, request: request, as: Melix_Worker_V1_ImageEditResponse.self)
+        case .rpc(let runner):
+            return try await runner.imageEdit(socketPath: socketPath, request: request)
+        }
     }
 
     public func getModelInfo(
         request: Melix_Worker_V1_GetModelInfoRequest
     ) async throws -> Melix_Worker_V1_GetModelInfoResponse {
-        try await sendUnary(
-            kind: .getModelInfo,
-            request: request,
-            as: Melix_Worker_V1_GetModelInfoResponse.self
-        )
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .getModelInfo,
+                request: request,
+                as: Melix_Worker_V1_GetModelInfoResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.getModelInfo(socketPath: socketPath, request: request)
+        }
     }
 
     public func convertModel(
         request: Melix_Worker_V1_ConvertModelRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error> {
-        try await sendStream(kind: .convertModel, request: request, as: Melix_Worker_V1_ConvertModelEvent.self)
+        switch transport {
+        case .bridge:
+            return try await sendStream(kind: .convertModel, request: request, as: Melix_Worker_V1_ConvertModelEvent.self)
+        case .rpc(let runner):
+            return try await runner.convertModel(socketPath: socketPath, request: request)
+        }
     }
 
     public func runDoctor(
         request: Melix_Worker_V1_RunDoctorRequest
     ) async throws -> Melix_Worker_V1_RunDoctorResponse {
-        try await sendUnary(
-            kind: .runDoctor,
-            request: request,
-            as: Melix_Worker_V1_RunDoctorResponse.self
-        )
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .runDoctor,
+                request: request,
+                as: Melix_Worker_V1_RunDoctorResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.runDoctor(socketPath: socketPath, request: request)
+        }
     }
 
     public func searchHubModels(
         request: Melix_Worker_V1_SearchHubModelsRequest
     ) async throws -> Melix_Worker_V1_SearchHubModelsResponse {
-        try await sendUnary(
-            kind: .searchHubModels,
-            request: request,
-            as: Melix_Worker_V1_SearchHubModelsResponse.self
-        )
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .searchHubModels,
+                request: request,
+                as: Melix_Worker_V1_SearchHubModelsResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.searchHubModels(socketPath: socketPath, request: request)
+        }
     }
 
     public func getHubModelCard(
         request: Melix_Worker_V1_GetHubModelCardRequest
     ) async throws -> Melix_Worker_V1_GetHubModelCardResponse {
-        try await sendUnary(
-            kind: .getHubModelCard,
-            request: request,
-            as: Melix_Worker_V1_GetHubModelCardResponse.self
-        )
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .getHubModelCard,
+                request: request,
+                as: Melix_Worker_V1_GetHubModelCardResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.getHubModelCard(socketPath: socketPath, request: request)
+        }
     }
 
     public func runBench(
         request: Melix_Worker_V1_RunBenchRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
-        try await sendStream(kind: .runBench, request: request, as: Melix_Worker_V1_RunBenchEvent.self)
+        switch transport {
+        case .bridge:
+            return try await sendStream(kind: .runBench, request: request, as: Melix_Worker_V1_RunBenchEvent.self)
+        case .rpc(let runner):
+            return try await runner.runBench(socketPath: socketPath, request: request)
+        }
     }
 
     public func runBenchMatrix(
         request: Melix_Worker_V1_RunBenchMatrixRequest
     ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
-        try await sendUnary(
-            kind: .runBenchMatrix,
-            request: request,
-            as: Melix_Worker_V1_RunBenchMatrixResponse.self
-        )
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .runBenchMatrix,
+                request: request,
+                as: Melix_Worker_V1_RunBenchMatrixResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.runBenchMatrix(socketPath: socketPath, request: request)
+        }
     }
 
     public func runEvaluation(
         request: Melix_Worker_V1_RunEvaluationRequest
     ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
-        try await sendUnary(
-            kind: .runEvaluation,
-            request: request,
-            as: Melix_Worker_V1_RunEvaluationResponse.self
-        )
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .runEvaluation,
+                request: request,
+                as: Melix_Worker_V1_RunEvaluationResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.runEvaluation(socketPath: socketPath, request: request)
+        }
     }
 
     public func exportResults(
         request: Melix_Worker_V1_ExportResultsRequest
     ) async throws -> Melix_Worker_V1_ExportResultsResponse {
-        try await sendUnary(
-            kind: .exportResults,
-            request: request,
-            as: Melix_Worker_V1_ExportResultsResponse.self
-        )
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .exportResults,
+                request: request,
+                as: Melix_Worker_V1_ExportResultsResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.exportResults(socketPath: socketPath, request: request)
+        }
     }
 
     public func submitResults(
         request: Melix_Worker_V1_SubmitResultsRequest
     ) async throws -> Melix_Worker_V1_SubmitResultsResponse {
-        try await sendUnary(
-            kind: .submitResults,
-            request: request,
-            as: Melix_Worker_V1_SubmitResultsResponse.self
-        )
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .submitResults,
+                request: request,
+                as: Melix_Worker_V1_SubmitResultsResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.submitResults(socketPath: socketPath, request: request)
+        }
     }
 
     private func sendStream<Request: SwiftProtobuf.Message, Response: SwiftProtobuf.Message>(
@@ -296,6 +578,9 @@ public struct PythonBridgeWorkerClient:
         request: Request,
         as _: Response.Type
     ) async throws -> AsyncThrowingStream<Response, Error> {
+        guard case .bridge(let runner) = transport else {
+            throw WorkerClientError.unavailable
+        }
         let lineStream = try await runner.runStream(
             command: BridgeCommand(
                 kind: kind,
@@ -328,6 +613,9 @@ public struct PythonBridgeWorkerClient:
         request: Request,
         as _: Response.Type
     ) async throws -> Response {
+        guard case .bridge(let runner) = transport else {
+            throw WorkerClientError.unavailable
+        }
         let line = try await runner.runUnary(
             command: BridgeCommand(
                 kind: kind,
@@ -1271,6 +1559,447 @@ private actor ProcessTerminationState {
     }
 }
 
+public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
+    private let makeEventLoopGroup: @Sendable () -> MultiThreadedEventLoopGroup
+    private let shutdownEventLoopGroup: @Sendable (MultiThreadedEventLoopGroup) async throws -> Void
+
+    public init(
+        makeEventLoopGroup: @escaping @Sendable () -> MultiThreadedEventLoopGroup = {
+            MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        },
+        shutdownEventLoopGroup: @escaping @Sendable (MultiThreadedEventLoopGroup) async throws -> Void = { group in
+            try await group.shutdownGracefully()
+        }
+    ) {
+        self.makeEventLoopGroup = makeEventLoopGroup
+        self.shutdownEventLoopGroup = shutdownEventLoopGroup
+    }
+
+    public func handshake(
+        socketPath: String,
+        request: Melix_Worker_V1_HandshakeRequest
+    ) async throws -> Melix_Worker_V1_HandshakeResponse {
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _, _ in
+            try await runtimeClient.handshake(request)
+        }
+    }
+
+    public func loadModel(
+        socketPath: String,
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _, _ in
+            try await runtimeClient.loadModel(request)
+        }
+    }
+
+    public func unloadModel(
+        socketPath: String,
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _, _ in
+            try await runtimeClient.unloadModel(request)
+        }
+    }
+
+    public func runtimeStats(
+        socketPath: String,
+        request: Melix_Worker_V1_GetRuntimeStatsRequest
+    ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _, _ in
+            try await runtimeClient.getRuntimeStats(request)
+        }
+    }
+
+    public func cacheStats(
+        socketPath: String,
+        request: Melix_Worker_V1_GetCacheStatsRequest
+    ) async throws -> Melix_Worker_V1_GetCacheStatsResponse {
+        try await withRPCClients(socketPath: socketPath) { _, _, cacheClient, _ in
+            try await cacheClient.getCacheStats(request)
+        }
+    }
+
+    public func generate(
+        socketPath: String,
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+                        try await inferenceClient.generate(request) { response in
+                            for try await event in response.messages {
+                                continuation.yield(event)
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: workerClientError(from: error))
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    public func prefill(
+        socketPath: String,
+        request: Melix_Worker_V1_PrefillRequest
+    ) async throws -> Melix_Worker_V1_PrefillResponse {
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+            try await inferenceClient.prefill(request)
+        }
+    }
+
+    public func decode(
+        socketPath: String,
+        request: Melix_Worker_V1_DecodeRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        let startupLatch = StreamStartupLatch()
+        let stream = AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+                        try await inferenceClient.decode(request) { response in
+                            await startupLatch.markReady()
+                            for try await event in response.messages {
+                                continuation.yield(event)
+                            }
+                        }
+                    }
+                    await startupLatch.markReady()
+                    continuation.finish()
+                } catch {
+                    let clientError = workerClientError(from: error)
+                    await startupLatch.markFailed(clientError)
+                    continuation.finish(throwing: clientError)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+        try await startupLatch.waitUntilReady()
+        return stream
+    }
+
+    public func abort(
+        socketPath: String,
+        request: Melix_Worker_V1_AbortRequest
+    ) async throws -> Melix_Worker_V1_AbortResponse {
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+            try await inferenceClient.abort(request)
+        }
+    }
+
+    public func embed(
+        socketPath: String,
+        request: Melix_Worker_V1_EmbedRequest
+    ) async throws -> Melix_Worker_V1_EmbedResponse {
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+            try await inferenceClient.embed(request)
+        }
+    }
+
+    public func rerank(
+        socketPath: String,
+        request: Melix_Worker_V1_RerankRequest
+    ) async throws -> Melix_Worker_V1_RerankResponse {
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+            try await inferenceClient.rerank(request)
+        }
+    }
+
+    public func transcribe(
+        socketPath: String,
+        request: Melix_Worker_V1_TranscribeRequest
+    ) async throws -> Melix_Worker_V1_TranscribeResponse {
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+            try await inferenceClient.transcribe(request)
+        }
+    }
+
+    public func speak(
+        socketPath: String,
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> Melix_Worker_V1_SpeakResponse {
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+            try await inferenceClient.speak(request)
+        }
+    }
+
+    public func speakStream(
+        socketPath: String,
+        request: Melix_Worker_V1_SpeakRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+                        try await inferenceClient.speakStream(request) { response in
+                            for try await event in response.messages {
+                                continuation.yield(event)
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: workerClientError(from: error))
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    public func imageGenerate(
+        socketPath: String,
+        request: Melix_Worker_V1_ImageGenerateRequest
+    ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+            try await inferenceClient.imageGenerate(request, options: imageRequestOptions())
+        }
+    }
+
+    public func imageEdit(
+        socketPath: String,
+        request: Melix_Worker_V1_ImageEditRequest
+    ) async throws -> Melix_Worker_V1_ImageEditResponse {
+        try await withRPCClients(socketPath: socketPath) { _, inferenceClient, _, _ in
+            try await inferenceClient.imageEdit(request, options: imageRequestOptions())
+        }
+    }
+
+    public func getModelInfo(
+        socketPath: String,
+        request: Melix_Worker_V1_GetModelInfoRequest
+    ) async throws -> Melix_Worker_V1_GetModelInfoResponse {
+        try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+            try await maintenanceClient.getModelInfo(request)
+        }
+    }
+
+    public func convertModel(
+        socketPath: String,
+        request: Melix_Worker_V1_ConvertModelRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+                        try await maintenanceClient.convertModel(request) { response in
+                            for try await event in response.messages {
+                                continuation.yield(event)
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: workerClientError(from: error))
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    public func runDoctor(
+        socketPath: String,
+        request: Melix_Worker_V1_RunDoctorRequest
+    ) async throws -> Melix_Worker_V1_RunDoctorResponse {
+        try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+            try await maintenanceClient.runDoctor(request)
+        }
+    }
+
+    public func searchHubModels(
+        socketPath: String,
+        request: Melix_Worker_V1_SearchHubModelsRequest
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse {
+        try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+            try await maintenanceClient.searchHubModels(request)
+        }
+    }
+
+    public func getHubModelCard(
+        socketPath: String,
+        request: Melix_Worker_V1_GetHubModelCardRequest
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse {
+        try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+            try await maintenanceClient.getHubModelCard(request)
+        }
+    }
+
+    public func runBench(
+        socketPath: String,
+        request: Melix_Worker_V1_RunBenchRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+                        try await maintenanceClient.runBench(request) { response in
+                            for try await event in response.messages {
+                                continuation.yield(event)
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: workerClientError(from: error))
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    public func runBenchMatrix(
+        socketPath: String,
+        request: Melix_Worker_V1_RunBenchMatrixRequest
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
+        try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+            try await maintenanceClient.runBenchMatrix(request)
+        }
+    }
+
+    public func runEvaluation(
+        socketPath: String,
+        request: Melix_Worker_V1_RunEvaluationRequest
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
+        try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+            try await maintenanceClient.runEvaluation(request)
+        }
+    }
+
+    public func exportResults(
+        socketPath: String,
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
+        try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+            try await maintenanceClient.exportResults(request)
+        }
+    }
+
+    public func submitResults(
+        socketPath: String,
+        request: Melix_Worker_V1_SubmitResultsRequest
+    ) async throws -> Melix_Worker_V1_SubmitResultsResponse {
+        try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+            try await maintenanceClient.submitResults(request)
+        }
+    }
+
+    private func withRPCClients<Result: Sendable>(
+        socketPath: String,
+        operation: @Sendable @escaping (
+            Melix_Worker_V1_RuntimeService.Client<HTTP2ClientTransport.Posix>,
+            Melix_Worker_V1_InferenceService.Client<HTTP2ClientTransport.Posix>,
+            Melix_Worker_V1_CacheService.Client<HTTP2ClientTransport.Posix>,
+            Melix_Worker_V1_MaintenanceService.Client<HTTP2ClientTransport.Posix>
+        ) async throws -> Result
+    ) async throws -> Result {
+        let eventLoopGroup = makeEventLoopGroup()
+        do {
+            let result = try await withGRPCClient(
+                transport: .http2NIOPosix(
+                    target: .unixDomainSocket(path: socketPath),
+                    transportSecurity: .plaintext,
+                    eventLoopGroup: eventLoopGroup
+                )
+            ) { client in
+                let runtimeClient = Melix_Worker_V1_RuntimeService.Client(wrapping: client)
+                let inferenceClient = Melix_Worker_V1_InferenceService.Client(wrapping: client)
+                let cacheClient = Melix_Worker_V1_CacheService.Client(wrapping: client)
+                let maintenanceClient = Melix_Worker_V1_MaintenanceService.Client(wrapping: client)
+                return try await operation(runtimeClient, inferenceClient, cacheClient, maintenanceClient)
+            }
+            try await shutdownEventLoopGroup(eventLoopGroup)
+            return result
+        } catch {
+            try? await shutdownEventLoopGroup(eventLoopGroup)
+            throw workerClientError(from: error)
+        }
+    }
+
+    private func imageRequestOptions(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> GRPCCore.CallOptions {
+        var options = GRPCCore.CallOptions.defaults
+        let rawValue = environment["MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS", default: ""]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let timeoutSeconds = Int(rawValue).flatMap { $0 > 0 ? $0 : nil } ?? 1_800
+        options.timeout = .seconds(timeoutSeconds)
+        return options
+    }
+}
+
+private func workerClientError(from error: Error) -> WorkerClientError {
+    if let workerError = error as? WorkerClientError {
+        return workerError
+    }
+    if let rpcError = error as? GRPCCore.RPCError {
+        if rpcError.code == .unavailable {
+            return .unavailable
+        }
+        return .requestFailed(
+            code: bridgeCompatibleErrorCode(from: rpcError.code),
+            message: rpcError.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+    return .unavailable
+}
+
+private func bridgeCompatibleErrorCode(from code: GRPCCore.RPCError.Code) -> String {
+    switch code {
+    case .cancelled:
+        return "CANCELLED"
+    case .unknown:
+        return "UNKNOWN"
+    case .invalidArgument:
+        return "INVALID_ARGUMENT"
+    case .deadlineExceeded:
+        return "DEADLINE_EXCEEDED"
+    case .notFound:
+        return "NOT_FOUND"
+    case .alreadyExists:
+        return "ALREADY_EXISTS"
+    case .permissionDenied:
+        return "PERMISSION_DENIED"
+    case .resourceExhausted:
+        return "RESOURCE_EXHAUSTED"
+    case .failedPrecondition:
+        return "FAILED_PRECONDITION"
+    case .aborted:
+        return "ABORTED"
+    case .outOfRange:
+        return "OUT_OF_RANGE"
+    case .unimplemented:
+        return "UNIMPLEMENTED"
+    case .internalError:
+        return "INTERNAL"
+    case .unavailable:
+        return "UNAVAILABLE"
+    case .dataLoss:
+        return "DATA_LOSS"
+    case .unauthenticated:
+        return "UNAUTHENTICATED"
+    default:
+        return code.description
+    }
+}
+
 public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
     private let repoRoot: String
     private let environment: [String: String]
@@ -1299,18 +2028,32 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
             stderrTask.cancel()
         }
 
-        _ = await waitForTermination(
+        let terminationStatus = await waitForTermination(
             of: process,
             state: terminationState
         )
 
         let output = try await stdoutTask.value
-        _ = try await stderrTask.value
+        let errorOutput = try await stderrTask.value
 
         guard let line = output.split(separator: "\n").last.map(String.init),
               !line.isEmpty
         else {
+            logBridgeProcessFailure(
+                command: command,
+                terminationStatus: terminationStatus,
+                stdout: output,
+                stderr: errorOutput
+            )
             throw WorkerClientError.unavailable
+        }
+        if terminationStatus != 0 {
+            logBridgeProcessFailure(
+                command: command,
+                terminationStatus: terminationStatus,
+                stdout: output,
+                stderr: errorOutput
+            )
         }
         return line
     }
@@ -1421,5 +2164,32 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
             return process.terminationStatus
         }
         return await state.waitForExit()
+    }
+
+    private func logBridgeProcessFailure(
+        command: BridgeCommand,
+        terminationStatus: Int32,
+        stdout: String,
+        stderr: String
+    ) {
+        let stderrPreview = Self.preview(stderr)
+        let stdoutPreview = Self.preview(stdout)
+        print(
+            "Melix Python bridge command \(command.kind.rawValue) ended with status \(terminationStatus); "
+                + "stdout_bytes=\(stdout.utf8.count) stderr_bytes=\(stderr.utf8.count) "
+                + "stdout_preview=\(stdoutPreview) stderr_preview=\(stderrPreview)"
+        )
+    }
+
+    private static func preview(_ value: String) -> String {
+        let collapsed = value
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+        let limit = 2_000
+        guard collapsed.count > limit else {
+            return collapsed
+        }
+        let endIndex = collapsed.index(collapsed.startIndex, offsetBy: limit)
+        return String(collapsed[..<endIndex]) + "...<truncated>"
     }
 }
