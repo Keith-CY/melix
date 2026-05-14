@@ -6201,37 +6201,7 @@ public actor MelixCLIRunner {
             }
             return renderRegistrySnapshot(result.manifestJson)
         case .loraTrain(let options):
-            var ext = options.parameters
-            if options.preflightFitCheck {
-                guard options.modelID.trimmingCharacters(in: .whitespacesAndNewlines).contains("/") else {
-                    throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix lora train --model-id Hugging Face repo targets.")
-                }
-                let receipt = try await makeMemoryFitReceipt(repoID: options.modelID, targetKind: "train")
-                try enforceMemoryFitPreflight(
-                    receipt,
-                    allowMemoryRisk: options.allowMemoryRisk,
-                    commandName: "training"
-                )
-                ext.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
-            }
-            ext["adapter_name"] = options.adapterName
-            ext["dataset_source_kind"] = options.datasetSourceKind
-            if !options.datasetURI.isEmpty {
-                ext["dataset_uri"] = options.datasetURI
-            }
-            if !options.targetRepo.isEmpty {
-                ext["target_repo"] = options.targetRepo
-            }
-            if !options.trainingMode.isEmpty {
-                ext["training_mode"] = options.trainingMode
-            }
-            let result = try await performModelOperation(
-                modelID: options.modelID,
-                operation: "train_lora",
-                outputDir: "",
-                ext: ext
-            )
-            return options.json ? result.manifestJson : result.outputPath
+            return try await runLoraTrain(options)
         case .alignmentTrain(let options):
             var ext = options.parameters
             ext["adapter_name"] = options.adapterName
@@ -7064,7 +7034,6 @@ public actor MelixCLIRunner {
              .serverSnapshot,
              .serverStart,
              .loraList,
-             .loraTrain,
              .alignmentTrain,
              .loraActivate,
              .loraRemoveDerived,
@@ -7102,6 +7071,41 @@ public actor MelixCLIRunner {
             outputDir: "",
             ext: ext
         )
+    }
+
+    private func runLoraTrain(_ options: LoraTrainOptions) async throws -> String {
+        var ext = options.parameters
+        if options.preflightFitCheck {
+            guard options.modelID.trimmingCharacters(in: .whitespacesAndNewlines).contains("/") else {
+                throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix lora train --model-id Hugging Face repo targets.")
+            }
+            let receipt = try await makeMemoryFitReceipt(repoID: options.modelID, targetKind: "train")
+            try enforceMemoryFitPreflight(
+                receipt,
+                allowMemoryRisk: options.allowMemoryRisk,
+                commandName: "training"
+            )
+            ext.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
+        }
+        try await primeConfiguredRegistryRootsIfNeeded()
+        ext["adapter_name"] = options.adapterName
+        ext["dataset_source_kind"] = options.datasetSourceKind
+        if !options.datasetURI.isEmpty {
+            ext["dataset_uri"] = options.datasetURI
+        }
+        if !options.targetRepo.isEmpty {
+            ext["target_repo"] = options.targetRepo
+        }
+        if !options.trainingMode.isEmpty {
+            ext["training_mode"] = options.trainingMode
+        }
+        let result = try await performModelOperation(
+            modelID: options.modelID,
+            operation: "train_lora",
+            outputDir: "",
+            ext: ext
+        )
+        return options.json ? result.manifestJson : result.outputPath
     }
 
     private func loadOperatorStateForRegistryPriming() -> MelixOperatorSessionState {
