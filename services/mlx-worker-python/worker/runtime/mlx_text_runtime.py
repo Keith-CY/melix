@@ -146,6 +146,7 @@ _TEXT_STOP_SEQUENCE_KEYS = (
     "stop_sequences",
 )
 _STREAM_STOP_KWARG_NAMES = ("stop", "stop_words", "stop_sequences")
+_SAMPLER_PENALTY_KWARG_NAMES = ("frequency_penalty", "presence_penalty")
 _STOP_CONTRACT_CACHE_FIELD = "_melix.resolved_text_stop_contract_cache"
 
 
@@ -523,6 +524,10 @@ def _resolve_adapter_backed_metadata(model_spec) -> dict[str, str]:
     return contract.to_runtime_metadata()
 
 
+def _declared_kwargs(callable_obj: Any, names: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(name for name in names if _callable_accepts_kwarg(callable_obj, name))
+
+
 class AutoMLXBackend:
     runtime_name = "mlx-unavailable"
 
@@ -534,6 +539,7 @@ class AutoMLXBackend:
         sampler_factory=None,
     ) -> None:
         self._stream_stop_kwarg = ""
+        self._sampler_penalty_kwargs: tuple[str, ...] = ()
         if load_fn is not None and stream_generate_fn is not None and sampler_factory is not None:
             self._available = True
             self._error = None
@@ -541,6 +547,7 @@ class AutoMLXBackend:
             self._stream_generate_fn = stream_generate_fn
             self._sampler_factory = sampler_factory
             self._stream_stop_kwarg = _first_declared_kwarg(stream_generate_fn, _STREAM_STOP_KWARG_NAMES)
+            self._sampler_penalty_kwargs = _declared_kwargs(sampler_factory, _SAMPLER_PENALTY_KWARG_NAMES)
             self.runtime_name = "mlx-lm"
             return
 
@@ -572,6 +579,7 @@ class AutoMLXBackend:
             self._stream_generate_fn = stream_generate
             self._sampler_factory = make_sampler
             self._stream_stop_kwarg = _first_declared_kwarg(stream_generate, _STREAM_STOP_KWARG_NAMES)
+            self._sampler_penalty_kwargs = _declared_kwargs(make_sampler, _SAMPLER_PENALTY_KWARG_NAMES)
 
     def load_model(self, model_spec, *, trust_remote_code: bool = False) -> dict[str, Any]:
         if not self._available:
@@ -653,9 +661,8 @@ class AutoMLXBackend:
             "top_p": float(sampling.top_p),
             "top_k": int(sampling.top_k),
         }
-        for penalty_name in ("frequency_penalty", "presence_penalty"):
-            if _callable_accepts_kwarg(self._sampler_factory, penalty_name):
-                sampler_kwargs[penalty_name] = float(getattr(sampling, penalty_name, 0.0))
+        for penalty_name in self._sampler_penalty_kwargs:
+            sampler_kwargs[penalty_name] = float(getattr(sampling, penalty_name, 0.0))
         sampler = self._sampler_factory(**sampler_kwargs)
         max_tokens = int(sampling.max_output_tokens) if int(sampling.max_output_tokens) > 0 else 256
         stop_contract = _cached_resolve_text_stop_contract(loaded_model, sampling, execution_ext)

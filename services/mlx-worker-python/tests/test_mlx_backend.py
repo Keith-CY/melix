@@ -333,8 +333,25 @@ def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.Mon
         _ = (model_source, kwargs)
         return object(), FakeTokenizer()
 
-    def fake_sampler_factory(*, temp: float, top_p: float, top_k: int):
-        _ = (temp, top_p, top_k)
+    seen_sampler_kwargs: list[dict[str, float | int]] = []
+
+    def fake_sampler_factory(
+        *,
+        temp: float,
+        top_p: float,
+        top_k: int,
+        frequency_penalty: float,
+        presence_penalty: float,
+    ):
+        seen_sampler_kwargs.append(
+            {
+                "temp": temp,
+                "top_p": top_p,
+                "top_k": top_k,
+                "frequency_penalty": frequency_penalty,
+                "presence_penalty": presence_penalty,
+            }
+        )
         return "fake-sampler"
 
     seen_stop_values: list[list[str] | None] = []
@@ -352,14 +369,76 @@ def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.Mon
     loaded_model = backend.load_model(
         WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
     )
-    sampling = common_pb2.SamplingConfig(max_output_tokens=8, stop=["</turn>"])
+    sampling = common_pb2.SamplingConfig(
+        max_output_tokens=8,
+        stop=["</turn>"],
+        frequency_penalty=0.25,
+        presence_penalty=0.5,
+    )
 
     for _ in range(2):
         chunks = list(backend.generate_tokens(loaded_model, "prompt", sampling, Event()))
         assert [chunk.text for chunk in chunks] == ["ok"]
 
     assert seen_stop_values == [["</turn>", "</s>"], ["</turn>", "</s>"]]
+    assert seen_sampler_kwargs == [
+        {
+            "temp": 0.0,
+            "top_p": 0.0,
+            "top_k": 0,
+            "frequency_penalty": 0.25,
+            "presence_penalty": 0.5,
+        },
+        {
+            "temp": 0.0,
+            "top_p": 0.0,
+            "top_k": 0,
+            "frequency_penalty": 0.25,
+            "presence_penalty": 0.5,
+        },
+    ]
     assert signature_calls.get("fake_stream_generate") == 1
+    assert signature_calls.get("fake_sampler_factory") == 1
+    assert stop_contract_calls == 1
+
+    fake_mlx_lm = types.ModuleType("mlx_lm")
+    fake_sample_utils = types.ModuleType("mlx_lm.sample_utils")
+    fake_mlx_lm.load = fake_load
+    fake_mlx_lm.stream_generate = fake_stream_generate
+    fake_mlx_lm.sample_utils = fake_sample_utils
+    fake_sample_utils.make_sampler = fake_sampler_factory
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+    monkeypatch.setitem(sys.modules, "mlx_lm.sample_utils", fake_sample_utils)
+    monkeypatch.setattr(
+        mlx_text_runtime_module.importlib.util,
+        "find_spec",
+        lambda name: object() if name == "mlx_lm" else None,
+    )
+    runtime_utils.clear_callable_kwarg_signature_cache()
+    signature_calls.clear()
+    seen_stop_values.clear()
+    seen_sampler_kwargs.clear()
+    stop_contract_calls = 0
+
+    live_backend = AutoMLXBackend()
+    live_loaded_model = live_backend.load_model(
+        WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
+    )
+    chunks = list(live_backend.generate_tokens(live_loaded_model, "prompt", sampling, Event()))
+
+    assert [chunk.text for chunk in chunks] == ["ok"]
+    assert seen_stop_values == [["</turn>", "</s>"]]
+    assert seen_sampler_kwargs == [
+        {
+            "temp": 0.0,
+            "top_p": 0.0,
+            "top_k": 0,
+            "frequency_penalty": 0.25,
+            "presence_penalty": 0.5,
+        }
+    ]
+    assert signature_calls.get("fake_stream_generate") == 1
+    assert signature_calls.get("fake_sampler_factory") == 1
     assert stop_contract_calls == 1
     runtime_utils.clear_callable_kwarg_signature_cache()
 
