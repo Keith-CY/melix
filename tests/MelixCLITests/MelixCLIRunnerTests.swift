@@ -2554,7 +2554,6 @@ struct MelixCLIRunnerTests {
         ])
         let executor = RecordingCLICommandExecutor(
             responses: [
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"train_lora","job_id":"lora-job-1","output_path":"/tmp/melix/train_lora/issue365-sft.adapter.json"}"#,
                 #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"train_alignment","job_id":"align-job-1","output_path":"/tmp/melix/alignment/issue365-dpo.adapter.json","alignment_run_manifest_path":"/tmp/melix/alignment/issue365-dpo.alignment_run.json"}"#,
@@ -5198,14 +5197,17 @@ struct MelixCLIRunnerTests {
         // pick each row even if another id were a superstring.
         let dataRows = lines.dropFirst()
         let baseRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text ") && $0.hasSuffix("-  n/a") })
+            dataRows.first(where: { $0.hasPrefix("melix-base-text ") })
         )
         let fusedRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") && $0.hasSuffix("fused    safe") })
+            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") })
         )
         let adapterRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") && $0.hasSuffix("adapter  trust") })
+            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") })
         )
+        #expect(baseRow.components(separatedBy: "  ").filter { !$0.isEmpty }.suffix(2) == ["-", "n/a"])
+        #expect(fusedRow.components(separatedBy: "  ").filter { !$0.isEmpty }.suffix(2) == ["fused", "safe"])
+        #expect(adapterRow.components(separatedBy: "  ").filter { !$0.isEmpty }.suffix(2) == ["adapter", "trust"])
         // The first column is padded to the widest model_id
         // ("melix-base-text-lora-runtime" = 28 chars); assert the "KIND"
         // column actually starts at the column-separator offset. A

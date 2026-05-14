@@ -16,6 +16,12 @@ so avoiding the generated initializer's repeated global `object.__setattr__`
 lookups targets the dominant local Linux cost without changing serialized
 diagnostics payloads.
 
+This slice then targets the registered probe's serialization phase: the common
+debug-event path already stores `event_index` as an exact `int` and `duration_ms`
+as an exact `float`, so `ServingDiagnosticsEvent.to_dict()` can skip redundant
+numeric constructor calls while retaining the previous coercion behavior for
+non-exact numeric inputs.
+
 ## Affected Paths
 
 - `services/mlx-worker-python/worker/productization/serving_diagnostics.py`

@@ -385,7 +385,7 @@ struct DesktopFoundationViewTests {
         listener.requestedHost = "0.0.0.0"
         listener.requestedPort = 18080
         listener.effectiveHost = "127.0.0.1"
-        listener.effectivePort = 11_434
+        listener.effectivePort = UInt32(MelixGatewayDefaults.port)
         listener.defaultModelID = desktopTestReadyModelID
         listener.servedModelIds = [desktopTestReadyModelID]
         listener.rateLimitPerMinute = 240
@@ -433,7 +433,7 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("18,080"))
         #expect(renderedTexts.contains("240"))
         #expect(renderedTexts.contains("90"))
-        #expect(viewModel.selectedServerSession?.effectiveBaseURL == "http://127.0.0.1:11434/v1")
+        #expect(viewModel.selectedServerSession?.effectiveBaseURL == "http://127.0.0.1:12436/v1")
         #expect(viewModel.selectedServerSession?.gatewayConfigRequiresRestart == true)
         #expect(viewModel.selectedServerSession?.gatewayConfigSourceText == "Operator Override")
         #expect(viewModel.selectedServerSession?.servingDefaults.streamIntervalTokens == 3)
@@ -2265,7 +2265,7 @@ struct DesktopFoundationViewTests {
             title: "Primary Session",
             modelID: "melix-dev-text",
             effectiveHost: "127.0.0.1",
-            effectivePort: 11_434,
+            effectivePort: 12_436,
             authMode: .apiKeys,
             authTokenHint: "desktop-agent",
             sharedAccessState: .enabled,
@@ -2284,7 +2284,7 @@ struct DesktopFoundationViewTests {
         let ollamaGroup = try #require(groupByID["ollama_compatibility"])
 
         #expect(groups.count == 3)
-        #expect(openAIGroup.snippets.contains { $0.body.contains("http://127.0.0.1:11434/v1") })
+        #expect(openAIGroup.snippets.contains { $0.body.contains("http://127.0.0.1:12436/v1") })
         #expect(openAIGroup.snippets.contains { $0.body.contains("<desktop-agent>") })
         #expect(openAIGroup.snippets.contains { $0.body.contains("\"stream\":true") || $0.body.contains("\"stream\": True") || $0.body.contains("stream: true") })
         #expect(openAIGroup.snippets.contains { $0.body.contains("client.responses.stream") || $0.body.contains("response.iter_lines()") || $0.body.contains("TextDecoderStream") })

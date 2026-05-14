@@ -4,9 +4,9 @@
 const T3 = window.MelixTokens;
 
 const SERVER_SESSIONS = [
-  { id: 1, model: 'mlx-community/Llama-3.2-3B-Instruct-4bit', alias: 'Melix Text Turbo', state: 'running', port: 11434, ctx: '8192', accel: 'speculative_decode' },
-  { id: 2, model: 'mlx-community/Qwen2.5-7B-Instruct-4bit', alias: 'Qwen 7B', state: 'paused', port: 11435, ctx: '32768', accel: 'baseline' },
-  { id: 3, model: 'mlx-community/whisper-large-v3-mlx', alias: 'Whisper Large', state: 'stopped', port: 11436, ctx: '—', accel: 'baseline' },
+  { id: 1, model: 'mlx-community/Llama-3.2-3B-Instruct-4bit', alias: 'Melix Text Turbo', state: 'running', port: 12436, ctx: '8192', accel: 'speculative_decode' },
+  { id: 2, model: 'mlx-community/Qwen2.5-7B-Instruct-4bit', alias: 'Qwen 7B', state: 'paused', port: 12437, ctx: '32768', accel: 'baseline' },
+  { id: 3, model: 'mlx-community/whisper-large-v3-mlx', alias: 'Whisper Large', state: 'stopped', port: 12438, ctx: '—', accel: 'baseline' },
 ];
 
 const STATE_COLORS = {

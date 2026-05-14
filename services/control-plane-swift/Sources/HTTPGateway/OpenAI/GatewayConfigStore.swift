@@ -391,8 +391,8 @@ public actor GatewayConfigStore {
     }
 
     private static func resolveDefaults(environment: [String: String]) -> GatewayConfigDefaults {
-        let builtInHost = "127.0.0.1"
-        let builtInPort: UInt32 = 11_434
+        let builtInHost = MelixGatewayDefaults.host
+        let builtInPort: UInt32 = UInt32(MelixGatewayDefaults.port)
         let builtInRateLimit: UInt32 = 120
         let builtInTimeout: UInt32 = 120
         let builtInModelIdleTimeout: UInt32 = 600

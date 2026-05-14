@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneCore
 
 public enum MelixOperatorServerSessionLifecycle: String, Codable, Sendable {
     case draft = "Draft"
@@ -123,8 +124,8 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         title: String,
         defaultModelID: String = "",
         servedModelIDs: [String] = [],
-        host: String = "127.0.0.1",
-        port: Int = 8080,
+        host: String = MelixGatewayDefaults.host,
+        port: Int = MelixGatewayDefaults.port,
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
         modelIdleTimeoutSeconds: Int = 600,
@@ -165,6 +166,7 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id
         case title
+        case legacyModelID = "model_id"
         case defaultModelID = "default_model_id"
         case servedModelIDs = "served_model_ids"
         case host
@@ -185,15 +187,16 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let defaultModelID = try container.decodeIfPresent(String.self, forKey: .defaultModelID) ?? ""
+        let defaultModelID = try container.decodeIfPresent(String.self, forKey: .defaultModelID)
+            ?? (try container.decodeIfPresent(String.self, forKey: .legacyModelID) ?? "")
         self.init(
             id: try container.decode(String.self, forKey: .id),
             title: try container.decodeIfPresent(String.self, forKey: .title) ?? "",
             defaultModelID: defaultModelID,
             servedModelIDs: try container.decodeIfPresent([String].self, forKey: .servedModelIDs)
                 ?? (defaultModelID.isEmpty ? [] : [defaultModelID]),
-            host: try container.decodeIfPresent(String.self, forKey: .host) ?? "127.0.0.1",
-            port: try container.decodeIfPresent(Int.self, forKey: .port) ?? 8080,
+            host: try container.decodeIfPresent(String.self, forKey: .host) ?? MelixGatewayDefaults.host,
+            port: try container.decodeIfPresent(Int.self, forKey: .port) ?? MelixGatewayDefaults.port,
             rateLimitPerMinute: try container.decodeIfPresent(Int.self, forKey: .rateLimitPerMinute) ?? 120,
             timeoutSeconds: try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds) ?? 120,
             modelIdleTimeoutSeconds: try container.decodeIfPresent(

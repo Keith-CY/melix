@@ -25,7 +25,7 @@ port as intent while selecting the next available port in the generated manifest
 
 ```bash
 python3 scripts/install_local_product.py \
-  --http-port 11434 \
+  --http-port 12436 \
   --prefer-available-http-port \
   --json
 ```
@@ -133,7 +133,7 @@ launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/io.melix.control-pl
 Probe the local control plane:
 
 ```bash
-curl -sS http://127.0.0.1:11434/v1/models
+curl -sS http://127.0.0.1:12436/v1/models
 ```
 
 Registry-discovered models are synchronized on demand before `/v1/models` is rendered. The response metadata includes the structured `melix.registry_*` identity fields plus `melix.model_path` for each discovered registry model.

@@ -88,7 +88,7 @@ curl -N -sS \
     "stream":true,
     "messages":[{"role":"user","content":"emit enough tokens to observe keepalive comments"}]
   }' \
-  "http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/chat/completions"
+  "http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/chat/completions"
 ```
 
 Expected stream shape:
@@ -112,7 +112,7 @@ curl -N -sS \
     "resume_request_id":"chatcmpl-REPLACE-ME",
     "messages":[{"role":"user","content":"resume the active stream"}]
   }' \
-  "http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/chat/completions"
+  "http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/chat/completions"
 ```
 
 Expected outcome:

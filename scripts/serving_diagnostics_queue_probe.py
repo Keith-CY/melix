@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import statistics
+import tempfile
 import time
 from pathlib import Path
 
@@ -16,6 +17,8 @@ sys.path.insert(0, str(ROOT / "services/mlx-worker-python"))
 from worker.productization.serving_diagnostics import (  # noqa: E402
     BoundedServingDiagnosticsEventQueue,
     ServingDiagnosticsEvent,
+    ServingDiagnosticsRequestSummary,
+    write_serving_diagnostics_bundle,
 )
 
 
@@ -27,7 +30,21 @@ def main() -> int:
     serialization_samples: list[float] = []
     dropped = 0
     retained = 0
+    serialized_bytes = 0
     serialization_checksum = 0
+    summary = ServingDiagnosticsRequestSummary(
+        request_id="req-probe",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
     for sample_index in range(max(sample_count, 1)):
         queue = BoundedServingDiagnosticsEventQueue(max_events=capacity)
         started = time.perf_counter()
@@ -46,10 +63,22 @@ def main() -> int:
         dropped = snapshot.dropped_count
         retained = len(snapshot.events)
         serialize_started = time.perf_counter()
-        checksum = 0
-        for event in snapshot.events:
-            checksum += int(event.to_dict()["event_index"])
-        serialization_checksum = checksum
+        with tempfile.TemporaryDirectory() as directory:
+            paths = write_serving_diagnostics_bundle(
+                output_root=Path(directory),
+                bundle_id=f"diag-probe-{sample_index}",
+                invocation={},
+                effective_config={},
+                model_refs={},
+                request_summary=summary,
+                events=snapshot,
+                diagnostics_mode="debug",
+            )
+            event_rows = paths["events"].read_text(encoding="utf-8").splitlines()
+            serialization_checksum = sum(
+                int(json.loads(line)["event_index"]) for line in event_rows
+            )
+            serialized_bytes = paths["events"].stat().st_size
         serialization_samples.append((time.perf_counter() - serialize_started) * 1000.0)
     print(
         json.dumps(
@@ -60,6 +89,7 @@ def main() -> int:
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
                 "serialization_elapsed_ms_mean": round(statistics.fmean(serialization_samples), 6),
                 "serialization_checksum": float(serialization_checksum),
+                "serialized_bytes": float(serialized_bytes),
                 "dropped_count": float(dropped),
                 "retained_count": float(retained),
             },

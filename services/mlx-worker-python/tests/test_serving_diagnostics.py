@@ -275,6 +275,23 @@ def test_serving_diagnostics_empty_event_attributes_skip_stable_json_object(
     assert event.to_dict()["attributes"] == {}
 
 
+def test_serving_diagnostics_event_to_dict_preserves_numeric_coercion() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-numeric-coercion",
+        phase="decode",
+        event_index=True,
+        status="completed",
+        duration_ms=3,
+    )
+
+    payload = event.to_dict()
+
+    assert payload["event_index"] == 1
+    assert type(payload["event_index"]) is int
+    assert payload["duration_ms"] == 3.0
+    assert type(payload["duration_ms"]) is float
+
+
 def test_serving_diagnostics_bounded_queue_serializes_append_during_snapshot() -> None:
     first_event = ServingDiagnosticsEvent(
         request_id="req-concurrent",
@@ -435,6 +452,48 @@ def test_serving_diagnostics_serializes_sets_as_stable_arrays(tmp_path: Path) ->
     event_payload = json.loads(paths["events"].read_text(encoding="utf-8"))
     assert event_payload["attributes"]["tags"] == ["alpha", "zeta"]
     assert event_payload["attributes"]["frozen"] == [1, 2, 3]
+
+
+def test_serving_diagnostics_events_jsonl_uses_compact_stable_lines(tmp_path: Path) -> None:
+    summary = ServingDiagnosticsRequestSummary(
+        request_id="req-compact",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
+    event = ServingDiagnosticsEvent(
+        request_id="req-compact",
+        phase="decode",
+        event_index=7,
+        status="completed",
+        attributes={"beta": 2, "alpha": 1},
+    )
+
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-compact",
+        invocation={},
+        effective_config={},
+        model_refs={},
+        request_summary=summary,
+        events=(event,),
+        diagnostics_mode="debug",
+    )
+
+    line = paths["events"].read_text(encoding="utf-8")
+    assert line == (
+        '{"attributes":{"alpha":1,"beta":2},"duration_ms":0.0,'
+        '"event_index":7,"phase":"decode","request_id":"req-compact",'
+        '"schema_version":"melix.serving_diagnostics.event.v1",'
+        '"status":"completed"}\n'
+    )
 
 
 @pytest.mark.parametrize("value", (0, -1, "0", "bad", None))

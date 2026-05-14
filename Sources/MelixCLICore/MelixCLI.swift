@@ -1301,8 +1301,8 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         title: String,
         defaultModelID: String = "",
         servedModelIDs: [String] = [],
-        host: String = "127.0.0.1",
-        port: Int = 8080,
+        host: String = MelixGatewayDefaults.host,
+        port: Int = MelixGatewayDefaults.port,
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
         modelIdleTimeoutSeconds: Int = 600,
@@ -2866,7 +2866,11 @@ public enum MelixCLIParser {
             guard !defaultModelID.isEmpty else {
                 throw MelixCLIError.missingRequired("--model or --models is required for melix server session create.")
             }
-            let port = try parseIntValue(values.single["--port"], option: "--port", defaultValue: 8080) ?? 8080
+            let port = try parseIntValue(
+                values.single["--port"],
+                option: "--port",
+                defaultValue: MelixGatewayDefaults.port
+            ) ?? MelixGatewayDefaults.port
             let rateLimit = try parseIntValue(
                 values.single["--rate-limit-per-minute"],
                 option: "--rate-limit-per-minute",
@@ -2888,7 +2892,7 @@ public enum MelixCLIParser {
                     title: title,
                     defaultModelID: defaultModelID,
                     servedModelIDs: modelIDs,
-                    host: values.single["--host"] ?? "127.0.0.1",
+                    host: values.single["--host"] ?? MelixGatewayDefaults.host,
                     port: port,
                     rateLimitPerMinute: rateLimit,
                     timeoutSeconds: timeoutSeconds,

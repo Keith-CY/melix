@@ -37,7 +37,7 @@ MELIX_RUNTIME_DIR=.runtime/phase7-ops bash scripts/dev_up.sh
 3. Confirm that the control plane exposes the expected local image model.
 
 ```bash
-curl -sS http://127.0.0.1:11434/v1/models
+curl -sS http://127.0.0.1:12436/v1/models
 ```
 
 4. Run the reproducible Phase 7 metrics command.

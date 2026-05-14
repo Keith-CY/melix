@@ -302,7 +302,7 @@ def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
         image_defaults_store_path=Path(
             os.environ.get("MELIX_IMAGE_DEFAULTS_STORE_PATH", melix_home_dir / "config" / "image-defaults.json")
         ).expanduser(),
-        http_port=os.environ.get("MELIX_HTTP_PORT", "11434"),
+        http_port=os.environ.get("MELIX_HTTP_PORT", "12436"),
         python_backend_mode=os.environ.get("MELIX_BACKEND_MODE", "auto"),
         swift_text_worker_backend_mode=os.environ.get("MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE", "swift"),
         python_bridge_executable=resolve_python_bridge_executable(),

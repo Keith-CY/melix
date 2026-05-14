@@ -38,7 +38,7 @@ This default startup path uses the real backend configuration. Only opt into det
 3. Confirm the control plane can see the expected local models.
 
 ```bash
-curl -sS http://127.0.0.1:11434/v1/models
+curl -sS http://127.0.0.1:12436/v1/models
 ```
 
 4. Launch the native desktop shell.

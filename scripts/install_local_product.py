@@ -19,7 +19,7 @@ def main() -> int:
     parser.add_argument("--repo-root", default=str(ROOT))
     parser.add_argument("--home-dir", default=str(Path.home()))
     parser.add_argument("--launch-agents-dir", default="")
-    parser.add_argument("--http-port", type=int, default=11434)
+    parser.add_argument("--http-port", type=int, default=12436)
     parser.add_argument("--service-instance-name", default="")
     parser.add_argument("--prefer-available-http-port", action="store_true")
     parser.add_argument("--product-version", default="")
