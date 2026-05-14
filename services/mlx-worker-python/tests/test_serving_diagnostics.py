@@ -275,6 +275,23 @@ def test_serving_diagnostics_empty_event_attributes_skip_stable_json_object(
     assert event.to_dict()["attributes"] == {}
 
 
+def test_serving_diagnostics_event_to_dict_preserves_numeric_coercion() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-numeric-coercion",
+        phase="decode",
+        event_index=True,
+        status="completed",
+        duration_ms=3,
+    )
+
+    payload = event.to_dict()
+
+    assert payload["event_index"] == 1
+    assert type(payload["event_index"]) is int
+    assert payload["duration_ms"] == 3.0
+    assert type(payload["duration_ms"]) is float
+
+
 def test_serving_diagnostics_bounded_queue_serializes_append_during_snapshot() -> None:
     first_event = ServingDiagnosticsEvent(
         request_id="req-concurrent",
