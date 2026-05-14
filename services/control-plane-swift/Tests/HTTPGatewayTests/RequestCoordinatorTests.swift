@@ -3337,12 +3337,16 @@ struct RequestCoordinatorTests {
     @Test("gateway speculative defaults populate worker acceleration when model defaults are unspecified")
     func gatewaySpeculativeDefaultsPopulateWorkerAccelerationWhenModelDefaultsAreUnspecified() async throws {
         let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
         var textModel = ModelCatalog.devTextModel()
         textModel.settings.defaultAccelerationMode = .unspecified
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
             modelCatalog: catalog
         )
 
@@ -3352,6 +3356,7 @@ struct RequestCoordinatorTests {
                 saveBoundarySnapshot: true,
                 executionExt: [
                     "melix.gateway.acceleration_mode": "speculative_decode",
+                    "melix.gateway.acceleration_profile": "throughput",
                     "melix.gateway.draft_model_id": "melix-dev-text",
                     "melix.gateway.num_draft_tokens": "7",
                 ]
@@ -3367,11 +3372,47 @@ struct RequestCoordinatorTests {
         let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
 
         #expect(prefillRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(prefillRequest.execution.acceleration.profileID == "throughput")
+        #expect(prefillRequest.execution.acceleration.ext["melix.gateway.acceleration_profile"] == "throughput")
         #expect(prefillRequest.execution.acceleration.draftModelID == "melix-dev-text")
         #expect(prefillRequest.execution.acceleration.numDraftTokens == 7)
         #expect(decodeRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(decodeRequest.execution.acceleration.profileID == "throughput")
         #expect(decodeRequest.execution.acceleration.draftModelID == "melix-dev-text")
         #expect(decodeRequest.execution.acceleration.numDraftTokens == 7)
+
+        await workerClient.emitDecodeStarted(
+            requestID: "req-gateway-speculative-defaults",
+            decodeHandle: decodeRequest.decodeHandle,
+            accelerationMode: .speculativeDecode
+        )
+        let decodeProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-gateway-speculative-defaults",
+            phase: .requestDecoding,
+            matching: { $0.accelerationProfileID == "throughput" }
+        )
+        await workerClient.emitToken(
+            requestID: "req-gateway-speculative-defaults",
+            text: "accelerated",
+            accelerationMode: .speculativeDecode
+        )
+        await workerClient.emitCacheDecision(
+            requestID: "req-gateway-speculative-defaults",
+            restoredSnapshotID: "snapshot-throughput",
+            accelerationMode: .speculativeDecode
+        )
+
+        var metrics = await metricsStore.snapshot()
+        for _ in 0..<100 where metrics.values["session_graph.restore_snapshot_count", default: 0] < 1 {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            metrics = await metricsStore.snapshot()
+        }
+
+        #expect(decodeProgress?.decodeHandle == decodeRequest.decodeHandle)
+        #expect(decodeProgress?.accelerationMode == .speculativeDecode)
+        #expect(decodeProgress?.accelerationProfileID == "throughput")
+        #expect(metrics.values["session_graph.restore_snapshot_count", default: 0] == 1)
 
         await workerClient.finish(requestID: "req-gateway-speculative-defaults")
         _ = await consumer.result
@@ -3841,6 +3882,29 @@ private actor PhaseAwareWorkerClient:
         var payload = Melix_Worker_V1_TokenDelta()
         payload.text = text
         event.tokenDelta = payload
+        continuation.yield(event)
+    }
+
+    func emitCacheDecision(
+        requestID: String,
+        restoredSnapshotID: String,
+        accelerationMode: Melix_Worker_V1_AccelerationMode = .unspecified
+    ) {
+        guard let continuation = continuations[requestID] else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionDecoding
+        event.admissionState = .admissionAdmitted
+        event.lane = "text.decode.interactive"
+        event.accelerationMode = accelerationMode
+        var payload = Melix_Worker_V1_CacheDecision()
+        payload.blockTableID = "block-\(requestID)"
+        payload.restoredSnapshotID = restoredSnapshotID
+        payload.persistedToL2 = true
+        event.cacheDecision = payload
         continuation.yield(event)
     }
 

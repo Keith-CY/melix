@@ -32,6 +32,53 @@ Do not use debug-only diagnostics bundles as public performance claims. They are
 for reproducing runtime shape and request events, not for leaderboard-style
 comparisons.
 
+## Serving Acceleration Profiles
+
+Serving acceleration profiles are stable operator-facing intents that resolve
+before lower-level serving overrides. Use them when creating or updating a
+server session so reports, diagnostics, and benchmark artifacts can state the
+chosen serving intent instead of only listing individual knobs.
+
+Initial profiles:
+
+| Profile | Intent | Resolved defaults |
+| --- | --- | --- |
+| `balanced` | Default local serving with moderate batching. | baseline acceleration, concurrent processing enabled, max concurrent requests `4`, prefill batch size `2`, completion batch size `2`, no draft model, `0` draft tokens |
+| `throughput` | Throughput-first serving when a draft model is supplied. | speculative decode, concurrent processing enabled, max concurrent requests `8`, prefill batch size `4`, completion batch size `4`, `6` draft tokens, draft model supplied by operator override |
+| `low-memory` | Conservative serving for constrained memory. | baseline acceleration, concurrent processing disabled, max concurrent requests `1`, prefill batch size `1`, completion batch size `1`, no draft model, `0` draft tokens |
+| `long-session` | Repeated-session serving with bounded batching. | baseline acceleration, concurrent processing enabled, max concurrent requests `2`, prefill batch size `2`, completion batch size `1`, no draft model, `0` draft tokens |
+
+Examples:
+
+```bash
+melix server session create \
+  --title "Qwen low-memory" \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --acceleration-profile low-memory \
+  --json
+
+melix server session update \
+  --server-session-id server-session-qwen \
+  --acceleration-profile throughput \
+  --draft-model-id z-lab/Qwen3.5-27B-DFlash \
+  --json
+```
+
+Manual flags remain valid and override the resolved profile defaults. For
+example, `--acceleration-profile throughput --num-draft-tokens 4` keeps the
+throughput batching defaults while using `4` draft tokens. A throughput profile
+without a draft model is not enough to activate speculative serving; provide
+`--draft-model-id` or explicitly override the acceleration mode back to
+`baseline`.
+
+Serving state and evidence should record both the selected profile and resolved
+settings. In diagnostics and benchmark artifacts, prefer these keys when
+available:
+
+- `acceleration_profile`
+- `acceleration_profile_id`
+- `melix.gateway.acceleration_profile`
+
 ## Bundle Layout
 
 Serving diagnostics bundles are written under:

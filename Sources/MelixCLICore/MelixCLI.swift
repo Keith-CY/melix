@@ -1274,6 +1274,7 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
     public let port: Int
     public let rateLimitPerMinute: Int
     public let timeoutSeconds: Int
+    public let accelerationProfile: String
     public let accelerationMode: String
     public let draftModelID: String
     public let numDraftTokens: Int
@@ -1286,6 +1287,7 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         port: Int = MelixGatewayDefaults.port,
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
+        accelerationProfile: String = ServingAccelerationProfiles.defaultProfileID,
         accelerationMode: String = "baseline",
         draftModelID: String = "",
         numDraftTokens: Int = 0,
@@ -1297,6 +1299,7 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         self.port = port
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
+        self.accelerationProfile = accelerationProfile
         self.accelerationMode = accelerationMode
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
@@ -1312,6 +1315,7 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
     public let port: Int
     public let rateLimitPerMinute: Int
     public let timeoutSeconds: Int
+    public let accelerationProfile: String
     public let accelerationMode: String
     public let draftModelID: String
     public let numDraftTokens: Int
@@ -1325,6 +1329,7 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
         port: Int = 0,
         rateLimitPerMinute: Int = 0,
         timeoutSeconds: Int = 0,
+        accelerationProfile: String = "",
         accelerationMode: String = "",
         draftModelID: String = "",
         numDraftTokens: Int = 0,
@@ -1337,6 +1342,7 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
         self.port = port
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
+        self.accelerationProfile = accelerationProfile
         self.accelerationMode = accelerationMode
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
@@ -1893,8 +1899,8 @@ public enum MelixCLIParser {
       melix model roots rescan [--json]
       melix server snapshot [--json]
       melix server session list [--json]
-      melix server session create --title TITLE --model-id MODEL_ID [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
-      melix server session update --server-session-id ID [--title TITLE] [--model-id MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
+      melix server session create --title TITLE --model-id MODEL_ID [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
+      melix server session update --server-session-id ID [--title TITLE] [--model-id MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
       melix server session remove --server-session-id ID [--json]
       melix server session select --server-session-id ID [--json]
       melix server start [TITLE] [--model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--server-session-id ID] [--json]
@@ -2820,6 +2826,7 @@ public enum MelixCLIParser {
                     port: port,
                     rateLimitPerMinute: rateLimit,
                     timeoutSeconds: timeoutSeconds,
+                    accelerationProfile: servingDefaults.accelerationProfile,
                     accelerationMode: servingDefaults.accelerationMode,
                     draftModelID: servingDefaults.draftModelID,
                     numDraftTokens: servingDefaults.numDraftTokens,
@@ -2848,6 +2855,7 @@ public enum MelixCLIParser {
                         option: "--timeout-seconds",
                         defaultValue: 0
                     ) ?? 0,
+                    accelerationProfile: servingDefaults.accelerationProfile,
                     accelerationMode: servingDefaults.accelerationMode,
                     draftModelID: servingDefaults.draftModelID,
                     numDraftTokens: servingDefaults.numDraftTokens,
@@ -2871,23 +2879,31 @@ public enum MelixCLIParser {
 
     private static func parseCreateServerSessionServingDefaults(
         _ values: ParsedArguments
-    ) throws -> (accelerationMode: String, draftModelID: String, numDraftTokens: Int) {
+    ) throws -> (accelerationProfile: String, accelerationMode: String, draftModelID: String, numDraftTokens: Int) {
+        let profileID = try normalizedServingDefaultsAccelerationProfile(
+            values.single["--acceleration-profile"],
+            defaultValue: ServingAccelerationProfiles.defaultProfileID,
+            allowEmpty: false
+        )
+        let profile = ServingAccelerationProfiles.profile(id: profileID)
         let draftModelID = trimmedOption(values.single["--draft-model-id"])
         let accelerationMode = try normalizedServingDefaultsAccelerationMode(
             values.single["--acceleration-mode"],
-            defaultValue: draftModelID.isEmpty ? "baseline" : "speculative_decode"
+            defaultValue: draftModelID.isEmpty
+                ? ServingAccelerationProfiles.controlPlaneRawValue(profile.accelerationMode)
+                : "speculative_decode"
         )
         let numDraftTokens = try parseNonNegativeIntValue(
             values.single["--num-draft-tokens"],
             option: "--num-draft-tokens",
-            defaultValue: accelerationMode == "speculative_decode" ? defaultSpeculativeNumDraftTokens : 0
+            defaultValue: accelerationMode == "speculative_decode" ? Int(max(profile.numDraftTokens, UInt32(defaultSpeculativeNumDraftTokens))) : 0
         )
 
         if accelerationMode == "baseline" {
             guard draftModelID.isEmpty else {
                 throw MelixCLIError.usage("--draft-model-id requires --acceleration-mode speculative_decode.")
             }
-            return (accelerationMode, "", 0)
+            return (profileID, accelerationMode, "", 0)
         }
 
         guard !draftModelID.isEmpty else {
@@ -2896,31 +2912,39 @@ public enum MelixCLIParser {
         guard numDraftTokens > 0 else {
             throw MelixCLIError.usage("--num-draft-tokens must be greater than zero for speculative decode.")
         }
-        return (accelerationMode, draftModelID, numDraftTokens)
+        return (profileID, accelerationMode, draftModelID, numDraftTokens)
     }
 
     private static func parseUpdateServerSessionServingDefaults(
         _ values: ParsedArguments
-    ) throws -> (accelerationMode: String, draftModelID: String, numDraftTokens: Int) {
+    ) throws -> (accelerationProfile: String, accelerationMode: String, draftModelID: String, numDraftTokens: Int) {
+        let profileID = try normalizedServingDefaultsAccelerationProfile(
+            values.single["--acceleration-profile"],
+            defaultValue: "",
+            allowEmpty: true
+        )
+        let profile = profileID.isEmpty ? nil : ServingAccelerationProfiles.profile(id: profileID)
         let draftModelID = trimmedOption(values.single["--draft-model-id"])
         let accelerationMode = try normalizedServingDefaultsAccelerationMode(
             values.single["--acceleration-mode"],
-            defaultValue: draftModelID.isEmpty ? "" : "speculative_decode",
+            defaultValue: draftModelID.isEmpty
+                ? profile.map { ServingAccelerationProfiles.controlPlaneRawValue($0.accelerationMode) } ?? ""
+                : "speculative_decode",
             allowEmpty: true
         )
         let numDraftTokens = try parseNonNegativeIntValue(
             values.single["--num-draft-tokens"],
             option: "--num-draft-tokens",
-            defaultValue: 0
+            defaultValue: profile.map { Int($0.numDraftTokens) } ?? 0
         )
 
         if accelerationMode == "baseline" {
             guard draftModelID.isEmpty else {
                 throw MelixCLIError.usage("--draft-model-id requires --acceleration-mode speculative_decode.")
             }
-            return (accelerationMode, "", 0)
+            return (profileID, accelerationMode, "", 0)
         }
-        return (accelerationMode, draftModelID, numDraftTokens)
+        return (profileID, accelerationMode, draftModelID, numDraftTokens)
     }
 
     private static func parseChat(_ arguments: [String]) throws -> MelixCLICommand {
@@ -4636,9 +4660,17 @@ public enum MelixCLIParser {
         defaultValue: String,
         allowEmpty: Bool = false
     ) throws -> String {
+        guard let value else {
+            return defaultValue
+        }
         let trimmed = trimmedOption(value)
         if trimmed.isEmpty {
-            return allowEmpty ? defaultValue : defaultValue
+            guard allowEmpty else {
+                throw MelixCLIError.usage(
+                    "Invalid value for --acceleration-mode. Expected baseline or speculative_decode."
+                )
+            }
+            return defaultValue
         }
         switch trimmed.lowercased() {
         case "baseline", "speculative_decode":
@@ -4648,6 +4680,31 @@ public enum MelixCLIParser {
                 "Invalid value for --acceleration-mode. Expected baseline or speculative_decode."
             )
         }
+    }
+
+    private static func normalizedServingDefaultsAccelerationProfile(
+        _ value: String?,
+        defaultValue: String,
+        allowEmpty: Bool = false
+    ) throws -> String {
+        guard let value else {
+            return defaultValue
+        }
+        let trimmed = trimmedOption(value)
+        if trimmed.isEmpty {
+            guard allowEmpty else {
+                throw MelixCLIError.usage(
+                    "Invalid value for --acceleration-profile. Expected \(ServingAccelerationProfiles.allowedProfileList)."
+                )
+            }
+            return defaultValue
+        }
+        if let normalized = ServingAccelerationProfiles.normalizeProfileID(trimmed) {
+            return normalized
+        }
+        throw MelixCLIError.usage(
+            "Invalid value for --acceleration-profile. Expected \(ServingAccelerationProfiles.allowedProfileList)."
+        )
     }
 }
 
@@ -5254,7 +5311,8 @@ public actor MelixCLIRunner {
             completionBatchSize: configuredSession.servingDefaults.completionBatchSize,
             accelerationMode: accelerationMode(for: configuredSession.servingDefaults.accelerationMode),
             draftModelID: configuredSession.servingDefaults.draftModelID,
-            numDraftTokens: configuredSession.servingDefaults.numDraftTokens
+            numDraftTokens: configuredSession.servingDefaults.numDraftTokens,
+            accelerationProfile: configuredSession.servingDefaults.accelerationProfile
         )
     }
 
@@ -5872,7 +5930,8 @@ public actor MelixCLIRunner {
                 completionBatchSize: configuredSession.servingDefaults.completionBatchSize,
                 accelerationMode: accelerationMode(for: configuredSession.servingDefaults.accelerationMode),
                 draftModelID: configuredSession.servingDefaults.draftModelID,
-                numDraftTokens: configuredSession.servingDefaults.numDraftTokens
+                numDraftTokens: configuredSession.servingDefaults.numDraftTokens,
+                accelerationProfile: configuredSession.servingDefaults.accelerationProfile
             )
             let snapshot = try await client.startServerSession(serverSessionID: configuredSession.id)
             return try renderServerSnapshot(snapshot, json: options.json)
@@ -7267,10 +7326,35 @@ public actor MelixCLIRunner {
         }
     }
 
+    private func applyAccelerationProfile(
+        _ profileID: String,
+        to defaults: inout MelixOperatorServerServingDefaultsState
+    ) throws {
+        let normalizedProfileID = profileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedProfileID.isEmpty == false else {
+            return
+        }
+        guard let profileID = ServingAccelerationProfiles.normalizeProfileID(normalizedProfileID) else {
+            throw MelixCLIError.usage(
+                "Invalid value for --acceleration-profile. Expected \(ServingAccelerationProfiles.allowedProfileList)."
+            )
+        }
+        let profile = ServingAccelerationProfiles.profile(id: profileID)
+        defaults.accelerationProfile = profileID
+        defaults.concurrentProcessingEnabled = profile.concurrentProcessingEnabled
+        defaults.maxConcurrentRequests = Int(profile.maxConcurrentRequests)
+        defaults.prefillBatchSize = Int(profile.prefillBatchSize)
+        defaults.completionBatchSize = Int(profile.completionBatchSize)
+        defaults.accelerationMode = ServingAccelerationProfiles.controlPlaneRawValue(profile.accelerationMode)
+        defaults.draftModelID = profile.draftModelID
+        defaults.numDraftTokens = Int(profile.numDraftTokens)
+    }
+
     private func servingDefaults(
         for options: ServerSessionCreateOptions
     ) throws -> MelixOperatorServerServingDefaultsState {
         var defaults = MelixOperatorServerServingDefaultsState()
+        try applyAccelerationProfile(options.accelerationProfile, to: &defaults)
         let rawAccelerationMode = options.accelerationMode.trimmingCharacters(in: .whitespacesAndNewlines)
         let accelerationMode = normalizedServingDefaultsAccelerationMode(options.accelerationMode)
         if rawAccelerationMode.isEmpty == false && accelerationMode.isEmpty {
@@ -7279,11 +7363,21 @@ public actor MelixCLIRunner {
             )
         }
         guard accelerationMode == "speculative_decode" else {
+            if rawAccelerationMode.isEmpty == false {
+                defaults.accelerationMode = "baseline"
+                defaults.draftModelID = ""
+                defaults.numDraftTokens = 0
+            }
             return defaults
         }
         defaults.accelerationMode = accelerationMode
-        defaults.draftModelID = options.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        defaults.numDraftTokens = max(0, options.numDraftTokens)
+        let draftModelID = options.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if draftModelID.isEmpty == false {
+            defaults.draftModelID = draftModelID
+        }
+        if options.numDraftTokens > 0 {
+            defaults.numDraftTokens = options.numDraftTokens
+        }
         if defaults.numDraftTokens <= 0 {
             defaults.numDraftTokens = Self.defaultSpeculativeNumDraftTokens
         }
@@ -7305,10 +7399,12 @@ public actor MelixCLIRunner {
             )
         }
         let draftModelID = options.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        try applyAccelerationProfile(options.accelerationProfile, to: &session.servingDefaults)
         let hasAccelerationMode = accelerationMode.isEmpty == false
         let hasDraftModelID = draftModelID.isEmpty == false
         let hasNumDraftTokens = options.numDraftTokens > 0
-        guard hasAccelerationMode || hasDraftModelID || hasNumDraftTokens else {
+        let hasAccelerationProfile = options.accelerationProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        guard hasAccelerationMode || hasDraftModelID || hasNumDraftTokens || hasAccelerationProfile else {
             return
         }
 
@@ -7428,20 +7524,7 @@ public actor MelixCLIRunner {
     }
 
     private func accelerationMode(for rawValue: String) -> Melix_Controlplane_V1_AccelerationMode {
-        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "baseline":
-            return .baseline
-        case "speculative_decode":
-            return .speculativeDecode
-        case "accelerated_prefill":
-            return .acceleratedPrefill
-        case "active_kv_quantized":
-            return .activeKvQuantized
-        case "sparse_prefill":
-            return .sparsePrefill
-        default:
-            return .unspecified
-        }
+        ServingAccelerationProfiles.controlPlaneAccelerationMode(rawValue: rawValue)
     }
 
     private func runtimeModeLabel(_ model: Melix_Controlplane_V1_ModelSummary) -> String {

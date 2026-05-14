@@ -6448,6 +6448,39 @@ struct ControlPlaneServiceTests {
         #expect(serverRequest.server.applyGatewayConfig.rateLimitPerMinute == 240)
         #expect(serverRequest.server.applyGatewayConfig.timeoutSeconds == 90)
         #expect(gatewaySnapshot.runtimeSessions.first?.serverSessionID == "server-session-2")
+
+        let servingDefaultsSnapshot = try await client.applyServerSessionServingDefaults(
+            serverSessionID: "server-session-2",
+            temperature: 0.42,
+            topP: 0.91,
+            maxTokens: 768,
+            streamIntervalTokens: 3,
+            maxConcurrentRequests: 8,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 4,
+            completionBatchSize: 4,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            numDraftTokens: 6,
+            accelerationProfile: "throughput"
+        )
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.apply_serving_defaults")
+        #expect(serverRequest.targetID == "server-session-2")
+        #expect(serverRequest.server.applyServingDefaults.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.applyServingDefaults.temperature == 0.42)
+        #expect(serverRequest.server.applyServingDefaults.topP == 0.91)
+        #expect(serverRequest.server.applyServingDefaults.maxTokens == 768)
+        #expect(serverRequest.server.applyServingDefaults.streamIntervalTokens == 3)
+        #expect(serverRequest.server.applyServingDefaults.maxConcurrentRequests == 8)
+        #expect(serverRequest.server.applyServingDefaults.concurrentProcessingEnabled)
+        #expect(serverRequest.server.applyServingDefaults.prefillBatchSize == 4)
+        #expect(serverRequest.server.applyServingDefaults.completionBatchSize == 4)
+        #expect(serverRequest.server.applyServingDefaults.accelerationMode == .speculativeDecode)
+        #expect(serverRequest.server.applyServingDefaults.draftModelID == "melix-dev-draft")
+        #expect(serverRequest.server.applyServingDefaults.numDraftTokens == 6)
+        #expect(serverRequest.server.applyServingDefaults.accelerationProfile == "throughput")
+        #expect(servingDefaultsSnapshot.runtimeSessions.first?.serverSessionID == "server-session-2")
     }
 
     @Test("control-plane xpc client server lifecycle defaults surface unimplemented errors")
@@ -6577,6 +6610,26 @@ struct ControlPlaneServiceTests {
                 servedModelID: "melix-dev-text",
                 rateLimitPerMinute: 120,
                 timeoutSeconds: 60
+            )
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Serving defaults apply is not implemented for this control-plane client."
+        )) {
+            _ = try await client.applyServerSessionServingDefaults(
+                serverSessionID: "server-session-1",
+                temperature: 0.7,
+                topP: 1.0,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4,
+                concurrentProcessingEnabled: true,
+                prefillBatchSize: 2,
+                completionBatchSize: 2,
+                accelerationMode: .baseline,
+                draftModelID: "",
+                numDraftTokens: 0,
+                accelerationProfile: "balanced"
             )
         }
 
