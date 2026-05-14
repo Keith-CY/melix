@@ -3722,6 +3722,12 @@
         "key": "serialization_checksum",
         "unit": "index-sum",
         "direction": "informational"
+      },
+      {
+        "key": "serialized_bytes",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
       }
     ]
   }
