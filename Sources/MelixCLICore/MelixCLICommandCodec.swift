@@ -386,11 +386,18 @@ public enum MelixCLICommandCodec {
             arguments = ["server", "session", "update"]
             appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
             appendOption("--title", value: options.title, into: &arguments)
-            appendOption("--model-id", value: options.modelID, into: &arguments)
+            for modelID in options.servedModelIDs {
+                appendOption("--model", value: modelID, into: &arguments)
+            }
+            if !options.defaultModelID.isEmpty,
+               options.servedModelIDs.first != options.defaultModelID {
+                appendOption("--default-model", value: options.defaultModelID, into: &arguments)
+            }
             appendOption("--host", value: options.host, into: &arguments)
             appendPositiveInt("--port", value: options.port, into: &arguments)
             appendPositiveInt("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
             appendPositiveInt("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
+            appendPositiveInt("--model-idle-timeout-seconds", value: options.modelIdleTimeoutSeconds, into: &arguments)
             appendOption("--acceleration-mode", value: options.accelerationMode, into: &arguments)
             appendOption("--draft-model-id", value: options.draftModelID, into: &arguments)
             appendPositiveInt("--num-draft-tokens", value: options.numDraftTokens, into: &arguments)
@@ -398,11 +405,18 @@ public enum MelixCLICommandCodec {
         case .serverSessionCreate(let options):
             arguments = ["server", "session", "create"]
             appendOption("--title", value: options.title, into: &arguments)
-            appendOption("--model-id", value: options.modelID, into: &arguments)
+            for modelID in options.servedModelIDs {
+                appendOption("--model", value: modelID, into: &arguments)
+            }
+            if !options.defaultModelID.isEmpty,
+               options.servedModelIDs.first != options.defaultModelID {
+                appendOption("--default-model", value: options.defaultModelID, into: &arguments)
+            }
             appendOption("--host", value: options.host, into: &arguments)
             appendPositiveInt("--port", value: options.port, into: &arguments)
             appendPositiveInt("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
             appendPositiveInt("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
+            appendPositiveInt("--model-idle-timeout-seconds", value: options.modelIdleTimeoutSeconds, into: &arguments)
             appendOption("--acceleration-mode", value: options.accelerationMode, into: &arguments)
             appendOption("--draft-model-id", value: options.draftModelID, into: &arguments)
             appendPositiveInt("--num-draft-tokens", value: options.numDraftTokens, into: &arguments)
@@ -422,11 +436,18 @@ public enum MelixCLICommandCodec {
             } else {
                 appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
             }
-            appendOption("--model", value: options.modelID, into: &arguments)
+            for modelID in options.servedModelIDs {
+                appendOption("--model", value: modelID, into: &arguments)
+            }
+            if !options.defaultModelID.isEmpty,
+               options.servedModelIDs.first != options.defaultModelID {
+                appendOption("--default-model", value: options.defaultModelID, into: &arguments)
+            }
             appendOption("--host", value: options.host, into: &arguments)
             appendPositiveInt("--port", value: options.port, into: &arguments)
             appendPositiveInt("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
             appendPositiveInt("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
+            appendPositiveInt("--model-idle-timeout-seconds", value: options.modelIdleTimeoutSeconds, into: &arguments)
             json = options.json
         case .serverPause(let options):
             arguments = ["server", "pause"]

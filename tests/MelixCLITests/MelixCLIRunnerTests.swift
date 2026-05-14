@@ -1534,7 +1534,8 @@ struct MelixCLIRunnerTests {
               "args": {
                 "server_session_id": "server-session-1",
                 "title": 123,
-                "model_id": "${inputs.model_id}",
+                "default_model_id": "${inputs.model_id}",
+                "served_model_ids": ["${inputs.model_id}"],
                 "host": true,
                 "port": "8080",
                 "rate_limit_per_minute": 60,
@@ -2074,7 +2075,8 @@ struct MelixCLIRunnerTests {
               "args": {
                 "server_session_id": "${inputs.server_session_id}",
                 "title": "Fake Phase 8",
-                "model_id": "${inputs.model_id}",
+                "default_model_id": "${inputs.model_id}",
+                "served_model_ids": ["${inputs.model_id}"],
                 "host": "127.0.0.1",
                 "port": 8080
               }
@@ -2299,7 +2301,12 @@ struct MelixCLIRunnerTests {
             MelixOperatorSessionState(
                 selectedServerSessionID: "server-session-1",
                 serverSessions: [
-                    .init(id: "server-session-1", title: "Fake Phase 8", modelID: "melix-dev-text")
+                    .init(
+                        id: "server-session-1",
+                        title: "Fake Phase 8",
+                        defaultModelID: "melix-dev-text",
+                        servedModelIDs: ["melix-dev-text"]
+                    )
                 ]
             )
         )
@@ -5434,7 +5441,7 @@ struct MelixCLIRunnerTests {
             .serverSessionCreate(
                 .init(
                     title: "Vision Session",
-                    modelID: "melix-dev-vlm",
+                    servedModelIDs: ["melix-dev-vlm"],
                     host: "127.0.0.1",
                     port: 12434,
                     accelerationMode: "speculative_decode",
@@ -5454,7 +5461,8 @@ struct MelixCLIRunnerTests {
 
         #expect(selectedServerSessionID == "server-session-1")
         #expect(sessions.count == 1)
-        #expect(sessions.first?["model_id"] as? String == "melix-dev-vlm")
+        #expect(sessions.first?["default_model_id"] as? String == "melix-dev-vlm")
+        #expect(sessions.first?["served_model_ids"] as? [String] == ["melix-dev-vlm"])
 
         _ = try await runner.run(
             .serverStart(.init(serverSessionID: "server-session-1"))
@@ -5464,7 +5472,8 @@ struct MelixCLIRunnerTests {
         let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
 
         #expect(gatewayConfigCall.serverSessionID == "server-session-1")
-        #expect(gatewayConfigCall.servedModelID == "melix-dev-vlm")
+        #expect(gatewayConfigCall.defaultModelID == "melix-dev-vlm")
+        #expect(gatewayConfigCall.servedModelIDs == ["melix-dev-vlm"])
         #expect(servingDefaultsCall.serverSessionID == "server-session-1")
         #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
         #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
@@ -5479,7 +5488,8 @@ struct MelixCLIRunnerTests {
                     .init(
                         id: "server-session-1",
                         title: "Broken Session",
-                        modelID: "melix-dev-ocr"
+                        defaultModelID: "melix-dev-ocr",
+                        servedModelIDs: ["melix-dev-ocr"]
                     )
                 ]
             )
@@ -5515,7 +5525,7 @@ struct MelixCLIRunnerTests {
             .serverSessionCreate(
                 .init(
                     title: "Qwen Session",
-                    modelID: "mlx-community/Qwen3.5-27B-4bit"
+                    servedModelIDs: ["mlx-community/Qwen3.5-27B-4bit"]
                 )
             )
         )
@@ -5560,7 +5570,7 @@ struct MelixCLIRunnerTests {
             .serverStart(
                 .init(
                     serverTitle: "Gemma 31B",
-                    modelID: modelID,
+                    servedModelIDs: [modelID],
                     host: "127.0.0.1",
                     port: 12434,
                     rateLimitPerMinute: 60,
@@ -5578,13 +5588,15 @@ struct MelixCLIRunnerTests {
         #expect(state.selectedServerSessionID == "server-session-1")
         #expect(session.id == "server-session-1")
         #expect(session.title == "Gemma 31B")
-        #expect(session.modelID == modelID)
+        #expect(session.defaultModelID == modelID)
+        #expect(session.servedModelIDs == [modelID])
         #expect(session.host == "127.0.0.1")
         #expect(session.port == 12434)
         #expect(session.rateLimitPerMinute == 60)
         #expect(session.timeoutSeconds == 240)
         #expect(gatewayConfigCall.serverSessionID == "server-session-1")
-        #expect(gatewayConfigCall.servedModelID == modelID)
+        #expect(gatewayConfigCall.defaultModelID == modelID)
+        #expect(gatewayConfigCall.servedModelIDs == [modelID])
         #expect(gatewayConfigCall.port == 12434)
         #expect(servingDefaultsCall.serverSessionID == "server-session-1")
         #expect(startedAction == .start("server-session-1"))
@@ -5618,7 +5630,8 @@ struct MelixCLIRunnerTests {
                     .init(
                         id: "server-session-1",
                         title: "Qwen Dev",
-                        modelID: originalModelID,
+                        defaultModelID: originalModelID,
+                        servedModelIDs: [originalModelID],
                         host: "127.0.0.1",
                         port: 8080
                     ),
@@ -5630,7 +5643,7 @@ struct MelixCLIRunnerTests {
             .serverStart(
                 .init(
                     serverTitle: "Qwen Dev",
-                    modelID: updatedModelID,
+                    servedModelIDs: [updatedModelID],
                     host: "0.0.0.0",
                     port: 12435,
                     rateLimitPerMinute: 90,
@@ -5648,13 +5661,15 @@ struct MelixCLIRunnerTests {
         #expect(state.selectedServerSessionID == "server-session-1")
         #expect(session.id == "server-session-1")
         #expect(session.title == "Qwen Dev")
-        #expect(session.modelID == updatedModelID)
+        #expect(session.defaultModelID == updatedModelID)
+        #expect(session.servedModelIDs == [updatedModelID])
         #expect(session.host == "0.0.0.0")
         #expect(session.port == 12435)
         #expect(session.rateLimitPerMinute == 90)
         #expect(session.timeoutSeconds == 300)
         #expect(gatewayConfigCall.serverSessionID == "server-session-1")
-        #expect(gatewayConfigCall.servedModelID == updatedModelID)
+        #expect(gatewayConfigCall.defaultModelID == updatedModelID)
+        #expect(gatewayConfigCall.servedModelIDs == [updatedModelID])
         #expect(gatewayConfigCall.port == 12435)
         #expect(startedAction == .start("server-session-1"))
     }
@@ -5685,12 +5700,14 @@ struct MelixCLIRunnerTests {
                     .init(
                         id: "server-session-1",
                         title: "Existing One",
-                        modelID: modelID
+                        defaultModelID: modelID,
+                        servedModelIDs: [modelID]
                     ),
                     .init(
                         id: "server-session-3",
                         title: "Existing Three",
-                        modelID: modelID
+                        defaultModelID: modelID,
+                        servedModelIDs: [modelID]
                     ),
                 ]
             )
@@ -5700,7 +5717,7 @@ struct MelixCLIRunnerTests {
             .serverStart(
                 .init(
                     serverTitle: "Gemma 31B",
-                    modelID: modelID,
+                    servedModelIDs: [modelID],
                     port: 12434
                 )
             )
@@ -5731,10 +5748,10 @@ struct MelixCLIRunnerTests {
             )
         )
 
-        await #expect(throws: MelixCLIError.missingRequired("TITLE is required when passing --model, --host, --port, --rate-limit-per-minute, or --timeout-seconds to melix server start.")) {
-            _ = try await runner.run(.serverStart(.init(modelID: "mlx-community/gemma-4-31b-it-4bit")))
+        await #expect(throws: MelixCLIError.missingRequired("TITLE is required when passing --model, --models, --default-model, --host, --port, --rate-limit-per-minute, --timeout-seconds, or --model-idle-timeout-seconds to melix server start.")) {
+            _ = try await runner.run(.serverStart(.init(servedModelIDs: ["mlx-community/gemma-4-31b-it-4bit"])))
         }
-        await #expect(throws: MelixCLIError.missingRequired("--model is required when starting a titled server session.")) {
+        await #expect(throws: MelixCLIError.missingRequired("--model or --models is required when starting a titled server session.")) {
             _ = try await runner.run(.serverStart(.init(serverTitle: "Gemma 31B")))
         }
     }
@@ -5775,7 +5792,8 @@ struct MelixCLIRunnerTests {
                     .init(
                         id: "server-session-1",
                         title: "Imported Session",
-                        modelID: importedModelID
+                        defaultModelID: importedModelID,
+                        servedModelIDs: [importedModelID]
                     )
                 ]
             )
@@ -5788,7 +5806,8 @@ struct MelixCLIRunnerTests {
         let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
         let startedAction = try #require(await client.lastServerAction)
 
-        #expect(gatewayConfigCall.servedModelID == importedModelID)
+        #expect(gatewayConfigCall.defaultModelID == importedModelID)
+        #expect(gatewayConfigCall.servedModelIDs == [importedModelID])
         #expect(startedAction == .start("server-session-1"))
     }
 
@@ -10169,9 +10188,11 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         let serverSessionID: String
         let host: String
         let port: Int
-        let servedModelID: String
+        let defaultModelID: String
+        let servedModelIDs: [String]
         let rateLimitPerMinute: Int
         let timeoutSeconds: Int
+        let modelIdleTimeoutSeconds: Int
     }
 
     struct ServingDefaultsApplyCall: Sendable, Equatable {
@@ -10561,17 +10582,21 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         serverSessionID: String,
         host: String,
         port: Int,
-        servedModelID: String,
+        defaultModelID: String,
+        servedModelIDs: [String],
         rateLimitPerMinute: Int,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        modelIdleTimeoutSeconds: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         lastGatewayConfigApplyRequest = GatewayConfigApplyCall(
             serverSessionID: serverSessionID,
             host: host,
             port: port,
-            servedModelID: servedModelID,
+            defaultModelID: defaultModelID,
+            servedModelIDs: servedModelIDs,
             rateLimitPerMinute: rateLimitPerMinute,
-            timeoutSeconds: timeoutSeconds
+            timeoutSeconds: timeoutSeconds,
+            modelIdleTimeoutSeconds: modelIdleTimeoutSeconds
         )
         return snapshot
     }

@@ -421,9 +421,11 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let serverSessionID: String
         let host: String
         let port: Int
-        let servedModelID: String
+        let defaultModelID: String
+        let servedModelIDs: [String]
         let rateLimitPerMinute: Int
         let timeoutSeconds: Int
+        let modelIdleTimeoutSeconds: Int
     }
 
     struct RecordedServingDefaultsApplyRequest: Equatable, Sendable {
@@ -1268,22 +1270,27 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         serverSessionID: String,
         host: String,
         port: Int,
-        servedModelID: String,
+        defaultModelID: String,
+        servedModelIDs: [String],
         rateLimitPerMinute: Int,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        modelIdleTimeoutSeconds: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         recordedActions.append("gateway.config:\(serverSessionID)")
         if let applyGatewayConfigError {
             throw applyGatewayConfigError
         }
+        let normalizedServedModelIDs = servedModelIDs.isEmpty ? [defaultModelID] : servedModelIDs
         recordedGatewayConfigApplyRequests.append(
             RecordedGatewayConfigApplyRequest(
                 serverSessionID: serverSessionID,
                 host: host,
                 port: port,
-                servedModelID: servedModelID,
+                defaultModelID: defaultModelID,
+                servedModelIDs: normalizedServedModelIDs,
                 rateLimitPerMinute: rateLimitPerMinute,
-                timeoutSeconds: timeoutSeconds
+                timeoutSeconds: timeoutSeconds,
+                modelIdleTimeoutSeconds: modelIdleTimeoutSeconds
             )
         )
 
@@ -1294,9 +1301,11 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             config.listeners[existingIndex].requestedPort = UInt32(max(1, port))
             config.listeners[existingIndex].effectiveHost = host
             config.listeners[existingIndex].effectivePort = UInt32(max(1, port))
-            config.listeners[existingIndex].servedModelID = servedModelID
+            config.listeners[existingIndex].defaultModelID = defaultModelID
+            config.listeners[existingIndex].servedModelIds = normalizedServedModelIDs
             config.listeners[existingIndex].rateLimitPerMinute = UInt32(max(1, rateLimitPerMinute))
             config.listeners[existingIndex].timeoutSeconds = UInt32(max(1, timeoutSeconds))
+            config.listeners[existingIndex].modelIdleTimeoutSeconds = UInt32(max(0, modelIdleTimeoutSeconds))
             config.listeners[existingIndex].source = .operatorOverride
             config.listeners[existingIndex].activeBinding = true
             config.listeners[existingIndex].requiresRestart = false
@@ -1307,9 +1316,11 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             listener.requestedPort = UInt32(max(1, port))
             listener.effectiveHost = host
             listener.effectivePort = UInt32(max(1, port))
-            listener.servedModelID = servedModelID
+            listener.defaultModelID = defaultModelID
+            listener.servedModelIds = normalizedServedModelIDs
             listener.rateLimitPerMinute = UInt32(max(1, rateLimitPerMinute))
             listener.timeoutSeconds = UInt32(max(1, timeoutSeconds))
+            listener.modelIdleTimeoutSeconds = UInt32(max(0, modelIdleTimeoutSeconds))
             listener.source = .operatorOverride
             listener.activeBinding = true
             listener.requiresRestart = false
@@ -1393,7 +1404,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         } else {
             var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
             session.serverSessionID = serverSessionID
-            session.servedModelID = snapshot.gatewayConfig.listeners.first(where: { $0.serverSessionID == serverSessionID })?.servedModelID ?? "melix-dev-text"
+            session.defaultModelID = snapshot.gatewayConfig.listeners.first(where: { $0.serverSessionID == serverSessionID })?.defaultModelID ?? "melix-dev-text"
             session.requestedTemperature = temperature
             session.requestedTopP = topP
             session.requestedMaxTokens = UInt32(max(1, maxTokens))

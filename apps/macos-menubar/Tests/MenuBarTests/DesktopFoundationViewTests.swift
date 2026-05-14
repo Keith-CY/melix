@@ -386,7 +386,8 @@ struct DesktopFoundationViewTests {
         listener.requestedPort = 18080
         listener.effectiveHost = "127.0.0.1"
         listener.effectivePort = 11_434
-        listener.servedModelID = desktopTestReadyModelID
+        listener.defaultModelID = desktopTestReadyModelID
+        listener.servedModelIds = [desktopTestReadyModelID]
         listener.rateLimitPerMinute = 240
         listener.timeoutSeconds = 90
         listener.source = .operatorOverride
@@ -395,7 +396,7 @@ struct DesktopFoundationViewTests {
         snapshot.gatewayConfig.listeners = [listener]
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
         servingDefaults.serverSessionID = "server-session-1"
-        servingDefaults.servedModelID = desktopTestReadyModelID
+        servingDefaults.defaultModelID = desktopTestReadyModelID
         servingDefaults.requestedTemperature = 0.33
         servingDefaults.requestedTopP = 0.92
         servingDefaults.requestedMaxTokens = 384
@@ -450,7 +451,7 @@ struct DesktopFoundationViewTests {
         snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
         servingDefaults.serverSessionID = "server-session-1"
-        servingDefaults.servedModelID = desktopTestReadyModelID
+        servingDefaults.defaultModelID = desktopTestReadyModelID
         servingDefaults.requestedTemperature = 0.44
         servingDefaults.requestedTopP = 0.91
         servingDefaults.requestedMaxTokens = 320

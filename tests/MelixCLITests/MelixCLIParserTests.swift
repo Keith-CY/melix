@@ -761,7 +761,7 @@ struct MelixCLIParserTests {
         let titledServerStartCommand = MelixCLICommand.serverStart(
             .init(
                 serverTitle: "Gemma 31B",
-                modelID: "mlx-community/gemma-4-31b-it-4bit",
+                servedModelIDs: ["mlx-community/gemma-4-31b-it-4bit"],
                 host: "127.0.0.1",
                 port: 12434,
                 rateLimitPerMinute: 60,
@@ -782,6 +782,34 @@ struct MelixCLIParserTests {
             "--json",
         ])
         #expect(try MelixCLIParser.parse(titledServerStartArguments) == titledServerStartCommand)
+
+        let multiModelServerStartCommand = MelixCLICommand.serverStart(
+            .init(
+                serverTitle: "Mixed Server",
+                defaultModelID: "melix-secondary",
+                servedModelIDs: ["melix-primary", "melix-secondary"],
+                host: "127.0.0.1",
+                port: 12435,
+                modelIdleTimeoutSeconds: 300,
+                json: true
+            )
+        )
+        let multiModelServerStartArguments = try MelixCLICommandCodec.arguments(
+            for: multiModelServerStartCommand
+        )
+        #expect(multiModelServerStartArguments == [
+            "server",
+            "start",
+            "Mixed Server",
+            "--model", "melix-primary",
+            "--model", "melix-secondary",
+            "--default-model", "melix-secondary",
+            "--host", "127.0.0.1",
+            "--port", "12435",
+            "--model-idle-timeout-seconds", "300",
+            "--json",
+        ])
+        #expect(try MelixCLIParser.parse(multiModelServerStartArguments) == multiModelServerStartCommand)
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -872,12 +900,12 @@ struct MelixCLIParserTests {
             (.modelRootsRescan(.init(json: true)), "model.roots.rescan"),
             (.serverSnapshot(.init(json: true)), "server.snapshot"),
             (.serverSessionList(.init(json: true)), "server.session.list"),
-            (.serverSessionCreate(.init(title: "Server", modelID: "model", host: "127.0.0.1", port: 8080, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)), "server.session.create"),
-            (.serverSessionUpdate(.init(serverSessionID: "server-session-1", title: "Server", modelID: "model", host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)), "server.session.update"),
+            (.serverSessionCreate(.init(title: "Server", servedModelIDs: ["model"], host: "127.0.0.1", port: 8080, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)), "server.session.create"),
+            (.serverSessionUpdate(.init(serverSessionID: "server-session-1", title: "Server", servedModelIDs: ["model"], host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)), "server.session.update"),
             (.serverSessionRemove(.init(serverSessionID: "server-session-1", json: true)), "server.session.remove"),
             (.serverSessionSelect(.init(serverSessionID: "server-session-1", json: true)), "server.session.select"),
             (.serverStart(.init(serverSessionID: "server-session-1", json: true)), "server.start"),
-            (.serverStart(.init(serverTitle: "Gemma 31B", modelID: "mlx-community/gemma-4-31b-it-4bit", host: "127.0.0.1", port: 12434, json: true)), "server.start"),
+            (.serverStart(.init(serverTitle: "Gemma 31B", servedModelIDs: ["mlx-community/gemma-4-31b-it-4bit"], host: "127.0.0.1", port: 12434, json: true)), "server.start"),
             (.serverPause(.init(serverSessionID: "server-session-1", json: true)), "server.pause"),
             (.serverResume(.init(serverSessionID: "server-session-1", json: true)), "server.resume"),
             (.serverWake(.init(serverSessionID: "server-session-1", json: true)), "server.wake"),
@@ -965,8 +993,8 @@ struct MelixCLIParserTests {
             .modelRootsRemove(.init(path: "/models", json: true)),
             .modelRootsMove(.init(path: "/models", index: 1, json: true)),
             .modelRootsRescan(.init(json: true)),
-            .serverSessionCreate(.init(title: "Server", modelID: "model", host: "127.0.0.1", port: 8080, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)),
-            .serverSessionUpdate(.init(serverSessionID: "server-session-1", title: "Server", modelID: "model", host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)),
+            .serverSessionCreate(.init(title: "Server", servedModelIDs: ["model"], host: "127.0.0.1", port: 8080, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)),
+            .serverSessionUpdate(.init(serverSessionID: "server-session-1", title: "Server", servedModelIDs: ["model"], host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)),
             .serverSessionRemove(.init(serverSessionID: "server-session-1", json: true)),
             .serverSessionSelect(.init(serverSessionID: "server-session-1", json: true)),
             .serverStart(.init(serverSessionID: "server-session-1", json: true)),
@@ -1562,9 +1590,11 @@ struct MelixCLIParserTests {
             "session",
             "create",
             "--title", "Qwen Session",
-            "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--models", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit,melix-secondary",
+            "--default-model", "melix-secondary",
             "--host", "127.0.0.1",
             "--port", "12434",
+            "--model-idle-timeout-seconds", "300",
             "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
             "--num-draft-tokens", "4",
             "--json",
@@ -1574,9 +1604,12 @@ struct MelixCLIParserTests {
             "session",
             "update",
             "--server-session-id", "server-session-qwen",
-            "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--model", "melix-secondary",
+            "--default-model", "melix-secondary",
             "--port", "12434",
             "--timeout-seconds", "90",
+            "--model-idle-timeout-seconds", "240",
             "--acceleration-mode", "speculative_decode",
             "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
             "--num-draft-tokens", "8",
@@ -1612,17 +1645,27 @@ struct MelixCLIParserTests {
         }
 
         #expect(createOptions.title == "Qwen Session")
-        #expect(createOptions.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(createOptions.defaultModelID == "melix-secondary")
+        #expect(createOptions.servedModelIDs == [
+            "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "melix-secondary",
+        ])
         #expect(createOptions.host == "127.0.0.1")
         #expect(createOptions.port == 12434)
+        #expect(createOptions.modelIdleTimeoutSeconds == 300)
         #expect(createOptions.accelerationMode == "speculative_decode")
         #expect(createOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(createOptions.numDraftTokens == 4)
         #expect(createOptions.json)
         #expect(updateOptions.serverSessionID == "server-session-qwen")
-        #expect(updateOptions.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(updateOptions.defaultModelID == "melix-secondary")
+        #expect(updateOptions.servedModelIDs == [
+            "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "melix-secondary",
+        ])
         #expect(updateOptions.port == 12434)
         #expect(updateOptions.timeoutSeconds == 90)
+        #expect(updateOptions.modelIdleTimeoutSeconds == 240)
         #expect(updateOptions.accelerationMode == "speculative_decode")
         #expect(updateOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(updateOptions.numDraftTokens == 8)
@@ -1642,11 +1685,13 @@ struct MelixCLIParserTests {
             "server",
             "start",
             "Gemma 31B",
-            "--model", "mlx-community/gemma-4-31b-it-4bit",
+            "--models", "mlx-community/gemma-4-31b-it-4bit,melix-secondary",
+            "--default-model", "melix-secondary",
             "--host", "127.0.0.1",
             "--port", "12434",
             "--rate-limit-per-minute", "60",
             "--timeout-seconds", "240",
+            "--model-idle-timeout-seconds", "300",
             "--json",
         ])
         let resumeCommand = try MelixCLIParser.parse([
@@ -1690,11 +1735,16 @@ struct MelixCLIParserTests {
         #expect(startOptions.json)
         #expect(titledStartOptions.serverSessionID == "server-session-1")
         #expect(titledStartOptions.serverTitle == "Gemma 31B")
-        #expect(titledStartOptions.modelID == "mlx-community/gemma-4-31b-it-4bit")
+        #expect(titledStartOptions.defaultModelID == "melix-secondary")
+        #expect(titledStartOptions.servedModelIDs == [
+            "mlx-community/gemma-4-31b-it-4bit",
+            "melix-secondary",
+        ])
         #expect(titledStartOptions.host == "127.0.0.1")
         #expect(titledStartOptions.port == 12434)
         #expect(titledStartOptions.rateLimitPerMinute == 60)
         #expect(titledStartOptions.timeoutSeconds == 240)
+        #expect(titledStartOptions.modelIdleTimeoutSeconds == 300)
         #expect(titledStartOptions.json)
         #expect(resumeOptions.serverSessionID == "server-session-3")
         #expect(!resumeOptions.json)

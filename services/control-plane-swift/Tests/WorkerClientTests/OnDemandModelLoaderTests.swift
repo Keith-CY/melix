@@ -67,6 +67,100 @@ struct OnDemandModelLoaderTests {
         #expect(metrics.values["control_plane.model_eviction_success_count"] == 1)
     }
 
+    @Test("idle sweep unloads only idle served models and protects pinned models")
+    func idleSweepUnloadsOnlyIdleServedModelsAndProtectsPinnedModels() async throws {
+        final class ClockBox: @unchecked Sendable {
+            var nowUnixMs: Int64
+
+            init(nowUnixMs: Int64) {
+                self.nowUnixMs = nowUnixMs
+            }
+        }
+
+        let clock = ClockBox(nowUnixMs: 100_000)
+        let catalog = ModelCatalog(
+            seedModels: [
+                makeTextModel(id: "served-idle", state: .modelWarm),
+                makeTextModel(id: "unserved-idle", state: .modelWarm),
+                makePinnedTextModel(id: "served-pinned"),
+            ],
+            nowUnixMs: { clock.nowUnixMs }
+        )
+        _ = await catalog.recordLoadSucceeded(id: "served-idle", dispatchHandle: "served-idle::swift")
+        _ = await catalog.recordLoadSucceeded(id: "unserved-idle", dispatchHandle: "unserved-idle::swift")
+        _ = await catalog.recordLoadSucceeded(
+            id: "served-pinned",
+            dispatchHandle: "served-pinned::swift",
+            pinRequested: true
+        )
+        clock.nowUnixMs += 11_000
+        let workerClient = LoaderTestingWorkerClient()
+        await workerClient.setUnloadResponse(ok: true)
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let metricsStore = MetricsStore()
+
+        let plan = await OnDemandModelLoader.sweepIdleModels(
+            servedModelIDs: ["served-idle", "served-pinned"],
+            idleTimeoutSeconds: 10,
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+        let servedIdle = try #require(await catalog.model(id: "served-idle"))
+        let unservedIdle = try #require(await catalog.model(id: "unserved-idle"))
+        let servedPinned = try #require(await catalog.model(id: "served-pinned"))
+        let metrics = await metricsStore.snapshot()
+
+        #expect(plan.decisions.map(\.modelID) == ["served-idle"])
+        #expect(plan.pinnedProtectedModelIDs == ["served-pinned"])
+        #expect(servedIdle.state == .modelUnloaded)
+        #expect(unservedIdle.state == .modelWarm)
+        #expect(servedPinned.state == .modelPinned)
+        #expect(await workerClient.unloadHandles == ["served-idle::swift"])
+        #expect(metrics.values["control_plane.model_idle_unload_count"] == 1)
+        #expect(metrics.values["control_plane.model_idle_skip_pinned_count"] == 1)
+    }
+
+    @Test("idle sweep protects models with active requests")
+    func idleSweepProtectsModelsWithActiveRequests() async throws {
+        final class ClockBox: @unchecked Sendable {
+            var nowUnixMs: Int64
+
+            init(nowUnixMs: Int64) {
+                self.nowUnixMs = nowUnixMs
+            }
+        }
+
+        let clock = ClockBox(nowUnixMs: 200_000)
+        let catalog = ModelCatalog(
+            seedModels: [makeTextModel(id: "served-active", state: .modelWarm)],
+            nowUnixMs: { clock.nowUnixMs }
+        )
+        _ = await catalog.recordLoadSucceeded(id: "served-active", dispatchHandle: "served-active::swift")
+        await catalog.beginRequest(modelID: "served-active")
+        clock.nowUnixMs += 11_000
+        let workerClient = LoaderTestingWorkerClient()
+        await workerClient.setUnloadResponse(ok: true)
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let metricsStore = MetricsStore()
+
+        let plan = await OnDemandModelLoader.sweepIdleModels(
+            servedModelIDs: ["served-active"],
+            idleTimeoutSeconds: 10,
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+        let active = try #require(await catalog.model(id: "served-active"))
+        let metrics = await metricsStore.snapshot()
+
+        #expect(plan.decisions.isEmpty)
+        #expect(plan.activeProtectedModelIDs == ["served-active"])
+        #expect(active.state == .modelWarm)
+        #expect(await workerClient.unloadHandles.isEmpty)
+        #expect(metrics.values["control_plane.model_idle_skip_active_count"] == 1)
+    }
+
     @Test("discovered text models lazy-load with runtime resident bytes and explicit memory budgets")
     func discoveredTextModelsLazyLoadWithRuntimeResidentBytesAndExplicitMemoryBudgets() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])

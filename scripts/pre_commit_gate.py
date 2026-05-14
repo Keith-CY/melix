@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -60,6 +61,18 @@ class PerformanceOutcome:
 
 class GateError(RuntimeError):
     pass
+
+
+@contextmanager
+def scrubbed_git_environment():
+    original_env = dict(os.environ)
+    os.environ.clear()
+    os.environ.update(scrub_git_local_env(env=original_env))
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(original_env)
 
 
 def _env_flag(env: Mapping[str, str], name: str) -> bool:
@@ -220,12 +233,13 @@ def run_performance_report(root: Path, changed_files: list[str]) -> PerformanceO
                     continue
                 print(f"[pre-commit] running performance probe: {probe_id}", flush=True)
                 try:
-                    result, _success = run_probe_job(
-                        registry_path=registry_path,
-                        probe_id=probe_id,
-                        base_repo=base_repo,
-                        head_repo=head_repo,
-                    )
+                    with scrubbed_git_environment():
+                        result, _success = run_probe_job(
+                            registry_path=registry_path,
+                            probe_id=probe_id,
+                            base_repo=base_repo,
+                            head_repo=head_repo,
+                        )
                     results.append(result)
                     (probes_dir / f"{probe_id}.json").write_text(
                         json.dumps(result, indent=2, sort_keys=True) + "\n",

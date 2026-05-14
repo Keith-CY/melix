@@ -964,11 +964,13 @@ private enum MelixPipelineCommandBuilder {
                 ServerSessionUpdateOptions(
                     serverSessionID: string("server_session_id", args) ?? ServerSessionRuntimeStore.defaultServerSessionID,
                     title: string("title", args) ?? "",
-                    modelID: string("model_id", args) ?? "",
+                    defaultModelID: string("default_model_id", args) ?? "",
+                    servedModelIDs: try firstStringArray(["served_model_ids"], args),
                     host: string("host", args) ?? "",
                     port: try int("port", args) ?? 0,
                     rateLimitPerMinute: try int("rate_limit_per_minute", args) ?? 0,
                     timeoutSeconds: try int("timeout_seconds", args) ?? 0,
+                    modelIdleTimeoutSeconds: try int("model_idle_timeout_seconds", args) ?? 0,
                     accelerationMode: string("acceleration_mode", args) ?? "",
                     draftModelID: string("draft_model_id", args) ?? "",
                     numDraftTokens: try int("num_draft_tokens", args) ?? 0

@@ -203,6 +203,40 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     }
 }
 
+public extension NormalizedTextRequest {
+    func replacingModel(_ model: String) -> NormalizedTextRequest {
+        NormalizedTextRequest(
+            endpoint: endpoint,
+            model: model,
+            messages: messages,
+            stream: stream,
+            includeUsage: includeUsage,
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
+            sessionID: sessionID,
+            branchID: branchID,
+            parentRequestID: parentRequestID,
+            restoreSnapshotID: restoreSnapshotID,
+            saveBoundarySnapshot: saveBoundarySnapshot,
+            presetID: presetID,
+            workflow: workflow,
+            workflowRunID: workflowRunID,
+            workflowNodeID: workflowNodeID,
+            stopSequences: stopSequences,
+            userID: userID,
+            enableThinking: enableThinking,
+            reasoningEffort: reasoningEffort,
+            thinking: thinking,
+            structuredOutput: structuredOutput,
+            toolParser: toolParser,
+            tools: tools,
+            toolChoice: toolChoice,
+            chatTemplate: chatTemplate
+        )
+    }
+}
+
 public struct ShapedTextRequest: Sendable, Equatable {
     public let endpoint: TextEndpointKind
     public let model: String

@@ -128,7 +128,7 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(sharedState.selectedSurfaceID == "server")
         #expect(sharedState.selectedToolSectionID == "diagnostics")
         #expect(sharedState.selectedServerSessionID == "server-session-shared")
-        #expect(sharedState.serverSessions.first?.modelID == "melix-dev-vlm")
+        #expect(sharedState.serverSessions.first?.defaultModelID == "melix-dev-vlm")
         #expect(sharedState.serverSessions.first?.autoSleepEnabled == true)
         #expect(sharedState.serverSessions.first?.lightSleepAfterSeconds == 60)
         #expect(sharedState.serverSessions.first?.deepSleepAfterSeconds == 600)
@@ -158,7 +158,8 @@ struct OperatorSessionPersistenceSmokeTests {
                 MelixOperatorServerSessionState(
                     id: "legacy-server",
                     title: "Legacy Server",
-                    modelID: "melix-dev-text",
+                    defaultModelID: "melix-dev-text",
+                    servedModelIDs: ["melix-dev-text"],
                     lifecycle: .running
                 )
             ],

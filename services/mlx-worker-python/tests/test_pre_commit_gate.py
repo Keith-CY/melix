@@ -223,6 +223,57 @@ def test_performance_probe_failure_writes_traceback(monkeypatch, tmp_path: Path)
     assert "RuntimeError: probe exploded" in error_text
 
 
+def test_performance_probe_runs_with_scrubbed_git_environment(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GIT_DIR", "/tmp/melix-hook-git-dir")
+    monkeypatch.setenv("GIT_WORK_TREE", "/tmp/melix-hook-work-tree")
+    monkeypatch.setenv("GIT_INDEX_FILE", "/tmp/melix-hook-index")
+    monkeypatch.setattr(pre_commit_gate, "_report_run_dir", lambda root: tmp_path / "run")
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "build_scope_report",
+        lambda registry_path, changed_files: {
+            "changed_files": changed_files,
+            "force_all": False,
+            "matched_probe_ids": ["probe-one"],
+            "selected_probes": [{"id": "probe-one", "name": "Probe one", "metrics": []}],
+        },
+    )
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "load_probe_registry",
+        lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
+    )
+    monkeypatch.setattr(pre_commit_gate, "export_index_snapshot", lambda root, destination: destination.mkdir())
+    monkeypatch.setattr(pre_commit_gate, "export_head_snapshot", lambda root, destination: destination.mkdir())
+    observed_env: dict[str, str | None] = {}
+
+    def run_probe(**kwargs):
+        for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+            observed_env[name] = pre_commit_gate.os.environ.get(name)
+        return ({"probe": {"id": "probe-one"}}, True)
+
+    monkeypatch.setattr(pre_commit_gate, "run_probe_job", run_probe)
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "build_performance_report",
+        lambda scope, probe_results: {"summary": {"status": "ok"}, "rows": []},
+    )
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "write_report_outputs",
+        lambda report, report_dir: {"markdown": report_dir / "report.md"},
+    )
+    monkeypatch.setattr(pre_commit_gate, "render_terminal_report", lambda report: "")
+
+    outcome = pre_commit_gate.run_performance_report(tmp_path, ["scripts/pre_commit_gate.py"])
+
+    assert outcome.status == "ok"
+    assert observed_env == {"GIT_DIR": None, "GIT_WORK_TREE": None, "GIT_INDEX_FILE": None}
+    assert pre_commit_gate.os.environ.get("GIT_DIR") == "/tmp/melix-hook-git-dir"
+    assert pre_commit_gate.os.environ.get("GIT_WORK_TREE") == "/tmp/melix-hook-work-tree"
+    assert pre_commit_gate.os.environ.get("GIT_INDEX_FILE") == "/tmp/melix-hook-index"
+
+
 def test_shell_hook_uses_repo_cache_and_python_312_by_default(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

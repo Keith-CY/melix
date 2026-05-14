@@ -765,6 +765,138 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/chat/completions routes by payload model within the active server roster")
+    func postChatCompletionsRoutesByPayloadModelWithinActiveServerRoster() async throws {
+        var primary = ModelCatalog.devTextModel()
+        primary.modelID = "melix-primary"
+        primary.state = .modelWarm
+        var secondary = ModelCatalog.devTextModel()
+        secondary.modelID = "melix-secondary"
+        secondary.state = .modelWarm
+        let catalog = ModelCatalog(seedModels: [primary, secondary])
+        _ = await catalog.recordLoadSucceeded(id: "melix-secondary", dispatchHandle: "melix-secondary::swift")
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-routed-secondary",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "secondary"
+            ),
+        ])
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-test-gateway-config-\(UUID().uuidString).json"),
+            defaults: [:]
+        )
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "127.0.0.1"
+        command.port = 11_434
+        command.defaultModelID = "melix-primary"
+        command.servedModelIds = ["melix-primary", "melix-secondary"]
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+        try await gatewayConfigStore.apply(command: command)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-routed-secondary" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) }),
+            gatewayConfigStore: gatewayConfigStore
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    """
+                    {
+                      "model": "melix-secondary",
+                      "stream": true,
+                      "messages": [
+                        { "role": "user", "content": "route" }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(request.execution.modelHandle == "melix-secondary::swift")
+        #expect(payload.contains("\"model\":\"melix-secondary\""))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("POST /v1/chat/completions rejects payload models outside the active server roster")
+    func postChatCompletionsRejectsPayloadModelsOutsideActiveServerRoster() async throws {
+        var primary = ModelCatalog.devTextModel()
+        primary.modelID = "melix-primary"
+        primary.state = .modelWarm
+        var secondary = ModelCatalog.devTextModel()
+        secondary.modelID = "melix-secondary"
+        secondary.state = .modelWarm
+        let catalog = ModelCatalog(seedModels: [primary, secondary])
+        let workerClient = ScriptedWorkerClient(events: [])
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-test-gateway-config-\(UUID().uuidString).json"),
+            defaults: [:]
+        )
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "127.0.0.1"
+        command.port = 11_434
+        command.defaultModelID = "melix-primary"
+        command.servedModelIds = ["melix-primary"]
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+        try await gatewayConfigStore.apply(command: command)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            gatewayConfigStore: gatewayConfigStore
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    """
+                    {
+                      "model": "melix-secondary",
+                      "stream": true,
+                      "messages": [
+                        { "role": "user", "content": "route" }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 404)
+        #expect(payload.contains("\"code\":\"model_not_served_by_server\""))
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
     @Test("POST /v1/chat/completions forwards OpenAI tools and emits SDK-compatible tool deltas")
     func postChatCompletionsForwardsOpenAIToolsAndToolDeltas() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])

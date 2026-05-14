@@ -302,14 +302,14 @@ public actor GatewayServingDefaultsStore {
 
     public func summary(
         serverSessionIDs: [String],
-        servedModelIDs: [String: String],
+        defaultModelIDs: [String: String],
         modelSettingsByModelID: [String: Melix_Controlplane_V1_ModelSettings]
     ) -> Melix_Controlplane_V1_ServingDefaultsSummary {
         var summary = Melix_Controlplane_V1_ServingDefaultsSummary()
         let allServerSessionIDs = Set(
             serverSessionIDs.map(Self.trimmed).filter { !$0.isEmpty }
             + recordsByServerSessionID.keys
-            + servedModelIDs.keys
+            + defaultModelIDs.keys
         )
 
         summary.sessions = allServerSessionIDs.sorted().map { serverSessionID in
@@ -325,9 +325,9 @@ public actor GatewayServingDefaultsStore {
             let requestedAccelerationMode = record?.accelerationMode ?? defaults.accelerationMode
             let requestedDraftModelID = record?.draftModelID ?? defaults.draftModelID
             let requestedNumDraftTokens = record?.numDraftTokens ?? defaults.numDraftTokens
-            let servedModelID = Self.trimmed(servedModelIDs[serverSessionID] ?? "")
-            let modelSamplingPolicy = modelSettingsByModelID[servedModelID].flatMap(ModelSamplingPolicy.init)
-            let modelSettings = modelSettingsByModelID[servedModelID]
+            let defaultModelID = Self.trimmed(defaultModelIDs[serverSessionID] ?? "")
+            let modelSamplingPolicy = modelSettingsByModelID[defaultModelID].flatMap(ModelSamplingPolicy.init)
+            let modelSettings = modelSettingsByModelID[defaultModelID]
             let effectiveBatchingDefaults = Self.effectiveBatchingDefaults(
                 concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
                 maxConcurrentRequests: requestedMaxConcurrentRequests,
@@ -343,7 +343,7 @@ public actor GatewayServingDefaultsStore {
 
             var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
             session.serverSessionID = serverSessionID
-            session.servedModelID = servedModelID
+            session.defaultModelID = defaultModelID
             session.requestedTemperature = requestedTemperature
             session.requestedTopP = requestedTopP
             session.requestedMaxTokens = requestedMaxTokens

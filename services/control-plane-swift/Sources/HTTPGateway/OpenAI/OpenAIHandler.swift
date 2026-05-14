@@ -270,6 +270,7 @@ public struct OpenAIHandler: Sendable {
     private let mcpToolCatalog: MCPToolCatalog
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
+    private let gatewayConfigStore: GatewayConfigStore
     private let gatewayServingDefaultsStore: GatewayServingDefaultsStore
     private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
@@ -294,6 +295,7 @@ public struct OpenAIHandler: Sendable {
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
+        gatewayConfigStore: GatewayConfigStore? = nil,
         gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
         gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
         persistentAuthSessionStore: PersistentAuthSessionStore? = nil,
@@ -316,6 +318,7 @@ public struct OpenAIHandler: Sendable {
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
+        self.gatewayConfigStore = gatewayConfigStore ?? Self.transientGatewayConfigStore(environment: environment)
         self.gatewayServingDefaultsStore = gatewayServingDefaultsStore ?? GatewayServingDefaultsStore(environment: environment)
         self.gatewayRuntimeBinding = gatewayRuntimeBinding
         self.persistentAuthSessionStore = persistentAuthSessionStore
@@ -325,6 +328,14 @@ public struct OpenAIHandler: Sendable {
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.sortedKeys]
+    }
+
+    private static func transientGatewayConfigStore(environment: [String: String]) -> GatewayConfigStore {
+        GatewayConfigStore(
+            storeURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-openai-gateway-config-\(UUID().uuidString).json"),
+            defaults: environment
+        )
     }
 
     public func handle(_ request: HTTPRequest) async throws -> HTTPResponse {
@@ -1718,6 +1729,11 @@ public struct OpenAIHandler: Sendable {
         guard normalized.stream || normalized.endpoint == .chatCompletions else {
             throw HTTPRequestHandlingError.streamRequired
         }
+        let resolvedModelID = try await resolveServedModelID(
+            requestedModelID: normalized.model,
+            endpoint: .textGeneration
+        )
+        let routed = normalized.replacingModel(resolvedModelID)
         await RegistrySnapshotSync.syncModelsIfAvailable(
             modelCatalog: modelCatalog,
             workerRegistry: workerRegistry,
@@ -1725,7 +1741,7 @@ public struct OpenAIHandler: Sendable {
             rescan: true
         )
         if let validationFailure = await endpointCompatibilityFailureResponse(
-            modelID: normalized.model,
+            modelID: routed.model,
             endpoint: .textGeneration
         ) {
             throw HTTPRequestHandlingError.gatewayResponse(validationFailure)
@@ -1733,7 +1749,7 @@ public struct OpenAIHandler: Sendable {
         let modelHandle: String
         do {
             modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
-                modelID: normalized.model,
+                modelID: routed.model,
                 modelCatalog: modelCatalog,
                 workerRegistry: workerRegistry,
                 metricsStore: metricsStore
@@ -1749,7 +1765,7 @@ public struct OpenAIHandler: Sendable {
         } catch {
             throw HTTPRequestHandlingError.workerUnavailable
         }
-        let resolvedModel = await modelCatalog.model(id: normalized.model)
+        let resolvedModel = await modelCatalog.model(id: routed.model)
         let modelToolParser: ToolParserSelection? = if let resolvedModel {
             ToolParserSelection(modelSettings: resolvedModel.settings)
         } else {
@@ -1772,7 +1788,7 @@ public struct OpenAIHandler: Sendable {
         }
         let shapingStartedAt = Date()
         let translated = try translator.translate(
-            normalized,
+            routed,
             modelHandle: modelHandle,
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
@@ -1785,6 +1801,61 @@ public struct OpenAIHandler: Sendable {
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
         return translated
+    }
+
+    private func resolveServedModelID(
+        requestedModelID: String,
+        endpoint: HTTPGatewayEndpointFamily
+    ) async throws -> String {
+        let startedAt = Date()
+        let catalogModels = await modelCatalog.listModels()
+        let fallbackModelID = defaultServedModelID(from: catalogModels)
+        let roster = await gatewayConfigStore.activeModelRoster(
+            runtimeBinding: gatewayRuntimeBinding,
+            fallbackDefaultModelID: fallbackModelID,
+            fallbackServedModelIDs: defaultServedModelIDs(from: catalogModels, endpoint: endpoint)
+        )
+        let trimmedRequested = requestedModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedModelID = trimmedRequested.isEmpty ? roster.defaultModelID : trimmedRequested
+        let servedModelIDs = Set(roster.servedModelIDs)
+        await metricsStore.set(
+            Double(roster.servedModelIDs.count),
+            forKey: "gateway.server_served_model_count"
+        )
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "gateway.model_route_resolution_ms"
+        )
+        guard !roster.explicit || servedModelIDs.contains(resolvedModelID) else {
+            await metricsStore.increment("gateway.model_not_served_count")
+            throw HTTPRequestHandlingError.modelNotServed(resolvedModelID)
+        }
+        _ = await OnDemandModelLoader.sweepIdleModels(
+            servedModelIDs: roster.servedModelIDs,
+            idleTimeoutSeconds: roster.modelIdleTimeoutSeconds,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore
+        )
+        _ = endpoint
+        return resolvedModelID
+    }
+
+    private func defaultServedModelIDs(
+        from models: [Melix_Controlplane_V1_ModelSummary],
+        endpoint: HTTPGatewayEndpointFamily
+    ) -> [String] {
+        models
+            .filter { endpointSupportsModel($0, endpoint: endpoint) }
+            .map(\.modelID)
+    }
+
+    private func defaultServedModelID(
+        from models: [Melix_Controlplane_V1_ModelSummary]
+    ) -> String {
+        models.first(where: { $0.kind == "text" || $0.features.contains("chat") })?.modelID
+            ?? models.first?.modelID
+            ?? ""
     }
 
     private func nonStreamChatCompletionsResponse(
@@ -1819,6 +1890,13 @@ public struct OpenAIHandler: Sendable {
         }
 
         do {
+            let modelID = translated.modelID
+            await modelCatalog.beginRequest(modelID: modelID)
+            defer {
+                Task { [modelCatalog, modelID] in
+                    await modelCatalog.finishRequest(modelID: modelID)
+                }
+            }
             let aggregate = try await aggregateChatCompletion(
                 stream: execution.stream
             )
@@ -2009,6 +2087,7 @@ public struct OpenAIHandler: Sendable {
             ])
         }
 
+        await modelCatalog.beginRequest(modelID: translated.modelID)
         let stream = sseWriter.encode(
             stream: execution.stream,
             requestID: execution.requestID,
@@ -2017,7 +2096,10 @@ public struct OpenAIHandler: Sendable {
             toolParser: ToolParserSelection(executionExt: translated.workerRequest.execution.ext),
             options: SSEStreamWriter.StreamOptions(
                 includeUsage: translated.workerRequest.execution.ext["melix.stream.include_usage"] == "true"
-            )
+            ),
+            onComplete: { [modelCatalog] in
+                await modelCatalog.finishRequest(modelID: translated.modelID)
+            }
         )
 
         return HTTPResponse(
@@ -2099,6 +2181,16 @@ public struct OpenAIHandler: Sendable {
             return jsonResponse(
                 statusCode: 409,
                 payload: ["error": ["code": "model_not_ready", "message": "Requested model is not loaded."]]
+            )
+        case .modelNotServed(let modelID):
+            return jsonResponse(
+                statusCode: 404,
+                payload: [
+                    "error": [
+                        "code": "model_not_served_by_server",
+                        "message": "Model \(modelID) is not served by the active Melix server session.",
+                    ],
+                ]
             )
         case .modelRuntimeMissing:
             return jsonResponse(
@@ -3245,6 +3337,7 @@ private struct SanitizedOutputMetrics {
 private enum HTTPRequestHandlingError: Error {
     case streamRequired
     case modelNotReady
+    case modelNotServed(String)
     case modelRuntimeMissing
     case workerUnavailable
     case workerRejected(Melix_Worker_V1_ErrorStatus)
