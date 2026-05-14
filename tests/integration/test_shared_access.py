@@ -43,8 +43,8 @@ def test_shared_access_accepts_known_api_keys_and_rejects_unknown_keys() -> None
         accepted_status, accepted_payload = _request_json(stack.models_url(), headers={"x-api-key": "sk-codex"})
         metrics = _wait_for_metrics(
             stack.control_plane_metrics_path,
-            "shared_access.accepted_client_count",
-            minimum=1,
+            "shared_access.rejected_request_count",
+            minimum=2,
         )
         values = metrics["values"]
 
