@@ -1745,16 +1745,20 @@ def _normalize_unique_event_field(value: object) -> list[str]:
 def _expanded_semantic_actor_values(values: tuple[str, ...]) -> tuple[str, ...]:
     expanded: list[str] = []
     seen_expanded: set[str] = set()
+    is_group_actor_alias = _is_group_actor_alias
+    seen_add = seen_expanded.add
+    expanded_append = expanded.append
     for value in values:
-        if _is_group_actor_alias(value):
-            expansion = ("speaker_1", "speaker_2")
-        else:
-            expansion = (value,)
-        for expanded_value in expansion:
-            if expanded_value in seen_expanded:
-                continue
-            seen_expanded.add(expanded_value)
-            expanded.append(expanded_value)
+        if is_group_actor_alias(value):
+            if "speaker_1" not in seen_expanded:
+                seen_add("speaker_1")
+                expanded_append("speaker_1")
+            if "speaker_2" not in seen_expanded:
+                seen_add("speaker_2")
+                expanded_append("speaker_2")
+        elif value not in seen_expanded:
+            seen_add(value)
+            expanded_append(value)
     return tuple(expanded)
 
 
