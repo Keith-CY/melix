@@ -115,10 +115,10 @@ struct DesktopPolishSmokeTests {
             return true
         }
         try await waitForDesktopPolishCondition("operator session should persist queue state") {
+            viewModel.selectToolSection(.downloads)
             guard let restoredState = try? operatorSessionStore.load() else {
                 return false
             }
-            viewModel.selectToolSection(.downloads)
             return restoredState.downloadQueue.isEmpty == false
                 && restoredState.selectedToolSection == .downloads
         }
