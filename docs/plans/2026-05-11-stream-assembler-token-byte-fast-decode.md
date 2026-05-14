@@ -1,8 +1,11 @@
-# Stream assembler token-byte fast decode
+# Stream assembler ASCII token-byte fast decode
 
 ## Scope
 
-Optimize exactly one Python hot path in `RequestStreamAssembler`: complete UTF-8 token-byte fragments that arrive without pending partial bytes.
+Optimize exactly one Python hot path in `RequestStreamAssembler`: complete ASCII
+`token_bytes` fragments that arrive without pending partial bytes. This is a
+follow-on to the existing direct UTF-8 decode path and keeps split multibyte and
+invalid-byte fallback behavior unchanged.
 
 Affected files:
 
@@ -24,7 +27,11 @@ The probe feeds many ASCII `token_bytes` fragments through a plain stream assemb
 
 ## Optimization
 
-When there are no pending partial token bytes, decode the incoming byte fragment directly with `bytes.decode("utf-8")`. Fall back to the existing incremental decoder path for split multibyte sequences or invalid bytes so behavior remains unchanged.
+When there are no pending partial token bytes and the incoming byte fragment is
+ASCII, decode with `bytes.decode("ascii")` before the generic UTF-8 attempt. The
+existing direct UTF-8 decode remains the non-ASCII complete-fragment path, and
+the incremental decoder still handles split multibyte sequences or invalid
+bytes.
 
 ## Verification
 
