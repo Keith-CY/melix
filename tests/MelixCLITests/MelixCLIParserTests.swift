@@ -891,6 +891,7 @@ struct MelixCLIParserTests {
             (.chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
             (.chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
             (.loraList(.init(modelID: "model", json: true)), "lora.list"),
+            (.loraRun(.init(training: .init(modelID: "model-8bit", datasetSourceKind: "hf_dataset", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "auto", parameters: ["derived_model_alias": "derived", "response_only": "true"], preflightFitCheck: true, allowMemoryRisk: true), evaluation: .init(modelID: "model-8bit", suites: ["event_extraction"], datasetID: "top200", sampleSize: 4, parameters: ["dataset_root": "evaluation"], json: false), outputDir: "/tmp/lora-run", json: true)), "lora.run"),
             (.loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], preflightFitCheck: true, allowMemoryRisk: true, json: true)), "lora.train"),
             (.alignmentTrain(.init(modelID: "model", datasetURI: "/tmp/preference.jsonl", adapterName: "aligned", algorithm: "dpo", json: true)), "alignment.train"),
             (.loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl", json: true)), "lora.dataset.inspect"),
@@ -982,6 +983,7 @@ struct MelixCLIParserTests {
             .remoteServerTest(.init(remoteServerID: "custom", remoteModelID: "remote-model", json: true)),
             .chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
             .chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
+            .loraRun(.init(training: .init(modelID: "model-8bit", datasetSourceKind: "hf_dataset", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "auto", parameters: ["derived_model_alias": "derived", "response_only": "true"], preflightFitCheck: true, allowMemoryRisk: true), evaluation: .init(modelID: "model-8bit", suites: ["event_extraction"], datasetID: "top200", sampleSize: 4, parameters: ["dataset_root": "evaluation"], json: false), outputDir: "/tmp/lora-run", json: true)),
             .loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)),
             .alignmentTrain(.init(modelID: "model", datasetURI: "/tmp/preference.jsonl", adapterName: "aligned", algorithm: "dpo", json: true)),
             .loraActivate(.init(modelID: "model", adapterPath: "/tmp/adapter.json", derivedModelAlias: "derived", activationMode: "adapter_backed_runtime", json: true)),
@@ -1922,6 +1924,145 @@ struct MelixCLIParserTests {
         #expect(options.parameters["mask_prompt"] == "true")
         #expect(options.parameters["derived_model_alias"] == "melix-dev-text-ultrachat")
         #expect(options.trainingMode == "qlora")
+    }
+
+    @Test("parses one-command lora run with training and evaluation controls")
+    func parsesLoraRunCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "lora",
+            "run",
+            "--model-id", "unsloth/gemma-4-E4B-it-MLX-8bit",
+            "--hf-dataset-path", "HuggingFaceH4/ultrachat_200k",
+            "--hf-train-split", "train_sft",
+            "--chat-feature", "messages",
+            "--adapter-name", "dialogue-extraction-adapter",
+            "--training-mode", "auto",
+            "--rank", "8",
+            "--max-steps", "20",
+            "--activation-mode", "adapter_backed_runtime",
+            "--eval-suite", "event_extraction",
+            "--eval-dataset-id", "top200.event-extraction.top20.v1",
+            "--eval-dataset-root", "evaluation",
+            "--eval-sample-size", "8",
+            "--scoring-mode", "event_extraction_weighted_f1",
+            "--seed", "11",
+            "--output-dir", "/tmp/melix/lora-run",
+            "--json",
+        ])
+
+        guard case .loraRun(let options) = command else {
+            Issue.record("Expected loraRun command")
+            return
+        }
+
+        #expect(options.training.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(options.training.datasetSourceKind == "hf_dataset")
+        #expect(options.training.adapterName == "dialogue-extraction-adapter")
+        #expect(options.training.trainingMode == "auto")
+        #expect(options.training.parameters["hf_dataset_path"] == "HuggingFaceH4/ultrachat_200k")
+        #expect(options.training.parameters["rank"] == "8")
+        #expect(options.training.parameters["max_steps"] == "20")
+        #expect(options.activationMode == "adapter_backed_runtime")
+        #expect(options.evaluation.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(options.evaluation.suites == ["event_extraction"])
+        #expect(options.evaluation.datasetID == "top200.event-extraction.top20.v1")
+        #expect(options.evaluation.sampleSize == 8)
+        #expect(options.evaluation.parameters["dataset_root"] == "evaluation")
+        #expect(options.evaluation.parameters["scoring_mode"] == "event_extraction_weighted_f1")
+        #expect(options.evaluation.parameters["seed"] == "11")
+        #expect(options.outputDir == "/tmp/melix/lora-run")
+        #expect(options.json)
+    }
+
+    @Test("parses lora run custom evaluation sources and rejects ambiguous evaluation inputs")
+    func parsesLoraRunCustomEvaluationSourcesAndRejectsAmbiguity() throws {
+        let jsonlCommand = try MelixCLIParser.parse([
+            "lora", "run",
+            "--model-id", "melix-dev-text",
+            "--dataset-uri", "/tmp/train",
+            "--adapter-name", "adapter",
+            "--eval-dataset-id", "custom-jsonl",
+            "--eval-suite", "event_extraction",
+            "--source-jsonl", "/tmp/eval/dialogue.jsonl",
+            "--scoring-mode", "event_extraction_weighted_f1",
+        ])
+        guard case .loraRun(let jsonlOptions) = jsonlCommand else {
+            Issue.record("Expected loraRun command")
+            return
+        }
+        #expect(jsonlOptions.evaluation.source.kind == .localJSONL)
+        #expect(jsonlOptions.evaluation.source.path == "/tmp/eval/dialogue.jsonl")
+        #expect(jsonlOptions.evaluation.profile.scoringMode == "event_extraction_weighted_f1")
+
+        let csvCommand = try MelixCLIParser.parse([
+            "lora", "run",
+            "--model-id", "melix-dev-text",
+            "--dataset-uri", "/tmp/train",
+            "--adapter-name", "adapter",
+            "--eval-dataset-id", "custom-csv",
+            "--eval-suite", "mmlu",
+            "--source-csv", "/tmp/eval/dialogue.csv",
+            "--field-input-text-path", "dialogue",
+            "--field-target-path", "events",
+        ])
+        guard case .loraRun(let csvOptions) = csvCommand else {
+            Issue.record("Expected loraRun command")
+            return
+        }
+        #expect(csvOptions.evaluation.source.kind == .localCSV)
+        #expect(csvOptions.evaluation.fieldMapping.inputTextPath == "dialogue")
+        #expect(csvOptions.evaluation.fieldMapping.targetPath == "events")
+
+        try assertError(
+            for: [
+                "lora", "run",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/train",
+                "--adapter-name", "adapter",
+                "--eval-dataset-id", "custom",
+                "--source-csv", "/tmp/a.csv",
+                "--source-jsonl", "/tmp/a.jsonl",
+            ],
+            equals: .usage("At most one of --source-csv or --source-jsonl may be provided for melix lora run.")
+        )
+        try assertError(
+            for: [
+                "lora", "run",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/train",
+                "--adapter-name", "adapter",
+                "--eval-dataset-id", "custom",
+                "--source-csv", "/tmp/a.csv",
+                "--dataset-root", "evaluation",
+                "--field-input-text-path", "dialogue",
+                "--field-target-path", "events",
+            ],
+            equals: .usage("--dataset-root is only supported for builtin evaluation datasets.")
+        )
+        try assertError(
+            for: [
+                "lora", "run",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/train",
+                "--adapter-name", "adapter",
+                "--eval-dataset-id", "custom",
+                "--source-csv", "/tmp/a.csv",
+                "--field-target-path", "events",
+            ],
+            equals: .missingRequired("--field-input-text-path is required when using a custom evaluation dataset source.")
+        )
+        try assertError(
+            for: [
+                "lora", "run",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/train",
+                "--adapter-name", "adapter",
+                "--eval-dataset-id", "custom",
+                "--source-csv", "/tmp/a.csv",
+                "--field-input-text-path", "dialogue",
+            ],
+            equals: .missingRequired("--field-target-path is required when using a custom evaluation dataset source.")
+        )
     }
 
     @Test("parses alignment train with preference and RL parameters")
@@ -3678,6 +3819,22 @@ struct MelixCLIParserTests {
         try assertError(
             for: ["lora", "train", "--model-id", "melix-dev-text", "--dataset-uri", "/tmp/data.jsonl"],
             equals: .missingRequired("--adapter-name is required for melix lora train.")
+        )
+        try assertError(
+            for: ["lora", "run", "--dataset-uri", "/tmp/data.jsonl", "--adapter-name", "demo", "--eval-dataset-id", "top200"],
+            equals: .missingRequired("--model-id is required for melix lora run.")
+        )
+        try assertError(
+            for: ["lora", "run", "--model-id", "melix-dev-text", "--adapter-name", "demo", "--eval-dataset-id", "top200"],
+            equals: .missingRequired("Either --dataset-uri or --hf-dataset-path is required for melix lora run.")
+        )
+        try assertError(
+            for: ["lora", "run", "--model-id", "melix-dev-text", "--dataset-uri", "/tmp/data.jsonl", "--eval-dataset-id", "top200"],
+            equals: .missingRequired("--adapter-name is required for melix lora run.")
+        )
+        try assertError(
+            for: ["lora", "run", "--model-id", "melix-dev-text", "--dataset-uri", "/tmp/data.jsonl", "--adapter-name", "demo"],
+            equals: .missingRequired("--eval-dataset-id is required for melix lora run.")
         )
         try assertError(
             for: ["lora", "dataset", "inspect", "--dataset-uri", "/tmp/data.jsonl"],

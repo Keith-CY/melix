@@ -120,6 +120,28 @@ public struct LoraTrainOptions: Equatable, Sendable {
     }
 }
 
+public struct LoraRunOptions: Equatable, Sendable {
+    public let training: LoraTrainOptions
+    public let activationMode: String
+    public let evaluation: EvalCompareOptions
+    public let outputDir: String
+    public let json: Bool
+
+    public init(
+        training: LoraTrainOptions,
+        activationMode: String = "adapter_backed_runtime",
+        evaluation: EvalCompareOptions,
+        outputDir: String = "",
+        json: Bool = false
+    ) {
+        self.training = training
+        self.activationMode = activationMode
+        self.evaluation = evaluation
+        self.outputDir = outputDir
+        self.json = json
+    }
+}
+
 public struct AlignmentTrainOptions: Equatable, Sendable {
     public let modelID: String
     public let datasetSourceKind: String
@@ -1672,6 +1694,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case remoteServerTest(RemoteServerTestOptions)
     case chatRun(ChatRunOptions)
     case loraList(LoraListOptions)
+    case loraRun(LoraRunOptions)
     case loraTrain(LoraTrainOptions)
     case alignmentTrain(AlignmentTrainOptions)
     case loraDatasetInspect(LoraDatasetInspectOptions)
@@ -1910,6 +1933,7 @@ public enum MelixCLIParser {
       melix remote-server test --remote-server-id ID [--model MODEL] [--json]
       melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
+      melix lora run --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --eval-dataset-id DATASET_ID [--eval-suite SUITE ...] [--output-dir PATH] [--activation-mode (adapter_backed_runtime|fused_derived_model)] [--training-mode auto|lora|qlora|dora] [training options...] [evaluation options...] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--preflight-fit-check] [--allow-memory-risk] [--json]
       melix alignment train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --algorithm dpo|orpo|cpo|grpo|rlhf [--target-repo REPO] [--source-adapter-path PATH] [--grpo-candidate-count N] [--candidate-generation-mode scored_trace|runtime_generate] [--candidate-scoring-mode dataset_score|seed_overlap_proxy|reward_model] [--candidate-generation-max-tokens N] [--reference-model-path PATH] [--reward-model-manifest-path PATH] [--kl-penalty N] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--json]
         note: --source-adapter-path is the upstream/base LoRA adapter to carry into GRPO/RLHF output; it is not checkpoint resumption.
@@ -3223,87 +3247,54 @@ public enum MelixCLIParser {
             )
         case "train":
             let values = try cursor.parse()
-            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
-                throw MelixCLIError.missingRequired("--model-id is required for melix lora train.")
-            }
-            let datasetURI = values.single["--dataset-uri"] ?? ""
-            let hfDatasetPath = values.single["--hf-dataset-path"] ?? ""
-            guard !datasetURI.isEmpty || !hfDatasetPath.isEmpty else {
-                throw MelixCLIError.missingRequired("Either --dataset-uri or --hf-dataset-path is required for melix lora train.")
-            }
-            guard let adapterName = values.single["--adapter-name"], !adapterName.isEmpty else {
-                throw MelixCLIError.missingRequired("--adapter-name is required for melix lora train.")
-            }
-            let datasetSourceKind = datasetURI.isEmpty ? "hf_dataset" : "local_package"
-            var parameters: [String: String] = [:]
-            for option in [
-                "--rank",
-                "--alpha",
-                "--dropout",
-                "--target-modules",
-                "--num-layers",
-                "--batch-size",
-                "--epochs",
-                "--max-steps",
-                "--learning-rate",
-                "--max-seq-length",
-                "--sample-limit",
-                "--gradient-accumulation",
-                "--hf-dataset-path",
-                "--hf-dataset-name",
-                "--hf-dataset-revision",
-                "--hf-train-split",
-                "--hf-valid-split",
-                "--chat-feature",
-                "--prompt-feature",
-                "--completion-feature",
-                "--text-feature",
-                "--derived-model-alias",
-            ] {
-                if let value = values.single[option] {
-                    parameters[normalizedParameterKey(option)] = value
-                }
-            }
-            let resumeAdapter = (values.single["--resume-adapter"] ?? "").trimmingCharacters(in: .whitespaces)
-            let resumeManifest = (values.single["--resume-from-manifest"] ?? "").trimmingCharacters(in: .whitespaces)
-            if !resumeAdapter.isEmpty, !resumeManifest.isEmpty {
-                throw MelixCLIError.usage("--resume-adapter and --resume-from-manifest are mutually exclusive.")
-            }
-            if !resumeAdapter.isEmpty {
-                parameters["resume_source_path"] = resumeAdapter
-            }
-            if !resumeManifest.isEmpty {
-                parameters["resume_manifest_path"] = resumeManifest
-            }
-            if let presetID = values.single["--preset"] {
-                parameters["preset_id"] = presetID
-            }
-            if let experimentGroupID = values.single["--experiment-group"] {
-                parameters["experiment_group_id"] = experimentGroupID
-            }
-            let trainingMode = (values.single["--training-mode"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if !trainingMode.isEmpty, ["lora", "qlora", "dora"].contains(trainingMode) == false {
-                if ["dpo", "orpo", "cpo", "grpo", "rlhf"].contains(trainingMode) {
-                    throw MelixCLIError.usage(
-                        "Invalid value for --training-mode. For alignment training modes (dpo, orpo, cpo, grpo, rlhf), use `melix alignment train --algorithm <mode>`."
-                    )
-                }
-                throw MelixCLIError.usage("Invalid value for --training-mode. Expected one of: lora, qlora, dora.")
-            }
-            for flag in ["--response-only", "--mask-prompt", "--gradient-checkpointing"] where values.flags.contains(flag) {
-                parameters[normalizedParameterKey(flag)] = "true"
-            }
             return .loraTrain(
-                LoraTrainOptions(
-                    modelID: modelID,
-                    datasetSourceKind: datasetSourceKind,
-                    datasetURI: datasetURI,
-                    adapterName: adapterName,
-                    targetRepo: values.single["--target-repo"] ?? "",
-                    trainingMode: trainingMode,
-                    parameters: parameters,
-                    preflightFitCheck: values.flags.contains("--preflight-fit-check"),
-                    allowMemoryRisk: values.flags.contains("--allow-memory-risk"),
+                try parseLoraTrainOptions(
+                    values,
+                    command: "melix lora train",
+                    allowAutoTrainingMode: false,
+                    jsonOverride: nil
+                )
+            )
+        case "run":
+            let values = try cursor.parse(multiValueOptions: ["--suite", "--eval-suite", "--ignored-path"])
+            let training = try parseLoraTrainOptions(
+                values,
+                command: "melix lora run",
+                allowAutoTrainingMode: true,
+                jsonOverride: false
+            )
+            let activationMode = values.single["--activation-mode"] ?? "adapter_backed_runtime"
+            if ["fused_derived_model", "adapter_backed_runtime"].contains(activationMode) == false {
+                throw MelixCLIError.usage(
+                    "Invalid value for --activation-mode. Expected one of: fused_derived_model, adapter_backed_runtime."
+                )
+            }
+            let evalDatasetID = values.single["--eval-dataset-id"] ?? values.single["--dataset-id"] ?? ""
+            guard evalDatasetID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--eval-dataset-id is required for melix lora run.")
+            }
+            let evalSuites = (values.multi["--eval-suite"] ?? []) + (values.multi["--suite"] ?? [])
+            var evalParameters = try parseEvalParameters(values)
+            if let evalDatasetRoot = values.single["--eval-dataset-root"], evalDatasetRoot.isEmpty == false {
+                evalParameters["dataset_root"] = evalDatasetRoot
+            }
+            let sourceConfiguration = try parseLoraRunEvaluationSourceConfiguration(values)
+            return .loraRun(
+                LoraRunOptions(
+                    training: training,
+                    activationMode: activationMode,
+                    evaluation: EvalCompareOptions(
+                        modelID: training.modelID,
+                        suites: evalSuites,
+                        datasetID: evalDatasetID,
+                        sampleSize: UInt32(values.single["--eval-sample-size"] ?? values.single["--sample-size"] ?? "") ?? 0,
+                        source: sourceConfiguration.source,
+                        fieldMapping: sourceConfiguration.fieldMapping,
+                        profile: sourceConfiguration.profile,
+                        parameters: evalParameters,
+                        json: false
+                    ),
+                    outputDir: values.single["--output-dir"] ?? "",
                     json: values.flags.contains("--json")
                 )
             )
@@ -4486,6 +4477,151 @@ public enum MelixCLIParser {
         }
     }
 
+    private static func parseLoraTrainOptions(
+        _ values: ParsedArguments,
+        command: String,
+        allowAutoTrainingMode: Bool,
+        jsonOverride: Bool?
+    ) throws -> LoraTrainOptions {
+        guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+            throw MelixCLIError.missingRequired("--model-id is required for \(command).")
+        }
+        let datasetURI = values.single["--dataset-uri"] ?? ""
+        let hfDatasetPath = values.single["--hf-dataset-path"] ?? ""
+        guard !datasetURI.isEmpty || !hfDatasetPath.isEmpty else {
+            throw MelixCLIError.missingRequired("Either --dataset-uri or --hf-dataset-path is required for \(command).")
+        }
+        guard let adapterName = values.single["--adapter-name"], !adapterName.isEmpty else {
+            throw MelixCLIError.missingRequired("--adapter-name is required for \(command).")
+        }
+        let datasetSourceKind = datasetURI.isEmpty ? "hf_dataset" : "local_package"
+        var parameters: [String: String] = [:]
+        for option in [
+            "--rank",
+            "--alpha",
+            "--dropout",
+            "--target-modules",
+            "--num-layers",
+            "--batch-size",
+            "--epochs",
+            "--max-steps",
+            "--learning-rate",
+            "--max-seq-length",
+            "--sample-limit",
+            "--gradient-accumulation",
+            "--hf-dataset-path",
+            "--hf-dataset-name",
+            "--hf-dataset-revision",
+            "--hf-train-split",
+            "--hf-valid-split",
+            "--chat-feature",
+            "--prompt-feature",
+            "--completion-feature",
+            "--text-feature",
+            "--derived-model-alias",
+        ] {
+            if let value = values.single[option] {
+                parameters[normalizedParameterKey(option)] = value
+            }
+        }
+        let resumeAdapter = (values.single["--resume-adapter"] ?? "").trimmingCharacters(in: .whitespaces)
+        let resumeManifest = (values.single["--resume-from-manifest"] ?? "").trimmingCharacters(in: .whitespaces)
+        if !resumeAdapter.isEmpty, !resumeManifest.isEmpty {
+            throw MelixCLIError.usage("--resume-adapter and --resume-from-manifest are mutually exclusive.")
+        }
+        if !resumeAdapter.isEmpty {
+            parameters["resume_source_path"] = resumeAdapter
+        }
+        if !resumeManifest.isEmpty {
+            parameters["resume_manifest_path"] = resumeManifest
+        }
+        if let presetID = values.single["--preset"] {
+            parameters["preset_id"] = presetID
+        }
+        if let experimentGroupID = values.single["--experiment-group"] {
+            parameters["experiment_group_id"] = experimentGroupID
+        }
+        let trainingMode = (values.single["--training-mode"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let validTrainingModes = allowAutoTrainingMode ? ["auto", "lora", "qlora", "dora"] : ["lora", "qlora", "dora"]
+        if !trainingMode.isEmpty, validTrainingModes.contains(trainingMode) == false {
+            if ["dpo", "orpo", "cpo", "grpo", "rlhf"].contains(trainingMode) {
+                throw MelixCLIError.usage(
+                    "Invalid value for --training-mode. For alignment training modes (dpo, orpo, cpo, grpo, rlhf), use `melix alignment train --algorithm <mode>`."
+                )
+            }
+            let expected = allowAutoTrainingMode ? "auto, lora, qlora, dora" : "lora, qlora, dora"
+            throw MelixCLIError.usage("Invalid value for --training-mode. Expected one of: \(expected).")
+        }
+        for flag in ["--response-only", "--mask-prompt", "--gradient-checkpointing"] where values.flags.contains(flag) {
+            parameters[normalizedParameterKey(flag)] = "true"
+        }
+        return LoraTrainOptions(
+            modelID: modelID,
+            datasetSourceKind: datasetSourceKind,
+            datasetURI: datasetURI,
+            adapterName: adapterName,
+            targetRepo: values.single["--target-repo"] ?? "",
+            trainingMode: trainingMode,
+            parameters: parameters,
+            preflightFitCheck: values.flags.contains("--preflight-fit-check"),
+            allowMemoryRisk: values.flags.contains("--allow-memory-risk"),
+            json: jsonOverride ?? values.flags.contains("--json")
+        )
+    }
+
+    private static func parseLoraRunEvaluationSourceConfiguration(
+        _ values: ParsedArguments
+    ) throws -> (
+        source: ControlPlaneEvaluationRequest.Source,
+        fieldMapping: ControlPlaneEvaluationRequest.FieldMapping,
+        profile: ControlPlaneEvaluationRequest.Profile
+    ) {
+        let localCSVPath = values.single["--source-csv"] ?? ""
+        let localJSONLPath = values.single["--source-jsonl"] ?? ""
+        guard [localCSVPath, localJSONLPath].filter({ $0.isEmpty == false }).count <= 1 else {
+            throw MelixCLIError.usage("At most one of --source-csv or --source-jsonl may be provided for melix lora run.")
+        }
+        let fieldMapping = ControlPlaneEvaluationRequest.FieldMapping(
+            systemPath: values.single["--field-system-path"] ?? "",
+            inputTextPath: values.single["--field-input-text-path"] ?? "",
+            targetPath: values.single["--field-target-path"] ?? "",
+            sampleIDPath: values.single["--field-sample-id-path"] ?? ""
+        )
+        let outputSchemaJSON = try parseEvaluationOutputSchemaJSON(values)
+        let profile = ControlPlaneEvaluationRequest.Profile(
+            profileType: values.single["--profile-type"] ?? "final_result",
+            resultKind: values.single["--result-kind"] ?? "text",
+            extractionMode: values.single["--extraction-mode"] ?? "heuristic_final",
+            scoringMode: values.single["--scoring-mode"] ?? "",
+            threshold: try parseDoubleValue(values.single["--threshold"], option: "--threshold", defaultValue: 1.0) ?? 1.0,
+            outputSchemaJSON: outputSchemaJSON,
+            ignoredPaths: values.multi["--ignored-path"] ?? []
+        )
+        let source: ControlPlaneEvaluationRequest.Source
+        if localCSVPath.isEmpty == false {
+            source = .localCSV(path: localCSVPath)
+        } else if localJSONLPath.isEmpty == false {
+            source = .localJSONL(path: localJSONLPath)
+        } else {
+            source = .builtinPackage
+        }
+        if source.kind != .builtinPackage {
+            if values.single["--dataset-root"]?.isEmpty == false || values.single["--eval-dataset-root"]?.isEmpty == false {
+                throw MelixCLIError.usage("--dataset-root is only supported for builtin evaluation datasets.")
+            }
+            if profile.scoringMode == "event_extraction_weighted_f1" {
+                return (source, fieldMapping, profile)
+            }
+            guard fieldMapping.inputTextPath.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--field-input-text-path is required when using a custom evaluation dataset source.")
+            }
+            guard fieldMapping.targetPath.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--field-target-path is required when using a custom evaluation dataset source.")
+            }
+        }
+        return (source, fieldMapping, profile)
+    }
+
     private static func normalizedParameterKey(_ option: String) -> String {
         option
             .replacingOccurrences(of: "--", with: "")
@@ -5369,6 +5505,174 @@ public actor MelixCLIRunner {
         )
     }
 
+    private func runLoraTrainOperation(
+        _ options: LoraTrainOptions,
+        outputDir: String = "",
+        trainingModeOverride: String = ""
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        var ext = options.parameters
+        if options.preflightFitCheck {
+            guard options.modelID.trimmingCharacters(in: .whitespacesAndNewlines).contains("/") else {
+                throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix lora train --model-id Hugging Face repo targets.")
+            }
+            let receipt = try await makeMemoryFitReceipt(repoID: options.modelID, targetKind: "train")
+            try enforceMemoryFitPreflight(
+                receipt,
+                allowMemoryRisk: options.allowMemoryRisk,
+                commandName: "training"
+            )
+            ext.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
+        }
+        ext["adapter_name"] = options.adapterName
+        ext["dataset_source_kind"] = options.datasetSourceKind
+        if !options.datasetURI.isEmpty {
+            ext["dataset_uri"] = options.datasetURI
+        }
+        if !options.targetRepo.isEmpty {
+            ext["target_repo"] = options.targetRepo
+        }
+        let trainingMode = trainingModeOverride.isEmpty ? options.trainingMode : trainingModeOverride
+        if !trainingMode.isEmpty {
+            ext["training_mode"] = trainingMode
+        }
+        return try await performModelOperation(
+            modelID: options.modelID,
+            operation: "train_lora",
+            outputDir: outputDir,
+            ext: ext
+        )
+    }
+
+    private func runLoraActivateOperation(
+        _ options: LoraActivateOptions,
+        outputDir: String = ""
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        var ext = ["artifact_path": options.adapterPath]
+        if !options.derivedModelAlias.isEmpty {
+            ext["derived_model_alias"] = options.derivedModelAlias
+        }
+        if !options.activationMode.isEmpty {
+            ext["activation_mode"] = options.activationMode
+        }
+        return try await performModelOperation(
+            modelID: options.modelID,
+            operation: "activate_adapter",
+            outputDir: outputDir,
+            ext: ext
+        )
+    }
+
+    private func runLoraRun(_ options: LoraRunOptions) async throws -> String {
+        let outputRoot = try loraRunOutputRoot(options)
+        let trainOutputDir = outputRoot.appendingPathComponent("train", isDirectory: true)
+        let activationOutputDir = outputRoot.appendingPathComponent("activate", isDirectory: true)
+        let evaluationOutputDir = outputRoot.appendingPathComponent("evaluation", isDirectory: true)
+        try FileManager.default.createDirectory(at: evaluationOutputDir, withIntermediateDirectories: true)
+
+        let resolvedTrainingMode = Self.resolvedLoraRunTrainingMode(
+            requested: options.training.trainingMode,
+            modelID: options.training.modelID,
+            parameters: options.training.parameters
+        )
+        let trainResult = try await runLoraTrainOperation(
+            options.training,
+            outputDir: trainOutputDir.path,
+            trainingModeOverride: resolvedTrainingMode
+        )
+        let adapterManifestPath = try Self.resolveLoraAdapterManifestPath(
+            from: trainResult,
+            fallbackOutputDir: trainOutputDir.path
+        )
+        let alias = options.training.parameters["derived_model_alias"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? "\(options.training.adapterName)-runtime"
+        let activationResult = try await runLoraActivateOperation(
+            LoraActivateOptions(
+                modelID: options.training.modelID,
+                adapterPath: adapterManifestPath,
+                derivedModelAlias: alias,
+                activationMode: options.activationMode
+            ),
+            outputDir: activationOutputDir.path
+        )
+        let compareOptions = EvalCompareOptions(
+            modelID: options.evaluation.modelID,
+            hfRepoID: options.evaluation.hfRepoID,
+            targetModelIDs: options.evaluation.targetModelIDs,
+            targetAdapterManifestPaths: [adapterManifestPath] + options.evaluation.targetAdapterManifestPaths,
+            suites: options.evaluation.suites,
+            datasetID: options.evaluation.datasetID,
+            sampleSize: options.evaluation.sampleSize,
+            source: options.evaluation.source,
+            fieldMapping: options.evaluation.fieldMapping,
+            profile: options.evaluation.profile,
+            parameters: options.evaluation.parameters,
+            json: true
+        )
+        let compareResults = try await runEvaluationCompare(compareOptions)
+        let compareJobID = compareResults.first?.job.jobID ?? ""
+        let summaryPath = evaluationOutputDir.appendingPathComponent("compare-summary.csv").path
+        let samplesPath = evaluationOutputDir.appendingPathComponent("compare-samples.jsonl").path
+        var exportedSummaryPath = ""
+        var exportedSamplesPath = ""
+        if compareJobID.isEmpty == false {
+            _ = try await exportEvaluationArtifact(
+                options: EvalExportOptions(jobID: compareJobID, outputPath: summaryPath, json: false),
+                missingRowsMessage: "No evaluation compare summary rows were found for job \(compareJobID).",
+                rowCount: { bundle in bundle.evaluationCompareSummaryRows(jobID: compareJobID).count },
+                contents: { bundle in bundle.evaluationCompareSummaryCSV(jobID: compareJobID) }
+            )
+            exportedSummaryPath = summaryPath
+            _ = try await exportEvaluationArtifact(
+                options: EvalExportOptions(jobID: compareJobID, outputPath: samplesPath, json: false),
+                missingRowsMessage: "No evaluation compare sample rows were found for job \(compareJobID).",
+                rowCount: { bundle in bundle.evaluationCompareSampleRows(jobID: compareJobID).count },
+                contents: { bundle in try bundle.evaluationCompareSamplesJSONL(jobID: compareJobID) }
+            )
+            exportedSamplesPath = samplesPath
+        }
+
+        let activationPayload = Self.jsonObject(from: activationResult.manifestJson) ?? [:]
+        let receipt: [String: Any] = [
+            "schema_version": "melix.lora_run_receipt.v1",
+            "status": "completed",
+            "model_id": options.training.modelID,
+            "adapter_name": options.training.adapterName,
+            "training_mode": resolvedTrainingMode,
+            "activation_mode": options.activationMode,
+            "output_dir": outputRoot.path,
+            "adapter_manifest_path": adapterManifestPath,
+            "activation_manifest_path": Self.resolveLoraActivationManifestPath(
+                from: activationResult,
+                fallbackOutputDir: activationOutputDir.path
+            ),
+            "derived_model_id": Self.stringValue("derived_model_id", from: activationPayload),
+            "train": Self.modelOperationPayload(trainResult),
+            "activation": Self.modelOperationPayload(activationResult),
+            "evaluation": [
+                "job_ids": compareResults.map(\.job.jobID),
+                "summary_csv_path": exportedSummaryPath,
+                "samples_jsonl_path": exportedSamplesPath,
+                "results": compareResults.map(makeEvaluationPayload),
+            ],
+        ]
+        if options.json {
+            return try prettyJSON(receipt)
+        }
+        var lines = [
+            "LoRA run completed.",
+            "output_dir: \(outputRoot.path)",
+            "training_mode: \(resolvedTrainingMode)",
+            "adapter_manifest: \(adapterManifestPath)",
+            "activation_manifest: \(receipt["activation_manifest_path"] as? String ?? "")",
+        ]
+        if compareJobID.isEmpty == false {
+            lines.append("evaluation_job: \(compareJobID)")
+            lines.append("summary_csv: \(exportedSummaryPath)")
+            lines.append("samples_jsonl: \(exportedSamplesPath)")
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     public func run(_ command: MelixCLICommand) async throws -> String {
         if commandRequiresConfiguredRegistryRootPriming(command) {
             try await primeConfiguredRegistryRootsIfNeeded()
@@ -6031,37 +6335,10 @@ public actor MelixCLIRunner {
                 )
             }
             return renderRegistrySnapshot(result.manifestJson)
+        case .loraRun(let options):
+            return try await runLoraRun(options)
         case .loraTrain(let options):
-            var ext = options.parameters
-            if options.preflightFitCheck {
-                guard options.modelID.trimmingCharacters(in: .whitespacesAndNewlines).contains("/") else {
-                    throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix lora train --model-id Hugging Face repo targets.")
-                }
-                let receipt = try await makeMemoryFitReceipt(repoID: options.modelID, targetKind: "train")
-                try enforceMemoryFitPreflight(
-                    receipt,
-                    allowMemoryRisk: options.allowMemoryRisk,
-                    commandName: "training"
-                )
-                ext.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
-            }
-            ext["adapter_name"] = options.adapterName
-            ext["dataset_source_kind"] = options.datasetSourceKind
-            if !options.datasetURI.isEmpty {
-                ext["dataset_uri"] = options.datasetURI
-            }
-            if !options.targetRepo.isEmpty {
-                ext["target_repo"] = options.targetRepo
-            }
-            if !options.trainingMode.isEmpty {
-                ext["training_mode"] = options.trainingMode
-            }
-            let result = try await performModelOperation(
-                modelID: options.modelID,
-                operation: "train_lora",
-                outputDir: "",
-                ext: ext
-            )
+            let result = try await runLoraTrainOperation(options)
             return options.json ? result.manifestJson : result.outputPath
         case .alignmentTrain(let options):
             var ext = options.parameters
@@ -6110,19 +6387,7 @@ public actor MelixCLIRunner {
             )
             return options.json ? result.manifestJson : result.outputPath
         case .loraActivate(let options):
-            var ext = ["artifact_path": options.adapterPath]
-            if !options.derivedModelAlias.isEmpty {
-                ext["derived_model_alias"] = options.derivedModelAlias
-            }
-            if !options.activationMode.isEmpty {
-                ext["activation_mode"] = options.activationMode
-            }
-            let result = try await performModelOperation(
-                modelID: options.modelID,
-                operation: "activate_adapter",
-                outputDir: "",
-                ext: ext
-            )
+            let result = try await runLoraActivateOperation(options)
             return options.json ? result.manifestJson : result.outputPath
         case .loraRemoveDerived(let options):
             var ext: [String: String] = [:]
@@ -6833,6 +7098,102 @@ public actor MelixCLIRunner {
         }
     }
 
+    private func loraRunOutputRoot(_ options: LoraRunOptions) throws -> URL {
+        if options.outputDir.isEmpty == false {
+            return URL(fileURLWithPath: (options.outputDir as NSString).expandingTildeInPath)
+        }
+        let root = MelixHome(environment: environment).rootURL
+            .appendingPathComponent("runs", isDirectory: true)
+            .appendingPathComponent("lora-run", isDirectory: true)
+        let timestamp = String(Int64(Date().timeIntervalSince1970 * 1000))
+        let adapter = Self.sanitizedLoraRunPathComponent(options.training.adapterName)
+        return root.appendingPathComponent("\(timestamp)-\(adapter)", isDirectory: true)
+    }
+
+    private static func sanitizedLoraRunPathComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let scalars = value.unicodeScalars.map { scalar -> Character in
+            allowed.contains(scalar) ? Character(scalar) : "-"
+        }
+        let candidate = String(scalars)
+            .split(separator: "-", omittingEmptySubsequences: true)
+            .joined(separator: "-")
+        return candidate.isEmpty ? "adapter" : candidate
+    }
+
+    private static func resolvedLoraRunTrainingMode(
+        requested: String,
+        modelID: String,
+        parameters: [String: String]
+    ) -> String {
+        let normalized = requested.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalized.isEmpty || normalized == "auto" else {
+            return normalized
+        }
+        let evidence = ([modelID] + parameters.map { "\($0.key)=\($0.value)" })
+            .joined(separator: " ")
+            .lowercased()
+        let quantizedMarkers = ["4bit", "8bit", "q4", "q8", "optiq", "quantized"]
+        return quantizedMarkers.contains { evidence.contains($0) } ? "qlora" : "lora"
+    }
+
+    private static func resolveLoraAdapterManifestPath(
+        from result: Melix_Controlplane_V1_ModelOperationResult,
+        fallbackOutputDir: String
+    ) throws -> String {
+        let payload = jsonObject(from: result.manifestJson) ?? [:]
+        for key in ["adapter_manifest_path", "manifest_path", "artifact_path"] {
+            let value = stringValue(key, from: payload)
+            if value.isEmpty == false {
+                return value
+            }
+        }
+        if result.outputPath.hasSuffix(".json") {
+            return result.outputPath
+        }
+        if result.outputPath.isEmpty == false {
+            return URL(fileURLWithPath: result.outputPath).appendingPathComponent("train_lora.adapter.json").path
+        }
+        if fallbackOutputDir.isEmpty == false {
+            return URL(fileURLWithPath: fallbackOutputDir).appendingPathComponent("train_lora.adapter.json").path
+        }
+        throw MelixCLIError.runtime("LoRA training did not return an adapter manifest path.")
+    }
+
+    private static func resolveLoraActivationManifestPath(
+        from result: Melix_Controlplane_V1_ModelOperationResult,
+        fallbackOutputDir: String
+    ) -> String {
+        let payload = jsonObject(from: result.manifestJson) ?? [:]
+        let manifestPath = stringValue("manifest_path", from: payload)
+        if manifestPath.isEmpty == false {
+            return manifestPath
+        }
+        if result.outputPath.hasSuffix(".json") {
+            return result.outputPath
+        }
+        if result.outputPath.isEmpty == false {
+            return URL(fileURLWithPath: result.outputPath).appendingPathComponent("manifest.json").path
+        }
+        if fallbackOutputDir.isEmpty == false {
+            return URL(fileURLWithPath: fallbackOutputDir).appendingPathComponent("manifest.json").path
+        }
+        return ""
+    }
+
+    private static func modelOperationPayload(
+        _ result: Melix_Controlplane_V1_ModelOperationResult
+    ) -> [String: Any] {
+        [
+            "job_id": result.jobID,
+            "operation": result.operation,
+            "stage": result.stage,
+            "pct": result.pct,
+            "output_path": result.outputPath,
+            "manifest": jsonObject(from: result.manifestJson) ?? [:],
+        ]
+    }
+
     private static func jsonObject(from text: String) -> [String: Any]? {
         guard let data = text.data(using: .utf8) else {
             return nil
@@ -6895,6 +7256,7 @@ public actor MelixCLIRunner {
              .serverSnapshot,
              .serverStart,
              .loraList,
+             .loraRun,
              .loraTrain,
              .alignmentTrain,
              .loraActivate,

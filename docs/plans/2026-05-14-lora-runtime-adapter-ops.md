@@ -68,6 +68,12 @@ Concurrent adapter-backed targets that share the same base model must have the s
    - Capture or report the exact environmental blocker.
    - Open the PR and monitor CI plus the Performance Report comment.
 
+6. One-command operator path
+   - Add `melix lora run` as the public happy path for train, adapter-backed activation, base-vs-adapter evaluation compare, and compare artifact export.
+   - Default `--activation-mode` to `adapter_backed_runtime` so the flow exercises fast adapter switching and shared-base isolation metadata.
+   - Support `--training-mode auto`, resolving quantized model ids such as 4-bit or 8-bit MLX repos to QLoRA.
+   - Keep `melix lora train`, `melix lora activate`, and `melix eval compare` as advanced/manual escape hatches.
+
 After every implementation commit, merge `origin/main` into the feature branch before continuing.
 
 ## Success Metrics
@@ -120,6 +126,19 @@ python3 scripts/python_changed_line_coverage.py \
 Real LoRA acceptance target:
 
 ```bash
+swift run melix lora run \
+  --model-id unsloth/gemma-4-E4B-it-MLX-8bit \
+  --dataset-uri .runtime/lora-runtime-acceptance/dialogue-training-package \
+  --adapter-name dialogue-extraction-quality \
+  --training-mode auto \
+  --activation-mode adapter_backed_runtime \
+  --eval-suite event_extraction \
+  --eval-dataset-id top200.event-extraction.top20.v1 \
+  --eval-dataset-root evaluation \
+  --scoring-mode event_extraction_weighted_f1 \
+  --output-dir .runtime/lora-runtime-acceptance/lora-run \
+  --json
+
 MELIX_REAL_LORA_MODEL_ID="unsloth/gemma-4-E4B-it-MLX-8bit" \
 MELIX_REAL_LORA_DATASET_ID="dialogue-extraction" \
 MELIX_REAL_LORA_ACCEPTANCE=1 \
