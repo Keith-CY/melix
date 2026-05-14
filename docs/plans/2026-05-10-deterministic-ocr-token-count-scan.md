@@ -21,3 +21,9 @@ This is a Python runtime slice and is locally verifiable on Linux. The PR-scoped
 - OCR token counts remain equivalent to Python whitespace splitting for prompt and completion accounting.
 - Changed-scope coverage remains at least 95%.
 - The registered probe shows a lower `elapsed_ms_mean` than the origin/main baseline, or a clearly bounded non-regression.
+
+## 2026-05-14 follow-up slice
+
+The single-image OCR prompt-token path now reuses `PreparedVisionRequest.preprocess_input_bytes` for image-token accounting instead of reading the image `byte_length` property again. `prepare_vision_request(...)` already accumulates this byte total while constructing the immutable request, and OCR render validation keeps the normal runtime path to one image with no videos. Multi-image or malformed mixed-media inputs retain the existing per-image fallback summation.
+
+The same registered `deterministic-ocr-token-count-scan` probe covers this follow-up because it repeatedly calls `DeterministicOCRRuntime.prompt_token_count(...)` for a single-image OCR request and reports elapsed time plus peak bytes.
