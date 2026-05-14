@@ -237,7 +237,7 @@ struct DesktopShellStateTests {
             host: "0.0.0.0",
             port: 18080,
             effectiveHost: "127.0.0.1",
-            effectivePort: 11434,
+            effectivePort: 12436,
             gatewayConfigSourceText: "Operator Override",
             gatewayConfigActiveBinding: true,
             gatewayConfigRequiresRestart: true,
@@ -273,8 +273,8 @@ struct DesktopShellStateTests {
         )
 
         #expect(session.baseURL == "http://0.0.0.0:18080/v1")
-        #expect(session.effectiveBaseURL == "http://127.0.0.1:11434/v1")
-        #expect(session.effectiveListenerLabel == "127.0.0.1:11434")
+        #expect(session.effectiveBaseURL == "http://127.0.0.1:12436/v1")
+        #expect(session.effectiveListenerLabel == "127.0.0.1:12436")
 
         let encoded = try JSONEncoder().encode(session)
         let decoded = try JSONDecoder().decode(DesktopServerSessionState.self, from: encoded)
@@ -282,7 +282,7 @@ struct DesktopShellStateTests {
         #expect(decoded.host == "0.0.0.0")
         #expect(decoded.port == 18080)
         #expect(decoded.effectiveHost == "127.0.0.1")
-        #expect(decoded.effectivePort == 11434)
+        #expect(decoded.effectivePort == 12436)
         #expect(decoded.gatewayConfigSourceText == "Operator Override")
         #expect(decoded.gatewayConfigActiveBinding)
         #expect(decoded.gatewayConfigRequiresRestart)

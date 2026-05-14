@@ -45,7 +45,7 @@ curl -sS \
   -H 'content-type: application/json' \
   -H 'x-api-key: sk-desktop' \
   -d '{"remember_me":true}' \
-  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/melix/auth/session
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/melix/auth/session
 ```
 
 Expected response:
@@ -60,7 +60,7 @@ Expected response:
 ```bash
 curl -sS \
   -H "X-Melix-Session: ${MELIX_SESSION_TOKEN}" \
-  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/models
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/models
 ```
 
 Expected response:
@@ -75,7 +75,7 @@ After restarting the local stack with the same `MELIX_HOME` and gateway keyring:
 ```bash
 curl -sS \
   -H "X-Melix-Session: ${MELIX_SESSION_TOKEN}" \
-  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/melix/auth/session
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/melix/auth/session
 ```
 
 Expected response:
@@ -88,7 +88,7 @@ Expected response:
 ```bash
 curl -sS -X DELETE \
   -H "X-Melix-Session: ${MELIX_SESSION_TOKEN}" \
-  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/melix/auth/session
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/melix/auth/session
 ```
 
 Expected follow-up rejection:
@@ -96,7 +96,7 @@ Expected follow-up rejection:
 ```bash
 curl -sS \
   -H "X-Melix-Session: ${MELIX_SESSION_TOKEN}" \
-  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/models
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/models
 ```
 
 - status `401`
@@ -112,7 +112,7 @@ curl -sS \
   -H 'content-type: application/json' \
   -H 'x-api-key: sk-desktop' \
   -d '{"remember_me":false}' \
-  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/melix/auth/session
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/melix/auth/session
 ```
 
 After restart, the same token must fail with:

@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneCore
 
 public enum MelixOperatorServerSessionLifecycle: String, Codable, Sendable {
     case draft = "Draft"
@@ -120,8 +121,8 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         id: String,
         title: String,
         modelID: String,
-        host: String = "127.0.0.1",
-        port: Int = 8080,
+        host: String = MelixGatewayDefaults.host,
+        port: Int = MelixGatewayDefaults.port,
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
         servingDefaults: MelixOperatorServerServingDefaultsState = .init(),
@@ -177,8 +178,8 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
             id: try container.decode(String.self, forKey: .id),
             title: try container.decodeIfPresent(String.self, forKey: .title) ?? "",
             modelID: try container.decodeIfPresent(String.self, forKey: .modelID) ?? "",
-            host: try container.decodeIfPresent(String.self, forKey: .host) ?? "127.0.0.1",
-            port: try container.decodeIfPresent(Int.self, forKey: .port) ?? 8080,
+            host: try container.decodeIfPresent(String.self, forKey: .host) ?? MelixGatewayDefaults.host,
+            port: try container.decodeIfPresent(Int.self, forKey: .port) ?? MelixGatewayDefaults.port,
             rateLimitPerMinute: try container.decodeIfPresent(Int.self, forKey: .rateLimitPerMinute) ?? 120,
             timeoutSeconds: try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds) ?? 120,
             servingDefaults: try container.decodeIfPresent(
