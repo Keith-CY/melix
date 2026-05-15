@@ -57,6 +57,13 @@ _TARGETS: dict[str, PackagingTargetProfile] = {
 }
 
 
+def resolve_local_connect_host(bind_host: str) -> str:
+    normalized = bind_host.strip()
+    if normalized in {"", "0.0.0.0", "::", "[::]"}:
+        return "127.0.0.1"
+    return normalized
+
+
 def list_packaging_target_profiles() -> list[PackagingTargetProfile]:
     return [*_TARGETS.values()]
 

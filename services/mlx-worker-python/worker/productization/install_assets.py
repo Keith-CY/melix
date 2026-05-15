@@ -14,7 +14,10 @@ from worker.productization.startup_signals import (
     read_product_version,
     resolve_http_port,
 )
-from worker.productization.packaging_targets import build_packaging_target_metadata
+from worker.productization.packaging_targets import (
+    build_packaging_target_metadata,
+    resolve_local_connect_host,
+)
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,8 @@ class LocalProductLayout:
     product_version: str
     requested_http_port: int
     http_port: int
+    http_bind_host: str
+    http_connect_host: str
 
 
 @dataclass(frozen=True)
@@ -76,6 +81,7 @@ def build_local_product_layout(
     prefer_available_http_port: bool = False,
     product_version: str = "",
     update_channel_path: str | Path | None = None,
+    http_bind_host: str = "127.0.0.1",
 ) -> LocalProductLayout:
     resolved_repo_root = Path(repo_root).expanduser().resolve()
     resolved_home_dir = Path(home_dir or Path.home()).expanduser().resolve()
@@ -90,6 +96,8 @@ def build_local_product_layout(
         http_port,
         prefer_available_http_port=prefer_available_http_port,
     )
+    normalized_bind_host = http_bind_host.strip() or "127.0.0.1"
+    resolved_connect_host = resolve_local_connect_host(normalized_bind_host)
     resolved_product_version = product_version or _resolve_product_version(resolved_repo_root)
     resolved_update_channel_path = (
         Path(update_channel_path).expanduser().resolve()
@@ -146,6 +154,8 @@ def build_local_product_layout(
         product_version=resolved_product_version,
         requested_http_port=http_port,
         http_port=resolved_http_port,
+        http_bind_host=normalized_bind_host,
+        http_connect_host=resolved_connect_host,
     )
 
 
@@ -219,6 +229,7 @@ def build_launch_agent_specs(
 
     control_plane_environment = {
         **common_swift_environment,
+        "MELIX_HTTP_HOST": layout.http_bind_host,
         "MELIX_HTTP_PORT": str(layout.http_port),
         "MELIX_WORKER_SOCKET_PATH": str(layout.python_socket_path),
         "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(layout.swift_text_worker_socket_path),
@@ -363,8 +374,12 @@ def write_local_product_artifacts(
         "install_manifest_path": str(layout.install_manifest_path),
         "requested_http_port": layout.requested_http_port,
         "http_port": layout.http_port,
+        "http_bind_host": layout.http_bind_host,
+        "http_connect_host": layout.http_connect_host,
         "http_port_auto_selected": layout.requested_http_port != layout.http_port,
-        "ready_probe_url": f"http://127.0.0.1:{layout.http_port}/v1/models",
+        "health_probe_url": f"http://{layout.http_connect_host}:{layout.http_port}/health",
+        "ready_probe_url": f"http://{layout.http_connect_host}:{layout.http_port}/v1/models",
+        "service_base_url": f"http://{layout.http_connect_host}:{layout.http_port}/v1",
         "control_plane_stdout_path": str(layout.control_plane_stdout_path),
         "control_plane_stderr_path": str(layout.control_plane_stderr_path),
         "swift_text_worker_stdout_path": str(layout.swift_text_worker_stdout_path),
@@ -408,6 +423,8 @@ def render_environment_script(layout: LocalProductLayout) -> str:
         "MELIX_WORKER_SOCKET_PATH": str(layout.python_socket_path),
         "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(layout.swift_text_worker_socket_path),
         "MELIX_HTTP_PORT": str(layout.http_port),
+        "MELIX_HTTP_HOST": str(layout.http_bind_host),
+        "MELIX_HTTP_CONNECT_HOST": str(layout.http_connect_host),
         "MELIX_CONTROL_PLANE_METRICS_PATH": str(layout.control_plane_metrics_path),
         "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": str(layout.swift_text_worker_metrics_path),
         "MELIX_PYTHON_WORKER_METRICS_PATH": str(layout.python_worker_metrics_path),

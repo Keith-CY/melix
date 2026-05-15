@@ -10,7 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from worker.productization.packaging_targets import build_packaging_target_metadata
+from worker.productization.packaging_targets import (
+    build_packaging_target_metadata,
+    resolve_local_connect_host,
+)
 from worker.productization.startup_signals import default_update_channel_path
 
 
@@ -120,6 +123,9 @@ def render_portable_environment_script(
     logical_product_identity: str,
     packaging_target_id: str,
     packaging_kind: str,
+    http_bind_host: str = "127.0.0.1",
+    http_connect_host: str = "127.0.0.1",
+    http_port: int = 12436,
 ) -> str:
     return "\n".join(
         [
@@ -141,6 +147,9 @@ def render_portable_environment_script(
             'export MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH="${MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH:-$MELIX_HOME/config/gateway-serving-defaults.json}"',
             'export MELIX_IMAGE_DEFAULTS_STORE_PATH="${MELIX_IMAGE_DEFAULTS_STORE_PATH:-$MELIX_HOME/config/image-defaults.json}"',
             'export MELIX_PRODUCT_MANIFEST_PATH="${MELIX_PRODUCT_MANIFEST_PATH:-$MELIX_HOME/install/install-manifest.json}"',
+            f'export MELIX_HTTP_HOST="${{MELIX_HTTP_HOST:-{http_bind_host}}}"',
+            f'export MELIX_HTTP_CONNECT_HOST="${{MELIX_HTTP_CONNECT_HOST:-{http_connect_host}}}"',
+            f'export MELIX_HTTP_PORT="${{MELIX_HTTP_PORT:-{http_port}}}"',
             'export MELIX_BACKEND_MODE="auto"',
             'export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="swift"',
             'export MELIX_LOGS_DIR="${MELIX_LOGS_DIR:-$MELIX_HOME/logs}"',
@@ -225,6 +234,8 @@ def write_unsigned_macos_app_bundle(
     packaging_target_id: str = "macos_app_bundle_preview",
     update_channel_path: str | Path | None = None,
     icon_source_path: str | Path | None = None,
+    http_bind_host: str = "127.0.0.1",
+    http_port: int = 12436,
 ) -> dict[str, Any]:
     write_started_at = time.perf_counter()
     timings: dict[str, float] = {}
@@ -244,6 +255,8 @@ def write_unsigned_macos_app_bundle(
         if icon_source_path is not None
         else repo_root_path / "apps/macos-menubar/Sources/AppMain/Resources/Branding/MelixAppIcon.icns"
     )
+    normalized_bind_host = http_bind_host.strip() or "127.0.0.1"
+    resolved_connect_host = resolve_local_connect_host(normalized_bind_host)
 
     if not executable.is_file():
         raise FileNotFoundError(f"Missing menubar executable: {executable}")
@@ -302,9 +315,17 @@ def write_unsigned_macos_app_bundle(
             logical_product_identity=str(target_metadata["logical_product_identity"]),
             packaging_target_id=str(target_metadata["packaging_target_id"]),
             packaging_kind=str(target_metadata["packaging_kind"]),
+            http_bind_host=normalized_bind_host,
+            http_connect_host=resolved_connect_host,
+            http_port=http_port,
         ),
         encoding="utf-8",
     )
+    target_metadata["http_bind_host"] = normalized_bind_host
+    target_metadata["http_connect_host"] = resolved_connect_host
+    target_metadata["http_port"] = http_port
+    target_metadata["health_probe_url"] = f"http://{resolved_connect_host}:{http_port}/health"
+    target_metadata["service_base_url"] = f"http://{resolved_connect_host}:{http_port}/v1"
     layout.packaging_target_manifest_path.write_text(
         json.dumps(target_metadata, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -366,6 +387,11 @@ def write_unsigned_macos_app_bundle(
         "packaging_kind": str(target_metadata["packaging_kind"]),
         "logical_product_identity": str(target_metadata["logical_product_identity"]),
         "update_channel_path": str(target_metadata["update_channel_path"]),
+        "http_bind_host": normalized_bind_host,
+        "http_connect_host": resolved_connect_host,
+        "http_port": http_port,
+        "health_probe_url": str(target_metadata["health_probe_url"]),
+        "service_base_url": str(target_metadata["service_base_url"]),
         "timings": timings,
     }
 

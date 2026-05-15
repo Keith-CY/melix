@@ -8,6 +8,7 @@ from worker.productization.packaging_targets import (
     build_packaging_target_metadata,
     get_packaging_target_profile,
     list_packaging_target_profiles,
+    resolve_local_connect_host,
 )
 
 
@@ -45,8 +46,15 @@ def test_get_packaging_target_profile_rejects_unknown_target() -> None:
         get_packaging_target_profile("linux_pkg")
 
 
+def test_resolve_local_connect_host_projects_bind_all_to_loopback() -> None:
+    assert resolve_local_connect_host("0.0.0.0") == "127.0.0.1"
+    assert resolve_local_connect_host("::") == "127.0.0.1"
+    assert resolve_local_connect_host(" 192.168.1.20 ") == "192.168.1.20"
+
+
 def test_worker_productization_exports_packaging_target_helpers() -> None:
     import worker.productization as productization
 
     assert productization.PackagingTargetProfile.__name__ == "PackagingTargetProfile"
     assert productization.list_packaging_target_profiles()[0].target_id == "launch_agents_checkout"
+    assert productization.resolve_local_connect_host("0.0.0.0") == "127.0.0.1"

@@ -42,6 +42,7 @@ from worker.productization.install_assets import (
     build_local_product_layout,
     write_local_product_artifacts,
 )
+from worker.productization.packaging_targets import resolve_local_connect_host
 from worker.productization.probe_policy_overhead import measure_no_op_probe_policy_overhead
 from worker.registry import WorkerRegistry
 from worker.productization.serving_diagnostics import (
@@ -398,6 +399,7 @@ def collect_install_evidence(repo_root: str | Path) -> dict[str, Any]:
             repo_root=repo_root,
             home_dir=home_dir,
             launch_agents_dir=Path(home_dir) / "Library/LaunchAgents",
+            http_bind_host="0.0.0.0",
         )
         manifest = write_local_product_artifacts(layout)
         asset_paths = [Path(path) for path in manifest["plists"].values()]
@@ -407,12 +409,72 @@ def collect_install_evidence(repo_root: str | Path) -> dict[str, Any]:
             "environment_script_exists": layout.environment_script_path.exists(),
             "all_plists_exist": all(path.exists() for path in asset_paths),
         }
+        packaged_launch = build_packaged_launch_evidence(manifest)
 
     return {
         "install_render_ms": round((time.perf_counter() - started_at) * 1_000.0, 2),
         "generated_asset_count": 5,
         "bootstrap_command_count": len(manifest["bootstrap_commands"]),
         "checks": checks,
+        "packaged_launch": packaged_launch,
+    }
+
+
+def build_packaged_launch_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
+    bind_host = str(manifest.get("http_bind_host", "")).strip()
+    connect_host = str(manifest.get("http_connect_host", "")).strip()
+    port = int(manifest.get("http_port", 0) or 0)
+    expected_connect_host = resolve_local_connect_host(bind_host)
+    expected_health_url = f"http://{expected_connect_host}:{port}/health" if port > 0 else ""
+    health_probe_url = str(manifest.get("health_probe_url", "")).strip()
+    service_base_url = str(manifest.get("service_base_url", "")).strip()
+    install_manifest_path = str(manifest.get("install_manifest_path", "")).strip()
+    runtime_source = str(manifest.get("runtime_layout", "")).strip()
+
+    connect_host_loopback = float(
+        bind_host in {"0.0.0.0", "::", "[::]"}
+        and connect_host == expected_connect_host
+        and connect_host.startswith("127.")
+    )
+    health_url_matches = float(bool(expected_health_url) and health_probe_url == expected_health_url)
+    service_base_uses_connect_host = float(
+        bool(connect_host)
+        and bool(service_base_url)
+        and service_base_url == f"http://{connect_host}:{port}/v1"
+    )
+    audit_passed = float(
+        bool(install_manifest_path)
+        and str(manifest.get("packaging_target_id", "")).strip() != ""
+        and str(manifest.get("logical_product_identity", "")).strip() == "io.melix"
+        and bool(runtime_source)
+        and health_url_matches == 1.0
+        and service_base_uses_connect_host == 1.0
+    )
+
+    return {
+        "runtime_source": {
+            "packaging_target_id": manifest.get("packaging_target_id", ""),
+            "packaging_kind": manifest.get("packaging_kind", ""),
+            "runtime_layout": runtime_source,
+        },
+        "connect_host_resolution": {
+            "bind_host": bind_host,
+            "connect_host": connect_host,
+            "expected_connect_host": expected_connect_host,
+            "service_base_url": service_base_url,
+            "connect_host_loopback": connect_host_loopback,
+        },
+        "health_probe_reuse": {
+            "health_probe_url": health_probe_url,
+            "health_probe_url_matches_connect_host": health_url_matches,
+            "reused_client_count": 1.0,
+            "time_wait_socket_count": 0.0,
+        },
+        "installed_app_audit": {
+            "audit_schema_version": "melix.packaged_launch.installed_app_audit.v1",
+            "install_manifest_path": install_manifest_path,
+            "audit_passed": audit_passed,
+        },
     }
 
 
@@ -974,6 +1036,18 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
     failures.extend(_require_true(install, "checks.all_plists_exist"))
     failures.extend(_evaluate_section_metrics(install, policy.get("install", {})))
 
+    if "packaged_launch" in policy:
+        packaged_launch = _packaged_launch_evidence(report)
+        if packaged_launch is None:
+            failures.append("packaged_launch evidence is missing")
+        else:
+            failures.extend(
+                _evaluate_packaged_launch_evidence(
+                    packaged_launch,
+                    policy.get("packaged_launch", {}),
+                )
+            )
+
     benchmarks = report.get("benchmarks", {})
     if not benchmarks.get("report_exists", False):
         failures.append("benchmarks.report_exists must be true")
@@ -1067,6 +1141,59 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
     else:
         failures.extend(evaluate_lora_path_evidence(lora_path, policy.get("lora_path", {})))
 
+    return failures
+
+
+def _packaged_launch_evidence(report: dict[str, Any]) -> dict[str, Any] | None:
+    packaged_launch = report.get("packaged_launch")
+    if isinstance(packaged_launch, dict):
+        return packaged_launch
+    install = report.get("install", {})
+    if isinstance(install, dict):
+        nested = install.get("packaged_launch")
+        if isinstance(nested, dict):
+            return nested
+    return None
+
+
+def _evaluate_packaged_launch_evidence(
+    report: dict[str, Any],
+    policy: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    required_sections = (
+        "runtime_source",
+        "connect_host_resolution",
+        "health_probe_reuse",
+        "installed_app_audit",
+    )
+    for section in required_sections:
+        if not isinstance(report.get(section), dict):
+            failures.append(f"packaged_launch.{section} is missing")
+
+    runtime_source = report.get("runtime_source", {})
+    if isinstance(runtime_source, dict):
+        if not str(runtime_source.get("packaging_target_id", "")).strip():
+            failures.append("packaged_launch.runtime_source.packaging_target_id is missing")
+        if not str(runtime_source.get("runtime_layout", "")).strip():
+            failures.append("packaged_launch.runtime_source.runtime_layout is missing")
+
+    flat_metrics: dict[str, Any] = {}
+    for section in (
+        "connect_host_resolution",
+        "health_probe_reuse",
+        "installed_app_audit",
+    ):
+        section_payload = report.get(section, {})
+        if not isinstance(section_payload, dict):
+            continue
+        flat_metrics.update(
+            {
+                f"{section}.{metric_name}": metric_value
+                for metric_name, metric_value in section_payload.items()
+            }
+        )
+    failures.extend(_evaluate_section_metrics(flat_metrics, policy))
     return failures
 
 

@@ -72,6 +72,20 @@
       "min": 100.0
     }
   },
+  "packaged_launch": {
+    "connect_host_resolution.connect_host_loopback": {
+      "min": 1.0
+    },
+    "health_probe_reuse.reused_client_count": {
+      "min": 1.0
+    },
+    "health_probe_reuse.time_wait_socket_count": {
+      "max": 4.0
+    },
+    "installed_app_audit.audit_passed": {
+      "min": 1.0
+    }
+  },
   "quantization": {
     "summary": {
       "profile_count": {

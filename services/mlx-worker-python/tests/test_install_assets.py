@@ -37,6 +37,8 @@ def test_build_local_product_layout_uses_cli_first_melix_home(tmp_path: Path) ->
     assert layout.product_version == "0.1.0"
     assert layout.requested_http_port == 18443
     assert layout.http_port == 18443
+    assert layout.http_bind_host == "127.0.0.1"
+    assert layout.http_connect_host == "127.0.0.1"
     assert layout.install_manifest_path == home_dir / ".melix/install/install-manifest.json"
     assert layout.environment_script_path == home_dir / ".melix/install/melix-product-env.sh"
 
@@ -98,6 +100,7 @@ def test_build_launch_agent_specs_capture_expected_commands_and_environment(tmp_
     control_spec = specs["io.melix.control-plane"]
     assert control_spec.environment["MELIX_REPO_ROOT"] == str(repo_root)
     assert control_spec.environment["MELIX_HOME"] == str(layout.melix_home_dir)
+    assert control_spec.environment["MELIX_HTTP_HOST"] == "127.0.0.1"
     assert control_spec.environment["MELIX_HTTP_PORT"] == "12436"
     assert control_spec.environment["MELIX_MANAGED_MODEL_ROOT"] == str(layout.managed_models_dir)
     assert control_spec.environment["MELIX_AUDIO_RUNTIME_PACK_ROOT"] == str(layout.audio_runtime_packs_dir)
@@ -224,8 +227,12 @@ def test_write_local_product_artifacts_writes_plists_manifest_and_env(tmp_path: 
     assert payload["logical_product_identity"] == "io.melix"
     assert payload["product_version"] == "0.1.0"
     assert payload["requested_http_port"] == 19434
+    assert payload["http_bind_host"] == "127.0.0.1"
+    assert payload["http_connect_host"] == "127.0.0.1"
     assert payload["http_port_auto_selected"] is False
+    assert payload["health_probe_url"] == "http://127.0.0.1:19434/health"
     assert payload["ready_probe_url"] == "http://127.0.0.1:19434/v1/models"
+    assert payload["service_base_url"] == "http://127.0.0.1:19434/v1"
     assert payload["update_channel_path"] == str(repo_root / "infra/packaging/update-channels/stable.json")
     assert payload["melix_home_dir"] == str(layout.melix_home_dir)
     assert payload["install_dir"] == str(layout.install_dir)
@@ -244,11 +251,34 @@ def test_write_local_product_artifacts_writes_plists_manifest_and_env(tmp_path: 
     assert f'MELIX_PRODUCT_VERSION="{layout.product_version}"' in layout.environment_script_path.read_text()
     assert f'MELIX_UPDATE_CHANNEL_PATH="{layout.update_channel_path}"' in layout.environment_script_path.read_text()
     assert f'MELIX_HOME="{layout.melix_home_dir}"' in layout.environment_script_path.read_text()
+    assert f'MELIX_HTTP_HOST="{layout.http_bind_host}"' in layout.environment_script_path.read_text()
+    assert f'MELIX_HTTP_CONNECT_HOST="{layout.http_connect_host}"' in layout.environment_script_path.read_text()
     assert "MELIX_APP_SUPPORT_DIR" not in layout.environment_script_path.read_text()
     assert f'MELIX_PYTHON_WORKER_METRICS_PATH="{layout.python_worker_metrics_path}"' in layout.environment_script_path.read_text()
     assert f'MELIX_MANAGED_MODEL_ROOT="{layout.managed_models_dir}"' in layout.environment_script_path.read_text()
     assert f'MELIX_AUDIO_RUNTIME_PACK_ROOT="{layout.audio_runtime_packs_dir}"' in layout.environment_script_path.read_text()
     assert f'MELIX_PRODUCT_MANIFEST_PATH="{layout.install_manifest_path}"' in layout.environment_script_path.read_text()
+
+
+def test_write_local_product_artifacts_resolves_bind_all_to_loopback_connect_host(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    layout = build_local_product_layout(
+        repo_root=repo_root,
+        home_dir=home_dir,
+        http_port=12436,
+        http_bind_host="0.0.0.0",
+    )
+
+    manifest = write_local_product_artifacts(layout)
+
+    assert manifest["http_bind_host"] == "0.0.0.0"
+    assert manifest["http_connect_host"] == "127.0.0.1"
+    assert manifest["health_probe_url"] == "http://127.0.0.1:12436/health"
+    assert manifest["ready_probe_url"] == "http://127.0.0.1:12436/v1/models"
+    assert manifest["service_base_url"] == "http://127.0.0.1:12436/v1"
 
 
 def test_write_local_product_artifacts_writes_sidecar_service_instance_into_env(tmp_path: Path) -> None:

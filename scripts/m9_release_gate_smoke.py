@@ -26,6 +26,8 @@ def run_smoke(repo_root: Path, fixture_mode: str) -> dict[str, object]:
     failures = evaluate_release_gate(report, policy)
     m9_summary = dict(report["m9"]["summary"])
     observability_evidence = dict(report.get("observability", {}).get("evidence", {}))
+    packaged_launch = dict(report.get("install", {}).get("packaged_launch", {}))
+    packaged_launch_audit = dict(packaged_launch.get("installed_app_audit", {}))
 
     return {
         "passed": not failures,
@@ -43,6 +45,9 @@ def run_smoke(repo_root: Path, fixture_mode: str) -> dict[str, object]:
             ),
             "release_gate.observability_required_artifact_validity_passed": float(
                 observability_evidence.get("required_artifact_validity_passed", 0.0)
+            ),
+            "release_gate.packaged_launch_installed_app_audit_passed": float(
+                packaged_launch_audit.get("audit_passed", 0.0)
             ),
         },
     }
@@ -76,6 +81,7 @@ def _build_fixture_report(
                 "environment_script_exists": True,
                 "all_plists_exist": True,
             },
+            "packaged_launch": _build_passing_packaged_launch_report(),
         },
         "benchmarks": {
             "report_exists": True,
@@ -204,6 +210,34 @@ def _build_passing_m9_report() -> dict[str, object]:
                 "closure_audit.blocker_count": 0.0,
                 "closure_audit.evidence_gap_count": 0.0,
             }
+        },
+    }
+
+
+def _build_passing_packaged_launch_report() -> dict[str, object]:
+    return {
+        "runtime_source": {
+            "packaging_target_id": "launch_agents_checkout",
+            "packaging_kind": "launch_agents",
+            "runtime_layout": "repo_checkout",
+        },
+        "connect_host_resolution": {
+            "bind_host": "0.0.0.0",
+            "connect_host": "127.0.0.1",
+            "expected_connect_host": "127.0.0.1",
+            "service_base_url": "http://127.0.0.1:12436/v1",
+            "connect_host_loopback": 1.0,
+        },
+        "health_probe_reuse": {
+            "health_probe_url": "http://127.0.0.1:12436/health",
+            "health_probe_url_matches_connect_host": 1.0,
+            "reused_client_count": 1.0,
+            "time_wait_socket_count": 0.0,
+        },
+        "installed_app_audit": {
+            "audit_schema_version": "melix.packaged_launch.installed_app_audit.v1",
+            "install_manifest_path": "/tmp/melix/install-manifest.json",
+            "audit_passed": 1.0,
         },
     }
 

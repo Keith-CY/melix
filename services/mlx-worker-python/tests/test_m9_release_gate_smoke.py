@@ -31,6 +31,7 @@ def test_main_prints_passing_smoke_payload(
                 "release_gate.m9_missing_probe_count": 0.0,
                 "release_gate.m9_failed_threshold_count": 0.0,
                 "release_gate.observability_required_artifact_validity_passed": 1.0,
+                "release_gate.packaged_launch_installed_app_audit_passed": 1.0,
             },
         },
     )
@@ -92,3 +93,4 @@ def test_run_smoke_passes_for_passing_fixture() -> None:
 
     assert payload["passed"] is True
     assert payload["metrics"]["release_gate.observability_required_artifact_validity_passed"] == 1.0
+    assert payload["metrics"]["release_gate.packaged_launch_installed_app_audit_passed"] == 1.0
