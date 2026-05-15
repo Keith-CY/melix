@@ -195,7 +195,10 @@ public actor ControlPlaneService {
         gatewayConfigStore: GatewayConfigStore? = nil,
         gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
         imageDefaultsStore: ImageDefaultsStore? = nil,
-        gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
+        gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(
+            host: MelixGatewayDefaults.host,
+            port: UInt32(MelixGatewayDefaults.port)
+        ),
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
         persistentAuthSessionStore: PersistentAuthSessionStore? = nil,

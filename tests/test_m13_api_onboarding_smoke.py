@@ -27,7 +27,7 @@ def test_main_prints_machine_readable_payload(
         "run_smoke",
         lambda repo_root: {
             "ok": True,
-            "base_url": "http://127.0.0.1:11434/v1",
+            "base_url": "http://127.0.0.1:12436/v1",
             "examples": {"input": "Hello from Melix"},
             "health": {"status_code": 200},
             "responses": {"contains_completed_event": True},
@@ -126,10 +126,10 @@ class _FakeStack:
         return {"x-api-key": "sk-desktop"}
 
     def responses_url(self) -> str:
-        return "http://127.0.0.1:11434/v1/responses"
+        return "http://127.0.0.1:12436/v1/responses"
 
     def messages_url(self) -> str:
-        return "http://127.0.0.1:11434/v1/messages"
+        return "http://127.0.0.1:12436/v1/messages"
 
 
 @pytest.mark.parametrize(

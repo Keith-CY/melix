@@ -57,7 +57,7 @@ and a worktree-local `MELIX_HOME`.
 Do not run a bare `bash scripts/dev_up.sh` when another Melix worktree may be
 running or when the task expects a long-lived local stack. Each concurrently
 running worktree must use a different `MELIX_HTTP_PORT`. The bare
-`scripts/dev_up.sh` default HTTP port is `11434`; named instances should use
+`scripts/dev_up.sh` default HTTP port is `12436`; named instances should use
 different explicit ports, for example `12434` and `12435`.
 
 Use this shell helper pattern for starting a development instance:

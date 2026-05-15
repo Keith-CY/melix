@@ -73,7 +73,7 @@ Shared-enabled example:
 ```bash
 curl -sS \
   -H 'x-api-key: sk-codex' \
-  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/models
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/models
 ```
 
 Bearer example:
@@ -81,7 +81,7 @@ Bearer example:
 ```bash
 curl -sS \
   -H 'Authorization: Bearer sk-codex' \
-  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/models
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/models
 ```
 
 Expected failure probes:
