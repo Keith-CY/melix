@@ -52,6 +52,7 @@ def test_probe_policy_uses_slots_for_hot_path_instances() -> None:
     assert not hasattr(policy, "__dict__")
     assert policy.telemetry_enabled is False
     assert policy.no_op_reason == "probe_mode_minimal"
+    assert ProbePolicy(mode=ProbeMode.EVIDENCE).no_op_reason == ""
 
 
 def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
@@ -62,6 +63,8 @@ def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     assert payload["sample_count"] == 1.0
     assert payload["no_op_recorder_call_ms_mean"] >= 0.0
     assert payload["no_op_policy_check_call_ms_mean"] >= 0.0
+    assert payload["no_op_reason_call_ms_mean"] >= 0.0
     assert "no_op_recorder_delta_ms" in payload
+    assert "no_op_reason_delta_ms" in payload
     assert payload["absolute_tolerance_ms"] > 0.0
     assert payload["threshold_passed"] == 1.0

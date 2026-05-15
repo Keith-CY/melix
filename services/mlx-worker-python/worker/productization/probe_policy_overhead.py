@@ -23,9 +23,12 @@ class ProbeOverheadMetrics:
     baseline_call_ms_mean: float
     no_op_recorder_call_ms_mean: float
     no_op_policy_check_call_ms_mean: float
+    no_op_reason_call_ms_mean: float
     no_op_recorder_overhead_pct: float
     no_op_policy_check_overhead_pct: float
+    no_op_reason_overhead_pct: float
     no_op_recorder_delta_ms: float
+    no_op_reason_delta_ms: float
     threshold_pct: float
     absolute_tolerance_ms: float
     threshold_passed: bool
@@ -37,9 +40,12 @@ class ProbeOverheadMetrics:
             "baseline_call_ms_mean": self.baseline_call_ms_mean,
             "no_op_recorder_call_ms_mean": self.no_op_recorder_call_ms_mean,
             "no_op_policy_check_call_ms_mean": self.no_op_policy_check_call_ms_mean,
+            "no_op_reason_call_ms_mean": self.no_op_reason_call_ms_mean,
             "no_op_recorder_overhead_pct": self.no_op_recorder_overhead_pct,
             "no_op_policy_check_overhead_pct": self.no_op_policy_check_overhead_pct,
+            "no_op_reason_overhead_pct": self.no_op_reason_overhead_pct,
             "no_op_recorder_delta_ms": self.no_op_recorder_delta_ms,
+            "no_op_reason_delta_ms": self.no_op_reason_delta_ms,
             "threshold_pct": self.threshold_pct,
             "absolute_tolerance_ms": self.absolute_tolerance_ms,
             "threshold_passed": 1.0 if self.threshold_passed else 0.0,
@@ -69,21 +75,32 @@ def measure_no_op_probe_policy_overhead(
         iterations=iteration_count,
         samples=sample_count,
     )
+    reason_samples = _sample_call_ms(
+        lambda: policy.no_op_reason,
+        iterations=iteration_count,
+        samples=sample_count,
+    )
     baseline_mean = _mean(baseline_samples)
     recorder_mean = _mean(recorder_samples)
     policy_mean = _mean(policy_samples)
+    reason_mean = _mean(reason_samples)
     recorder_overhead_pct = _overhead_pct(recorder_mean, baseline_mean)
     policy_overhead_pct = _overhead_pct(policy_mean, baseline_mean)
+    reason_overhead_pct = _overhead_pct(reason_mean, baseline_mean)
     recorder_delta_ms = round(recorder_mean - baseline_mean, 9)
+    reason_delta_ms = round(reason_mean - baseline_mean, 9)
     return ProbeOverheadMetrics(
         sample_count=sample_count,
         iteration_count=iteration_count,
         baseline_call_ms_mean=baseline_mean,
         no_op_recorder_call_ms_mean=recorder_mean,
         no_op_policy_check_call_ms_mean=policy_mean,
+        no_op_reason_call_ms_mean=reason_mean,
         no_op_recorder_overhead_pct=recorder_overhead_pct,
         no_op_policy_check_overhead_pct=policy_overhead_pct,
+        no_op_reason_overhead_pct=reason_overhead_pct,
         no_op_recorder_delta_ms=recorder_delta_ms,
+        no_op_reason_delta_ms=reason_delta_ms,
         threshold_pct=float(threshold_pct),
         absolute_tolerance_ms=float(absolute_tolerance_ms),
         threshold_passed=recorder_overhead_pct <= threshold_pct
