@@ -12,6 +12,7 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
+from worker.model_ops import adapter_activation_pipeline as adapter_activation_pipeline_module
 from worker.model_ops.deterministic_lora_runner import DeterministicLoRARunner
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops import mlx_lm_runner as mlx_lm_runner_module
@@ -484,6 +485,36 @@ def test_mlx_lora_namespace_uses_dora_fine_tune_type(tmp_path: Path) -> None:
     )
 
     assert mlx_lm_runner_module._mlx_lora_namespace(request).fine_tune_type == "dora"
+
+
+def test_mlx_lora_namespace_exposes_adapter_capability_receipt(tmp_path: Path) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(
+            model_path="mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            quant_profile_id="q4",
+        ),
+        ext={"training_mode": "qlora"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-qlora",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="chat_messages",
+    )
+
+    namespace = mlx_lm_runner_module._mlx_lora_namespace(request)
+
+    assert namespace.fine_tune_type == "lora"
+    assert namespace.adapter_family == "qlora"
+    assert namespace.adapter_capabilities["quantized_base_supported"] is True
+    assert namespace.adapter_loader_kwargs == {}
 
 
 def test_mlx_lm_runner_routes_alignment_rl_to_scored_trace_backend(tmp_path: Path) -> None:
@@ -2607,6 +2638,16 @@ def test_adapter_activation_pipeline_emits_explicit_adapter_backed_runtime_load_
                 "source_model": "melix-test-text",
                 "weights_path": str(weights_dir / "adapters.safetensors"),
                 "adapter_name": "unit-adapter",
+                "adapter_family": "qlora",
+                "adapter_capabilities": {
+                    "lora_like": True,
+                    "mergeable": True,
+                    "relora_compatible": True,
+                    "quantized_base_supported": True,
+                },
+                "backend_supported": True,
+                "unsupported_reason": "",
+                "base_quantization_method": "quant_profile",
                 "adapter_set_hash": "adapter-hash-1234",
                 "job_id": "model-ops-0001",
             }
@@ -2639,12 +2680,132 @@ def test_adapter_activation_pipeline_emits_explicit_adapter_backed_runtime_load_
     assert "runtime_mode" not in result.manifest
     assert result.manifest["adapter_manifest_path"] == str(manifest_path)
     assert result.manifest["adapter_weights_path"] == str(weights_dir / "adapters.safetensors")
+    assert result.manifest["adapter_family"] == "qlora"
+    assert result.manifest["adapter_capabilities"]["mergeable"] is True
+    assert result.manifest["backend_supported"] is True
+    assert result.manifest["unsupported_reason"] == ""
+    assert result.manifest["base_quantization_method"] == "quant_profile"
     assert result.manifest["source_model_kind"] == "text"
     assert result.manifest["source_model_parser_mode"] == "structured"
     assert result.manifest["source_model_reasoning_mode"] == "separate"
     assert result.manifest["source_model_quant_profile_id"] == "q4"
     assert result.manifest["source_model_tokenizer_hash"] == "tok-hash-a"
     assert result.manifest["source_model_ext"]["text_family_id"] == "qwen"
+
+
+def test_adapter_activation_pipeline_rejects_non_mergeable_fused_activation(tmp_path: Path) -> None:
+    weights_dir = tmp_path / "adapter-weights"
+    weights_dir.mkdir(parents=True)
+    (weights_dir / "adapters.safetensors").write_bytes(b"fake-adapter")
+    manifest_path = tmp_path / "train_lora.adapter.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-test-text",
+                "weights_path": str(weights_dir / "adapters.safetensors"),
+                "adapter_name": "fake-relora-adapter",
+                "adapter_family": "fake_relora",
+                "adapter_capabilities": {
+                    "lora_like": True,
+                    "mergeable": False,
+                    "relora_compatible": True,
+                    "quantized_base_supported": False,
+                },
+                "backend_supported": True,
+                "unsupported_reason": "",
+                "adapter_set_hash": "fake-relora-hash",
+                "job_id": "model-ops-0003",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+            job_id="model-ops-0004",
+            request_ext={
+                "artifact_path": str(manifest_path),
+                "activation_mode": "fused_derived_model",
+            },
+            source_model=_text_model(model_path=str(tmp_path / "base-model")),
+            output_dir=tmp_path / "activate",
+        )
+
+    assert exc.value.code == "non_mergeable_adapter"
+    assert exc.value.details["adapter_family"] == "fake_relora"
+
+
+def test_adapter_activation_pipeline_rejects_backend_unsupported_manifest(tmp_path: Path) -> None:
+    weights_dir = tmp_path / "adapter-weights"
+    weights_dir.mkdir(parents=True)
+    (weights_dir / "adapters.safetensors").write_bytes(b"fake-adapter")
+    manifest_path = tmp_path / "train_lora.adapter.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-test-text",
+                "weights_path": str(weights_dir / "adapters.safetensors"),
+                "adapter_name": "unsupported-adapter",
+                "adapter_family": "unsupported_adapter",
+                "adapter_capabilities": {
+                    "lora_like": True,
+                    "mergeable": True,
+                    "relora_compatible": False,
+                    "quantized_base_supported": False,
+                },
+                "backend_supported": False,
+                "unsupported_reason": "unsupported_backend",
+                "adapter_set_hash": "unsupported-hash",
+                "job_id": "model-ops-0005",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+            job_id="model-ops-0006",
+            request_ext={
+                "artifact_path": str(manifest_path),
+                "activation_mode": "adapter_backed_runtime",
+            },
+            source_model=_text_model(model_path=str(tmp_path / "base-model")),
+            output_dir=tmp_path / "activate",
+        )
+
+    assert exc.value.code == "unsupported_backend"
+    assert exc.value.details["adapter_family"] == "unsupported_adapter"
+
+
+def test_adapter_activation_manifest_helpers_preserve_legacy_defaults() -> None:
+    assert adapter_activation_pipeline_module._manifest_bool({}, "backend_supported", default=True) is True
+    assert (
+        adapter_activation_pipeline_module._manifest_bool(
+            {"backend_supported": "false"},
+            "backend_supported",
+            default=True,
+        )
+        is False
+    )
+
+    assert adapter_activation_pipeline_module._manifest_adapter_capabilities({}) == {
+        "lora_like": True,
+        "mergeable": True,
+        "relora_compatible": True,
+        "quantized_base_supported": True,
+    }
+    assert adapter_activation_pipeline_module._manifest_adapter_capabilities(
+        {"adapter_capabilities": {"mergeable": "false"}}
+    ) == {
+        "lora_like": True,
+        "mergeable": False,
+        "relora_compatible": True,
+        "quantized_base_supported": True,
+    }
 
 
 def test_adapter_activation_pipeline_validates_component_scope_for_vlm_adapters(tmp_path: Path) -> None:

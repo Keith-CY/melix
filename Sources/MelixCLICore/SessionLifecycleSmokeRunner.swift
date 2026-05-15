@@ -126,13 +126,14 @@ public struct SessionLifecycleSmokeRunner: Sendable {
                 messages: [.init(role: "user", content: "wake the server")]
             )
         )
+        async let wakeAssistantTask = collectAssistantText(from: wakeExecution)
         let readyAfterWake = try await waitForLifecycle(
             serverSessionID: serverSessionID,
             expectedLifecycle: .ready,
             timeoutSeconds: 2
         )
         let wakeToReadyMS = elapsedMS(since: wakeStartedAt)
-        let wakeAssistant = try await collectAssistantText(from: wakeExecution)
+        let wakeAssistant = try await wakeAssistantTask
 
         _ = try await client.updateServerIdlePolicy(
             serverSessionID: serverSessionID,
