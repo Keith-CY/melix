@@ -861,6 +861,7 @@ struct OpenAIHandlerTests {
         _ = await catalog.recordLoadSucceeded(id: "melix-idle", dispatchHandle: "melix-idle::swift")
         clock.now = Date(timeIntervalSince1970: 200)
 
+        let unloadGate = ScriptedWorkerUnloadGate()
         let workerClient = ScriptedWorkerClient(events: [
             makeCompletedEvent(
                 requestID: "req-idle-sweep",
@@ -868,7 +869,7 @@ struct OpenAIHandlerTests {
                 finishReason: "stop",
                 assistantText: "active"
             ),
-        ], unloadDelayNanoseconds: 200_000_000)
+        ], unloadGate: unloadGate)
         let gatewayConfigStore = GatewayConfigStore(
             storeURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("melix-test-gateway-config-\(UUID().uuidString).json"),
@@ -899,7 +900,6 @@ struct OpenAIHandlerTests {
             now: { clock.now }
         )
 
-        let startedAt = ContinuousClock.now
         let response = try await handler.handle(
             HTTPRequest(
                 method: .post,
@@ -918,15 +918,21 @@ struct OpenAIHandlerTests {
                 )
             )
         )
-        let elapsed = startedAt.duration(to: .now)
         let payload = try await collectBody(response.body)
 
         #expect(response.statusCode == 200)
         #expect(payload.contains("data: [DONE]"))
-        #expect(elapsed < .milliseconds(150))
+
+        try await waitForOpenAIHandlerCondition("idle sweep starts after response") {
+            await workerClient.unloadRequestCount == 1
+        }
         #expect(await workerClient.unloadCompletedCount == 0)
 
-        try await waitForOpenAIHandlerCondition("idle sweep unloads after response") {
+        await unloadGate.release()
+        try await waitForOpenAIHandlerCondition(
+            "idle sweep unloads after response",
+            timeout: .seconds(2)
+        ) {
             await workerClient.unloadCompletedCount == 1
         }
     }
@@ -8180,6 +8186,29 @@ private func makeRegistrySnapshotManifestJSON(
     return String(decoding: data, as: UTF8.self)
 }
 
+private actor ScriptedWorkerUnloadGate {
+    private var released = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard released == false else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        released = true
+        let pendingWaiters = waiters
+        waiters.removeAll()
+        for waiter in pendingWaiters {
+            waiter.resume()
+        }
+    }
+}
+
 private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWorkerClientProtocol {
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private let streamFailure: Error?
@@ -8192,6 +8221,7 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
     private let runtimeStatsFailure: Error?
     private let runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse?
     private let unloadDelayNanoseconds: UInt64
+    private let unloadGate: ScriptedWorkerUnloadGate?
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
     private(set) var unloadRequestCount = 0
@@ -8208,7 +8238,8 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         runtimeKVCacheBytes: UInt64 = 0,
         runtimeStatsFailure: Error? = nil,
         runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse? = nil,
-        unloadDelayNanoseconds: UInt64 = 0
+        unloadDelayNanoseconds: UInt64 = 0,
+        unloadGate: ScriptedWorkerUnloadGate? = nil
     ) {
         self.events = events
         self.streamFailure = streamFailure
@@ -8221,6 +8252,7 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         self.runtimeStatsFailure = runtimeStatsFailure
         self.runtimeStatsResponseOverride = runtimeStatsResponseOverride
         self.unloadDelayNanoseconds = unloadDelayNanoseconds
+        self.unloadGate = unloadGate
     }
 
     func canDispatchRequests() async -> Bool {
@@ -8264,6 +8296,7 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         if unloadDelayNanoseconds > 0 {
             try await Task.sleep(nanoseconds: unloadDelayNanoseconds)
         }
+        await unloadGate?.wait()
         unloadCompletedCount += 1
         var response = Melix_Worker_V1_UnloadModelResponse()
         response.ok = true
