@@ -502,7 +502,11 @@ def _synthetic_column_params(column_type: str, raw_params: str) -> dict[str, Any
 
 
 def _synthetic_column_payload_value(raw_params: str) -> str:
-    candidate = raw_params[1:] if raw_params.startswith("@") else raw_params
+    if not raw_params.startswith("@"):
+        return raw_params
+    candidate = raw_params[1:]
+    if not candidate:
+        return raw_params
     path = Path(candidate).expanduser()
     if path.is_file():
         return path.read_text(encoding="utf-8")

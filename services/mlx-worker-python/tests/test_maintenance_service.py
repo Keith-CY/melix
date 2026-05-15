@@ -951,6 +951,30 @@ def test_synthetic_dataset_request_uses_defaults_and_column_shortcuts(tmp_path: 
     assert request.columns[4].params == {}
 
 
+def test_synthetic_dataset_column_shortcuts_only_read_explicit_at_files(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "prompt.txt"
+    prompt_file.write_text("file-backed prompt", encoding="utf-8")
+
+    request = maintenance_core_module._synthetic_dataset_request_from_ext(
+        _synthetic_dataset_base_ext(
+            columns_json=json.dumps(
+                [
+                    f"literal:llm_text:{prompt_file}",
+                    f"expanded:llm_text:@{prompt_file}",
+                    "missing:llm_text:@/does/not/exist.txt",
+                    "empty:llm_text:@",
+                ]
+            )
+        ),
+        job_id="job-explicit-files",
+    )
+
+    assert request.columns[0].params == {"prompt": str(prompt_file)}
+    assert request.columns[1].params == {"prompt": "file-backed prompt"}
+    assert request.columns[2].params == {"prompt": "@/does/not/exist.txt"}
+    assert request.columns[3].params == {"prompt": "@"}
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
