@@ -24,22 +24,19 @@ class ProbePolicy:
     fallback_applied: bool = False
     telemetry_enabled: bool = field(init=False, repr=False, compare=False)
     evidence_enabled: bool = field(init=False, repr=False, compare=False)
+    no_op_reason: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         mode = self.mode
         evidence_enabled = mode is ProbeMode.EVIDENCE or mode is ProbeMode.DEBUG
+        telemetry_enabled = mode is ProbeMode.SAMPLED or evidence_enabled
+        object.__setattr__(self, "telemetry_enabled", telemetry_enabled)
+        object.__setattr__(self, "evidence_enabled", evidence_enabled)
         object.__setattr__(
             self,
-            "telemetry_enabled",
-            mode is ProbeMode.SAMPLED or evidence_enabled,
+            "no_op_reason",
+            "" if telemetry_enabled else f"probe_mode_{mode.value}",
         )
-        object.__setattr__(self, "evidence_enabled", evidence_enabled)
-
-    @property
-    def no_op_reason(self) -> str:
-        if self.telemetry_enabled:
-            return ""
-        return f"probe_mode_{self.mode.value}"
 
     @classmethod
     def from_env(
