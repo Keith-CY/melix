@@ -64,6 +64,8 @@ public enum MelixCLICommandCodec {
             return "dataset.hub.download"
         case .datasetRemove:
             return "dataset.remove"
+        case .datasetSynthetic(let options):
+            return "dataset.synthetic.\(options.mode)"
         case .uriInspect:
             return "uri.inspect"
         case .uriImport:
@@ -362,6 +364,42 @@ public enum MelixCLICommandCodec {
             appendOption("--repo-id", value: options.repoID, into: &arguments)
             appendOption("--revision", value: options.revision, into: &arguments)
             appendOption("--snapshot-id", value: options.snapshotID, into: &arguments)
+            json = options.json
+        case .datasetSynthetic(let options):
+            arguments = ["dataset", "synthetic", options.mode]
+            appendOption("--dataset-id", value: options.datasetID, into: &arguments)
+            appendOption("--dataset-name", value: options.datasetName, into: &arguments)
+            appendPositiveUInt32("--num-records", value: options.numRecords, into: &arguments)
+            appendOption("--output-kind", value: options.outputKind, into: &arguments)
+            appendOption("--output-format", value: options.outputFormat, into: &arguments)
+            appendOption("--output-dir", value: options.outputDir, into: &arguments)
+            appendOption("--provider-endpoint", value: options.providerEndpoint, into: &arguments)
+            appendOption("--provider-name", value: options.providerName, into: &arguments)
+            appendOption("--provider-type", value: options.providerType, into: &arguments)
+            appendOption("--api-key", value: options.apiKey, into: &arguments)
+            appendMultiOption("--header", values: options.headers, into: &arguments)
+            appendOption("--model-alias", value: options.modelAlias, into: &arguments)
+            appendOption("--model", value: options.model, into: &arguments)
+            appendOption("--temperature", value: options.temperature, into: &arguments)
+            appendOption("--top-p", value: options.topP, into: &arguments)
+            appendPositiveUInt32("--max-tokens", value: options.maxTokens, into: &arguments)
+            appendOption("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
+            appendPositiveUInt32("--max-parallel-requests", value: options.maxParallelRequests, into: &arguments)
+            appendOption("--extra-body-json", value: options.extraBodyJSON, into: &arguments)
+            appendMultiOption("--column", values: options.columns, into: &arguments)
+            appendOption("--seed-source-kind", value: options.seedSourceKind, into: &arguments)
+            appendOption("--seed-source-path", value: options.seedSourcePath, into: &arguments)
+            appendOption("--validation-ratio", value: options.validationRatio, into: &arguments)
+            if options.previewCount != 3 {
+                appendPositiveUInt32("--preview-count", value: options.previewCount, into: &arguments)
+            }
+            if let randomSeed = options.randomSeed {
+                appendOption("--random-seed", value: String(randomSeed), into: &arguments)
+            }
+            appendOption("--resume", value: options.resume, into: &arguments)
+            if options.enableDataDesignerTelemetry {
+                arguments.append("--enable-datadesigner-telemetry")
+            }
             json = options.json
         case .modelRootsRescan(let options):
             arguments = ["model", "roots", "rescan"]
