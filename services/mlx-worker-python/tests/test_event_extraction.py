@@ -2305,6 +2305,51 @@ def test_event_extraction_dialogue_diagnostics_uses_top_k_for_slowest_dialogues(
     ]
 
 
+def test_event_extraction_dialogue_diagnostics_streams_raw_response_and_throttle_aggregates(monkeypatch) -> None:
+    original_numeric_trace_values = EvaluationCore._numeric_trace_values
+
+    def fail_materialized_numeric_values(traces, field_name):
+        if field_name in {"raw_response_chars", "throttle_sleep_ms"}:
+            raise AssertionError(f"{field_name} should be streamed without materializing a list")  # pragma: no cover
+        return original_numeric_trace_values(traces, field_name)
+
+    monkeypatch.setattr(EvaluationCore, "_numeric_trace_values", staticmethod(fail_materialized_numeric_values))
+    traces = [
+        {
+            "dialogue_id": "dlg-1",
+            "line_number": 1,
+            "status": "ok",
+            "request_duration_ms": 2.0,
+            "total_duration_ms": 7.0,
+            "raw_response_chars": 10,
+            "throttle_sleep_ms": 1.25,
+        },
+        {
+            "dialogue_id": "dlg-2",
+            "line_number": 2,
+            "status": "failed",
+            "request_duration_ms": 4.0,
+            "total_duration_ms": 5.0,
+            "raw_response_chars": 40,
+            "throttle_sleep_ms": 2,
+        },
+        {
+            "dialogue_id": "dlg-3",
+            "line_number": 3,
+            "status": "aborted",
+            "request_duration_ms": 6.0,
+            "total_duration_ms": 3.0,
+            "raw_response_chars": True,
+            "throttle_sleep_ms": False,
+        },
+    ]
+
+    diagnostics = EvaluationCore._event_extraction_dialogue_diagnostics(traces)
+
+    assert diagnostics["total_throttle_sleep_ms"] == 3.25
+    assert diagnostics["raw_response_chars"] == {"mean": 25.0, "max": 40.0}
+
+
 def test_evaluation_core_writes_semantic_judge_artifacts_without_persisting_judge_secret(
     tmp_path: Path,
     monkeypatch,
