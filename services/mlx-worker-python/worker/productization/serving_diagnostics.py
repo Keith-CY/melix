@@ -75,7 +75,7 @@ class BoundedServingDiagnosticsEventQueue:
             )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ServingDiagnosticsRequestSummary:
     request_id: str
     task_kind: str
