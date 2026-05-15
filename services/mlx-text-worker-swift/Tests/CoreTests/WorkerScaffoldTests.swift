@@ -588,7 +588,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(response.protocolVersion, "melix.worker.v1")
         XCTAssertEqual(response.runtimeVersion, "melix-swift-text-worker/dev")
         XCTAssertTrue(response.capabilities.cache.supportsPrefixCache)
-        XCTAssertEqual(response.capabilities.cache.kvQuantProfiles, ["q4", "q8"])
+        XCTAssertEqual(response.capabilities.cache.kvQuantProfiles, ["turboquant-q4", "q4", "q8"])
         XCTAssertEqual(
             response.capabilities.cache.supportedModes,
             [.tiered, .rotating, .hybrid]
@@ -603,6 +603,7 @@ final class WorkerScaffoldTests: XCTestCase {
             response.capabilities.ext.map { $0.name },
             ["engine_family", "accelerated_prefill", "sparse_prefill", "active_kv_quantized"]
         )
+        XCTAssertEqual(response.capabilities.ext.last?.metadata["profiles"], "turboquant-q4,q4,q8")
     }
 
     func testCacheModePolicyResolvesPolicyStringsAndMapsMetrics() {
@@ -1140,7 +1141,7 @@ final class WorkerScaffoldTests: XCTestCase {
         }
 
         XCTAssertEqual(result.appliedAcceleration.mode, .activeKvQuantized)
-        XCTAssertEqual(result.appliedAcceleration.activeKvQuantProfile, "q4")
+        XCTAssertEqual(result.appliedAcceleration.activeKvQuantProfile, "turboquant-q4")
         XCTAssertEqual(result.activeKVQuantizationRatio, 25)
     }
 
@@ -3207,10 +3208,10 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertTrue(response.ok)
         XCTAssertEqual(response.appliedAcceleration.mode, .activeKvQuantized)
-        XCTAssertEqual(response.appliedAcceleration.activeKvQuantProfile, "q4")
+        XCTAssertEqual(response.appliedAcceleration.activeKvQuantProfile, "turboquant-q4")
         XCTAssertEqual(metrics["swift_text.active_kv_quantization_ratio"], 25)
         XCTAssertEqual(stored?.acceleration.mode, .activeKvQuantized)
-        XCTAssertEqual(stored?.acceleration.activeKvQuantProfile, "q4")
+        XCTAssertEqual(stored?.acceleration.activeKvQuantProfile, "turboquant-q4")
     }
 
     func testPrefillTracksSparsePrefillProtectionAndSkipMetrics() async throws {
@@ -7189,6 +7190,12 @@ final class WorkerScaffoldTests: XCTestCase {
             25
         )
         XCTAssertEqual(
+            activeKVQuantizationRatio(
+                from: makeAccelerationPolicy(mode: .activeKvQuantized, activeKvQuantProfile: "turboquant-q4")
+            ),
+            25
+        )
+        XCTAssertEqual(
             activeKVQuantizationRatio(from: makeAccelerationPolicy(mode: .activeKvQuantized, activeKvQuantProfile: "q8")),
             50
         )
@@ -7199,6 +7206,22 @@ final class WorkerScaffoldTests: XCTestCase {
     }
 
     #if canImport(MLXLMCommon)
+    func testActiveKVDefaultProfileNormalizesToTurboQuantQ4() {
+        var activeAcceleration = Melix_Worker_V1_AccelerationPolicy()
+        activeAcceleration.mode = .activeKvQuantized
+
+        let normalized = normalizedAccelerationPolicy(activeAcceleration)
+
+        XCTAssertEqual(normalized.activeKvQuantProfile, "turboquant-q4")
+        XCTAssertEqual(
+            activeKVKernelPathCode(
+                for: normalized,
+                turboQuantRuntimeRoute: .blocked(.attentionHookUnavailable)
+            ),
+            90
+        )
+    }
+
     func testActiveKVDecodeQuantizationGuardSkipsWhenCacheIsAlreadyQuantized() {
         var activeAcceleration = Melix_Worker_V1_AccelerationPolicy()
         activeAcceleration.mode = .activeKvQuantized

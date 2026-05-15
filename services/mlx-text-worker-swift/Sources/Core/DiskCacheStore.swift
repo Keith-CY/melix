@@ -567,9 +567,9 @@ func activeKVQuantizationRatio(
 ) -> Int {
     if acceleration.mode == .activeKvQuantized {
         switch acceleration.activeKvQuantProfile.lowercased() {
-        case "q4":
+        case ActiveKVQuantizationProfiles.affineQ4, ActiveKVQuantizationProfiles.defaultProfile:
             return 25
-        case "q8":
+        case ActiveKVQuantizationProfiles.q8:
             return 50
         default:
             return 50

@@ -22,6 +22,13 @@ struct TextPrefillContext: @unchecked Sendable {
     let promptTokens: Int
 }
 
+enum ActiveKVQuantizationProfiles {
+    static let defaultProfile = "turboquant-q4"
+    static let affineQ4 = "q4"
+    static let q8 = "q8"
+    static let supportedProfiles = [defaultProfile, affineQ4, q8]
+}
+
 struct RuntimePrefillResult: Sendable {
     let context: TextPrefillContext
     let promptTokens: Int
@@ -521,7 +528,7 @@ func normalizedAccelerationPolicy(
 
     if normalized.mode == .activeKvQuantized,
        normalized.activeKvQuantProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        normalized.activeKvQuantProfile = "q4"
+        normalized.activeKvQuantProfile = ActiveKVQuantizationProfiles.defaultProfile
     }
 
     if normalized.mode == .sparsePrefill,

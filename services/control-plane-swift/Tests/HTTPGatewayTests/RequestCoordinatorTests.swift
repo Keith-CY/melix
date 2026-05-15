@@ -3418,6 +3418,43 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("model active KV defaults populate TurboQuant Q4 when profile is empty")
+    func modelActiveKVDefaultsPopulateTurboQuantQ4WhenProfileIsEmpty() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .activeKvQuantized
+        textModel.settings.accelerationProfileID = ""
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-model-active-kv-default-turboquant",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.mode == .activeKvQuantized)
+        #expect(prefillRequest.execution.acceleration.activeKvQuantProfile == "turboquant-q4")
+        #expect(decodeRequest.execution.acceleration.mode == .activeKvQuantized)
+        #expect(decodeRequest.execution.acceleration.activeKvQuantProfile == "turboquant-q4")
+
+        await workerClient.finish(requestID: "req-model-active-kv-default-turboquant")
+        _ = await consumer.result
+    }
+
 }
 
 private actor BlockingWorkerClient: WorkerRoutingClient {

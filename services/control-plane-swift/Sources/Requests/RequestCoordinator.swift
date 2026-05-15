@@ -315,6 +315,7 @@ private enum CacheRouteClass: String, Sendable {
 
 private let boundarySafePrefillChunkTargetTokens: UInt32 = 16
 private let workerDispatchReadinessCacheTTLSeconds: TimeInterval = 5
+private let defaultActiveKVQuantProfile = "turboquant-q4"
 
 private struct GatewayBatchingExecutionDefaults: Sendable {
     let concurrentProcessingEnabled: Bool
@@ -1758,7 +1759,9 @@ public actor RequestCoordinator {
         switch workerRequest.execution.acceleration.mode {
         case .activeKvQuantized:
             if workerRequest.execution.acceleration.activeKvQuantProfile.isEmpty {
-                workerRequest.execution.acceleration.activeKvQuantProfile = model.settings.accelerationProfileID
+                workerRequest.execution.acceleration.activeKvQuantProfile = model.settings.accelerationProfileID.isEmpty
+                    ? defaultActiveKVQuantProfile
+                    : model.settings.accelerationProfileID
             }
         case .acceleratedPrefill, .sparsePrefill:
             if workerRequest.execution.acceleration.prefillHint.isEmpty {
