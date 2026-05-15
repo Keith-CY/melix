@@ -484,12 +484,10 @@ def _write_jsonl(path: Path, rows: Any) -> None:
             if isinstance(row, ServingDiagnosticsEvent):
                 fast_line = _empty_attribute_event_json_line(row)
                 if fast_line is not None:
-                    write(fast_line)
-                    write("\n")
+                    write(fast_line + "\n")
                     continue
                 row = row.to_dict()
-            write(encode(row))
-            write("\n")
+            write(encode(row) + "\n")
 
 
 def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | None:
