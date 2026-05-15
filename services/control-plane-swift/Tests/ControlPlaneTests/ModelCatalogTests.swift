@@ -65,10 +65,194 @@ struct ModelCatalogTests {
         #expect(metadata["melix.load_trust.requires_reload"] == "true")
         #expect(metadata["melix.load_trust.route_class"] == "python_text_compatibility")
         #expect(metadata["melix.load_trust.loader_family"] == "mlx_lm")
+        #expect(metadata["melix.capability.receipt_present"] == "true")
+        #expect(metadata["melix.capability.receipt_schema"] == "melix.model_capability_receipt.v1")
+        #expect(metadata["melix.acceleration.supported_modes"] == "baseline")
         #expect(metadata["unrelated"] == nil)
 
         let legacyMetadata = try #require(RegistrySnapshotSync.publicMetadata(from: registryBacked.settings.ext))
         #expect(legacyMetadata["melix.model_path"] == "/tmp/registry/model")
+    }
+
+    @Test("model capability receipts cover tasks acceleration drafts and speculative metadata")
+    func modelCapabilityReceiptsCoverTasksAccelerationDraftsAndSpeculativeMetadata() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.defaultAccelerationMode = .speculativeDecode
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        model.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        model.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        model.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        model.settings.ext["melix.speculative_head.configured"] = "true"
+        model.settings.ext["melix.speculative_head.configured_layers"] = "4"
+        model.settings.ext["melix.speculative_head.indexed_layers"] = "4"
+        model.settings.ext["melix.speculative_head.drop_flag_state"] = "false"
+        model.settings.ext["melix.speculative_head.runtime_available"] = "true"
+        model.settings.ext["melix.speculative_head.artifact_available"] = "true"
+        model = ModelCapabilityReceipts.withReceipt(model)
+
+        let receipt = model.capabilityReceipt
+        let acceleration = ModelCapabilityReceipts.accelerationReceipt(
+            for: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft"
+        )
+        let completion = try #require(receipt.tasks.first { $0.capability == "completion" })
+        let embedding = try #require(receipt.tasks.first { $0.capability == "embedding" })
+
+        #expect(receipt.schemaVersion == "melix.model_capability_receipt.v1")
+        #expect(completion.state == .capabilitySupported)
+        #expect(embedding.unsupportedReason == .unsupportedReasonUnsupportedTask)
+        #expect(acceleration.state == .capabilitySupported)
+        #expect(acceleration.requestedAccelerationMode == .speculativeDecode)
+        #expect(acceleration.resolvedAccelerationMode == .speculativeDecode)
+        #expect(acceleration.validDraftModelIds == ["melix-dev-draft"])
+        #expect(acceleration.draftCompatibility.first?.state == .capabilitySupported)
+        #expect(acceleration.speculativeHead.configuredLayers == 4)
+        #expect(acceleration.speculativeHead.indexedLayers == 4)
+        #expect(acceleration.speculativeHead.artifactAvailable)
+    }
+
+    @Test("capability receipt validation refuses invalid drafts and inconsistent speculative metadata")
+    func capabilityReceiptValidationRefusesInvalidDraftsAndInconsistentSpeculativeMetadata() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.defaultAccelerationMode = .speculativeDecode
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        model.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        model.settings.ext["melix.speculative_head.configured"] = "true"
+        model.settings.ext["melix.speculative_head.configured_layers"] = "4"
+        model.settings.ext["melix.speculative_head.indexed_layers"] = "4"
+        model.settings.ext["melix.speculative_head.drop_flag_state"] = "false"
+        model.settings.ext["melix.speculative_head.metadata_inconsistent"] = "enabled"
+
+        let invalidDraft = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "other-draft"
+        )
+        let inconsistent = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft"
+        )
+
+        #expect(invalidDraft.ok == false)
+        #expect(invalidDraft.unsupportedReason == .unsupportedReasonDraftModelNotAllowed)
+        #expect(inconsistent.ok == false)
+        #expect(inconsistent.unsupportedReason == .unsupportedReasonMetadataInconsistent)
+        #expect(inconsistent.receipt.speculativeHead.artifactAvailable == false)
+    }
+
+    @Test("capability receipt identifiers expose stable typed values")
+    func capabilityReceiptIdentifiersExposeStableTypedValues() async throws {
+        #expect(ModelCapabilityReceipts.unsupportedReasonIdentifier(.unsupportedReasonUnsupportedMode) == "unsupported_mode")
+        #expect(ModelCapabilityReceipts.unsupportedReasonIdentifier(.unsupportedReasonMissingDraftModel) == "missing_draft_model")
+        #expect(ModelCapabilityReceipts.unsupportedReasonIdentifier(.unsupportedReasonTargetDisabled) == "target_disabled")
+        #expect(ModelCapabilityReceipts.unsupportedReasonIdentifier(.unsupportedReasonDrafterDisabled) == "drafter_disabled")
+        #expect(ModelCapabilityReceipts.unsupportedReasonIdentifier(.unsupportedReasonMetadataInconsistent) == "metadata_inconsistent")
+        #expect(ModelCapabilityReceipts.unsupportedReasonIdentifier(.unsupportedReasonExperimentalUnverified) == "experimental_unverified")
+        #expect(ModelCapabilityReceipts.unsupportedReasonIdentifier(.unspecified) == "unspecified")
+        #expect(ModelCapabilityReceipts.unsupportedReasonIdentifier(.UNRECOGNIZED(42)) == "unrecognized_42")
+        #expect(ModelCapabilityReceipts.supportStateIdentifier(.capabilityExperimental) == "experimental")
+        #expect(ModelCapabilityReceipts.supportStateIdentifier(.capabilityMetadataInconsistent) == "metadata_inconsistent")
+        #expect(ModelCapabilityReceipts.supportStateIdentifier(.unspecified) == "unspecified")
+        #expect(ModelCapabilityReceipts.supportStateIdentifier(.UNRECOGNIZED(7)) == "unrecognized_7")
+        #expect(ModelCapabilityReceipts.accelerationModeIdentifier(.acceleratedPrefill) == "accelerated_prefill")
+        #expect(ModelCapabilityReceipts.accelerationModeIdentifier(.activeKvQuantized) == "active_kv_quantized")
+        #expect(ModelCapabilityReceipts.accelerationModeIdentifier(.unspecified) == "unspecified")
+        #expect(ModelCapabilityReceipts.accelerationModeIdentifier(.UNRECOGNIZED(9)) == "unrecognized_9")
+        #expect(ModelCapabilityReceipts.workerAccelerationMode(from: .acceleratedPrefill) == .acceleratedPrefill)
+        #expect(ModelCapabilityReceipts.workerAccelerationMode(from: .activeKvQuantized) == .activeKvQuantized)
+        #expect(ModelCapabilityReceipts.workerAccelerationMode(from: .unspecified) == .unspecified)
+        #expect(ModelCapabilityReceipts.workerAccelerationMode(from: .UNRECOGNIZED(21)) == .unspecified)
+        #expect(ModelCapabilityReceipts.controlPlaneAccelerationMode(from: .acceleratedPrefill) == .acceleratedPrefill)
+        #expect(ModelCapabilityReceipts.controlPlaneAccelerationMode(from: .activeKvQuantized) == .activeKvQuantized)
+        #expect(ModelCapabilityReceipts.controlPlaneAccelerationMode(from: .unspecified) == .unspecified)
+        #expect(ModelCapabilityReceipts.controlPlaneAccelerationMode(from: .UNRECOGNIZED(22)) == .unspecified)
+    }
+
+    @Test("capability receipt validation covers typed unsupported acceleration cases")
+    func capabilityReceiptValidationCoversTypedUnsupportedAccelerationCases() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,accelerated-prefill,active-kv-quantized,unknown"
+        let prefill = ModelCapabilityReceipts.accelerationReceipt(for: model, requestedMode: .acceleratedPrefill)
+        let activeKV = ModelCapabilityReceipts.accelerationReceipt(for: model, requestedMode: .activeKvQuantized)
+        let unsupportedMode = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "draft"
+        )
+        #expect(prefill.state == .capabilitySupported)
+        #expect(activeKV.resolvedAccelerationMode == .activeKvQuantized)
+        #expect(unsupportedMode.unsupportedReason == .unsupportedReasonUnsupportedMode)
+        #expect(unsupportedMode.message == "Acceleration mode speculative_decode is not supported for this model.")
+
+        var targetDisabled = ModelCatalog.devTextModel()
+        targetDisabled.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        targetDisabled.settings.ext["melix.acceleration.valid_draft_model_ids"] = "draft"
+        targetDisabled.settings.ext["melix.acceleration.target_capability"] = "disabled"
+        let targetRefusal = ModelCapabilityReceipts.validateAcceleration(
+            model: targetDisabled,
+            requestedMode: .speculativeDecode,
+            draftModelID: "draft"
+        )
+        #expect(targetRefusal.unsupportedReason == .unsupportedReasonTargetDisabled)
+        #expect(targetRefusal.message == "The target model disables the requested acceleration path.")
+
+        var missingDraft = ModelCatalog.devTextModel()
+        missingDraft.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        missingDraft.settings.ext["melix.acceleration.valid_draft_model_ids"] = "draft"
+        let missingDraftRefusal = ModelCapabilityReceipts.validateAcceleration(
+            model: missingDraft,
+            requestedMode: .speculativeDecode,
+            draftModelID: ""
+        )
+        #expect(missingDraftRefusal.unsupportedReason == .unsupportedReasonMissingDraftModel)
+        #expect(missingDraftRefusal.message == "Speculative decode requires an explicit draft model.")
+
+        var drafterDisabled = ModelCatalog.devTextModel()
+        drafterDisabled.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        drafterDisabled.settings.ext["melix.acceleration.valid_draft_model_ids"] = "draft"
+        drafterDisabled.settings.ext["melix.acceleration.drafter_capability"] = "disabled"
+        let drafterRefusal = ModelCapabilityReceipts.validateAcceleration(
+            model: drafterDisabled,
+            requestedMode: .speculativeDecode,
+            draftModelID: "draft"
+        )
+        #expect(drafterRefusal.unsupportedReason == .unsupportedReasonDrafterDisabled)
+        #expect(drafterRefusal.message == "The configured draft model disables speculative draft capability.")
+
+        var runtimeUnavailable = ModelCatalog.devTextModel()
+        runtimeUnavailable.settings.ext["melix.speculative_head.configured"] = "true"
+        runtimeUnavailable.settings.ext["melix.speculative_head.configured_layers"] = "4"
+        runtimeUnavailable.settings.ext["melix.speculative_head.indexed_layers"] = "4"
+        runtimeUnavailable.settings.ext["melix.speculative_head.runtime_available"] = "false"
+        runtimeUnavailable.settings.ext["melix.speculative_head.artifact_available"] = "false"
+        let unavailableReceipt = ModelCapabilityReceipts.accelerationReceipt(for: runtimeUnavailable)
+        #expect(unavailableReceipt.speculativeHead.state == .capabilityUnsupported)
+        #expect(unavailableReceipt.speculativeHead.unsupportedReason == .unsupportedReasonRuntimeUnavailable)
+
+        var payloadModel = ModelCatalog.devTextModel()
+        payloadModel.settings.defaultAccelerationMode = .speculativeDecode
+        payloadModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        payloadModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "draft-a"
+        payloadModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        payloadModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        payloadModel.settings.ext["melix.speculative_head.configured"] = "true"
+        payloadModel.settings.ext["melix.speculative_head.configured_layers"] = "1"
+        payloadModel.settings.ext["melix.speculative_head.indexed_layers"] = "1"
+        payloadModel.settings.ext["melix.speculative_head.drop_flag_state"] = "false"
+        payloadModel.settings.ext["melix.speculative_head.runtime_available"] = "true"
+        payloadModel.settings.ext["melix.speculative_head.artifact_available"] = "true"
+        payloadModel = ModelCapabilityReceipts.withReceipt(payloadModel)
+        let payload = ModelCapabilityReceipts.discoveryPayload(for: payloadModel)
+        let acceleration = try #require(payload["acceleration"] as? [String: Any])
+        let drafts = try #require(acceleration["draft_compatibility"] as? [[String: Any]])
+        let speculativeHead = try #require(acceleration["speculative_head"] as? [String: Any])
+        let metadata = try #require(ModelCatalogPresentation.publicAPIMetadata(for: payloadModel))
+        #expect(drafts.first?["draft_model_id"] as? String == "draft-a")
+        #expect(drafts.first?["state"] as? String == "supported")
+        #expect(speculativeHead["configured_layers"] as? NSNumber == 1)
+        #expect(metadata["melix.acceleration.valid_draft_model_ids"] == "draft-a")
     }
 
     @Test("presentation maps capability classes to public identifiers")

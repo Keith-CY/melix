@@ -3341,6 +3341,10 @@ struct RequestCoordinatorTests {
         let metricsStore = MetricsStore()
         var textModel = ModelCatalog.devTextModel()
         textModel.settings.defaultAccelerationMode = .unspecified
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-text"
+        textModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        textModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
@@ -3380,6 +3384,13 @@ struct RequestCoordinatorTests {
         #expect(decodeRequest.execution.acceleration.profileID == "throughput")
         #expect(decodeRequest.execution.acceleration.draftModelID == "melix-dev-text")
         #expect(decodeRequest.execution.acceleration.numDraftTokens == 7)
+        #expect(prefillRequest.execution.ext["melix.capability.receipt_schema"] == "melix.model_capability_receipt.v1")
+        #expect(prefillRequest.execution.ext["melix.acceleration.requested_acceleration_mode"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.acceleration.resolved_acceleration_mode"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.acceleration.target_capability"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.acceleration.drafter_capability"] == "speculative_draft")
+        #expect(prefillRequest.execution.ext["melix.acceleration.unsupported_reason"] == "none")
+        #expect(prefillRequest.execution.ext["melix.acceleration.valid_draft_model_ids"] == "melix-dev-text")
 
         await workerClient.emitDecodeStarted(
             requestID: "req-gateway-speculative-defaults",
@@ -3416,6 +3427,44 @@ struct RequestCoordinatorTests {
 
         await workerClient.finish(requestID: "req-gateway-speculative-defaults")
         _ = await consumer.result
+    }
+
+    @Test("unsupported speculative draft is rejected before worker dispatch")
+    func unsupportedSpeculativeDraftIsRejectedBeforeWorkerDispatch() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .unspecified
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        do {
+            _ = try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-invalid-draft",
+                    executionExt: [
+                        "melix.gateway.acceleration_mode": "speculative_decode",
+                        "melix.gateway.draft_model_id": "other-draft",
+                    ]
+                )
+            )
+            Issue.record("Expected unsupported acceleration to be thrown.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .unsupportedAcceleration(
+                reason: .unsupportedReasonDraftModelNotAllowed,
+                message: "Draft model other-draft is not allowed for this target model.",
+                recoveryHint: "Choose one of the target receipt's valid_draft_model_ids."
+            ))
+        }
+
+        #expect(await workerClient.generatedRequests.isEmpty)
+        #expect(await workerClient.lastPrefillRequest() == nil)
+        #expect(await workerClient.lastDecodeRequest() == nil)
     }
 
     @Test("model acceleration defaults override gateway speculative execution defaults")

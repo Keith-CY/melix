@@ -79,6 +79,9 @@ struct HTTPRuntimeDiscoveryPayloads {
             "kind": model.kind,
             "state": model.state.discoveryString,
             "hf_repo_id": model.settings.ext["melix.hf_repo_id"] ?? "",
+            "supported_modalities": model.supportedModalities,
+            "supported_tasks": model.supportedTasks,
+            "capability_receipt": ModelCapabilityReceipts.discoveryPayload(for: model),
         ]
     }
 }
