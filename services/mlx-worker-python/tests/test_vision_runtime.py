@@ -1510,6 +1510,54 @@ def test_prepare_vision_request_accepts_remote_http_inputs(monkeypatch: pytest.M
     assert request.preprocess_input_bytes == len(b"remote diagram text")
 
 
+def test_prepare_vision_request_rejects_http_and_private_remote_image_inputs() -> None:
+    with pytest.raises(MultimodalPreprocessError, match="Unsupported image URI scheme: http"):
+        prepare_vision_request(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(image_uri="http://example.com/cat.png")],
+                )
+            ]
+        )
+
+    with pytest.raises(MultimodalPreprocessError, match="Remote image URI requires a host."):
+        prepare_vision_request(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(image_uri="https:///cat.png")],
+                )
+            ]
+        )
+
+    with pytest.raises(
+        MultimodalPreprocessError,
+        match="Remote image URI host is not allowed: localhost",
+    ):
+        prepare_vision_request(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(image_uri="https://localhost/cat.png")],
+                )
+            ]
+        )
+
+    with pytest.raises(
+        MultimodalPreprocessError,
+        match="Remote image URI host is not allowed: 127.0.0.1",
+    ):
+        prepare_vision_request(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(image_uri="https://127.0.0.1/cat.png")],
+                )
+            ]
+        )
+
+
 def test_prepare_vision_request_parses_each_image_uri_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

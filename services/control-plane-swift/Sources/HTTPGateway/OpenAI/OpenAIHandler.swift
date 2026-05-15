@@ -238,6 +238,17 @@ private enum GatewayAuthorizationContext: Sendable {
     case localTrusted
     case credential(keyID: String, via: GatewayAccessPolicy.RequiredHeader)
     case session(token: String, metadata: PersistentAuthSessionMetadata)
+
+    var rateLimitIdentity: String {
+        switch self {
+        case .localTrusted:
+            return "local-trust"
+        case let .credential(keyID, _):
+            return "credential:\(keyID)"
+        case let .session(_, metadata):
+            return "credential:\(metadata.keyID)"
+        }
+    }
 }
 
 private enum GatewayAuthorizationRoute {
@@ -270,8 +281,10 @@ public struct OpenAIHandler: Sendable {
     private let mcpToolCatalog: MCPToolCatalog
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
+    private let gatewayConfigStore: GatewayConfigStore
     private let gatewayServingDefaultsStore: GatewayServingDefaultsStore
     private let gatewayRuntimeBinding: GatewayRuntimeBinding
+    private let gatewayRateLimiter: GatewayRateLimiter
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
     private let environment: [String: String]
     private let imageRequestTimeoutSeconds: UInt32
@@ -294,11 +307,13 @@ public struct OpenAIHandler: Sendable {
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
+        gatewayConfigStore: GatewayConfigStore? = nil,
         gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
         gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(
             host: MelixGatewayDefaults.host,
             port: UInt32(MelixGatewayDefaults.port)
         ),
+        gatewayRateLimiter: GatewayRateLimiter? = nil,
         persistentAuthSessionStore: PersistentAuthSessionStore? = nil,
         now: @escaping @Sendable () -> Date = Date.init,
         environment: [String: String] = ProcessInfo.processInfo.environment
@@ -319,8 +334,10 @@ public struct OpenAIHandler: Sendable {
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
+        self.gatewayConfigStore = gatewayConfigStore ?? GatewayConfigStore(environment: environment)
         self.gatewayServingDefaultsStore = gatewayServingDefaultsStore ?? GatewayServingDefaultsStore(environment: environment)
         self.gatewayRuntimeBinding = gatewayRuntimeBinding
+        self.gatewayRateLimiter = gatewayRateLimiter ?? GatewayRateLimiter()
         self.persistentAuthSessionStore = persistentAuthSessionStore
         self.environment = environment
         self.imageRequestTimeoutSeconds = Self.resolveImageRequestTimeoutSeconds(environment: environment)
@@ -336,6 +353,12 @@ public struct OpenAIHandler: Sendable {
         case .failure(let authorizationFailure):
             return authorizationFailure
         case .success(let authorizationContext):
+            if let rateLimitFailure = await rateLimitFailureResponse(
+                for: request,
+                authorization: authorizationContext
+            ) {
+                return rateLimitFailure
+            }
             switch (request.method, request.path) {
             case (.get, "/.well-known/melix.json"):
                 return try await handleDiscoveryWellKnown()
@@ -574,6 +597,61 @@ public struct OpenAIHandler: Sendable {
             forKey: "operator.cache_stats_latency_ms"
         )
         return try encodedJSONResponse(response)
+    }
+
+    private func rateLimitFailureResponse(
+        for request: HTTPRequest,
+        authorization: GatewayAuthorizationContext
+    ) async -> HTTPResponse? {
+        let route = authorizationRoute(for: request)
+        guard route != .health else {
+            return nil
+        }
+        let limit = await activeGatewayRateLimitPerMinute()
+        let decision = await gatewayRateLimiter.admit(
+            identity: authorization.rateLimitIdentity,
+            limitPerMinute: limit
+        )
+        await metricsStore.set(Double(limit), forKey: "gateway.rate_limit_per_minute")
+        await metricsStore.set(Double(decision.remaining), forKey: "gateway.rate_limit_remaining")
+        await metricsStore.set(decision.allowed ? 1 : 0, forKey: "gateway.rate_limit_last_admission")
+        guard !decision.allowed else {
+            return nil
+        }
+        await metricsStore.increment("gateway.rate_limited_request_count")
+        return HTTPResponse(
+            statusCode: 429,
+            headers: [
+                "content-type": "application/json",
+                "retry-after": String(decision.retryAfterSeconds),
+                "x-ratelimit-limit": String(decision.limitPerMinute),
+                "x-ratelimit-remaining": String(decision.remaining),
+            ],
+            body: .data(jsonData([
+                "error": [
+                    "code": "rate_limited",
+                    "message": "Gateway rate limit exceeded.",
+                    "rate_limit": [
+                        "identity": decision.identity,
+                        "limit_per_minute": decision.limitPerMinute,
+                        "retry_after_seconds": decision.retryAfterSeconds,
+                    ],
+                ],
+            ]))
+        )
+    }
+
+    private func activeGatewayRateLimitPerMinute() async -> UInt32 {
+        let models = await modelCatalog.listModels()
+        let fallbackModelID = models.first?.modelID ?? "melix-dev-text"
+        let summary = await gatewayConfigStore.summary(
+            serverSessionIDs: [gatewayRuntimeBinding.activeServerSessionID],
+            runtimeBinding: gatewayRuntimeBinding,
+            fallbackServedModelID: fallbackModelID
+        )
+        return summary.listeners.first(where: \.activeBinding)?.rateLimitPerMinute
+            ?? summary.listeners.first?.rateLimitPerMinute
+            ?? 120
     }
 
     private func handleCreateAuthSession(
@@ -1539,7 +1617,33 @@ public struct OpenAIHandler: Sendable {
             return invalidArgumentResponse(message: "source_artifact_id cannot be combined with image_base64 or image_url.")
         }
 
-        var resolvedImageURI = imageRequest.imageURL ?? ""
+        let requestedImageURL = imageRequest.imageURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let requestedMaskURL = imageRequest.maskURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var imageURLReceipt: ExternalMediaURLAdmissionReceipt?
+        var maskURLReceipt: ExternalMediaURLAdmissionReceipt?
+        var resolvedImageURI = ""
+        if !requestedImageURL.isEmpty {
+            switch await admittedExternalMediaURI(requestedImageURL, mediaKind: "image") {
+            case let .accepted(receipt):
+                resolvedImageURI = requestedImageURL
+                imageURLReceipt = receipt
+            case let .rejected(response):
+                return response
+            }
+        }
+        let resolvedMaskURI: String
+        if !requestedMaskURL.isEmpty {
+            switch await admittedExternalMediaURI(requestedMaskURL, mediaKind: "mask") {
+            case let .accepted(receipt):
+                resolvedMaskURI = requestedMaskURL
+                maskURLReceipt = receipt
+            case let .rejected(response):
+                return response
+            }
+        } else {
+            resolvedMaskURI = ""
+        }
+
         var sourceJobID = ""
         if sourceArtifactID.isEmpty == false {
             guard let imageJobReadModel, let sourceArtifact = await imageJobReadModel.artifact(artifactID: sourceArtifactID) else {
@@ -1583,7 +1687,7 @@ public struct OpenAIHandler: Sendable {
         workerRequest.image = imageBytes
         workerRequest.imageUri = resolvedImageURI
         workerRequest.mask = maskBytes ?? Data()
-        workerRequest.maskUri = imageRequest.maskURL ?? ""
+        workerRequest.maskUri = resolvedMaskURI
         workerRequest.sourceArtifactID = sourceArtifactID
         workerRequest.promptDelta = promptDelta
         workerRequest.editMode = workerImageEditMode(resolvedEditMode)
@@ -1591,6 +1695,12 @@ public struct OpenAIHandler: Sendable {
         workerRequest.size = imageRequest.size ?? "1024x1024"
         workerRequest.n = UInt32(max(1, imageRequest.n ?? 1))
         workerRequest.responseFormat = imageRequest.responseFormat ?? "png"
+        if let imageURLReceipt {
+            applyExternalMediaURLReceipt(imageURLReceipt, to: &workerRequest, prefix: "melix.external_media.image")
+        }
+        if let maskURLReceipt {
+            applyExternalMediaURLReceipt(maskURLReceipt, to: &workerRequest, prefix: "melix.external_media.mask")
+        }
         if sourceJobID.isEmpty == false {
             workerRequest.ext["melix.image.source_job_id"] = sourceJobID
         }
@@ -2167,6 +2277,13 @@ public struct OpenAIHandler: Sendable {
         )
     }
 
+    private func jsonData(_ payload: [String: Any]) -> Data {
+        let sanitizedPayload = Self.sanitizeJSONValue(payload)
+        recordSanitizedOutputMetrics(sanitizedPayload.metrics)
+        return (try? JSONSerialization.data(withJSONObject: sanitizedPayload.value, options: [.sortedKeys]))
+            ?? Data("{}".utf8)
+    }
+
     private func recordSanitizedOutputMetrics(_ metrics: SanitizedOutputMetrics) {
         guard metrics.isEmpty == false else {
             return
@@ -2237,6 +2354,57 @@ public struct OpenAIHandler: Sendable {
             statusCode: 400,
             payload: ["error": ["code": "invalid_argument", "message": message]]
         )
+    }
+
+    private enum ExternalMediaAdmissionOutcome {
+        case accepted(ExternalMediaURLAdmissionReceipt)
+        case rejected(HTTPResponse)
+    }
+
+    private func admittedExternalMediaURI(
+        _ rawURL: String,
+        mediaKind: String
+    ) async -> ExternalMediaAdmissionOutcome {
+        do {
+            let receipt = try ExternalMediaURLAdmission.validate(rawURL, mediaKind: mediaKind)
+            await recordExternalMediaURLAdmission(receipt)
+            return .accepted(receipt)
+        } catch let error as ExternalMediaURLAdmissionError {
+            await recordExternalMediaURLRefusal(error)
+            return .rejected(invalidArgumentResponse(message: error.operatorMessage))
+        } catch {
+            let admissionError = ExternalMediaURLAdmissionError.malformedURL(mediaKind)
+            await recordExternalMediaURLRefusal(admissionError)
+            return .rejected(invalidArgumentResponse(message: admissionError.operatorMessage))
+        }
+    }
+
+    private func recordExternalMediaURLAdmission(_ receipt: ExternalMediaURLAdmissionReceipt) async {
+        await metricsStore.increment("external_media.url_admission_count")
+        if receipt.sourceKind == "remote" {
+            await metricsStore.increment("external_media.remote_url_admission_count")
+        } else {
+            await metricsStore.increment("external_media.local_url_admission_count")
+        }
+    }
+
+    private func recordExternalMediaURLRefusal(_ error: ExternalMediaURLAdmissionError) async {
+        await metricsStore.increment("external_media.url_refusal_count")
+        await metricsStore.increment("external_media.refusal.\(error.refusalReason)")
+    }
+
+    private func applyExternalMediaURLReceipt(
+        _ receipt: ExternalMediaURLAdmissionReceipt,
+        to request: inout Melix_Worker_V1_ImageEditRequest,
+        prefix: String
+    ) {
+        request.ext["\(prefix).policy"] = receipt.policy
+        request.ext["\(prefix).source_kind"] = receipt.sourceKind
+        request.ext["\(prefix).scheme"] = receipt.scheme
+        request.ext["\(prefix).reason"] = receipt.reason
+        if !receipt.host.isEmpty {
+            request.ext["\(prefix).host"] = receipt.host
+        }
     }
 
     private func workerErrorResponse(_ error: Melix_Worker_V1_ErrorStatus) -> HTTPResponse {

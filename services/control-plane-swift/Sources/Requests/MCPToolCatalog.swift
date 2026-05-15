@@ -2,6 +2,13 @@ import Foundation
 import MelixControlPlaneProtocol
 
 public struct MCPToolCatalog: Sendable, Equatable {
+    public enum DiscoverySource: String, Sendable, Equatable {
+        case none
+        case environment
+        case melixHome
+        case explicit
+    }
+
     public struct Source: Sendable, Codable, Equatable {
         public let sourceID: String
         public let enabled: Bool
@@ -79,6 +86,7 @@ public struct MCPToolCatalog: Sendable, Equatable {
     }
 
     public let configPath: String
+    public let discoverySource: DiscoverySource
     public let defaultParserMode: ToolParserMode
     public let sources: [Source]
     public let policyReceipt: PolicyReceipt
@@ -87,11 +95,15 @@ public struct MCPToolCatalog: Sendable, Equatable {
 
     public init(
         configPath: String = "",
+        discoverySource: DiscoverySource = .none,
         defaultParserMode: ToolParserMode = .json,
         sources: [Source] = [],
         policyReceipt: PolicyReceipt = .default
     ) {
         self.configPath = configPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.discoverySource = self.configPath.isEmpty
+            ? .none
+            : (discoverySource == .none ? .explicit : discoverySource)
         self.defaultParserMode = defaultParserMode
         self.policyReceipt = policyReceipt
         let refused = Set(policyReceipt.refusedNamespaces)
@@ -111,18 +123,25 @@ public struct MCPToolCatalog: Sendable, Equatable {
     public static func load(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> MCPToolCatalog {
-        guard
+        if
             let configPath = environment["MELIX_MCP_CONFIG_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines),
             !configPath.isEmpty
-        else {
-            return .empty
+        {
+            return load(configPath: configPath, discoverySource: .environment, environment: environment)
         }
 
-        return load(configPath: configPath, environment: environment)
+        let melixHomeConfig = MelixPathLayout(environment: environment)
+            .configDirectoryURL
+            .appendingPathComponent("mcp-tools.json", isDirectory: false)
+        guard FileManager.default.fileExists(atPath: melixHomeConfig.path) else {
+            return .empty
+        }
+        return load(configPath: melixHomeConfig.path, discoverySource: .melixHome, environment: environment)
     }
 
     public static func load(
         configPath: String,
+        discoverySource: DiscoverySource = .explicit,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> MCPToolCatalog {
         let trimmedPath = configPath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -131,7 +150,7 @@ public struct MCPToolCatalog: Sendable, Equatable {
             let data = try? Data(contentsOf: URL(fileURLWithPath: trimmedPath)),
             let payload = try? JSONDecoder().decode(FilePayload.self, from: data)
         else {
-            return MCPToolCatalog(configPath: trimmedPath)
+            return MCPToolCatalog(configPath: trimmedPath, discoverySource: discoverySource)
         }
 
         let registry = ToolParserRegistry()
@@ -143,6 +162,7 @@ public struct MCPToolCatalog: Sendable, Equatable {
         )
         return MCPToolCatalog(
             configPath: trimmedPath,
+            discoverySource: discoverySource,
             defaultParserMode: defaultMode,
             sources: payload.sources,
             policyReceipt: policyReceipt
@@ -190,7 +210,7 @@ public struct MCPToolCatalog: Sendable, Equatable {
         summary.effectivePolicy = policyReceipt.effectivePolicy
         summary.operatorOverrideSource = policyReceipt.operatorOverrideSource
         summary.refusedNamespaces = policyReceipt.refusedNamespaces
-        summary.sources = sources.map { source in
+        summary.sources = [discoveryReceiptSource()] + sources.map { source in
             var item = Melix_Controlplane_V1_MCPToolSourceSummary()
             item.sourceID = source.sourceID
             item.enabled = source.enabled
@@ -200,6 +220,16 @@ public struct MCPToolCatalog: Sendable, Equatable {
             return item
         }
         return summary
+    }
+
+    private func discoveryReceiptSource() -> Melix_Controlplane_V1_MCPToolSourceSummary {
+        var item = Melix_Controlplane_V1_MCPToolSourceSummary()
+        item.sourceID = "config-discovery"
+        item.enabled = !configPath.isEmpty
+        item.namespaces = [discoverySource.rawValue]
+        item.toolCount = 0
+        item.policyState = configPath.isEmpty ? "not_configured" : "explicit_or_melix_home_only"
+        return item
     }
 
     private static func policyReceipt(

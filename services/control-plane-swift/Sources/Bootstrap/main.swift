@@ -132,6 +132,7 @@ enum MelixControlPlaneBootstrap {
             cacheMetadataStore: cacheMetadataStore,
             mcpToolCatalog: mcpToolCatalog,
             gatewayAccessPolicyStore: gatewayAccessPolicyStore,
+            gatewayConfigStore: gatewayConfigStore,
             gatewayServingDefaultsStore: gatewayServingDefaultsStore,
             gatewayRuntimeBinding: gatewayRuntimeBinding,
             persistentAuthSessionStore: persistentAuthSessionStore

@@ -8,7 +8,9 @@ M9.4 adds a gateway-scoped auth-session workflow:
 
 - `POST /v1/melix/auth/session` creates a typed gateway session from an already valid gateway credential
 - `GET /v1/melix/auth/session` inspects the active session via `X-Melix-Session`
-- `DELETE /v1/melix/auth/session` revokes the session and records sign-out latency
+- `DELETE /v1/melix/auth/session` revokes the session and records sign-out latency.
+  Revocation consumes the token once; repeated or concurrent sign-out attempts for
+  the same token return `401 revoked_session`.
 
 Remembered sessions survive process restart until TTL expiry or explicit revocation. Non-remembered sessions remain process-local and disappear on restart.
 
@@ -102,6 +104,10 @@ curl -sS \
 - status `401`
 - `error.code = "revoked_session"`
 - `error.session_state.state = "revoked"`
+
+Repeating the same `DELETE /v1/melix/auth/session` request after a successful
+sign-out must also return `401 revoked_session`. Treat this as the expected
+single-consumption result, not as an operator-facing success.
 
 ### Non-Remembered Session Check
 

@@ -161,7 +161,7 @@ def test_build_phase6_vision_metrics_report_includes_machine_readable_checks() -
     report = exported_build_phase6_vision_metrics_report(
         ingress={
             "local_image_success": True,
-            "remote_image_success": True,
+            "remote_image_refusal_success": True,
             "multi_image_success": True,
         },
         ocr={
@@ -195,13 +195,13 @@ def test_build_phase6_vision_metrics_report_includes_machine_readable_checks() -
     metrics = report["metrics"]
     checks = report["checks"]
     assert checks["vision.ingress.local_image_success"] is True
-    assert checks["vision.ingress.remote_image_success"] is True
+    assert checks["vision.ingress.remote_image_refusal_success"] is True
     assert checks["vision.ingress.multi_image_success"] is True
     assert checks["vision.ocr.default_stop_success"] is True
     assert checks["vision.vlm.tool_call_success"] is True
     assert metrics["vision.integration_success_rate"] == 100.0
     assert metrics["vision.ingress.local_image_success_rate"] == 100.0
-    assert metrics["vision.ingress.remote_image_success_rate"] == 100.0
+    assert metrics["vision.ingress.remote_image_refusal_success_rate"] == 100.0
     assert metrics["vision.ingress.multi_image_success_rate"] == 100.0
     assert metrics["vision.ocr.default_stop_success_rate"] == 100.0
     assert metrics["vision.vlm.tool_call_success_rate"] == 100.0
@@ -227,7 +227,7 @@ def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
     report = exported_build_phase6_vision_metrics_report(
         ingress={
             "local_image_success": False,
-            "remote_image_success": False,
+            "remote_image_refusal_success": False,
             "multi_image_success": False,
         },
         ocr={
@@ -244,7 +244,7 @@ def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
     metrics = report["metrics"]
     assert metrics["vision.integration_success_rate"] == 0.0
     assert metrics["vision.ingress.local_image_success_rate"] == 0.0
-    assert metrics["vision.ingress.remote_image_success_rate"] == 0.0
+    assert metrics["vision.ingress.remote_image_refusal_success_rate"] == 0.0
     assert metrics["vision.ingress.multi_image_success_rate"] == 0.0
     assert metrics["vision.ocr.default_stop_success_rate"] == 0.0
     assert metrics["vision.vlm.tool_call_success_rate"] == 0.0
@@ -327,12 +327,12 @@ def test_build_phase16_video_metrics_report_includes_operator_metrics() -> None:
     checks = report["checks"]
     metrics = report["metrics"]
     assert checks["video.local_path_success"] is True
-    assert checks["video.remote_url_success"] is True
+    assert checks["video.remote_url_refusal_success"] is True
     assert checks["video.bounded_window_success"] is True
     assert checks["video.routing.text_protection_success"] is True
     assert metrics["video.integration_success_rate"] == 100.0
     assert metrics["video.local_path.request_latency_ms"] == 28.6
-    assert metrics["video.remote_url.request_latency_ms"] == 31.4
+    assert metrics["video.remote_url_refusal.request_latency_ms"] == 31.4
     assert metrics["video.bounded_window.request_latency_ms"] == 42.5
     assert metrics["vision.video_first_token_ms"] == 12.1
     assert metrics["vision.preprocess_latency_ms"] == 5.3
@@ -358,12 +358,12 @@ def test_build_phase16_video_metrics_report_defaults_missing_values() -> None:
     checks = report["checks"]
     metrics = report["metrics"]
     assert checks["video.local_path_success"] is False
-    assert checks["video.remote_url_success"] is False
+    assert checks["video.remote_url_refusal_success"] is False
     assert checks["video.bounded_window_success"] is False
     assert checks["video.routing.text_protection_success"] is False
     assert metrics["video.integration_success_rate"] == 0.0
     assert metrics["video.local_path.request_latency_ms"] == 0.0
-    assert metrics["video.remote_url.request_latency_ms"] == 0.0
+    assert metrics["video.remote_url_refusal.request_latency_ms"] == 0.0
     assert metrics["video.bounded_window.request_latency_ms"] == 0.0
     assert metrics["vision.video_first_token_ms"] == 0.0
     assert metrics["vision.preprocess_latency_ms"] == 0.0

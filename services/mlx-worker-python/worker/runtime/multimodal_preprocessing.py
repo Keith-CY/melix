@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import mimetypes
 from dataclasses import dataclass
 from math import ceil
@@ -269,9 +270,24 @@ def _bytes_from_image_uri(uri: str) -> tuple[bytes, str, str, str, str]:
             reference.format,
             reference.filename,
         )
-    if scheme == "http" or scheme == "https":
+    if scheme == "https":
+        _validate_remote_media_reference(reference)
         return _fetch_remote_image(reference)
     raise MultimodalPreprocessError(f"Unsupported image URI scheme: {scheme}")
+
+
+def _validate_remote_media_reference(reference: ParsedImageReference) -> None:
+    host = (reference.parsed.hostname or "").strip().lower()
+    if not host:
+        raise MultimodalPreprocessError("Remote image URI requires a host.")
+    if host == "localhost" or host.endswith(".localhost"):
+        raise MultimodalPreprocessError(f"Remote image URI host is not allowed: {host}")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if address.is_private or address.is_loopback or address.is_link_local:
+        raise MultimodalPreprocessError(f"Remote image URI host is not allowed: {host}")
 
 
 def _fetch_remote_image(uri: str | ParsedImageReference) -> tuple[bytes, str, str, str, str]:

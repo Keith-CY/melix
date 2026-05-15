@@ -177,11 +177,13 @@ def test_parse_video_reference_decodes_remote_and_file_uris_once() -> None:
     local = _parse_video_reference("file:///tmp/local%20demo.webm")
 
     assert remote.scheme == "https"
+    assert remote.authority == "example.com"
     assert remote.decoded_path == "/media/demo clip.mov"
     assert remote.path_name == "demo clip.mov"
     assert remote.path_suffix == "mov"
 
     assert local.scheme == "file"
+    assert local.authority == ""
     assert local.decoded_path == "/tmp/local demo.webm"
     assert local.path_name == "local demo.webm"
     assert local.path_suffix == "webm"
@@ -241,6 +243,34 @@ def test_uri_identity_hash_preserves_nul_framed_payload_digest() -> None:
                 media=common_pb2.MediaMetadata(format="mov"),
             ),
             "Unsupported video URI scheme: ftp.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="http://example.com/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Unsupported video URI scheme: http.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https:///demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI requires a host.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https://localhost/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI host is not allowed: localhost.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https://127.0.0.1/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI host is not allowed: 127.0.0.1.",
         ),
         (
             common_pb2.MessagePart(

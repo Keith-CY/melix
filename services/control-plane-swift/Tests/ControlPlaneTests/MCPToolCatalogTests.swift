@@ -44,8 +44,10 @@ struct MCPToolCatalogTests {
         defer { try? FileManager.default.removeItem(at: fixture.deletingLastPathComponent()) }
 
         let catalog = MCPToolCatalog.load(environment: ["MELIX_MCP_CONFIG_PATH": " \(fixture.path) "])
+        let summary = catalog.summary()
 
         #expect(catalog.configPath == fixture.path)
+        #expect(catalog.discoverySource == .environment)
         #expect(catalog.defaultParserMode == .mistral)
         #expect(catalog.sources.map(\.sourceID) == ["disabled-search", "filesystem"])
         #expect(catalog.sources[1].namespaces == ["tools.fs.read", "tools.math"])
@@ -55,6 +57,41 @@ struct MCPToolCatalogTests {
         #expect(catalog.resolvedToolCount == 2)
         #expect(catalog.policyReceipt.effectivePolicy == "allow_configured")
         #expect(catalog.policyReceipt.refusedNamespaces.isEmpty)
+        #expect(summary.sources.first?.sourceID == "config-discovery")
+        #expect(summary.sources.first?.enabled == true)
+        #expect(summary.sources.first?.namespaces == ["environment"])
+        #expect(summary.sources.first?.policyState == "explicit_or_melix_home_only")
+    }
+
+    @Test("environment loading discovers only explicit and MELIX_HOME MCP configs")
+    func environmentLoadingDiscoversOnlyExplicitAndMelixHomeMCPConfigs() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-mcp-discovery-\(UUID().uuidString)", isDirectory: true)
+        let ignoredDirectory = tempDirectory.appendingPathComponent("ignored-cwd", isDirectory: true)
+        let melixHome = tempDirectory.appendingPathComponent("home", isDirectory: true)
+        let melixConfigDirectory = melixHome.appendingPathComponent("config", isDirectory: true)
+        try FileManager.default.createDirectory(at: ignoredDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixConfigDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        try Data(
+            """
+            {"sources":[{"source_id":"cwd","namespaces":["tools.cwd"]}]}
+            """.utf8
+        ).write(to: ignoredDirectory.appendingPathComponent("mcp-tools.json"))
+
+        let absent = MCPToolCatalog.load(environment: ["MELIX_HOME": melixHome.path])
+        try Data(
+            """
+            {"sources":[{"source_id":"home","namespaces":["tools.home"]}]}
+            """.utf8
+        ).write(to: melixConfigDirectory.appendingPathComponent("mcp-tools.json"))
+        let discovered = MCPToolCatalog.load(environment: ["MELIX_HOME": melixHome.path])
+
+        #expect(absent == .empty)
+        #expect(discovered.discoverySource == .melixHome)
+        #expect(discovered.resolvedSourceIDs == ["home"])
+        #expect(discovered.resolvedNamespaces == ["tools.home"])
+        #expect(discovered.summary().sources.first?.namespaces == ["melixHome"])
     }
 
     @Test("config loading blocks high risk tool namespaces unless allowlisted")
@@ -102,6 +139,8 @@ struct MCPToolCatalogTests {
         #expect(blocked.policyReceipt.refusedNamespaces == ["tools.fs.write", "tools.shell.exec"])
         #expect(blockedSummary.refusedNamespaces == ["tools.fs.write", "tools.shell.exec"])
         #expect(blockedSummary.effectivePolicy == "block_high_risk")
+        #expect(blockedSummary.sources.first?.sourceID == "config-discovery")
+        #expect(blockedSummary.sources.first?.namespaces == ["explicit"])
 
         #expect(allowed.resolvedNamespaces == ["tools.fs.read", "tools.fs.write", "tools.math"])
         #expect(allowed.policyReceipt.requestedPolicy == "operator_allowlist")

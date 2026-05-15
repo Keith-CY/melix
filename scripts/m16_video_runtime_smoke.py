@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import base64
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import sys
 import threading
 import time
@@ -73,29 +72,6 @@ def _metric_value(snapshot: dict[str, object], key: str) -> float:
     return round(float(value), 2)
 
 
-def _start_video_fixture_server(
-    payload: bytes,
-    *,
-    content_type: str = "video/mp4",
-) -> tuple[ThreadingHTTPServer, str]:
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            self.send_response(200)
-            self.send_header("content-type", content_type)
-            self.send_header("content-length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def log_message(self, format: str, *args) -> None:  # noqa: A003
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    url = f"http://127.0.0.1:{server.server_port}/remote-video.mp4"
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    return server, url
-
-
 def _video_chat_payload(
     *,
     reference: str | None = None,
@@ -144,6 +120,7 @@ def _capture_video_scenario(
     payload: dict[str, object],
     expected_fragments: list[str],
     source_reference: str,
+    expected_status: int = 200,
 ) -> dict[str, Any]:
     status, body, elapsed_ms = _timed_post_json(stack.chat_url(), payload)
     response_text = body.decode("utf-8") if isinstance(body, bytes) else json.dumps(body)
@@ -151,7 +128,8 @@ def _capture_video_scenario(
 
     return {
         "scenario_id": scenario_id,
-        "success": status == 200 and all(fragment in response_text for fragment in expected_fragments),
+        "success": status == expected_status
+        and all(fragment in response_text for fragment in expected_fragments),
         "request_latency_ms": round(elapsed_ms, 2),
         "source_reference": source_reference,
         "response_excerpt": response_text[:600],
@@ -238,7 +216,6 @@ def run_smoke(repo_root: Path) -> dict[str, Any]:
         repo_root,
         environment_overrides={"MELIX_DETERMINISTIC_VLM_DELAY_MS": "150"},
     )
-    remote_server: ThreadingHTTPServer | None = None
 
     try:
         stack.start()
@@ -246,8 +223,6 @@ def run_smoke(repo_root: Path) -> dict[str, Any]:
         local_video_path = stack.runtime_state_root / "fixtures" / "local-smoke.mp4"
         local_video_path.parent.mkdir(parents=True, exist_ok=True)
         local_video_path.write_bytes(b"local video smoke fixture")
-
-        remote_server, remote_video_url = _start_video_fixture_server(b"remote video smoke fixture")
 
         local_path = _capture_video_scenario(
             stack,
@@ -266,21 +241,21 @@ def run_smoke(repo_root: Path) -> dict[str, Any]:
             source_reference=str(local_video_path),
         )
 
-        remote_url = _capture_video_scenario(
+        blocked_remote_url = _capture_video_scenario(
             stack,
-            scenario_id="remote_url",
+            scenario_id="blocked_remote_url",
             payload=_video_chat_payload(
-                reference=remote_video_url,
+                reference="http://127.0.0.1/remote-video.mp4",
                 filename="remote-video.mp4",
                 prompt="Summarize the remote clip.",
                 frame_budget=4,
             ),
             expected_fragments=[
-                "Video content: remote-video.mp4",
-                "Frame policy: uniform_sample 4 frame(s)",
-                "Prompt: Summarize the remote clip.",
+                "invalid_argument",
+                "Unsupported video URI scheme: http.",
             ],
-            source_reference=remote_video_url,
+            source_reference="http://127.0.0.1/remote-video.mp4",
+            expected_status=400,
         )
 
         bounded_window = _capture_video_scenario(
@@ -305,7 +280,7 @@ def run_smoke(repo_root: Path) -> dict[str, Any]:
         routing = _capture_routing_scenario(stack)
         report = build_phase16_video_metrics_report(
             local_path=local_path,
-            remote_url=remote_url,
+            remote_url=blocked_remote_url,
             bounded_window=bounded_window,
             routing=routing,
         )
@@ -317,15 +292,12 @@ def run_smoke(repo_root: Path) -> dict[str, Any]:
             "metrics": report["metrics"],
             "scenarios": {
                 "local_path": local_path,
-                "remote_url": remote_url,
+                "blocked_remote_url": blocked_remote_url,
                 "bounded_window": bounded_window,
                 "routing": routing,
             },
         }
     finally:
-        if remote_server is not None:
-            remote_server.shutdown()
-            remote_server.server_close()
         stack.stop()
 
 

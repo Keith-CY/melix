@@ -179,6 +179,66 @@ struct OpenAIHandlerTests {
         #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 0)
     }
 
+    @Test("gateway rate limits by accepted credential identity across compatible headers")
+    func gatewayRateLimitsByAcceptedCredentialIdentityAcrossCompatibleHeaders() async throws {
+        let metricsStore = MetricsStore()
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-rate-limit-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: tempDirectory.appendingPathComponent("gateway-config.json"),
+            defaults: ["MELIX_GATEWAY_RATE_LIMIT_PER_MINUTE": "1"]
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            gatewayConfigStore: gatewayConfigStore,
+            gatewayRateLimiter: GatewayRateLimiter(now: { Date(timeIntervalSince1970: 1_000) })
+        )
+
+        let accepted = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["x-api-key": "sk-codex"],
+                body: Data()
+            )
+        )
+        let rejected = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["Authorization": "Bearer sk-codex"],
+                body: Data()
+            )
+        )
+        let rejectedPayload = try await jsonPayload(from: rejected.body)
+        let error = try #require(rejectedPayload["error"] as? [String: Any])
+        let rateLimit = try #require(error["rate_limit"] as? [String: Any])
+
+        #expect(accepted.statusCode == 200)
+        #expect(rejected.statusCode == 429)
+        #expect(error["code"] as? String == "rate_limited")
+        #expect(rateLimit["identity"] as? String == "credential:codex")
+        #expect(rateLimit["limit_per_minute"] as? Int == 1)
+        #expect(rejected.headers["retry-after"] == "60")
+        #expect(rejected.headers["x-ratelimit-limit"] == "1")
+        #expect(await metricsStore.value(forKey: "gateway.rate_limited_request_count") == 1)
+        #expect(await metricsStore.value(forKey: "gateway.rate_limit_remaining") == 0)
+    }
+
     @Test("GET /v1/models enforces bearer-token gateway access and rejects disallowed headers")
     func getModelsEnforcesBearerTokenGatewayAccessAndRejectsDisallowedHeaders() async throws {
         let metricsStore = MetricsStore()
@@ -430,6 +490,16 @@ struct OpenAIHandlerTests {
                 body: Data()
             )
         )
+        let duplicateSignOutResponse = try await handler.handle(
+            HTTPRequest(
+                method: .delete,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let duplicateSignOutPayload = try await jsonPayload(from: duplicateSignOutResponse.body)
+        let duplicateSignOutError = try #require(duplicateSignOutPayload["error"] as? [String: Any])
         let rejectedResponse = try await handler.handle(
             HTTPRequest(
                 method: .get,
@@ -446,6 +516,8 @@ struct OpenAIHandlerTests {
         #expect(modelsResponse.statusCode == 200)
         #expect(inspectResponse.statusCode == 200)
         #expect(signOutResponse.statusCode == 200)
+        #expect(duplicateSignOutResponse.statusCode == 401)
+        #expect(duplicateSignOutError["code"] as? String == "revoked_session")
         #expect(rejectedResponse.statusCode == 401)
         #expect(error["code"] as? String == "revoked_session")
         #expect(sessionState["state"] as? String == "revoked")
@@ -6446,6 +6518,51 @@ struct OpenAIHandlerTests {
 
         #expect(invalidMaskResponse.statusCode == 400)
         #expect(invalidMaskPayload.contains("mask_base64 must be valid base64."))
+    }
+
+    @Test("image edit endpoints reject private external media URLs before worker dispatch")
+    func imageEditEndpointsRejectPrivateExternalMediaURLsBeforeWorkerDispatch() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            metricsStore: metricsStore
+        )
+        let privateURLBody = try #require(
+            """
+            {
+              "id": "image-edit-private-url",
+              "model": "melix-dev-image",
+              "prompt": "use remote",
+              "image_url": "https://127.0.0.1/source.png"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: privateURLBody)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "invalid_argument")
+        #expect(error["message"] as? String == "External media URL host is not allowed: 127.0.0.1.")
+        #expect(await imageClient.lastImageEditRequest == nil)
+        #expect(await metricsStore.value(forKey: "external_media.url_refusal_count") == 1)
+        #expect(await metricsStore.value(forKey: "external_media.refusal.private_or_loopback_host") == 1)
     }
 
     @Test("image edit responses map failed and completed states into payloads and job summaries")

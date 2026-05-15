@@ -23,6 +23,10 @@ Point `MELIX_MCP_CONFIG_PATH` at a JSON file with this structure:
 
 Rules:
 
+- Discovery order is `MELIX_MCP_CONFIG_PATH`, then
+  `$MELIX_HOME/config/mcp-tools.json`, then no MCP config.
+- Melix does not discover `./mcp-tools.json` or any other process current
+  working directory file during packaged/default local launch.
 - `default_parser_mode` is used when no request-level or model-level parser selection is already present.
 - Only enabled sources contribute namespaces to auto-injection.
 - Namespaces are deduplicated in source order after disabled sources are removed.
@@ -42,6 +46,9 @@ bash scripts/dev_up.sh
 
 - The control-plane handshake advertises the `mcp-tools` feature when MCP configuration is present.
 - The effective MCP catalog appears in the typed server snapshot under `mcp_tools`.
+- `mcp_tools.sources` starts with a `config-discovery` receipt. Its namespace
+  records the active discovery source: `environment`, `melixHome`, `explicit`,
+  or `none`.
 - `mcp_tools` includes the requested policy, effective policy, operator override source, and
   refused namespaces so operator surfaces can explain why configured tools were not exposed.
 - Structured text requests record `melix.mcp.source_ids` when MCP namespaces are auto-injected.
@@ -66,7 +73,11 @@ The smoke command:
 
 ## Troubleshooting
 
-- If the handshake does not advertise `mcp-tools`, confirm `MELIX_MCP_CONFIG_PATH` points at a readable file.
+- If the handshake does not advertise `mcp-tools`, confirm
+  `MELIX_MCP_CONFIG_PATH` points at a readable file or
+  `$MELIX_HOME/config/mcp-tools.json` exists.
+- If a repo-local `mcp-tools.json` is ignored, move it under `MELIX_HOME/config`
+  or pass it explicitly with `MELIX_MCP_CONFIG_PATH`.
 - If a configured namespace is absent from the effective catalog, inspect `mcp_tools.refused_namespaces`
   and `mcp.refused_tool_count`.
 - If `mcp.tool_injection_count` stays at `0`, confirm the request path is a structured-tool-capable text endpoint and not an unsupported route.

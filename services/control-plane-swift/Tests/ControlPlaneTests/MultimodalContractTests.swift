@@ -126,9 +126,89 @@ struct MultimodalContractTests {
         #expect(local.imageUri == "/tmp/local-image.png")
         #expect(local.media.sourceKind == .mediaSourceUri)
         #expect(local.media.filename == "local-image.png")
+        #expect(local.media.preprocessingHints["external_url_policy"] == "local_media_allowed")
+        #expect(local.media.preprocessingHints["external_url_source_kind"] == "local")
+        #expect(local.media.preprocessingHints["external_url_scheme"] == "path")
         #expect(remote.imageUri == "https://example.com/remote-image.png")
         #expect(remote.media.sourceKind == .mediaSourceUri)
         #expect(remote.media.preprocessingHints["detail"] == "high")
+        #expect(remote.media.preprocessingHints["external_url_policy"] == "external_https_public_only")
+        #expect(remote.media.preprocessingHints["external_url_source_kind"] == "remote")
+        #expect(remote.media.preprocessingHints["external_url_scheme"] == "https")
+        #expect(remote.media.preprocessingHints["external_url_host"] == "example.com")
+    }
+
+    @Test("external media URL admission allows local and public HTTPS while refusing unsafe remote hosts")
+    func externalMediaURLAdmissionCoversLocalPublicAndUnsafeRemoteCases() throws {
+        let localPath = try ExternalMediaURLAdmission.validate("/tmp/local-image.png", mediaKind: "image")
+        let fileURL = try ExternalMediaURLAdmission.validate("file:///tmp/local-image.png", mediaKind: "image")
+        let publicURL = try ExternalMediaURLAdmission.validate(
+            " HTTPS://Example.com/remote-image.png ",
+            mediaKind: "image"
+        )
+
+        #expect(localPath.policy == "local_media_allowed")
+        #expect(localPath.sourceKind == "local")
+        #expect(localPath.scheme == "path")
+        #expect(fileURL.scheme == "file")
+        #expect(publicURL.policy == "external_https_public_only")
+        #expect(publicURL.sourceKind == "remote")
+        #expect(publicURL.scheme == "https")
+        #expect(publicURL.host == "example.com")
+        #expect(publicURL.reason == "accepted_https_public_host_without_fetch")
+
+        let refusals: [(String, ExternalMediaURLAdmissionError)] = [
+            ("", .malformedURL("image")),
+            ("http://[::1", .malformedURL("image")),
+            ("http://example.com/image.png", .unsupportedScheme("http")),
+            ("https:///image.png", .missingHost),
+            ("https://localhost/image.png", .privateHost("localhost")),
+            ("https://service.localhost/image.png", .privateHost("service.localhost")),
+            ("https://127.0.0.1/image.png", .privateHost("127.0.0.1")),
+            ("https://10.0.0.1/image.png", .privateHost("10.0.0.1")),
+            ("https://169.254.1.1/image.png", .privateHost("169.254.1.1")),
+            ("https://172.16.0.1/image.png", .privateHost("172.16.0.1")),
+            ("https://192.168.0.1/image.png", .privateHost("192.168.0.1")),
+            ("https://[::1]/image.png", .privateHost("[::1]")),
+            ("https://[fe80::1]/image.png", .privateHost("[fe80::1]")),
+            ("https://[fc00::1]/image.png", .privateHost("[fc00::1]")),
+            ("https://[fd00::1]/image.png", .privateHost("[fd00::1]")),
+        ]
+
+        for (rawURL, expectedError) in refusals {
+            do {
+                _ = try ExternalMediaURLAdmission.validate(rawURL, mediaKind: "image")
+                Issue.record("Expected \(rawURL) to be refused.")
+            } catch let error as ExternalMediaURLAdmissionError {
+                #expect(error == expectedError)
+                #expect(error.operatorMessage == expectedError.operatorMessage)
+                #expect(error.refusalReason == expectedError.refusalReason)
+            } catch {
+                Issue.record("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    @Test("multimodal request normalizer rejects private external image URLs")
+    func privateExternalImageURLsAreRejectedWithTypedOperatorErrors() {
+        let normalizer = MultimodalRequestNormalizer()
+        let privateImage = OpenAIMultimodalContentPart(
+            type: .inputImage,
+            inputImage: OpenAIMultimodalImageReference(
+                url: "https://127.0.0.1/private.png",
+                mimeType: "image/png"
+            )
+        )
+
+        do {
+            _ = try normalizer.normalize(privateImage)
+            Issue.record("Expected private image URL to fail.")
+        } catch let error as MultimodalRequestNormalizationError {
+            #expect(error == .externalMediaURLBlocked("External media URL host is not allowed: 127.0.0.1."))
+            #expect(error.operatorMessage == "External media URL host is not allowed: 127.0.0.1.")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 
     @Test("multimodal request normalizer preserves multi-image ordering")
@@ -353,6 +433,8 @@ struct MultimodalContractTests {
         #expect(normalizedURI.media.frameBudget == 12)
         #expect(normalizedURI.media.startMs == 500)
         #expect(normalizedURI.media.endMs == 3_500)
+        #expect(normalizedURI.media.preprocessingHints["external_url_policy"] == "external_https_public_only")
+        #expect(normalizedURI.media.preprocessingHints["external_url_host"] == "example.com")
 
         #expect(normalizedInline.videoBytes == Data("video".utf8))
         #expect(normalizedInline.media.mediaType == .video)

@@ -6,7 +6,7 @@ Support remote URLs, local paths, and inline payloads through one normalized ima
 
 ## Scope
 
-- add `http` and `https` image ingress
+- add admitted remote image ingress
 - preserve local-path and inline payload support
 - keep request normalization shared across text and vision-family APIs
 
@@ -25,6 +25,10 @@ Support remote URLs, local paths, and inline payloads through one normalized ima
 - ingress should normalize to one internal image-reference model before runtime dispatch
 - remote fetch behavior should remain explicit and measurable
 - validation should distinguish unsupported sources from missing sources
+- Issue #621 tightened production remote media ingress on `2026-05-15`: remote
+  image URLs are HTTPS-only and must pass public-host admission before fetch.
+  Local paths, `file:` URLs, and inline payloads remain supported; loopback,
+  private, link-local, `http`, and malformed remote URLs are refusal cases.
 
 ## Verification
 
@@ -35,7 +39,7 @@ Support remote URLs, local paths, and inline payloads through one normalized ima
 
 ## Acceptance
 
-- local, remote, and inline image inputs are all accepted through the supported multimodal path
+- local, admitted remote, and inline image inputs are supported through the multimodal path
 - normalization and failure cases are contract-tested
 
 ## Coverage

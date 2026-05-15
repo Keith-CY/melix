@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import threading
@@ -21,12 +20,19 @@ def _post_json(url: str, payload: dict[str, object], *, timeout: float = 10.0) -
         headers={"content-type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        content_type = response.headers.get("content-type", "")
-        body = response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            content_type = response.headers.get("content-type", "")
+            body = response.read()
+            if "application/json" in content_type:
+                return response.status, json.loads(body.decode("utf-8"))
+            return response.status, body
+    except urllib.error.HTTPError as exc:
+        content_type = exc.headers.get("content-type", "")
+        body = exc.read()
         if "application/json" in content_type:
-            return response.status, json.loads(body.decode("utf-8"))
-        return response.status, body
+            return exc.code, json.loads(body.decode("utf-8"))
+        return exc.code, body
 
 
 def _timed_post_json(
@@ -53,23 +59,14 @@ def _chat_completions_tool_call_stream_success(status: int, payload: object) -> 
     )
 
 
-def _start_image_fixture_server(payload: bytes, *, content_type: str = "image/png") -> tuple[ThreadingHTTPServer, str]:
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            self.send_response(200)
-            self.send_header("content-type", content_type)
-            self.send_header("content-length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def log_message(self, format: str, *args) -> None:  # noqa: A003
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    url = f"http://127.0.0.1:{server.server_port}/fixture.png"
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    return server, url
+def _json_error_code(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return ""
+    code = error.get("code")
+    return code if isinstance(code, str) else ""
 
 
 def test_text_requests_record_interference_metrics_during_multimodal_load() -> None:
@@ -333,11 +330,11 @@ def test_ocr_chat_applies_default_and_overridden_stop_sequences() -> None:
         stack.stop()
 
 
-def test_multimodal_chat_accepts_local_and_remote_image_urls(tmp_path: Path) -> None:
+def test_multimodal_chat_accepts_local_and_rejects_private_remote_image_urls(tmp_path: Path) -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
     local_image = tmp_path / "local-image.txt"
     local_image.write_text("phase6 local image fixture")
-    remote_server, remote_url = _start_image_fixture_server(b"phase6 remote image fixture")
+    remote_url = "https://127.0.0.1/fixture.png"
 
     try:
         stack.start()
@@ -393,12 +390,10 @@ def test_multimodal_chat_accepts_local_and_remote_image_urls(tmp_path: Path) -> 
                 ],
             },
         )
-        assert remote_status == 200
-        assert b"Image content: phase6 remote image fixture" in remote_payload
-        assert b"Prompt: Summarize the remote image." in remote_payload
+        assert remote_status == 400
+        assert _json_error_code(remote_payload) == "invalid_argument"
+        assert "External media URL host is not allowed" in json.dumps(remote_payload)
     finally:
-        remote_server.shutdown()
-        remote_server.server_close()
         stack.stop()
 
 
@@ -622,7 +617,7 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
     multi_second.write_text("phase6 multi second")
     tool_image = tmp_path / "vision-tool.txt"
     tool_image.write_text("phase6 tool evidence image")
-    remote_server, remote_url = _start_image_fixture_server(b"phase6 remote evidence image")
+    remote_url = "https://127.0.0.1/remote-evidence.png"
     ocr_image = base64.b64encode(b"title<ocr:end>body").decode("ascii")
 
     try:
@@ -768,9 +763,10 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
                     local_status == 200
                     and b"Image content: phase6 local evidence image" in local_payload
                 ),
-                "remote_image_success": (
-                    remote_status == 200
-                    and b"Image content: phase6 remote evidence image" in remote_payload
+                "remote_image_refusal_success": (
+                    remote_status == 400
+                    and _json_error_code(remote_payload) == "invalid_argument"
+                    and "External media URL host is not allowed" in json.dumps(remote_payload)
                 ),
                 "multi_image_success": (
                     multi_status == 200
@@ -797,13 +793,13 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
         metrics = report["metrics"]
         checks = report["checks"]
         assert checks["vision.ingress.local_image_success"] is True
-        assert checks["vision.ingress.remote_image_success"] is True
+        assert checks["vision.ingress.remote_image_refusal_success"] is True
         assert checks["vision.ingress.multi_image_success"] is True
         assert checks["vision.ocr.default_stop_success"] is True
         assert checks["vision.vlm.tool_call_success"] is True
         assert metrics["vision.integration_success_rate"] == 100.0
         assert metrics["vision.ingress.local_image_success_rate"] == 100.0
-        assert metrics["vision.ingress.remote_image_success_rate"] == 100.0
+        assert metrics["vision.ingress.remote_image_refusal_success_rate"] == 100.0
         assert metrics["vision.ingress.multi_image_success_rate"] == 100.0
         assert metrics["vision.ocr.default_stop_success_rate"] == 100.0
         assert metrics["vision.vlm.tool_call_success_rate"] == 100.0
@@ -831,6 +827,4 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
         assert metrics["vision.quantized_load_mode"] in {"fallback", "native_quantized"}
         assert "vision.quantized_load_fallback_reason" in metrics
     finally:
-        remote_server.shutdown()
-        remote_server.server_close()
         stack.stop()
