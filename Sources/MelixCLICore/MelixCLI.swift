@@ -778,10 +778,10 @@ public struct ServerControlOptions: Equatable, Sendable {
             ? ServerSessionRuntimeStore.defaultServerSessionID
             : serverSessionID
         self.serverTitle = serverTitle
-        let trimmedDefaultModelID = defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedDefaultModelID = trimmedDefaultModelID.isEmpty
-            ? servedModelIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? ""
-            : trimmedDefaultModelID
+        let resolvedDefaultModelID = MelixServerModelRosterNormalizer.resolvedDefaultModelID(
+            defaultModelID,
+            servedModelIDs: servedModelIDs
+        )
         self.defaultModelID = resolvedDefaultModelID
         self.servedModelIDs = servedModelIDs.isEmpty
             ? []
@@ -1411,10 +1411,10 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         let trimmedServedModelIDs = servedModelIDs.map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }.filter { !$0.isEmpty }
-        let trimmedDefaultModelID = defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedDefaultModelID = trimmedDefaultModelID.isEmpty
-            ? (trimmedServedModelIDs.first ?? "")
-            : trimmedDefaultModelID
+        let resolvedDefaultModelID = MelixServerModelRosterNormalizer.resolvedDefaultModelID(
+            defaultModelID,
+            servedModelIDs: trimmedServedModelIDs
+        )
         self.defaultModelID = resolvedDefaultModelID
         self.servedModelIDs = MelixServerModelRosterNormalizer.normalizedOrDefault(
             trimmedServedModelIDs,
@@ -1468,10 +1468,10 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
     ) {
         self.serverSessionID = serverSessionID
         self.title = title
-        let trimmedDefaultModelID = defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedDefaultModelID = trimmedDefaultModelID.isEmpty
-            ? servedModelIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? ""
-            : trimmedDefaultModelID
+        let resolvedDefaultModelID = MelixServerModelRosterNormalizer.resolvedDefaultModelID(
+            defaultModelID,
+            servedModelIDs: servedModelIDs
+        )
         self.defaultModelID = resolvedDefaultModelID
         self.servedModelIDs = servedModelIDs.isEmpty
             ? []

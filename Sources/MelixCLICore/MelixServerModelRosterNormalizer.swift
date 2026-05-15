@@ -30,6 +30,15 @@ public enum MelixServerModelRosterNormalizer {
         )
     }
 
+    public static func resolvedDefaultModelID(
+        _ defaultModelID: String,
+        servedModelIDs: [String]
+    ) -> String {
+        let t = trimmed(defaultModelID)
+        guard t.isEmpty else { return t }
+        return servedModelIDs.lazy.map(trimmed).first { !$0.isEmpty } ?? ""
+    }
+
     private static func trimmed(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
