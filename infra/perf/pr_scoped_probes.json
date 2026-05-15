@@ -3655,8 +3655,8 @@
       "scripts/probe_policy_noop_overhead_probe.py",
       "scripts/changed_scope_coverage.py"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_probe_policy.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_probe_policy_overhead_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_policy_noop_overhead_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_probe_policy.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_probe_policy_overhead_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_policy_noop_overhead_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/probe_policy.py services/mlx-worker-python/worker/productization/probe_policy_overhead.py services/mlx-worker-python/tests/test_probe_policy.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/probe_policy_noop_overhead_probe.py",
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_probe_policy.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_probe_policy_overhead_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_policy_noop_overhead_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_probe_policy.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_probe_policy_overhead_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_policy_noop_overhead_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/probe_policy.py services/mlx-worker-python/worker/productization/probe_policy_overhead.py services/mlx-worker-python/tests/test_probe_policy.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/probe_policy_noop_overhead_probe.py",
     "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"scripts/probe_policy_noop_overhead_probe.py\"; if [ -f \"$SCRIPT\" ]; then python3 \"$SCRIPT\"; else for CANDIDATE in \"../head/$SCRIPT\" \"${GITHUB_WORKSPACE:-}/head/$SCRIPT\"; do if [ -f \"$CANDIDATE\" ]; then python3 \"$CANDIDATE\"; exit $?; fi; done; echo \"missing probe script fallback for $SCRIPT\" >&2; exit 2; fi'",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
@@ -3670,6 +3670,16 @@
         "key": "no_op_policy_check_overhead_pct",
         "unit": "pct",
         "direction": "informational"
+      },
+      {
+        "key": "no_op_reason_overhead_pct",
+        "unit": "pct",
+        "direction": "informational"
+      },
+      {
+        "key": "no_op_reason_call_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better"
       },
       {
         "key": "threshold_passed",
