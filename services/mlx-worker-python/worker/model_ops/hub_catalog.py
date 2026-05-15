@@ -26,7 +26,7 @@ _SIZE_HINT_MULTIPLIERS = {
 
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HubModelSummaryRecord:
     repo_id: str
     author: str
@@ -50,13 +50,13 @@ class HubModelSummaryRecord:
     recommended_action: str = "inspect_metadata"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HubSearchPage:
     items: list[HubModelSummaryRecord]
     next_cursor: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HubModelCardRecord:
     repo_id: str
     author: str
