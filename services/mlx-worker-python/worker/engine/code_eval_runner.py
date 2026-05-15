@@ -295,6 +295,17 @@ _REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS = (
     "test_status",
     "failure_detail",
 )
+
+
+def _code_eval_payload_has_required_string_fields(payload: dict[str, object]) -> bool:
+    return (
+        "runtime_status" in payload
+        and "timeout_status" in payload
+        and "test_status" in payload
+        and "failure_detail" in payload
+    )
+
+
 _CODE_EVAL_PAYLOAD_KEY_TOKENS = {
     key: json.dumps(key, separators=(",", ":")).encode("utf-8")
     for key in (*_CODE_EVAL_PAYLOAD_STRING_KEYS, *_CODE_EVAL_PAYLOAD_INT_KEYS)
@@ -377,7 +388,7 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
         payload[key] = value
         search_start = value_start + len(str(value))
 
-    if all(key in payload for key in _REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS):
+    if _code_eval_payload_has_required_string_fields(payload):
         return payload
     return None
 
