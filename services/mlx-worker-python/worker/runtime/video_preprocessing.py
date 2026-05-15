@@ -19,7 +19,7 @@ SUPPORTED_VIDEO_MIME_TYPES = {
 MAX_VIDEO_FRAME_BUDGET = 128
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PreparedVideoInput:
     source_kind: str
     reference: str
@@ -35,7 +35,7 @@ class PreparedVideoInput:
     sha256_hex: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ParsedVideoReference:
     raw: str
     scheme: str
