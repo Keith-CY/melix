@@ -177,7 +177,10 @@ def _top_level_weight_file_bytes(model_dir: Path) -> int:
 
 
 def _weight_dir_entry_file_size(entry: os.DirEntry[str]) -> int:
-    if os.path.splitext(entry.name)[1].lower() not in _MODEL_WEIGHT_SUFFIXES:
+    name = entry.name
+    if not name.endswith(_MODEL_WEIGHT_SUFFIXES) and not name.lower().endswith(
+        _MODEL_WEIGHT_SUFFIXES,
+    ):
         return 0
     try:
         if not entry.is_file():
