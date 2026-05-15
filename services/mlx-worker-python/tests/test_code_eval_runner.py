@@ -814,6 +814,19 @@ def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_par
     assert payload_path.read_bytes_calls == 1
 
 
+def test_code_eval_payload_required_field_check_preserves_fast_path_gate() -> None:
+    payload = {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "timeout_status": "ok",
+    }
+
+    assert code_eval_runner._code_eval_payload_has_required_string_fields(payload)
+    del payload["failure_detail"]
+    assert not code_eval_runner._code_eval_payload_has_required_string_fields(payload)
+
+
 def test_load_payload_file_fast_path_reuses_precomputed_key_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     payload_path = _BytesOnlyPayloadPath(
         json.dumps(
