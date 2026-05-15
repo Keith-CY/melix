@@ -5341,6 +5341,12 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastDoctorReport?.markdown.contains("Melix Doctor") == true)
         #expect(viewModel.lastBenchReport?.reportPath.contains("bench-report") == true)
         #expect(viewModel.desktopFoundationState.benchMetrics.contains(where: { $0.name == "bench.smoke.ttft_ms" }))
+        #expect(viewModel.diagnosticsRunMonitor?.stage == .benchmark)
+        #expect(viewModel.diagnosticsRunMonitor?.phase == .completed)
+        #expect(viewModel.diagnosticsRunMonitor?.primaryMetricText.contains("bench.smoke.ttft_ms") == true)
+        #expect(viewModel.diagnosticsRunMonitor?.artifactText.contains("bench-report") == true)
+        #expect(viewModel.diagnosticsRunMonitor?.progressFraction == 1)
+        #expect(viewModel.diagnosticsRunMonitor?.steps.allSatisfy { $0.phase == .completed } == true)
         #expect(viewModel.lastModelOperation?.operation == "upload")
         #expect(viewModel.lastModelOperation?.outputPath.contains("/tmp/melix-upload-adapter") == true)
         #expect(viewModel.adapterPackages.first?.adapterName == "melix-dev-adapter")
@@ -5582,6 +5588,9 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.lastError == "boom click")
         #expect(viewModel.desktopFoundationState.logs.contains(where: { $0.message == "boom click" }))
+        #expect(viewModel.diagnosticsRunMonitor?.stage == .benchmark)
+        #expect(viewModel.diagnosticsRunMonitor?.phase == .failed)
+        #expect(viewModel.diagnosticsRunMonitor?.detailText == "boom click")
     }
 
     @Test("benchmark selection state falls back and benchmark guard rails surface local errors")
@@ -6399,6 +6408,10 @@ struct RuntimeViewModelTests {
         #expect(viewModel.benchmarkMatrixSummaryCards.count == 6)
         #expect(viewModel.benchmarkMatrixContextChartPoints.count == 2)
         #expect(viewModel.benchmarkMatrixThroughputChartPoints.count == 2)
+        #expect(viewModel.diagnosticsRunMonitor?.stage == .matrix)
+        #expect(viewModel.diagnosticsRunMonitor?.phase == .completed)
+        #expect(viewModel.diagnosticsRunMonitor?.primaryMetricText.contains("matrix.throughput_tokens_per_second") == true)
+        #expect(viewModel.diagnosticsRunMonitor?.artifactText.contains("matrix-newer") == true)
 
         await viewModel.exportSelectedBenchmarkMatrixSummaryCSV()
 
@@ -6756,6 +6769,11 @@ struct RuntimeViewModelTests {
         let summaryExport = try #require(viewModel.lastEvaluationExport)
         let summaryCSV = try String(contentsOfFile: summaryExport.outputPath, encoding: .utf8)
         #expect(viewModel.selectedEvaluationHistoryJobID == "eval-pending-runner")
+        #expect(viewModel.diagnosticsRunMonitor?.stage == .evaluation)
+        #expect(viewModel.diagnosticsRunMonitor?.phase == .completed)
+        #expect(viewModel.diagnosticsRunMonitor?.primaryMetricText.contains("eval.compare.win_rate") == true)
+        #expect(viewModel.diagnosticsRunMonitor?.artifactText.contains("eval-pending-runner") == true)
+        #expect(viewModel.diagnosticsRunMonitor?.steps.contains { $0.title == "Collect Scores" && $0.phase == .completed } == true)
         #expect(summaryExport.formatTitle == "summary.csv")
         #expect(summaryExport.rowCount == 1)
         #expect(summaryCSV.contains("eval-pending-runner"))
@@ -6829,6 +6847,62 @@ struct RuntimeViewModelTests {
         #expect(summaryExport.rowCount == 1)
         #expect(summaryCSV.contains("eval-pending-selection"))
         #expect(summaryCSV.contains("eval.compare.win_rate"))
+    }
+
+    @Test("diagnostics run monitor maps control-plane progress events")
+    @MainActor
+    func diagnosticsRunMonitorMapsControlPlaneProgressEvents() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.beginDiagnosticsRunMonitorForTest(
+            stage: .benchmark,
+            title: "Benchmark",
+            targetText: testReadyModelID,
+            suiteText: "smoke",
+            detailText: "test run"
+        )
+        await client.sendBenchmarkProgress(jobID: "bench-progress", suite: "smoke", pct: 42)
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        let benchMonitor = try #require(viewModel.diagnosticsRunMonitor)
+        #expect(benchMonitor.startedAt != nil)
+        #expect(benchMonitor.elapsedText != "running")
+        #expect(benchMonitor.progressFraction == 0.42)
+        #expect(benchMonitor.progressText.contains("42%"))
+        #expect(benchMonitor.steps.contains { $0.id == "run" && $0.phase == .running })
+        #expect(benchMonitor.recentEvents.contains { $0.contains("smoke 42%") })
+
+        viewModel.beginDiagnosticsRunMonitorForTest(
+            stage: .evaluation,
+            title: "Evaluation",
+            targetText: testReadyModelID,
+            suiteText: "mmlu",
+            detailText: "test eval"
+        )
+        await client.sendRequestProgress(
+            requestID: "eval-progress",
+            phase: .requestPrefilling,
+            prefillProcessedTokens: 30,
+            prefillTotalTokens: 60,
+            activeRequests: 1
+        )
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        let evalMonitor = try #require(viewModel.diagnosticsRunMonitor)
+        #expect(evalMonitor.stage == .evaluation)
+        #expect(evalMonitor.progressFraction == 0.5)
+        #expect(evalMonitor.progressText.contains("50%"))
+        #expect(evalMonitor.recentEvents.contains { $0.contains("eval-progress") })
+        #expect(evalMonitor.recentEvents.contains { $0.contains("50% 30/60") })
     }
 
     @Test("evaluation pending history survives selection before export bundle loads")
@@ -7229,6 +7303,10 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastBenchReport?.reportPath.contains("bench-report") == true)
         #expect(viewModel.selectedBenchmarkMatrixHistoryEntry?.jobID == "matrix-newer")
         #expect(viewModel.selectedEvaluationHistoryEntry?.jobID == "eval-newer")
+        #expect(viewModel.diagnosticsRunMonitor?.stage == .evaluation)
+        #expect(viewModel.diagnosticsRunMonitor?.phase == .completed)
+        #expect(viewModel.diagnosticsRunMonitor?.primaryMetricText.contains("mmlu.accuracy") == true)
+        #expect(viewModel.diagnosticsRunMonitor?.artifactText.contains("eval-newer") == true)
         #expect(viewModel.lastBenchmarkCSVExport != nil)
         #expect(viewModel.lastBenchmarkMatrixExport?.formatTitle == "summary.csv")
         #expect(viewModel.lastEvaluationExport?.formatTitle == "samples.jsonl")

@@ -849,12 +849,7 @@ public struct OpenAIHandler: Sendable {
         do {
             execution = try await requestCoordinator.resumeChatCompletion(requestID: requestID)
         } catch let error as RequestCoordinatorError {
-            return jsonResponse(statusCode: error.statusCode, payload: [
-                "error": [
-                    "code": error.errorCode,
-                    "message": error.errorMessage,
-                ],
-            ])
+            return jsonResponse(statusCode: error.statusCode, payload: error.openAIErrorPayload)
         }
 
         let stream = sseWriter.encode(
@@ -2042,12 +2037,7 @@ public struct OpenAIHandler: Sendable {
                 requestStartedAt: requestStartedAt
             )
         } catch let error as RequestCoordinatorError {
-            return jsonResponse(statusCode: error.statusCode, payload: [
-                "error": [
-                    "code": error.errorCode,
-                    "message": error.errorMessage,
-                ],
-            ])
+            return jsonResponse(statusCode: error.statusCode, payload: error.openAIErrorPayload)
         }
 
         do {
@@ -2242,12 +2232,7 @@ public struct OpenAIHandler: Sendable {
                 requestStartedAt: requestStartedAt
             )
         } catch let error as RequestCoordinatorError {
-            return jsonResponse(statusCode: error.statusCode, payload: [
-                "error": [
-                    "code": error.errorCode,
-                    "message": error.errorMessage,
-                ],
-            ])
+            return jsonResponse(statusCode: error.statusCode, payload: error.openAIErrorPayload)
         }
 
         await modelCatalog.beginRequest(modelID: translated.modelID)
@@ -4265,6 +4250,8 @@ private extension RequestCoordinatorError {
             return 409
         case .workerUnavailable:
             return 503
+        case .unsupportedAcceleration:
+            return 400
         }
     }
 
@@ -4276,6 +4263,8 @@ private extension RequestCoordinatorError {
             return "request_not_resumable"
         case .workerUnavailable:
             return "worker_unavailable"
+        case .unsupportedAcceleration:
+            return "unsupported_acceleration"
         }
     }
 
@@ -4287,7 +4276,21 @@ private extension RequestCoordinatorError {
             return "The disconnected request is no longer eligible for resume."
         case .workerUnavailable:
             return "The worker cannot accept requests."
+        case .unsupportedAcceleration(_, let message, _):
+            return message
         }
+    }
+
+    var openAIErrorPayload: [String: Any] {
+        var error: [String: Any] = [
+            "code": errorCode,
+            "message": errorMessage,
+        ]
+        if case .unsupportedAcceleration(let reason, _, let recoveryHint) = self {
+            error["unsupported_reason"] = ModelCapabilityReceipts.unsupportedReasonIdentifier(reason)
+            error["recovery_hint"] = recoveryHint
+        }
+        return ["error": error]
     }
 }
 

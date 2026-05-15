@@ -648,6 +648,97 @@ func renderReportMarkdown(_ payload: [String: Any]) -> String {
     return lines.joined(separator: "\n") + "\n"
 }
 
+func renderRunReportTerminal(_ payload: [String: Any]) -> String {
+    let kind = stringField(payload, "report_kind", fallback: "runs")
+    let title = kind == "benchmark" ? "Benchmark" : kind == "evaluation" ? "Evaluation" : "Run"
+    let summary = payload["pass_fail_summary"] as? [String: Any] ?? [:]
+    let runCount = stringField(payload, "run_count", fallback: "0")
+    let completed = stringField(summary, "completed", fallback: "0")
+    let failed = stringField(summary, "failed", fallback: "0")
+    let other = stringField(summary, "other", fallback: "0")
+
+    var lines: [String] = [
+        "Melix \(title) Dashboard",
+        "runs=\(runCount) completed=\(completed) failed=\(failed) other=\(other)",
+        "",
+        "Runs",
+    ]
+
+    let runs = payload["model_backend_matrix"] as? [[String: Any]] ?? []
+    if runs.isEmpty {
+        lines.append("- none")
+    } else {
+        for run in runs.prefix(8) {
+            let runID = stringField(run, "run_id", fallback: "-")
+            let model = stringField(run, "model_id", fallback: "-")
+            let source = stringField(run, "source_repo", fallback: "-")
+            let target = source == "-" ? model : source
+            let task = stringField(run, "task_kind", fallback: "-")
+            let status = stringField(run, "status", fallback: "-")
+            lines.append("- \(runID)  \(status)  \(task)  \(target)")
+        }
+        if runs.count > 8 {
+            lines.append("- ... \(runs.count - 8) more runs")
+        }
+    }
+
+    lines.append("")
+    lines.append("Primary Metrics")
+    let metrics = payload["metrics"] as? [[String: Any]] ?? []
+    if metrics.isEmpty {
+        lines.append("- none")
+    } else {
+        for metric in metrics.prefix(10) {
+            let runID = stringField(metric, "run_id", fallback: "-")
+            let name = stringField(metric, "name", fallback: "-")
+            let value = stringField(metric, "value", fallback: "-")
+            let unit = stringField(metric, "unit")
+            let renderedValue = unit.isEmpty ? value : "\(value) \(unit)"
+            lines.append("- \(runID)  \(name)=\(renderedValue)")
+        }
+        if metrics.count > 10 {
+            lines.append("- ... \(metrics.count - 10) more metrics")
+        }
+    }
+
+    lines.append("")
+    lines.append("Artifacts")
+    let artifacts = payload["artifact_links"] as? [[String: Any]] ?? []
+    if artifacts.isEmpty {
+        lines.append("- none")
+    } else {
+        for artifact in artifacts.prefix(8) {
+            lines.append(
+                "- \(stringField(artifact, "run_id", fallback: "-"))  \(stringField(artifact, "kind", fallback: "-"))  \(stringField(artifact, "path", fallback: "-"))"
+            )
+        }
+        if artifacts.count > 8 {
+            lines.append("- ... \(artifacts.count - 8) more artifacts")
+        }
+    }
+
+    let gaps = payload["known_gaps"] as? [[String: Any]] ?? []
+    if gaps.isEmpty == false {
+        lines.append("")
+        lines.append("Known Gaps")
+        for gap in gaps.prefix(6) {
+            lines.append("- \(stringField(gap, "run_id", fallback: "-"))  \(stringField(gap, "gap", fallback: "-"))")
+        }
+        if gaps.count > 6 {
+            lines.append("- ... \(gaps.count - 6) more gaps")
+        }
+    }
+
+    if let generation = payload["report_generation"] as? [String: Any], generation.isEmpty == false {
+        lines.append("")
+        lines.append(
+            "Report generation: record_scan_ms=\(stringField(generation, "record_scan_ms", fallback: "0")) markdown_render_ms=\(stringField(generation, "markdown_render_ms", fallback: "0"))"
+        )
+    }
+
+    return lines.joined(separator: "\n") + "\n"
+}
+
 func runRecordJSONString(_ value: Any) throws -> String {
     let data = try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys])
     return (String(data: data, encoding: .utf8) ?? "") + "\n"
