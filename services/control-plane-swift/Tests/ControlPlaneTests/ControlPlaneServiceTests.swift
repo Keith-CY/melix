@@ -2030,6 +2030,84 @@ struct ControlPlaneServiceTests {
         #expect(request.ext["melix.registry_roots_json"] == #"["/tmp/root-b","/tmp/root-a"]"#)
     }
 
+    @Test("synthetic dataset operations are allowed without a catalog model when required inputs are present")
+    func syntheticDatasetOperationsAreAllowedWithoutCatalogModelWhenRequiredInputsArePresent() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = #"{"operation":"generate_synthetic_dataset","dataset_id":"synthetic.chat.v1"}"#
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/melix/synthetic/samples.jsonl"
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: []),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+        let ext = [
+            "synthetic_dataset_id": "synthetic.chat.v1",
+            "provider_endpoint": "http://127.0.0.1:12436/v1",
+            "model": "melix-dev-text",
+        ]
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-datasets",
+                operation: "generate_synthetic_dataset",
+                outputDir: "/tmp/melix/synthetic",
+                ext: ext
+            )
+        )
+        let request = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.ok)
+        #expect(response.model.operation.operation == "generate_synthetic_dataset")
+        #expect(response.model.operation.outputPath == "/tmp/melix/synthetic/samples.jsonl")
+        #expect(request.sourceModel == "melix-datasets")
+        #expect(request.outputDir == "/tmp/melix/synthetic")
+        #expect(request.ext["operation"] == "generate_synthetic_dataset")
+        #expect(request.ext["synthetic_dataset_id"] == "synthetic.chat.v1")
+    }
+
+    @Test("synthetic dataset operations require the managed import discriminator inputs")
+    func syntheticDatasetOperationsRequireManagedImportDiscriminatorInputs() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: []),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-datasets",
+                operation: "generate_synthetic_dataset",
+                outputDir: "/tmp/melix/synthetic",
+                ext: [
+                    "synthetic_dataset_id": "synthetic.chat.v1",
+                    "provider_endpoint": "http://127.0.0.1:12436/v1",
+                ]
+            )
+        )
+
+        let requests = await modelOpsClient.convertRequests
+        #expect(!response.ok)
+        #expect(response.error.code == "not_found")
+        #expect(requests.allSatisfy { $0.ext["operation"] != "generate_synthetic_dataset" })
+    }
+
     @Test("execute handles model.load on the local fast path")
     func executeHandlesLocalModelLoad() async throws {
         let service = ControlPlaneService()
