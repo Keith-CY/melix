@@ -103,6 +103,7 @@ def test_serving_diagnostics_bundle_writes_stable_layout_and_prefill_fields(
     assert request_payload["cache_restored_tokens"] == 64
     assert request_payload["cache_computed_tokens"] == 64
     assert request_payload["finish_reason"] == "stop"
+    assert not hasattr(summary, "__dict__")
 
     event_rows = [
         json.loads(line)
