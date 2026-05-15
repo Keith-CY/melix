@@ -36,10 +36,32 @@ The immediate gap is the follow-up local-serving hardening slice:
 ## Verification
 
 ```bash
-swift test --package-path services/control-plane-swift --filter 'OpenAIHandlerTests|HTTPGatewayRequestParserTests'
-PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python pytest -q tests/integration/test_non_text_endpoints.py::test_health_and_cache_endpoints_return_operator_state tests/test_m13_api_onboarding_smoke.py
+make swift-test
+make py-test
+make integration-test
+swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'HTTPGatewayRequestParserTests|OpenAIHandlerTests|MCPToolCatalogTests|ControlPlaneServiceTests'
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage run --source=scripts,tests -m pytest -q tests/test_m13_api_onboarding_smoke.py tests/test_m9_mcp_smoke.py tests/integration/test_non_text_endpoints.py::test_health_and_cache_endpoints_return_operator_state tests/integration/test_api_onboarding_examples.py::test_api_onboarding_smoke_verifies_the_live_quick_start_examples tests/integration/test_mcp_tool_injection.py::test_responses_endpoint_auto_injects_mcp_tools_from_repo_owned_config
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx python scripts/m9_mcp_smoke.py --json
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python coverage run --append --source=scripts,tests scripts/phase5_control_plane_metrics.py
 git diff --check
 ```
+
+Full pre-merge commit hook results:
+
+- `make swift-test`: passed.
+- `make py-test`: `2593 passed, 14 skipped`.
+- `make integration-test`: `113 passed, 1 skipped`.
+
+Post-merge `origin/main` focused results:
+
+- Swift focused coverage tests: `357 tests` passed; changed-line coverage
+  `99.20% (497/501)`.
+- Python focused coverage tests: `23 passed`; changed-line coverage
+  `100.00% (26/26)`.
+- MCP smoke: passed with `mcp.configured_tool_count=2`,
+  `mcp.refused_tool_count=1`, and `mcp.tool_injection_success_rate=1`.
+- Phase 5 metrics smoke: passed with public liveness and authenticated health
+  diagnostics metrics recorded.
 
 ## Metrics
 

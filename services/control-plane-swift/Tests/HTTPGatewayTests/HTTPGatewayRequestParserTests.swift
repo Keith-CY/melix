@@ -27,6 +27,26 @@ struct HTTPGatewayRequestParserTests {
         #expect(request.body == Data("{}".utf8))
     }
 
+    @Test("parser accepts delete requests and ignores trailing body bytes")
+    func parserAcceptsDeleteRequestsAndIgnoresTrailingBodyBytes() throws {
+        let raw = Data(
+            """
+            DELETE /v1/melix/auth/session HTTP/1.1\r
+            Host: 127.0.0.1\r
+            Content-Length: 0\r
+            \r
+            trailing
+            """.utf8
+        )
+
+        let result = HTTPGatewayRequestParser.parseRequest(from: raw, maxBodyBytes: 0)
+        let request = try #require(result.successValue)
+
+        #expect(request.method == .delete)
+        #expect(request.path == "/v1/melix/auth/session")
+        #expect(request.body.isEmpty)
+    }
+
     @Test("parser rejects oversized declared bodies before waiting for payload bytes")
     func parserRejectsOversizedDeclaredBodies() throws {
         let raw = Data(
@@ -88,6 +108,50 @@ struct HTTPGatewayRequestParserTests {
 
         #expect(response.statusCode == 400)
         #expect(error.errorCode == "invalid_forwarded_prefix")
+    }
+
+    @Test("parser rejects malformed request framing and content length")
+    func parserRejectsMalformedRequestFramingAndContentLength() throws {
+        let cases: [(Data, HTTPGatewayRequestParseError)] = [
+            (Data("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n".utf8), .incomplete),
+            (Data("PATCH /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8), .invalidRequest),
+            (Data("GET /health\r\nHost: 127.0.0.1\r\n\r\n".utf8), .invalidRequest),
+            (Data("POST /v1/responses HTTP/1.1\r\nContent-Length: nope\r\n\r\n".utf8), .invalidRequest),
+            (Data("POST /v1/responses HTTP/1.1\r\nContent-Length: 4\r\n\r\n{}".utf8), .incomplete),
+        ]
+
+        for (raw, expectedError) in cases {
+            let result = HTTPGatewayRequestParser.parseRequest(from: raw)
+            let error = try #require(result.failureValue)
+            let response = HTTPGatewayRequestParser.errorResponse(for: error)
+
+            #expect(error == expectedError)
+            #expect(response.statusCode == expectedError.statusCode)
+            #expect(error.errorCode == expectedError.errorCode)
+            #expect(error.message == expectedError.message)
+        }
+    }
+
+    @Test("parser rejects forwarded prefixes with traversal or empty segments")
+    func parserRejectsForwardedPrefixesWithTraversalOrEmptySegments() throws {
+        let unsafePrefixes = ["/melix//api", "/melix/../api", "/melix?route=api", "/melix#api"]
+
+        for prefix in unsafePrefixes {
+            let raw = Data(
+                """
+                GET /health HTTP/1.1\r
+                Host: 127.0.0.1\r
+                X-Forwarded-Prefix: \(prefix)\r
+                \r
+
+                """.utf8
+            )
+            let result = HTTPGatewayRequestParser.parseRequest(from: raw)
+            let error = try #require(result.failureValue)
+
+            #expect(error == .invalidForwardedPrefix(prefix))
+            #expect(error.message.contains("X-Forwarded-Prefix"))
+        }
     }
 }
 private extension Result where Success == HTTPRequest, Failure == HTTPGatewayRequestParseError {
