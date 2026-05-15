@@ -59,6 +59,10 @@ _COMMAND_HEARTBEAT_SECONDS = 30.0
 _MATCH_PROBE_INDEXES_CACHE: dict[tuple[int, int, tuple[str, ...]], frozenset[int]] = {}
 _PROBE_ID_INDEX_CACHE: dict[tuple[int, int], dict[str, int]] = {}
 _PROBE_SCOPE_DICT_CACHE: dict[tuple[int, str], dict[str, object]] = {}
+_SCOPE_SELECTION_CACHE: dict[
+    tuple[int, int, tuple[str, ...]],
+    tuple[bool, tuple[str, ...], tuple[dict[str, object], ...]],
+] = {}
 
 
 def _log_progress(message: str) -> None:
@@ -235,33 +239,18 @@ def build_scope_report(
 ) -> dict[str, object]:
     probes = load_probe_registry_for_scope(registry_path)
     changed_path_set = {path for path in changed_files if path}
-    force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
-        changed_path_set
-    )
-    direct_changed_path_set = changed_path_set - _FORCE_ALL_CONTEXT_ONLY_PATHS
-    matched_probe_indexes = (
-        frozenset()
-        if not direct_changed_path_set
-        else _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
-    )
-    framework_probe_indexes = _force_all_direct_probe_indexes(
-        changed_paths=changed_path_set,
-        probes=probes,
-    )
-    matched_probe_indexes = matched_probe_indexes | framework_probe_indexes
-    if force_all:
-        selected = probes
-    else:
-        selected = tuple(probe for index, probe in enumerate(probes) if index in matched_probe_indexes)
-    matched_probe_ids = [probe.probe_id for index, probe in enumerate(probes) if index in matched_probe_indexes]
     changed_paths = tuple(sorted(changed_path_set))
+    force_all, matched_probe_ids, selected_probes = _scope_selection(
+        probes=probes,
+        changed_paths=changed_paths,
+    )
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
         "force_all": force_all,
-        "matched_probe_ids": matched_probe_ids,
-        "selected_probes": [_probe_scope_dict(probe) for probe in selected],
-        "selected_count": len(selected),
+        "matched_probe_ids": list(matched_probe_ids),
+        "selected_probes": list(selected_probes),
+        "selected_count": len(selected_probes),
     }
 
 
@@ -2360,6 +2349,51 @@ def _probe_scope_dict(probe: ProbeDefinition) -> dict[str, object]:
         cached = probe.to_scope_dict()
         _PROBE_SCOPE_DICT_CACHE[cache_key] = cached
     return cached
+
+
+def _scope_selection(
+    *,
+    probes: tuple[ProbeDefinition, ...],
+    changed_paths: tuple[str, ...],
+) -> tuple[bool, tuple[str, ...], tuple[dict[str, object], ...]]:
+    cache_key = (id(probes), len(probes), changed_paths)
+    cached = _SCOPE_SELECTION_CACHE.get(cache_key)
+    if cached is None:
+        cached = _scope_selection_uncached(probes=probes, changed_paths=changed_paths)
+        _SCOPE_SELECTION_CACHE[cache_key] = cached
+    return cached
+
+
+def _scope_selection_uncached(
+    *,
+    probes: tuple[ProbeDefinition, ...],
+    changed_paths: tuple[str, ...],
+) -> tuple[bool, tuple[str, ...], tuple[dict[str, object], ...]]:
+    changed_path_set = frozenset(changed_paths)
+    force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
+        changed_path_set
+    )
+    direct_changed_path_set = changed_path_set - _FORCE_ALL_CONTEXT_ONLY_PATHS
+    matched_probe_indexes = (
+        frozenset()
+        if not direct_changed_path_set
+        else _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
+    )
+    matched_probe_indexes = matched_probe_indexes | _force_all_direct_probe_indexes(
+        changed_paths=changed_path_set,
+        probes=probes,
+    )
+    selected_probes = tuple(
+        _probe_scope_dict(probe)
+        for index, probe in enumerate(probes)
+        if force_all or index in matched_probe_indexes
+    )
+    matched_probe_ids = tuple(
+        probe.probe_id
+        for index, probe in enumerate(probes)
+        if index in matched_probe_indexes
+    )
+    return force_all, matched_probe_ids, selected_probes
 
 
 def _match_probe_indexes(
