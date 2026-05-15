@@ -9797,9 +9797,12 @@ struct MelixCLIRunnerTests {
         let cancelRequestPath = try #require(activeCancelPayload["request_path"] as? String)
         let cancelRequestPayload = try parseJSONFile(cancelRequestPath)
         let cancelRequest = try #require(cancelRequestPayload)
+        let activeProcessSignal = try #require(cancelRequest["process_signal"] as? [String: Any])
         #expect(activeCancelPayload["cancel_requested"] as? Bool == true)
         #expect(cancelRequest["schema_version"] as? String == "melix.job_cancel_request.v1")
         #expect(cancelRequest["job_id"] as? String == "eval-1")
+        #expect(activeProcessSignal["sent"] as? Bool == false)
+        #expect(activeProcessSignal["reason"] as? String == "pid_not_recorded")
 
         let activeCancelText = try await runner.run(
             .jobsCancel(.init(jobID: "eval-1", sourcePath: sourceRoot.path))
@@ -9898,10 +9901,13 @@ struct MelixCLIRunnerTests {
         try FileManager.default.createDirectory(at: noLogRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: invalidRoot, withIntermediateDirectories: true)
 
-        try "active model ops log\n".write(
+        let largeLogPrefix = Data(repeating: UInt8(ascii: "x"), count: 1_050_000)
+        var largeModelOpsLog = largeLogPrefix
+        largeModelOpsLog.append(Data([0xff, 0xfe]))
+        largeModelOpsLog.append(Data("\nactive model ops log tail\n".utf8))
+        try largeModelOpsLog.write(
             to: activeRoot.appendingPathComponent("model-ops-active.log"),
-            atomically: true,
-            encoding: .utf8
+            options: [.atomic]
         )
         try writeJSONObjectForTest(
             [
@@ -10083,6 +10089,34 @@ struct MelixCLIRunnerTests {
             .appendingPathComponent("train_lora.adapter.json")
             .standardizedFileURL
             .path)
+
+        let activeModelOpsLogsJSON = try #require(parseJSONObject(
+            try await runner.run(.jobsLogs(.init(jobID: "model-ops-active", sourcePath: trainRoot.path, json: true)))
+        ))
+        let activeModelOpsLogsContent = try #require(activeModelOpsLogsJSON["content"] as? String)
+        #expect(activeModelOpsLogsContent.hasPrefix("Log snapshot truncated to last "))
+        #expect(activeModelOpsLogsContent.contains("active model ops log tail"))
+        #expect(activeModelOpsLogsContent.contains("\u{fffd}"))
+
+        let pidRunRoot = root.appendingPathComponent("pid-run", isDirectory: true)
+        try FileManager.default.createDirectory(at: pidRunRoot, withIntermediateDirectories: true)
+        var pidRecord = makeRunRecordPayloadForTest(
+            runID: "pid-1",
+            runKind: "evaluation",
+            runRoot: pidRunRoot,
+            startedAtUnixMS: 800,
+            status: "running"
+        )
+        pidRecord["process"] = ["pid": ProcessInfo.processInfo.processIdentifier]
+        try writeJSONObjectForTest(pidRecord, to: pidRunRoot.appendingPathComponent("run-record.json"))
+        let pidCancel = try #require(parseJSONObject(
+            try await runner.run(.jobsCancel(.init(jobID: "pid-1", sourcePath: root.path, json: true)))
+        ))
+        let pidCancelPath = try #require(pidCancel["request_path"] as? String)
+        let pidCancelRequest = try #require(try parseJSONFile(pidCancelPath))
+        let pidProcessSignal = try #require(pidCancelRequest["process_signal"] as? [String: Any])
+        #expect(pidProcessSignal["sent"] as? Bool == false)
+        #expect(pidProcessSignal["reason"] as? String == "direct_process_signal_disabled")
 
         do {
             _ = try await runner.run(.jobsShow(.init(jobID: "missing", sourcePath: trainRoot.path)))

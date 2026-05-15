@@ -205,12 +205,14 @@ Active jobs can be cancelled through a durable local request file:
 swift run melix jobs cancel <job-id> --json
 ```
 
-For active run-record jobs with a persisted process ID, Melix sends a
-termination signal and writes `cancel-request.json` beside the run record. For
-model-ops LoRA manifests, cancellation state is stored beside the adapter
-manifest. For terminal jobs, Melix returns a non-mutating response that
-explains the job is no longer cancelable. Future async workers should poll the
-same request file rather than inventing a second cancellation contract.
+For active run-record jobs, Melix writes `cancel-request.json` beside the run
+record. Direct process signaling is disabled in this CLI surface; persisted PID
+metadata is reported in the JSON result but is not signaled so stale or reused
+PIDs cannot terminate an unrelated local process. For model-ops LoRA manifests,
+cancellation state is stored beside the adapter manifest. For terminal jobs,
+Melix returns a non-mutating response that explains the job is no longer
+cancelable. Future async workers should poll the same request file rather than
+inventing a second cancellation contract.
 
 ## Run An Evaluation Suite
 

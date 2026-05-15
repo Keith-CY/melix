@@ -1,5 +1,6 @@
-import Darwin
 import Foundation
+
+private let melixJobsLogSnapshotByteLimit = 1 * 1024 * 1024
 
 public struct JobsListOptions: Equatable, Sendable {
     public let sourcePath: String
@@ -133,7 +134,7 @@ final class MelixJobStatusStore {
         guard let logURL = modelOpsLogURL(record) else {
             throw MelixCLIError.runtime("No logs were found for \(record.jobID).")
         }
-        let text = try String(contentsOf: logURL, encoding: .utf8)
+        let text = try readModelOpsLogText(from: logURL, follow: follow)
         return MelixLogSnapshot(
             runID: record.jobID,
             sourcePath: record.manifestPath,
@@ -672,27 +673,17 @@ final class MelixJobStatusStore {
     }
 
     private func terminateProcessIfPresent(_ record: MelixRunRecord) -> [String: Any] {
-        guard let pid = persistedPID(record), pid > 0 else {
+        guard let pid = persistedPID(record) else {
             return [
                 "pid": NSNull(),
                 "sent": false,
                 "reason": "pid_not_recorded",
             ]
         }
-        let result = Darwin.kill(pid_t(pid), SIGTERM)
-        if result == 0 {
-            return [
-                "pid": pid,
-                "sent": true,
-                "signal": "SIGTERM",
-            ]
-        }
         return [
             "pid": pid,
             "sent": false,
-            "signal": "SIGTERM",
-            "errno": errno,
-            "reason": String(cString: strerror(errno)),
+            "reason": "direct_process_signal_disabled",
         ]
     }
 
@@ -847,6 +838,47 @@ final class MelixJobStatusStore {
         return Int((values?.contentModificationDate ?? Date()).timeIntervalSince1970 * 1000)
     }
 
+    private func readModelOpsLogText(from url: URL, follow: Bool) throws -> String {
+        var data = try readModelOpsLogData(from: url)
+        guard follow else {
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        let deadline = Date().addingTimeInterval(1.0)
+        var stablePolls = 0
+        while Date() < deadline && stablePolls < 2 {
+            Thread.sleep(forTimeInterval: 0.2)
+            let next = try readModelOpsLogData(from: url)
+            if next.count > data.count {
+                data = next
+                stablePolls = 0
+            } else {
+                stablePolls += 1
+            }
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func readModelOpsLogData(from url: URL) throws -> Data {
+        let attributes = try fileManager.attributesOfItem(atPath: url.path)
+        let fileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        let offset = fileSize > UInt64(melixJobsLogSnapshotByteLimit)
+            ? fileSize - UInt64(melixJobsLogSnapshotByteLimit)
+            : 0
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        if offset > 0 {
+            try handle.seek(toOffset: offset)
+        }
+        let data = handle.readDataToEndOfFile()
+        guard offset > 0 else {
+            return data
+        }
+        var snapshot = Data("Log snapshot truncated to last \(melixJobsLogSnapshotByteLimit) bytes.\n".utf8)
+        snapshot.append(data)
+        return snapshot
+    }
+
     private func writeJSON(_ payload: [String: Any], to url: URL) throws {
         try fileManager.createDirectory(
             at: url.deletingLastPathComponent(),
@@ -894,7 +926,7 @@ func renderJobStatus(_ payload: [String: Any]) -> String {
         lines.append("Logs: \(stringField(logs, "path"))")
     }
     if let cancellation = payload["cancellation"] as? [String: Any],
-       stringField(cancellation, "requested") == "1" || stringField(cancellation, "requested") == "true" {
+       (cancellation["requested"] as? Bool) == true {
         lines.append("Cancellation: requested")
     }
     return lines.joined(separator: "\n") + "\n"

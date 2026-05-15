@@ -29,10 +29,11 @@ than introducing a second execution engine.
   snapshot behavior.
 - Add `jobs artifacts` so operators can discover all paths referenced by a job,
   including the artifact root, record path, logs, and explicit artifacts.
-- Add `jobs cancel` as a durable local cancellation contract. For active jobs
-  with a persisted PID, send a termination signal. For all jobs, write a
-  cancellation request file next to the run record so future workers can poll
-  the same contract. Terminal jobs return a non-mutating status.
+- Add `jobs cancel` as a durable local cancellation contract. For active jobs,
+  always write a cancellation request file next to the run record so future
+  workers can poll the same contract. Direct process signaling is intentionally
+  disabled in this slice so stale or reused PID metadata cannot terminate an
+  unrelated local process. Terminal jobs return a non-mutating status.
 - Keep `runs` as the lower-level run-record export/report surface.
 
 ## Architecture
@@ -68,11 +69,12 @@ request file without changing the operator CLI.
     artifact paths for benchmark/evaluation run-record fixtures and a LoRA
     training manifest fixture.
   - `jobs logs --follow --json` preserves existing follow/redaction semantics.
-  - `jobs cancel --json` writes a cancellation request for active jobs and
-    reports terminal jobs as not cancelable.
+  - `jobs cancel --json` writes a cancellation request for active jobs,
+    reports direct process signaling as disabled, and reports terminal jobs as
+    not cancelable.
   - Focused Swift CLI tests cover the new parser and runner paths.
-- Probe overhead: `N/A`; this is local metadata inspection and signal/cancel
-  request persistence, not a benchmark/evaluation evidence path.
+- Probe overhead: `N/A`; this is local metadata inspection and cancel request
+  persistence, not a benchmark/evaluation evidence path.
 
 ## Verification
 
@@ -103,6 +105,6 @@ make integration-test
 - `melix jobs logs <id> --follow` streams or polls the current redacted log
   snapshot using the existing diagnostics behavior.
 - `melix jobs cancel <id> --json` records a durable cancellation request and
-  terminates a persisted local PID when present.
+  does not directly signal persisted PIDs.
 - Failed jobs still expose preserved logs and artifacts through `jobs show`,
   `jobs logs`, and `jobs artifacts`.
