@@ -181,7 +181,9 @@ class ServingDiagnosticsEvent:
             "duration_ms": duration_ms
             if type(duration_ms) is float
             else float(duration_ms),
-            "attributes": {} if not attributes else _stable_json_object(attributes),
+            "attributes": {}
+            if attributes is _EMPTY_EVENT_ATTRIBUTES
+            else _stable_json_object(attributes),
         }
 
 
