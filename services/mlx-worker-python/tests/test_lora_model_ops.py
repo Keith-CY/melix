@@ -809,7 +809,12 @@ def test_train_lora_supports_qlora_with_hf_valid_split_and_persists_desired_alia
     normalized_dataset_payload = json.loads(normalized_dataset_path.read_text(encoding="utf-8"))
 
     assert payload["training_mode"] == "qlora"
+    assert payload["adapter_family"] == "qlora"
+    assert payload["adapter_capabilities"]["quantized_base_supported"] is True
+    assert payload["backend_supported"] is True
+    assert payload["unsupported_reason"] == ""
     assert payload["quantization_mode"] == "quantized_base"
+    assert payload["base_quantization_method"] == "quant_profile"
     assert payload["hf_valid_split"] == "validation"
     assert payload["validation_strategy"] == "hf_split"
     assert payload["validation_sample_count"] == 1
@@ -865,6 +870,9 @@ def test_train_lora_supports_dora_mode_contract_and_manifest(tmp_path: Path) -> 
     assert payload["training_mode"] == "dora"
     assert payload["training_objective"] == "supervised_finetuning"
     assert payload["adapter_algorithm"] == "dora"
+    assert payload["adapter_family"] == "dora"
+    assert payload["adapter_capabilities"]["relora_compatible"] is False
+    assert payload["adapter_capabilities"]["mergeable"] is True
     assert payload["preference_loss"] == ""
     assert payload["dataset_contract"] == "sft"
     assert payload["dora_enabled"] is True
@@ -1448,7 +1456,7 @@ def test_train_lora_rejects_qlora_for_non_quantized_base_model(tmp_path: Path) -
         )
     )
 
-    assert events[-1].failed.error.code == "unsupported_training_mode"
+    assert events[-1].failed.error.code == "unsupported_quantized_base"
 
 
 @pytest.mark.parametrize("training_mode", ["dpo", "orpo", "cpo"])
@@ -2307,6 +2315,9 @@ def test_train_lora_resolves_qwen3moe_expert_preset_and_adapter_backed_activatio
     ]
     assert train_payload["source_model"] == "melix-dev-text"
     assert train_payload["quantization_mode"] == "quantized_base"
+    assert train_payload["adapter_family"] == "qlora"
+    assert train_payload["adapter_capabilities"]["mergeable"] is True
+    assert train_payload["base_quantization_method"] == "quant_profile"
 
     activate_events = list(
         service.ConvertModel(
@@ -2328,6 +2339,9 @@ def test_train_lora_resolves_qwen3moe_expert_preset_and_adapter_backed_activatio
     )
 
     assert activation_payload["activation_mode"] == "adapter_backed_runtime"
+    assert activation_payload["adapter_family"] == "qlora"
+    assert activation_payload["adapter_capabilities"]["mergeable"] is True
+    assert activation_payload["base_quantization_method"] == "quant_profile"
     assert activation_payload["source_model_quant_profile_id"] == "q4"
     assert activation_payload["source_model_ext"]["melix.lora.family_id"] == "qwen3moe"
     assert activation_payload["source_model_ext"]["melix.text.moe.expert_count"] == "2"
@@ -2561,6 +2575,11 @@ def test_training_config_helper_resolution_paths_and_limits() -> None:
         profile=training_config_module._FAMILY_PROFILES["qwen"],
     )
     assert qwen_targets == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    qwen_targets.append("mutated")
+    assert training_config_module._resolve_target_modules(
+        "@attention,q_proj,attention",
+        profile=training_config_module._FAMILY_PROFILES["qwen"],
+    ) == ["q_proj", "k_proj", "v_proj", "o_proj"]
     mixtral_defaults = training_config_module._resolve_target_modules(
         "",
         profile=training_config_module._FAMILY_PROFILES["mixtral"],

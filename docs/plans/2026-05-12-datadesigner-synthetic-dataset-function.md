@@ -70,15 +70,97 @@ Current Melix contracts:
 
 ## Implementation Status
 
-This slice implements the worker/productization adapter and dependency contract:
+This plan now covers the worker/productization adapter plus the first public CLI
+surface:
 
 - `services/mlx-worker-python/worker/productization/synthetic_dataset_generation.py`
 - `services/mlx-worker-python/tests/test_synthetic_dataset_generation.py`
 - optional worker extra `synthetic-data = ["data-designer>=0.5.9,<0.6"]`
+- `melix dataset synthetic preview`
+- `melix dataset synthetic create`
 
-Public CLI, protobuf RPC, registry browse UI, and native studio surfaces remain
-separate follow-up slices because they touch operator-facing workflows beyond
-the function boundary.
+Native registry browse UI and native studio surfaces remain separate follow-up
+slices because they touch operator-facing workflows beyond the function
+boundary. The first CLI surface reuses the existing model-operation request path
+and worker dataset-operation dispatch so no protobuf schema change is required.
+
+## CLI Surface
+
+The first public entry point is:
+
+```bash
+melix dataset synthetic preview \
+  --dataset-id synthetic.chat.preview \
+  --dataset-name "Synthetic Chat Preview" \
+  --num-records 3 \
+  --output-kind training \
+  --output-format prompt_completion \
+  --output-dir .runtime/synthetic/preview \
+  --provider-endpoint http://127.0.0.1:12436/v1 \
+  --model melix-dev-text \
+  --column 'prompt:llm_text:{"prompt":"Write a training prompt."}' \
+  --column 'completion:llm_text:{"prompt":"Answer the prompt."}' \
+  --json
+```
+
+```bash
+melix dataset synthetic create \
+  --dataset-id synthetic.chat.v1 \
+  --dataset-name "Synthetic Chat" \
+  --num-records 100 \
+  --output-kind training \
+  --output-format prompt_completion \
+  --output-dir .runtime/synthetic/chat-v1 \
+  --provider-endpoint http://127.0.0.1:12436/v1 \
+  --model-alias generator \
+  --model melix-dev-text \
+  --column 'prompt:llm_text:{"prompt":"Write a training prompt."}' \
+  --column 'completion:llm_text:{"prompt":"Answer the prompt."}' \
+  --validation-ratio 0.1 \
+  --resume never \
+  --json
+```
+
+Required parameters for both modes:
+
+- `--dataset-id`
+- `--dataset-name`
+- `--num-records`
+- `--output-kind`
+- `--output-format`
+- `--output-dir`
+- `--provider-endpoint`
+- `--model`
+- at least one `--column`
+
+Optional provider/model controls:
+
+- `--provider-name` defaults to `melix`
+- `--provider-type` defaults to `openai`
+- `--api-key`
+- repeated `--header KEY=VALUE`
+- `--model-alias` defaults to `generator`
+- `--temperature`
+- `--top-p`
+- `--max-tokens`
+- `--timeout-seconds`
+- `--max-parallel-requests`
+- `--extra-body-json`
+
+Optional dataset controls:
+
+- `--seed-source-kind` with `--seed-source-path`
+- `--validation-ratio`
+- `--preview-count`
+- `--random-seed`
+- `--resume never|if_possible|always`
+- `--enable-datadesigner-telemetry`
+
+Columns use `NAME:TYPE:JSON_OR_PATH`. JSON payloads map directly to DataDesigner
+column parameters. Non-JSON payloads are treated conservatively as prompt text
+for LLM columns, expression text for expression columns, and sampler values for
+sampler columns. A payload prefixed with `@` or pointing at an existing file is
+expanded from that file before it is passed to the worker.
 
 ## Function Boundary
 

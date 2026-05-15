@@ -4237,6 +4237,128 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["melix.hf_snapshot_id"] == "abc123")
     }
 
+    @Test("dataset synthetic forwards DataDesigner generation request")
+    func datasetSyntheticForwardsDataDesignerGenerationRequest() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/melix/synthetic-chat",
+            manifestJSON: #"""
+            {
+              "operation": "generate_synthetic_dataset",
+              "schema_version": "melix.training_dataset_package.v1",
+              "dataset_id": "synthetic.chat.v1",
+              "dataset_name": "Synthetic Chat",
+              "output_kind": "training",
+              "row_count": 4,
+              "datadesigner": {
+                "provider": {
+                  "api_key": "[REDACTED]"
+                }
+              }
+            }
+            """#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(.datasetSynthetic(.init(
+            mode: "create",
+            datasetID: "synthetic.chat.v1",
+            datasetName: "Synthetic Chat",
+            numRecords: 4,
+            outputKind: "training",
+            outputFormat: "prompt_completion",
+            outputDir: "/tmp/melix/synthetic-chat",
+            providerEndpoint: "http://127.0.0.1:12436/v1",
+            apiKey: "sk-secret",
+            headers: ["X-Test=1"],
+            modelAlias: "generator",
+            model: "melix-dev-text",
+            temperature: "0.2",
+            topP: "0.9",
+            maxTokens: 128,
+            timeoutSeconds: "30",
+            maxParallelRequests: 2,
+            extraBodyJSON: #"{"seed":7}"#,
+            columns: [
+                #"prompt:llm_text:{"prompt":"write a prompt"}"#,
+                #"completion:llm_text:{"prompt":"answer it"}"#,
+            ],
+            validationRatio: "0.1",
+            previewCount: 2,
+            randomSeed: 7,
+            resume: "never",
+            json: true
+        )))
+        let call = try #require(await client.lastModelOperationCall)
+        let payload = try #require(parseJSONObject(output))
+
+        #expect(call.modelID == "melix-datasets")
+        #expect(call.operation == "generate_synthetic_dataset")
+        #expect(call.outputDir == "/tmp/melix/synthetic-chat")
+        #expect(call.ext["synthetic_mode"] == "create")
+        #expect(call.ext["synthetic_dataset_id"] == "synthetic.chat.v1")
+        #expect(call.ext["synthetic_dataset_name"] == "Synthetic Chat")
+        #expect(call.ext["synthetic_num_records"] == "4")
+        #expect(call.ext["synthetic_output_kind"] == "training")
+        #expect(call.ext["synthetic_output_format"] == "prompt_completion")
+        #expect(call.ext["provider_endpoint"] == "http://127.0.0.1:12436/v1")
+        #expect(call.ext["provider_name"] == "melix")
+        #expect(call.ext["provider_type"] == "openai")
+        #expect(call.ext["api_key"] == "sk-secret")
+        #expect(call.ext["model_alias"] == "generator")
+        #expect(call.ext["model"] == "melix-dev-text")
+        #expect(call.ext["temperature"] == "0.2")
+        #expect(call.ext["top_p"] == "0.9")
+        #expect(call.ext["max_tokens"] == "128")
+        #expect(call.ext["timeout_seconds"] == "30")
+        #expect(call.ext["max_parallel_requests"] == "2")
+        #expect(call.ext["extra_body_json"] == #"{"seed":7}"#)
+        #expect(call.ext["validation_ratio"] == "0.1")
+        #expect(call.ext["preview_count"] == "2")
+        #expect(call.ext["random_seed"] == "7")
+        #expect(call.ext["resume"] == "never")
+        #expect(call.ext["disable_datadesigner_telemetry"] == "true")
+        #expect(call.ext["headers_json"] == #"["X-Test=1"]"#)
+        #expect(call.ext["columns_json"]?.contains("prompt:llm_text") == true)
+        #expect(payload["dataset_id"] as? String == "synthetic.chat.v1")
+        #expect(output.contains("sk-secret") == false)
+    }
+
+    @Test("dataset synthetic supports plain text render seed source and subprocess argv")
+    func datasetSyntheticSupportsPlainTextRenderSeedSourceAndSubprocessArgv() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "",
+            manifestJSON: #"""
+            {
+              "operation": "generate_synthetic_dataset",
+              "dataset_name": "Synthetic Preview",
+              "output_kind": "raw_jsonl",
+              "sample_count": 3
+            }
+            """#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(.datasetSynthetic(.init(
+            mode: "preview",
+            datasetID: "synthetic.preview.v1",
+            datasetName: "Synthetic Preview",
+            numRecords: 3,
+            outputKind: "raw_jsonl",
+            outputFormat: "jsonl",
+            outputDir: "/tmp/melix/synthetic-preview",
+            providerEndpoint: "http://127.0.0.1:12436/v1",
+            model: "melix-dev-text",
+            columns: [#"prompt:llm_text:{"prompt":"write"}"#],
+            seedSourceKind: "jsonl",
+            seedSourcePath: "/tmp/seeds.jsonl"
+        )))
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(output == "Synthetic dataset Synthetic Preview (raw_jsonl) generated with 3 rows.\n")
+        #expect(call.ext["seed_source_kind"] == "jsonl")
+        #expect(call.ext["seed_source_path"] == "/tmp/seeds.jsonl")
+    }
+
     @Test("dataset remove renders manifest summary when worker output path is empty")
     func datasetRemoveRendersManifestSummaryWhenWorkerOutputPathIsEmpty() async throws {
         let client = StubControlPlaneXPCClient()
@@ -7225,6 +7347,79 @@ struct MelixCLIRunnerTests {
         #expect(commands[2] == ["dataset", "remove", "--repo-id", "org/dataset", "--revision", "main", "--snapshot-id", "abc123", "--json"])
     }
 
+    @Test("subprocess-backed synthetic dataset operation builds public melix arguments")
+    func subprocessBackedSyntheticDatasetOperationBuildsPublicCLIArguments() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                #"{"operation":"generate_synthetic_dataset","job_id":"synthetic-job-1","output_path":"/tmp/melix/synthetic/samples.jsonl","dataset_id":"synthetic.chat.v1"}"#,
+            ]
+        )
+        let runner = MelixCLIRunner(
+            client: client,
+            commandExecutor: executor.run
+        )
+
+        let result = try await runner.performModelOperation(
+            modelID: "melix-datasets",
+            operation: "generate_synthetic_dataset",
+            outputDir: "/tmp/melix/synthetic",
+            ext: [
+                "synthetic_mode": "preview",
+                "synthetic_dataset_id": "synthetic.chat.v1",
+                "synthetic_dataset_name": "Synthetic Chat",
+                "synthetic_num_records": "3",
+                "synthetic_output_kind": "training",
+                "synthetic_output_format": "prompt_completion",
+                "provider_endpoint": "http://127.0.0.1:12436/v1",
+                "provider_name": "melix",
+                "provider_type": "openai",
+                "api_key": "sk-secret",
+                "headers_json": #"["X-Test=1"]"#,
+                "model_alias": "generator",
+                "model": "melix-dev-text",
+                "temperature": "0.2",
+                "top_p": "0.9",
+                "max_tokens": "128",
+                "timeout_seconds": "30",
+                "max_parallel_requests": "2",
+                "extra_body_json": #"{"seed":7}"#,
+                "columns_json": #"["prompt:llm_text:{\"prompt\":\"write\"}"]"#,
+                "seed_source_kind": "jsonl",
+                "seed_source_path": "/tmp/seeds.jsonl",
+                "validation_ratio": "0.1",
+                "preview_count": "2",
+                "random_seed": "7",
+                "resume": "if_possible",
+                "disable_datadesigner_telemetry": "false",
+            ]
+        )
+        let commands = await executor.commands
+        let command = try #require(commands.first)
+
+        #expect(await client.lastModelOperationCall == nil)
+        #expect(result.outputPath == "/tmp/melix/synthetic/samples.jsonl")
+        #expect(Array(command.prefix(3)) == ["dataset", "synthetic", "preview"])
+        #expect(command.contains("--dataset-id"))
+        #expect(command.contains("synthetic.chat.v1"))
+        #expect(command.contains("--output-dir"))
+        #expect(command.contains("/tmp/melix/synthetic"))
+        #expect(command.contains("--provider-endpoint"))
+        #expect(command.contains("http://127.0.0.1:12436/v1"))
+        #expect(command.contains("--header"))
+        #expect(command.contains("X-Test=1"))
+        #expect(command.contains("--model"))
+        #expect(command.contains("melix-dev-text"))
+        #expect(command.contains("--extra-body-json"))
+        #expect(command.contains(#"{"seed":7}"#))
+        #expect(command.contains("--column"))
+        #expect(command.contains(#"prompt:llm_text:{"prompt":"write"}"#))
+        #expect(command.contains("--seed-source-kind"))
+        #expect(command.contains("/tmp/seeds.jsonl"))
+        #expect(command.contains("--enable-datadesigner-telemetry"))
+        #expect(command.contains("--json"))
+    }
+
     @Test("subprocess-backed legacy alignment training mode uses alignment train")
     func subprocessBackedLegacyAlignmentTrainingModeUsesAlignmentTrain() async throws {
         let client = StubControlPlaneXPCClient()
@@ -9512,8 +9707,13 @@ struct MelixCLIRunnerTests {
         let sourceRoot = root.appendingPathComponent("records", isDirectory: true)
         let benchRunRoot = sourceRoot.appendingPathComponent("bench-1", isDirectory: true)
         let evalRunRoot = sourceRoot.appendingPathComponent("eval-1", isDirectory: true)
+        let failedRunRoot = sourceRoot.appendingPathComponent("failed-1", isDirectory: true)
+        let loraRunRoot = sourceRoot
+            .appendingPathComponent("jobs/model-ops/train_lora/model-ops-0001", isDirectory: true)
         try FileManager.default.createDirectory(at: benchRunRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: evalRunRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: failedRunRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: loraRunRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
         try writeJSONObjectForTest(
@@ -9636,6 +9836,131 @@ struct MelixCLIRunnerTests {
 
         try writeJSONObjectForTest(
             makeRunRecordPayloadForTest(
+                runID: "failed-1",
+                runKind: "benchmark",
+                runRoot: failedRunRoot,
+                startedAtUnixMS: 150,
+                status: "failed"
+            ),
+            to: failedRunRoot.appendingPathComponent("run-record.json")
+        )
+        try "failed job log\n"
+            .write(to: failedRunRoot.appendingPathComponent("logs.txt"), atomically: true, encoding: .utf8)
+        try "adapter weights\n"
+            .write(to: loraRunRoot.appendingPathComponent("adapters.safetensors"), atomically: true, encoding: .utf8)
+        try "{}\n"
+            .write(to: loraRunRoot.appendingPathComponent("adapter_config.json"), atomically: true, encoding: .utf8)
+        try "lora training log\n"
+            .write(to: loraRunRoot.appendingPathComponent("logs.txt"), atomically: true, encoding: .utf8)
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.lora_adapter_package.v1",
+                "job_id": "model-ops-0001",
+                "operation": "train_lora",
+                "adapter_name": "adapter-a",
+                "source_model": "melix-dev-text",
+                "dataset_id": "dataset-a",
+                "dataset_uri": "/tmp/dataset-a",
+                "created_at_unix_ms": 175,
+                "updated_at_unix_ms": 175,
+                "training_duration_ms": 75,
+                "training.tokens_per_second": 42.0,
+                "artifact_path": loraRunRoot.appendingPathComponent("train_lora.adapter.json").path,
+                "weights_path": loraRunRoot.appendingPathComponent("adapters.safetensors").path,
+                "adapter_config_path": loraRunRoot.appendingPathComponent("adapter_config.json").path,
+            ],
+            to: loraRunRoot.appendingPathComponent("train_lora.adapter.json")
+        )
+
+        let jobsListJSON = try await runner.run(.jobsList(.init(sourcePath: sourceRoot.path, json: true)))
+        let jobsListPayload = try #require(parseJSONArray(jobsListJSON) as? [[String: Any]])
+        let jobIDs = Set(jobsListPayload.compactMap { $0["job_id"] as? String })
+        #expect(jobIDs == Set(["bench-1", "eval-1", "failed-1", "model-ops-0001"]))
+        #expect(jobsListPayload.first?["schema_version"] as? String == "melix.job_summary.v1")
+
+        let jobsListText = try await runner.run(.jobsList(.init(sourcePath: sourceRoot.path)))
+        #expect(jobsListText.contains("job_id\trun_kind\tstatus"))
+        #expect(jobsListText.contains("model-ops-0001\ttraining\tcompleted"))
+
+        let jobsShowJSON = try await runner.run(.jobsShow(.init(jobID: "bench-1", sourcePath: sourceRoot.path, json: true)))
+        let jobsShowPayload = try #require(parseJSONObject(jobsShowJSON))
+        let jobLogs = try #require(jobsShowPayload["logs"] as? [String: Any])
+        let jobCancellation = try #require(jobsShowPayload["cancellation"] as? [String: Any])
+        let jobArtifacts = try #require(jobsShowPayload["artifacts"] as? [[String: Any]])
+        #expect(jobsShowPayload["schema_version"] as? String == "melix.job_status.v1")
+        #expect(jobsShowPayload["job_id"] as? String == "bench-1")
+        #expect(jobsShowPayload["phase"] as? String == "run_record_write")
+        #expect(jobLogs["available"] as? Bool == true)
+        #expect(jobCancellation["cancelable"] as? Bool == false)
+        #expect(jobArtifacts.contains { ($0["kind"] as? String) == "logs" })
+        #expect(jobArtifacts.contains { ($0["kind"] as? String) == "evidence" })
+
+        let jobsShowText = try await runner.run(.jobsShow(.init(jobID: "bench-1", sourcePath: sourceRoot.path)))
+        #expect(jobsShowText.contains("Job: bench-1"))
+        #expect(jobsShowText.contains("Logs: "))
+
+        let failedShowJSON = try await runner.run(.jobsShow(.init(jobID: "failed-1", sourcePath: sourceRoot.path, json: true)))
+        let failedShowPayload = try #require(parseJSONObject(failedShowJSON))
+        let failedLogs = try #require(failedShowPayload["logs"] as? [String: Any])
+        let failedArtifacts = try #require(failedShowPayload["artifacts"] as? [[String: Any]])
+        #expect(failedShowPayload["status"] as? String == "failed")
+        #expect(failedShowPayload["error"] is [String: Any])
+        #expect(failedLogs["available"] as? Bool == true)
+        #expect(failedArtifacts.contains { ($0["kind"] as? String) == "evidence" })
+
+        let loraShowJSON = try await runner.run(.jobsShow(.init(jobID: "model-ops-0001", sourcePath: sourceRoot.path, json: true)))
+        let loraShowPayload = try #require(parseJSONObject(loraShowJSON))
+        let loraLogs = try #require(loraShowPayload["logs"] as? [String: Any])
+        let loraArtifacts = try #require(loraShowPayload["artifacts"] as? [[String: Any]])
+        #expect(loraShowPayload["run_kind"] as? String == "training")
+        #expect(loraShowPayload["phase"] as? String == "write_manifest")
+        #expect(loraLogs["available"] as? Bool == true)
+        #expect(loraArtifacts.contains { ($0["kind"] as? String) == "adapter_manifest" })
+        #expect(loraArtifacts.contains { ($0["kind"] as? String) == "adapter_weights" })
+
+        let jobsArtifactsText = try await runner.run(
+            .jobsArtifacts(.init(jobID: "bench-1", sourcePath: sourceRoot.path))
+        )
+        #expect(jobsArtifactsText.contains("kind\texists\tpath"))
+        #expect(jobsArtifactsText.contains("run-record.json"))
+
+        let loraArtifactsText = try await runner.run(
+            .jobsArtifacts(.init(jobID: "model-ops-0001", sourcePath: sourceRoot.path))
+        )
+        #expect(loraArtifactsText.contains("train_lora.adapter.json"))
+
+        let loraArtifactsJSON = try await runner.run(
+            .jobsArtifacts(.init(jobID: "model-ops-0001", sourcePath: sourceRoot.path, json: true))
+        )
+        let loraArtifactsPayload = try #require(parseJSONObject(loraArtifactsJSON))
+        #expect((loraArtifactsPayload["artifact_count"] as? Int ?? 0) > 0)
+
+        let jobsLogsJSON = try await runner.run(
+            .jobsLogs(.init(jobID: "bench-1", sourcePath: sourceRoot.path, follow: true, json: true))
+        )
+        let jobsLogsPayload = try #require(parseJSONObject(jobsLogsJSON))
+        #expect(jobsLogsPayload["schema_version"] as? String == "melix.logs.v1")
+        #expect((jobsLogsPayload["content"] as? String)?.contains("<redacted>") == true)
+
+        let loraLogsText = try await runner.run(
+            .jobsLogs(.init(jobID: "model-ops-0001", sourcePath: sourceRoot.path, follow: true))
+        )
+        #expect(loraLogsText.contains("lora training log"))
+
+        let terminalCancelJSON = try await runner.run(
+            .jobsCancel(.init(jobID: "bench-1", sourcePath: sourceRoot.path, json: true))
+        )
+        let terminalCancelPayload = try #require(parseJSONObject(terminalCancelJSON))
+        #expect(terminalCancelPayload["cancel_requested"] as? Bool == false)
+        #expect(terminalCancelPayload["reason"] as? String == "job_terminal_or_not_active")
+
+        let terminalCancelText = try await runner.run(
+            .jobsCancel(.init(jobID: "bench-1", sourcePath: sourceRoot.path))
+        )
+        #expect(terminalCancelText.contains("Cancel was not requested for bench-1: job_terminal_or_not_active."))
+
+        try writeJSONObjectForTest(
+            makeRunRecordPayloadForTest(
                 runID: "eval-1",
                 runKind: "evaluation",
                 runRoot: evalRunRoot,
@@ -9659,6 +9984,32 @@ struct MelixCLIRunnerTests {
         #expect(activeLogsPayload["follow_requested"] as? Bool == true)
         #expect(activeLogsPayload["active_follow_supported"] as? Bool == true)
         #expect((activeLogsPayload["content"] as? String)?.contains("active line 2") == true)
+
+        let activeCancelJSON = try await runner.run(
+            .jobsCancel(.init(jobID: "eval-1", sourcePath: sourceRoot.path, json: true))
+        )
+        let activeCancelPayload = try #require(parseJSONObject(activeCancelJSON))
+        let cancelRequestPath = try #require(activeCancelPayload["request_path"] as? String)
+        let cancelRequestPayload = try parseJSONFile(cancelRequestPath)
+        let cancelRequest = try #require(cancelRequestPayload)
+        let activeProcessSignal = try #require(cancelRequest["process_signal"] as? [String: Any])
+        #expect(activeCancelPayload["cancel_requested"] as? Bool == true)
+        #expect(cancelRequest["schema_version"] as? String == "melix.job_cancel_request.v1")
+        #expect(cancelRequest["job_id"] as? String == "eval-1")
+        #expect(activeProcessSignal["sent"] as? Bool == false)
+        #expect(activeProcessSignal["reason"] as? String == "pid_not_recorded")
+
+        let activeCancelText = try await runner.run(
+            .jobsCancel(.init(jobID: "eval-1", sourcePath: sourceRoot.path))
+        )
+        #expect(activeCancelText == "Cancel requested for eval-1.\n")
+
+        let cancelledShowJSON = try await runner.run(.jobsShow(.init(jobID: "eval-1", sourcePath: sourceRoot.path, json: true)))
+        let cancelledShowPayload = try #require(parseJSONObject(cancelledShowJSON))
+        let cancelledState = try #require(cancelledShowPayload["cancellation"] as? [String: Any])
+        #expect(cancelledState["requested"] as? Bool == true)
+        let cancelledShowText = try await runner.run(.jobsShow(.init(jobID: "eval-1", sourcePath: sourceRoot.path)))
+        #expect(cancelledShowText.contains("Cancellation: requested"))
 
         let bundleOutputRoot = root.appendingPathComponent("debug-output/bench-1", isDirectory: true)
         let bundleJSON = try await runner.run(
@@ -9819,6 +10170,298 @@ struct MelixCLIRunnerTests {
 
         #expect(parseJSONObject(jsonOutput)?["report_path"] as? String == "/tmp/melix/bench/runs/bench-json/report.md")
         #expect(liveOutput.value() == "")
+    }
+
+    @Test("jobs CLI handles model ops roots cancellation and edge cases")
+    func jobsCLIHandlesModelOpsRootsCancellationAndEdgeCases() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-jobs-edge-cases-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": root.path])
+        let modelOpsRoot = melixHome.modelOpsJobsRootURL
+        let trainRoot = modelOpsRoot.appendingPathComponent("train_lora", isDirectory: true)
+        let activeRoot = trainRoot.appendingPathComponent("model-ops-active", isDirectory: true)
+        let failedRoot = trainRoot.appendingPathComponent("model-ops-failed", isDirectory: true)
+        let noLogRoot = trainRoot.appendingPathComponent("model-ops-no-log", isDirectory: true)
+        let invalidRoot = trainRoot.appendingPathComponent("model-ops-invalid", isDirectory: true)
+        try FileManager.default.createDirectory(at: activeRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: failedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: noLogRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: invalidRoot, withIntermediateDirectories: true)
+
+        let largeLogPrefix = Data(repeating: UInt8(ascii: "x"), count: 1_050_000)
+        var largeModelOpsLog = largeLogPrefix
+        largeModelOpsLog.append(Data([0xff, 0xfe]))
+        largeModelOpsLog.append(Data("\nactive model ops log tail\n".utf8))
+        try largeModelOpsLog.write(
+            to: activeRoot.appendingPathComponent("model-ops-active.log"),
+            options: [.atomic]
+        )
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.lora_adapter_package.v1",
+                "job_id": "model-ops-direct",
+                "operation": "train_lora",
+                "status": "completed",
+                "created_at_unix_ms": "450",
+                "updated_at_unix_ms": NSNumber(value: 450),
+                "source_model": "melix-dev-text",
+                "weights_path": modelOpsRoot.appendingPathComponent("direct.safetensors").path,
+            ],
+            to: modelOpsRoot.appendingPathComponent("train_lora.adapter.json")
+        )
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.lora_adapter_package.v1",
+                "job_id": "model-ops-active",
+                "operation": "train_lora",
+                "status": "running",
+                "phase": "train",
+                "created_at_unix_ms": 500,
+                "updated_at_unix_ms": 500,
+                "training.tokens_per_second": "12.5",
+            ],
+            to: activeRoot.appendingPathComponent("train_lora.adapter.json")
+        )
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.lora_adapter_package.v1",
+                "job_id": "model-ops-failed",
+                "operation": "train_lora",
+                "status": "failed",
+                "phase": "finalize",
+                "created_at_unix_ms": 300,
+                "updated_at_unix_ms": 300,
+                "error_code": "adapter_write_failed",
+                "error_message": "Adapter manifest write failed.",
+            ],
+            to: failedRoot.appendingPathComponent("train_lora.adapter.json")
+        )
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.lora_adapter_package.v1",
+                "job_id": "model-ops-no-log",
+                "operation": "train_lora",
+                "status": "error",
+                "created_at_unix_ms": 300,
+                "updated_at_unix_ms": 300,
+            ],
+            to: noLogRoot.appendingPathComponent("train_lora.adapter.json")
+        )
+        try writeJSONObjectForTest(
+            ["schema_version": "melix.lora_adapter_package.v1", "operation": "noop"],
+            to: invalidRoot.appendingPathComponent("train_lora.adapter.json")
+        )
+        let inlineRunRoot = root.appendingPathComponent("inline-run", isDirectory: true)
+        let fallbackRunRoot = root.appendingPathComponent("fallback-run", isDirectory: true)
+        try FileManager.default.createDirectory(at: inlineRunRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: fallbackRunRoot, withIntermediateDirectories: true)
+        var inlineRecord = makeRunRecordPayloadForTest(
+            runID: "inline-1",
+            runKind: "benchmark",
+            runRoot: inlineRunRoot,
+            startedAtUnixMS: 600,
+            status: "failed"
+        )
+        inlineRecord["updated_at_unix_ms"] = "650"
+        inlineRecord["phase"] = "inline-phase"
+        inlineRecord["error"] = [
+            "code": "inline_failure",
+            "message": "Inline failure.",
+        ]
+        inlineRecord["progress"] = [
+            "phase": "progress-phase",
+            "pct": 0.5,
+        ]
+        inlineRecord["metrics"] = [
+            [
+                "name": "worker.requests_per_second",
+                "value": NSNumber(value: 3.5),
+                "unit": "requests_per_second",
+            ],
+        ]
+        try writeJSONObjectForTest(
+            inlineRecord,
+            to: inlineRunRoot.appendingPathComponent("run-record.json")
+        )
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.run_record.v1",
+                "run_id": "fallback-1",
+                "run_kind": "benchmark",
+                "status": "",
+                "started_at_unix_ms": 700,
+                "duration_ms": 0,
+                "command": ["display": "melix bench run"],
+                "target": [:],
+                "dataset": [:],
+                "environment": [:],
+                "metrics": [],
+                "artifacts": [],
+                "known_gaps": [],
+                "artifact_root": fallbackRunRoot.path,
+            ],
+            to: fallbackRunRoot.appendingPathComponent("run-record.json")
+        )
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let defaultList = try #require(parseJSONArray(try await runner.run(.jobsList(.init(json: true)))) as? [[String: Any]])
+        #expect(defaultList.map { $0["job_id"] as? String }.contains("model-ops-direct"))
+        #expect(defaultList.map { $0["job_id"] as? String }.contains("model-ops-active"))
+
+        let trainRootList = try #require(
+            parseJSONArray(try await runner.run(.jobsList(.init(sourcePath: trainRoot.path, json: true)))) as? [[String: Any]]
+        )
+        #expect(trainRootList.map { $0["job_id"] as? String } == [
+            "model-ops-active",
+            "model-ops-failed",
+            "model-ops-no-log",
+        ])
+
+        let emptyList = try await runner.run(
+            .jobsList(.init(sourcePath: root.appendingPathComponent("missing").path))
+        )
+        #expect(emptyList == "No jobs found.\n")
+
+        let activeShow = try #require(parseJSONObject(
+            try await runner.run(.jobsShow(.init(jobID: "model-ops-active", sourcePath: trainRoot.path, json: true)))
+        ))
+        let activeMetrics = try #require(activeShow["throughput_metrics"] as? [[String: Any]])
+        #expect(activeMetrics.first?["value"] as? Double == 12.5)
+        #expect((activeShow["command"] as? [String: Any])?["display"] as? String == "melix lora train")
+
+        let failedShow = try #require(parseJSONObject(
+            try await runner.run(.jobsShow(.init(jobID: "model-ops-failed", sourcePath: trainRoot.path, json: true)))
+        ))
+        #expect((failedShow["error"] as? [String: Any])?["code"] as? String == "adapter_write_failed")
+
+        let noLogShow = try #require(parseJSONObject(
+            try await runner.run(.jobsShow(.init(jobID: "model-ops-no-log", sourcePath: trainRoot.path, json: true)))
+        ))
+        #expect((noLogShow["error"] as? [String: Any])?["message"] as? String == "Job status was error.")
+        #expect((noLogShow["throughput_metrics"] as? [[String: Any]])?.isEmpty == true)
+
+        let inlineShow = try #require(parseJSONObject(
+            try await runner.run(.jobsShow(.init(jobID: "inline-1", sourcePath: root.path, json: true)))
+        ))
+        #expect(inlineShow["phase"] as? String == "inline-phase")
+        #expect(inlineShow["updated_at_unix_ms"] as? Int == 650)
+        #expect((inlineShow["progress"] as? [String: Any])?["phase"] as? String == "progress-phase")
+        #expect((inlineShow["error"] as? [String: Any])?["code"] as? String == "inline_failure")
+        #expect((inlineShow["throughput_metrics"] as? [[String: Any]])?.first?["name"] as? String == "worker.requests_per_second")
+
+        let fallbackShow = try #require(parseJSONObject(
+            try await runner.run(.jobsShow(.init(jobID: "fallback-1", sourcePath: root.path, json: true)))
+        ))
+        #expect(fallbackShow["phase"] as? String == "unknown")
+        #expect(fallbackShow["updated_at_unix_ms"] as? Int == 700)
+        #expect(fallbackShow["progress"] is NSNull)
+
+        let terminalCancel = try #require(parseJSONObject(
+            try await runner.run(.jobsCancel(.init(jobID: "model-ops-failed", sourcePath: trainRoot.path, json: true)))
+        ))
+        #expect(terminalCancel["cancel_requested"] as? Bool == false)
+        #expect(terminalCancel["reason"] as? String == "job_terminal_or_not_active")
+
+        let activeCancel = try #require(parseJSONObject(
+            try await runner.run(.jobsCancel(.init(jobID: "model-ops-active", sourcePath: trainRoot.path, json: true)))
+        ))
+        let activeCancelPath = try #require(activeCancel["request_path"] as? String)
+        #expect(activeCancel["cancel_requested"] as? Bool == true)
+        let activeSourceManifestPath = try #require(try parseJSONFile(activeCancelPath)?["source_manifest_path"] as? String)
+        #expect(URL(fileURLWithPath: activeSourceManifestPath).standardizedFileURL.path == activeRoot
+            .appendingPathComponent("train_lora.adapter.json")
+            .standardizedFileURL
+            .path)
+
+        let activeModelOpsLogsJSON = try #require(parseJSONObject(
+            try await runner.run(.jobsLogs(.init(jobID: "model-ops-active", sourcePath: trainRoot.path, json: true)))
+        ))
+        let activeModelOpsLogsContent = try #require(activeModelOpsLogsJSON["content"] as? String)
+        #expect(activeModelOpsLogsContent.hasPrefix("Log snapshot truncated to last "))
+        #expect(activeModelOpsLogsContent.contains("active model ops log tail"))
+        #expect(activeModelOpsLogsContent.contains("\u{fffd}"))
+
+        let pidRunRoot = root.appendingPathComponent("pid-run", isDirectory: true)
+        try FileManager.default.createDirectory(at: pidRunRoot, withIntermediateDirectories: true)
+        var pidRecord = makeRunRecordPayloadForTest(
+            runID: "pid-1",
+            runKind: "evaluation",
+            runRoot: pidRunRoot,
+            startedAtUnixMS: 800,
+            status: "running"
+        )
+        pidRecord["process"] = ["pid": ProcessInfo.processInfo.processIdentifier]
+        try writeJSONObjectForTest(pidRecord, to: pidRunRoot.appendingPathComponent("run-record.json"))
+        let pidCancel = try #require(parseJSONObject(
+            try await runner.run(.jobsCancel(.init(jobID: "pid-1", sourcePath: root.path, json: true)))
+        ))
+        let pidCancelPath = try #require(pidCancel["request_path"] as? String)
+        let pidCancelRequest = try #require(try parseJSONFile(pidCancelPath))
+        let pidProcessSignal = try #require(pidCancelRequest["process_signal"] as? [String: Any])
+        #expect(pidProcessSignal["sent"] as? Bool == false)
+        #expect(pidProcessSignal["reason"] as? String == "direct_process_signal_disabled")
+
+        do {
+            _ = try await runner.run(.jobsShow(.init(jobID: "missing", sourcePath: trainRoot.path)))
+            Issue.record("Expected jobs show to reject a missing job.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No job was found for missing."))
+        }
+        do {
+            _ = try await runner.run(.jobsArtifacts(.init(jobID: "missing", sourcePath: trainRoot.path)))
+            Issue.record("Expected jobs artifacts to reject a missing job.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No job was found for missing."))
+        }
+        do {
+            _ = try await runner.run(.jobsLogs(.init(jobID: "missing", sourcePath: trainRoot.path)))
+            Issue.record("Expected jobs logs to reject a missing job.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No job was found for missing."))
+        }
+        do {
+            _ = try await runner.run(.jobsLogs(.init(jobID: "model-ops-no-log", sourcePath: trainRoot.path)))
+            Issue.record("Expected jobs logs to reject a model-ops job with no log file.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No logs were found for model-ops-no-log."))
+        }
+        do {
+            _ = try await runner.run(.jobsCancel(.init(jobID: "missing", sourcePath: trainRoot.path)))
+            Issue.record("Expected jobs cancel to reject a missing job.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No job was found for missing."))
+        }
+
+        #expect(renderJobArtifacts(["job_id": "empty", "artifacts": []]) == "No artifacts found for empty.\n")
+        let renderedFallbacks = renderJobList([
+            [
+                "job_id": "suite-array",
+                "run_kind": "benchmark",
+                "status": "completed",
+                "phase": "done",
+                "model_id": "model-a",
+                "suite_ids": [1, "smoke"],
+                "started_at_unix_ms": 1,
+                "artifact_root": "",
+            ],
+            [
+                "job_id": "suite-string",
+                "run_kind": "benchmark",
+                "status": "completed",
+                "phase": "done",
+                "suite_ids": "manual",
+                "started_at_unix_ms": 2,
+                "artifact_root": "",
+            ],
+        ])
+        #expect(renderedFallbacks.contains("1,smoke"))
+        #expect(renderedFallbacks.contains("manual"))
     }
 
     @Test("run record store handles default roots invalid records and render fallbacks")
