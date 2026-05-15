@@ -206,6 +206,7 @@ public enum ModelCapabilityReceipts {
         case .unsupportedReasonRuntimeUnavailable:
             return "runtime_unavailable"
         case .unsupportedReasonExperimentalUnverified:
+            // Reserved: not yet assigned by any code path; present for schema completeness.
             return "experimental_unverified"
         case .unspecified:
             return "unspecified"
@@ -223,6 +224,7 @@ public enum ModelCapabilityReceipts {
         case .capabilityUnsupported:
             return "unsupported"
         case .capabilityExperimental:
+            // Reserved: not yet assigned by any code path; present for schema completeness.
             return "experimental"
         case .capabilityMetadataInconsistent:
             return "metadata_inconsistent"
@@ -512,6 +514,10 @@ public enum ModelCapabilityReceipts {
         if speculativeHead.configured,
            speculativeHead.state == .capabilityMetadataInconsistent {
             return (.capabilityMetadataInconsistent, .unsupportedReasonMetadataInconsistent, speculativeHead.recoveryHint)
+        }
+        if speculativeHead.configured,
+           speculativeHead.state == .capabilityUnsupported {
+            return (.capabilityUnsupported, .unsupportedReasonRuntimeUnavailable, speculativeHead.recoveryHint)
         }
         return (.capabilitySupported, .unsupportedReasonNone, "")
     }

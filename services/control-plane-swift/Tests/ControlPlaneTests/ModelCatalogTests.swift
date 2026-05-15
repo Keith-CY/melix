@@ -231,6 +231,22 @@ struct ModelCatalogTests {
         #expect(unavailableReceipt.speculativeHead.state == .capabilityUnsupported)
         #expect(unavailableReceipt.speculativeHead.unsupportedReason == .unsupportedReasonRuntimeUnavailable)
 
+        var speculativeHeadUnavailable = ModelCatalog.devTextModel()
+        speculativeHeadUnavailable.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        speculativeHeadUnavailable.settings.ext["melix.acceleration.valid_draft_model_ids"] = "draft"
+        speculativeHeadUnavailable.settings.ext["melix.speculative_head.configured"] = "true"
+        speculativeHeadUnavailable.settings.ext["melix.speculative_head.configured_layers"] = "4"
+        speculativeHeadUnavailable.settings.ext["melix.speculative_head.indexed_layers"] = "4"
+        speculativeHeadUnavailable.settings.ext["melix.speculative_head.runtime_available"] = "false"
+        speculativeHeadUnavailable.settings.ext["melix.speculative_head.artifact_available"] = "false"
+        let speculativeHeadRefusal = ModelCapabilityReceipts.validateAcceleration(
+            model: speculativeHeadUnavailable,
+            requestedMode: .speculativeDecode,
+            draftModelID: "draft"
+        )
+        #expect(speculativeHeadRefusal.ok == false)
+        #expect(speculativeHeadRefusal.unsupportedReason == .unsupportedReasonRuntimeUnavailable)
+
         var payloadModel = ModelCatalog.devTextModel()
         payloadModel.settings.defaultAccelerationMode = .speculativeDecode
         payloadModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
@@ -253,6 +269,10 @@ struct ModelCatalogTests {
         #expect(drafts.first?["state"] as? String == "supported")
         #expect(speculativeHead["configured_layers"] as? NSNumber == 1)
         #expect(metadata["melix.acceleration.valid_draft_model_ids"] == "draft-a")
+        #expect(metadata["melix.acceleration.requested_acceleration_mode"] != nil)
+        #expect(metadata["melix.acceleration.resolved_acceleration_mode"] != nil)
+        #expect(metadata["melix.acceleration.requested_mode"] == nil)
+        #expect(metadata["melix.acceleration.resolved_mode"] == nil)
     }
 
     @Test("presentation maps capability classes to public identifiers")

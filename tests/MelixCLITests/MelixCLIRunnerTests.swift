@@ -576,6 +576,8 @@ struct MelixCLIRunnerTests {
         #expect(receipt["schema_version"] as? String == "melix.model_capability_receipt.v1")
         #expect(acceleration["requested_acceleration_mode"] as? String == "baseline")
         #expect(suggestions.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-4bit" })
+        #expect(models.contains { $0["model_id"] as? String == "melix-dev-vlm" })
+        #expect(models.contains { $0["model_id"] as? String == "melix-dev-image" })
 
         let fullIDCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "mlx-community/Qwen3.5-9B-MLX-4bit")))))
         let fullIDAlias = try #require(fullIDCapabilities["model_alias_discovery"] as? [String: Any])
