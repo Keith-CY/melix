@@ -362,7 +362,8 @@ struct ControlPlaneXPCClientTests {
                 completionBatchSize: 2,
                 accelerationMode: .baseline,
                 draftModelID: "",
-                numDraftTokens: 0
+                numDraftTokens: 0,
+                accelerationProfile: "balanced"
             )
             Issue.record("Expected the protocol default applyServerSessionServingDefaults implementation to throw.")
         } catch let error as ControlPlaneXPCClientError {
@@ -889,7 +890,8 @@ struct ControlPlaneXPCClientTests {
             completionBatchSize: 2,
             accelerationMode: .speculativeDecode,
             draftModelID: "melix-dev-draft",
-            numDraftTokens: 6
+            numDraftTokens: 6,
+            accelerationProfile: "throughput"
         )
         let request = try #require(await service.lastExecuteRequest)
 
@@ -908,6 +910,7 @@ struct ControlPlaneXPCClientTests {
         #expect(request.server.applyServingDefaults.accelerationMode == .speculativeDecode)
         #expect(request.server.applyServingDefaults.draftModelID == "melix-dev-draft")
         #expect(request.server.applyServingDefaults.numDraftTokens == 6)
+        #expect(request.server.applyServingDefaults.accelerationProfile == "throughput")
         #expect(snapshot.servingDefaults.sessions.first?.requestedTemperature == 0.33)
     }
 

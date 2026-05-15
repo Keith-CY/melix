@@ -8152,7 +8152,8 @@ public final class RuntimeViewModel {
                         from: serverSession.servingDefaults.accelerationMode
                     ),
                     draftModelID: serverSession.servingDefaults.draftModelID,
-                    numDraftTokens: serverSession.servingDefaults.numDraftTokens
+                    numDraftTokens: serverSession.servingDefaults.numDraftTokens,
+                    accelerationProfile: serverSession.servingDefaults.accelerationProfile
                 )
             }
             await metrics.record(
@@ -8543,6 +8544,7 @@ public final class RuntimeViewModel {
                         port: serverSession.port,
                         rateLimitPerMinute: serverSession.rateLimitPerMinute,
                         timeoutSeconds: serverSession.timeoutSeconds,
+                        accelerationProfile: serverSession.servingDefaults.accelerationProfile,
                         accelerationMode: serverSession.servingDefaults.accelerationMode,
                         draftModelID: serverSession.servingDefaults.draftModelID,
                         numDraftTokens: serverSession.servingDefaults.numDraftTokens,
