@@ -5596,9 +5596,15 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     assert shaped_repeated_prompt == "one two one two one two"
     assert shaped_repeated_prompt.tokens == ("one", "two", "one", "two", "one", "two")
     assert shaped_repeated_prompt.token_count == 6
-    assert shaped_repeated_prompt.split() == ["one", "two", "one", "two", "one", "two"]
+    split_tokens = shaped_repeated_prompt.split()
+    assert isinstance(split_tokens, list)
+    assert split_tokens == ["one", "two", "one", "two", "one", "two"]
+    assert split_tokens[0] == "one"
+    assert split_tokens[:2] == ["one", "two"]
     with pytest.raises(TypeError, match="immutable"):
-        shaped_repeated_prompt.split().append("three")
+        split_tokens.append("three")
+    with pytest.raises(TypeError, match="immutable"):
+        split_tokens[0] = "three"
     assert shaped_repeated_prompt.split(" ", 1) == ["one", "two one two one two"]
     assert core._benchmark_prompt_token_count(shaped_repeated_prompt) == 6
     assert core._benchmark_prompt_token_count("") == 1

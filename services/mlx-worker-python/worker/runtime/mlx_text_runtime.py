@@ -974,6 +974,7 @@ class MLXTextRuntime:
             return
 
         max_stop_prefix_length = _stop_sequence_max_prefix_length(stop_sequences)
+        stop_prefixes = _stop_sequence_prefixes(stop_sequences, max_stop_prefix_length)
         pending = ""
         last_token_event: RuntimeTokenEvent | None = None
         for event in events:
@@ -994,7 +995,7 @@ class MLXTextRuntime:
                 yield replace(event, text="", raw_text="", finish_reason="stop_sequence")
                 return
 
-            held_suffix = _viable_stop_prefix_suffix(candidate, stop_sequences, max_stop_prefix_length)
+            held_suffix = _viable_stop_prefix_suffix(candidate, stop_sequences, max_stop_prefix_length, stop_prefixes)
             if held_suffix:
                 visible = candidate[: -len(held_suffix)]
                 pending = held_suffix
@@ -1036,16 +1037,29 @@ def _stop_sequence_max_prefix_length(stop_sequences: tuple[str, ...]) -> int:
     return max((len(sequence) for sequence in stop_sequences), default=0) - 1
 
 
+def _stop_sequence_prefixes(stop_sequences: tuple[str, ...], max_stop_prefix_length: int) -> frozenset[str]:
+    if max_stop_prefix_length <= 0:
+        return frozenset()
+    return frozenset(
+        sequence[:length]
+        for sequence in stop_sequences
+        for length in range(1, min(len(sequence), max_stop_prefix_length) + 1)
+    )
+
+
 def _viable_stop_prefix_suffix(
     text: str,
     stop_sequences: tuple[str, ...],
     max_stop_prefix_length: int | None = None,
+    stop_prefixes: frozenset[str] | None = None,
 ) -> str:
     if max_stop_prefix_length is None:
         max_stop_prefix_length = _stop_sequence_max_prefix_length(stop_sequences)
+    if stop_prefixes is None:
+        stop_prefixes = _stop_sequence_prefixes(stop_sequences, max_stop_prefix_length)
     max_prefix_length = min(len(text), max_stop_prefix_length)
     for length in range(max_prefix_length, 0, -1):
         suffix = text[-length:]
-        if any(sequence.startswith(suffix) for sequence in stop_sequences):
+        if suffix in stop_prefixes:
             return suffix
     return ""

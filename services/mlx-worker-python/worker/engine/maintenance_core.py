@@ -54,6 +54,9 @@ logger = logging.getLogger(__name__)
 class ImmutableBenchmarkTokens(list[str]):
     __slots__ = ()
 
+    def __init__(self, tokens: tuple[str, ...]) -> None:
+        super().__init__(tokens)
+
     @staticmethod
     def _raise_immutable(*_: object, **__: object) -> NoReturn:
         raise TypeError("Shaped benchmark prompt tokens are immutable")
@@ -77,18 +80,18 @@ class ShapedBenchmarkPrompt(str):
 
     def __new__(cls, value: str, tokens: tuple[str, ...]) -> ShapedBenchmarkPrompt:
         prompt = str.__new__(cls, value)
-        prompt._tokens = ImmutableBenchmarkTokens(tokens)
+        prompt._tokens = tokens
         return prompt
 
     def split(self, sep: str | None = None, maxsplit: int = -1) -> list[str]:
         if sep is None and maxsplit == -1:
             # Preserve the shaped-token cache on the hot path; callers must treat it as read-only.
-            return self._tokens
+            return ImmutableBenchmarkTokens(self._tokens)
         return str(self).split(sep, maxsplit)
 
     @property
     def tokens(self) -> tuple[str, ...]:
-        return tuple(self._tokens)
+        return self._tokens
 
     @property
     def token_count(self) -> int:

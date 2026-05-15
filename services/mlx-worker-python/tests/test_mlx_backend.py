@@ -755,9 +755,21 @@ def test_stop_sequence_helpers_preserve_earliest_match_and_viable_suffix() -> No
 
     stop_sequences = ("<stop>", "</turn>")
     max_prefix_length = mlx_text_runtime_module._stop_sequence_max_prefix_length(stop_sequences)
+    prefixes = mlx_text_runtime_module._stop_sequence_prefixes(stop_sequences, max_prefix_length)
+    assert "<sto" in prefixes
     assert mlx_text_runtime_module._viable_stop_prefix_suffix("hello <sto", stop_sequences, max_prefix_length) == "<sto"
+    assert (
+        mlx_text_runtime_module._viable_stop_prefix_suffix(
+            "hello <sto",
+            stop_sequences,
+            max_prefix_length,
+            prefixes,
+        )
+        == "<sto"
+    )
     assert mlx_text_runtime_module._viable_stop_prefix_suffix("hello <sto", stop_sequences) == "<sto"
     assert mlx_text_runtime_module._viable_stop_prefix_suffix("hello", stop_sequences, max_prefix_length) == ""
+    assert mlx_text_runtime_module._stop_sequence_prefixes(stop_sequences, 0) == frozenset()
 
 
 def test_auto_backend_records_installed_mlx_package_versions(monkeypatch: pytest.MonkeyPatch) -> None:
