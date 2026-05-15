@@ -20,6 +20,10 @@ Execute the release gate and emit JSON evidence:
 make phase8-release-gate PHASE8_RELEASE_GATE_ARGS="--json"
 ```
 
+The GitHub Actions workflow also runs automatically when a new release-candidate branch is
+created with the `rc/` prefix, for example `rc/2026-05-15`. Other branch or tag creation
+events are ignored by the release-gates job.
+
 The release gate checks:
 
 - install asset generation
