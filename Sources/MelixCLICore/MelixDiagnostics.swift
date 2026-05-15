@@ -445,6 +445,10 @@ public struct MelixDiagnosticsStore {
         )
     }
 
+    func resolvedLogPath(record: MelixRunRecord) -> String? {
+        (try? resolveLogURL(record: record).path)
+    }
+
     func writeDebugBundle(
         record: MelixRunRecord,
         outputPath: String = ""

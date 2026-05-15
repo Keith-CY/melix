@@ -1623,6 +1623,11 @@ public enum MelixCLICommand: Equatable, Sendable {
     case system(SystemOptions)
     case monitor(MonitorOptions)
     case logs(LogsOptions)
+    case jobsList(JobsListOptions)
+    case jobsShow(JobsShowOptions)
+    case jobsLogs(LogsOptions)
+    case jobsArtifacts(JobsArtifactsOptions)
+    case jobsCancel(JobsCancelOptions)
     case debugBundle(DebugBundleOptions)
     case estimateImport(EstimateImportOptions)
     case convert(ConvertOptions)
@@ -1796,6 +1801,8 @@ public enum MelixCLIParser {
             return try parseMonitor(tail)
         case "logs":
             return try parseLogs(tail)
+        case "jobs":
+            return try parseJobs(tail)
         case "debug":
             return try parseDebug(tail)
         case "estimate":
@@ -1854,6 +1861,11 @@ public enum MelixCLIParser {
       melix system --json
       melix monitor [--from PATH] [--json]
       melix logs JOB_ID [--from PATH] [--follow] [--json]
+      melix jobs list [--from PATH] [--json]
+      melix jobs show JOB_ID [--from PATH] [--json]
+      melix jobs logs JOB_ID [--from PATH] [--follow] [--json]
+      melix jobs artifacts JOB_ID [--from PATH] [--json]
+      melix jobs cancel JOB_ID [--from PATH] [--json]
       melix debug bundle RUN_OR_JOB_ID [--from PATH] [--output PATH] [--json]
       melix estimate import HF_REPO [--json]
       melix estimate import --repo-id HF_REPO [--json]
@@ -2137,7 +2149,7 @@ public enum MelixCLIParser {
 
     private static func parseLogs(_ arguments: [String]) throws -> MelixCLICommand {
         var optionArguments = arguments
-        let jobID = try extractRunID(from: &optionArguments, command: "melix logs")
+        let jobID = try extractRunID(from: &optionArguments, command: "melix logs", fieldName: "JOB_ID")
         let values = try ArgumentCursor(arguments: optionArguments).parse()
         return .logs(
             LogsOptions(
@@ -2147,6 +2159,47 @@ public enum MelixCLIParser {
                 json: values.flags.contains("--json")
             )
         )
+    }
+
+    private static func parseJobs(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let tail = Array(arguments.dropFirst())
+        switch action {
+        case "list":
+            let values = try ArgumentCursor(arguments: tail).parse()
+            return .jobsList(.init(sourcePath: values.single["--from"] ?? "", json: values.flags.contains("--json")))
+        case "show":
+            var optionArguments = tail
+            let jobID = try extractRunID(from: &optionArguments, command: "melix jobs show", fieldName: "JOB_ID")
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .jobsShow(.init(jobID: jobID, sourcePath: values.single["--from"] ?? "", json: values.flags.contains("--json")))
+        case "logs":
+            var optionArguments = tail
+            let jobID = try extractRunID(from: &optionArguments, command: "melix jobs logs", fieldName: "JOB_ID")
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .jobsLogs(
+                .init(
+                    jobID: jobID,
+                    sourcePath: values.single["--from"] ?? "",
+                    follow: values.flags.contains("--follow"),
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "artifacts":
+            var optionArguments = tail
+            let jobID = try extractRunID(from: &optionArguments, command: "melix jobs artifacts", fieldName: "JOB_ID")
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .jobsArtifacts(.init(jobID: jobID, sourcePath: values.single["--from"] ?? "", json: values.flags.contains("--json")))
+        case "cancel":
+            var optionArguments = tail
+            let jobID = try extractRunID(from: &optionArguments, command: "melix jobs cancel", fieldName: "JOB_ID")
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            return .jobsCancel(.init(jobID: jobID, sourcePath: values.single["--from"] ?? "", json: values.flags.contains("--json")))
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
     }
 
     private static func parseDebug(_ arguments: [String]) throws -> MelixCLICommand {
@@ -4136,14 +4189,18 @@ public enum MelixCLIParser {
         }
     }
 
-    private static func extractRunID(from arguments: inout [String], command: String) throws -> String {
+    private static func extractRunID(
+        from arguments: inout [String],
+        command: String,
+        fieldName: String = "RUN_ID"
+    ) throws -> String {
         guard let first = arguments.first, !first.hasPrefix("--") else {
-            throw MelixCLIError.missingRequired("RUN_ID is required for \(command).")
+            throw MelixCLIError.missingRequired("\(fieldName) is required for \(command).")
         }
         arguments.removeFirst()
         let runID = first.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !runID.isEmpty else {
-            throw MelixCLIError.missingRequired("RUN_ID is required for \(command).")
+            throw MelixCLIError.missingRequired("\(fieldName) is required for \(command).")
         }
         return runID
     }
@@ -5473,6 +5530,47 @@ public actor MelixCLIRunner {
                 return try prettyJSON(snapshot.payload)
             }
             return snapshot.text.hasSuffix("\n") ? snapshot.text : snapshot.text + "\n"
+        case .jobsList(let options):
+            let jobs = try jobStatusStore().list(sourcePath: options.sourcePath)
+            if options.json {
+                return try prettyJSON(jobs)
+            }
+            return renderJobList(jobs)
+        case .jobsShow(let options):
+            let payload = try jobStatusStore().show(jobID: options.jobID, sourcePath: options.sourcePath)
+            if options.json {
+                return try prettyJSON(payload)
+            }
+            return renderJobStatus(payload)
+        case .jobsLogs(let options):
+            let snapshot = try jobStatusStore().logSnapshot(
+                jobID: options.jobID,
+                sourcePath: options.sourcePath,
+                follow: options.follow
+            )
+            if options.json {
+                return try prettyJSON(snapshot.payload)
+            }
+            return snapshot.text.hasSuffix("\n") ? snapshot.text : snapshot.text + "\n"
+        case .jobsArtifacts(let options):
+            let payload = try jobStatusStore().artifacts(jobID: options.jobID, sourcePath: options.sourcePath)
+            if options.json {
+                return try prettyJSON(payload)
+            }
+            return renderJobArtifacts(payload)
+        case .jobsCancel(let options):
+            let result = try jobStatusStore().cancel(jobID: options.jobID, sourcePath: options.sourcePath)
+            if options.json {
+                return try prettyJSON(result.payload)
+            }
+            let requested = (result.payload["cancel_requested"] as? Bool) == true
+            let reason = stringField(result.payload, "reason")
+            if requested {
+                return "Cancel requested for \(options.jobID).\n"
+            }
+            return reason.isEmpty
+                ? "Cancel was not requested for \(options.jobID).\n"
+                : "Cancel was not requested for \(options.jobID): \(reason).\n"
         case .debugBundle(let options):
             let record = try runRecordStore().findRecord(runID: options.runID, sourcePath: options.sourcePath)
             let result = try diagnosticsStore().writeDebugBundle(record: record, outputPath: options.outputPath)
@@ -6989,6 +7087,15 @@ public actor MelixCLIRunner {
         MelixDiagnosticsStore(
             melixHome: MelixHome(environment: environment),
             environment: environment
+        )
+    }
+
+    private func jobStatusStore() -> MelixJobStatusStore {
+        let melixHome = MelixHome(environment: environment)
+        return MelixJobStatusStore(
+            runRecordStore: runRecordStore(),
+            diagnosticsStore: diagnosticsStore(),
+            melixHome: melixHome
         )
     }
 
