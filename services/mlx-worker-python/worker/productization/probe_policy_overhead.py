@@ -28,6 +28,7 @@ class ProbeOverheadMetrics:
     no_op_policy_check_overhead_pct: float
     no_op_reason_overhead_pct: float
     no_op_recorder_delta_ms: float
+    no_op_policy_check_delta_ms: float
     no_op_reason_delta_ms: float
     threshold_pct: float
     absolute_tolerance_ms: float
@@ -45,6 +46,7 @@ class ProbeOverheadMetrics:
             "no_op_policy_check_overhead_pct": self.no_op_policy_check_overhead_pct,
             "no_op_reason_overhead_pct": self.no_op_reason_overhead_pct,
             "no_op_recorder_delta_ms": self.no_op_recorder_delta_ms,
+            "no_op_policy_check_delta_ms": self.no_op_policy_check_delta_ms,
             "no_op_reason_delta_ms": self.no_op_reason_delta_ms,
             "threshold_pct": self.threshold_pct,
             "absolute_tolerance_ms": self.absolute_tolerance_ms,
@@ -88,6 +90,7 @@ def measure_no_op_probe_policy_overhead(
     policy_overhead_pct = _overhead_pct(policy_mean, baseline_mean)
     reason_overhead_pct = _overhead_pct(reason_mean, baseline_mean)
     recorder_delta_ms = round(recorder_mean - baseline_mean, 9)
+    policy_delta_ms = round(policy_mean - baseline_mean, 9)
     reason_delta_ms = round(reason_mean - baseline_mean, 9)
     return ProbeOverheadMetrics(
         sample_count=sample_count,
@@ -100,6 +103,7 @@ def measure_no_op_probe_policy_overhead(
         no_op_policy_check_overhead_pct=policy_overhead_pct,
         no_op_reason_overhead_pct=reason_overhead_pct,
         no_op_recorder_delta_ms=recorder_delta_ms,
+        no_op_policy_check_delta_ms=policy_delta_ms,
         no_op_reason_delta_ms=reason_delta_ms,
         threshold_pct=float(threshold_pct),
         absolute_tolerance_ms=float(absolute_tolerance_ms),

@@ -65,6 +65,7 @@ def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     assert payload["no_op_policy_check_call_ms_mean"] >= 0.0
     assert payload["no_op_reason_call_ms_mean"] >= 0.0
     assert "no_op_recorder_delta_ms" in payload
+    assert "no_op_policy_check_delta_ms" in payload
     assert "no_op_reason_delta_ms" in payload
     assert payload["absolute_tolerance_ms"] > 0.0
     assert payload["threshold_passed"] == 1.0
