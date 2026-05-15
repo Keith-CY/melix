@@ -173,7 +173,7 @@ def test_prepare_video_input_infers_format_from_plain_local_path() -> None:
 
 
 def test_parse_video_reference_decodes_remote_and_file_uris_once() -> None:
-    remote = _parse_video_reference("https://example.com/media/demo%20clip.mov?token=abc")
+    remote = _parse_video_reference("https://example.com/media/demo%20clip.mov?cache=1")
     local = _parse_video_reference("file:///tmp/local%20demo.webm")
 
     assert remote.scheme == "https"
@@ -185,6 +185,26 @@ def test_parse_video_reference_decodes_remote_and_file_uris_once() -> None:
     assert local.decoded_path == "/tmp/local demo.webm"
     assert local.path_name == "local demo.webm"
     assert local.path_suffix == "webm"
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected_name", "expected_suffix"),
+    [
+        ("https://example.com/media/archive.demo.MP4", "archive.demo.MP4", "mp4"),
+        ("https://example.com/media/demo.mov/", "demo.mov", "mov"),
+        ("/tmp/.mp4", ".mp4", ""),
+        ("relative/video.", "video.", ""),
+    ],
+)
+def test_parse_video_reference_preserves_pathlib_suffix_edges(
+    reference: str,
+    expected_name: str,
+    expected_suffix: str,
+) -> None:
+    parsed = _parse_video_reference(reference)
+
+    assert parsed.path_name == expected_name
+    assert parsed.path_suffix == expected_suffix
 
 
 def test_uri_identity_hash_preserves_nul_framed_payload_digest() -> None:
