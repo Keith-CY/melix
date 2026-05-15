@@ -28,10 +28,11 @@ struct BenchmarkExportBundleTests {
         #expect(rows[0].taskKind == "text-generation")
         #expect(rows[0].sourceRepo == "HuggingFaceH4/ultrachat_200k")
         #expect(rows[0].suiteID == "smoke")
+        #expect(rows[0].accelerationProfile == "balanced")
         #expect(rows[0].metricName == "bench.smoke.tokens_per_second")
         #expect(rows[0].metricValue == 47.08)
-        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms"))
-        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
+        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,acceleration_profile,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,balanced,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
     }
 
     @Test("surfaces invalid json and emits the csv header for empty benchmark history")
@@ -54,7 +55,7 @@ struct BenchmarkExportBundleTests {
             json: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#
         )
         #expect(emptyBundle?.benchmarkHistoryEntries() == [])
-        #expect(emptyBundle?.benchmarkCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms\n")
+        #expect(emptyBundle?.benchmarkCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,acceleration_profile,metric_name,metric_value,unit,created_at_unix_ms\n")
     }
 
     @Test("decodes unified run evidence envelopes from export bundles")
@@ -327,17 +328,19 @@ struct BenchmarkExportBundleTests {
         #expect(summaryRows.map(\.jobID) == ["matrix-c", "matrix-a", "matrix-b"])
         #expect(summaryRows[0].taskKind == "text-generation")
         #expect(summaryRows[1].contextLength == 1024)
+        #expect(summaryRows[1].accelerationProfile == "balanced")
         #expect(summaryRows[2].batchSize == 4)
 
         #expect(requestRows.map(\.cellID) == ["cell-0", "cell-1", "cell-2"])
         #expect(requestRows[0].requestIndex == 0)
         #expect(requestRows[1].repeatIndex == 0)
+        #expect(requestRows[1].accelerationProfile == "balanced")
         #expect(requestRows[2].status == "completed")
 
-        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms"))
-        #expect(summaryCSV.contains("matrix-a,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45"))
-        #expect(requestsCSV.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms"))
-        #expect(requestsCSV.contains("matrix-a,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,1,25.0"))
+        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms"))
+        #expect(summaryCSV.contains("matrix-a,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,balanced,enabled,plain_text,1,3,24,0,24.45"))
+        #expect(requestsCSV.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms"))
+        #expect(requestsCSV.contains("matrix-a,cell-1,text-generation,smoke,1024,128,2,cold,balanced,enabled,plain_text,1,0,1,25.0"))
     }
 
     @Test("benchmark matrix exports emit empty csv headers when there is no matrix history")
@@ -360,6 +363,7 @@ struct BenchmarkExportBundleTests {
 
         #expect(matrixJob.parameters["runtime_kind"] == "swift-text")
         #expect(matrixJob.parameters["runtime_model_id"] == "target/live")
+        #expect(summary.accelerationProfile == "throughput")
         #expect(summary.cellWallMS == 456.7)
         #expect(summary.completedCount == 3)
         #expect(summary.failedCount == 1)
@@ -375,6 +379,7 @@ struct BenchmarkExportBundleTests {
         #expect(request.cacheHit)
         #expect(request.runtimeKind == "swift-text")
         #expect(request.errorStage == "decode")
+        #expect(request.accelerationProfile == "throughput")
         #expect(request.speculativeAcceptanceRate == 0.8)
         #expect(request.speculativeRollbackRate == 0.2)
         #expect(request.speculativeAcceptedTokens == 24)
@@ -511,7 +516,8 @@ private let benchmarkExportBundleJSON = """
       "suites": ["smoke"],
       "parameters": {
         "sample_size": "4",
-        "batch_factor": "2"
+        "batch_factor": "2",
+        "acceleration_profile": "balanced"
       },
       "status": "completed",
       "output_dir": "/tmp/melix/bench/runs/bench-1",
@@ -1273,7 +1279,10 @@ private let benchmarkMatrixExportBundleJSON = """
       "status": "completed",
       "output_dir": "/tmp/melix/bench/matrix-runs/matrix-a",
       "created_at_unix_ms": 1712200000000,
-      "updated_at_unix_ms": 1712200005000
+      "updated_at_unix_ms": 1712200005000,
+      "parameters": {
+        "acceleration_profile": "balanced"
+      }
     },
     {
       "schema_version": "melix.benchmark_matrix_job.v1",
@@ -1662,7 +1671,8 @@ private let benchmarkEvaluationProbeBundleJSON = """
       "updated_at_unix_ms": 1712600001000,
       "parameters": {
         "runtime_kind": "swift-text",
-        "runtime_model_id": "target/live"
+        "runtime_model_id": "target/live",
+        "acceleration_profile_id": "throughput"
       }
     }
   ],

@@ -5747,6 +5747,48 @@ struct MelixCLIRunnerTests {
         #expect(servingDefaultsCall.numDraftTokens == 4)
     }
 
+    @Test("server session low memory profile persists serving defaults for start")
+    func serverSessionLowMemoryProfilePersistsServingDefaultsForStart() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
+
+        _ = try await runner.run(
+            .serverSessionCreate(
+                .init(
+                    title: "Low Memory Session",
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    accelerationProfile: "low-memory"
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverStart(.init(serverSessionID: "server-session-1"))
+        )
+
+        let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
+        #expect(servingDefaultsCall.accelerationProfile == "low-memory")
+        #expect(servingDefaultsCall.accelerationMode == .baseline)
+        #expect(servingDefaultsCall.maxConcurrentRequests == 1)
+        #expect(servingDefaultsCall.concurrentProcessingEnabled == false)
+        #expect(servingDefaultsCall.prefillBatchSize == 1)
+        #expect(servingDefaultsCall.completionBatchSize == 1)
+        #expect(servingDefaultsCall.draftModelID.isEmpty)
+        #expect(servingDefaultsCall.numDraftTokens == 0)
+    }
+
     @Test("server start shortcut creates a titled session and starts the generated id")
     func serverStartShortcutCreatesTitledSessionAndStartsGeneratedID() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -10918,6 +10960,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         let accelerationMode: Melix_Controlplane_V1_AccelerationMode
         let draftModelID: String
         let numDraftTokens: Int
+        let accelerationProfile: String
     }
 
     private(set) var lastServerAction: ServerAction?
@@ -11319,7 +11362,8 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         completionBatchSize: Int,
         accelerationMode: Melix_Controlplane_V1_AccelerationMode,
         draftModelID: String,
-        numDraftTokens: Int
+        numDraftTokens: Int,
+        accelerationProfile: String
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         lastServingDefaultsApplyRequest = ServingDefaultsApplyCall(
             serverSessionID: serverSessionID,
@@ -11333,7 +11377,8 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
             completionBatchSize: completionBatchSize,
             accelerationMode: accelerationMode,
             draftModelID: draftModelID,
-            numDraftTokens: numDraftTokens
+            numDraftTokens: numDraftTokens,
+            accelerationProfile: accelerationProfile
         )
         return snapshot
     }

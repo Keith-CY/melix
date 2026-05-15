@@ -22,6 +22,7 @@ public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Senda
     public var concurrentProcessingEnabled: Bool
     public var prefillBatchSize: Int
     public var completionBatchSize: Int
+    public var accelerationProfile: String
     public var accelerationMode: String
     public var draftModelID: String
     public var numDraftTokens: Int
@@ -35,6 +36,7 @@ public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Senda
         concurrentProcessingEnabled: Bool = true,
         prefillBatchSize: Int = 2,
         completionBatchSize: Int = 2,
+        accelerationProfile: String = ServingAccelerationProfiles.defaultProfileID,
         accelerationMode: String = "baseline",
         draftModelID: String = "",
         numDraftTokens: Int = 0
@@ -47,6 +49,8 @@ public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Senda
         self.concurrentProcessingEnabled = concurrentProcessingEnabled
         self.prefillBatchSize = prefillBatchSize
         self.completionBatchSize = completionBatchSize
+        self.accelerationProfile = ServingAccelerationProfiles.normalizeProfileID(accelerationProfile)
+            ?? ServingAccelerationProfiles.defaultProfileID
         self.accelerationMode = accelerationMode
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
@@ -61,6 +65,7 @@ public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Senda
         case concurrentProcessingEnabled = "concurrent_processing_enabled"
         case prefillBatchSize = "prefill_batch_size"
         case completionBatchSize = "completion_batch_size"
+        case accelerationProfile = "acceleration_profile"
         case accelerationMode = "acceleration_mode"
         case draftModelID = "draft_model_id"
         case numDraftTokens = "num_draft_tokens"
@@ -77,6 +82,8 @@ public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Senda
             concurrentProcessingEnabled: try container.decodeIfPresent(Bool.self, forKey: .concurrentProcessingEnabled) ?? true,
             prefillBatchSize: try container.decodeIfPresent(Int.self, forKey: .prefillBatchSize) ?? 2,
             completionBatchSize: try container.decodeIfPresent(Int.self, forKey: .completionBatchSize) ?? 2,
+            accelerationProfile: try container.decodeIfPresent(String.self, forKey: .accelerationProfile)
+                ?? ServingAccelerationProfiles.defaultProfileID,
             accelerationMode: try container.decodeIfPresent(String.self, forKey: .accelerationMode) ?? "baseline",
             draftModelID: try container.decodeIfPresent(String.self, forKey: .draftModelID) ?? "",
             numDraftTokens: try container.decodeIfPresent(Int.self, forKey: .numDraftTokens) ?? 0
@@ -93,6 +100,7 @@ public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Senda
         try container.encode(concurrentProcessingEnabled, forKey: .concurrentProcessingEnabled)
         try container.encode(prefillBatchSize, forKey: .prefillBatchSize)
         try container.encode(completionBatchSize, forKey: .completionBatchSize)
+        try container.encode(accelerationProfile, forKey: .accelerationProfile)
         try container.encode(accelerationMode, forKey: .accelerationMode)
         try container.encode(draftModelID, forKey: .draftModelID)
         try container.encode(numDraftTokens, forKey: .numDraftTokens)

@@ -218,6 +218,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let prefillBatchSize: UInt32
     public let completionBatchSize: UInt32
     public let accelerationMode: Melix_Controlplane_V1_AccelerationMode
+    public let accelerationProfile: String
     public let draftModelID: String
     public let numDraftTokens: UInt32
     public let sessionID: String?
@@ -1948,6 +1949,7 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.ext["melix.gateway.prefill_batch_size"] = String(shapedRequest.prefillBatchSize)
         generateRequest.execution.ext["melix.gateway.completion_batch_size"] = String(shapedRequest.completionBatchSize)
         generateRequest.execution.ext["melix.gateway.acceleration_mode"] = gatewayAccelerationModeRawValue(shapedRequest.accelerationMode)
+        generateRequest.execution.ext["melix.gateway.acceleration_profile"] = shapedRequest.accelerationProfile
         generateRequest.execution.ext["melix.gateway.num_draft_tokens"] = String(shapedRequest.numDraftTokens)
         if !shapedRequest.draftModelID.isEmpty {
             generateRequest.execution.ext["melix.gateway.draft_model_id"] = shapedRequest.draftModelID

@@ -293,6 +293,7 @@ message ApplyServingDefaults {
   AccelerationMode acceleration_mode = 10;
   string draft_model_id = 11;
   uint32 num_draft_tokens = 12;
+  string acceleration_profile = 13;
 }
 
 message ListModels {}
@@ -1248,6 +1249,9 @@ message ServingDefaultsSessionSummary {
   AccelerationMode effective_acceleration_mode = 25;
   string effective_draft_model_id = 26;
   uint32 effective_num_draft_tokens = 27;
+  string requested_acceleration_profile = 28;
+  string effective_acceleration_profile = 29;
+  string acceleration_profile_intent = 30;
 }
 
 message ServingDefaultsSummary {

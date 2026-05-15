@@ -175,6 +175,7 @@ private extension DesktopServerServingDefaultsState {
             concurrentProcessingEnabled: sharedState.concurrentProcessingEnabled,
             prefillBatchSize: sharedState.prefillBatchSize,
             completionBatchSize: sharedState.completionBatchSize,
+            accelerationProfile: sharedState.accelerationProfile,
             accelerationMode: sharedState.accelerationMode,
             draftModelID: sharedState.draftModelID,
             numDraftTokens: sharedState.numDraftTokens,
@@ -192,6 +193,7 @@ private extension DesktopServerServingDefaultsState {
             concurrentProcessingEnabled: concurrentProcessingEnabled,
             prefillBatchSize: prefillBatchSize,
             completionBatchSize: completionBatchSize,
+            accelerationProfile: accelerationProfile,
             accelerationMode: accelerationMode,
             draftModelID: draftModelID,
             numDraftTokens: numDraftTokens

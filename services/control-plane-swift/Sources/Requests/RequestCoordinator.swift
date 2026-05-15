@@ -377,6 +377,7 @@ private struct GatewayBatchingExecutionDefaults: Sendable {
 
 private struct GatewaySpeculativeExecutionDefaults: Sendable {
     let accelerationMode: Melix_Worker_V1_AccelerationMode
+    let accelerationProfile: String
     let draftModelID: String
     let numDraftTokens: UInt32
 
@@ -384,6 +385,9 @@ private struct GatewaySpeculativeExecutionDefaults: Sendable {
         self.accelerationMode = Self.parseAccelerationMode(
             executionExt["melix.gateway.acceleration_mode"]
         )
+        self.accelerationProfile = ServingAccelerationProfiles.normalizeProfileID(
+            executionExt["melix.gateway.acceleration_profile"]
+        ) ?? ServingAccelerationProfiles.defaultProfileID
         self.draftModelID = executionExt["melix.gateway.draft_model_id"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.numDraftTokens = Self.parseUInt32(
@@ -901,6 +905,7 @@ public actor RequestCoordinator {
             )
             let structuredOutputValidator = StructuredOutputValidator()
             let initialReasoningBudget = ReasoningBudgetState(execution: request.workerRequest.execution)
+            let requestAccelerationProfileID = request.workerRequest.execution.acceleration.profileID
             Task {
                 var firstDeltaRecorded = false
                 var firstSemanticEventRecorded = false
@@ -970,6 +975,7 @@ public actor RequestCoordinator {
                                 fallbackLane: plan.decodeLane,
                                 requestIdentity: request.workerRequest.execution.id,
                                 routeKind: plan.routeKind,
+                                accelerationProfileID: requestAccelerationProfileID,
                                 event: outputEvent
                             )
                             if let firstSemanticEventMs {
@@ -1234,6 +1240,7 @@ public actor RequestCoordinator {
         fallbackLane: String,
         requestIdentity: Melix_Worker_V1_RequestIdentity,
         routeKind: WorkerRouteKind,
+        accelerationProfileID: String,
         event: Melix_Worker_V1_ExecuteEvent
     ) async {
         let workerSource = routeKind.workerSourceID
@@ -1252,6 +1259,7 @@ public actor RequestCoordinator {
                     : (event.lane.isEmpty ? "text.prefill.hot" : event.lane),
                 workerID: workerSource,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
+                accelerationProfileID: accelerationProfileID,
                 source: workerSource
             )
         case .decodeStarted(let decodeStarted):
@@ -1262,6 +1270,7 @@ public actor RequestCoordinator {
                 workerID: workerSource,
                 decodeHandle: decodeStarted.decodeHandle,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
+                accelerationProfileID: accelerationProfileID,
                 source: workerSource
             )
         case .tokenDelta, .reasoningDelta, .toolCallDelta, .usageDelta:
@@ -1271,14 +1280,15 @@ public actor RequestCoordinator {
                 laneHint: observedLane,
                 workerID: workerSource,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
+                accelerationProfileID: accelerationProfileID,
                 source: workerSource
             )
-                if case .toolCallDelta(let toolCallDelta) = event.payload {
-                    await hydrateToolResult(
-                        requestIdentity: requestIdentity,
-                        toolCallID: toolCallDelta.callID
-                    )
-                }
+            if case .toolCallDelta(let toolCallDelta) = event.payload {
+                await hydrateToolResult(
+                    requestIdentity: requestIdentity,
+                    toolCallID: toolCallDelta.callID
+                )
+            }
         case .cacheDecision(let cacheDecision):
             await schedulerReadModel.recordPhaseTransition(
                 requestID: requestID,
@@ -1286,6 +1296,7 @@ public actor RequestCoordinator {
                 laneHint: observedLane,
                 workerID: workerSource,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
+                accelerationProfileID: accelerationProfileID,
                 source: workerSource
             )
             if !cacheDecision.restoredSnapshotID.isEmpty {
@@ -1757,6 +1768,7 @@ public actor RequestCoordinator {
         let gatewaySpeculativeDefaults = GatewaySpeculativeExecutionDefaults(
             executionExt: workerRequest.execution.ext
         )
+        let gatewayProfileID = gatewaySpeculativeDefaults.accelerationProfile
         if workerRequest.execution.acceleration.mode == .unspecified {
             let gatewayMode = gatewaySpeculativeDefaults.accelerationMode
             if model.settings.defaultAccelerationMode != .unspecified {
@@ -1785,6 +1797,12 @@ public actor RequestCoordinator {
         if workerRequest.execution.acceleration.profileID.isEmpty,
            !model.settings.accelerationProfileID.isEmpty {
             workerRequest.execution.acceleration.profileID = model.settings.accelerationProfileID
+        }
+        if workerRequest.execution.acceleration.profileID.isEmpty {
+            workerRequest.execution.acceleration.profileID = gatewayProfileID
+        }
+        if workerRequest.execution.acceleration.ext["melix.gateway.acceleration_profile"] == nil {
+            workerRequest.execution.acceleration.ext["melix.gateway.acceleration_profile"] = gatewayProfileID
         }
 
         switch workerRequest.execution.acceleration.mode {
@@ -1974,6 +1992,9 @@ public actor RequestCoordinator {
                     }
                     let restoreStage = self.restoreStageLabel(for: effectiveRestorePlan)
                     let cachePressure = await self.refreshWorkerCacheObservability(using: client) ?? 0
+                    let appliedProfileID = prefillResponse.appliedAcceleration.profileID.isEmpty
+                        ? request.execution.acceleration.profileID
+                        : prefillResponse.appliedAcceleration.profileID
                     let decodeRequest = makeDecodeRequest(
                         from: request,
                         prefillResponse: prefillResponse
@@ -2016,6 +2037,7 @@ public actor RequestCoordinator {
                             accelerationMode: controlPlaneAccelerationMode(
                                 from: prefillResponse.appliedAcceleration.mode
                             ),
+                            accelerationProfileID: appliedProfileID,
                             source: "swift-text-worker"
                         )
                         var progressEvent = makePrefillProgressEvent(
