@@ -23,6 +23,10 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
         "print('hi')",
         "parsed_code_block",
     )
+    assert code_eval_runner.extract_candidate_code("```python\n\n```") == (
+        "",
+        "parsed_code_block",
+    )
     assert code_eval_runner.extract_candidate_code(
         "first attempt:\n```python\nprint('old')\n```\nfinal answer:\n```python\nprint('new')\n```"
     ) == ("print('new')", "parsed_code_block")

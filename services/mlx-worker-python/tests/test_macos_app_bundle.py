@@ -53,6 +53,9 @@ def test_render_portable_environment_script_uses_home_relative_paths() -> None:
         logical_product_identity="io.melix",
         packaging_target_id="macos_app_bundle_preview",
         packaging_kind="app_bundle",
+        http_bind_host="0.0.0.0",
+        http_connect_host="127.0.0.1",
+        http_port=12436,
     )
 
     assert 'export MELIX_LOGICAL_PRODUCT_ID="io.melix"' in script
@@ -85,6 +88,9 @@ def test_render_portable_environment_script_uses_home_relative_paths() -> None:
         'export MELIX_PRODUCT_MANIFEST_PATH="${MELIX_PRODUCT_MANIFEST_PATH:-$MELIX_HOME/install/install-manifest.json}"'
         in script
     )
+    assert 'export MELIX_HTTP_HOST="${MELIX_HTTP_HOST:-0.0.0.0}"' in script
+    assert 'export MELIX_HTTP_CONNECT_HOST="${MELIX_HTTP_CONNECT_HOST:-127.0.0.1}"' in script
+    assert 'export MELIX_HTTP_PORT="${MELIX_HTTP_PORT:-12436}"' in script
     assert 'export MELIX_BACKEND_MODE="auto"' in script
     assert 'export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="swift"' in script
 
@@ -245,6 +251,8 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
         python_site_packages_path=python_site_packages,
         output_path=tmp_path / "Melix.app",
         icon_source_path=icon_file,
+        http_bind_host="0.0.0.0",
+        http_port=12436,
     )
 
     app_path = Path(manifest["app_path"])
@@ -280,12 +288,18 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     env_script = Path(manifest["embedded_env_script_path"]).read_text(encoding="utf-8")
     assert 'export MELIX_PACKAGING_TARGET_ID="macos_app_bundle_preview"' in env_script
     assert 'export MELIX_PRODUCT_VERSION="0.1.0"' in env_script
+    assert 'export MELIX_HTTP_HOST="${MELIX_HTTP_HOST:-0.0.0.0}"' in env_script
+    assert 'export MELIX_HTTP_CONNECT_HOST="${MELIX_HTTP_CONNECT_HOST:-127.0.0.1}"' in env_script
     assert "MELIX_APP_SUPPORT_DIR" not in env_script
     assert 'export MELIX_MODEL_OPS_JOBS_ROOT="${MELIX_MODEL_OPS_JOBS_ROOT:-$MELIX_HOME/jobs/model-ops}"' in env_script
     assert 'export MELIX_EVALUATION_JOBS_ROOT="${MELIX_EVALUATION_JOBS_ROOT:-$MELIX_HOME/jobs/evaluation}"' in env_script
     target_payload = json.loads(Path(manifest["packaging_target_manifest_path"]).read_text(encoding="utf-8"))
     assert target_payload["packaging_target_id"] == "macos_app_bundle_preview"
     assert target_payload["logical_product_identity"] == "io.melix"
+    assert target_payload["http_bind_host"] == "0.0.0.0"
+    assert target_payload["http_connect_host"] == "127.0.0.1"
+    assert target_payload["health_probe_url"] == "http://127.0.0.1:12436/health"
+    assert manifest["service_base_url"] == "http://127.0.0.1:12436/v1"
     timings = manifest["timings"]
     for key in (
         "copy_app_binary_seconds",
