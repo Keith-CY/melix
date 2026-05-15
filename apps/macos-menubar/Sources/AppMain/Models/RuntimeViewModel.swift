@@ -1018,6 +1018,86 @@ public enum RuntimeDiagnosticsStagePreference: String, Sendable {
     case evaluation
 }
 
+public struct RuntimeDiagnosticsRunStepState: Equatable, Identifiable, Sendable {
+    public enum Phase: String, Sendable {
+        case pending
+        case running
+        case completed
+        case failed
+    }
+
+    public let id: String
+    public let title: String
+    public let phase: Phase
+
+    public init(id: String, title: String, phase: Phase = .pending) {
+        self.id = RichOutputSanitizer.sanitized(id)
+        self.title = RichOutputSanitizer.sanitized(title)
+        self.phase = phase
+    }
+}
+
+public struct RuntimeDiagnosticsRunMonitorState: Equatable, Sendable {
+    public enum Phase: String, Sendable {
+        case running
+        case completed
+        case failed
+    }
+
+    public let id: String
+    public let stage: RuntimeDiagnosticsStagePreference
+    public let phase: Phase
+    public let title: String
+    public let targetText: String
+    public let suiteText: String
+    public let statusText: String
+    public let startedAt: Date?
+    public let elapsedText: String
+    public let primaryMetricText: String
+    public let artifactText: String
+    public let detailText: String
+    public let progressFraction: Double?
+    public let progressText: String
+    public let steps: [RuntimeDiagnosticsRunStepState]
+    public let recentEvents: [String]
+
+    public init(
+        id: String,
+        stage: RuntimeDiagnosticsStagePreference,
+        phase: Phase,
+        title: String,
+        targetText: String,
+        suiteText: String,
+        statusText: String,
+        startedAt: Date? = nil,
+        elapsedText: String,
+        primaryMetricText: String = "",
+        artifactText: String = "",
+        detailText: String = "",
+        progressFraction: Double? = nil,
+        progressText: String = "",
+        steps: [RuntimeDiagnosticsRunStepState] = [],
+        recentEvents: [String] = []
+    ) {
+        self.id = RichOutputSanitizer.sanitized(id)
+        self.stage = stage
+        self.phase = phase
+        self.title = RichOutputSanitizer.sanitized(title)
+        self.targetText = RichOutputSanitizer.sanitized(targetText)
+        self.suiteText = RichOutputSanitizer.sanitized(suiteText)
+        self.statusText = RichOutputSanitizer.sanitized(statusText)
+        self.startedAt = startedAt
+        self.elapsedText = RichOutputSanitizer.sanitized(elapsedText)
+        self.primaryMetricText = RichOutputSanitizer.sanitized(primaryMetricText)
+        self.artifactText = RichOutputSanitizer.sanitized(artifactText)
+        self.detailText = RichOutputSanitizer.sanitized(detailText)
+        self.progressFraction = progressFraction.map { min(1, max(0, $0)) }
+        self.progressText = RichOutputSanitizer.sanitized(progressText)
+        self.steps = steps
+        self.recentEvents = recentEvents.map(RichOutputSanitizer.sanitized)
+    }
+}
+
 public enum RuntimeBenchmarkMatrixLoadBudgetMode: String, CaseIterable, Identifiable, Sendable {
     case requests = "requests"
     case durationSeconds = "duration_seconds"
@@ -1854,6 +1934,7 @@ public final class RuntimeViewModel {
     public private(set) var modelRegistryEntries: [RuntimeRegistryEntryState] = []
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
     public private(set) var lastBenchReport: RuntimeBenchReportState?
+    public private(set) var diagnosticsRunMonitor: RuntimeDiagnosticsRunMonitorState?
     public private(set) var benchmarkHistory: [RuntimeBenchmarkHistoryEntryState] = []
     public private(set) var benchmarkMetricCards: [RuntimeBenchmarkMetricCardState] = []
     public private(set) var benchmarkChartPoints: [RuntimeBenchmarkChartPointState] = []
@@ -6998,6 +7079,420 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    private func beginDiagnosticsRunMonitor(
+        stage: RuntimeDiagnosticsStagePreference,
+        title: String,
+        targetText: String,
+        suiteText: String,
+        detailText: String
+    ) {
+        let startedAt = Date()
+        diagnosticsRunMonitor = RuntimeDiagnosticsRunMonitorState(
+            id: "\(stage.rawValue)-\(Int(startedAt.timeIntervalSince1970 * 1_000))",
+            stage: stage,
+            phase: .running,
+            title: title,
+            targetText: targetText,
+            suiteText: suiteText.isEmpty ? "n/a" : suiteText,
+            statusText: "Running",
+            startedAt: startedAt,
+            elapsedText: Self.diagnosticsElapsedText(since: startedAt),
+            detailText: detailText,
+            progressFraction: Self.diagnosticsRunProgressFraction(stage: stage, activeStepID: nil, completed: false),
+            progressText: Self.diagnosticsRunProgressText(stage: stage, activeStepID: nil),
+            steps: Self.diagnosticsRunSteps(stage: stage, activeStepID: nil),
+            recentEvents: [detailText].filter { $0.isEmpty == false }
+        )
+    }
+
+#if DEBUG
+    public func beginDiagnosticsRunMonitorForTest(
+        stage: RuntimeDiagnosticsStagePreference,
+        title: String,
+        targetText: String,
+        suiteText: String,
+        detailText: String
+    ) {
+        beginDiagnosticsRunMonitor(
+            stage: stage,
+            title: title,
+            targetText: targetText,
+            suiteText: suiteText,
+            detailText: detailText
+        )
+        notifyStateChanged()
+    }
+#endif
+
+    private func updateDiagnosticsRunMonitor(
+        stage: RuntimeDiagnosticsStagePreference,
+        stepID: String,
+        detailText: String,
+        progressFraction: Double? = nil
+    ) {
+        guard let current = diagnosticsRunMonitor, current.stage == stage, current.phase == .running else {
+            return
+        }
+        diagnosticsRunMonitor = RuntimeDiagnosticsRunMonitorState(
+            id: current.id,
+            stage: stage,
+            phase: .running,
+            title: current.title,
+            targetText: current.targetText,
+            suiteText: current.suiteText,
+            statusText: "Running",
+            startedAt: current.startedAt,
+            elapsedText: current.startedAt.map { Self.diagnosticsElapsedText(since: $0) } ?? current.elapsedText,
+            primaryMetricText: current.primaryMetricText,
+            artifactText: current.artifactText,
+            detailText: detailText.isEmpty ? current.detailText : detailText,
+            progressFraction: progressFraction ?? Self.diagnosticsRunProgressFraction(stage: stage, activeStepID: stepID, completed: false),
+            progressText: Self.diagnosticsRunProgressText(stage: stage, activeStepID: stepID, progressFraction: progressFraction),
+            steps: Self.diagnosticsRunSteps(stage: stage, activeStepID: stepID),
+            recentEvents: Self.diagnosticsRecentEvents(current.recentEvents, appending: detailText)
+        )
+    }
+
+    private func finishDiagnosticsRunMonitor(
+        stage: RuntimeDiagnosticsStagePreference,
+        startedAt: Date,
+        jobID: String,
+        metrics: [String: Double],
+        artifactText: String,
+        detailText: String = ""
+    ) {
+        let current = diagnosticsRunMonitor
+        let artifactSummary = artifactText.isEmpty ? jobID : artifactText
+        let detailSummary = detailText.isEmpty
+            ? (jobID.isEmpty ? (current?.detailText ?? "") : "job \(jobID)")
+            : detailText
+        diagnosticsRunMonitor = RuntimeDiagnosticsRunMonitorState(
+            id: current?.id ?? "\(stage.rawValue)-\(Int(startedAt.timeIntervalSince1970 * 1_000))",
+            stage: stage,
+            phase: .completed,
+            title: current?.title ?? Self.diagnosticsRunTitle(stage),
+            targetText: current?.targetText ?? "",
+            suiteText: current?.suiteText ?? "n/a",
+            statusText: "Completed",
+            startedAt: current?.startedAt ?? startedAt,
+            elapsedText: Self.diagnosticsElapsedText(since: startedAt),
+            primaryMetricText: Self.diagnosticsPrimaryMetricText(metrics),
+            artifactText: artifactSummary,
+            detailText: detailSummary,
+            progressFraction: 1,
+            progressText: "Complete",
+            steps: Self.diagnosticsRunSteps(stage: stage, activeStepID: nil, completed: true),
+            recentEvents: Self.diagnosticsRecentEvents(current?.recentEvents ?? [], appending: detailSummary)
+        )
+    }
+
+    private func failDiagnosticsRunMonitor(
+        stage: RuntimeDiagnosticsStagePreference,
+        startedAt: Date,
+        error: Error
+    ) {
+        let current = diagnosticsRunMonitor
+        diagnosticsRunMonitor = RuntimeDiagnosticsRunMonitorState(
+            id: current?.id ?? "\(stage.rawValue)-\(Int(startedAt.timeIntervalSince1970 * 1_000))",
+            stage: stage,
+            phase: .failed,
+            title: current?.title ?? Self.diagnosticsRunTitle(stage),
+            targetText: current?.targetText ?? "",
+            suiteText: current?.suiteText ?? "n/a",
+            statusText: "Failed",
+            startedAt: current?.startedAt ?? startedAt,
+            elapsedText: Self.diagnosticsElapsedText(since: startedAt),
+            primaryMetricText: current?.primaryMetricText ?? "",
+            artifactText: current?.artifactText ?? "",
+            detailText: String(describing: error),
+            progressFraction: current?.progressFraction,
+            progressText: "Failed",
+            steps: Self.failedDiagnosticsRunSteps(current?.steps ?? Self.diagnosticsRunSteps(stage: stage, activeStepID: nil)),
+            recentEvents: Self.diagnosticsRecentEvents(current?.recentEvents ?? [], appending: String(describing: error))
+        )
+    }
+
+    private func applyDiagnosticsRequestProgress(_ progress: Melix_Controlplane_V1_RequestProgressEvent) {
+        guard let current = diagnosticsRunMonitor, current.phase == .running else {
+            return
+        }
+        let fraction = progress.prefillProgressPct > 0
+            ? min(0.95, max(0.35, progress.prefillProgressPct / 100))
+            : current.progressFraction
+        updateDiagnosticsRunMonitor(
+            stage: current.stage,
+            stepID: Self.diagnosticsRunExecutionStepID(stage: current.stage),
+            detailText: Self.requestProgressMessage(progress),
+            progressFraction: fraction
+        )
+    }
+
+    private func applyDiagnosticsBenchmarkProgress(_ progress: Melix_Controlplane_V1_BenchmarkProgressEvent) {
+        guard let current = diagnosticsRunMonitor,
+              current.phase == .running,
+              current.stage == .benchmark || current.stage == .matrix
+        else {
+            return
+        }
+        let percent = min(100, max(0, progress.pct))
+        let suite = progress.suite.isEmpty ? "benchmark" : progress.suite
+        updateDiagnosticsRunMonitor(
+            stage: current.stage,
+            stepID: Self.diagnosticsRunExecutionStepID(stage: current.stage),
+            detailText: "\(suite) \(Self.diagnosticsMetricValueText(percent))%",
+            progressFraction: percent / 100
+        )
+    }
+
+    private static func diagnosticsRunTitle(_ stage: RuntimeDiagnosticsStagePreference) -> String {
+        switch stage {
+        case .benchmark:
+            return "Benchmark"
+        case .matrix:
+            return "Benchmark Matrix"
+        case .evaluation:
+            return "Evaluation"
+        }
+    }
+
+    private static func diagnosticsRunSteps(
+        stage: RuntimeDiagnosticsStagePreference,
+        activeStepID: String?,
+        completed: Bool = false
+    ) -> [RuntimeDiagnosticsRunStepState] {
+        let definitions: [(String, String)]
+        switch stage {
+        case .benchmark:
+            definitions = [
+                ("validate", "Validate Target"),
+                ("prepare", "Prepare Benchmark"),
+                ("run", "Run Suites"),
+                ("report", "Write Report"),
+            ]
+        case .matrix:
+            definitions = [
+                ("validate", "Validate Matrix"),
+                ("expand", "Expand Cells"),
+                ("run", "Run Matrix"),
+                ("summary", "Load Summary"),
+            ]
+        case .evaluation:
+            definitions = [
+                ("validate", "Validate Target"),
+                ("prepare", "Prepare Suites"),
+                ("run", "Run Evaluation"),
+                ("score", "Collect Scores"),
+            ]
+        }
+        let activeIndex = activeStepID.flatMap { id in definitions.firstIndex { $0.0 == id } }
+        return definitions.enumerated().map { index, definition in
+            let phase: RuntimeDiagnosticsRunStepState.Phase
+            if completed {
+                phase = .completed
+            } else if let activeIndex {
+                if index < activeIndex {
+                    phase = .completed
+                } else if index == activeIndex {
+                    phase = .running
+                } else {
+                    phase = .pending
+                }
+            } else if index == 0 {
+                phase = .running
+            } else {
+                phase = .pending
+            }
+            return RuntimeDiagnosticsRunStepState(id: definition.0, title: definition.1, phase: phase)
+        }
+    }
+
+    private static func failedDiagnosticsRunSteps(
+        _ steps: [RuntimeDiagnosticsRunStepState]
+    ) -> [RuntimeDiagnosticsRunStepState] {
+        guard steps.isEmpty == false else {
+            return steps
+        }
+        if let runningIndex = steps.firstIndex(where: { $0.phase == .running }) {
+            return steps.enumerated().map { index, step in
+                index == runningIndex ? RuntimeDiagnosticsRunStepState(id: step.id, title: step.title, phase: .failed) : step
+            }
+        }
+        if let pendingIndex = steps.firstIndex(where: { $0.phase == .pending }) {
+            return steps.enumerated().map { index, step in
+                index == pendingIndex ? RuntimeDiagnosticsRunStepState(id: step.id, title: step.title, phase: .failed) : step
+            }
+        }
+        guard let last = steps.last else {
+            return steps
+        }
+        return steps.dropLast() + [RuntimeDiagnosticsRunStepState(id: last.id, title: last.title, phase: .failed)]
+    }
+
+    private static func diagnosticsRunExecutionStepID(stage: RuntimeDiagnosticsStagePreference) -> String {
+        switch stage {
+        case .benchmark, .matrix, .evaluation:
+            return "run"
+        }
+    }
+
+    private static func diagnosticsRunProgressFraction(
+        stage: RuntimeDiagnosticsStagePreference,
+        activeStepID: String?,
+        completed: Bool
+    ) -> Double {
+        if completed {
+            return 1
+        }
+        let steps = diagnosticsRunSteps(stage: stage, activeStepID: activeStepID, completed: false)
+        guard let activeIndex = steps.firstIndex(where: { $0.phase == .running }) else {
+            return 0.1
+        }
+        return min(0.95, max(0.1, (Double(activeIndex) + 0.35) / Double(max(steps.count, 1))))
+    }
+
+    private static func diagnosticsRunProgressText(
+        stage: RuntimeDiagnosticsStagePreference,
+        activeStepID: String?,
+        progressFraction: Double? = nil
+    ) -> String {
+        let step = diagnosticsRunSteps(stage: stage, activeStepID: activeStepID)
+            .first(where: { $0.phase == .running })
+        let fraction = progressFraction ?? diagnosticsRunProgressFraction(stage: stage, activeStepID: activeStepID, completed: false)
+        let percent = Int((min(1, max(0, fraction)) * 100).rounded())
+        return step.map { "\(percent)% Running \($0.title)" } ?? "\(percent)% Running"
+    }
+
+    private static func diagnosticsRecentEvents(_ current: [String], appending event: String) -> [String] {
+        let trimmed = event.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = trimmed.isEmpty ? current : current + [trimmed]
+        return Array(next.suffix(4))
+    }
+
+    private static func diagnosticsElapsedText(since startedAt: Date) -> String {
+        formatDuration(milliseconds: Date().timeIntervalSince(startedAt) * 1_000)
+    }
+
+    private static func diagnosticsPrimaryMetricText(_ metrics: [String: Double]) -> String {
+        guard metrics.isEmpty == false else {
+            return ""
+        }
+        let preferredKeys = [
+            "bench.smoke.ttft_ms",
+            "matrix.throughput_tokens_per_second",
+            "matrix.decode_tokens_per_second",
+            "matrix.ttft_mean_ms",
+            "eval.compare.win_rate",
+            "event_extraction_weighted_f1",
+            "mmlu.accuracy",
+        ]
+        let key = preferredKeys.first(where: { metrics[$0] != nil }) ?? metrics.keys.sorted().first
+        guard let key, let value = metrics[key] else {
+            return ""
+        }
+        return "\(key)=\(diagnosticsMetricValueText(value))"
+    }
+
+    private static func diagnosticsMetricValueText(_ value: Double) -> String {
+        let format = abs(value) >= 100 ? "%.1f" : "%.3f"
+        return String(format: format, value)
+            .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
+    }
+
+    private static func benchmarkMatrixMonitorMetrics(
+        from rows: [ControlPlaneBenchmarkMatrixSummaryCSVRow]
+    ) -> [String: Double] {
+        benchmarkMatrixMonitorMetrics(
+            rowCount: rows.count,
+            ttftMeanMS: rows.map(\.ttftMeanMS),
+            decodeTokensPerSecondMean: rows.map(\.decodeTokensPerSecondMean),
+            throughputRequestsPerSecond: rows.map(\.throughputRequestsPerSecond),
+            throughputTokensPerSecond: rows.map(\.throughputTokensPerSecond),
+            successRate: rows.map(\.successRate)
+        )
+    }
+
+    private static func benchmarkMatrixMonitorMetrics(
+        from rows: [MelixCLIBenchmarkMatrixSummaryRowPayload]
+    ) -> [String: Double] {
+        benchmarkMatrixMonitorMetrics(
+            rowCount: rows.count,
+            ttftMeanMS: rows.map(\.ttftMeanMS),
+            decodeTokensPerSecondMean: rows.map(\.decodeTokensPerSecondMean),
+            throughputRequestsPerSecond: rows.map(\.throughputRequestsPerSecond),
+            throughputTokensPerSecond: rows.map(\.throughputTokensPerSecond),
+            successRate: rows.map(\.successRate)
+        )
+    }
+
+    private static func benchmarkMatrixMonitorMetrics(
+        from rows: [Melix_Controlplane_V1_BenchmarkMatrixSummaryRow]
+    ) -> [String: Double] {
+        benchmarkMatrixMonitorMetrics(
+            rowCount: rows.count,
+            ttftMeanMS: rows.map(\.ttftMeanMs),
+            decodeTokensPerSecondMean: rows.map(\.decodeTokensPerSecondMean),
+            throughputRequestsPerSecond: rows.map(\.throughputRequestsPerSecond),
+            throughputTokensPerSecond: rows.map(\.throughputTokensPerSecond),
+            successRate: rows.map(\.successRate)
+        )
+    }
+
+    private static func benchmarkMatrixMonitorMetrics(
+        rowCount: Int,
+        ttftMeanMS: [Double],
+        decodeTokensPerSecondMean: [Double],
+        throughputRequestsPerSecond: [Double],
+        throughputTokensPerSecond: [Double],
+        successRate: [Double]
+    ) -> [String: Double] {
+        guard rowCount > 0 else {
+            return [:]
+        }
+        return [
+            "matrix.cells": Double(rowCount),
+            "matrix.ttft_mean_ms": average(ttftMeanMS),
+            "matrix.decode_tokens_per_second": average(decodeTokensPerSecondMean),
+            "matrix.throughput_requests_per_second": average(throughputRequestsPerSecond),
+            "matrix.throughput_tokens_per_second": average(throughputTokensPerSecond),
+            "matrix.success_rate": average(successRate),
+        ]
+    }
+
+    private static func evaluationMonitorMetrics(
+        from results: [ControlPlaneEvaluationResult]
+    ) -> [String: Double] {
+        var valuesByName: [String: [Double]] = [:]
+        for result in results {
+            for summary in result.results {
+                for metric in summary.metrics where metric.name.isEmpty == false {
+                    valuesByName[metric.name, default: []].append(metric.value)
+                }
+            }
+        }
+        return valuesByName.mapValues(average)
+    }
+
+    private static func evaluationMonitorMetrics(
+        from payloads: [MelixCLIEvaluationRunPayload]
+    ) -> [String: Double] {
+        var valuesByName: [String: [Double]] = [:]
+        for payload in payloads {
+            for summary in payload.results {
+                for metric in summary.metrics where metric.name.isEmpty == false {
+                    valuesByName[metric.name, default: []].append(metric.value)
+                }
+            }
+        }
+        return valuesByName.mapValues(average)
+    }
+
+    private static func average(_ values: [Double]) -> Double {
+        guard values.isEmpty == false else {
+            return 0
+        }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
     public func runBench() async {
         preferredDiagnosticsStage = .benchmark
         if let disabledReason = diagnosticsBenchmarkUnavailableText {
@@ -7019,8 +7514,25 @@ public final class RuntimeViewModel {
         }
         let contextLengths = normalizedBenchContextLengths()
         let startedAt = Date()
+        beginDiagnosticsRunMonitor(
+            stage: .benchmark,
+            title: "Benchmark",
+            targetText: modelID,
+            suiteText: suites.joined(separator: ", "),
+            detailText: "ctx \(contextLengths.map(String.init).joined(separator: ",")) • batch \(normalizedBenchBatchSizes().map(String.init).joined(separator: ",")) • \(normalizedBenchRepeats()) repeats"
+        )
+        updateDiagnosticsRunMonitor(
+            stage: .benchmark,
+            stepID: "prepare",
+            detailText: "Preparing benchmark request"
+        )
         if let cliWorkflowRunner {
             do {
+                updateDiagnosticsRunMonitor(
+                    stage: .benchmark,
+                    stepID: "run",
+                    detailText: "Running benchmark via CLI workflow"
+                )
                 let payload = try await cliWorkflowRunner.decodeJSON(
                     MelixCLIBenchRunPayload.self,
                     command: .benchRun(
@@ -7055,6 +7567,13 @@ public final class RuntimeViewModel {
                         RuntimeBenchMetricState(name: key, value: String(format: "%.2f", payload.metrics[key] ?? 0))
                     }
                 )
+                finishDiagnosticsRunMonitor(
+                    stage: .benchmark,
+                    startedAt: startedAt,
+                    jobID: payload.reportPath,
+                    metrics: payload.metrics,
+                    artifactText: payload.reportPath
+                )
                 persistSelectedLoraJobBenchmarkFollowUp(
                     modelID: modelID,
                     jobID: payload.reportPath
@@ -7063,6 +7582,7 @@ public final class RuntimeViewModel {
             } catch {
                 recordCLIWorkflowErrorIfNeeded(error)
                 recordLocalError(String(describing: error))
+                failDiagnosticsRunMonitor(stage: .benchmark, startedAt: startedAt, error: error)
             }
             notifyStateChanged()
             return
@@ -7070,6 +7590,11 @@ public final class RuntimeViewModel {
         do {
             let result: ControlPlaneBenchResult
             if let operatorCommandRunner {
+                updateDiagnosticsRunMonitor(
+                    stage: .benchmark,
+                    stepID: "run",
+                    detailText: "Running benchmark through operator command runner"
+                )
                 result = try await operatorCommandRunner.runBenchmark(
                     .init(
                         modelID: modelID,
@@ -7085,6 +7610,11 @@ public final class RuntimeViewModel {
                     )
                 )
             } else {
+                updateDiagnosticsRunMonitor(
+                    stage: .benchmark,
+                    stepID: "run",
+                    detailText: "Running benchmark on the control plane"
+                )
                 result = try await client.runBench(
                     ControlPlaneBenchRequest(
                         modelID: modelID,
@@ -7114,6 +7644,13 @@ public final class RuntimeViewModel {
                     RuntimeBenchMetricState(name: key, value: String(format: "%.2f", result.metrics[key] ?? 0))
                 }
             )
+            finishDiagnosticsRunMonitor(
+                stage: .benchmark,
+                startedAt: startedAt,
+                jobID: result.job?.jobID ?? result.reportPath,
+                metrics: result.metrics,
+                artifactText: result.reportPath
+            )
             persistSelectedLoraJobBenchmarkFollowUp(
                 modelID: modelID,
                 jobID: result.job?.jobID ?? result.reportPath
@@ -7121,6 +7658,7 @@ public final class RuntimeViewModel {
             await refreshBenchmarkHistory(notify: false)
         } catch {
             recordLocalError(String(describing: error))
+            failDiagnosticsRunMonitor(stage: .benchmark, startedAt: startedAt, error: error)
         }
         notifyStateChanged()
     }
@@ -7266,8 +7804,28 @@ public final class RuntimeViewModel {
         }
 
         let startedAt = Date()
+        let matrixBudgetText = request.requests > 0
+            ? "\(request.requests) requests"
+            : "\(request.durationSeconds)s duration"
+        beginDiagnosticsRunMonitor(
+            stage: .matrix,
+            title: "Benchmark Matrix",
+            targetText: modelID,
+            suiteText: suites.joined(separator: ", "),
+            detailText: "\(request.matrixCellCount) cells • \(matrixBudgetText) • \(request.repeats)x repeats"
+        )
+        updateDiagnosticsRunMonitor(
+            stage: .matrix,
+            stepID: "expand",
+            detailText: "\(request.matrixCellCount) cells • \(matrixBudgetText)"
+        )
         if let cliWorkflowRunner {
             do {
+                updateDiagnosticsRunMonitor(
+                    stage: .matrix,
+                    stepID: "run",
+                    detailText: "Running matrix via CLI workflow"
+                )
                 let payload = try await cliWorkflowRunner.decodeJSON(
                     MelixCLIBenchmarkMatrixRunPayload.self,
                     command: .benchMatrixRun(
@@ -7292,6 +7850,14 @@ public final class RuntimeViewModel {
                     )
                 )
                 selectedBenchmarkMatrixHistoryJobID = payload.job.jobID
+                finishDiagnosticsRunMonitor(
+                    stage: .matrix,
+                    startedAt: startedAt,
+                    jobID: payload.job.jobID,
+                    metrics: Self.benchmarkMatrixMonitorMetrics(from: payload.summaryRows),
+                    artifactText: payload.job.outputDir,
+                    detailText: "\(payload.summaryRows.count) summary rows"
+                )
                 clearCLIWorkflowFailure()
                 await metrics.record(
                     name: "menu.ops_bench_matrix_ms",
@@ -7301,6 +7867,7 @@ public final class RuntimeViewModel {
             } catch {
                 recordCLIWorkflowErrorIfNeeded(error)
                 recordLocalError(String(describing: error))
+                failDiagnosticsRunMonitor(stage: .matrix, startedAt: startedAt, error: error)
             }
             notifyStateChanged()
             return
@@ -7308,6 +7875,11 @@ public final class RuntimeViewModel {
         do {
             let result: ControlPlaneBenchMatrixResult
             if let operatorCommandRunner {
+                updateDiagnosticsRunMonitor(
+                    stage: .matrix,
+                    stepID: "run",
+                    detailText: "Running matrix through operator command runner"
+                )
                 result = try await operatorCommandRunner.runBenchmarkMatrix(
                     .init(
                         modelID: request.modelID,
@@ -7328,9 +7900,27 @@ public final class RuntimeViewModel {
                     )
                 )
             } else {
+                updateDiagnosticsRunMonitor(
+                    stage: .matrix,
+                    stepID: "run",
+                    detailText: "Running matrix on the control plane"
+                )
                 result = try await client.runBenchMatrix(request)
             }
+            updateDiagnosticsRunMonitor(
+                stage: .matrix,
+                stepID: "summary",
+                detailText: "Loading matrix summary rows"
+            )
             selectedBenchmarkMatrixHistoryJobID = result.job.jobID
+            finishDiagnosticsRunMonitor(
+                stage: .matrix,
+                startedAt: startedAt,
+                jobID: result.job.jobID,
+                metrics: Self.benchmarkMatrixMonitorMetrics(from: result.summaryRows),
+                artifactText: result.job.outputDir,
+                detailText: "\(result.summaryRows.count) summary rows"
+            )
             await metrics.record(
                 name: "menu.ops_bench_matrix_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -7338,6 +7928,7 @@ public final class RuntimeViewModel {
             await refreshBenchmarkHistory(notify: false)
         } catch {
             recordLocalError(String(describing: error))
+            failDiagnosticsRunMonitor(stage: .matrix, startedAt: startedAt, error: error)
         }
         notifyStateChanged()
     }
@@ -7474,8 +8065,31 @@ public final class RuntimeViewModel {
             : [EvalRemoteTargetOptions(remoteServerID: remoteServerID, remoteModelID: remoteModelID)]
 
         let startedAt = Date()
+        let evaluationTargetText = usesRemoteTarget
+            ? [remoteServerID, remoteModelID].filter { $0.isEmpty == false }.joined(separator: " / ")
+            : modelID
+        let evaluationModeText = selectedEvaluationMode == .compare
+            ? "compare \(compareTargetModelIDs.joined(separator: ","))"
+            : "standard"
+        beginDiagnosticsRunMonitor(
+            stage: .evaluation,
+            title: selectedEvaluationMode == .compare ? "Evaluation Compare" : "Evaluation",
+            targetText: evaluationTargetText,
+            suiteText: suites.joined(separator: ", "),
+            detailText: "\(evaluationModeText) • sample \(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines))"
+        )
+        updateDiagnosticsRunMonitor(
+            stage: .evaluation,
+            stepID: "prepare",
+            detailText: "Preparing evaluation suites"
+        )
         if usesCustomSource == false, let cliWorkflowRunner {
             do {
+                updateDiagnosticsRunMonitor(
+                    stage: .evaluation,
+                    stepID: "run",
+                    detailText: "Running evaluation via CLI workflow"
+                )
                 let payloads = try await cliWorkflowRunner.decodeJSON(
                     [MelixCLIEvaluationRunPayload].self,
                     command: .evalRun(
@@ -7501,6 +8115,14 @@ public final class RuntimeViewModel {
                 )
                 selectedEvaluationHistoryJobID = payloads.first?.job.jobID ?? ""
                 rememberPendingEvaluationResults(payloads)
+                finishDiagnosticsRunMonitor(
+                    stage: .evaluation,
+                    startedAt: startedAt,
+                    jobID: selectedEvaluationHistoryJobID,
+                    metrics: Self.evaluationMonitorMetrics(from: payloads),
+                    artifactText: payloads.first?.job.outputDir ?? "",
+                    detailText: "\(payloads.reduce(0) { $0 + $1.results.count }) result rows"
+                )
                 clearCLIWorkflowFailure()
                 await metrics.record(
                     name: "menu.ops_eval_ms",
@@ -7514,14 +8136,21 @@ public final class RuntimeViewModel {
             } catch {
                 recordCLIWorkflowErrorIfNeeded(error)
                 recordLocalError(String(describing: error))
+                failDiagnosticsRunMonitor(stage: .evaluation, startedAt: startedAt, error: error)
             }
             notifyStateChanged()
             return
         }
         do {
             var evaluationJobID = ""
+            var monitorResults: [ControlPlaneEvaluationResult] = []
             if usesCustomSource == false, let operatorCommandRunner {
                 if selectedEvaluationMode == .compare {
+                    updateDiagnosticsRunMonitor(
+                        stage: .evaluation,
+                        stepID: "run",
+                        detailText: "Running evaluation compare through operator command runner"
+                    )
                     let results = try await operatorCommandRunner.runEvaluationCompare(
                         EvalCompareOptions(
                             modelID: usesRemoteTarget ? "" : modelID,
@@ -7537,8 +8166,14 @@ public final class RuntimeViewModel {
                         )
                     )
                     evaluationJobID = results.first?.job.jobID ?? ""
+                    monitorResults = results
                     rememberPendingEvaluationResults(results)
                 } else {
+                    updateDiagnosticsRunMonitor(
+                        stage: .evaluation,
+                        stepID: "run",
+                        detailText: "Running evaluation through operator command runner"
+                    )
                     let results = try await operatorCommandRunner.runEvaluations(
                         .init(
                             modelID: usesRemoteTarget ? "" : modelID,
@@ -7558,11 +8193,17 @@ public final class RuntimeViewModel {
                         )
                     )
                     evaluationJobID = results.first?.job.jobID ?? ""
+                    monitorResults = results
                     rememberPendingEvaluationResults(results)
                 }
             } else {
                 var results: [ControlPlaneEvaluationResult] = []
                 for suiteID in suites {
+                    updateDiagnosticsRunMonitor(
+                        stage: .evaluation,
+                        stepID: "run",
+                        detailText: "Running \(suiteID)"
+                    )
                     let result = try await client.runEvaluation(
                         makeEvaluationRequest(
                             suiteID: suiteID,
@@ -7579,8 +8220,22 @@ public final class RuntimeViewModel {
                     }
                     results.append(result)
                 }
+                monitorResults = results
                 rememberPendingEvaluationResults(results)
             }
+            updateDiagnosticsRunMonitor(
+                stage: .evaluation,
+                stepID: "score",
+                detailText: "Collecting scores and artifacts"
+            )
+            finishDiagnosticsRunMonitor(
+                stage: .evaluation,
+                startedAt: startedAt,
+                jobID: evaluationJobID,
+                metrics: Self.evaluationMonitorMetrics(from: monitorResults),
+                artifactText: monitorResults.first?.job.outputDir ?? "",
+                detailText: "\(monitorResults.reduce(0) { $0 + $1.results.count }) result rows"
+            )
             await metrics.record(
                 name: "menu.ops_eval_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -7596,6 +8251,7 @@ public final class RuntimeViewModel {
             }
         } catch {
             recordLocalError(String(describing: error))
+            failDiagnosticsRunMonitor(stage: .evaluation, startedAt: startedAt, error: error)
         }
         notifyStateChanged()
     }
@@ -8711,6 +9367,9 @@ public final class RuntimeViewModel {
             latestSnapshot.metrics.values["scheduler.cache_pressure"] = progress.cachePressure
             latestSnapshot.queues.activeRequests = progress.activeRequests
             latestSnapshot.queues.queuedRequests = progress.waitingRequests
+            applyDiagnosticsRequestProgress(progress)
+        case .benchProgress(let progress):
+            applyDiagnosticsBenchmarkProgress(progress)
         case .cacheStats(let cacheStats):
             latestSnapshot.cache = cacheStats.summary
         case .resourcePressure(let resourcePressure):
@@ -11693,6 +12352,9 @@ public final class RuntimeViewModel {
             return "\(modelStateChanged.modelID) -> \(modelStateText(modelStateChanged.state))"
         case .requestProgress(let progress):
             return requestProgressMessage(progress)
+        case .benchProgress(let progress):
+            let suite = progress.suite.isEmpty ? "benchmark" : progress.suite
+            return "\(progress.jobID) \(suite) \(String(format: "%.0f", progress.pct))%"
         case .sessionState(let sessionStateChanged):
             return "Session \(sessionStateChanged.state.sessionID) updated"
         case .cacheStats:

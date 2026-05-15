@@ -577,6 +577,9 @@ public enum MelixCLICommandCodec {
             if options.allowMemoryRisk {
                 arguments.append("--allow-memory-risk")
             }
+            if options.liveProgress == false {
+                arguments.append("--no-live")
+            }
             appendOption("--dataset-ref", value: options.parameters["dataset_ref"], into: &arguments)
             appendOption("--hf-dataset-name", value: options.parameters["hf_dataset_name"], into: &arguments)
             appendOption("--hf-dataset-split", value: options.parameters["hf_dataset_split"], into: &arguments)
@@ -603,6 +606,9 @@ public enum MelixCLICommandCodec {
             appendPositiveUInt32("--duration-seconds", value: options.durationSeconds, into: &arguments)
             if options.allowLargeMatrix {
                 arguments.append("--allow-large-matrix")
+            }
+            if options.liveProgress == false {
+                arguments.append("--no-live")
             }
             json = options.json
         case .benchExportCSV(let options):
@@ -649,6 +655,9 @@ public enum MelixCLICommandCodec {
             if options.allowMemoryRisk {
                 arguments.append("--allow-memory-risk")
             }
+            if options.liveProgress == false {
+                arguments.append("--no-live")
+            }
             json = options.json
         case .evalPromptList(let options):
             arguments = ["eval", "prompt", "list"]
@@ -694,6 +703,9 @@ public enum MelixCLICommandCodec {
                 into: &arguments
             )
             appendEvalParameters(options.parameters, into: &arguments)
+            if options.liveProgress == false {
+                arguments.append("--no-live")
+            }
             json = options.json
         case .evalExportSummaryCSV(let options):
             arguments = ["eval", "export-summary-csv"]
