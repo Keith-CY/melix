@@ -30,6 +30,16 @@ public enum MelixCLICommandCodec {
             return "monitor"
         case .logs:
             return "logs"
+        case .jobsList:
+            return "jobs.list"
+        case .jobsShow:
+            return "jobs.show"
+        case .jobsLogs:
+            return "jobs.logs"
+        case .jobsArtifacts:
+            return "jobs.artifacts"
+        case .jobsCancel:
+            return "jobs.cancel"
         case .debugBundle:
             return "debug.bundle"
         case .estimateImport(let options):
@@ -281,6 +291,29 @@ public enum MelixCLICommandCodec {
             if options.follow {
                 arguments.append("--follow")
             }
+            json = options.json
+        case .jobsList(let options):
+            arguments = ["jobs", "list"]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            json = options.json
+        case .jobsShow(let options):
+            arguments = ["jobs", "show", options.jobID]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            json = options.json
+        case .jobsLogs(let options):
+            arguments = ["jobs", "logs", options.jobID]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            if options.follow {
+                arguments.append("--follow")
+            }
+            json = options.json
+        case .jobsArtifacts(let options):
+            arguments = ["jobs", "artifacts", options.jobID]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
+            json = options.json
+        case .jobsCancel(let options):
+            arguments = ["jobs", "cancel", options.jobID]
+            appendOption("--from", value: options.sourcePath, into: &arguments)
             json = options.json
         case .debugBundle(let options):
             arguments = ["debug", "bundle", options.runID]
