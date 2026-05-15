@@ -480,4 +480,5 @@ def _write_jsonl(path: Path, rows: Any) -> None:
         encode = _JSONL_ENCODER.encode
         write = handle.write
         for row in rows:
-            write(encode(row) + "\n")
+            write(encode(row))
+            write("\n")

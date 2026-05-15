@@ -300,6 +300,12 @@ _CODE_EVAL_PAYLOAD_KEY_TOKENS = {
     key: json.dumps(key, separators=(",", ":")).encode("utf-8")
     for key in (*_CODE_EVAL_PAYLOAD_STRING_KEYS, *_CODE_EVAL_PAYLOAD_INT_KEYS)
 }
+_CODE_EVAL_PAYLOAD_STRING_FIELD_TOKENS = tuple(
+    (key, _CODE_EVAL_PAYLOAD_KEY_TOKENS[key]) for key in _CODE_EVAL_PAYLOAD_STRING_KEYS
+)
+_CODE_EVAL_PAYLOAD_INT_FIELD_TOKENS = tuple(
+    (key, _CODE_EVAL_PAYLOAD_KEY_TOKENS[key]) for key in _CODE_EVAL_PAYLOAD_INT_KEYS
+)
 
 
 _JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
@@ -326,13 +332,13 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
         return None
 
     payload: dict[str, object] = {}
-    for key in _CODE_EVAL_PAYLOAD_STRING_KEYS:
-        value = _extract_json_string_field(payload_bytes, key)
+    for key, key_token in _CODE_EVAL_PAYLOAD_STRING_FIELD_TOKENS:
+        value = _extract_json_string_field_with_token(payload_bytes, key_token)
         if value is not None:
             payload[key] = value
 
-    for key in _CODE_EVAL_PAYLOAD_INT_KEYS:
-        value = _extract_json_int_field(payload_bytes, key)
+    for key, key_token in _CODE_EVAL_PAYLOAD_INT_FIELD_TOKENS:
+        value = _extract_json_int_field_with_token(payload_bytes, key_token)
         if value is None:
             return None
         payload[key] = value
@@ -346,6 +352,10 @@ def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:
     key_token = _CODE_EVAL_PAYLOAD_KEY_TOKENS.get(key)
     if key_token is None:
         key_token = json.dumps(key, separators=(",", ":")).encode("utf-8")
+    return _json_field_value_start_for_token(payload_bytes, key_token)
+
+
+def _json_field_value_start_for_token(payload_bytes: bytes, key_token: bytes) -> int | None:
     key_index = payload_bytes.find(key_token)
     if key_index < 0:
         return None
@@ -366,6 +376,15 @@ def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:
 
 def _extract_json_string_field(payload_bytes: bytes, key: str) -> str | None:
     start = _json_field_value_start(payload_bytes, key)
+    return _extract_json_string_field_at(payload_bytes, start)
+
+
+def _extract_json_string_field_with_token(payload_bytes: bytes, key_token: bytes) -> str | None:
+    start = _json_field_value_start_for_token(payload_bytes, key_token)
+    return _extract_json_string_field_at(payload_bytes, start)
+
+
+def _extract_json_string_field_at(payload_bytes: bytes, start: int | None) -> str | None:
     if start is None or payload_bytes[start] != ord('"'):
         return None
     cursor = start + 1
@@ -383,6 +402,15 @@ def _extract_json_string_field(payload_bytes: bytes, key: str) -> str | None:
 
 def _extract_json_int_field(payload_bytes: bytes, key: str) -> int | None:
     start = _json_field_value_start(payload_bytes, key)
+    return _extract_json_int_field_at(payload_bytes, start)
+
+
+def _extract_json_int_field_with_token(payload_bytes: bytes, key_token: bytes) -> int | None:
+    start = _json_field_value_start_for_token(payload_bytes, key_token)
+    return _extract_json_int_field_at(payload_bytes, start)
+
+
+def _extract_json_int_field_at(payload_bytes: bytes, start: int | None) -> int | None:
     if start is None:
         return None
     cursor = start
