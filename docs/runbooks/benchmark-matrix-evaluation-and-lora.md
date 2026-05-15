@@ -176,6 +176,42 @@ Notes:
   probes for faster cell-level regression triage
 - matrix runs persist under `<jobs_root>/bench/matrix-runs/<job_id>/`
 
+## Inspect Durable Jobs
+
+Benchmark, matrix, and evaluation runs that persist `run-record.json` entries
+are visible through the durable jobs surface. Completed LoRA training jobs are
+also visible when they persist the standard
+`jobs/model-ops/train_lora/<job-id>/train_lora.adapter.json` manifest. Use this
+namespace when you need one operator contract for status, logs, cancellation,
+and artifact discovery across long-running workflows:
+
+```bash
+swift run melix jobs list
+swift run melix jobs list --json
+
+swift run melix jobs show <job-id> --json
+swift run melix jobs logs <job-id> --follow
+swift run melix jobs artifacts <job-id> --json
+```
+
+`jobs show --json` reports the job status, phase, timestamps, error payload,
+log path, artifact paths, and cancellation state. `jobs logs --follow` uses the
+same redacted diagnostics log snapshot as `melix logs`, so failed jobs still
+preserve inspectable logs.
+
+Active jobs can be cancelled through a durable local request file:
+
+```bash
+swift run melix jobs cancel <job-id> --json
+```
+
+For active run-record jobs with a persisted process ID, Melix sends a
+termination signal and writes `cancel-request.json` beside the run record. For
+model-ops LoRA manifests, cancellation state is stored beside the adapter
+manifest. For terminal jobs, Melix returns a non-mutating response that
+explains the job is no longer cancelable. Future async workers should poll the
+same request file rather than inventing a second cancellation contract.
+
 ## Run An Evaluation Suite
 
 Use `eval run` for quality-style checks over repository-owned evaluation suites.
