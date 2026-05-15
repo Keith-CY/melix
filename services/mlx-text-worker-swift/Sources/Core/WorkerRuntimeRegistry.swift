@@ -146,7 +146,7 @@ actor WorkerRuntimeRegistry {
         cache.supportsPrefixCache = true
         cache.supportsPagedCache = true
         cache.supportsDiskCache = false
-        cache.kvQuantProfiles = ["q4", "q8"]
+        cache.kvQuantProfiles = ActiveKVQuantizationProfiles.supportedProfiles
         cache.supportsBoundarySnapshots = false
         cache.supportedModes = CacheModePolicy.supportedModes
         cache.experimentalModes = CacheModePolicy.experimentalModes
@@ -173,7 +173,7 @@ actor WorkerRuntimeRegistry {
         activeKV.name = "active_kv_quantized"
         activeKV.metadata = [
             "value": supportsActiveKVQuantization() ? "yes" : "no",
-            "profiles": "q4,q8"
+            "profiles": ActiveKVQuantizationProfiles.supportedProfiles.joined(separator: ",")
         ]
 
         capabilities.ext = [ext, acceleratedPrefill, sparsePrefill, activeKV]
