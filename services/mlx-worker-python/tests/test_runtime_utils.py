@@ -288,7 +288,11 @@ def test_top_level_weight_file_bytes_streams_iterdir_entries(
         log.append("scandir")
         return original_scandir(path)
 
+    def fail_splitext(path: str):  # pragma: no cover - must stay uncalled for this regression
+        raise AssertionError("top-level weight scan should avoid splitext allocation")
+
     monkeypatch.setattr(runtime_utils.Path, "iterdir", fail_iterdir)
+    monkeypatch.setattr(runtime_utils.os.path, "splitext", fail_splitext)
     monkeypatch.setattr(runtime_utils.os, "scandir", tracked_scandir)
 
     assert runtime_utils._top_level_weight_file_bytes(bundle) == len(b"weightsadapter-bytes")
@@ -324,6 +328,7 @@ def test_top_level_weight_file_bytes_handles_direntry_non_files_and_errors() -> 
             return FakeStat()
 
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("README.md")) == 0
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry(".bin")) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("nested.safetensors", is_file=False)) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("broken.safetensors", is_file_raises=True)) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("missing.safetensors", stat_raises=True)) == 0
@@ -377,7 +382,10 @@ def test_estimate_model_weight_resident_bytes_handles_file_missing_and_stat_erro
 ) -> None:
     weight_file = tmp_path / "model.safetensors"
     weight_file.write_bytes(b"abc")
+    suffix_only = tmp_path / ".bin"
+    suffix_only.write_bytes(b"suffix-only")
     assert runtime_utils.estimate_model_weight_resident_bytes(str(weight_file)) == 3
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(suffix_only)) == 0
     assert runtime_utils.estimate_model_weight_resident_bytes(str(tmp_path / "missing")) == 0
 
     original_stat = runtime_utils.Path.stat
