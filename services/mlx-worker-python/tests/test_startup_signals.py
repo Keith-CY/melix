@@ -139,6 +139,18 @@ def test_compare_versions_identical_clean_values_skip_part_parsing(
     assert compare_versions(" v1.2.3+build ", "v1.2.3+build") == 0
 
 
+def test_compare_versions_v_prefix_equivalent_values_skip_part_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_next_part(value: str, index: int):  # pragma: no cover - sentinel
+        raise AssertionError(f"compare_versions parsed v-prefix equivalent values for {value} at {index}")
+
+    monkeypatch.setattr(startup_signals_module, "_next_normalized_version_part", fail_next_part)
+
+    assert compare_versions("v1.2.3+build", "1.2.3+build") == 0
+    assert compare_versions("2.10.0", "v2.10.0") == 0
+
+
 def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
