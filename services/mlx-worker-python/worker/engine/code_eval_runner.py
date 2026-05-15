@@ -382,11 +382,12 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
                 search_start = value_start + len(value) + 1
             continue
 
-        value = _extract_json_int_field_at(payload_bytes, value_start)
-        if value is None:
+        int_result = _extract_json_int_field_value_and_end(payload_bytes, value_start)
+        if int_result is None:
             return None
+        value, value_end = int_result
         payload[key] = value
-        search_start = value_start + len(str(value))
+        search_start = value_end
 
     if _code_eval_payload_has_required_string_fields(payload):
         return payload
@@ -461,6 +462,17 @@ def _extract_json_int_field_with_token(payload_bytes: bytes, key_token: bytes) -
 
 
 def _extract_json_int_field_at(payload_bytes: bytes, start: int | None) -> int | None:
+    result = _extract_json_int_field_value_and_end(payload_bytes, start)
+    if result is None:
+        return None
+    value, _end = result
+    return value
+
+
+def _extract_json_int_field_value_and_end(
+    payload_bytes: bytes,
+    start: int | None,
+) -> tuple[int, int] | None:
     if start is None:
         return None
     cursor = start
@@ -482,7 +494,7 @@ def _extract_json_int_field_at(payload_bytes: bytes, start: int | None) -> int |
         cursor += 1
     if digit_count == 0:
         return None
-    return sign * value
+    return sign * value, cursor
 
 
 def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
