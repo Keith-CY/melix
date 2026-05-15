@@ -17,6 +17,7 @@ from worker.model_ops.adapter_capabilities import (
     AdapterCapabilityRegistry,
 )
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops import adapter_activation_pipeline as adapter_activation_pipeline_module
 from worker.model_ops import mlx_lm_runner as mlx_lm_runner_module
 from worker.model_ops import training_config as training_config_module
 
@@ -182,6 +183,17 @@ def test_quantization_helpers_report_path_hints_and_legacy_boolean() -> None:
 
     assert training_config_module._base_quantization_method(source_model) == "path_hint"
     assert training_config_module._is_quantized_base_model(source_model) is True
+
+
+def test_adapter_activation_manifest_capabilities_preserve_defaults_for_null_values() -> None:
+    assert adapter_activation_pipeline_module._manifest_adapter_capabilities(
+        {"adapter_capabilities": {"mergeable": "false", "relora_compatible": None}}
+    ) == {
+        "lora_like": True,
+        "mergeable": False,
+        "relora_compatible": True,
+        "quantized_base_supported": True,
+    }
 
 
 def test_mlx_lora_namespace_forwards_extension_loader_kwargs(tmp_path: Path) -> None:

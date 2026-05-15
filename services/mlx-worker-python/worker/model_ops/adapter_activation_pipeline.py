@@ -328,9 +328,8 @@ def _manifest_adapter_capabilities(manifest: dict[str, Any]) -> dict[str, bool]:
     if not isinstance(raw_capabilities, dict):
         return defaults
     capabilities = dict(defaults)
-    for key in defaults:
+    for key, default in defaults.items():
         if key not in raw_capabilities:
             continue
-        value = raw_capabilities.get(key)
-        capabilities[key] = value if isinstance(value, bool) else str(value).strip().lower() in {"1", "true", "yes", "on"}
+        capabilities[key] = _manifest_bool(raw_capabilities, key, default=default)
     return capabilities
