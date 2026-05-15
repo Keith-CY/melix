@@ -19,6 +19,14 @@ boolean semantics introduced by the earlier mode-check fast path. The focused
 regression asserts that policy instances remain slotted and still expose the
 same no-op reason and telemetry behavior.
 
+## 2026-05-15 no-op reason field follow-up
+
+This follow-up keeps the registered `probe-policy-noop-overhead` scope and
+extends the same no-op overhead probe to measure `no_op_reason` access. The hot
+path now materializes `no_op_reason` once during immutable policy construction,
+matching the existing cached boolean fields and avoiding repeated f-string work
+when disabled probe paths report their no-op reason.
+
 ## Registered performance probe
 
 The affected path is covered by the registered PR-scoped probe
@@ -28,6 +36,8 @@ reports:
 
 - `no_op_policy_check_call_ms_mean`
 - `no_op_policy_check_overhead_pct`
+- `no_op_reason_call_ms_mean`
+- `no_op_reason_overhead_pct`
 - `no_op_recorder_overhead_pct`
 - `threshold_passed`
 
