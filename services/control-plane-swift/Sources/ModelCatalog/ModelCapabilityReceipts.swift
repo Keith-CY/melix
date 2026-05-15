@@ -431,7 +431,7 @@ public enum ModelCapabilityReceipts {
 
         let dropFlagValid = ["absent", "true", "false"].contains(receipt.dropFlagState)
         let layersConsistent = receipt.configuredLayers == 0 || receipt.configuredLayers == receipt.indexedLayers
-        if receipt.configured, (!dropFlagValid || !layersConsistent || ext["melix.speculative_head.metadata_inconsistent"] == "true") {
+        if receipt.configured, (!dropFlagValid || !layersConsistent || parseBool(ext["melix.speculative_head.metadata_inconsistent"]) == true) {
             receipt.state = .capabilityMetadataInconsistent
             receipt.unsupportedReason = .unsupportedReasonMetadataInconsistent
             receipt.artifactAvailable = false

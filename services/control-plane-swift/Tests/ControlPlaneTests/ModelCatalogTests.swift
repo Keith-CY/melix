@@ -120,8 +120,9 @@ struct ModelCatalogTests {
         model.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
         model.settings.ext["melix.speculative_head.configured"] = "true"
         model.settings.ext["melix.speculative_head.configured_layers"] = "4"
-        model.settings.ext["melix.speculative_head.indexed_layers"] = "2"
+        model.settings.ext["melix.speculative_head.indexed_layers"] = "4"
         model.settings.ext["melix.speculative_head.drop_flag_state"] = "false"
+        model.settings.ext["melix.speculative_head.metadata_inconsistent"] = "enabled"
 
         let invalidDraft = ModelCapabilityReceipts.validateAcceleration(
             model: model,

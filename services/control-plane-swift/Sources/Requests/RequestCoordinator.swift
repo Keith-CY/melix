@@ -434,6 +434,11 @@ private struct SchedulingPlan: Sendable {
     let accelerationRefusal: AccelerationReceiptValidation?
 }
 
+private struct ModelAccelerationResolution: Sendable {
+    let request: TranslatedChatRequest
+    let accelerationRefusal: AccelerationReceiptValidation?
+}
+
 private struct StructuredOutputValidationEvent: Sendable {
     let event: Melix_Worker_V1_ExecuteEvent
     let didValidate: Bool
@@ -1571,8 +1576,9 @@ public actor RequestCoordinator {
         _ translatedRequest: TranslatedChatRequest
     ) async -> SchedulingPlan {
         let recoveredRequest = await resolvedRecoveryRequest(translatedRequest)
-        let request = await resolvedModelAccelerationRequest(recoveredRequest)
-        let accelerationRefusal = await accelerationRefusal(for: request)
+        let accelerationResolution = await resolvedModelAccelerationRequest(recoveredRequest)
+        let request = accelerationResolution.request
+        let accelerationRefusal = accelerationResolution.accelerationRefusal
         let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
         let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
         let phaseAwareEligible = await canUsePhaseAwareExecution(
@@ -1736,12 +1742,15 @@ public actor RequestCoordinator {
 
     private func resolvedModelAccelerationRequest(
         _ translatedRequest: TranslatedChatRequest
-    ) async -> TranslatedChatRequest {
+    ) async -> ModelAccelerationResolution {
         guard
             let modelCatalog,
             let model = await modelCatalog.model(id: translatedRequest.modelID)
         else {
-            return translatedRequest
+            return ModelAccelerationResolution(
+                request: translatedRequest,
+                accelerationRefusal: nil
+            )
         }
 
         var workerRequest = translatedRequest.workerRequest
@@ -1794,46 +1803,38 @@ public actor RequestCoordinator {
         let requestedMode = ModelCapabilityReceipts.controlPlaneAccelerationMode(
             from: workerRequest.execution.acceleration.mode
         )
-        let receipt = ModelCapabilityReceipts.accelerationReceipt(
-            for: model,
-            requestedMode: requestedMode,
-            draftModelID: workerRequest.execution.acceleration.draftModelID
-        )
+        let receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt
+        let accelerationRefusal: AccelerationReceiptValidation?
+        if requestedMode == .baseline || requestedMode == .unspecified {
+            receipt = ModelCapabilityReceipts.accelerationReceipt(
+                for: model,
+                requestedMode: requestedMode,
+                draftModelID: workerRequest.execution.acceleration.draftModelID
+            )
+            accelerationRefusal = nil
+        } else {
+            let validation = ModelCapabilityReceipts.validateAcceleration(
+                model: model,
+                requestedMode: requestedMode,
+                draftModelID: workerRequest.execution.acceleration.draftModelID
+            )
+            receipt = validation.receipt
+            accelerationRefusal = validation.ok ? nil : validation
+        }
         workerRequest.execution.ext.merge(
             ModelCapabilityReceipts.accelerationAuditMetadata(receipt),
             uniquingKeysWith: { _, receiptValue in receiptValue }
         )
 
-        return TranslatedChatRequest(
-            requestID: translatedRequest.requestID,
-            modelID: translatedRequest.modelID,
-            workerRequest: workerRequest,
-            stream: translatedRequest.stream
+        return ModelAccelerationResolution(
+            request: TranslatedChatRequest(
+                requestID: translatedRequest.requestID,
+                modelID: translatedRequest.modelID,
+                workerRequest: workerRequest,
+                stream: translatedRequest.stream
+            ),
+            accelerationRefusal: accelerationRefusal
         )
-    }
-
-    private func accelerationRefusal(
-        for translatedRequest: TranslatedChatRequest
-    ) async -> AccelerationReceiptValidation? {
-        guard
-            let modelCatalog,
-            let model = await modelCatalog.model(id: translatedRequest.modelID)
-        else {
-            return nil
-        }
-        let requestedMode = ModelCapabilityReceipts.controlPlaneAccelerationMode(
-            from: translatedRequest.workerRequest.execution.acceleration.mode
-        )
-        guard requestedMode != .baseline, requestedMode != .unspecified else {
-            return nil
-        }
-
-        let validation = ModelCapabilityReceipts.validateAcceleration(
-            model: model,
-            requestedMode: requestedMode,
-            draftModelID: translatedRequest.workerRequest.execution.acceleration.draftModelID
-        )
-        return validation.ok ? nil : validation
     }
 
     private func isContinuousBatchEligible(
