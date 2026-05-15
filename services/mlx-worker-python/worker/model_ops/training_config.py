@@ -1046,8 +1046,8 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
         cache = {}
         profile[_NORMALIZED_TARGET_MODULES_CACHE_KEY] = cache
     cached_targets = cache.get(raw_value)
-    if cached_targets is not None:
-        return cached_targets
+    if isinstance(cached_targets, tuple):
+        return list(cached_targets)
 
     presets = profile.get(_NORMALIZED_TARGET_MODULE_PRESETS_KEY)
     if not isinstance(presets, dict):
@@ -1069,9 +1069,9 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
             if expanded_target not in seen:
                 seen.add(expanded_target)
                 resolved_targets.append(expanded_target)
-    result = resolved_targets if requested_found else list(default_targets)
-    cache[raw_value] = result
-    return result
+    resolved_tuple = tuple(resolved_targets) if requested_found else default_targets
+    cache[raw_value] = resolved_tuple
+    return list(resolved_tuple)
 
 
 def _reject_unsafe_quantized_lora_targets(
