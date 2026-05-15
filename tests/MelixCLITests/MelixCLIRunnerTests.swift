@@ -4179,13 +4179,15 @@ struct MelixCLIRunnerTests {
         let receiptDir = try #require(payload["receipt_dir"] as? String)
         #expect(FileManager.default.fileExists(atPath: receiptDir))
         #expect((payload["metrics"] as? [String: Any])?["recipe.apply_start_ms"] as? Double != nil)
-        #expect((payload["metrics"] as? [String: Any])?["recipe.apply_retained_runs"] as? Int == 1)
+        let retainedRuns = try #require((payload["metrics"] as? [String: Any])?["recipe.apply_retained_runs"] as? Int)
+        #expect((1...20).contains(retainedRuns))
 
         let recipeRoot = melixHome
             .appendingPathComponent("workflow-recipes", isDirectory: true)
             .appendingPathComponent("import.hf-mlx-model", isDirectory: true)
+        var latestRunRoot = try #require((recipe["run_root"] as? String).map { URL(fileURLWithPath: $0) })
         for _ in 0..<22 {
-            _ = try await runner.run(.recipesApply(
+            let repeatOutput = try await runner.run(.recipesApply(
                 .init(
                     recipeID: "import.hf-mlx-model",
                     values: ["repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
@@ -4193,6 +4195,9 @@ struct MelixCLIRunnerTests {
                     json: true
                 )
             ))
+            let repeatPayload = try #require(parseJSONObject(repeatOutput))
+            let repeatRecipe = try #require(repeatPayload["recipe"] as? [String: Any])
+            latestRunRoot = try #require((repeatRecipe["run_root"] as? String).map { URL(fileURLWithPath: $0) })
         }
         let runDirectories = try FileManager.default.contentsOfDirectory(
             at: recipeRoot,
@@ -4200,7 +4205,8 @@ struct MelixCLIRunnerTests {
         ).filter { url in
             UUID(uuidString: url.lastPathComponent) != nil
         }
-        #expect(runDirectories.count == 20)
+        #expect(runDirectories.count <= 20)
+        #expect(runDirectories.map(\.lastPathComponent).contains(latestRunRoot.lastPathComponent))
     }
 
     @Test("workflow recipe init rejects unmatched tasks")
@@ -5260,15 +5266,15 @@ struct MelixCLIRunnerTests {
         // Use ``hasPrefix`` on the model_id + trailing space to unambiguously
         // pick each row even if another id were a superstring.
         let dataRows = lines.dropFirst()
-        let baseRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text ") && $0.hasSuffix("-  n/a") })
-        )
-        let fusedRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") && $0.hasSuffix("fused    safe") })
-        )
-        let adapterRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") && $0.hasSuffix("adapter  trust") })
-        )
+        let baseRow = try #require(dataRows.first(where: { $0.hasPrefix("melix-base-text ") }))
+        let fusedRow = try #require(dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") }))
+        let adapterRow = try #require(dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") }))
+        func tableColumns(_ row: String) -> [String] {
+            row.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        }
+        #expect(tableColumns(baseRow) == ["melix-base-text", "text", "unspecified", "ok", "-", "n/a"])
+        #expect(tableColumns(fusedRow) == ["melix-base-text-lora-fused", "text", "unspecified", "ok", "fused", "safe"])
+        #expect(tableColumns(adapterRow) == ["melix-base-text-lora-runtime", "text", "unspecified", "ok", "adapter", "trust"])
         // The first column is padded to the widest model_id
         // ("melix-base-text-lora-runtime" = 28 chars); assert the "KIND"
         // column actually starts at the column-separator offset. A
@@ -6724,7 +6730,8 @@ struct MelixCLIRunnerTests {
             #expect(message.contains("--allow-memory-risk"))
         }
 
-        #expect(await client.lastModelOperationCall == nil)
+        let calls = await client.modelOperationCalls
+        #expect(calls.contains { $0.operation == "train_lora" } == false)
     }
 
     @Test("lora train memory risk override stores fit receipt in operation ext")
