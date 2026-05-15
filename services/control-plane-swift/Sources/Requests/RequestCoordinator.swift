@@ -316,6 +316,11 @@ private enum CacheRouteClass: String, Sendable {
 private let boundarySafePrefillChunkTargetTokens: UInt32 = 16
 private let workerDispatchReadinessCacheTTLSeconds: TimeInterval = 5
 private let defaultActiveKVQuantProfile = "turboquant-q4"
+private let activeKVQuantProfiles: Set<String> = [
+    defaultActiveKVQuantProfile,
+    "q4",
+    "q8",
+]
 
 private struct GatewayBatchingExecutionDefaults: Sendable {
     let concurrentProcessingEnabled: Bool
@@ -1777,9 +1782,9 @@ public actor RequestCoordinator {
         switch workerRequest.execution.acceleration.mode {
         case .activeKvQuantized:
             if workerRequest.execution.acceleration.activeKvQuantProfile.isEmpty {
-                workerRequest.execution.acceleration.activeKvQuantProfile = model.settings.accelerationProfileID.isEmpty
-                    ? defaultActiveKVQuantProfile
-                    : model.settings.accelerationProfileID
+                workerRequest.execution.acceleration.activeKvQuantProfile = activeKVQuantProfile(
+                    from: model.settings.accelerationProfileID
+                )
             }
         case .acceleratedPrefill, .sparsePrefill:
             if workerRequest.execution.acceleration.prefillHint.isEmpty {
@@ -1795,6 +1800,18 @@ public actor RequestCoordinator {
             workerRequest: workerRequest,
             stream: translatedRequest.stream
         )
+    }
+
+    private func activeKVQuantProfile(from rawProfileID: String) -> String {
+        let normalized = rawProfileID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        if activeKVQuantProfiles.contains(normalized),
+           ServingAccelerationProfiles.normalizeProfileID(normalized) == nil {
+            return normalized
+        }
+        return defaultActiveKVQuantProfile
     }
 
     private func isContinuousBatchEligible(

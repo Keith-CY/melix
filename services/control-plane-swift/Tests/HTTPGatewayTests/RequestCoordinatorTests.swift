@@ -3496,6 +3496,78 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("serving profile IDs do not replace the active KV quant profile")
+    func servingProfileIDsDoNotReplaceActiveKVQuantProfile() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .activeKvQuantized
+        textModel.settings.accelerationProfileID = "balanced"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-model-active-kv-serving-profile-balanced",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.profileID == "balanced")
+        #expect(prefillRequest.execution.acceleration.activeKvQuantProfile == "turboquant-q4")
+        #expect(decodeRequest.execution.acceleration.profileID == "balanced")
+        #expect(decodeRequest.execution.acceleration.activeKvQuantProfile == "turboquant-q4")
+
+        await workerClient.finish(requestID: "req-model-active-kv-serving-profile-balanced")
+        _ = await consumer.result
+    }
+
+    @Test("explicit active KV quant profile IDs remain supported")
+    func explicitActiveKVQuantProfileIDsRemainSupported() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .activeKvQuantized
+        textModel.settings.accelerationProfileID = "q8"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-model-active-kv-explicit-q8",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.activeKvQuantProfile == "q8")
+        #expect(decodeRequest.execution.acceleration.activeKvQuantProfile == "q8")
+
+        await workerClient.finish(requestID: "req-model-active-kv-explicit-q8")
+        _ = await consumer.result
+    }
+
 }
 
 private actor BlockingWorkerClient: WorkerRoutingClient {

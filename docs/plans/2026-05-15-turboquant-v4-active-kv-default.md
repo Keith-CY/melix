@@ -9,6 +9,9 @@ profile instead of silently falling back to affine q4 cache quantization.
 
 - Keep affine `q4` available for explicit comparison probes.
 - Make empty active-KV profile requests normalize to `turboquant-q4`.
+- Keep named serving acceleration profile IDs separate from active-KV quant
+  profile IDs; serving profiles such as `balanced` must not become worker
+  `activeKvQuantProfile` values.
 - Advertise `turboquant-q4` in worker active-KV capabilities.
 - Preserve the existing fused-route source of truth:
   `active_kv_kernel_path != fallback`,
@@ -34,6 +37,8 @@ profile instead of silently falling back to affine q4 cache quantization.
 - Empty active-KV profile normalizes to `turboquant-q4`.
 - The worker advertises `turboquant-q4` as the first active-KV profile.
 - Explicit `q4` remains an affine profile and still reports q4 memory ratio.
+- Explicit active-KV quant profile IDs such as `q8` remain supported, while
+  named serving acceleration profiles fall back to the default quant profile.
 - Existing TurboQuant fused-route tests continue to prove route promotion only
   after a real fused attention dispatch.
 - `scripts/phase2_metrics_report.py --require-fused-turboquant` remains the
