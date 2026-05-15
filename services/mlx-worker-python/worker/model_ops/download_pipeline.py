@@ -67,9 +67,10 @@ class DownloadPipeline:
                 ext=ext,
             )
 
-        output_path = output_dir / "download.artifact"
-        partial_path = output_dir / "download.artifact.partial"
-        state_path = output_dir / "download.state.json"
+        output_filename = self._output_filename(ext)
+        output_path = output_dir / output_filename
+        partial_path = output_dir / f"{output_filename}.partial"
+        state_path = output_dir / self._state_filename(ext=ext, output_filename=output_filename)
         source_path = self._resolve_source_path(
             request=request,
             output_dir=output_dir,
@@ -82,6 +83,7 @@ class DownloadPipeline:
         max_retries = max(0, self._int(ext.get("max_retries"), default=1))
         fail_after_bytes = max(0, self._int(ext.get("test_fail_after_bytes"), default=0))
         remaining_failures = max(0, self._int(ext.get("test_failures_before_success"), default=0))
+        cancel_after_bytes = max(0, self._int(ext.get("test_cancel_after_bytes"), default=0))
         stall_after_bytes = max(0, self._int(ext.get("test_stall_after_bytes"), default=0))
         stall_elapsed_ms = max(0, self._int(ext.get("test_stall_elapsed_ms"), default=0))
         stall_timeout_ms = max(1, self._int(ext.get("stall_timeout_ms"), default=30_000))
@@ -187,6 +189,29 @@ class DownloadPipeline:
                                         stall_reason="",
                                     )
                                 )
+                            if cancel_after_bytes and downloaded_bytes >= cancel_after_bytes:
+                                terminal_json = self._terminal_manifest_json(
+                                    self._build_manifest_payload(
+                                        manifest_context=manifest_context,
+                                        status="cancelled",
+                                        terminal_state="cancelled",
+                                        stage="download",
+                                        pct=0.0 if total_bytes == 0 else downloaded_bytes / total_bytes,
+                                        downloaded_bytes=downloaded_bytes,
+                                        total_bytes=total_bytes,
+                                        retry_count=retry_count,
+                                        resume_used=resume_used,
+                                        resume_from_bytes=resume_from_bytes,
+                                        stall_detection_count=stall_detection_count,
+                                        stall_reason="",
+                                    ),
+                                    status="cancelled",
+                                )
+                                raise ModelOperationError(
+                                    code="download_cancelled",
+                                    message="Download was cancelled before completion.",
+                                    details={"state_json": terminal_json},
+                                )
 
                 os.replace(os.fspath(partial_path), os.fspath(output_path))
                 snapshots.append(
@@ -285,6 +310,18 @@ class DownloadPipeline:
             if mirror:
                 return mirror
         return "https://huggingface.co"
+
+    @staticmethod
+    def _output_filename(ext: dict[str, str]) -> str:
+        raw_name = ext.get("output_filename", "").strip() or "download.artifact"
+        name = Path(raw_name).name
+        return name or "download.artifact"
+
+    @staticmethod
+    def _state_filename(*, ext: dict[str, str], output_filename: str) -> str:
+        if not ext.get("output_filename", "").strip():
+            return "download.state.json"
+        return f"{output_filename}.state.json"
 
     @staticmethod
     def _resolve_source_path(
@@ -591,6 +628,8 @@ class DownloadPipeline:
             payload["terminal_state"] = "failed"
         elif status == "stalled":
             payload["terminal_state"] = "stalled"
+        elif status == "cancelled":
+            payload["terminal_state"] = "cancelled"
         return DownloadPipeline._write_manifest_json(Path(str(payload["state_path"])), payload)
 
     @staticmethod
