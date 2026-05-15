@@ -185,7 +185,7 @@ struct ProductInstallStateTests {
         let diagnostic = try #require(provider.startupFailureDiagnostic(for: MenuBarTestError(description: "handshake failed")))
 
         #expect(diagnostic.classification == "host_port_conflict")
-        #expect(diagnostic.userMessage.contains("11434"))
+        #expect(diagnostic.userMessage.contains("12436"))
         #expect(diagnostic.userMessage.contains(controlPlaneStderrURL.path))
     }
 
@@ -256,7 +256,7 @@ struct ProductInstallStateTests {
         let diagnostic = try #require(provider.startupFailureDiagnostic(for: MenuBarTestError(description: "handshake failed")))
 
         #expect(diagnostic.classification == "startup_hang")
-        #expect(diagnostic.userMessage.contains("http://127.0.0.1:11434/v1/models"))
+        #expect(diagnostic.userMessage.contains("http://127.0.0.1:12436/v1/models"))
         #expect(diagnostic.userMessage.contains(temporaryRoot.path))
         #expect(diagnostic.detail == "still booting")
     }
@@ -288,8 +288,8 @@ private func writeManifest(
     to url: URL,
     productVersion: String = "0.1.0",
     updateChannelPath: String? = nil,
-    readyProbeURL: String = "http://127.0.0.1:11434/v1/models",
-    httpPort: Int = 11434,
+    readyProbeURL: String = "http://127.0.0.1:12436/v1/models",
+    httpPort: Int = 12436,
     logsDirectoryPath: String,
     controlPlaneStdoutPath: String? = nil,
     controlPlaneStderrPath: String? = nil,

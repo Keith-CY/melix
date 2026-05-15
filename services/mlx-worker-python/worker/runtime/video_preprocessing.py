@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 
@@ -138,17 +137,24 @@ def _parse_video_reference(reference: str) -> ParsedVideoReference:
     if parsed.scheme in {"http", "https", "file"}:
         parsed_path = parsed.path
         decoded_path = parsed_path if "%" not in parsed_path else unquote(parsed_path)
-        path = Path(decoded_path)
+        path_name, path_suffix = _path_name_and_suffix(decoded_path)
     else:
         decoded_path = reference
-        path = Path(reference)
+        path_name, path_suffix = _path_name_and_suffix(reference)
     return ParsedVideoReference(
         raw=reference,
         scheme=parsed.scheme,
         decoded_path=decoded_path,
-        path_name=path.name,
-        path_suffix=path.suffix.lstrip(".").lower(),
+        path_name=path_name,
+        path_suffix=path_suffix,
     )
+
+
+def _path_name_and_suffix(path: str) -> tuple[str, str]:
+    path_name = path.rstrip("/").rsplit("/", 1)[-1]
+    dot_index = path_name.rfind(".")
+    path_suffix = path_name[dot_index + 1 :].lower() if 0 < dot_index < len(path_name) - 1 else ""
+    return path_name, path_suffix
 
 
 def _validate_video_uri(reference: str | ParsedVideoReference) -> None:

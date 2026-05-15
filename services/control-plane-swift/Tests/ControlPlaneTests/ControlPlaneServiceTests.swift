@@ -555,7 +555,7 @@ struct ControlPlaneServiceTests {
         #expect(response.ok)
         #expect(listener.servedModelID == "")
         #expect(listener.requestedHost == "127.0.0.1")
-        #expect(listener.requestedPort == 11_434)
+        #expect(listener.requestedPort == UInt32(MelixGatewayDefaults.port))
     }
 
     @Test("execute rejects gateway config target mismatches and typed payload validation failures")

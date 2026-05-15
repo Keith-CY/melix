@@ -55,7 +55,7 @@ def make_layout(tmp_path: Path):
         gateway_config_store_path=tmp_path / "home/config/gateway-config.json",
         gateway_serving_defaults_store_path=tmp_path / "home/config/gateway-serving-defaults.json",
         image_defaults_store_path=tmp_path / "home/config/image-defaults.json",
-        http_port="11434",
+        http_port="12436",
         python_backend_mode="deterministic",
         swift_text_worker_backend_mode="deterministic",
         python_bridge_executable=None,

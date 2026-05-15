@@ -51,7 +51,7 @@ bash scripts/dev_app_up.sh
 3. Check model visibility through the control plane.
 
 ```bash
-curl -sS http://127.0.0.1:11434/v1/models
+curl -sS http://127.0.0.1:12436/v1/models
 ```
 
 4. Inspect the runtime directory and logs when startup fails.

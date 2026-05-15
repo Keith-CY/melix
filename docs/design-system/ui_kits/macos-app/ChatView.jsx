@@ -130,7 +130,7 @@ function ChatInspector() {
     <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto', height: '100%' }}>
       <GroupBox title="Session">
         <div style={{ fontSize: 12, fontWeight: 600, color: T2.fgPrimary, marginBottom: 4 }}>running</div>
-        <div style={{ fontSize: 10, fontFamily: T2.fontMono, color: T2.fgTertiary }}>http://localhost:11434</div>
+        <div style={{ fontSize: 10, fontFamily: T2.fontMono, color: T2.fgTertiary }}>http://localhost:12436</div>
       </GroupBox>
       <GroupBox title="Analysis Routes">
         {[
