@@ -421,9 +421,11 @@ def _extract_structured_result_payload(stdout: str) -> dict[str, object] | None:
         prefix_index = stdout.rfind(prefix, 0, search_end)
         if prefix_index < 0:
             return None
-        if prefix_index > 0 and stdout[prefix_index - 1] not in {"\n", "\r"}:
-            search_end = prefix_index
-            continue
+        if prefix_index > 0:
+            previous_character = stdout[prefix_index - 1]
+            if previous_character != "\n" and previous_character != "\r":
+                search_end = prefix_index
+                continue
         line_end = len(stdout)
         newline_index = stdout.find("\n", prefix_index)
         carriage_index = stdout.find("\r", prefix_index)
@@ -442,9 +444,10 @@ def _mlx_lora_namespace(request: TrainingRequest):
         train=True,
         data=str(request.normalized_dataset_dir),
         model=str(request.model_path),
-        fine_tune_type=(
-            "dora" if request.config.adapter_algorithm == "dora" else "lora"
-        ),
+        fine_tune_type=request.config.adapter_algorithm,
+        adapter_family=request.config.adapter_family,
+        adapter_capabilities=dict(request.config.adapter_capabilities),
+        adapter_loader_kwargs=dict(request.config.adapter_loader_kwargs),
         optimizer="adam",
         optimizer_config={"adam": {}, "adamw": {}, "muon": {}, "sgd": {}, "adafactor": {}},
         num_layers=request.config.num_layers,
