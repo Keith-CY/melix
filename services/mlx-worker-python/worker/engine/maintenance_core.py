@@ -76,11 +76,12 @@ class ImmutableBenchmarkTokens(list[str]):
 
 
 class ShapedBenchmarkPrompt(str):
-    __slots__ = ("_tokens",)
+    __slots__ = ("_tokens", "token_count")
 
     def __new__(cls, value: str, tokens: tuple[str, ...]) -> ShapedBenchmarkPrompt:
         prompt = str.__new__(cls, value)
         prompt._tokens = tokens
+        prompt.token_count = len(tokens)
         return prompt
 
     def split(self, sep: str | None = None, maxsplit: int = -1) -> list[str]:
@@ -92,10 +93,6 @@ class ShapedBenchmarkPrompt(str):
     @property
     def tokens(self) -> tuple[str, ...]:
         return self._tokens
-
-    @property
-    def token_count(self) -> int:
-        return len(self._tokens)
 
 
 @dataclass(frozen=True)
