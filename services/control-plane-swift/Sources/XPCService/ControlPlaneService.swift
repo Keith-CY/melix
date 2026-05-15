@@ -2682,6 +2682,16 @@ public actor ControlPlaneService {
             }
             let sourcePath = command.ext["source_path"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return sourcePath.isEmpty == false
+        case "dataset_snapshot":
+            return command.modelID.trimmingCharacters(in: .whitespacesAndNewlines) == "melix-datasets"
+        case "dataset_download", "dataset_remove":
+            let repoID = command.ext["melix.hf_dataset_repo_id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return repoID.isEmpty == false
+        case "generate_synthetic_dataset":
+            let datasetID = command.ext["synthetic_dataset_id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let endpoint = command.ext["provider_endpoint"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let model = command.ext["model"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return datasetID.isEmpty == false && endpoint.isEmpty == false && model.isEmpty == false
         default:
             return false
         }
