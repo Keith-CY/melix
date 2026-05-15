@@ -925,6 +925,7 @@ def test_payload_fast_path_field_extractors_cover_malformed_edges() -> None:
     assert code_eval_runner._extract_json_string_field(b'{"failure_detail":"oops}', "failure_detail") is None
     assert code_eval_runner._extract_json_int_field(b'{"tests_passed":-7}', "tests_passed") == -7
     assert code_eval_runner._extract_json_int_field(b'{"tests_total":12345}', "tests_total") == 12345
+    assert code_eval_runner._extract_json_int_field_value_and_end(b'-42, "next": 1', 0) == (-42, 3)
     assert code_eval_runner._extract_json_int_field(b'{"tests_total":-}', "tests_total") is None
     assert code_eval_runner._extract_json_int_field(b'{"tests_total": }', "tests_total") is None
 
