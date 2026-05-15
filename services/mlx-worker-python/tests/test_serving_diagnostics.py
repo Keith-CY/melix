@@ -121,6 +121,28 @@ def test_serving_diagnostics_bundle_writes_stable_layout_and_prefill_fields(
     ]
 
 
+def test_serving_diagnostics_event_empty_attributes_match_explicit_empty_mapping() -> None:
+    default_event = ServingDiagnosticsEvent(
+        request_id="req-empty-default",
+        phase="decode",
+        event_index=1,
+        status="completed",
+    )
+    explicit_empty_event = ServingDiagnosticsEvent(
+        request_id="req-empty-explicit",
+        phase="decode",
+        event_index=1,
+        status="completed",
+        attributes={},
+    )
+
+    default_payload = default_event.to_dict()
+    explicit_payload = explicit_empty_event.to_dict()
+
+    assert default_payload["attributes"] == {}
+    assert explicit_payload["attributes"] == {}
+
+
 def test_serving_diagnostics_bounded_queue_drops_oldest_without_blocking(
     tmp_path: Path,
 ) -> None:
