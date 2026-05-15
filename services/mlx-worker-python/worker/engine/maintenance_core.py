@@ -95,6 +95,16 @@ class ShapedBenchmarkPrompt(str):
         return self._tokens
 
 
+def _make_shaped_benchmark_prompt(tokens: tuple[str, ...], *, context_length: int) -> ShapedBenchmarkPrompt:
+    token_count = len(tokens)
+    if token_count >= context_length:
+        shaped_tokens = tokens[:context_length]
+    else:
+        full_repeats, remainder = divmod(context_length, token_count)
+        shaped_tokens = tokens * full_repeats + tokens[:remainder]
+    return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
+
+
 @dataclass(frozen=True)
 class BenchMetricSpec:
     suite: str
@@ -3751,15 +3761,11 @@ class MaintenanceCore:
     def _shape_benchmark_prompt(prompt: str, *, context_length: int) -> str:
         tokens = prompt.split()
         if not tokens:
-            tokens = ["benchmark"]
-        if len(tokens) >= context_length:
-            shaped_tokens = tuple(tokens[:context_length])
-            return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
-        full_repeats, remainder = divmod(context_length, len(tokens))
-        shaped_tokens = tuple(tokens * full_repeats + tokens[:remainder])
-        if remainder:
-            return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
-        return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
+            return ShapedBenchmarkPrompt(
+                "benchmark " * (context_length - 1) + "benchmark",
+                ("benchmark",) * context_length,
+            )
+        return _make_shaped_benchmark_prompt(tuple(tokens), context_length=context_length)
 
     @staticmethod
     def _benchmark_prompt_token_count(prompt: str) -> int:

@@ -148,6 +148,7 @@ _TEXT_STOP_SEQUENCE_KEYS = (
 _STREAM_STOP_KWARG_NAMES = ("stop", "stop_words", "stop_sequences")
 _SAMPLER_PENALTY_KWARG_NAMES = ("frequency_penalty", "presence_penalty")
 _STOP_CONTRACT_CACHE_FIELD = "_melix.resolved_text_stop_contract_cache"
+_STOP_KWARGS_CACHE_FIELD = "_melix.resolved_text_stop_kwargs_cache"
 
 
 def _split_stop_sequence_value(value: Any) -> list[str]:
@@ -251,6 +252,31 @@ def _cached_resolve_text_stop_contract(
         contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
         cache[cache_key] = contract
     return contract
+
+
+def _cached_stream_stop_kwargs(
+    loaded_model: Any,
+    sampling: Any,
+    execution_ext: dict[str, str] | None,
+    stream_stop_kwarg: str,
+) -> dict[str, Any]:
+    if not stream_stop_kwarg:
+        return {}
+    cache_key = _stop_contract_cache_key(loaded_model, sampling, execution_ext)
+    if cache_key is None or not isinstance(loaded_model, dict):
+        contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+        return {stream_stop_kwarg: list(contract.sequences)} if contract.sequences else {}
+
+    cache = loaded_model.get(_STOP_KWARGS_CACHE_FIELD)
+    if not isinstance(cache, dict):
+        cache = {}
+        loaded_model[_STOP_KWARGS_CACHE_FIELD] = cache
+    kwargs = cache.get((stream_stop_kwarg, cache_key))
+    if kwargs is None:
+        contract = _cached_resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+        kwargs = {stream_stop_kwarg: list(contract.sequences)} if contract.sequences else {}
+        cache[(stream_stop_kwarg, cache_key)] = kwargs
+    return kwargs
 
 
 def _int_tuple(value: Any) -> tuple[int, ...]:
@@ -711,10 +737,12 @@ class AutoMLXBackend:
             sampler_kwargs[penalty_name] = float(getattr(sampling, penalty_name, 0.0))
         sampler = self._sampler_factory(**sampler_kwargs)
         max_tokens = int(sampling.max_output_tokens) if int(sampling.max_output_tokens) > 0 else 256
-        stop_contract = _cached_resolve_text_stop_contract(loaded_model, sampling, execution_ext)
-        stream_kwargs: dict[str, Any] = {}
-        if stop_contract.sequences and self._stream_stop_kwarg:
-            stream_kwargs[self._stream_stop_kwarg] = list(stop_contract.sequences)
+        stream_kwargs = _cached_stream_stop_kwargs(
+            loaded_model,
+            sampling,
+            execution_ext,
+            self._stream_stop_kwarg,
+        )
 
         for response in self._stream_generate_fn(
             loaded_model["model"],

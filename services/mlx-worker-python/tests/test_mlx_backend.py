@@ -443,6 +443,59 @@ def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.Mon
     runtime_utils.clear_callable_kwarg_signature_cache()
 
 
+def test_cached_stream_stop_kwargs_covers_empty_fallback_and_cached_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sampling = common_pb2.SamplingConfig(max_output_tokens=8, stop=["</turn>"])
+    loaded_model = {"tokenizer": FakeTokenizer()}
+
+    assert mlx_text_runtime_module._cached_stream_stop_kwargs(
+        loaded_model,
+        sampling,
+        None,
+        "",
+    ) == {}
+
+    resolve_calls = 0
+    original_resolve_stop_contract = mlx_text_runtime_module.resolve_text_stop_contract
+
+    def tracked_resolve_stop_contract(loaded_model, sampling, execution_ext=None):
+        nonlocal resolve_calls
+        resolve_calls += 1
+        return original_resolve_stop_contract(loaded_model, sampling, execution_ext)
+
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "resolve_text_stop_contract",
+        tracked_resolve_stop_contract,
+    )
+
+    fallback_kwargs = mlx_text_runtime_module._cached_stream_stop_kwargs(
+        object(),
+        sampling,
+        None,
+        "stop",
+    )
+    assert fallback_kwargs == {"stop": ["</turn>"]}
+    assert resolve_calls == 1
+
+    first_kwargs = mlx_text_runtime_module._cached_stream_stop_kwargs(
+        loaded_model,
+        sampling,
+        None,
+        "stop",
+    )
+    second_kwargs = mlx_text_runtime_module._cached_stream_stop_kwargs(
+        loaded_model,
+        sampling,
+        None,
+        "stop",
+    )
+    assert first_kwargs == {"stop": ["</turn>", "</s>"]}
+    assert second_kwargs is first_kwargs
+    assert resolve_calls == 2
+
+
 def test_auto_backend_scores_reward_responses_with_mlx_generation() -> None:
     seen: dict[str, object] = {}
 
