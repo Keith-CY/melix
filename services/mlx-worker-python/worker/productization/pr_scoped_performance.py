@@ -40,13 +40,24 @@ _FORCE_ALL_WILDCARD_GLOBS = tuple(glob for glob in _FORCE_ALL_GLOBS if _glob_has
 _FORCE_ALL_CONTEXT_ONLY_PATHS = frozenset(
     {
         "infra/perf/pr_scoped_probes.json",
+        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
         "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
     }
 )
+_FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH = {
+    "infra/perf/pr_scoped_probes.json": frozenset({"pr-scoped-performance-registry-cache"}),
+    "services/mlx-worker-python/worker/productization/pr_scoped_performance.py": frozenset(
+        {
+            "pr-scoped-performance-registry-cache",
+            "pr-scoped-performance-scope-matcher",
+        }
+    ),
+}
 _COVERAGE_PERCENT_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
 _TEXT_FILE_SUFFIXES = {".md", ".py", ".json", ".txt", ".yaml", ".yml"}
 _COMMAND_HEARTBEAT_SECONDS = 30.0
 _MATCH_PROBE_INDEXES_CACHE: dict[tuple[int, int, tuple[str, ...]], frozenset[int]] = {}
+_PROBE_ID_INDEX_CACHE: dict[tuple[int, int], dict[str, int]] = {}
 _PROBE_SCOPE_DICT_CACHE: dict[tuple[int, str], dict[str, object]] = {}
 
 
@@ -233,6 +244,11 @@ def build_scope_report(
         if not direct_changed_path_set
         else _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
     )
+    framework_probe_indexes = _force_all_direct_probe_indexes(
+        changed_paths=changed_path_set,
+        probes=probes,
+    )
+    matched_probe_indexes = matched_probe_indexes | framework_probe_indexes
     if force_all:
         selected = probes
     else:
@@ -306,9 +322,15 @@ def build_performance_report(
     rows: list[dict[str, object]] = []
     force_all = bool(scope.get("force_all", False))
     matched_probe_ids = set(_string_list(scope.get("matched_probe_ids")))
-    gate_probe_ids = matched_probe_ids if force_all and matched_probe_ids else {
-        str(probe.get("id", "")).strip() for probe in selected_probes if str(probe.get("id", "")).strip()
-    }
+    gate_probe_ids = (
+        matched_probe_ids
+        if force_all
+        else {
+            str(probe.get("id", "")).strip()
+            for probe in selected_probes
+            if str(probe.get("id", "")).strip()
+        }
+    )
     regression_count = 0
     context_regression_count = 0
     verification_failure_count = 0
@@ -2373,6 +2395,33 @@ def _match_probe_indexes_uncached(
             if pattern.match(path) is not None:
                 matched_probe_indexes.update(probe_indexes)
     return frozenset(matched_probe_indexes)
+
+
+def _force_all_direct_probe_indexes(
+    *,
+    changed_paths: set[str] | frozenset[str] | tuple[str, ...],
+    probes: tuple[ProbeDefinition, ...],
+) -> frozenset[int]:
+    direct_probe_ids: set[str] = set()
+    for path in changed_paths:
+        direct_probe_ids.update(_FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path, ()))
+    if not direct_probe_ids:
+        return frozenset()
+    probe_id_to_index = _probe_id_to_index(probes)
+    return frozenset(
+        index
+        for probe_id in direct_probe_ids
+        if (index := probe_id_to_index.get(probe_id)) is not None
+    )
+
+
+def _probe_id_to_index(probes: tuple[ProbeDefinition, ...]) -> dict[str, int]:
+    cache_key = (id(probes), len(probes))
+    cached = _PROBE_ID_INDEX_CACHE.get(cache_key)
+    if cached is None:
+        cached = {probe.probe_id: index for index, probe in enumerate(probes)}
+        _PROBE_ID_INDEX_CACHE[cache_key] = cached
+    return cached
 
 
 @lru_cache(maxsize=None)

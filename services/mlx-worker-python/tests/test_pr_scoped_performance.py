@@ -36,6 +36,7 @@ from worker.productization.pr_scoped_performance import (
     _matches_any_glob,
     _match_probe_indexes,
     _parse_coverage_percent,
+    _probe_id_to_index,
     _probe_benchmark_evaluation_report,
     _probe_benchmark_export_run_scan,
     _probe_benchmark_queue_cache,
@@ -2569,6 +2570,31 @@ def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
     assert second["selected_probes"] == first["selected_probes"]
 
 
+def test_probe_id_index_reuses_cached_mapping_without_reiterating() -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="target",
+            name="Target",
+            runner="ubuntu-latest",
+            watch_globs=(),
+            test_command="",
+            coverage_command="",
+            probe_impl="command_json",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    cache = pr_scoped_performance_module._PROBE_ID_INDEX_CACHE
+    cache.clear()
+
+    first = _probe_id_to_index(probes)
+    second = _probe_id_to_index(probes)
+
+    cache.clear()
+    assert first == {"target": 0}
+    assert second is first
+
+
 def test_load_probe_registry_refreshes_cache_when_file_changes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -4563,6 +4589,55 @@ def test_scope_report_tracks_direct_matches_separately_when_force_all(tmp_path: 
     assert scope["force_all"] is True
     assert {probe["id"] for probe in scope["selected_probes"]} == {"target", "context"}
     assert scope["matched_probe_ids"] == ["target"]
+
+
+def test_scope_report_treats_framework_force_all_paths_as_context_for_domain_probes(
+    tmp_path: Path,
+) -> None:
+    registry_path = tmp_path / "probes.json"
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "evaluation-store-samples-csv-streaming",
+                    "name": "Evaluation samples",
+                    "watch_globs": [
+                        "services/mlx-worker-python/worker/productization/evaluation_store.py",
+                        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+                    ],
+                    "probe_impl": "command_json",
+                    "metrics": [
+                        {"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}
+                    ],
+                },
+                {
+                    "id": "pr-scoped-performance-scope-matcher",
+                    "name": "Scope matcher",
+                    "watch_globs": [
+                        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+                    ],
+                    "probe_impl": "command_json",
+                    "metrics": [
+                        {"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}
+                    ],
+                },
+            ]
+        )
+    )
+
+    scope = build_scope_report(
+        registry_path=registry_path,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/pr_scoped_performance.py"
+        ],
+    )
+
+    assert scope["force_all"] is True
+    assert {probe["id"] for probe in scope["selected_probes"]} == {
+        "evaluation-store-samples-csv-streaming",
+        "pr-scoped-performance-scope-matcher",
+    }
+    assert scope["matched_probe_ids"] == ["pr-scoped-performance-scope-matcher"]
 
 
 def test_force_all_context_regressions_do_not_fail_direct_probe_gate() -> None:
