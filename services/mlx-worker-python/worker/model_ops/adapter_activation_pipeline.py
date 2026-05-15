@@ -7,6 +7,10 @@ from typing import Any, Callable
 
 from packages.protocol.python.worker.v1 import common_pb2
 
+from worker.model_ops.adapter_capabilities import (
+    UNSUPPORTED_REASON_NON_MERGEABLE_ADAPTER,
+    UNSUPPORTED_REASON_UNSUPPORTED_BACKEND,
+)
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.mlx_lm_runner import ActivationRequest, MLXLMRunner
 
@@ -63,6 +67,29 @@ class AdapterActivationPipeline:
             raise ModelOperationError(
                 code="activation_failure",
                 message=f"Unsupported activation mode: {activation_mode}",
+            )
+        adapter_family = _manifest_str(adapter_manifest, "adapter_family") or "lora"
+        adapter_capabilities = _manifest_adapter_capabilities(adapter_manifest)
+        backend_supported = _manifest_bool(adapter_manifest, "backend_supported", default=True)
+        unsupported_reason = _manifest_str(adapter_manifest, "unsupported_reason")
+        if backend_supported is False:
+            raise ModelOperationError(
+                code=unsupported_reason or UNSUPPORTED_REASON_UNSUPPORTED_BACKEND,
+                message=f"Adapter family {adapter_family} is not supported by this activation backend.",
+                details={
+                    "adapter_family": adapter_family,
+                    "activation_mode": activation_mode,
+                    "unsupported_reason": unsupported_reason,
+                },
+            )
+        if activation_mode == "fused_derived_model" and adapter_capabilities.get("mergeable") is False:
+            raise ModelOperationError(
+                code=UNSUPPORTED_REASON_NON_MERGEABLE_ADAPTER,
+                message=(
+                    f"Adapter family {adapter_family} does not support fused activation; "
+                    "use activation_mode=adapter_backed_runtime."
+                ),
+                details={"adapter_family": adapter_family, "activation_mode": activation_mode},
             )
         adapter_scope = _validate_adapter_scope(
             adapter_manifest=adapter_manifest,
@@ -145,6 +172,11 @@ class AdapterActivationPipeline:
             "adapter_manifest_path": str(adapter_manifest_path),
             "adapter_weights_path": adapter_weights_path,
             "adapter_name": adapter_manifest.get("adapter_name", ""),
+            "adapter_family": adapter_family,
+            "adapter_capabilities": adapter_capabilities,
+            "backend_supported": backend_supported,
+            "unsupported_reason": unsupported_reason,
+            "base_quantization_method": _manifest_str(adapter_manifest, "base_quantization_method"),
             "adapter_set_hash": adapter_set_hash,
             "source_adapter_job_id": str(adapter_manifest.get("job_id", "")),
             "derived_model_id": derived_model_id,
@@ -274,3 +306,31 @@ def _validate_adapter_scope(
 
 def _manifest_str(manifest: dict[str, Any], key: str) -> str:
     return str(manifest.get(key, "") or "").strip()
+
+
+def _manifest_bool(manifest: dict[str, Any], key: str, *, default: bool) -> bool:
+    value = manifest.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _manifest_adapter_capabilities(manifest: dict[str, Any]) -> dict[str, bool]:
+    defaults = {
+        "lora_like": True,
+        "mergeable": True,
+        "relora_compatible": True,
+        "quantized_base_supported": True,
+    }
+    raw_capabilities = manifest.get("adapter_capabilities")
+    if not isinstance(raw_capabilities, dict):
+        return defaults
+    capabilities = dict(defaults)
+    for key in defaults:
+        if key not in raw_capabilities:
+            continue
+        value = raw_capabilities.get(key)
+        capabilities[key] = value if isinstance(value, bool) else str(value).strip().lower() in {"1", "true", "yes", "on"}
+    return capabilities
