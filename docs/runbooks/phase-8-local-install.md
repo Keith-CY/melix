@@ -182,6 +182,24 @@ For deterministic download resume, retry, and stall smoke without network access
 PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python python scripts/m8_download_smoke.py --json
 ```
 
+For deterministic packaged VLM artifact-cache recovery without network access or a live
+VLM runtime:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python python scripts/packaged_vlm_artifact_cache_smoke.py --json
+```
+
+The smoke uses a flat cache layout with `model.gguf` and `mmproj.gguf`, preserves
+`model.gguf.partial` after a cancelled first pass, resumes the second pass from
+the saved bytes, and emits a route receipt containing:
+
+- `model_artifact_path`
+- `companion_projector_path`
+- `cache_layout`
+- `cache_restore_status`
+- `local_route_verified`
+
 For deterministic MCP tool-loading and auto-injection smoke:
 
 ```bash
