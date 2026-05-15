@@ -844,6 +844,33 @@ def test_load_payload_file_fast_path_reuses_precomputed_key_tokens(monkeypatch: 
         code_eval_runner._json_field_value_start(b'{"other":1}', "other")
 
 
+def test_load_payload_file_fast_path_falls_back_for_unexpected_key_order() -> None:
+    payload_path = _BytesOnlyPayloadPath(
+        json.dumps(
+            {
+                "tests_total": 3,
+                "failure_detail": "",
+                "timeout_status": "ok",
+                "tests_passed": 3,
+                "compile_status": "compiled",
+                "test_status": "passed",
+                "runtime_status": "ok",
+            },
+            sort_keys=False,
+        ).encode("utf-8")
+    )
+
+    assert code_eval_runner._load_payload_file(payload_path) == {
+        "compile_status": "compiled",
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 3,
+        "tests_total": 3,
+        "timeout_status": "ok",
+    }
+
+
 def test_load_payload_file_fast_path_falls_back_for_escaped_fields(tmp_path: Path) -> None:
     payload_path = tmp_path / "payload.json"
     payload_path.write_text(
