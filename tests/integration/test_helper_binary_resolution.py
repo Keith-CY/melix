@@ -149,16 +149,16 @@ def test_resolve_swift_product_binary_stats_each_candidate_once(
     os.utime(flat, (1, 1))
     os.utime(preferred, (2, 2))
 
-    original_stat = Path.stat
+    original_stat = helpers.os.stat
     product_stats = 0
 
-    def counting_stat(self: Path, *args: object, **kwargs: object):
+    def counting_stat(path: str, *args: object, **kwargs: object):
         nonlocal product_stats
-        if self.name == "melix-text-worker-swift":
+        if os.path.basename(path) == "melix-text-worker-swift":
             product_stats += 1
-        return original_stat(self, *args, **kwargs)
+        return original_stat(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "stat", counting_stat)
+    monkeypatch.setattr(helpers.os, "stat", counting_stat)
 
     resolved = helpers.resolve_swift_product_binary(
         repo_root,
