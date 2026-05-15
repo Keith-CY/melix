@@ -59,25 +59,29 @@ logger = logging.getLogger(__name__)
 
 
 class ShapedBenchmarkPrompt(str):
-    __slots__ = ("_tokens",)
+    __slots__ = ("_tokens", "token_count")
 
-    def __new__(cls, value: str, tokens: tuple[str, ...]) -> ShapedBenchmarkPrompt:
+    def __new__(
+        cls,
+        value: str,
+        tokens: tuple[str, ...] | None,
+        token_count: int,
+    ) -> ShapedBenchmarkPrompt:
         prompt = str.__new__(cls, value)
         prompt._tokens = tokens
+        prompt.token_count = token_count
         return prompt
 
     def split(self, sep: str | None = None, maxsplit: int = -1) -> list[str]:
         if sep is None and maxsplit == -1:
-            return list(self._tokens)
+            return list(self.tokens)
         return str(self).split(sep, maxsplit)
 
     @property
     def tokens(self) -> tuple[str, ...]:
+        if self._tokens is None:
+            self._tokens = tuple(str(self).split())
         return self._tokens
-
-    @property
-    def token_count(self) -> int:
-        return len(self._tokens)
 
 
 @dataclass(frozen=True)
@@ -4030,12 +4034,14 @@ class MaintenanceCore:
             tokens = ["benchmark"]
         if len(tokens) >= context_length:
             shaped_tokens = tuple(tokens[:context_length])
-            return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
+            return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens, len(shaped_tokens))
         full_repeats, remainder = divmod(context_length, len(tokens))
-        shaped_tokens = tuple(tokens * full_repeats + tokens[:remainder])
+        base_prompt = " ".join(tokens)
         if remainder:
-            return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
-        return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
+            shaped_prompt = (base_prompt + " ") * full_repeats + " ".join(tokens[:remainder])
+        else:
+            shaped_prompt = ((base_prompt + " ") * full_repeats).rstrip()
+        return ShapedBenchmarkPrompt(shaped_prompt, None, context_length)
 
     @staticmethod
     def _benchmark_prompt_token_count(prompt: str) -> int:

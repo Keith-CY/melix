@@ -5821,6 +5821,11 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     assert core._benchmark_prompt_token_count("one two") == 2
     assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
     assert MaintenanceCore._shape_benchmark_prompt.cache_info().hits == 1
+    shaped_long_prompt = core._shape_benchmark_prompt("alpha beta", context_length=128)
+    assert shaped_long_prompt.token_count == 128
+    assert shaped_long_prompt._tokens is None
+    assert shaped_long_prompt.tokens[:4] == ("alpha", "beta", "alpha", "beta")
+    assert shaped_long_prompt.token_count == 128
     MaintenanceCore._shape_benchmark_prompt.cache_clear()
 
     shape_calls: list[tuple[str, int]] = []
