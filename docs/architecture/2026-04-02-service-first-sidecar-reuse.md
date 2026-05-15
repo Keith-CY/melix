@@ -43,9 +43,12 @@ The expected v1 surface is:
 - `POST /v1/rerank`
 - `GET /v1/models`
 - `GET /health`
+- `GET /v1/melix/health`
 
 Authentication and local multi-client access remain part of this layer through the existing
-gateway access policy and shared-access configuration.
+gateway access policy and shared-access configuration. `GET /health` stays a public liveness
+probe; route readiness and model counts are exposed through the authenticated
+`GET /v1/melix/health` diagnostics endpoint.
 
 ### Tooling Surface
 

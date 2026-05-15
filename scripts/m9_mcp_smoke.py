@@ -43,7 +43,7 @@ def run_smoke(repo_root: Path) -> dict[str, object]:
                         {
                             "source_id": "filesystem",
                             "enabled": True,
-                            "namespaces": ["tools.fs.read", "tools.fs.write"],
+                            "namespaces": ["tools.fs.read", "tools.search", "tools.fs.write"],
                         },
                         {
                             "source_id": "disabled-search",
@@ -94,6 +94,7 @@ def run_smoke(repo_root: Path) -> dict[str, object]:
         "stream_completed": "event: response.completed" in body,
         "tool_injection_recorded": values["mcp.tool_injection_count"] >= 1,
         "configured_tool_count_recorded": values["mcp.configured_tool_count"] == 2,
+        "refused_tool_count_recorded": values["mcp.refused_tool_count"] == 1,
         "success_rate_recorded": values["mcp.tool_injection_success_rate"] == 1,
     }
     return {
@@ -105,6 +106,7 @@ def run_smoke(repo_root: Path) -> dict[str, object]:
             "mcp.disabled_tool_source_count": values["mcp.disabled_tool_source_count"],
             "mcp.tool_injection_count": values["mcp.tool_injection_count"],
             "mcp.configured_tool_count": values["mcp.configured_tool_count"],
+            "mcp.refused_tool_count": values["mcp.refused_tool_count"],
             "mcp.tool_injection_success_rate": values["mcp.tool_injection_success_rate"],
         },
     }

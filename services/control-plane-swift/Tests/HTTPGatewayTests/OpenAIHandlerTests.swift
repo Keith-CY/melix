@@ -316,7 +316,12 @@ struct OpenAIHandlerTests {
             )
         )
         let operatorRoutes: [(HTTPMethod, String, String, Bool)] = [
+            (.get, "/.well-known/melix.json", "missing_api_key", true),
+            (.get, "/api/capabilities", "missing_api_key", true),
+            (.get, "/api/instructions", "missing_api_key", true),
+            (.get, "/api/config-metadata", "missing_api_key", true),
             (.get, "/v1/models", "missing_api_key", true),
+            (.get, "/v1/melix/health", "missing_api_key", true),
             (.get, "/v1/cache/stats", "missing_api_key", true),
             (.post, "/v1/melix/auth/session", "missing_api_key", true),
             (.get, "/v1/melix/auth/session", "missing_session", false),
@@ -346,9 +351,13 @@ struct OpenAIHandlerTests {
         let health = try await handler.handle(
             HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
         )
+        let healthPayload = try await collectBody(health.body)
 
         let gatewayPolicyFailures = operatorRoutes.filter(\.3).count
         #expect(health.statusCode == 200)
+        #expect(healthPayload.contains("\"status\":\"ok\""))
+        #expect(!healthPayload.contains("routes"))
+        #expect(!healthPayload.contains("models_ready"))
         #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == Double(gatewayPolicyFailures))
         #expect(await metricsStore.value(forKey: "route_auth_policy") == 2)
     }
@@ -6784,8 +6793,8 @@ struct OpenAIHandlerTests {
         }
     }
 
-    @Test("GET /health reports route readiness and model counts")
-    func getHealthReportsRouteReadinessAndModelCounts() async throws {
+    @Test("GET /v1/melix/health reports authenticated route readiness and model counts")
+    func getHealthDiagnosticsReportsRouteReadinessAndModelCounts() async throws {
         let healthyClient = ScriptedWorkerClient(events: [])
         let unhealthyClient = UnavailableWorkerClient()
         let metricsStore = MetricsStore()
@@ -6806,7 +6815,7 @@ struct OpenAIHandlerTests {
         )
 
         let response = try await handler.handle(
-            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+            HTTPRequest(method: .get, path: "/v1/melix/health", headers: [:], body: Data())
         )
         let payload = try await collectBody(response.body)
         let metrics = await metricsStore.snapshot()
@@ -6821,11 +6830,11 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"python_image\":true"))
         #expect(payload.contains("\"models_ready\":3"))
         #expect(payload.contains("\"models_total\":3"))
-        #expect(metrics.values["operator.health_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["operator.health_diagnostics_latency_ms", default: -1] >= 0)
     }
 
-    @Test("GET /health reports ok when all routes are ready and pinned models count as ready")
-    func getHealthReportsOkWhenAllRoutesAreReadyAndPinnedModelsCountAsReady() async throws {
+    @Test("GET /v1/melix/health reports ok when all routes are ready and pinned models count as ready")
+    func getHealthDiagnosticsReportsOkWhenAllRoutesAreReadyAndPinnedModelsCountAsReady() async throws {
         let healthyTextClient = ScriptedWorkerClient(events: [])
         let healthyPythonClient = ScriptedPhaseFiveWorkerClient()
 
@@ -6853,7 +6862,7 @@ struct OpenAIHandlerTests {
         )
 
         let response = try await handler.handle(
-            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+            HTTPRequest(method: .get, path: "/v1/melix/health", headers: [:], body: Data())
         )
         let payload = try await collectBody(response.body)
 
@@ -6863,8 +6872,8 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"models_total\":3"))
     }
 
-    @Test("GET /health reports missing route clients as false when a registry is present")
-    func getHealthReportsMissingRouteClientsAsFalseWhenARegistryIsPresent() async throws {
+    @Test("GET /v1/melix/health reports missing route clients as false when a registry is present")
+    func getHealthDiagnosticsReportsMissingRouteClientsAsFalseWhenARegistryIsPresent() async throws {
         let healthyTextClient = ScriptedWorkerClient(events: [])
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
@@ -6876,7 +6885,7 @@ struct OpenAIHandlerTests {
         )
 
         let response = try await handler.handle(
-            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+            HTTPRequest(method: .get, path: "/v1/melix/health", headers: [:], body: Data())
         )
         let payload = try await collectBody(response.body)
 
@@ -6886,8 +6895,8 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"python_model_operations\":false"))
     }
 
-    @Test("GET /health degrades cleanly when no worker registry is wired")
-    func getHealthDegradesCleanlyWithoutAWorkerRegistry() async throws {
+    @Test("GET /v1/melix/health degrades cleanly when no worker registry is wired")
+    func getHealthDiagnosticsDegradesCleanlyWithoutAWorkerRegistry() async throws {
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
             requestCoordinator: RequestCoordinator(
@@ -6897,7 +6906,7 @@ struct OpenAIHandlerTests {
         )
 
         let response = try await handler.handle(
-            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+            HTTPRequest(method: .get, path: "/v1/melix/health", headers: [:], body: Data())
         )
         let payload = try await collectBody(response.body)
 
@@ -6909,6 +6918,31 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"python_model_operations\":false"))
         #expect(payload.contains("\"python_transcription\":false"))
         #expect(payload.contains("\"python_speech\":false"))
+    }
+
+    @Test("GET /health returns liveness only")
+    func getHealthReturnsLivenessOnly() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"service\":\"melix-control-plane\""))
+        #expect(payload.contains("\"status\":\"ok\""))
+        #expect(!payload.contains("routes"))
+        #expect(!payload.contains("models_ready"))
+        #expect(await metricsStore.value(forKey: "operator.health_latency_ms") >= 0)
     }
 
     @Test("GET discovery endpoints expose machine readable local runtime contracts")
@@ -7025,11 +7059,14 @@ struct OpenAIHandlerTests {
 
         let localService = try #require(onboarding.surfaces.first { $0.surfaceID == "local_service" })
         #expect(localService.endpointIds.contains("well_known"))
+        #expect(localService.endpointIds.contains("health_diagnostics"))
         #expect(localService.endpointIds.contains("capabilities"))
         #expect(localService.endpointIds.contains("instructions"))
         #expect(localService.endpointIds.contains("config_metadata"))
         let endpointIDs = Set(onboarding.endpoints.map(\.endpointID))
-        #expect(endpointIDs.isSuperset(of: ["well_known", "capabilities", "instructions", "config_metadata"]))
+        #expect(endpointIDs.isSuperset(
+            of: ["health_diagnostics", "well_known", "capabilities", "instructions", "config_metadata"]
+        ))
     }
 
     @Test("GET capabilities discovery renders all model residency states")

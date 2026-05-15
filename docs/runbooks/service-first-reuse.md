@@ -18,6 +18,10 @@ Treat these endpoints as the supported local reuse boundary:
 - `POST /v1/rerank`
 - `GET /v1/models`
 - `GET /health`
+- `GET /v1/melix/health`
+
+`GET /health` is a public liveness probe. Use authenticated `GET /v1/melix/health`
+when a consumer needs route readiness or model-count diagnostics.
 
 Use shared-access configuration only when more than one client needs to reach the same
 sidecar instance.
@@ -97,6 +101,7 @@ After startup, verify the sidecar directly:
 
 ```bash
 curl -sS http://127.0.0.1:${MELIX_HTTP_PORT}/health
+curl -sS http://127.0.0.1:${MELIX_HTTP_PORT}/v1/melix/health
 curl -sS http://127.0.0.1:${MELIX_HTTP_PORT}/v1/models
 ```
 

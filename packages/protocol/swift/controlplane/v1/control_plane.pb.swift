@@ -4929,6 +4929,10 @@ public struct Melix_Controlplane_V1_MCPToolSourceSummary: Sendable {
 
   public var toolCount: UInt32 = 0
 
+  public var refusedNamespaces: [String] = []
+
+  public var policyState: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4948,6 +4952,14 @@ public struct Melix_Controlplane_V1_MCPToolCatalogSummary: Sendable {
   public var resolvedToolCount: UInt32 = 0
 
   public var sources: [Melix_Controlplane_V1_MCPToolSourceSummary] = []
+
+  public var requestedPolicy: String = String()
+
+  public var effectivePolicy: String = String()
+
+  public var operatorOverrideSource: String = String()
+
+  public var refusedNamespaces: [String] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -4994,39 +5006,70 @@ public struct Melix_Controlplane_V1_ToolingConfigPathSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ToolingSettingsSummary: Sendable {
+public struct Melix_Controlplane_V1_ToolingSettingsSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var embedding: Melix_Controlplane_V1_EmbeddingToolingSummary {
-    get {_embedding ?? Melix_Controlplane_V1_EmbeddingToolingSummary()}
-    set {_embedding = newValue}
+    get {_storage._embedding ?? Melix_Controlplane_V1_EmbeddingToolingSummary()}
+    set {_uniqueStorage()._embedding = newValue}
   }
   /// Returns true if `embedding` has been explicitly set.
-  public var hasEmbedding: Bool {self._embedding != nil}
+  public var hasEmbedding: Bool {_storage._embedding != nil}
   /// Clears the value of `embedding`. Subsequent reads from it will return its default value.
-  public mutating func clearEmbedding() {self._embedding = nil}
+  public mutating func clearEmbedding() {_uniqueStorage()._embedding = nil}
 
-  public var builtinToolParserModes: [String] = []
+  public var builtinToolParserModes: [String] {
+    get {_storage._builtinToolParserModes}
+    set {_uniqueStorage()._builtinToolParserModes = newValue}
+  }
 
-  public var mcpDefaultParserMode: String = String()
+  public var mcpDefaultParserMode: String {
+    get {_storage._mcpDefaultParserMode}
+    set {_uniqueStorage()._mcpDefaultParserMode = newValue}
+  }
 
-  public var mcpConfigPath: String = String()
+  public var mcpConfigPath: String {
+    get {_storage._mcpConfigPath}
+    set {_uniqueStorage()._mcpConfigPath = newValue}
+  }
 
-  public var mcpEnabledSourceCount: UInt32 = 0
+  public var mcpEnabledSourceCount: UInt32 {
+    get {_storage._mcpEnabledSourceCount}
+    set {_uniqueStorage()._mcpEnabledSourceCount = newValue}
+  }
 
-  public var mcpResolvedToolCount: UInt32 = 0
+  public var mcpResolvedToolCount: UInt32 {
+    get {_storage._mcpResolvedToolCount}
+    set {_uniqueStorage()._mcpResolvedToolCount = newValue}
+  }
 
-  public var configPaths: [Melix_Controlplane_V1_ToolingConfigPathSummary] = []
+  public var configPaths: [Melix_Controlplane_V1_ToolingConfigPathSummary] {
+    get {_storage._configPaths}
+    set {_uniqueStorage()._configPaths = newValue}
+  }
 
-  public var additionalArguments: [String] = []
+  public var additionalArguments: [String] {
+    get {_storage._additionalArguments}
+    set {_uniqueStorage()._additionalArguments = newValue}
+  }
+
+  public var mcpRefusedToolCount: UInt32 {
+    get {_storage._mcpRefusedToolCount}
+    set {_uniqueStorage()._mcpRefusedToolCount = newValue}
+  }
+
+  public var mcpEffectivePolicy: String {
+    get {_storage._mcpEffectivePolicy}
+    set {_uniqueStorage()._mcpEffectivePolicy = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _embedding: Melix_Controlplane_V1_EmbeddingToolingSummary? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Controlplane_V1_APIOnboardingSurfaceSummary: Sendable {
@@ -14153,7 +14196,7 @@ extension Melix_Controlplane_V1_SubscribeRequest: SwiftProtobuf.Message, SwiftPr
 
 extension Melix_Controlplane_V1_MCPToolSourceSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MCPToolSourceSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}source_id\0\u{1}enabled\0\u{1}namespaces\0\u{3}tool_count\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}source_id\0\u{1}enabled\0\u{1}namespaces\0\u{3}tool_count\0\u{3}refused_namespaces\0\u{3}policy_state\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -14165,6 +14208,8 @@ extension Melix_Controlplane_V1_MCPToolSourceSummary: SwiftProtobuf.Message, Swi
       case 2: try { try decoder.decodeSingularBoolField(value: &self.enabled) }()
       case 3: try { try decoder.decodeRepeatedStringField(value: &self.namespaces) }()
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.toolCount) }()
+      case 5: try { try decoder.decodeRepeatedStringField(value: &self.refusedNamespaces) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.policyState) }()
       default: break
       }
     }
@@ -14183,6 +14228,12 @@ extension Melix_Controlplane_V1_MCPToolSourceSummary: SwiftProtobuf.Message, Swi
     if self.toolCount != 0 {
       try visitor.visitSingularUInt32Field(value: self.toolCount, fieldNumber: 4)
     }
+    if !self.refusedNamespaces.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.refusedNamespaces, fieldNumber: 5)
+    }
+    if !self.policyState.isEmpty {
+      try visitor.visitSingularStringField(value: self.policyState, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -14191,6 +14242,8 @@ extension Melix_Controlplane_V1_MCPToolSourceSummary: SwiftProtobuf.Message, Swi
     if lhs.enabled != rhs.enabled {return false}
     if lhs.namespaces != rhs.namespaces {return false}
     if lhs.toolCount != rhs.toolCount {return false}
+    if lhs.refusedNamespaces != rhs.refusedNamespaces {return false}
+    if lhs.policyState != rhs.policyState {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -14198,7 +14251,7 @@ extension Melix_Controlplane_V1_MCPToolSourceSummary: SwiftProtobuf.Message, Swi
 
 extension Melix_Controlplane_V1_MCPToolCatalogSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MCPToolCatalogSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}config_path\0\u{3}default_parser_mode\0\u{3}enabled_source_count\0\u{3}resolved_tool_count\0\u{1}sources\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}config_path\0\u{3}default_parser_mode\0\u{3}enabled_source_count\0\u{3}resolved_tool_count\0\u{1}sources\0\u{3}requested_policy\0\u{3}effective_policy\0\u{3}operator_override_source\0\u{3}refused_namespaces\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -14211,6 +14264,10 @@ extension Melix_Controlplane_V1_MCPToolCatalogSummary: SwiftProtobuf.Message, Sw
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.enabledSourceCount) }()
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.resolvedToolCount) }()
       case 5: try { try decoder.decodeRepeatedMessageField(value: &self.sources) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.requestedPolicy) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.effectivePolicy) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.operatorOverrideSource) }()
+      case 9: try { try decoder.decodeRepeatedStringField(value: &self.refusedNamespaces) }()
       default: break
       }
     }
@@ -14232,6 +14289,18 @@ extension Melix_Controlplane_V1_MCPToolCatalogSummary: SwiftProtobuf.Message, Sw
     if !self.sources.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.sources, fieldNumber: 5)
     }
+    if !self.requestedPolicy.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestedPolicy, fieldNumber: 6)
+    }
+    if !self.effectivePolicy.isEmpty {
+      try visitor.visitSingularStringField(value: self.effectivePolicy, fieldNumber: 7)
+    }
+    if !self.operatorOverrideSource.isEmpty {
+      try visitor.visitSingularStringField(value: self.operatorOverrideSource, fieldNumber: 8)
+    }
+    if !self.refusedNamespaces.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.refusedNamespaces, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -14241,6 +14310,10 @@ extension Melix_Controlplane_V1_MCPToolCatalogSummary: SwiftProtobuf.Message, Sw
     if lhs.enabledSourceCount != rhs.enabledSourceCount {return false}
     if lhs.resolvedToolCount != rhs.resolvedToolCount {return false}
     if lhs.sources != rhs.sources {return false}
+    if lhs.requestedPolicy != rhs.requestedPolicy {return false}
+    if lhs.effectivePolicy != rhs.effectivePolicy {return false}
+    if lhs.operatorOverrideSource != rhs.operatorOverrideSource {return false}
+    if lhs.refusedNamespaces != rhs.refusedNamespaces {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -14348,68 +14421,132 @@ extension Melix_Controlplane_V1_ToolingConfigPathSummary: SwiftProtobuf.Message,
 
 extension Melix_Controlplane_V1_ToolingSettingsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ToolingSettingsSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}embedding\0\u{3}builtin_tool_parser_modes\0\u{3}mcp_default_parser_mode\0\u{3}mcp_config_path\0\u{3}mcp_enabled_source_count\0\u{3}mcp_resolved_tool_count\0\u{3}config_paths\0\u{3}additional_arguments\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}embedding\0\u{3}builtin_tool_parser_modes\0\u{3}mcp_default_parser_mode\0\u{3}mcp_config_path\0\u{3}mcp_enabled_source_count\0\u{3}mcp_resolved_tool_count\0\u{3}config_paths\0\u{3}additional_arguments\0\u{3}mcp_refused_tool_count\0\u{3}mcp_effective_policy\0")
+
+  fileprivate class _StorageClass {
+    var _embedding: Melix_Controlplane_V1_EmbeddingToolingSummary? = nil
+    var _builtinToolParserModes: [String] = []
+    var _mcpDefaultParserMode: String = String()
+    var _mcpConfigPath: String = String()
+    var _mcpEnabledSourceCount: UInt32 = 0
+    var _mcpResolvedToolCount: UInt32 = 0
+    var _configPaths: [Melix_Controlplane_V1_ToolingConfigPathSummary] = []
+    var _additionalArguments: [String] = []
+    var _mcpRefusedToolCount: UInt32 = 0
+    var _mcpEffectivePolicy: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _embedding = source._embedding
+      _builtinToolParserModes = source._builtinToolParserModes
+      _mcpDefaultParserMode = source._mcpDefaultParserMode
+      _mcpConfigPath = source._mcpConfigPath
+      _mcpEnabledSourceCount = source._mcpEnabledSourceCount
+      _mcpResolvedToolCount = source._mcpResolvedToolCount
+      _configPaths = source._configPaths
+      _additionalArguments = source._additionalArguments
+      _mcpRefusedToolCount = source._mcpRefusedToolCount
+      _mcpEffectivePolicy = source._mcpEffectivePolicy
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._embedding) }()
-      case 2: try { try decoder.decodeRepeatedStringField(value: &self.builtinToolParserModes) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.mcpDefaultParserMode) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.mcpConfigPath) }()
-      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.mcpEnabledSourceCount) }()
-      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.mcpResolvedToolCount) }()
-      case 7: try { try decoder.decodeRepeatedMessageField(value: &self.configPaths) }()
-      case 8: try { try decoder.decodeRepeatedStringField(value: &self.additionalArguments) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._embedding) }()
+        case 2: try { try decoder.decodeRepeatedStringField(value: &_storage._builtinToolParserModes) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._mcpDefaultParserMode) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._mcpConfigPath) }()
+        case 5: try { try decoder.decodeSingularUInt32Field(value: &_storage._mcpEnabledSourceCount) }()
+        case 6: try { try decoder.decodeSingularUInt32Field(value: &_storage._mcpResolvedToolCount) }()
+        case 7: try { try decoder.decodeRepeatedMessageField(value: &_storage._configPaths) }()
+        case 8: try { try decoder.decodeRepeatedStringField(value: &_storage._additionalArguments) }()
+        case 9: try { try decoder.decodeSingularUInt32Field(value: &_storage._mcpRefusedToolCount) }()
+        case 10: try { try decoder.decodeSingularStringField(value: &_storage._mcpEffectivePolicy) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._embedding {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
-    if !self.builtinToolParserModes.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.builtinToolParserModes, fieldNumber: 2)
-    }
-    if !self.mcpDefaultParserMode.isEmpty {
-      try visitor.visitSingularStringField(value: self.mcpDefaultParserMode, fieldNumber: 3)
-    }
-    if !self.mcpConfigPath.isEmpty {
-      try visitor.visitSingularStringField(value: self.mcpConfigPath, fieldNumber: 4)
-    }
-    if self.mcpEnabledSourceCount != 0 {
-      try visitor.visitSingularUInt32Field(value: self.mcpEnabledSourceCount, fieldNumber: 5)
-    }
-    if self.mcpResolvedToolCount != 0 {
-      try visitor.visitSingularUInt32Field(value: self.mcpResolvedToolCount, fieldNumber: 6)
-    }
-    if !self.configPaths.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.configPaths, fieldNumber: 7)
-    }
-    if !self.additionalArguments.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.additionalArguments, fieldNumber: 8)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._embedding {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if !_storage._builtinToolParserModes.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._builtinToolParserModes, fieldNumber: 2)
+      }
+      if !_storage._mcpDefaultParserMode.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._mcpDefaultParserMode, fieldNumber: 3)
+      }
+      if !_storage._mcpConfigPath.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._mcpConfigPath, fieldNumber: 4)
+      }
+      if _storage._mcpEnabledSourceCount != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._mcpEnabledSourceCount, fieldNumber: 5)
+      }
+      if _storage._mcpResolvedToolCount != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._mcpResolvedToolCount, fieldNumber: 6)
+      }
+      if !_storage._configPaths.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._configPaths, fieldNumber: 7)
+      }
+      if !_storage._additionalArguments.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._additionalArguments, fieldNumber: 8)
+      }
+      if _storage._mcpRefusedToolCount != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._mcpRefusedToolCount, fieldNumber: 9)
+      }
+      if !_storage._mcpEffectivePolicy.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._mcpEffectivePolicy, fieldNumber: 10)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_ToolingSettingsSummary, rhs: Melix_Controlplane_V1_ToolingSettingsSummary) -> Bool {
-    if lhs._embedding != rhs._embedding {return false}
-    if lhs.builtinToolParserModes != rhs.builtinToolParserModes {return false}
-    if lhs.mcpDefaultParserMode != rhs.mcpDefaultParserMode {return false}
-    if lhs.mcpConfigPath != rhs.mcpConfigPath {return false}
-    if lhs.mcpEnabledSourceCount != rhs.mcpEnabledSourceCount {return false}
-    if lhs.mcpResolvedToolCount != rhs.mcpResolvedToolCount {return false}
-    if lhs.configPaths != rhs.configPaths {return false}
-    if lhs.additionalArguments != rhs.additionalArguments {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._embedding != rhs_storage._embedding {return false}
+        if _storage._builtinToolParserModes != rhs_storage._builtinToolParserModes {return false}
+        if _storage._mcpDefaultParserMode != rhs_storage._mcpDefaultParserMode {return false}
+        if _storage._mcpConfigPath != rhs_storage._mcpConfigPath {return false}
+        if _storage._mcpEnabledSourceCount != rhs_storage._mcpEnabledSourceCount {return false}
+        if _storage._mcpResolvedToolCount != rhs_storage._mcpResolvedToolCount {return false}
+        if _storage._configPaths != rhs_storage._configPaths {return false}
+        if _storage._additionalArguments != rhs_storage._additionalArguments {return false}
+        if _storage._mcpRefusedToolCount != rhs_storage._mcpRefusedToolCount {return false}
+        if _storage._mcpEffectivePolicy != rhs_storage._mcpEffectivePolicy {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

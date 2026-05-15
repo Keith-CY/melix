@@ -1007,6 +1007,8 @@ message MCPToolSourceSummary {
   bool enabled = 2;
   repeated string namespaces = 3;
   uint32 tool_count = 4;
+  repeated string refused_namespaces = 5;
+  string policy_state = 6;
 }
 
 message MCPToolCatalogSummary {
@@ -1015,6 +1017,10 @@ message MCPToolCatalogSummary {
   uint32 enabled_source_count = 3;
   uint32 resolved_tool_count = 4;
   repeated MCPToolSourceSummary sources = 5;
+  string requested_policy = 6;
+  string effective_policy = 7;
+  string operator_override_source = 8;
+  repeated string refused_namespaces = 9;
 }
 
 message EmbeddingToolingSummary {
@@ -1042,6 +1048,8 @@ message ToolingSettingsSummary {
   uint32 mcp_resolved_tool_count = 6;
   repeated ToolingConfigPathSummary config_paths = 7;
   repeated string additional_arguments = 8;
+  uint32 mcp_refused_tool_count = 9;
+  string mcp_effective_policy = 10;
 }
 
 enum APIOnboardingSurfaceStatus {

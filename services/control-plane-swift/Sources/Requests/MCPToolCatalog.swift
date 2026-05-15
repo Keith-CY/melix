@@ -54,6 +54,20 @@ public struct MCPToolCatalog: Sendable, Equatable {
         }
     }
 
+    public struct PolicyReceipt: Sendable, Equatable {
+        public let requestedPolicy: String
+        public let effectivePolicy: String
+        public let operatorOverrideSource: String
+        public let refusedNamespaces: [String]
+
+        public static let `default` = PolicyReceipt(
+            requestedPolicy: "default_block_high_risk",
+            effectivePolicy: "block_high_risk",
+            operatorOverrideSource: "",
+            refusedNamespaces: []
+        )
+    }
+
     private struct FilePayload: Decodable {
         let defaultParserMode: String?
         let sources: [Source]
@@ -67,19 +81,31 @@ public struct MCPToolCatalog: Sendable, Equatable {
     public let configPath: String
     public let defaultParserMode: ToolParserMode
     public let sources: [Source]
+    public let policyReceipt: PolicyReceipt
 
     public static let empty = MCPToolCatalog()
 
     public init(
         configPath: String = "",
         defaultParserMode: ToolParserMode = .json,
-        sources: [Source] = []
+        sources: [Source] = [],
+        policyReceipt: PolicyReceipt = .default
     ) {
         self.configPath = configPath.trimmingCharacters(in: .whitespacesAndNewlines)
         self.defaultParserMode = defaultParserMode
-        self.sources = sources
-            .filter { !$0.sourceID.isEmpty && !$0.namespaces.isEmpty }
-            .sorted { $0.sourceID < $1.sourceID }
+        self.policyReceipt = policyReceipt
+        let refused = Set(policyReceipt.refusedNamespaces)
+        self.sources = sources.compactMap { source in
+            let namespaces = source.namespaces.filter { !refused.contains($0) }
+            guard !source.sourceID.isEmpty && !namespaces.isEmpty else {
+                return nil
+            }
+            return Source(
+                sourceID: source.sourceID,
+                enabled: source.enabled,
+                namespaces: namespaces
+            )
+        }.sorted { $0.sourceID < $1.sourceID }
     }
 
     public static func load(
@@ -92,10 +118,13 @@ public struct MCPToolCatalog: Sendable, Equatable {
             return .empty
         }
 
-        return load(configPath: configPath)
+        return load(configPath: configPath, environment: environment)
     }
 
-    public static func load(configPath: String) -> MCPToolCatalog {
+    public static func load(
+        configPath: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> MCPToolCatalog {
         let trimmedPath = configPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
             !trimmedPath.isEmpty,
@@ -108,10 +137,15 @@ public struct MCPToolCatalog: Sendable, Equatable {
         let registry = ToolParserRegistry()
         let defaultMode = payload.defaultParserMode
             .flatMap { registry.mode(for: $0) } ?? .json
+        let policyReceipt = Self.policyReceipt(
+            for: payload.sources,
+            environment: environment
+        )
         return MCPToolCatalog(
             configPath: trimmedPath,
             defaultParserMode: defaultMode,
-            sources: payload.sources
+            sources: payload.sources,
+            policyReceipt: policyReceipt
         )
     }
 
@@ -142,20 +176,85 @@ public struct MCPToolCatalog: Sendable, Equatable {
         UInt32(resolvedNamespaces.count)
     }
 
+    public var refusedNamespaceCount: UInt32 {
+        UInt32(policyReceipt.refusedNamespaces.count)
+    }
+
     func summary() -> Melix_Controlplane_V1_MCPToolCatalogSummary {
         var summary = Melix_Controlplane_V1_MCPToolCatalogSummary()
         summary.configPath = configPath
         summary.defaultParserMode = defaultParserMode.rawValue
         summary.enabledSourceCount = enabledSourceCount
         summary.resolvedToolCount = resolvedToolCount
+        summary.requestedPolicy = policyReceipt.requestedPolicy
+        summary.effectivePolicy = policyReceipt.effectivePolicy
+        summary.operatorOverrideSource = policyReceipt.operatorOverrideSource
+        summary.refusedNamespaces = policyReceipt.refusedNamespaces
         summary.sources = sources.map { source in
             var item = Melix_Controlplane_V1_MCPToolSourceSummary()
             item.sourceID = source.sourceID
             item.enabled = source.enabled
             item.namespaces = source.namespaces
             item.toolCount = UInt32(source.namespaces.count)
+            item.policyState = "allowed"
             return item
         }
         return summary
     }
+
+    private static func policyReceipt(
+        for sources: [Source],
+        environment: [String: String]
+    ) -> PolicyReceipt {
+        let allowlistedNamespaces = Set(namespaceList(environment["MELIX_MCP_HIGH_RISK_ALLOWLIST"]))
+        let allowlistEnabled = !allowlistedNamespaces.isEmpty
+        let requestedPolicy = allowlistEnabled ? "operator_allowlist" : "default_block_high_risk"
+        let refused = sources
+            .filter(\.enabled)
+            .flatMap(\.namespaces)
+            .filter { isHighRiskNamespace($0) && !allowlistedNamespaces.contains($0) }
+        let deduplicatedRefusals = deduplicate(refused).sorted()
+        return PolicyReceipt(
+            requestedPolicy: requestedPolicy,
+            effectivePolicy: deduplicatedRefusals.isEmpty ? "allow_configured" : "block_high_risk",
+            operatorOverrideSource: allowlistEnabled ? "MELIX_MCP_HIGH_RISK_ALLOWLIST" : "",
+            refusedNamespaces: deduplicatedRefusals
+        )
+    }
+
+    private static func namespaceList(_ rawValue: String?) -> [String] {
+        (rawValue ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func deduplicate(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var output: [String] = []
+        for value in values where seen.insert(value).inserted {
+            output.append(value)
+        }
+        return output
+    }
+
+    private static func isHighRiskNamespace(_ namespace: String) -> Bool {
+        let normalized = namespace.lowercased()
+        return highRiskMarkers.contains { normalized.contains($0) }
+    }
+
+    private static let highRiskMarkers = [
+        "shell",
+        "exec",
+        "execute",
+        "terminal",
+        "process",
+        "subprocess",
+        "eval",
+        "filesystem.write",
+        "fs.write",
+        "file.write",
+        "network.upload",
+        "upload",
+    ]
 }

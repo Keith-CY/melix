@@ -15,6 +15,9 @@
 - Treat MCP configuration as a typed Melix-owned input, not an opaque passthrough string.
 - Keep parser mode selection separate from MCP tool-source selection; parser choice explains how tools are emitted, MCP explains which tools are eligible.
 - Operator control in this slice means explicit enabled or disabled state and snapshot visibility, not full UI editing.
+- High-risk MCP namespaces are not exposed by default. Operators must opt exact namespaces into
+  auto-injection with `MELIX_MCP_HIGH_RISK_ALLOWLIST`, and snapshots must expose the requested
+  policy, effective policy, override source, and refused namespaces.
 
 ## Performance Probes And Success Metrics
 
@@ -22,6 +25,7 @@
 - `mcp.config_load_latency_ms`
 - `mcp.configured_tool_count`
 - `mcp.disabled_tool_source_count`
+- `mcp.refused_tool_count`
 
 ## Task 1: Add Typed MCP Configuration And Snapshot Visibility
 
@@ -84,14 +88,15 @@
   - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python pytest tests/integration/test_mcp_tool_injection.py tests/test_m9_mcp_smoke.py -q`
     - Result: `4 passed in 10.66s`
   - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/m9_mcp_smoke.py --json`
-    - Result: all checks `true`; metrics recorded `mcp.config_load_latency_ms=1.443028450012207`, `mcp.configured_tool_count=2`, `mcp.disabled_tool_source_count=1`, `mcp.tool_injection_count=1`, `mcp.tool_injection_success_rate=1`
+    - Result: all checks `true`; metrics recorded `mcp.config_load_latency_ms=1.443028450012207`, `mcp.configured_tool_count=2`, `mcp.disabled_tool_source_count=1`, `mcp.refused_tool_count=1`, `mcp.tool_injection_count=1`, `mcp.tool_injection_success_rate=1`
 - [x] Measure changed-line coverage for the touched Swift and integration scope and confirm coverage is at least `95%`.
   - Swift changed-line coverage: `100.00% (555/555)` across the touched Swift source and test scope.
   - Python changed-line coverage: `100.00% (118/118)` across `tests/integration/test_mcp_tool_injection.py`, `scripts/m9_mcp_smoke.py`, and `tests/test_m9_mcp_smoke.py`.
   - Generated protobuf artifacts under `packages/protocol/` were excluded from hand-written coverage accounting.
-- [x] Record the changed-scope metrics report for `mcp.tool_injection_success_rate`, `mcp.config_load_latency_ms`, `mcp.configured_tool_count`, and `mcp.disabled_tool_source_count`.
+- [x] Record the changed-scope metrics report for `mcp.tool_injection_success_rate`, `mcp.config_load_latency_ms`, `mcp.configured_tool_count`, `mcp.disabled_tool_source_count`, and `mcp.refused_tool_count`.
   - `mcp.tool_injection_success_rate = 1`
   - `mcp.config_load_latency_ms = 1.443028450012207`
   - `mcp.configured_tool_count = 2`
   - `mcp.disabled_tool_source_count = 1`
+  - `mcp.refused_tool_count = 1`
 - [x] Commit M9.1 with the MCP catalog, request-shaping, streaming metadata, runbook, smoke coverage, and this execution record.

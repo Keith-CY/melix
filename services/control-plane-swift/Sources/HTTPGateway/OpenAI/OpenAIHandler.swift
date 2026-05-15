@@ -346,6 +346,8 @@ public struct OpenAIHandler: Sendable {
                 return try await handleModels()
             case (.get, "/health"):
                 return try await handleHealth()
+            case (.get, "/v1/melix/health"):
+                return try await handleHealthDiagnostics()
             case (.get, "/v1/cache/stats"):
                 return try await handleCacheStats()
             case (.post, "/v1/melix/auth/session"):
@@ -515,11 +517,24 @@ public struct OpenAIHandler: Sendable {
 
     private func handleHealth() async throws -> HTTPResponse {
         let startedAt = Date()
+        let response = HealthResponse(
+            status: "ok",
+            service: "melix-control-plane"
+        )
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "operator.health_latency_ms"
+        )
+        return try encodedJSONResponse(response)
+    }
+
+    private func handleHealthDiagnostics() async throws -> HTTPResponse {
+        let startedAt = Date()
         let routes = await healthRoutes()
         let models = await modelCatalog.listModels()
         let readyCount = models.filter { $0.state == .modelWarm || $0.state == .modelPinned }.count
         let status = routes.values.allSatisfy { $0 } ? "ok" : "degraded"
-        let response = HealthResponse(
+        let response = HealthDiagnosticsResponse(
             status: status,
             routes: routes,
             modelsReady: readyCount,
@@ -527,7 +542,7 @@ public struct OpenAIHandler: Sendable {
         )
         await metricsStore.set(
             Date().timeIntervalSince(startedAt) * 1000,
-            forKey: "operator.health_latency_ms"
+            forKey: "operator.health_diagnostics_latency_ms"
         )
         return try encodedJSONResponse(response)
     }
@@ -2516,12 +2531,13 @@ public struct OpenAIHandler: Sendable {
 
     private func authorizationRoute(for request: HTTPRequest) -> GatewayAuthorizationRoute {
         switch (request.method, request.path) {
-        case (.get, "/health"),
-             (.get, "/.well-known/melix.json"),
+        case (.get, "/health"):
+            return .health
+        case (.get, "/.well-known/melix.json"),
              (.get, "/api/capabilities"),
              (.get, "/api/instructions"),
              (.get, "/api/config-metadata"):
-            return .health
+            return .standard
         case (.post, "/v1/melix/auth/session"):
             return .createSession
         case (.get, "/v1/melix/auth/session"), (.delete, "/v1/melix/auth/session"):
@@ -3419,6 +3435,11 @@ private enum HTTPGatewayEndpointFamily: String {
 }
 
 private struct HealthResponse: Codable {
+    let status: String
+    let service: String
+}
+
+private struct HealthDiagnosticsResponse: Codable {
     let status: String
     let routes: [String: Bool]
     let modelsReady: Int

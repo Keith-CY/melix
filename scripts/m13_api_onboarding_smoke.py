@@ -66,7 +66,10 @@ def run_smoke(repo_root: Path) -> dict[str, object]:
     try:
         gateway_headers = stack._gateway_request_headers()
         health_status, health_payload = request_json(
-            f"http://127.0.0.1:{stack.http_port}/health",
+            f"http://127.0.0.1:{stack.http_port}/health"
+        )
+        health_diagnostics_status, health_diagnostics_payload = request_json(
+            f"http://127.0.0.1:{stack.http_port}/v1/melix/health",
             headers=gateway_headers,
         )
         responses_status, responses_content_type, responses_body = request_sse(
@@ -95,11 +98,15 @@ def run_smoke(repo_root: Path) -> dict[str, object]:
 
         if health_status != 200:
             raise AssertionError(f"/health returned {health_status}")
-        if health_payload.get("status") not in {"ok", "degraded"}:
+        if health_payload.get("status") != "ok" or "routes" in health_payload:
             raise AssertionError(f"unexpected health status: {health_payload}")
-        routes = health_payload.get("routes", {})
+        if health_diagnostics_status != 200:
+            raise AssertionError(f"/v1/melix/health returned {health_diagnostics_status}")
+        if health_diagnostics_payload.get("status") not in {"ok", "degraded"}:
+            raise AssertionError(f"unexpected health diagnostics status: {health_diagnostics_payload}")
+        routes = health_diagnostics_payload.get("routes", {})
         if not isinstance(routes, dict) or routes.get("swift_text") is not True:
-            raise AssertionError(f"swift_text route is not ready: {health_payload}")
+            raise AssertionError(f"swift_text route is not ready: {health_diagnostics_payload}")
 
         if responses_status != 200:
             raise AssertionError(f"/v1/responses returned {responses_status}: {responses_body}")
@@ -132,6 +139,10 @@ def run_smoke(repo_root: Path) -> dict[str, object]:
             "health": {
                 "status_code": health_status,
                 "status": health_payload["status"],
+            },
+            "health_diagnostics": {
+                "status_code": health_diagnostics_status,
+                "status": health_diagnostics_payload["status"],
                 "swift_text_ready": routes["swift_text"],
             },
             "responses": {

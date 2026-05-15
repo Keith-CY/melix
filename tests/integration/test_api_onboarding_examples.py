@@ -20,7 +20,8 @@ def test_api_onboarding_smoke_verifies_the_live_quick_start_examples() -> None:
     assert payload["examples"]["anthropic_version"] == "2023-06-01"
     assert payload["examples"]["auth_header_names"] == ["x-api-key"]
     assert payload["health"]["status_code"] == 200
-    assert payload["health"]["swift_text_ready"] is True
+    assert payload["health_diagnostics"]["status_code"] == 200
+    assert payload["health_diagnostics"]["swift_text_ready"] is True
     assert payload["responses"]["status_code"] == 200
     assert payload["responses"]["contains_output_delta"] is True
     assert payload["responses"]["contains_completed_event"] is True

@@ -133,54 +133,65 @@ class _FakeStack:
 
 
 @pytest.mark.parametrize(
-    ("health_result", "responses_result", "messages_result", "message"),
+    ("health_result", "health_diagnostics_result", "responses_result", "messages_result", "message"),
     [
-        ((503, {"status": "ok", "routes": {"swift_text": True}}), None, None, "/health returned 503"),
-        ((200, {"status": "offline", "routes": {"swift_text": True}}), None, None, "unexpected health status"),
-        ((200, {"status": "ok", "routes": {"swift_text": False}}), None, None, "swift_text route is not ready"),
+        ((503, {"status": "ok"}), None, None, None, "/health returned 503"),
+        ((200, {"status": "offline"}), None, None, None, "unexpected health status"),
+        ((200, {"status": "ok", "routes": {"swift_text": True}}), None, None, None, "unexpected health status"),
+        ((200, {"status": "ok"}), (503, {"status": "ok", "routes": {"swift_text": True}}), None, None, "/v1/melix/health returned 503"),
+        ((200, {"status": "ok"}), (200, {"status": "offline", "routes": {"swift_text": True}}), None, None, "unexpected health diagnostics status"),
+        ((200, {"status": "ok"}), (200, {"status": "ok", "routes": {"swift_text": False}}), None, None, "swift_text route is not ready"),
         (
+            (200, {"status": "ok"}),
             (200, {"status": "ok", "routes": {"swift_text": True}}),
             (500, "text/event-stream; charset=utf-8", "error"),
             None,
             "/v1/responses returned 500",
         ),
         (
+            (200, {"status": "ok"}),
             (200, {"status": "ok", "routes": {"swift_text": True}}),
             (200, "application/json", "error"),
             None,
             "responses content type is not SSE",
         ),
         (
+            (200, {"status": "ok"}),
             (200, {"status": "ok", "routes": {"swift_text": True}}),
             (200, "text/event-stream; charset=utf-8", "event: response.completed\ndata: [DONE]"),
             None,
             "responses example did not emit output deltas",
         ),
         (
+            (200, {"status": "ok"}),
             (200, {"status": "ok", "routes": {"swift_text": True}}),
             (200, "text/event-stream; charset=utf-8", "event: response.output_text.delta"),
             None,
             "responses example did not complete cleanly",
         ),
         (
+            (200, {"status": "ok"}),
             (200, {"status": "ok", "routes": {"swift_text": True}}),
             (200, "text/event-stream; charset=utf-8", "event: response.output_text.delta\nevent: response.completed\ndata: [DONE]"),
             (500, "text/event-stream; charset=utf-8", "error"),
             "/v1/messages returned 500",
         ),
         (
+            (200, {"status": "ok"}),
             (200, {"status": "ok", "routes": {"swift_text": True}}),
             (200, "text/event-stream; charset=utf-8", "event: response.output_text.delta\nevent: response.completed\ndata: [DONE]"),
             (200, "application/json", "error"),
             "messages content type is not SSE",
         ),
         (
+            (200, {"status": "ok"}),
             (200, {"status": "ok", "routes": {"swift_text": True}}),
             (200, "text/event-stream; charset=utf-8", "event: response.output_text.delta\nevent: response.completed\ndata: [DONE]"),
             (200, "text/event-stream; charset=utf-8", "event: message.completed\ndata: [DONE]"),
             "messages example did not emit message deltas",
         ),
         (
+            (200, {"status": "ok"}),
             (200, {"status": "ok", "routes": {"swift_text": True}}),
             (200, "text/event-stream; charset=utf-8", "event: response.output_text.delta\nevent: response.completed\ndata: [DONE]"),
             (200, "text/event-stream; charset=utf-8", "event: message.delta"),
@@ -191,6 +202,7 @@ class _FakeStack:
 def test_run_smoke_rejects_invalid_endpoint_states(
     monkeypatch: pytest.MonkeyPatch,
     health_result: tuple[int, dict[str, object]],
+    health_diagnostics_result: tuple[int, dict[str, object]] | None,
     responses_result: tuple[int, str, str] | None,
     messages_result: tuple[int, str, str] | None,
     message: str,
@@ -211,7 +223,13 @@ def test_run_smoke_rejects_invalid_endpoint_states(
         "LiveMelixStack",
         lambda repo_root, environment_overrides: stack,
     )
-    monkeypatch.setattr(m13_api_onboarding_smoke, "request_json", lambda url, headers=None: health_result)
+    json_results = iter(
+        [
+            health_result,
+            health_diagnostics_result or (200, {"status": "ok", "routes": {"swift_text": True}}),
+        ]
+    )
+    monkeypatch.setattr(m13_api_onboarding_smoke, "request_json", lambda url, headers=None: next(json_results))
 
     stream_results = iter(
         [

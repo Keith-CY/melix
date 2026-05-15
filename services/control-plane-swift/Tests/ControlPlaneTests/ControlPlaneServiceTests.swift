@@ -165,6 +165,8 @@ struct ControlPlaneServiceTests {
                 .contains("Native /api/chat") == true
         )
         #expect(endpoints["health"]?.path == "/health")
+        #expect(endpoints["health"]?.summary.contains("liveness") == true)
+        #expect(endpoints["health_diagnostics"]?.path == "/v1/melix/health")
         #expect(endpoints["cache_stats"]?.path == "/v1/cache/stats")
         #expect(endpoints["responses"]?.streaming == true)
         #expect(endpoints["messages"]?.surfaceID == "anthropic_messages")

@@ -30,6 +30,8 @@ struct ToolingSettingsSnapshotSource: Sendable {
         summary.mcpConfigPath = mcpToolCatalog.configPath
         summary.mcpEnabledSourceCount = mcpToolCatalog.enabledSourceCount
         summary.mcpResolvedToolCount = mcpToolCatalog.resolvedToolCount
+        summary.mcpRefusedToolCount = mcpToolCatalog.refusedNamespaceCount
+        summary.mcpEffectivePolicy = mcpToolCatalog.policyReceipt.effectivePolicy
         summary.configPaths = resolvedConfigPaths(
             gatewayConfigStorePath: gatewayConfigStorePath,
             gatewayServingDefaultsStorePath: gatewayServingDefaultsStorePath,

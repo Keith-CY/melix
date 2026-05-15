@@ -92,11 +92,12 @@ Expected failure probes:
 
 ### Route Parity
 
-The same shared-access policy applies to every operator-facing route except `/health`, including
-text generation, embeddings, rerank, audio transcription, audio speech, image generation/editing,
-cache stats, auth session creation, and unknown routes. Missing credentials in shared-enabled mode
-must return `401 missing_api_key` before request body decoding or worker dispatch. Session inspect
-and revoke routes require `X-Melix-Session`; missing session credentials return
+The same shared-access policy applies to every operator-facing route except public liveness
+`/health`, including text generation, embeddings, rerank, audio transcription, audio speech,
+image generation/editing, authenticated health diagnostics at `/v1/melix/health`, discovery,
+cache stats, auth session creation, and unknown routes. Missing credentials in shared-enabled
+mode must return `401 missing_api_key` before request body decoding or worker dispatch. Session
+inspect and revoke routes require `X-Melix-Session`; missing session credentials return
 `401 missing_session` and do not fall through to the route handler.
 
 ### Desktop State

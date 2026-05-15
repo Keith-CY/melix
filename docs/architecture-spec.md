@@ -184,6 +184,10 @@ V1 should expose these local endpoints:
 - `GET /v1/models`
 - `GET /v1/cache/stats`
 - `GET /health`
+- `GET /v1/melix/health`
+
+`GET /health` is public liveness only. Route readiness and model counts belong
+to the authenticated `GET /v1/melix/health` diagnostics endpoint.
 
 The gateway should also leave room for Ollama-compatible local endpoints such as:
 
