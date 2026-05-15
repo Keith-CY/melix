@@ -14,6 +14,8 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("--hf-token passed to model or dataset hub download is saved"))
         #expect(MelixCLIParser.usageText.contains("--hf-dataset-revision overrides a revision embedded in --dataset-ref"))
         #expect(MelixCLIParser.usageText.contains("melix runs list [--from PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix jobs show JOB_ID [--from PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix jobs cancel JOB_ID [--from PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix bench report --from PATH [--format markdown|json]"))
         #expect(MelixCLIParser.usageText.contains("melix settings show --json [--override KEY=VALUE ...]"))
         #expect(MelixCLIParser.usageText.contains("melix info --json"))
@@ -37,6 +39,11 @@ struct MelixCLIParserTests {
             (["instructions", "--json"], "instructions"),
             (["schema", "--json"], "schema"),
             (["config", "metadata", "--json"], "config.metadata"),
+            (["jobs", "list", "--json"], "jobs.list"),
+            (["jobs", "show", "bench-1", "--from", "/tmp/runs", "--json"], "jobs.show"),
+            (["jobs", "logs", "bench-1", "--follow", "--json"], "jobs.logs"),
+            (["jobs", "artifacts", "bench-1", "--json"], "jobs.artifacts"),
+            (["jobs", "cancel", "bench-1", "--from", "/tmp/runs", "--json"], "jobs.cancel"),
         ]
 
         for (arguments, expectedID) in cases {
@@ -93,6 +100,15 @@ struct MelixCLIParserTests {
         }
         #expect(throws: MelixCLIError.usage("melix config metadata requires --json.")) {
             _ = try MelixCLIParser.parse(["config", "metadata"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["jobs"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("JOB_ID is required for melix jobs show.")) {
+            _ = try MelixCLIParser.parse(["jobs", "show"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["jobs", "unknown", "--json"])
         }
     }
 
