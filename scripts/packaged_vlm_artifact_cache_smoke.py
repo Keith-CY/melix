@@ -158,7 +158,11 @@ def main() -> int:
             },
         }
 
-    print(json.dumps(result, indent=2, sort_keys=True) if args.json else json.dumps(result, indent=2, sort_keys=True))
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        summary = ", ".join(f"{key}={str(value).lower()}" for key, value in checks.items())
+        print(f"pass: {summary}")
     return 0 if all(checks.values()) else 1
 
 
