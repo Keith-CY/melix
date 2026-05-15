@@ -6,6 +6,11 @@ public enum RequestCoordinatorError: Error, Equatable {
     case requestAlreadyActive
     case workerUnavailable
     case requestNotResumable
+    case unsupportedAcceleration(
+        reason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
+        message: String,
+        recoveryHint: String
+    )
 }
 
 public struct CoordinatedChatExecution: Sendable {
@@ -426,6 +431,7 @@ private struct SchedulingPlan: Sendable {
     let continuousBatchEligible: Bool
     let batchCohortID: String
     let batchMaxSize: UInt32
+    let accelerationRefusal: AccelerationReceiptValidation?
 }
 
 private struct StructuredOutputValidationEvent: Sendable {
@@ -734,6 +740,19 @@ public actor RequestCoordinator {
         let requestMetricStartedAt = requestStartedAt ?? now()
         let plan = await resolvedSchedulingPlan(translatedRequest)
         let request = plan.translatedRequest
+        if let accelerationRefusal = plan.accelerationRefusal {
+            await metricsStore.increment("control_plane.acceleration_refusal_count")
+            _ = await schedulerReadModel.recordRejected(
+                requestID: request.requestID,
+                laneHint: plan.admissionLane,
+                priority: request.workerRequest.execution.scheduling.priority
+            )
+            throw RequestCoordinatorError.unsupportedAcceleration(
+                reason: accelerationRefusal.unsupportedReason,
+                message: accelerationRefusal.message,
+                recoveryHint: accelerationRefusal.recoveryHint
+            )
+        }
         requestPlans[request.requestID] = plan
         await recordSchedulingMetrics(for: plan)
         await hydrateSessionGraph(for: request.workerRequest.execution.id)
@@ -1553,6 +1572,7 @@ public actor RequestCoordinator {
     ) async -> SchedulingPlan {
         let recoveredRequest = await resolvedRecoveryRequest(translatedRequest)
         let request = await resolvedModelAccelerationRequest(recoveredRequest)
+        let accelerationRefusal = await accelerationRefusal(for: request)
         let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
         let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
         let phaseAwareEligible = await canUsePhaseAwareExecution(
@@ -1594,7 +1614,8 @@ public actor RequestCoordinator {
                         prefillLane: lane,
                         batchingDefaults: batchingDefaults
                     )
-                    : 1
+                    : 1,
+                accelerationRefusal: accelerationRefusal
             )
         }
         guard
@@ -1634,7 +1655,8 @@ public actor RequestCoordinator {
                     routeKind: routeKind,
                     prefillLane: prefillLane,
                     batchingDefaults: batchingDefaults
-                )
+                ),
+                accelerationRefusal: accelerationRefusal
             )
         }
 
@@ -1707,7 +1729,8 @@ public actor RequestCoordinator {
                     prefillLane: prefillLane,
                     batchingDefaults: batchingDefaults
                 )
-                : 1
+                : 1,
+            accelerationRefusal: accelerationRefusal
         )
     }
 
@@ -1728,7 +1751,7 @@ public actor RequestCoordinator {
         if workerRequest.execution.acceleration.mode == .unspecified {
             let gatewayMode = gatewaySpeculativeDefaults.accelerationMode
             if model.settings.defaultAccelerationMode != .unspecified {
-                workerRequest.execution.acceleration.mode = workerAccelerationMode(
+                workerRequest.execution.acceleration.mode = ModelCapabilityReceipts.workerAccelerationMode(
                     from: model.settings.defaultAccelerationMode
                 )
             } else if gatewayMode != .baseline {
@@ -1768,12 +1791,49 @@ public actor RequestCoordinator {
             break
         }
 
+        let requestedMode = ModelCapabilityReceipts.controlPlaneAccelerationMode(
+            from: workerRequest.execution.acceleration.mode
+        )
+        let receipt = ModelCapabilityReceipts.accelerationReceipt(
+            for: model,
+            requestedMode: requestedMode,
+            draftModelID: workerRequest.execution.acceleration.draftModelID
+        )
+        workerRequest.execution.ext.merge(
+            ModelCapabilityReceipts.accelerationAuditMetadata(receipt),
+            uniquingKeysWith: { _, receiptValue in receiptValue }
+        )
+
         return TranslatedChatRequest(
             requestID: translatedRequest.requestID,
             modelID: translatedRequest.modelID,
             workerRequest: workerRequest,
             stream: translatedRequest.stream
         )
+    }
+
+    private func accelerationRefusal(
+        for translatedRequest: TranslatedChatRequest
+    ) async -> AccelerationReceiptValidation? {
+        guard
+            let modelCatalog,
+            let model = await modelCatalog.model(id: translatedRequest.modelID)
+        else {
+            return nil
+        }
+        let requestedMode = ModelCapabilityReceipts.controlPlaneAccelerationMode(
+            from: translatedRequest.workerRequest.execution.acceleration.mode
+        )
+        guard requestedMode != .baseline, requestedMode != .unspecified else {
+            return nil
+        }
+
+        let validation = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: requestedMode,
+            draftModelID: translatedRequest.workerRequest.execution.acceleration.draftModelID
+        )
+        return validation.ok ? nil : validation
     }
 
     private func isContinuousBatchEligible(
@@ -2826,22 +2886,7 @@ private func controlPlaneAccelerationMode(
 private func workerAccelerationMode(
     from controlPlaneMode: Melix_Controlplane_V1_AccelerationMode
 ) -> Melix_Worker_V1_AccelerationMode {
-    switch controlPlaneMode {
-    case .unspecified:
-        return .unspecified
-    case .baseline:
-        return .baseline
-    case .speculativeDecode:
-        return .speculativeDecode
-    case .acceleratedPrefill:
-        return .acceleratedPrefill
-    case .sparsePrefill:
-        return .sparsePrefill
-    case .activeKvQuantized:
-        return .activeKvQuantized
-    case .UNRECOGNIZED:
-        return .unspecified
-    }
+    ModelCapabilityReceipts.workerAccelerationMode(from: controlPlaneMode)
 }
 
 private func resolvedPrefillChunkTarget(

@@ -278,10 +278,20 @@ struct MelixRuntimeDiscoveryBuilder {
     }
 
     func capabilitiesPayload(modelQuery: String = "") -> [String: Any] {
-        [
+        let seedModels = ModelCatalog.phaseFiveSeedModels().map { model in
+            [
+                "model_id": model.modelID,
+                "kind": model.kind,
+                "supported_modalities": model.supportedModalities,
+                "supported_tasks": model.supportedTasks,
+                "capability_receipt": ModelCapabilityReceipts.discoveryPayload(for: model),
+            ]
+        }
+        return [
             "schema_version": MelixRuntimeDiscoveryContracts.capabilitiesSchemaVersion,
             "features": MelixRuntimeDiscoveryContracts.enabledFeatures,
             "supported_tasks": MelixRuntimeDiscoveryContracts.supportedTasks,
+            "models": seedModels,
             "model_alias_discovery": MelixRuntimeDiscoveryContracts.modelAliasDiscoveryPayload(query: modelQuery),
         ]
     }
