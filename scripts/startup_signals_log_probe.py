@@ -88,6 +88,37 @@ def _measure_tail_scan(log_path: Path, *, iterations: int) -> tuple[float, float
     return statistics.fmean(elapsed_samples), statistics.fmean(peak_samples)
 
 
+def _measure_report_allocations(*, iterations: int) -> tuple[float, float, float]:
+    elapsed_samples: list[float] = []
+    peak_samples: list[float] = []
+    has_dict_samples: list[float] = []
+    for _ in range(5):
+        tracemalloc.start()
+        started = time.perf_counter()
+        reports = [
+            startup_signals.StartupFailureReport(
+                classification="control_plane_crash",
+                summary="Control plane crashed before startup completed.",
+                detail="Inspect the control-plane logs for the crash cause.",
+                http_port=12436,
+                ready_probe_url="http://127.0.0.1:12436/v1/models",
+                primary_log_path="control-plane.stderr.log",
+                log_excerpt="fatal error: control plane crashed",
+            )
+            for _ in range(iterations)
+        ]
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_samples.append(float(peak))
+        has_dict_samples.append(1.0 if hasattr(reports[0], "__dict__") else 0.0)
+    return (
+        statistics.fmean(elapsed_samples),
+        statistics.fmean(peak_samples),
+        statistics.fmean(has_dict_samples),
+    )
+
+
 def main() -> int:
     iterations = 400
     samples = 5
@@ -153,6 +184,9 @@ def main() -> int:
             worker_exists.append(exists / iterations)
 
         tail_elapsed_mean, tail_peak_mean = _measure_tail_scan(tail_log, iterations=iterations)
+        report_alloc_elapsed_mean, report_alloc_peak_mean, report_has_dict_mean = (
+            _measure_report_allocations(iterations=iterations * 10)
+        )
 
     print(
         json.dumps(
@@ -176,6 +210,9 @@ def main() -> int:
                     6,
                 ),
                 "iterations": float(iterations),
+                "report_alloc_elapsed_ms_mean": round(report_alloc_elapsed_mean, 6),
+                "report_alloc_peak_bytes_mean": round(report_alloc_peak_mean, 6),
+                "report_has_dict_mean": round(report_has_dict_mean, 6),
                 "sample_count": float(samples),
                 "tail_scan_elapsed_ms_mean": round(tail_elapsed_mean, 6),
                 "tail_scan_peak_bytes_mean": round(tail_peak_mean, 6),

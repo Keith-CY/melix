@@ -214,6 +214,31 @@ def test_classify_startup_failure_reports_host_port_conflict(tmp_path: Path) -> 
     assert "Address already in use" in report.log_excerpt
 
 
+def test_startup_failure_report_uses_slots_without_changing_dict_payload(tmp_path: Path) -> None:
+    control_plane_stderr = tmp_path / "control-plane.stderr.log"
+    control_plane_stderr.write_text("fatal error: boot failed\n", encoding="utf-8")
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+            "control_plane_stderr_path": str(control_plane_stderr),
+        },
+        error_text="handshake failed",
+    )
+
+    assert not hasattr(report, "__dict__")
+    assert report.to_dict() == {
+        "classification": "control_plane_crash",
+        "summary": "Control plane crashed before startup completed.",
+        "detail": "Melix never reached http://127.0.0.1:11434/v1/models. Inspect the control-plane logs for the crash cause.",
+        "http_port": 11434,
+        "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+        "primary_log_path": str(control_plane_stderr),
+        "log_excerpt": "fatal error: boot failed",
+    }
+
+
 def test_classify_startup_failure_skips_log_reads_when_error_text_reports_port_conflict(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

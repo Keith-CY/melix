@@ -36,7 +36,7 @@ class UpdateCheckResult:
     detail: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StartupFailureReport:
     classification: str
     summary: str
