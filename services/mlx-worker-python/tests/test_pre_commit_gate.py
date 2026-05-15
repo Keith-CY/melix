@@ -44,6 +44,36 @@ def test_host_gate_enforces_only_on_large_macos(monkeypatch) -> None:
     assert "128.0 GiB" in large_mac.reason
 
 
+def test_physical_memory_errors_are_wrapped(monkeypatch) -> None:
+    def fail_sysctl(*args, **kwargs):
+        raise subprocess.CalledProcessError(returncode=1, cmd=["sysctl"])
+
+    monkeypatch.setattr(pre_commit_gate.subprocess, "check_output", fail_sysctl)
+
+    with pytest.raises(pre_commit_gate.GateError, match="Unable to read macOS physical memory"):
+        pre_commit_gate.physical_memory_bytes()
+
+
+def test_physical_memory_rejects_unexpected_value(monkeypatch) -> None:
+    monkeypatch.setattr(pre_commit_gate.subprocess, "check_output", lambda *args, **kwargs: "not-an-int")
+
+    with pytest.raises(pre_commit_gate.GateError, match="Unexpected hw.memsize value"):
+        pre_commit_gate.physical_memory_bytes()
+
+
+def test_force_env_enforces_host_gate_without_sysctl(monkeypatch) -> None:
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "physical_memory_bytes",
+        lambda: (_ for _ in ()).throw(AssertionError("sysctl should not run")),
+    )
+
+    forced = pre_commit_gate.resolve_host_gate({"MELIX_PRE_COMMIT_FORCE": "1"})
+
+    assert forced.enforced is True
+    assert "forced" in forced.reason
+
+
 def test_gate_skips_without_running_commands_when_host_is_not_enforced(monkeypatch, tmp_path: Path) -> None:
     commands: list[str] = []
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(False, "not macOS"))
@@ -181,6 +211,48 @@ def test_export_head_snapshot_uses_popen_context_on_tar_failure(monkeypatch, tmp
     assert archive.waited is True
 
 
+def test_export_index_snapshot_can_preserve_head_diff_for_staged_content(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    snapshot = tmp_path / "snapshot"
+    source.mkdir()
+    git_env = pre_commit_gate._git_env()
+    subprocess.check_call(["git", "init", "-q"], cwd=source, env=git_env)
+    subprocess.check_call(["git", "config", "user.name", "Test User"], cwd=source, env=git_env)
+    subprocess.check_call(["git", "config", "user.email", "test@example.invalid"], cwd=source, env=git_env)
+    (source / "changed.py").write_text("value = 1\n", encoding="utf-8")
+    (source / "nested").mkdir()
+    (source / "deleted.py").write_text("remove_me = True\n", encoding="utf-8")
+    (source / "nested" / "deleted.py").write_text("nested_remove_me = True\n", encoding="utf-8")
+    subprocess.check_call(["git", "add", "-A"], cwd=source, env=git_env)
+    subprocess.check_call(["git", "commit", "-q", "-m", "base"], cwd=source, env=git_env)
+    (source / "changed.py").write_text("value = 1\nadded = 2\n", encoding="utf-8")
+    (source / "added.py").write_text("created = True\n", encoding="utf-8")
+    (source / "deleted.py").unlink()
+    (source / "nested" / "deleted.py").unlink()
+    subprocess.check_call(["git", "add", "-A"], cwd=source, env=git_env)
+
+    pre_commit_gate.export_index_snapshot(source, snapshot, git_backed=True)
+
+    diff = subprocess.check_output(
+        ["git", "diff", "--name-status"],
+        cwd=snapshot,
+        text=True,
+        env=git_env,
+    )
+    assert "M\tchanged.py" in diff
+    assert "A\tadded.py" in diff
+    assert "D\tdeleted.py" in diff
+    assert "D\tnested/deleted.py" in diff
+    assert not (snapshot / "nested").exists()
+    added_diff = subprocess.check_output(
+        ["git", "diff", "--unified=0", "--", "added.py"],
+        cwd=snapshot,
+        text=True,
+        env=git_env,
+    )
+    assert "+created = True" in added_diff
+
+
 def test_performance_probe_failure_writes_traceback(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(pre_commit_gate, "_report_run_dir", lambda root: tmp_path / "run")
     monkeypatch.setattr(
@@ -315,6 +387,31 @@ def test_pre_commit_base_ref_uses_head_outside_merge(monkeypatch, tmp_path: Path
     assert pre_commit_gate.pre_commit_base_ref(tmp_path) == "def456"
 
 
+def test_pre_commit_base_ref_prefers_merge_head(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(pre_commit_gate, "merge_head_ref", lambda root: "merge-head")
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "run_git",
+        lambda root, args: (_ for _ in ()).throw(AssertionError("HEAD lookup should not run")),
+    )
+
+    assert pre_commit_gate.pre_commit_base_ref(tmp_path) == "merge-head"
+
+
+def test_repo_root_uses_current_working_tree(monkeypatch, tmp_path: Path) -> None:
+    observed_roots: list[Path] = []
+
+    def fake_run_git(root: Path, args: list[str]) -> str:
+        observed_roots.append(root)
+        assert args == ["rev-parse", "--show-toplevel"]
+        return f"{tmp_path}\n"
+
+    monkeypatch.setattr(pre_commit_gate, "run_git", fake_run_git)
+
+    assert pre_commit_gate.repo_root() == tmp_path
+    assert observed_roots == [Path.cwd()]
+
+
 def test_staged_changed_files_compares_index_against_base_ref(monkeypatch, tmp_path: Path) -> None:
     observed_args: list[str] = []
 
@@ -384,10 +481,18 @@ def test_head_comparison_snapshot_preserves_base_git_diff_context(tmp_path: Path
         cwd=head_repo,
         text=True,
     )
+    name_status_output = subprocess.check_output(
+        ["git", "diff", "--name-status", "--", "kept.py", "added.py", "removed.py"],
+        cwd=head_repo,
+        text=True,
+    )
     assert "+++ b/kept.py" in diff_output
     assert "+new" in diff_output
     assert "+++ b/added.py" in diff_output
     assert "--- a/removed.py" in diff_output
+    assert "M\tkept.py" in name_status_output
+    assert "A\tadded.py" in name_status_output
+    assert "D\tremoved.py" in name_status_output
 
 
 def test_head_comparison_snapshot_scrubs_outer_git_environment(monkeypatch, tmp_path: Path) -> None:
@@ -508,6 +613,86 @@ def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path
     assert observed_base_refs == ["merge-head"]
 
 
+def test_run_performance_report_skips_empty_selected_probe_entries(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(pre_commit_gate, "_report_run_dir", lambda root: tmp_path / "run")
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "build_scope_report",
+        lambda registry_path, changed_files: {
+            "changed_files": changed_files,
+            "force_all": False,
+            "matched_probe_ids": [],
+            "selected_probes": [None, {}, {"id": ""}],
+        },
+    )
+    monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
+    monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref, **kwargs: destination.mkdir())
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "load_probe_registry",
+        lambda registry_path: (),
+    )
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "run_probe_job",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("no valid probes should run")),
+    )
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "build_performance_report",
+        lambda scope, probe_results: {"summary": {"status": "ok"}, "rows": []},
+    )
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "write_report_outputs",
+        lambda report, report_dir: {"markdown": report_dir / "report.md"},
+    )
+    monkeypatch.setattr(pre_commit_gate, "render_terminal_report", lambda report: "")
+
+    outcome = pre_commit_gate.run_performance_report(tmp_path, ["scripts/pre_commit_gate.py"])
+
+    assert outcome.status == "ok"
+    assert outcome.selected_probe_count == 3
+
+
+def test_run_performance_report_unknown_probe_failure_writes_traceback(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(pre_commit_gate, "_report_run_dir", lambda root: tmp_path / "run")
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "build_scope_report",
+        lambda registry_path, changed_files: {
+            "changed_files": changed_files,
+            "force_all": False,
+            "matched_probe_ids": ["missing-probe"],
+            "selected_probes": [{"id": "missing-probe", "name": "Missing probe", "metrics": []}],
+        },
+    )
+    monkeypatch.setattr(pre_commit_gate, "load_probe_registry", lambda registry_path: ())
+    monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
+    monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref, **kwargs: destination.mkdir())
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "run_probe_job",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("probe registry mismatch")),
+    )
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "build_performance_report",
+        lambda scope, probe_results: {"summary": {"status": "verification_failed"}, "rows": []},
+    )
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "write_report_outputs",
+        lambda report, report_dir: {"markdown": report_dir / "report.md"},
+    )
+    monkeypatch.setattr(pre_commit_gate, "render_terminal_report", lambda report: "")
+
+    outcome = pre_commit_gate.run_performance_report(tmp_path, ["scripts/pre_commit_gate.py"])
+
+    assert outcome.status == "verification_failed"
+    assert (tmp_path / "run" / "probes" / "missing-probe.error.txt").exists()
+
+
 def test_shell_hook_uses_repo_cache_and_python_312_by_default(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -585,6 +770,16 @@ def test_shell_hook_honors_python_override(tmp_path: Path) -> None:
     assert result.returncode == 0
 
 
+def test_main_returns_gate_error_status(monkeypatch) -> None:
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "repo_root",
+        lambda: (_ for _ in ()).throw(pre_commit_gate.GateError("boom")),
+    )
+
+    assert pre_commit_gate.main() == 1
+
+
 def test_gate_blocks_performance_regression_without_override(monkeypatch, tmp_path: Path) -> None:
     report_dir = tmp_path / "report"
     monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
@@ -654,3 +849,20 @@ def test_gate_allows_performance_regression_with_explicit_override_and_reason(
         )
         == 0
     )
+
+
+def test_gate_blocks_non_regression_performance_status(monkeypatch, tmp_path: Path) -> None:
+    report_dir = tmp_path / "report"
+    monkeypatch.setattr(pre_commit_gate, "resolve_host_gate", lambda env: pre_commit_gate.HostGate(True, "forced"))
+    monkeypatch.setattr(pre_commit_gate, "staged_changed_files", lambda root, **kwargs: ["services/example.py"])
+    monkeypatch.setattr(pre_commit_gate, "unstaged_tracked_files", lambda root: [])
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "run_performance_report",
+        lambda root, changed_files, **kwargs: pre_commit_gate.PerformanceOutcome("verification_failed", report_dir, 1),
+    )
+
+    def command_runner(command: str, cwd: Path):
+        return pre_commit_gate.CommandResult(command, True, 0, 0.0)
+
+    assert pre_commit_gate.run_gate(tmp_path, env={}, command_runner=command_runner) == 1

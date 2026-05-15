@@ -47,18 +47,17 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     if closing >= 0:
         opening = normalized.rfind("```", 0, closing)
         if opening >= 0:
+            content_start = _code_block_content_start(normalized, opening + 3)
+            candidate = normalized[content_start:closing].strip()
+            if candidate:
+                return candidate, "parsed_code_block"
+            if normalized.count("```") % 2 == 0:
+                return candidate, "parsed_code_block"
+            closing = opening
+            opening = normalized.rfind("```", 0, closing)
             if opening >= 0:
                 content_start = _code_block_content_start(normalized, opening + 3)
-                candidate = normalized[content_start:closing].strip()
-                if candidate:
-                    return candidate, "parsed_code_block"
-                if normalized.count("```") % 2 == 0:
-                    return candidate, "parsed_code_block"
-                closing = opening
-                opening = normalized.rfind("```", 0, closing)
-                if opening >= 0:
-                    content_start = _code_block_content_start(normalized, opening + 3)
-                    return normalized[content_start:closing].strip(), "parsed_code_block"
+                return normalized[content_start:closing].strip(), "parsed_code_block"
 
     return normalized, "parsed_code"
 
@@ -306,6 +305,25 @@ _CODE_EVAL_PAYLOAD_STRING_FIELD_TOKENS = tuple(
 _CODE_EVAL_PAYLOAD_INT_FIELD_TOKENS = tuple(
     (key, _CODE_EVAL_PAYLOAD_KEY_TOKENS[key]) for key in _CODE_EVAL_PAYLOAD_INT_KEYS
 )
+_CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY = (
+    ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"], "string"),
+    ("runtime_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"], "string"),
+    ("test_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"], "string"),
+    ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"], "int"),
+    ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"], "int"),
+    ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"], "string"),
+    ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["compile_status"], "string"),
+)
+_CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY = (
+    ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["compile_status"], "string"),
+    ("runtime_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"], "string"),
+    ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"], "string"),
+    ("test_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"], "string"),
+    ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"], "int"),
+    ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"], "int"),
+    ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"], "string"),
+)
+_CODE_EVAL_PAYLOAD_RUNNER_PREFIX = b'{"compile_status"'
 
 
 _JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
@@ -331,17 +349,33 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
     if _json_object_payload_bounds(payload_bytes) is None:
         return None
 
-    payload: dict[str, object] = {}
-    for key, key_token in _CODE_EVAL_PAYLOAD_STRING_FIELD_TOKENS:
-        value = _extract_json_string_field_with_token(payload_bytes, key_token)
-        if value is not None:
-            payload[key] = value
+    if payload_bytes.startswith(_CODE_EVAL_PAYLOAD_RUNNER_PREFIX):
+        field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY
+    else:
+        field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY
 
-    for key, key_token in _CODE_EVAL_PAYLOAD_INT_FIELD_TOKENS:
-        value = _extract_json_int_field_with_token(payload_bytes, key_token)
+    payload: dict[str, object] = {}
+    search_start = 0
+    for key, key_token, value_kind in field_tokens:
+        value_start = _json_field_value_start_for_token(
+            payload_bytes,
+            key_token,
+            start=search_start,
+        )
+        if value_start is None and search_start:
+            value_start = _json_field_value_start_for_token(payload_bytes, key_token)
+        if value_kind == "string":
+            value = _extract_json_string_field_at(payload_bytes, value_start)
+            if value is not None:
+                payload[key] = value
+                search_start = value_start + len(value) + 1
+            continue
+
+        value = _extract_json_int_field_at(payload_bytes, value_start)
         if value is None:
             return None
         payload[key] = value
+        search_start = value_start + len(str(value))
 
     if all(key in payload for key in _REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS):
         return payload
@@ -355,8 +389,13 @@ def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:
     return _json_field_value_start_for_token(payload_bytes, key_token)
 
 
-def _json_field_value_start_for_token(payload_bytes: bytes, key_token: bytes) -> int | None:
-    key_index = payload_bytes.find(key_token)
+def _json_field_value_start_for_token(
+    payload_bytes: bytes,
+    key_token: bytes,
+    *,
+    start: int = 0,
+) -> int | None:
+    key_index = payload_bytes.find(key_token, start)
     if key_index < 0:
         return None
     cursor = key_index + len(key_token)

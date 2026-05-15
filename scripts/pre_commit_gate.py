@@ -211,13 +211,80 @@ def export_base_snapshot(
     export_git_snapshot(root, destination, base_ref, env=env)
 
 
+def _initialize_snapshot_git_repo(source_root: Path, destination: Path) -> None:
+    subprocess.check_call(["git", "init", "-q"], cwd=destination, env=scrub_git_local_env())
+    source_head = run_git(source_root, ["rev-parse", "HEAD"]).strip()
+    subprocess.check_call(["git", "add", "-A"], cwd=destination, env=scrub_git_local_env())
+    subprocess.check_call(
+        [
+            "git",
+            "-c",
+            "user.name=Melix Pre-Commit",
+            "-c",
+            "user.email=melix-pre-commit@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            f"Snapshot {source_head}",
+        ],
+        cwd=destination,
+        env=scrub_git_local_env(),
+    )
+
+
+def _tracked_paths_at_revision(root: Path, revision: str) -> set[str]:
+    output = run_git(root, ["ls-tree", "-r", "--name-only", revision])
+    return {line for line in output.splitlines() if line}
+
+
+def _tracked_index_paths(root: Path) -> set[str]:
+    output = run_git(root, ["ls-files"])
+    return {line for line in output.splitlines() if line}
+
+
+def _staged_added_paths(root: Path) -> set[str]:
+    output = run_git(root, ["diff", "--cached", "--name-only", "--diff-filter=A"])
+    return {line for line in output.splitlines() if line}
+
+
+def _remove_paths_not_in_index(root: Path, destination: Path) -> None:
+    removed_paths = _tracked_paths_at_revision(root, "HEAD") - _tracked_index_paths(root)
+    for rel_path in sorted(removed_paths, reverse=True):
+        target = destination / rel_path
+        if target.is_file() or target.is_symlink():
+            target.unlink()
+            parent = target.parent
+            while parent != destination:
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
+
+
+def _mark_added_paths_intent_to_add(root: Path, destination: Path) -> None:
+    added_paths = _staged_added_paths(root)
+    if not added_paths:
+        return
+    subprocess.check_call(
+        ["git", "add", "--intent-to-add", "--", *sorted(added_paths)],
+        cwd=destination,
+        env=scrub_git_local_env(),
+    )
+
+
 def export_index_snapshot(
     root: Path,
     destination: Path,
     *,
     env: Mapping[str, str] | None = None,
+    git_backed: bool = False,
 ) -> None:
     destination.mkdir(parents=True, exist_ok=True)
+    if git_backed:
+        export_head_snapshot(root, destination)
+        _initialize_snapshot_git_repo(root, destination)
+        _remove_paths_not_in_index(root, destination)
     prefix = os.fspath(destination) + os.sep
     try:
         subprocess.check_call(
@@ -227,6 +294,8 @@ def export_index_snapshot(
         )
     except subprocess.CalledProcessError as exc:
         raise GateError(f"git checkout-index snapshot failed with exit {exc.returncode}") from exc
+    if git_backed:
+        _mark_added_paths_intent_to_add(root, destination)
 
 
 def _remove_worktree_path(path: Path) -> None:
