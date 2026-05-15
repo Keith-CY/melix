@@ -6227,11 +6227,11 @@ public actor MelixCLIRunner {
         MelixCLILiveRunDisplay(capabilities: terminalCapabilities, write: terminalWriter)
     }
 
-    private func withLiveRunTicker<T>(
+    private func withLiveRunTicker<T: Sendable>(
         state: MelixCLILiveRunState,
         display: MelixCLILiveRunDisplay,
         startedAt: Date,
-        operation: () async throws -> T
+        operation: @Sendable () async throws -> T
     ) async throws -> T {
         guard display.supportsContinuousRefresh else {
             return try await operation()
