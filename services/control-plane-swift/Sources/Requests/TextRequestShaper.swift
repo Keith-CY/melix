@@ -277,6 +277,9 @@ public struct TextRequestShaper: Sendable {
         let prefillBatchSize = gatewayServingDefaults?.prefillBatchSize ?? 2
         let completionBatchSize = gatewayServingDefaults?.completionBatchSize ?? 2
         let accelerationMode = gatewayServingDefaults?.accelerationMode ?? .baseline
+        let accelerationProfile = gatewayServingDefaults?.accelerationProfile
+            .flatMap(ServingAccelerationProfiles.normalizeProfileID)
+            ?? ServingAccelerationProfiles.defaultProfileID
         let draftModelID = gatewayServingDefaults?.draftModelID ?? ""
         let numDraftTokens = gatewayServingDefaults?.numDraftTokens ?? 0
         let saveBoundarySnapshot = request.saveBoundarySnapshot
@@ -338,6 +341,7 @@ public struct TextRequestShaper: Sendable {
             prefillBatchSize: prefillBatchSize,
             completionBatchSize: completionBatchSize,
             accelerationMode: accelerationMode,
+            accelerationProfile: accelerationProfile,
             draftModelID: draftModelID,
             numDraftTokens: numDraftTokens,
             sessionID: resolvedSessionID,
