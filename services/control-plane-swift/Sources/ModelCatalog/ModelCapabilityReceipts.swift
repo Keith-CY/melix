@@ -517,7 +517,7 @@ public enum ModelCapabilityReceipts {
         }
         if speculativeHead.configured,
            speculativeHead.state == .capabilityUnsupported {
-            return (.capabilityUnsupported, .unsupportedReasonRuntimeUnavailable, speculativeHead.recoveryHint)
+            return (speculativeHead.state, speculativeHead.unsupportedReason, speculativeHead.recoveryHint)
         }
         return (.capabilitySupported, .unsupportedReasonNone, "")
     }
