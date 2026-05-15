@@ -3,14 +3,18 @@ import Foundation
 public enum HTTPGatewayRequestParseError: Error, Equatable, Sendable {
     case incomplete
     case invalidRequest
+    case headersTooLarge(maxBytes: Int)
+    case duplicateHeader(String)
     case bodyTooLarge(declaredBytes: Int, maxBytes: Int)
     case unsupportedChunkedBody
     case invalidForwardedPrefix(String)
 
     public var statusCode: Int {
         switch self {
-        case .incomplete, .invalidRequest, .invalidForwardedPrefix:
+        case .incomplete, .invalidRequest, .duplicateHeader, .invalidForwardedPrefix:
             return 400
+        case .headersTooLarge:
+            return 431
         case .bodyTooLarge, .unsupportedChunkedBody:
             return 413
         }
@@ -20,6 +24,10 @@ public enum HTTPGatewayRequestParseError: Error, Equatable, Sendable {
         switch self {
         case .incomplete, .invalidRequest:
             return "bad_request"
+        case .headersTooLarge:
+            return "request_headers_too_large"
+        case .duplicateHeader:
+            return "duplicate_header"
         case .bodyTooLarge:
             return "request_body_too_large"
         case .unsupportedChunkedBody:
@@ -33,6 +41,10 @@ public enum HTTPGatewayRequestParseError: Error, Equatable, Sendable {
         switch self {
         case .incomplete, .invalidRequest:
             return "Unable to parse HTTP request."
+        case let .headersTooLarge(maxBytes):
+            return "Request headers exceed the \(maxBytes) byte limit."
+        case let .duplicateHeader(name):
+            return "Duplicate HTTP header is not accepted: \(name)."
         case let .bodyTooLarge(declaredBytes, maxBytes):
             return "Request body is too large: \(declaredBytes) bytes exceeds the \(maxBytes) byte limit."
         case .unsupportedChunkedBody:
@@ -44,12 +56,21 @@ public enum HTTPGatewayRequestParseError: Error, Equatable, Sendable {
 }
 public enum HTTPGatewayRequestParser {
     public static let defaultMaxBodyBytes = 16 * 1024 * 1024
+    public static let defaultMaxHeaderBytes = 64 * 1024
 
     public static func parseRequest(
         from data: Data,
-        maxBodyBytes: Int = defaultMaxBodyBytes
+        maxBodyBytes: Int = defaultMaxBodyBytes,
+        maxHeaderBytes: Int = defaultMaxHeaderBytes
     ) -> Result<HTTPRequest, HTTPGatewayRequestParseError> {
-        guard let headerRange = data.range(of: Data("\r\n\r\n".utf8)) else {
+        let resolvedMaxHeaderBytes = max(0, maxHeaderBytes)
+        let headerDelimiter = Data("\r\n\r\n".utf8)
+        let headerSearchLimit = min(data.count, resolvedMaxHeaderBytes + headerDelimiter.count)
+        let headerSearchData = Data(data.prefix(headerSearchLimit))
+        guard let headerRange = headerSearchData.range(of: headerDelimiter) else {
+            guard data.count <= resolvedMaxHeaderBytes else {
+                return .failure(.headersTooLarge(maxBytes: resolvedMaxHeaderBytes))
+            }
             return .failure(.incomplete)
         }
 
@@ -84,7 +105,11 @@ public enum HTTPGatewayRequestParser {
         for line in lines.dropFirst() {
             let pair = line.split(separator: ":", maxSplits: 1)
             guard pair.count == 2 else { continue }
-            headers[String(pair[0]).lowercased()] = String(pair[1]).trimmingCharacters(in: .whitespaces)
+            let key = String(pair[0]).lowercased()
+            guard headers[key] == nil else {
+                return .failure(.duplicateHeader(key))
+            }
+            headers[key] = String(pair[1]).trimmingCharacters(in: .whitespaces)
         }
 
         if let transferEncoding = headers["transfer-encoding"],

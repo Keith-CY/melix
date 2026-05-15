@@ -30,7 +30,9 @@ The immediate gap is the follow-up local-serving hardening slice:
    unit tested without live sockets.
 4. Add parser refusals for oversized `Content-Length`, chunked transfer
    encoding, and unsafe forwarded prefixes.
-5. Update runbooks and integration smoke expectations to consume the
+5. Add parser refusals for oversized headers and duplicate header names before
+   interpreting security-sensitive header values.
+6. Update runbooks and integration smoke expectations to consume the
    authenticated health diagnostics path when they need route details.
 
 ## Verification
@@ -63,9 +65,16 @@ Post-merge `origin/main` focused results:
 - Phase 5 metrics smoke: passed with public liveness and authenticated health
   diagnostics metrics recorded.
 
+Code-review follow-up results:
+
+- Swift focused coverage tests: `359 tests` passed after adding header-size and
+  duplicate-header refusal coverage.
+- Swift changed-line coverage for the parser follow-up:
+  `100.00% (111/111)`.
+
 ## Metrics
 
 - Public liveness latency: `operator.health_latency_ms`.
 - Authenticated diagnostics latency: `operator.health_diagnostics_latency_ms`.
-- Request parser refusals: `http.request_body_rejected_count` and
-  `http.forwarded_prefix_rejected_count`.
+- Request parser refusals: `http.request_header_rejected_count`,
+  `http.request_body_rejected_count`, and `http.forwarded_prefix_rejected_count`.

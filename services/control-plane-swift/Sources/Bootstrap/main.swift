@@ -45,6 +45,7 @@ enum MelixControlPlaneBootstrap {
         await metricsStore.set(0, forKey: "gateway.generation_default_merge_count")
         await metricsStore.set(0, forKey: "gateway.speculative_config_apply_ms")
         await metricsStore.set(0, forKey: "gateway.auth_validation_failures")
+        await metricsStore.set(0, forKey: "http.request_header_rejected_count")
         await metricsStore.set(0, forKey: "http.request_body_rejected_count")
         await metricsStore.set(0, forKey: "http.forwarded_prefix_rejected_count")
         await metricsStore.set(0, forKey: "shared_access.accepted_client_count")
@@ -272,6 +273,8 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
 
     private func recordParserRefusal(_ parseError: HTTPGatewayRequestParseError) async {
         switch parseError {
+        case .headersTooLarge, .duplicateHeader:
+            await metricsStore.increment("http.request_header_rejected_count")
         case .bodyTooLarge, .unsupportedChunkedBody:
             await metricsStore.increment("http.request_body_rejected_count")
         case .invalidForwardedPrefix:
@@ -330,6 +333,8 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
             return "Conflict"
         case 413:
             return "Payload Too Large"
+        case 431:
+            return "Request Header Fields Too Large"
         case 503:
             return "Service Unavailable"
         default:

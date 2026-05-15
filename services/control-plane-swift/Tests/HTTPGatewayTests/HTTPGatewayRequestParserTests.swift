@@ -132,6 +132,97 @@ struct HTTPGatewayRequestParserTests {
         }
     }
 
+    @Test("parser rejects headers that exceed the configured header byte limit")
+    func parserRejectsHeadersThatExceedTheConfiguredHeaderByteLimit() throws {
+        let rawWithoutDelimiter = Data("GET /health HTTP/1.1\r\nX-Filler: abcdef".utf8)
+        let missingDelimiterResult = HTTPGatewayRequestParser.parseRequest(
+            from: rawWithoutDelimiter,
+            maxHeaderBytes: 16
+        )
+        let missingDelimiterError = try #require(missingDelimiterResult.failureValue)
+
+        #expect(missingDelimiterError == .headersTooLarge(maxBytes: 16))
+        #expect(HTTPGatewayRequestParser.errorResponse(for: missingDelimiterError).statusCode == 431)
+
+        let rawWithDelimiter = Data(
+            """
+            GET /health HTTP/1.1\r
+            X-Filler: abcdefghijklmnopqrstuvwxyz\r
+            \r
+
+            """.utf8
+        )
+        let delimiterResult = HTTPGatewayRequestParser.parseRequest(
+            from: rawWithDelimiter,
+            maxHeaderBytes: 32
+        )
+        let delimiterError = try #require(delimiterResult.failureValue)
+
+        #expect(delimiterError == .headersTooLarge(maxBytes: 32))
+        #expect(delimiterError.errorCode == "request_headers_too_large")
+
+        let delimiterJustBeyondLimit = Data("\(String(repeating: "H", count: 25))\r\n\r\n".utf8)
+        let delimiterJustBeyondLimitResult = HTTPGatewayRequestParser.parseRequest(
+            from: delimiterJustBeyondLimit,
+            maxHeaderBytes: 24
+        )
+        let delimiterJustBeyondLimitError = try #require(delimiterJustBeyondLimitResult.failureValue)
+
+        #expect(delimiterJustBeyondLimitError == .headersTooLarge(maxBytes: 24))
+    }
+
+    @Test("parser rejects duplicate headers before interpreting security-sensitive values")
+    func parserRejectsDuplicateHeadersBeforeInterpretingSecuritySensitiveValues() throws {
+        let duplicateHeaderCases: [(Data, String)] = [
+            (
+                Data(
+                    """
+                    POST /v1/responses HTTP/1.1\r
+                    Content-Length: 2\r
+                    content-length: 0\r
+                    \r
+                    {}
+                    """.utf8
+                ),
+                "content-length"
+            ),
+            (
+                Data(
+                    """
+                    POST /v1/responses HTTP/1.1\r
+                    Transfer-Encoding: gzip\r
+                    transfer-encoding: chunked\r
+                    \r
+
+                    """.utf8
+                ),
+                "transfer-encoding"
+            ),
+            (
+                Data(
+                    """
+                    GET /health HTTP/1.1\r
+                    X-Forwarded-Prefix: /melix\r
+                    x-forwarded-prefix: https://evil.example\r
+                    \r
+
+                    """.utf8
+                ),
+                "x-forwarded-prefix"
+            ),
+        ]
+
+        for (raw, headerName) in duplicateHeaderCases {
+            let result = HTTPGatewayRequestParser.parseRequest(from: raw)
+            let error = try #require(result.failureValue)
+
+            #expect(error == .duplicateHeader(headerName))
+            #expect(error.statusCode == 400)
+            #expect(error.errorCode == "duplicate_header")
+            #expect(error.message.contains(headerName))
+        }
+    }
+
     @Test("parser rejects forwarded prefixes with traversal or empty segments")
     func parserRejectsForwardedPrefixesWithTraversalOrEmptySegments() throws {
         let unsafePrefixes = ["/melix//api", "/melix/../api", "/melix?route=api", "/melix#api"]
