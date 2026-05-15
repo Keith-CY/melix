@@ -142,3 +142,56 @@ def test_run_retry_exhausted_path_does_not_reparse_manifest_json(
     assert payload["status"] == "failed"
     assert payload["terminal_state"] == "failed"
     assert payload["downloaded_bytes"] == 1
+
+
+def test_run_preserves_cancelled_partial_with_stable_output_filename(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.gguf"
+    source_path.write_bytes(b"abcdefgh")
+    output_dir = tmp_path / "flat-cache"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/vlm",
+        ext={
+            "source_path": str(source_path),
+            "output_filename": "../model.gguf",
+            "chunk_bytes": "2",
+            "test_cancel_after_bytes": "4",
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-cancel", output_dir=output_dir)
+
+    assert exc_info.value.code == "download_cancelled"
+    payload = json.loads(exc_info.value.details["state_json"])
+    assert payload["status"] == "cancelled"
+    assert payload["terminal_state"] == "cancelled"
+    assert payload["downloaded_bytes"] == 4
+    assert payload["output_path"] == str(output_dir / "model.gguf")
+    assert payload["partial_path"] == str(output_dir / "model.gguf.partial")
+    assert (output_dir / "model.gguf.partial").read_bytes() == b"abcd"
+
+
+def test_run_resumes_named_artifact_from_preserved_partial(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.gguf"
+    source_path.write_bytes(b"abcdefgh")
+    output_dir = tmp_path / "flat-cache"
+    output_dir.mkdir()
+    (output_dir / "model.gguf.partial").write_bytes(b"abcd")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/vlm",
+        ext={
+            "source_path": str(source_path),
+            "output_filename": "model.gguf",
+            "chunk_bytes": "2",
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-resume", output_dir=output_dir)
+
+    assert result.output_path == output_dir / "model.gguf"
+    assert result.output_path.read_bytes() == b"abcdefgh"
+    payload = json.loads(result.snapshots[-1].manifest_json)
+    assert payload["resume_used"] is True
+    assert payload["resume_from_bytes"] == 4
