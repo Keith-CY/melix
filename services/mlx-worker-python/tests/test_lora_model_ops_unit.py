@@ -32,6 +32,7 @@ from worker.model_ops.lora_training_pipeline import (
 from worker.model_ops.lora_runtime_metadata import build_adapter_runtime_manifest_fields
 from worker.model_ops.lora_runtime_metadata import build_quantized_lora_manifest_fields
 from worker.model_ops.multimodal_lora_contracts import (
+    _adapter_parameter_matches_fragment,
     audit_adapter_checkpoint,
     finite_masked_softmax,
 )
@@ -405,6 +406,109 @@ def test_adapter_freeze_audit_rejects_serialized_vision_tower_weights(tmp_path: 
     assert exc.value.code == "adapter_freeze_audit_failed"
     assert exc.value.details["unexpected_serialized_param_count"] == "64"
     assert "vision_tower.encoder.layers.0.weight" in exc.value.details["unexpected_serialized_parameters"]
+
+
+def test_adapter_freeze_audit_accepts_language_model_lora_suffix_for_last_layer(
+    tmp_path: Path,
+) -> None:
+    weights_path = tmp_path / "gemma4-last-layer-adapter.safetensors"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "language_model.model.layers.41.self_attn.q_proj.lora_a": {
+                "dtype": "F32",
+                "shape": [2560, 4],
+                "data_offsets": [0, 40960],
+            },
+            "language_model.model.layers.41.self_attn.q_proj.lora_b": {
+                "dtype": "F32",
+                "shape": [4, 4096],
+                "data_offsets": [40960, 106496],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["model.layers.0.self_attn.q_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+        live_audit={
+            "unexpected_trainable_param_count": 0,
+            "unexpected_trainable_parameters": [],
+            "unexpected_trainable_param_counts": {},
+            "trainable_param_count_by_component": {"text_backbone": 26624},
+        },
+    )
+
+    assert audit.unexpected_frozen_param_count == 0
+    assert audit.unexpected_serialized_param_count == 0
+    assert audit.unexpected_trainable_param_count == 0
+    assert audit.serialized_param_count_by_component["text_backbone"] == 26624
+
+
+def test_adapter_freeze_audit_accepts_leaf_target_module_names(tmp_path: Path) -> None:
+    weights_path = tmp_path / "leaf-target-adapter.safetensors"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "language_model.model.layers.41.self_attn.q_proj.lora_a.weight": {
+                "dtype": "F16",
+                "shape": [2, 4],
+                "data_offsets": [0, 16],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["q_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+    )
+
+    assert audit.unexpected_serialized_param_count == 0
+    assert audit.unexpected_frozen_param_count == 0
+    assert audit.serialized_param_count_by_component["text_backbone"] == 8
+
+
+def test_adapter_parameter_fragment_matching_handles_empty_and_generic_fragments() -> None:
+    assert _adapter_parameter_matches_fragment(
+        "model.layers.0.self_attn.q_proj.lora_a.weight",
+        "",
+    ) is False
+    assert _adapter_parameter_matches_fragment(
+        "model.layers.0.self_attn.q_proj.lora_a.weight",
+        "model.layers.self_attn.weight",
+    ) is False
+
+
+def test_adapter_freeze_audit_rejects_wrong_target_fragment_for_adapter_weight(
+    tmp_path: Path,
+) -> None:
+    weights_path = tmp_path / "wrong-target-fragment.safetensors"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "model.layers.0.self_attn.q_proj.lora_a.weight": {
+                "dtype": "F16",
+                "shape": [2, 4],
+                "data_offsets": [0, 16],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["k_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+    )
+
+    assert audit.unexpected_serialized_param_count == 8
+    assert audit.unexpected_serialized_parameters == (
+        "model.layers.0.self_attn.q_proj.lora_a.weight",
+    )
 
 
 def test_adapter_freeze_audit_deduplicates_live_and_serialized_leaks(tmp_path: Path) -> None:

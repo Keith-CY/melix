@@ -524,6 +524,42 @@ def _resolve_adapter_backed_metadata(model_spec) -> dict[str, str]:
     return contract.to_runtime_metadata()
 
 
+def _is_mlx_lm_unmatched_weight_error(exc: ValueError) -> bool:
+    return "parameters not in model" in str(exc).lower()
+
+
+def _load_adapter_backed_model_without_strict(
+    *,
+    model_spec: Any,
+    adapter_metadata: dict[str, str],
+    trust_remote_code: bool,
+) -> tuple[Any, Any]:
+    try:
+        from mlx_lm.utils import _download, load_adapters, load_model, load_tokenizer
+    except ModuleNotFoundError:
+        raise
+
+    download_kwargs: dict[str, Any] = {"revision": model_spec.revision or None}
+    if trust_remote_code and _callable_accepts_kwarg(_download, "trust_remote_code"):
+        download_kwargs["trust_remote_code"] = True
+    model_path = _download(str(model_spec.model_path), **download_kwargs)
+    load_kwargs: dict[str, Any] = {
+        "lazy": False,
+        "strict": False,
+    }
+    if trust_remote_code and _callable_accepts_kwarg(load_model, "trust_remote_code"):
+        load_kwargs["trust_remote_code"] = True
+    model, config = load_model(model_path, **load_kwargs)
+    model = load_adapters(model, adapter_metadata["adapter_dir"])
+    model.eval()
+    tokenizer = load_tokenizer(
+        model_path,
+        None,
+        eos_token_ids=config.get("eos_token_id", None) if isinstance(config, dict) else None,
+    )
+    return model, tokenizer
+
+
 def _declared_kwargs(callable_obj: Any, names: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(name for name in names if _callable_accepts_kwarg(callable_obj, name))
 
@@ -593,7 +629,17 @@ class AutoMLXBackend:
             load_kwargs["trust_remote_code"] = True
         if adapter_metadata:
             load_kwargs["adapter_path"] = adapter_metadata["adapter_dir"]
-        loaded = self._load_fn(model_spec.model_path, **load_kwargs)
+        try:
+            loaded = self._load_fn(model_spec.model_path, **load_kwargs)
+        except ValueError as exc:
+            if not adapter_metadata or not _is_mlx_lm_unmatched_weight_error(exc):
+                raise
+            model, tokenizer = _load_adapter_backed_model_without_strict(
+                model_spec=model_spec,
+                adapter_metadata=adapter_metadata,
+                trust_remote_code=trust_remote_code,
+            )
+            loaded = (model, tokenizer)
         model, tokenizer = loaded[:2]
         family_config = resolve_text_family_config(
             dict(model_spec.ext),

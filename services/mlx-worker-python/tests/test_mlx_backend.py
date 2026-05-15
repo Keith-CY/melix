@@ -945,6 +945,158 @@ def test_auto_backend_loads_adapter_backed_runtime_with_adapter_path() -> None:
     assert loaded_model["derived_from_model_id"] == "melix-dev-text"
 
 
+def test_auto_backend_retries_adapter_backed_quantized_load_without_strict(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        seen["load"] = (model_source, kwargs)
+        raise ValueError("Received 126 parameters not in model: language_model.layer.weight")
+
+    fake_utils = types.ModuleType("mlx_lm.utils")
+
+    def fake_download(model_source: str, **kwargs):
+        seen["download"] = (model_source, kwargs)
+        return "/tmp/downloaded-model"
+
+    def fake_load_model(model_source: str, **kwargs):
+        seen["load_model"] = (model_source, kwargs)
+        return object(), {"eos_token_id": 2}
+
+    def fake_load_adapters(model, adapter_path: str):
+        seen["load_adapters"] = (model, adapter_path)
+
+        class AdapterModel:
+            def eval(self) -> None:
+                seen["adapter_eval"] = True
+
+        return AdapterModel()
+
+    def fake_load_tokenizer(model_source: str, tokenizer_config=None, eos_token_ids=None):
+        seen["load_tokenizer"] = (model_source, tokenizer_config, eos_token_ids)
+        return FakeTokenizer()
+
+    fake_utils._download = fake_download
+    fake_utils.load_adapters = fake_load_adapters
+    fake_utils.load_model = fake_load_model
+    fake_utils.load_tokenizer = fake_load_tokenizer
+    monkeypatch.setitem(sys.modules, "mlx_lm.utils", fake_utils)
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "unused",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
+    model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
+    model_spec.ext["melix.adapter_manifest_path"] = "/tmp/melix-train/train_lora.adapter.json"
+    model_spec.ext["melix.adapter_weights_path"] = "/tmp/melix-train/weights/adapters.safetensors"
+
+    loaded_model = backend.load_model(model_spec)
+
+    assert seen["load"] == (
+        "mlx-community/test-model",
+        {
+            "lazy": False,
+            "adapter_path": str(Path("/tmp/melix-train/weights").resolve()),
+        },
+    )
+    assert seen["download"] == ("mlx-community/test-model", {"revision": "dev"})
+    assert seen["load_model"] == (
+        "/tmp/downloaded-model",
+        {
+            "lazy": False,
+            "strict": False,
+        },
+    )
+    assert seen["load_adapters"][1] == str(Path("/tmp/melix-train/weights").resolve())
+    assert seen["adapter_eval"] is True
+    assert seen["load_tokenizer"] == ("/tmp/downloaded-model", None, 2)
+    assert loaded_model["activation_mode"] == "adapter_backed_runtime"
+
+
+def test_auto_backend_retries_adapter_backed_quantized_load_with_supported_trust_remote_code(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        seen["load"] = (model_source, kwargs)
+        raise ValueError("Received 3 parameters not in model: language_model.layer.weight")
+
+    fake_utils = types.ModuleType("mlx_lm.utils")
+
+    def fake_download(model_source: str, *, revision=None, trust_remote_code=False):
+        seen["download"] = (model_source, revision, trust_remote_code)
+        return "/tmp/downloaded-trust-model"
+
+    def fake_load_model(model_source: str, *, lazy: bool, strict: bool, trust_remote_code=False):
+        seen["load_model"] = (model_source, lazy, strict, trust_remote_code)
+        return object(), {"eos_token_id": 7}
+
+    def fake_load_adapters(model, adapter_path: str):
+        seen["load_adapters"] = (model, adapter_path)
+
+        class AdapterModel:
+            def eval(self) -> None:
+                seen["adapter_eval"] = True
+
+        return AdapterModel()
+
+    def fake_load_tokenizer(model_source: str, tokenizer_config=None, eos_token_ids=None):
+        seen["load_tokenizer"] = (model_source, tokenizer_config, eos_token_ids)
+        return FakeTokenizer()
+
+    fake_utils._download = fake_download
+    fake_utils.load_adapters = fake_load_adapters
+    fake_utils.load_model = fake_load_model
+    fake_utils.load_tokenizer = fake_load_tokenizer
+    monkeypatch.setitem(sys.modules, "mlx_lm.utils", fake_utils)
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "unused",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
+    model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
+    model_spec.ext["melix.adapter_manifest_path"] = "/tmp/melix-train/train_lora.adapter.json"
+    model_spec.ext["melix.adapter_weights_path"] = "/tmp/melix-train/weights/adapters.safetensors"
+
+    backend.load_model(model_spec, trust_remote_code=True)
+
+    assert seen["load"] == (
+        "mlx-community/test-model",
+        {
+            "lazy": False,
+            "trust_remote_code": True,
+            "adapter_path": str(Path("/tmp/melix-train/weights").resolve()),
+        },
+    )
+    assert seen["download"] == ("mlx-community/test-model", "dev", True)
+    assert seen["load_model"] == ("/tmp/downloaded-trust-model", False, False, True)
+    assert seen["adapter_eval"] is True
+    assert seen["load_tokenizer"] == ("/tmp/downloaded-trust-model", None, 7)
+
+
+def test_auto_backend_reraises_non_adapter_unmatched_load_error() -> None:
+    def fake_load(model_source: str, **kwargs):
+        _ = model_source
+        _ = kwargs
+        raise ValueError("Received 3 parameters not in model: language_model.layer.weight")
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "unused",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
+
+    with pytest.raises(ValueError, match="parameters not in model"):
+        backend.load_model(model_spec)
+
+
 def test_auto_backend_resolves_adapter_weights_from_manifest_when_ext_omits_them(tmp_path: Path) -> None:
     seen: dict[str, object] = {}
 

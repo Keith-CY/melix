@@ -155,6 +155,52 @@ the result with `adapter_backed_runtime`, and writes
 `.runtime/lora-runtime-acceptance/lora-runtime-acceptance.json`. The PR must
 record the final evidence path or the exact blocker.
 
+### Acceptance Result
+
+The real one-command LoRA run was validated locally against the downloaded
+`unsloth/gemma-4-E4B-it-MLX-8bit` snapshot and the dialogue extraction
+evaluation fixture:
+
+```bash
+swift run melix lora run \
+  --model-id unsloth/gemma-4-E4B-it-MLX-8bit \
+  --dataset-uri .runtime/lora-cli-run-acceptance-bootstrap/training_dataset \
+  --adapter-name gemma4-dialogue-extraction-cli-acceptance \
+  --training-mode auto \
+  --activation-mode adapter_backed_runtime \
+  --rank 4 --alpha 8 --dropout 0 \
+  --target-modules q_proj --num-layers 1 \
+  --batch-size 1 --epochs 1 --max-steps 1 \
+  --max-seq-length 1024 --sample-limit 4 \
+  --response-only --mask-prompt --gradient-checkpointing \
+  --eval-suite event_extraction \
+  --eval-dataset-id top200.event-extraction.top20.v1 \
+  --eval-dataset-root services/mlx-worker-python/fixtures/evaluation \
+  --eval-sample-size 2 \
+  --scoring-mode event_extraction_weighted_f1 \
+  --output-dir .runtime/lora-cli-run-acceptance/run \
+  --json \
+  > .runtime/lora-cli-run-acceptance/receipt.json \
+  2> .runtime/lora-cli-run-acceptance/stderr.log
+```
+
+Acceptance evidence:
+
+- Receipt: `.runtime/lora-cli-run-acceptance/receipt.json`
+- Compare summary: `.runtime/lora-cli-run-acceptance/run/evaluation/compare-summary.csv`
+- Compare samples: `.runtime/lora-cli-run-acceptance/run/evaluation/compare-samples.jsonl`
+- Training mode: `qlora`
+- Activation mode: `adapter_backed_runtime`
+- Training final loss: `1.2581018209457397`
+- Training throughput: `37.980233091704761` tokens per second
+- Peak training memory: `8.377168759703636` GB
+- Adapter audit: `unexpected_trainable_param_count=0`,
+  `unexpected_serialized_param_count=0`
+- Quantized compatibility: `quantized_base_detected=true`,
+  `quantized_base_kind=8bit`, `qlora_compatibility_status=compatible`
+- Evaluation compare: `win_count=2`, `loss_count=0`, `tie_count=0`,
+  `base_accuracy=0.0`, `target_accuracy=0.5`, `delta_accuracy=0.5`
+
 ## Risks
 
 - A backend may still reload the base model internally even when metadata says two adapters share a base. This plan records shareability first; backend hot-swap can be separately optimized behind the same contract.
