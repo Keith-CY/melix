@@ -17,6 +17,16 @@ sys.path.insert(0, str(REPO_ROOT / "services" / "mlx-worker-python"))
 
 from worker.productization import release_gates  # noqa: E402
 
+PHASE8_RELEASE_GATE_POLICY_PATH = REPO_ROOT / "infra" / "release" / "phase8-release-gate-policy.json"
+
+
+def _packaged_launch_policy() -> dict[str, Any]:
+    policy = release_gates.load_release_gate_policy(PHASE8_RELEASE_GATE_POLICY_PATH)
+    packaged_launch = policy.get("packaged_launch", {})
+    if not isinstance(packaged_launch, dict):  # pragma: no cover
+        raise SystemExit("phase8 release gate policy is missing packaged_launch")
+    return packaged_launch
+
 
 class CountingFailure(str):
     endswith_calls = 0
@@ -46,7 +56,85 @@ def _build_workload(section_count: int, failures_per_section: int) -> tuple[dict
     return report, policy
 
 
+def _exercise_packaged_launch_release_gate() -> None:
+    install_evidence = release_gates.collect_install_evidence(REPO_ROOT)
+    packaged_launch = install_evidence["packaged_launch"]
+    policy = {
+        "packaged_launch": _packaged_launch_policy(),
+    }
+
+    failures = release_gates.evaluate_release_gate(
+        {"install": {"packaged_launch": packaged_launch}},
+        policy,
+    )
+    if any("packaged_launch" in failure for failure in failures):  # pragma: no cover
+        raise SystemExit(f"packaged launch evidence unexpectedly failed: {failures}")
+
+    top_level_failures = release_gates.evaluate_release_gate(
+        {"packaged_launch": packaged_launch},
+        policy,
+    )
+    if any("packaged_launch" in failure for failure in top_level_failures):  # pragma: no cover
+        raise SystemExit(f"top-level packaged launch evidence unexpectedly failed: {top_level_failures}")
+
+    missing_failures = release_gates.evaluate_release_gate({}, policy)
+    if "packaged_launch evidence is missing" not in missing_failures:  # pragma: no cover
+        raise SystemExit(f"missing packaged launch evidence was not reported: {missing_failures}")
+
+    malformed_failures = release_gates.evaluate_release_gate(
+        {
+            "packaged_launch": {
+                "runtime_source": {"packaging_target_id": "", "runtime_layout": ""},
+                "connect_host_resolution": None,
+                "health_probe_reuse": packaged_launch["health_probe_reuse"],
+            }
+        },
+        policy,
+    )
+    expected_malformed = {
+        "packaged_launch.connect_host_resolution is missing",
+        "packaged_launch.installed_app_audit is missing",
+        "packaged_launch.runtime_source.packaging_target_id is missing",
+        "packaged_launch.runtime_source.runtime_layout is missing",
+        "connect_host_resolution.connect_host_loopback is missing",
+        "installed_app_audit.audit_passed is missing",
+    }
+    if not expected_malformed.issubset(set(malformed_failures)):  # pragma: no cover
+        raise SystemExit(f"malformed packaged launch evidence was not fully reported: {malformed_failures}")
+
+    regressed = {
+        **packaged_launch,
+        "connect_host_resolution": {
+            **packaged_launch["connect_host_resolution"],
+            "connect_host_loopback": 0.0,
+        },
+        "health_probe_reuse": {
+            **packaged_launch["health_probe_reuse"],
+            "reused_client_count": 0.0,
+            "time_wait_socket_count": 6.0,
+        },
+        "installed_app_audit": {
+            **packaged_launch["installed_app_audit"],
+            "audit_passed": 0.0,
+        },
+    }
+    regressed_failures = release_gates.evaluate_release_gate(
+        {"install": {"packaged_launch": regressed}},
+        policy,
+    )
+    expected_regressions = {
+        "connect_host_resolution.connect_host_loopback=0.00 fell below minimum 1.00",
+        "health_probe_reuse.reused_client_count=0.00 fell below minimum 1.00",
+        "health_probe_reuse.time_wait_socket_count=6.00 exceeded maximum 4.00",
+        "installed_app_audit.audit_passed=0.00 fell below minimum 1.00",
+    }
+    if not expected_regressions.issubset(set(regressed_failures)):  # pragma: no cover
+        raise SystemExit(f"regressed packaged launch evidence was not fully reported: {regressed_failures}")
+
+
 def main() -> None:
+    _exercise_packaged_launch_release_gate()
+
     section_count = int(os.environ.get("MELIX_RELEASE_GATES_M9_PROBE_SECTIONS", "160"))
     failures_per_section = int(os.environ.get("MELIX_RELEASE_GATES_M9_PROBE_FAILURES", "80"))
     sample_count = int(os.environ.get("MELIX_RELEASE_GATES_M9_PROBE_SAMPLES", "5"))

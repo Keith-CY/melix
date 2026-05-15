@@ -40,6 +40,14 @@ from worker.model_ops.training_dataset import build_training_dataset_artifact
 from worker.model_ops.upload_receipt_pipeline import UploadReceiptPipeline
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog, ResolvedBenchmarkSuite
+from worker.productization.synthetic_dataset_generation import (
+    SyntheticColumnSpec,
+    SyntheticDatasetRequest,
+    SyntheticModelConfig,
+    SyntheticModelProvider,
+    SyntheticSeedSource,
+    generate_synthetic_dataset_package,
+)
 from worker.registry import WorkerRegistry
 from worker.runtime.agentic_tools import execute_agentic_tool_calls
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest
@@ -78,32 +86,28 @@ class ImmutableBenchmarkTokens(list[str]):
 class ShapedBenchmarkPrompt(str):
     __slots__ = ("_tokens", "token_count")
 
-    def __new__(cls, value: str, tokens: tuple[str, ...]) -> ShapedBenchmarkPrompt:
+    def __new__(
+        cls,
+        value: str,
+        tokens: tuple[str, ...] | None,
+        token_count: int,
+    ) -> ShapedBenchmarkPrompt:
         prompt = str.__new__(cls, value)
         prompt._tokens = tokens
-        prompt.token_count = len(tokens)
+        prompt.token_count = token_count
         return prompt
 
     def split(self, sep: str | None = None, maxsplit: int = -1) -> list[str]:
         if sep is None and maxsplit == -1:
             # Preserve the shaped-token cache on the hot path; callers must treat it as read-only.
-            return ImmutableBenchmarkTokens(self._tokens)
+            return ImmutableBenchmarkTokens(self.tokens)
         return str(self).split(sep, maxsplit)
 
     @property
     def tokens(self) -> tuple[str, ...]:
+        if self._tokens is None:
+            self._tokens = tuple(str(self).split())
         return self._tokens
-
-
-def _make_shaped_benchmark_prompt(tokens: tuple[str, ...], *, context_length: int) -> ShapedBenchmarkPrompt:
-    token_count = len(tokens)
-    if token_count >= context_length:
-        shaped_tokens = tokens[:context_length]
-    else:
-        full_repeats, remainder = divmod(context_length, token_count)
-        shaped_tokens = tokens * full_repeats + tokens[:remainder]
-    return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens)
-
 
 @dataclass(frozen=True)
 class BenchMetricSpec:
@@ -284,6 +288,273 @@ def _write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
             handle.write(json.dumps(row) + "\n")
 
 
+def _synthetic_dataset_request_from_ext(
+    ext: dict[str, str],
+    *,
+    job_id: str,
+) -> SyntheticDatasetRequest:
+    columns = _synthetic_columns_from_ext(ext)
+    seed_source = _synthetic_seed_source_from_ext(ext)
+    return SyntheticDatasetRequest(
+        dataset_id=_required_ext(ext, "synthetic_dataset_id"),
+        dataset_name=_required_ext(ext, "synthetic_dataset_name"),
+        mode=ext.get("synthetic_mode", "").strip() or "create",
+        num_records=_positive_int_ext(ext, "synthetic_num_records"),
+        output_kind=_required_ext(ext, "synthetic_output_kind"),
+        output_format=_required_ext(ext, "synthetic_output_format"),
+        model_provider=SyntheticModelProvider(
+            endpoint=_required_ext(ext, "provider_endpoint"),
+            name=ext.get("provider_name", "").strip() or "melix",
+            provider_type=ext.get("provider_type", "").strip() or "openai",
+            api_key=ext.get("api_key", "").strip(),
+            extra_headers=_synthetic_headers_from_ext(ext),
+        ),
+        models=(
+            SyntheticModelConfig(
+                alias=ext.get("model_alias", "").strip() or "generator",
+                model=_required_ext(ext, "model"),
+                temperature=_optional_float_ext(ext, "temperature"),
+                top_p=_optional_float_ext(ext, "top_p"),
+                max_tokens=_optional_positive_int_ext(ext, "max_tokens"),
+                timeout_seconds=_optional_float_ext(ext, "timeout_seconds"),
+                max_parallel_requests=_optional_positive_int_ext(ext, "max_parallel_requests"),
+                extra_body=_json_object_ext(ext, "extra_body_json", default={}),
+            ),
+        ),
+        columns=columns,
+        job_id=job_id,
+        seed_source=seed_source,
+        validation_ratio=_optional_float_ext(ext, "validation_ratio") or 0.0,
+        preview_count=_optional_positive_int_ext(ext, "preview_count") or 3,
+        random_seed=_optional_int_ext(ext, "random_seed"),
+        data_designer_resume_mode=ext.get("resume", "").strip() or "never",
+        disable_data_designer_telemetry=_boolean_ext(ext, "disable_datadesigner_telemetry", default=True),
+    )
+
+
+def _required_ext(ext: dict[str, str], key: str) -> str:
+    value = ext.get(key, "").strip()
+    if not value:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"{key} is required for synthetic dataset generation.",
+            details={"field": key},
+        )
+    return value
+
+
+def _positive_int_ext(ext: dict[str, str], key: str) -> int:
+    value = _optional_positive_int_ext(ext, key)
+    if value is None:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"{key} must be greater than zero.",
+            details={"field": key},
+        )
+    return value
+
+
+def _optional_positive_int_ext(ext: dict[str, str], key: str) -> int | None:
+    raw_value = ext.get(key, "").strip()
+    if not raw_value:
+        return None
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"{key} must be an integer.",
+            details={"field": key, "value": raw_value},
+        ) from exc
+    if value <= 0:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"{key} must be greater than zero.",
+            details={"field": key, "value": raw_value},
+        )
+    return value
+
+
+def _optional_int_ext(ext: dict[str, str], key: str) -> int | None:
+    raw_value = ext.get(key, "").strip()
+    if not raw_value:
+        return None
+    try:
+        return int(raw_value)
+    except ValueError as exc:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"{key} must be an integer.",
+            details={"field": key, "value": raw_value},
+        ) from exc
+
+
+def _optional_float_ext(ext: dict[str, str], key: str) -> float | None:
+    raw_value = ext.get(key, "").strip()
+    if not raw_value:
+        return None
+    try:
+        return float(raw_value)
+    except ValueError as exc:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"{key} must be numeric.",
+            details={"field": key, "value": raw_value},
+        ) from exc
+
+
+def _boolean_ext(ext: dict[str, str], key: str, *, default: bool) -> bool:
+    raw_value = ext.get(key, "").strip().lower()
+    if not raw_value:
+        return default
+    if raw_value in {"1", "true", "yes", "on"}:
+        return True
+    if raw_value in {"0", "false", "no", "off"}:
+        return False
+    raise ModelOperationError(
+        code="invalid_synthetic_dataset_request",
+        message=f"{key} must be a boolean.",
+        details={"field": key, "value": raw_value},
+    )
+
+
+def _json_object_ext(ext: dict[str, str], key: str, *, default: dict[str, Any]) -> dict[str, Any]:
+    raw_value = ext.get(key, "").strip()
+    if not raw_value:
+        return default
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"{key} must be valid JSON.",
+            details={"field": key},
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"{key} must be a JSON object.",
+            details={"field": key},
+        )
+    return payload
+
+
+def _json_string_list_ext(ext: dict[str, str], key: str) -> list[str]:
+    raw_value = ext.get(key, "").strip()
+    if not raw_value:
+        return []
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"{key} must be valid JSON.",
+            details={"field": key},
+        ) from exc
+    if not isinstance(payload, list):
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"{key} must be a JSON array.",
+            details={"field": key},
+        )
+    return [str(item) for item in payload]
+
+
+def _synthetic_headers_from_ext(ext: dict[str, str]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for raw_header in _json_string_list_ext(ext, "headers_json"):
+        key, separator, value = raw_header.partition("=")
+        key = key.strip()
+        if not separator or not key:
+            raise ModelOperationError(
+                code="invalid_synthetic_dataset_request",
+                message="Synthetic provider headers must use KEY=VALUE syntax.",
+                details={"header": raw_header},
+            )
+        headers[key] = value
+    return headers
+
+
+def _synthetic_columns_from_ext(ext: dict[str, str]) -> tuple[SyntheticColumnSpec, ...]:
+    columns: list[SyntheticColumnSpec] = []
+    for raw_column in _json_string_list_ext(ext, "columns_json"):
+        parts = raw_column.split(":", 2)
+        if len(parts) != 3 or not parts[0].strip() or not parts[1].strip():
+            raise ModelOperationError(
+                code="invalid_synthetic_dataset_request",
+                message="Synthetic columns must use NAME:TYPE:JSON_OR_PATH syntax.",
+                details={"column": raw_column},
+            )
+        name, column_type, raw_params = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        columns.append(
+            SyntheticColumnSpec(
+                name=name,
+                column_type=column_type,
+                params=_synthetic_column_params(column_type, raw_params),
+            )
+        )
+    if not columns:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message="At least one synthetic column is required.",
+        )
+    return tuple(columns)
+
+
+def _synthetic_column_params(column_type: str, raw_params: str) -> dict[str, Any]:
+    if not raw_params:
+        return {}
+    if raw_params.startswith(("{", "[")):
+        try:
+            payload = json.loads(raw_params)
+        except json.JSONDecodeError as exc:
+            raise ModelOperationError(
+                code="invalid_synthetic_dataset_request",
+                message="Synthetic column JSON parameters must be valid JSON.",
+                details={"column_type": column_type},
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ModelOperationError(
+                code="invalid_synthetic_dataset_request",
+                message="Synthetic column JSON parameters must be an object.",
+                details={"column_type": column_type},
+            )
+        return payload
+    value = _synthetic_column_payload_value(raw_params)
+    if column_type in {"llm_text", "llm_structured", "llm_judge"}:
+        return {"prompt": value}
+    if column_type == "expression":
+        return {"expression": value}
+    if column_type == "sampler":
+        return {"values": value}
+    return {"value": value}
+
+
+def _synthetic_column_payload_value(raw_params: str) -> str:
+    if not raw_params.startswith("@"):
+        return raw_params
+    candidate = raw_params[1:]
+    if not candidate:
+        return raw_params
+    path = Path(candidate).expanduser()
+    if path.is_file():
+        return path.read_text(encoding="utf-8")
+    return raw_params
+
+
+def _synthetic_seed_source_from_ext(ext: dict[str, str]) -> SyntheticSeedSource | None:
+    source_kind = ext.get("seed_source_kind", "").strip()
+    source_path = ext.get("seed_source_path", "").strip()
+    if not source_kind and not source_path:
+        return None
+    if not source_kind or not source_path:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message="seed_source_kind and seed_source_path must be provided together.",
+        )
+    return SyntheticSeedSource(source_kind=source_kind, source_path=Path(source_path))
+
+
 class MaintenanceCore:
     def __init__(
         self,
@@ -434,6 +705,7 @@ class MaintenanceCore:
             "dataset_snapshot",
             "dataset_download",
             "dataset_remove",
+            "generate_synthetic_dataset",
         }:
             yield maintenance_pb2.ConvertModelEvent(
                 failed=maintenance_pb2.ConvertFailed(
@@ -478,7 +750,7 @@ class MaintenanceCore:
                 started=maintenance_pb2.ConvertStarted(job_id=job.job_id)
             )
 
-            if operation in {"dataset_snapshot", "dataset_download", "dataset_remove"}:
+            if operation in {"dataset_snapshot", "dataset_download", "dataset_remove", "generate_synthetic_dataset"}:
                 try:
                     result = self._run_dataset_operation(
                         operation=operation,
@@ -1879,6 +2151,7 @@ class MaintenanceCore:
             "dataset_snapshot": "dataset_snapshot.json",
             "dataset_download": "dataset_download.json",
             "dataset_remove": "dataset_remove.json",
+            "generate_synthetic_dataset": "generate_synthetic_dataset.json",
         }[operation]
         return output_dir / filename
 
@@ -1923,9 +2196,10 @@ class MaintenanceCore:
                 or request.source_model
                 or operation
             )
-        if operation in {"dataset_download", "dataset_remove", "dataset_snapshot"}:
+        if operation in {"dataset_download", "dataset_remove", "dataset_snapshot", "generate_synthetic_dataset"}:
             return (
-                request.ext.get("melix.hf_dataset_repo_id", "")
+                request.ext.get("synthetic_dataset_id", "")
+                or request.ext.get("melix.hf_dataset_repo_id", "")
                 or request.ext.get("repo_id", "")
                 or request.source_model
                 or operation
@@ -1994,6 +2268,31 @@ class MaintenanceCore:
                 "manifest": result.manifest,
                 "progress_events": progress_events,
                 "output_path": output_dir / "dataset_remove.json",
+            }
+
+        if operation == "generate_synthetic_dataset":
+            synthetic_progress: list[tuple[str, float]] = []
+
+            def record_synthetic_progress(stage: str, pct: float) -> None:
+                synthetic_progress.append((stage, pct))
+
+            synthetic_request = _synthetic_dataset_request_from_ext(
+                ext,
+                job_id=job_id,
+            )
+            package = generate_synthetic_dataset_package(
+                synthetic_request,
+                jobs_root=self._jobs_root,
+                output_dir=output_dir,
+                progress=record_synthetic_progress,
+            )
+            manifest = dict(package.manifest_payload)
+            manifest.setdefault("job_id", job_id)
+            progress_events.extend(synthetic_progress)
+            return {
+                "manifest": manifest,
+                "progress_events": progress_events,
+                "output_path": package.output_path,
             }
 
         raise ModelOperationError(
@@ -3761,11 +4060,17 @@ class MaintenanceCore:
     def _shape_benchmark_prompt(prompt: str, *, context_length: int) -> str:
         tokens = prompt.split()
         if not tokens:
-            return ShapedBenchmarkPrompt(
-                "benchmark " * (context_length - 1) + "benchmark",
-                ("benchmark",) * context_length,
-            )
-        return _make_shaped_benchmark_prompt(tuple(tokens), context_length=context_length)
+            tokens = ["benchmark"]
+        if len(tokens) >= context_length:
+            shaped_tokens = tuple(tokens[:context_length])
+            return ShapedBenchmarkPrompt(" ".join(shaped_tokens), shaped_tokens, len(shaped_tokens))
+        full_repeats, remainder = divmod(context_length, len(tokens))
+        base_prompt = " ".join(tokens)
+        if remainder:
+            shaped_prompt = (base_prompt + " ") * full_repeats + " ".join(tokens[:remainder])
+        else:
+            shaped_prompt = ((base_prompt + " ") * full_repeats).rstrip()
+        return ShapedBenchmarkPrompt(shaped_prompt, None, context_length)
 
     @staticmethod
     def _benchmark_prompt_token_count(prompt: str) -> int:

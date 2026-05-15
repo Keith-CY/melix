@@ -951,6 +951,100 @@ public struct DatasetRemoveOptions: Equatable, Sendable {
     }
 }
 
+public struct DatasetSyntheticOptions: Equatable, Sendable {
+    public let mode: String
+    public let datasetID: String
+    public let datasetName: String
+    public let numRecords: UInt32
+    public let outputKind: String
+    public let outputFormat: String
+    public let outputDir: String
+    public let providerEndpoint: String
+    public let providerName: String
+    public let providerType: String
+    public let apiKey: String
+    public let headers: [String]
+    public let modelAlias: String
+    public let model: String
+    public let temperature: String
+    public let topP: String
+    public let maxTokens: UInt32
+    public let timeoutSeconds: String
+    public let maxParallelRequests: UInt32
+    public let extraBodyJSON: String
+    public let columns: [String]
+    public let seedSourceKind: String
+    public let seedSourcePath: String
+    public let validationRatio: String
+    public let previewCount: UInt32
+    public let randomSeed: Int?
+    public let resume: String
+    public let enableDataDesignerTelemetry: Bool
+    public let json: Bool
+
+    public init(
+        mode: String,
+        datasetID: String,
+        datasetName: String,
+        numRecords: UInt32,
+        outputKind: String,
+        outputFormat: String,
+        outputDir: String,
+        providerEndpoint: String,
+        providerName: String = "melix",
+        providerType: String = "openai",
+        apiKey: String = "",
+        headers: [String] = [],
+        modelAlias: String = "generator",
+        model: String,
+        temperature: String = "",
+        topP: String = "",
+        maxTokens: UInt32 = 0,
+        timeoutSeconds: String = "",
+        maxParallelRequests: UInt32 = 0,
+        extraBodyJSON: String = "",
+        columns: [String],
+        seedSourceKind: String = "",
+        seedSourcePath: String = "",
+        validationRatio: String = "",
+        previewCount: UInt32 = 3,
+        randomSeed: Int? = nil,
+        resume: String = "never",
+        enableDataDesignerTelemetry: Bool = false,
+        json: Bool = false
+    ) {
+        self.mode = mode
+        self.datasetID = datasetID
+        self.datasetName = datasetName
+        self.numRecords = numRecords
+        self.outputKind = outputKind
+        self.outputFormat = outputFormat
+        self.outputDir = outputDir
+        self.providerEndpoint = providerEndpoint
+        self.providerName = providerName.isEmpty ? "melix" : providerName
+        self.providerType = providerType.isEmpty ? "openai" : providerType
+        self.apiKey = apiKey
+        self.headers = headers
+        self.modelAlias = modelAlias.isEmpty ? "generator" : modelAlias
+        self.model = model
+        self.temperature = temperature
+        self.topP = topP
+        self.maxTokens = maxTokens
+        self.timeoutSeconds = timeoutSeconds
+        self.maxParallelRequests = maxParallelRequests
+        self.extraBodyJSON = extraBodyJSON
+        self.columns = columns
+        self.seedSourceKind = seedSourceKind
+        self.seedSourcePath = seedSourcePath
+        self.validationRatio = validationRatio
+        self.previewCount = previewCount == 0 ? 3 : previewCount
+        self.randomSeed = randomSeed
+        self.resume = resume.isEmpty ? "never" : resume
+        self.enableDataDesignerTelemetry = enableDataDesignerTelemetry
+        self.json = json
+    }
+}
+
 public struct ModelDownloadOptions: Equatable, Sendable {
     public let modelID: String
     public let outputDir: String
@@ -1667,6 +1761,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case datasetList(DatasetListOptions)
     case datasetHubDownload(DatasetHubDownloadOptions)
     case datasetRemove(DatasetRemoveOptions)
+    case datasetSynthetic(DatasetSyntheticOptions)
     case uriInspect(URIInspectOptions)
     case uriImport(URIImportOptions)
     case recipesList(RecipeListOptions)
@@ -1913,6 +2008,8 @@ public enum MelixCLIParser {
       melix dataset list [--json]
       melix dataset hub download --repo-id HF_DATASET [--revision REV] [--hf-token TOKEN] [--json]
       melix dataset remove --repo-id HF_DATASET [--revision REV | --snapshot-id SHA] [--json]
+      melix dataset synthetic preview --dataset-id ID --dataset-name NAME --num-records N --output-kind KIND --output-format FORMAT --output-dir PATH --provider-endpoint URL --model MODEL --column NAME:TYPE:JSON [--model-alias ALIAS] [--api-key TOKEN] [--header KEY=VALUE ...] [--json]
+      melix dataset synthetic create --dataset-id ID --dataset-name NAME --num-records N --output-kind KIND --output-format FORMAT --output-dir PATH --provider-endpoint URL --model MODEL --column NAME:TYPE:JSON [--model-alias ALIAS] [--validation-ratio N] [--resume MODE] [--json]
       melix uri inspect URI [--json]
       melix uri import URI [--model-id MODEL_ID] [--revision REV] [--dry-run] [--json]
       melix recipes list [--task TASK] [--json]
@@ -2586,9 +2683,112 @@ public enum MelixCLIParser {
                     json: values.flags.contains("--json")
                 )
             )
+        case "synthetic":
+            return try parseDatasetSynthetic(Array(arguments.dropFirst()))
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseDatasetSynthetic(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let mode = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        guard ["preview", "create"].contains(mode) else {
+            throw MelixCLIError.usage(usageText)
+        }
+
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+            multiValueOptions: ["--column", "--header"],
+            valueLessFlags: ArgumentCursor.defaultValueLessFlags.subtracting(["--resume"]).union([
+                "--enable-datadesigner-telemetry",
+                "--disable-datadesigner-telemetry",
+            ])
+        )
+        guard let datasetID = nonEmpty(values.single["--dataset-id"]) else {
+            throw MelixCLIError.missingRequired("--dataset-id is required for melix dataset synthetic \(mode).")
+        }
+        guard let datasetName = nonEmpty(values.single["--dataset-name"]) else {
+            throw MelixCLIError.missingRequired("--dataset-name is required for melix dataset synthetic \(mode).")
+        }
+        guard let numRecords = try parseUInt32Value(values.single["--num-records"], option: "--num-records") else {
+            throw MelixCLIError.missingRequired("--num-records is required for melix dataset synthetic \(mode).")
+        }
+        guard let outputKind = nonEmpty(values.single["--output-kind"]) else {
+            throw MelixCLIError.missingRequired("--output-kind is required for melix dataset synthetic \(mode).")
+        }
+        guard let outputFormat = nonEmpty(values.single["--output-format"]) else {
+            throw MelixCLIError.missingRequired("--output-format is required for melix dataset synthetic \(mode).")
+        }
+        guard let outputDir = nonEmpty(values.single["--output-dir"]) else {
+            throw MelixCLIError.missingRequired("--output-dir is required for melix dataset synthetic \(mode).")
+        }
+        guard let providerEndpoint = nonEmpty(values.single["--provider-endpoint"]) else {
+            throw MelixCLIError.missingRequired("--provider-endpoint is required for melix dataset synthetic \(mode).")
+        }
+        guard let model = nonEmpty(values.single["--model"]) else {
+            throw MelixCLIError.missingRequired("--model is required for melix dataset synthetic \(mode).")
+        }
+        let columns = values.multi["--column"] ?? []
+        guard columns.isEmpty == false else {
+            throw MelixCLIError.missingRequired("--column is required for melix dataset synthetic \(mode).")
+        }
+        let resume = values.single["--resume"] ?? "never"
+        guard ["never", "if_possible", "always"].contains(resume) else {
+            throw MelixCLIError.usage("Invalid value for --resume. Expected never, if_possible, or always.")
+        }
+        guard values.flags.contains("--enable-datadesigner-telemetry") == false ||
+            values.flags.contains("--disable-datadesigner-telemetry") == false
+        else {
+            throw MelixCLIError.usage(
+                "--enable-datadesigner-telemetry and --disable-datadesigner-telemetry are mutually exclusive."
+            )
+        }
+        let seedSourceKind = values.single["--seed-source-kind"] ?? ""
+        let seedSourcePath = values.single["--seed-source-path"] ?? ""
+        if seedSourceKind.isEmpty != seedSourcePath.isEmpty {
+            throw MelixCLIError.usage("--seed-source-kind and --seed-source-path must be provided together.")
+        }
+
+        return .datasetSynthetic(
+            .init(
+                mode: mode,
+                datasetID: datasetID,
+                datasetName: datasetName,
+                numRecords: numRecords,
+                outputKind: outputKind,
+                outputFormat: outputFormat,
+                outputDir: outputDir,
+                providerEndpoint: providerEndpoint,
+                providerName: values.single["--provider-name"] ?? "melix",
+                providerType: values.single["--provider-type"] ?? "openai",
+                apiKey: values.single["--api-key"] ?? "",
+                headers: values.multi["--header"] ?? [],
+                modelAlias: values.single["--model-alias"] ?? "generator",
+                model: model,
+                temperature: values.single["--temperature"] ?? "",
+                topP: values.single["--top-p"] ?? "",
+                maxTokens: try parseUInt32Value(values.single["--max-tokens"], option: "--max-tokens") ?? 0,
+                timeoutSeconds: values.single["--timeout-seconds"] ?? "",
+                maxParallelRequests: try parseUInt32Value(
+                    values.single["--max-parallel-requests"],
+                    option: "--max-parallel-requests"
+                ) ?? 0,
+                extraBodyJSON: try canonicalInlineJSONObject(
+                    values.single["--extra-body-json"],
+                    option: "--extra-body-json"
+                ),
+                columns: columns,
+                seedSourceKind: seedSourceKind,
+                seedSourcePath: seedSourcePath,
+                validationRatio: values.single["--validation-ratio"] ?? "",
+                previewCount: try parseUInt32Value(values.single["--preview-count"], option: "--preview-count") ?? 3,
+                randomSeed: try parseIntValue(values.single["--random-seed"], option: "--random-seed"),
+                resume: resume,
+                enableDataDesignerTelemetry: values.flags.contains("--enable-datadesigner-telemetry"),
+                json: values.flags.contains("--json")
+            )
+        )
     }
 
     private static func parseDatasetHub(_ arguments: [String]) throws -> MelixCLICommand {
@@ -4492,6 +4692,31 @@ public enum MelixCLIParser {
         return String(decoding: canonicalData, as: UTF8.self)
     }
 
+    private static func canonicalInlineJSONObject(_ value: String?, option: String) throws -> String {
+        guard let value, value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return ""
+        }
+        guard let data = value.data(using: .utf8) else {
+            throw MelixCLIError.usage("\(option) must contain valid UTF-8 JSON.")
+        }
+        let parsed: Any
+        do {
+            parsed = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw MelixCLIError.usage("\(option) must contain valid JSON: \(error.localizedDescription)")
+        }
+        guard parsed is [String: Any] else {
+            throw MelixCLIError.usage("\(option) must contain a JSON object.")
+        }
+        let canonicalData = try JSONSerialization.data(withJSONObject: parsed, options: [.sortedKeys])
+        return String(decoding: canonicalData, as: UTF8.self)
+    }
+
+    private static func canonicalJSONStringArray(_ values: [String]) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
+    }
+
     private struct EvaluationFileMetadata {
         let resolvedPath: String
         let data: Data
@@ -4822,6 +5047,11 @@ public enum MelixCLIParser {
 
     private static func trimmedOption(_ value: String?) -> String {
         value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        let trimmed = trimmedOption(value)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func normalizedServingDefaultsAccelerationMode(
@@ -5381,6 +5611,74 @@ public actor MelixCLIRunner {
             outputDir: "",
             ext: ext
         )
+    }
+
+    public func generateSyntheticDataset(
+        options: DatasetSyntheticOptions
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        try await performModelOperation(
+            modelID: "melix-datasets",
+            operation: "generate_synthetic_dataset",
+            outputDir: options.outputDir,
+            ext: try syntheticDatasetExt(from: options)
+        )
+    }
+
+    private func syntheticDatasetExt(from options: DatasetSyntheticOptions) throws -> [String: String] {
+        var ext: [String: String] = [
+            "synthetic_mode": options.mode,
+            "synthetic_dataset_id": options.datasetID,
+            "synthetic_dataset_name": options.datasetName,
+            "synthetic_num_records": String(options.numRecords),
+            "synthetic_output_kind": options.outputKind,
+            "synthetic_output_format": options.outputFormat,
+            "provider_endpoint": options.providerEndpoint,
+            "provider_name": options.providerName,
+            "provider_type": options.providerType,
+            "model_alias": options.modelAlias,
+            "model": options.model,
+            "preview_count": String(options.previewCount),
+            "resume": options.resume,
+            "disable_datadesigner_telemetry": options.enableDataDesignerTelemetry ? "false" : "true",
+        ]
+        if options.apiKey.isEmpty == false {
+            ext["api_key"] = options.apiKey
+        }
+        if options.headers.isEmpty == false {
+            ext["headers_json"] = try Self.canonicalJSONStringArray(options.headers)
+        }
+        if options.temperature.isEmpty == false {
+            ext["temperature"] = options.temperature
+        }
+        if options.topP.isEmpty == false {
+            ext["top_p"] = options.topP
+        }
+        if options.maxTokens > 0 {
+            ext["max_tokens"] = String(options.maxTokens)
+        }
+        if options.timeoutSeconds.isEmpty == false {
+            ext["timeout_seconds"] = options.timeoutSeconds
+        }
+        if options.maxParallelRequests > 0 {
+            ext["max_parallel_requests"] = String(options.maxParallelRequests)
+        }
+        if options.extraBodyJSON.isEmpty == false {
+            ext["extra_body_json"] = options.extraBodyJSON
+        }
+        if options.columns.isEmpty == false {
+            ext["columns_json"] = try Self.canonicalJSONStringArray(options.columns)
+        }
+        if options.seedSourceKind.isEmpty == false {
+            ext["seed_source_kind"] = options.seedSourceKind
+            ext["seed_source_path"] = options.seedSourcePath
+        }
+        if options.validationRatio.isEmpty == false {
+            ext["validation_ratio"] = options.validationRatio
+        }
+        if let randomSeed = options.randomSeed {
+            ext["random_seed"] = String(randomSeed)
+        }
+        return ext
     }
 
     public func downloadModel(
@@ -6064,6 +6362,9 @@ public actor MelixCLIRunner {
                 snapshotID: options.snapshotID
             )
             return options.json ? result.manifestJson : renderDatasetRemoveResult(result)
+        case .datasetSynthetic(let options):
+            let result = try await generateSyntheticDataset(options: options)
+            return options.json ? result.manifestJson : renderSyntheticDatasetResult(result)
         case .modelRootsList(let options):
             let state = try loadOperatorState()
             if options.json {
@@ -6940,6 +7241,43 @@ public actor MelixCLIRunner {
             appendOption("--snapshot-id", value: ext["melix.hf_snapshot_id"], into: &arguments)
             arguments.append("--json")
             return arguments
+        case "generate_synthetic_dataset":
+            var arguments = [
+                "dataset",
+                "synthetic",
+                ext["synthetic_mode"] ?? "create",
+            ]
+            appendOption("--dataset-id", value: ext["synthetic_dataset_id"], into: &arguments)
+            appendOption("--dataset-name", value: ext["synthetic_dataset_name"], into: &arguments)
+            appendOption("--num-records", value: ext["synthetic_num_records"], into: &arguments)
+            appendOption("--output-kind", value: ext["synthetic_output_kind"], into: &arguments)
+            appendOption("--output-format", value: ext["synthetic_output_format"], into: &arguments)
+            appendOption("--output-dir", value: outputDir, into: &arguments)
+            appendOption("--provider-endpoint", value: ext["provider_endpoint"], into: &arguments)
+            appendOption("--provider-name", value: ext["provider_name"], into: &arguments)
+            appendOption("--provider-type", value: ext["provider_type"], into: &arguments)
+            appendOption("--api-key", value: ext["api_key"], into: &arguments)
+            appendMultiOption("--header", values: Self.syntheticJSONArrayStrings(ext["headers_json"]), into: &arguments)
+            appendOption("--model-alias", value: ext["model_alias"], into: &arguments)
+            appendOption("--model", value: ext["model"], into: &arguments)
+            appendOption("--temperature", value: ext["temperature"], into: &arguments)
+            appendOption("--top-p", value: ext["top_p"], into: &arguments)
+            appendOption("--max-tokens", value: ext["max_tokens"], into: &arguments)
+            appendOption("--timeout-seconds", value: ext["timeout_seconds"], into: &arguments)
+            appendOption("--max-parallel-requests", value: ext["max_parallel_requests"], into: &arguments)
+            appendOption("--extra-body-json", value: ext["extra_body_json"], into: &arguments)
+            appendMultiOption("--column", values: Self.syntheticJSONArrayStrings(ext["columns_json"]), into: &arguments)
+            appendOption("--seed-source-kind", value: ext["seed_source_kind"], into: &arguments)
+            appendOption("--seed-source-path", value: ext["seed_source_path"], into: &arguments)
+            appendOption("--validation-ratio", value: ext["validation_ratio"], into: &arguments)
+            appendOption("--preview-count", value: ext["preview_count"], into: &arguments)
+            appendOption("--random-seed", value: ext["random_seed"], into: &arguments)
+            appendOption("--resume", value: ext["resume"], into: &arguments)
+            if ext["disable_datadesigner_telemetry"] == "false" {
+                arguments.append("--enable-datadesigner-telemetry")
+            }
+            arguments.append("--json")
+            return arguments
         case "registry_snapshot":
             return ["lora", "list", "--model-id", modelID, "--json"]
         case "download":
@@ -7129,6 +7467,22 @@ public actor MelixCLIRunner {
             return
         }
         arguments.append(option)
+    }
+
+    private static func syntheticJSONArrayStrings(_ raw: String?) -> [String] {
+        guard
+            let raw,
+            let data = raw.data(using: .utf8),
+            let values = try? JSONSerialization.jsonObject(with: data) as? [String]
+        else {
+            return []
+        }
+        return values
+    }
+
+    private static func canonicalJSONStringArray(_ values: [String]) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func decodeSubprocessModelOperationResult(
@@ -8560,6 +8914,29 @@ public actor MelixCLIRunner {
             return headline + "\n"
         }
         return headline + "\nRemoved path: \(removedPath)\n"
+    }
+
+    private func renderSyntheticDatasetResult(_ result: Melix_Controlplane_V1_ModelOperationResult) -> String {
+        let outputPath = result.outputPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if outputPath.isEmpty == false {
+            return outputPath + "\n"
+        }
+        guard
+            let data = result.manifestJson.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return "Synthetic dataset generation completed.\n"
+        }
+        let datasetID = (payload["dataset_id"] as? String) ?? ""
+        let datasetName = (payload["dataset_name"] as? String) ?? ""
+        let outputKind = (payload["output_kind"] as? String) ?? ""
+        let rowCount = ((payload["row_count"] as? NSNumber)?.intValue)
+            ?? ((payload["sample_count"] as? NSNumber)?.intValue)
+            ?? 0
+        let label = datasetID.isEmpty ? datasetName : datasetID
+        let target = label.isEmpty ? "Synthetic dataset" : "Synthetic dataset \(label)"
+        let suffix = outputKind.isEmpty ? "" : " (\(outputKind))"
+        return "\(target)\(suffix) generated with \(rowCount) rows.\n"
     }
 
     private func renderRegistrySnapshot(_ manifestJSON: String) -> String {

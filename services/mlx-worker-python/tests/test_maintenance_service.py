@@ -780,6 +780,234 @@ def test_convert_model_supports_convert_and_quantize_jobs(tmp_path: Path) -> Non
     assert quantize_payload["kv_quant"] == "q8"
 
 
+def test_convert_model_dispatches_synthetic_dataset_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_generate_synthetic_dataset_package(request, *, jobs_root, output_dir, progress=None):
+        captured["request"] = request
+        captured["jobs_root"] = jobs_root
+        captured["output_dir"] = output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "samples.jsonl"
+        output_path.write_text('{"prompt":"hello","completion":"world"}\n', encoding="utf-8")
+        manifest_path = output_dir / "manifest.json"
+        manifest_payload = {
+            "schema_version": "melix.training_dataset_package.v1",
+            "operation": "generate_synthetic_dataset",
+            "dataset_id": request.dataset_id,
+            "dataset_name": request.dataset_name,
+            "output_kind": request.output_kind,
+            "row_count": request.num_records,
+        }
+        manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")
+        if progress is not None:
+            progress("generate_rows", 0.35)
+            progress("complete", 1.0)
+        return SimpleNamespace(
+            manifest_payload=manifest_payload,
+            manifest_path=manifest_path,
+            output_path=output_path,
+        )
+
+    monkeypatch.setattr(
+        maintenance_core_module,
+        "generate_synthetic_dataset_package",
+        fake_generate_synthetic_dataset_package,
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-datasets",
+                output_dir=str(tmp_path / "synthetic"),
+                generate_manifest=True,
+                ext={
+                    "operation": "generate_synthetic_dataset",
+                    "synthetic_mode": "create",
+                    "synthetic_dataset_id": "synthetic.chat.v1",
+                    "synthetic_dataset_name": "Synthetic Chat",
+                    "synthetic_num_records": "4",
+                    "synthetic_output_kind": "training",
+                    "synthetic_output_format": "prompt_completion",
+                    "provider_endpoint": "http://127.0.0.1:12436/v1",
+                    "provider_name": "melix",
+                    "provider_type": "openai",
+                    "api_key": "sk-secret",
+                    "headers_json": '["X-Test=1"]',
+                    "model_alias": "generator",
+                    "model": "melix-dev-text",
+                    "temperature": "0.2",
+                    "top_p": "0.9",
+                    "max_tokens": "128",
+                    "timeout_seconds": "30",
+                    "max_parallel_requests": "2",
+                    "extra_body_json": '{"seed":7}',
+                    "columns_json": '["prompt:llm_text:{\\"prompt\\":\\"write\\"}"]',
+                    "validation_ratio": "0.1",
+                    "preview_count": "2",
+                    "random_seed": "7",
+                    "resume": "never",
+                    "disable_datadesigner_telemetry": "true",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    request = captured["request"]
+    assert request.dataset_id == "synthetic.chat.v1"
+    assert request.dataset_name == "Synthetic Chat"
+    assert request.mode == "create"
+    assert request.num_records == 4
+    assert request.output_kind == "training"
+    assert request.output_format == "prompt_completion"
+    assert request.model_provider.endpoint == "http://127.0.0.1:12436/v1"
+    assert request.model_provider.api_key == "sk-secret"
+    assert request.model_provider.extra_headers == {"X-Test": "1"}
+    assert request.models[0].alias == "generator"
+    assert request.models[0].model == "melix-dev-text"
+    assert request.models[0].temperature == 0.2
+    assert request.models[0].top_p == 0.9
+    assert request.models[0].max_tokens == 128
+    assert request.models[0].timeout_seconds == 30.0
+    assert request.models[0].max_parallel_requests == 2
+    assert request.models[0].extra_body == {"seed": 7}
+    assert request.columns[0].name == "prompt"
+    assert request.columns[0].column_type == "llm_text"
+    assert request.columns[0].params == {"prompt": "write"}
+    assert request.validation_ratio == 0.1
+    assert request.preview_count == 2
+    assert request.random_seed == 7
+    assert request.disable_data_designer_telemetry is True
+    assert events[0].HasField("started")
+    assert any(event.HasField("progress") and event.progress.stage == "generate_rows" for event in events)
+    manifest = next(event.manifest for event in events if event.HasField("manifest"))
+    manifest_payload = json.loads(manifest.manifest_json)
+    assert manifest_payload["operation"] == "generate_synthetic_dataset"
+    assert manifest_payload["job_id"].startswith("model-ops-")
+    assert events[-1].HasField("completed")
+    assert events[-1].completed.output_path.endswith("samples.jsonl")
+
+
+def _synthetic_dataset_base_ext(**overrides: str) -> dict[str, str]:
+    ext = {
+        "synthetic_dataset_id": "synthetic.chat.v1",
+        "synthetic_dataset_name": "Synthetic Chat",
+        "synthetic_num_records": "4",
+        "synthetic_output_kind": "training",
+        "synthetic_output_format": "prompt_completion",
+        "provider_endpoint": "http://127.0.0.1:12436/v1",
+        "model": "melix-dev-text",
+        "columns_json": json.dumps(["prompt:llm_text:Write a prompt"]),
+    }
+    ext.update(overrides)
+    return ext
+
+
+def test_synthetic_dataset_request_uses_defaults_and_column_shortcuts(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "prompt.txt"
+    prompt_file.write_text("Write a useful training prompt.", encoding="utf-8")
+    seed_file = tmp_path / "seed.jsonl"
+    seed_file.write_text('{"topic":"swift"}\n', encoding="utf-8")
+
+    request = maintenance_core_module._synthetic_dataset_request_from_ext(
+        _synthetic_dataset_base_ext(
+            columns_json=json.dumps(
+                [
+                    f"prompt:llm_text:@{prompt_file}",
+                    "answer:expression:row.topic.upper()",
+                    "label:sampler:positive,negative",
+                    "tag:constant:static",
+                    "empty:metadata:",
+                ]
+            ),
+            seed_source_kind="jsonl",
+            seed_source_path=str(seed_file),
+            disable_datadesigner_telemetry="false",
+        ),
+        job_id="job-defaults",
+    )
+
+    assert request.mode == "create"
+    assert request.model_provider.name == "melix"
+    assert request.model_provider.provider_type == "openai"
+    assert request.models[0].alias == "generator"
+    assert request.models[0].temperature is None
+    assert request.models[0].max_tokens is None
+    assert request.validation_ratio == 0.0
+    assert request.preview_count == 3
+    assert request.random_seed is None
+    assert request.disable_data_designer_telemetry is False
+    assert request.seed_source is not None
+    assert request.seed_source.source_path == seed_file
+    assert request.columns[0].params == {"prompt": "Write a useful training prompt."}
+    assert request.columns[1].params == {"expression": "row.topic.upper()"}
+    assert request.columns[2].params == {"values": "positive,negative"}
+    assert request.columns[3].params == {"value": "static"}
+    assert request.columns[4].params == {}
+
+
+def test_synthetic_dataset_column_shortcuts_only_read_explicit_at_files(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "prompt.txt"
+    prompt_file.write_text("file-backed prompt", encoding="utf-8")
+
+    request = maintenance_core_module._synthetic_dataset_request_from_ext(
+        _synthetic_dataset_base_ext(
+            columns_json=json.dumps(
+                [
+                    f"literal:llm_text:{prompt_file}",
+                    f"expanded:llm_text:@{prompt_file}",
+                    "missing:llm_text:@/does/not/exist.txt",
+                    "empty:llm_text:@",
+                ]
+            )
+        ),
+        job_id="job-explicit-files",
+    )
+
+    assert request.columns[0].params == {"prompt": str(prompt_file)}
+    assert request.columns[1].params == {"prompt": "file-backed prompt"}
+    assert request.columns[2].params == {"prompt": "@/does/not/exist.txt"}
+    assert request.columns[3].params == {"prompt": "@"}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"synthetic_dataset_id": ""}, "synthetic_dataset_id is required"),
+        ({"synthetic_num_records": ""}, "synthetic_num_records must be greater than zero"),
+        ({"synthetic_num_records": "many"}, "synthetic_num_records must be an integer"),
+        ({"preview_count": "0"}, "preview_count must be greater than zero"),
+        ({"random_seed": "abc"}, "random_seed must be an integer"),
+        ({"temperature": "hot"}, "temperature must be numeric"),
+        ({"disable_datadesigner_telemetry": "maybe"}, "disable_datadesigner_telemetry must be a boolean"),
+        ({"extra_body_json": "{"}, "extra_body_json must be valid JSON"),
+        ({"extra_body_json": "[]"}, "extra_body_json must be a JSON object"),
+        ({"headers_json": "{"}, "headers_json must be valid JSON"),
+        ({"headers_json": "{}"}, "headers_json must be a JSON array"),
+        ({"headers_json": json.dumps(["bad"])}, "Synthetic provider headers must use KEY=VALUE syntax"),
+        ({"columns_json": json.dumps(["bad"])}, "Synthetic columns must use NAME:TYPE:JSON_OR_PATH syntax"),
+        ({"columns_json": "[]"}, "At least one synthetic column is required"),
+        ({"columns_json": json.dumps(["prompt:llm_text:{"])}, "Synthetic column JSON parameters must be valid JSON"),
+        ({"columns_json": json.dumps(["prompt:llm_text:[]"])}, "Synthetic column JSON parameters must be an object"),
+        ({"seed_source_kind": "jsonl"}, "seed_source_kind and seed_source_path must be provided together"),
+    ],
+)
+def test_synthetic_dataset_request_rejects_malformed_ext(
+    overrides: dict[str, str],
+    message: str,
+) -> None:
+    with pytest.raises(ModelOperationError, match=message):
+        maintenance_core_module._synthetic_dataset_request_from_ext(
+            _synthetic_dataset_base_ext(**overrides),
+            job_id="job-invalid",
+        )
+
+
 def test_convert_model_writes_manifest_once_after_in_memory_byte_convergence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5611,6 +5839,11 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     assert core._benchmark_prompt_token_count("one two") == 2
     assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
     assert MaintenanceCore._shape_benchmark_prompt.cache_info().hits == 1
+    shaped_long_prompt = core._shape_benchmark_prompt("alpha beta", context_length=128)
+    assert shaped_long_prompt.token_count == 128
+    assert shaped_long_prompt._tokens is None
+    assert shaped_long_prompt.tokens[:4] == ("alpha", "beta", "alpha", "beta")
+    assert shaped_long_prompt.token_count == 128
     MaintenanceCore._shape_benchmark_prompt.cache_clear()
 
     shape_calls: list[tuple[str, int]] = []

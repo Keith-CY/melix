@@ -23,6 +23,10 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
         "print('hi')",
         "parsed_code_block",
     )
+    assert code_eval_runner.extract_candidate_code("```python\n\n```") == (
+        "",
+        "parsed_code_block",
+    )
     assert code_eval_runner.extract_candidate_code(
         "first attempt:\n```python\nprint('old')\n```\nfinal answer:\n```python\nprint('new')\n```"
     ) == ("print('new')", "parsed_code_block")
@@ -842,6 +846,33 @@ def test_load_payload_file_fast_path_reuses_precomputed_key_tokens(monkeypatch: 
     }
     with pytest.raises(AssertionError, match="known code-eval payload keys"):
         code_eval_runner._json_field_value_start(b'{"other":1}', "other")
+
+
+def test_load_payload_file_fast_path_falls_back_for_unexpected_key_order() -> None:
+    payload_path = _BytesOnlyPayloadPath(
+        json.dumps(
+            {
+                "tests_total": 3,
+                "failure_detail": "",
+                "timeout_status": "ok",
+                "tests_passed": 3,
+                "compile_status": "compiled",
+                "test_status": "passed",
+                "runtime_status": "ok",
+            },
+            sort_keys=False,
+        ).encode("utf-8")
+    )
+
+    assert code_eval_runner._load_payload_file(payload_path) == {
+        "compile_status": "compiled",
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 3,
+        "tests_total": 3,
+        "timeout_status": "ok",
+    }
 
 
 def test_load_payload_file_fast_path_falls_back_for_escaped_fields(tmp_path: Path) -> None:
