@@ -901,6 +901,7 @@ struct MelixCLIParserTests {
             (.datasetList(.init(json: true)), "dataset.list"),
             (.datasetHubDownload(.init(repoID: "org/dataset", revision: "main", json: true)), "dataset.hub.download"),
             (.datasetRemove(.init(repoID: "org/dataset", revision: "main", snapshotID: "abc123", json: true)), "dataset.remove"),
+            (.datasetSynthetic(.init(mode: "preview", datasetID: "synthetic.chat.v1", datasetName: "Synthetic Chat", numRecords: 4, outputKind: "training", outputFormat: "prompt_completion", outputDir: "/tmp/synth", providerEndpoint: "http://127.0.0.1:12436/v1", model: "melix-dev-text", columns: ["prompt:llm_text:{\"prompt\":\"write\"}"], json: true)), "dataset.synthetic.preview"),
             (.uriInspect(.init(uri: "hf://model/org/model", json: true)), "uri.inspect"),
             (.uriImport(.init(uri: "hf://model/org/model", modelID: "model", revision: "main", dryRun: true, json: true)), "uri.import"),
             (.recipesList(.init(task: "import", json: true)), "recipes.list"),
@@ -996,6 +997,7 @@ struct MelixCLIParserTests {
             .datasetList(.init(json: true)),
             .datasetHubDownload(.init(repoID: "org/dataset", revision: "main", json: true)),
             .datasetRemove(.init(repoID: "org/dataset", revision: "main", snapshotID: "abc123", json: true)),
+            .datasetSynthetic(.init(mode: "create", datasetID: "synthetic.chat.v1", datasetName: "Synthetic Chat", numRecords: 4, outputKind: "training", outputFormat: "prompt_completion", outputDir: "/tmp/synth", providerEndpoint: "http://127.0.0.1:12436/v1", providerName: "melix", providerType: "openai", headers: ["X-Melix-Test=1"], modelAlias: "generator", model: "melix-dev-text", temperature: "0.2", topP: "0.9", maxTokens: 128, timeoutSeconds: "30", maxParallelRequests: 2, extraBodyJSON: "{\"seed\":7}", columns: ["prompt:llm_text:{\"prompt\":\"write\"}"], validationRatio: "0.1", randomSeed: 7, resume: "never", enableDataDesignerTelemetry: true, json: true)),
             .uriInspect(.init(uri: "hf://model/org/model", json: true)),
             .uriImport(.init(uri: "hf://model/org/model", modelID: "model", revision: "main", dryRun: true, json: true)),
             .recipesList(.init(task: "import", json: true)),
@@ -1325,6 +1327,162 @@ struct MelixCLIParserTests {
         #expect(removeOptions.revision == "main")
         #expect(removeOptions.snapshotID == "abc123")
         #expect(removeOptions.json)
+    }
+
+    @Test("parses dataset synthetic preview and create commands")
+    func parsesDatasetSyntheticPreviewAndCreateCommands() throws {
+        let previewCommand = try MelixCLIParser.parse([
+            "dataset",
+            "synthetic",
+            "preview",
+            "--dataset-id", "synthetic.chat.preview",
+            "--dataset-name", "Synthetic Chat Preview",
+            "--num-records", "3",
+            "--output-kind", "training",
+            "--output-format", "prompt_completion",
+            "--output-dir", "/tmp/synthetic-preview",
+            "--provider-endpoint", "http://127.0.0.1:12436/v1",
+            "--model", "melix-dev-text",
+            "--column", "prompt:llm_text:{\"prompt\":\"write a prompt\"}",
+            "--column", "completion:llm_text:{\"prompt\":\"answer it\"}",
+            "--json",
+        ])
+        let createCommand = try MelixCLIParser.parse([
+            "dataset",
+            "synthetic",
+            "create",
+            "--dataset-id", "synthetic.chat.create",
+            "--dataset-name", "Synthetic Chat Create",
+            "--num-records", "10",
+            "--output-kind", "training",
+            "--output-format", "prompt_completion",
+            "--output-dir", "/tmp/synthetic-create",
+            "--provider-endpoint", "http://127.0.0.1:12436/v1",
+            "--provider-name", "melix",
+            "--provider-type", "openai",
+            "--api-key", "sk-test",
+            "--header", "X-Test=1",
+            "--model-alias", "generator",
+            "--model", "melix-dev-text",
+            "--temperature", "0.2",
+            "--top-p", "0.9",
+            "--max-tokens", "128",
+            "--timeout-seconds", "30",
+            "--max-parallel-requests", "2",
+            "--extra-body-json", "{\"seed\":7}",
+            "--column", "prompt:llm_text:{\"prompt\":\"write a prompt\"}",
+            "--validation-ratio", "0.1",
+            "--preview-count", "2",
+            "--random-seed", "7",
+            "--resume", "if_possible",
+            "--enable-datadesigner-telemetry",
+            "--json",
+        ])
+
+        guard case .datasetSynthetic(let previewOptions) = previewCommand else {
+            Issue.record("Expected datasetSynthetic preview command")
+            return
+        }
+        guard case .datasetSynthetic(let createOptions) = createCommand else {
+            Issue.record("Expected datasetSynthetic create command")
+            return
+        }
+
+        #expect(previewOptions.mode == "preview")
+        #expect(previewOptions.datasetID == "synthetic.chat.preview")
+        #expect(previewOptions.numRecords == 3)
+        #expect(previewOptions.outputKind == "training")
+        #expect(previewOptions.outputFormat == "prompt_completion")
+        #expect(previewOptions.outputDir == "/tmp/synthetic-preview")
+        #expect(previewOptions.providerEndpoint == "http://127.0.0.1:12436/v1")
+        #expect(previewOptions.modelAlias == "generator")
+        #expect(previewOptions.columns.count == 2)
+        #expect(previewOptions.previewCount == 3)
+        #expect(previewOptions.enableDataDesignerTelemetry == false)
+        #expect(previewOptions.json)
+
+        #expect(createOptions.mode == "create")
+        #expect(createOptions.datasetID == "synthetic.chat.create")
+        #expect(createOptions.datasetName == "Synthetic Chat Create")
+        #expect(createOptions.numRecords == 10)
+        #expect(createOptions.apiKey == "sk-test")
+        #expect(createOptions.headers == ["X-Test=1"])
+        #expect(createOptions.temperature == "0.2")
+        #expect(createOptions.topP == "0.9")
+        #expect(createOptions.maxTokens == 128)
+        #expect(createOptions.timeoutSeconds == "30")
+        #expect(createOptions.maxParallelRequests == 2)
+        #expect(createOptions.extraBodyJSON == #"{"seed":7}"#)
+        #expect(createOptions.validationRatio == "0.1")
+        #expect(createOptions.previewCount == 2)
+        #expect(createOptions.randomSeed == 7)
+        #expect(createOptions.resume == "if_possible")
+        #expect(createOptions.enableDataDesignerTelemetry)
+    }
+
+    @Test("rejects malformed dataset synthetic commands")
+    func rejectsMalformedDatasetSyntheticCommands() {
+        func base(_ extra: [String] = []) -> [String] {
+            [
+                "dataset",
+                "synthetic",
+                "create",
+                "--dataset-id", "synthetic.chat.create",
+                "--dataset-name", "Synthetic Chat Create",
+                "--num-records", "10",
+                "--output-kind", "training",
+                "--output-format", "prompt_completion",
+                "--output-dir", "/tmp/synthetic-create",
+                "--provider-endpoint", "http://127.0.0.1:12436/v1",
+                "--model", "melix-dev-text",
+                "--column", #"prompt:llm_text:{"prompt":"write"}"#,
+            ] + extra
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--dataset-name is required for melix dataset synthetic create.")) {
+            try MelixCLIParser.parse(base().filter { $0 != "--dataset-name" && $0 != "Synthetic Chat Create" })
+        }
+        #expect(throws: MelixCLIError.missingRequired("--num-records is required for melix dataset synthetic create.")) {
+            try MelixCLIParser.parse(base().filter { $0 != "--num-records" && $0 != "10" })
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-kind is required for melix dataset synthetic create.")) {
+            try MelixCLIParser.parse(base().filter { $0 != "--output-kind" && $0 != "training" })
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-format is required for melix dataset synthetic create.")) {
+            try MelixCLIParser.parse(base().filter { $0 != "--output-format" && $0 != "prompt_completion" })
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-dir is required for melix dataset synthetic create.")) {
+            try MelixCLIParser.parse(base().filter { $0 != "--output-dir" && $0 != "/tmp/synthetic-create" })
+        }
+        #expect(throws: MelixCLIError.missingRequired("--provider-endpoint is required for melix dataset synthetic create.")) {
+            try MelixCLIParser.parse(base().filter { $0 != "--provider-endpoint" && $0 != "http://127.0.0.1:12436/v1" })
+        }
+        #expect(throws: MelixCLIError.missingRequired("--model is required for melix dataset synthetic create.")) {
+            try MelixCLIParser.parse(base().filter { $0 != "--model" && $0 != "melix-dev-text" })
+        }
+        #expect(throws: MelixCLIError.missingRequired("--column is required for melix dataset synthetic create.")) {
+            try MelixCLIParser.parse(base().filter { $0 != "--column" && $0 != #"prompt:llm_text:{"prompt":"write"}"# })
+        }
+        #expect(throws: MelixCLIError.usage("Invalid value for --resume. Expected never, if_possible, or always.")) {
+            try MelixCLIParser.parse(base(["--resume", "later"]))
+        }
+        #expect(throws: MelixCLIError.usage("--enable-datadesigner-telemetry and --disable-datadesigner-telemetry are mutually exclusive.")) {
+            try MelixCLIParser.parse(base(["--enable-datadesigner-telemetry", "--disable-datadesigner-telemetry"]))
+        }
+        #expect(throws: MelixCLIError.usage("--seed-source-kind and --seed-source-path must be provided together.")) {
+            try MelixCLIParser.parse(base(["--seed-source-kind", "jsonl"]))
+        }
+        do {
+            _ = try MelixCLIParser.parse(base(["--extra-body-json", "{"]))
+            Issue.record("Expected invalid extra body JSON to fail.")
+        } catch let error as MelixCLIError {
+            #expect(error.errorDescription?.contains("--extra-body-json must contain valid JSON") == true)
+        } catch {
+            Issue.record("Expected MelixCLIError, got \(error).")
+        }
+        #expect(throws: MelixCLIError.usage("--extra-body-json must contain a JSON object.")) {
+            try MelixCLIParser.parse(base(["--extra-body-json", "[]"]))
+        }
     }
 
     @Test("parses uri resolver commands")
@@ -3956,6 +4114,12 @@ struct MelixCLIParserTests {
         try assertError(
             for: ["dataset", "remove"],
             equals: .missingRequired("--repo-id is required for melix dataset remove.")
+        )
+        try assertError(for: ["dataset", "synthetic"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(for: ["dataset", "synthetic", "unknown"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(
+            for: ["dataset", "synthetic", "preview"],
+            equals: .missingRequired("--dataset-id is required for melix dataset synthetic preview.")
         )
         try assertError(for: ["server"], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["server", "hibernate"], equals: .usage(MelixCLIParser.usageText))

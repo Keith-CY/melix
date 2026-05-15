@@ -4295,6 +4295,128 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["melix.hf_snapshot_id"] == "abc123")
     }
 
+    @Test("dataset synthetic forwards DataDesigner generation request")
+    func datasetSyntheticForwardsDataDesignerGenerationRequest() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/melix/synthetic-chat",
+            manifestJSON: #"""
+            {
+              "operation": "generate_synthetic_dataset",
+              "schema_version": "melix.training_dataset_package.v1",
+              "dataset_id": "synthetic.chat.v1",
+              "dataset_name": "Synthetic Chat",
+              "output_kind": "training",
+              "row_count": 4,
+              "datadesigner": {
+                "provider": {
+                  "api_key": "[REDACTED]"
+                }
+              }
+            }
+            """#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(.datasetSynthetic(.init(
+            mode: "create",
+            datasetID: "synthetic.chat.v1",
+            datasetName: "Synthetic Chat",
+            numRecords: 4,
+            outputKind: "training",
+            outputFormat: "prompt_completion",
+            outputDir: "/tmp/melix/synthetic-chat",
+            providerEndpoint: "http://127.0.0.1:12436/v1",
+            apiKey: "sk-secret",
+            headers: ["X-Test=1"],
+            modelAlias: "generator",
+            model: "melix-dev-text",
+            temperature: "0.2",
+            topP: "0.9",
+            maxTokens: 128,
+            timeoutSeconds: "30",
+            maxParallelRequests: 2,
+            extraBodyJSON: #"{"seed":7}"#,
+            columns: [
+                #"prompt:llm_text:{"prompt":"write a prompt"}"#,
+                #"completion:llm_text:{"prompt":"answer it"}"#,
+            ],
+            validationRatio: "0.1",
+            previewCount: 2,
+            randomSeed: 7,
+            resume: "never",
+            json: true
+        )))
+        let call = try #require(await client.lastModelOperationCall)
+        let payload = try #require(parseJSONObject(output))
+
+        #expect(call.modelID == "melix-datasets")
+        #expect(call.operation == "generate_synthetic_dataset")
+        #expect(call.outputDir == "/tmp/melix/synthetic-chat")
+        #expect(call.ext["synthetic_mode"] == "create")
+        #expect(call.ext["synthetic_dataset_id"] == "synthetic.chat.v1")
+        #expect(call.ext["synthetic_dataset_name"] == "Synthetic Chat")
+        #expect(call.ext["synthetic_num_records"] == "4")
+        #expect(call.ext["synthetic_output_kind"] == "training")
+        #expect(call.ext["synthetic_output_format"] == "prompt_completion")
+        #expect(call.ext["provider_endpoint"] == "http://127.0.0.1:12436/v1")
+        #expect(call.ext["provider_name"] == "melix")
+        #expect(call.ext["provider_type"] == "openai")
+        #expect(call.ext["api_key"] == "sk-secret")
+        #expect(call.ext["model_alias"] == "generator")
+        #expect(call.ext["model"] == "melix-dev-text")
+        #expect(call.ext["temperature"] == "0.2")
+        #expect(call.ext["top_p"] == "0.9")
+        #expect(call.ext["max_tokens"] == "128")
+        #expect(call.ext["timeout_seconds"] == "30")
+        #expect(call.ext["max_parallel_requests"] == "2")
+        #expect(call.ext["extra_body_json"] == #"{"seed":7}"#)
+        #expect(call.ext["validation_ratio"] == "0.1")
+        #expect(call.ext["preview_count"] == "2")
+        #expect(call.ext["random_seed"] == "7")
+        #expect(call.ext["resume"] == "never")
+        #expect(call.ext["disable_datadesigner_telemetry"] == "true")
+        #expect(call.ext["headers_json"] == #"["X-Test=1"]"#)
+        #expect(call.ext["columns_json"]?.contains("prompt:llm_text") == true)
+        #expect(payload["dataset_id"] as? String == "synthetic.chat.v1")
+        #expect(output.contains("sk-secret") == false)
+    }
+
+    @Test("dataset synthetic supports plain text render seed source and subprocess argv")
+    func datasetSyntheticSupportsPlainTextRenderSeedSourceAndSubprocessArgv() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "",
+            manifestJSON: #"""
+            {
+              "operation": "generate_synthetic_dataset",
+              "dataset_name": "Synthetic Preview",
+              "output_kind": "raw_jsonl",
+              "sample_count": 3
+            }
+            """#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(.datasetSynthetic(.init(
+            mode: "preview",
+            datasetID: "synthetic.preview.v1",
+            datasetName: "Synthetic Preview",
+            numRecords: 3,
+            outputKind: "raw_jsonl",
+            outputFormat: "jsonl",
+            outputDir: "/tmp/melix/synthetic-preview",
+            providerEndpoint: "http://127.0.0.1:12436/v1",
+            model: "melix-dev-text",
+            columns: [#"prompt:llm_text:{"prompt":"write"}"#],
+            seedSourceKind: "jsonl",
+            seedSourcePath: "/tmp/seeds.jsonl"
+        )))
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(output == "Synthetic dataset Synthetic Preview (raw_jsonl) generated with 3 rows.\n")
+        #expect(call.ext["seed_source_kind"] == "jsonl")
+        #expect(call.ext["seed_source_path"] == "/tmp/seeds.jsonl")
+    }
+
     @Test("dataset remove renders manifest summary when worker output path is empty")
     func datasetRemoveRendersManifestSummaryWhenWorkerOutputPathIsEmpty() async throws {
         let client = StubControlPlaneXPCClient()
@@ -7394,6 +7516,79 @@ struct MelixCLIRunnerTests {
         #expect(commands[0] == ["dataset", "list", "--json"])
         #expect(commands[1] == ["dataset", "hub", "download", "--repo-id", "org/dataset", "--revision", "main", "--hf-token", "hf_secret", "--json"])
         #expect(commands[2] == ["dataset", "remove", "--repo-id", "org/dataset", "--revision", "main", "--snapshot-id", "abc123", "--json"])
+    }
+
+    @Test("subprocess-backed synthetic dataset operation builds public melix arguments")
+    func subprocessBackedSyntheticDatasetOperationBuildsPublicCLIArguments() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                #"{"operation":"generate_synthetic_dataset","job_id":"synthetic-job-1","output_path":"/tmp/melix/synthetic/samples.jsonl","dataset_id":"synthetic.chat.v1"}"#,
+            ]
+        )
+        let runner = MelixCLIRunner(
+            client: client,
+            commandExecutor: executor.run
+        )
+
+        let result = try await runner.performModelOperation(
+            modelID: "melix-datasets",
+            operation: "generate_synthetic_dataset",
+            outputDir: "/tmp/melix/synthetic",
+            ext: [
+                "synthetic_mode": "preview",
+                "synthetic_dataset_id": "synthetic.chat.v1",
+                "synthetic_dataset_name": "Synthetic Chat",
+                "synthetic_num_records": "3",
+                "synthetic_output_kind": "training",
+                "synthetic_output_format": "prompt_completion",
+                "provider_endpoint": "http://127.0.0.1:12436/v1",
+                "provider_name": "melix",
+                "provider_type": "openai",
+                "api_key": "sk-secret",
+                "headers_json": #"["X-Test=1"]"#,
+                "model_alias": "generator",
+                "model": "melix-dev-text",
+                "temperature": "0.2",
+                "top_p": "0.9",
+                "max_tokens": "128",
+                "timeout_seconds": "30",
+                "max_parallel_requests": "2",
+                "extra_body_json": #"{"seed":7}"#,
+                "columns_json": #"["prompt:llm_text:{\"prompt\":\"write\"}"]"#,
+                "seed_source_kind": "jsonl",
+                "seed_source_path": "/tmp/seeds.jsonl",
+                "validation_ratio": "0.1",
+                "preview_count": "2",
+                "random_seed": "7",
+                "resume": "if_possible",
+                "disable_datadesigner_telemetry": "false",
+            ]
+        )
+        let commands = await executor.commands
+        let command = try #require(commands.first)
+
+        #expect(await client.lastModelOperationCall == nil)
+        #expect(result.outputPath == "/tmp/melix/synthetic/samples.jsonl")
+        #expect(Array(command.prefix(3)) == ["dataset", "synthetic", "preview"])
+        #expect(command.contains("--dataset-id"))
+        #expect(command.contains("synthetic.chat.v1"))
+        #expect(command.contains("--output-dir"))
+        #expect(command.contains("/tmp/melix/synthetic"))
+        #expect(command.contains("--provider-endpoint"))
+        #expect(command.contains("http://127.0.0.1:12436/v1"))
+        #expect(command.contains("--header"))
+        #expect(command.contains("X-Test=1"))
+        #expect(command.contains("--model"))
+        #expect(command.contains("melix-dev-text"))
+        #expect(command.contains("--extra-body-json"))
+        #expect(command.contains(#"{"seed":7}"#))
+        #expect(command.contains("--column"))
+        #expect(command.contains(#"prompt:llm_text:{"prompt":"write"}"#))
+        #expect(command.contains("--seed-source-kind"))
+        #expect(command.contains("/tmp/seeds.jsonl"))
+        #expect(command.contains("--enable-datadesigner-telemetry"))
+        #expect(command.contains("--json"))
     }
 
     @Test("subprocess-backed legacy alignment training mode uses alignment train")
