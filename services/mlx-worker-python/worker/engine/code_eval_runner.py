@@ -351,12 +351,13 @@ def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:
         return None
     cursor = key_index + len(key_token)
     payload_length = len(payload_bytes)
-    while cursor < payload_length and payload_bytes[cursor] in b" \t\r\n":
+    whitespace = _JSON_PAYLOAD_WHITESPACE
+    while cursor < payload_length and payload_bytes[cursor] in whitespace:
         cursor += 1
     if cursor >= payload_length or payload_bytes[cursor] != ord(":"):
         return None
     cursor += 1
-    while cursor < payload_length and payload_bytes[cursor] in b" \t\r\n":
+    while cursor < payload_length and payload_bytes[cursor] in whitespace:
         cursor += 1
     if cursor >= payload_length:
         return None
