@@ -91,6 +91,17 @@ struct SessionLifecycleSmokeRunnerTests {
         #expect(report.scenarios["wake"]?.assistantText.contains("Echo: wake") == true)
     }
 
+    @Test("runner consumes wake stream while waiting for ready lifecycle")
+    func runnerConsumesWakeStreamWhileWaitingForReadyLifecycle() async throws {
+        let report = try await SessionLifecycleSmokeRunner(
+            client: LifecycleSmokeStubClient(deferWakeUntilStreamConsumption: true),
+            sleep: { _ in try await Task.sleep(for: .milliseconds(1)) }
+        ).run()
+
+        #expect(report.scenarios["wake"]?.lifecycle == "ready")
+        #expect(report.scenarios["wake"]?.assistantText.contains("Echo: wake") == true)
+    }
+
     @Test("command parser accepts explicit smoke arguments")
     func commandParserAcceptsExplicitArguments() throws {
         let options = try SessionLifecycleSmokeCommand.parseArguments([
@@ -327,6 +338,7 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
     private let allowSleepTransition: Bool
     private let chatModes: [String: LifecycleSmokeChatMode]
     private let pausedChatErrorReason: String?
+    private let deferWakeUntilStreamConsumption: Bool
     private var snapshot: Melix_Controlplane_V1_ServerSnapshot
     private var sleepPollCount = 0
     private var awakeGraceSnapshots = 0
@@ -338,12 +350,14 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
         allowSleepTransition: Bool = true,
         chatModes: [String: LifecycleSmokeChatMode] = [:],
         pausedChatErrorReason: String? = nil,
+        deferWakeUntilStreamConsumption: Bool = false,
         stopConflictCount: Int = 0
     ) {
         self.serverSessionID = serverSessionID
         self.allowSleepTransition = allowSleepTransition
         self.chatModes = chatModes
         self.pausedChatErrorReason = pausedChatErrorReason
+        self.deferWakeUntilStreamConsumption = deferWakeUntilStreamConsumption
         self.remainingStopConflicts = stopConflictCount
         self.snapshot = LifecycleSmokeStubClient.makeSnapshot(
             serverSessionID: serverSessionID,
@@ -376,32 +390,29 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
             }
             throw ControlPlaneChatExecutionError.unavailable
         }
+        var shouldWakeDuringStream = false
         if session.lifecycleState == .sleeping {
-            mutateSession(lifecycleState: .ready, powerState: .active, wakeReason: .requestActivity)
-            awakeGraceSnapshots = 2
+            if deferWakeUntilStreamConsumption {
+                shouldWakeDuringStream = true
+            } else {
+                completeDeferredWake()
+            }
         }
 
         let prompt = request.messages.last?.content ?? "empty"
         let assistantText = "Echo: \(prompt)"
         let mode = chatModes[prompt] ?? .standard
+        let events = chatEvents(mode: mode, assistantText: assistantText)
+        let streamState = LifecycleSmokeChatStreamState(
+            events: events,
+            shouldWakeDuringStream: shouldWakeDuringStream,
+            client: self
+        )
         return ControlPlaneChatExecution(
             requestID: "smoke-chat",
             modelID: request.modelID,
-            stream: AsyncThrowingStream { continuation in
-                switch mode {
-                case .standard:
-                    continuation.yield(.tokenDelta(assistantText))
-                    continuation.yield(.completed(finishReason: "stop", assistantText: assistantText, reasoningText: ""))
-                case .heartbeatThenCompletedEmptyAssistant:
-                    continuation.yield(.heartbeat)
-                    continuation.yield(.tokenDelta(assistantText))
-                    continuation.yield(.completed(finishReason: "stop", assistantText: "", reasoningText: ""))
-                case .tokensOnly:
-                    continuation.yield(.tokenDelta(assistantText))
-                case .noEvents:
-                    break
-                }
-                continuation.finish()
+            stream: AsyncThrowingStream {
+                await streamState.next()
             }
         )
     }
@@ -474,6 +485,34 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
         }
         sleepPollCount = 0
         return snapshot
+    }
+
+    fileprivate func completeDeferredWake() {
+        mutateSession(lifecycleState: .ready, powerState: .active, wakeReason: .requestActivity)
+        awakeGraceSnapshots = 2
+    }
+
+    private nonisolated func chatEvents(
+        mode: LifecycleSmokeChatMode,
+        assistantText: String
+    ) -> [ControlPlaneChatStreamEvent] {
+        switch mode {
+        case .standard:
+            [
+                .tokenDelta(assistantText),
+                .completed(finishReason: "stop", assistantText: assistantText, reasoningText: ""),
+            ]
+        case .heartbeatThenCompletedEmptyAssistant:
+            [
+                .heartbeat,
+                .tokenDelta(assistantText),
+                .completed(finishReason: "stop", assistantText: "", reasoningText: ""),
+            ]
+        case .tokensOnly:
+            [.tokenDelta(assistantText)]
+        case .noEvents:
+            []
+        }
     }
 
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
@@ -552,6 +591,36 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
         snapshot.serverState = .serverReady
         snapshot.runtimeSessions = [session]
         return snapshot
+    }
+}
+
+private actor LifecycleSmokeChatStreamState {
+    private let events: [ControlPlaneChatStreamEvent]
+    private let client: LifecycleSmokeStubClient
+    private var shouldWakeDuringStream: Bool
+    private var eventIndex = 0
+
+    init(
+        events: [ControlPlaneChatStreamEvent],
+        shouldWakeDuringStream: Bool,
+        client: LifecycleSmokeStubClient
+    ) {
+        self.events = events
+        self.shouldWakeDuringStream = shouldWakeDuringStream
+        self.client = client
+    }
+
+    func next() async -> ControlPlaneChatStreamEvent? {
+        if shouldWakeDuringStream {
+            await client.completeDeferredWake()
+            shouldWakeDuringStream = false
+        }
+        guard eventIndex < events.count else {
+            return nil
+        }
+        let event = events[eventIndex]
+        eventIndex += 1
+        return event
     }
 }
 

@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 from packages.protocol.python.worker.v1 import common_pb2
 
+from worker.model_ops.adapter_capabilities import (
+    DEFAULT_ADAPTER_CAPABILITY_REGISTRY,
+    UNSUPPORTED_REASON_MISSING_ADAPTER_PROVIDER,
+    UNSUPPORTED_REASON_MISSING_QUANTIZATION_PROVIDER,
+    UNSUPPORTED_REASON_UNSUPPORTED_BACKEND,
+    UNSUPPORTED_REASON_UNSUPPORTED_QUANTIZED_BASE,
+    AdapterCapabilityRegistry,
+)
 from worker.model_ops.errors import ModelOperationError
 
 
@@ -66,6 +74,12 @@ class LoRATrainingConfig:
     chunk_size: int
     training_objective: str = "supervised_finetuning"
     adapter_algorithm: str = "lora"
+    adapter_family: str = "lora"
+    adapter_capabilities: dict[str, bool] = field(default_factory=dict)
+    backend_supported: bool = True
+    unsupported_reason: str = ""
+    adapter_loader_kwargs: dict[str, str] = field(default_factory=dict)
+    base_quantization_method: str = ""
     preference_loss: str = ""
     dataset_contract: str = "sft"
     alignment: AlignmentTrainingConfig | None = None
@@ -104,9 +118,13 @@ _SUPPORTED_TRAINING_MODES = (
     | _CPT_TRAINING_MODES
 )
 _SUPPORTED_COMPONENT_SCOPES: frozenset[str] = frozenset({"text_backbone"})
+_BUILTIN_QUANTIZATION_METHODS: frozenset[str] = frozenset(
+    {"mlx", "mlx_lm", "mlx-lm", "quant_profile", "path_hint"}
+)
 
 _NORMALIZED_TARGET_MODULE_PRESETS_KEY = "_normalized_target_module_presets"
 _NORMALIZED_DEFAULT_TARGET_MODULES_KEY = "_normalized_default_target_modules"
+_NORMALIZED_TARGET_MODULES_CACHE_KEY = "_normalized_target_modules_cache"
 
 _FAMILY_PROFILES: dict[str, dict[str, object]] = {
     "llama": {
@@ -269,6 +287,7 @@ def _normalize_default_target_modules(profile: dict[str, object]) -> tuple[str, 
 for _profile in _FAMILY_PROFILES.values():
     _profile[_NORMALIZED_TARGET_MODULE_PRESETS_KEY] = _normalize_target_module_presets(_profile)
     _profile[_NORMALIZED_DEFAULT_TARGET_MODULES_KEY] = _normalize_default_target_modules(_profile)
+    _profile[_NORMALIZED_TARGET_MODULES_CACHE_KEY] = {}
 
 _ADVANCED_FAMILY_HOOKS: dict[str, dict[str, str]] = {
     "mixtral": {
@@ -348,6 +367,7 @@ def normalize_training_config(
     response_only_supported: bool,
     sample_count: int,
     validation_sample_count: int = 0,
+    adapter_registry: AdapterCapabilityRegistry | None = None,
 ) -> LoRATrainingConfig:
     _validate_lora_training_surface(source_model)
 
@@ -363,11 +383,45 @@ def normalize_training_config(
         dataset_contract=mode_contract["dataset_contract"],
         ext=ext,
     )
-    quantized_base_model = _is_quantized_base_model(source_model)
+    adapter_family = _resolve_adapter_family(ext, training_mode=training_mode, mode_contract=mode_contract)
+    registry = adapter_registry or DEFAULT_ADAPTER_CAPABILITY_REGISTRY
+    adapter_record = registry.resolve(adapter_family)
+    if adapter_record is None:
+        raise ModelOperationError(
+            code=UNSUPPORTED_REASON_MISSING_ADAPTER_PROVIDER,
+            message=f"No adapter provider is registered for adapter_family={adapter_family}.",
+            details={"adapter_family": adapter_family, "training_mode": training_mode},
+        )
+    if adapter_record.backend_supported is False:
+        raise ModelOperationError(
+            code=adapter_record.unsupported_reason or UNSUPPORTED_REASON_UNSUPPORTED_BACKEND,
+            message=f"Adapter family {adapter_record.adapter_family} is not supported by backend {adapter_record.backend}.",
+            details={
+                "adapter_family": adapter_record.adapter_family,
+                "backend": adapter_record.backend,
+                "unsupported_reason": adapter_record.unsupported_reason,
+            },
+        )
+
+    base_quantization_method = _base_quantization_method(source_model)
+    quantized_base_model = bool(base_quantization_method)
+    if quantized_base_model:
+        _validate_quantization_provider(source_model, base_quantization_method=base_quantization_method)
+    if quantized_base_model and adapter_record.capabilities.quantized_base_supported is False:
+        raise ModelOperationError(
+            code=UNSUPPORTED_REASON_UNSUPPORTED_QUANTIZED_BASE,
+            message=f"Adapter family {adapter_record.adapter_family} does not support quantized base models.",
+            details={
+                "adapter_family": adapter_record.adapter_family,
+                "training_mode": training_mode,
+                "base_quantization_method": base_quantization_method,
+            },
+        )
     if training_mode == "qlora" and quantized_base_model is False:
         raise ModelOperationError(
-            code="unsupported_training_mode",
+            code=UNSUPPORTED_REASON_UNSUPPORTED_QUANTIZED_BASE,
             message="training_mode=qlora requires a quantized base model.",
+            details={"adapter_family": adapter_record.adapter_family, "training_mode": training_mode},
         )
     quantization_mode = "quantized_base" if training_mode == "qlora" else "none"
     preset_id = ext.get("preset_id", "").strip()
@@ -585,7 +639,13 @@ def normalize_training_config(
         chunked_training=chunked_training,
         chunk_size=chunk_size,
         training_objective=mode_contract["training_objective"],
-        adapter_algorithm=mode_contract["adapter_algorithm"],
+        adapter_algorithm=adapter_record.adapter_algorithm,
+        adapter_family=adapter_record.adapter_family,
+        adapter_capabilities=adapter_record.capabilities.as_manifest(),
+        backend_supported=adapter_record.backend_supported,
+        unsupported_reason=adapter_record.unsupported_reason,
+        adapter_loader_kwargs=dict(adapter_record.loader_kwargs),
+        base_quantization_method=base_quantization_method,
         preference_loss=mode_contract["preference_loss"],
         dataset_contract=mode_contract["dataset_contract"],
         alignment=alignment,
@@ -681,6 +741,24 @@ def _resolve_training_mode_contract(training_mode: str, dataset_format: str) -> 
         "preference_loss": "",
         "dataset_contract": "text_completion",
     }
+
+
+def _resolve_adapter_family(
+    ext: dict[str, str],
+    *,
+    training_mode: str,
+    mode_contract: dict[str, str],
+) -> str:
+    explicit_family = (
+        ext.get("adapter_family", "").strip()
+        or ext.get("melix.adapter.family", "").strip()
+        or ext.get("melix.adapter_family", "").strip()
+    )
+    if explicit_family:
+        return explicit_family
+    if training_mode in {"qlora", "dora"}:
+        return training_mode
+    return mode_contract["adapter_algorithm"]
 
 
 def _resolve_alignment_config(
@@ -962,26 +1040,37 @@ def _resolve_family_hooks(source_model: common_pb2.ModelSpec, *, family_id: str)
 
 
 def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> list[str]:
+    cache = profile.get(_NORMALIZED_TARGET_MODULES_CACHE_KEY)
+    if not isinstance(cache, dict):
+        cache = {}
+        profile[_NORMALIZED_TARGET_MODULES_CACHE_KEY] = cache
+    cached_targets = cache.get(raw_value)
+    if isinstance(cached_targets, tuple):
+        return list(cached_targets)
+
     presets = profile.get(_NORMALIZED_TARGET_MODULE_PRESETS_KEY)
     if not isinstance(presets, dict):
         presets = _normalize_target_module_presets(profile)
     default_targets = profile.get(_NORMALIZED_DEFAULT_TARGET_MODULES_KEY)
     if not isinstance(default_targets, tuple):
         default_targets = _normalize_default_target_modules(profile)
-    requested = [item.strip().lower() for item in raw_value.split(",") if item.strip()]
-    if not requested:
-        return list(default_targets)
-
     resolved_targets: list[str] = []
     seen: set[str] = set()
-    for requested_target in requested:
+    requested_found = False
+    for raw_target in raw_value.split(","):
+        requested_target = raw_target.strip().lower()
+        if not requested_target:
+            continue
+        requested_found = True
         target_key = requested_target.lstrip("@")
         expanded_targets = presets.get(target_key, (requested_target,))
         for expanded_target in expanded_targets:
             if expanded_target not in seen:
                 seen.add(expanded_target)
                 resolved_targets.append(expanded_target)
-    return resolved_targets
+    resolved_tuple = tuple(resolved_targets) if requested_found else default_targets
+    cache[raw_value] = resolved_tuple
+    return list(resolved_tuple)
 
 
 def _reject_unsafe_quantized_lora_targets(
@@ -1060,8 +1149,19 @@ def _backend_target_modules(expanded_target_modules: Iterable[str]) -> list[str]
 
 
 def _is_quantized_base_model(source_model: common_pb2.ModelSpec) -> bool:
+    return bool(_base_quantization_method(source_model))
+
+
+def _base_quantization_method(source_model: common_pb2.ModelSpec) -> str:
+    ext_method = (
+        source_model.ext.get("melix.quantization.method", "").strip().lower()
+        or source_model.ext.get("quantization_method", "").strip().lower()
+    )
+    if ext_method:
+        return ext_method
+
     if source_model.quant_profile_id.strip():
-        return True
+        return "quant_profile"
 
     searchable = " ".join(
         [
@@ -1070,7 +1170,29 @@ def _is_quantized_base_model(source_model: common_pb2.ModelSpec) -> bool:
             source_model.revision.lower(),
         ]
     )
-    return _QUANTIZED_MODEL_PATTERN.search(searchable) is not None
+    if _QUANTIZED_MODEL_PATTERN.search(searchable) is not None:
+        return "path_hint"
+    return ""
+
+
+def _validate_quantization_provider(
+    source_model: common_pb2.ModelSpec,
+    *,
+    base_quantization_method: str,
+) -> None:
+    if base_quantization_method in _BUILTIN_QUANTIZATION_METHODS:
+        return
+    provider = (
+        source_model.ext.get("melix.quantization.provider", "").strip()
+        or source_model.ext.get("quantization_provider", "").strip()
+    )
+    if provider:
+        return
+    raise ModelOperationError(
+        code=UNSUPPORTED_REASON_MISSING_QUANTIZATION_PROVIDER,
+        message=f"No quantization provider is registered for {base_quantization_method}.",
+        details={"base_quantization_method": base_quantization_method},
+    )
 
 
 def _int_value(raw_value: str, *, default: int, minimum: int, field_name: str) -> int:
