@@ -17,12 +17,15 @@ sys.path.insert(0, str(REPO_ROOT / "services" / "mlx-worker-python"))
 
 from worker.productization import release_gates  # noqa: E402
 
-PACKAGED_LAUNCH_POLICY = {
-    "connect_host_resolution.connect_host_loopback": {"min": 1.0},
-    "health_probe_reuse.reused_client_count": {"min": 1.0},
-    "health_probe_reuse.time_wait_socket_count": {"max": 4.0},
-    "installed_app_audit.audit_passed": {"min": 1.0},
-}
+PHASE8_RELEASE_GATE_POLICY_PATH = REPO_ROOT / "infra" / "release" / "phase8-release-gate-policy.json"
+
+
+def _packaged_launch_policy() -> dict[str, Any]:
+    policy = release_gates.load_release_gate_policy(PHASE8_RELEASE_GATE_POLICY_PATH)
+    packaged_launch = policy.get("packaged_launch", {})
+    if not isinstance(packaged_launch, dict):  # pragma: no cover
+        raise SystemExit("phase8 release gate policy is missing packaged_launch")
+    return packaged_launch
 
 
 class CountingFailure(str):
@@ -57,7 +60,7 @@ def _exercise_packaged_launch_release_gate() -> None:
     install_evidence = release_gates.collect_install_evidence(REPO_ROOT)
     packaged_launch = install_evidence["packaged_launch"]
     policy = {
-        "packaged_launch": PACKAGED_LAUNCH_POLICY,
+        "packaged_launch": _packaged_launch_policy(),
     }
 
     failures = release_gates.evaluate_release_gate(

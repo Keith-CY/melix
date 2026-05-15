@@ -237,6 +237,9 @@ def _build_passing_packaged_launch_report() -> dict[str, object]:
         "installed_app_audit": {
             "audit_schema_version": "melix.packaged_launch.installed_app_audit.v1",
             "install_manifest_path": "/tmp/melix/install-manifest.json",
+            "expected_logical_product_identity": "io.melix",
+            "logical_product_identity": "io.melix",
+            "logical_product_identity_matches": 1.0,
             "audit_passed": 1.0,
         },
     }

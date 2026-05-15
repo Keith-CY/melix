@@ -189,12 +189,15 @@ def test_export_index_snapshot_can_preserve_head_diff_for_staged_content(tmp_pat
     subprocess.check_call(["git", "config", "user.name", "Test User"], cwd=source, env=git_env)
     subprocess.check_call(["git", "config", "user.email", "test@example.invalid"], cwd=source, env=git_env)
     (source / "changed.py").write_text("value = 1\n", encoding="utf-8")
+    (source / "nested").mkdir()
     (source / "deleted.py").write_text("remove_me = True\n", encoding="utf-8")
+    (source / "nested" / "deleted.py").write_text("nested_remove_me = True\n", encoding="utf-8")
     subprocess.check_call(["git", "add", "-A"], cwd=source, env=git_env)
     subprocess.check_call(["git", "commit", "-q", "-m", "base"], cwd=source, env=git_env)
     (source / "changed.py").write_text("value = 1\nadded = 2\n", encoding="utf-8")
     (source / "added.py").write_text("created = True\n", encoding="utf-8")
     (source / "deleted.py").unlink()
+    (source / "nested" / "deleted.py").unlink()
     subprocess.check_call(["git", "add", "-A"], cwd=source, env=git_env)
 
     pre_commit_gate.export_index_snapshot(source, snapshot, git_backed=True)
@@ -208,6 +211,8 @@ def test_export_index_snapshot_can_preserve_head_diff_for_staged_content(tmp_pat
     assert "M\tchanged.py" in diff
     assert "A\tadded.py" in diff
     assert "D\tdeleted.py" in diff
+    assert "D\tnested/deleted.py" in diff
+    assert not (snapshot / "nested").exists()
     added_diff = subprocess.check_output(
         ["git", "diff", "--unified=0", "--", "added.py"],
         cwd=snapshot,

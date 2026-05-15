@@ -82,6 +82,9 @@
     "health_probe_reuse.time_wait_socket_count": {
       "max": 4.0
     },
+    "installed_app_audit.logical_product_identity_matches": {
+      "min": 1.0
+    },
     "installed_app_audit.audit_passed": {
       "min": 1.0
     }

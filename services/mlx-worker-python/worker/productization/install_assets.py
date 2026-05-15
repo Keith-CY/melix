@@ -16,6 +16,7 @@ from worker.productization.startup_signals import (
 )
 from worker.productization.packaging_targets import (
     build_packaging_target_metadata,
+    format_http_url_host,
     resolve_local_connect_host,
 )
 
@@ -377,9 +378,9 @@ def write_local_product_artifacts(
         "http_bind_host": layout.http_bind_host,
         "http_connect_host": layout.http_connect_host,
         "http_port_auto_selected": layout.requested_http_port != layout.http_port,
-        "health_probe_url": f"http://{layout.http_connect_host}:{layout.http_port}/health",
-        "ready_probe_url": f"http://{layout.http_connect_host}:{layout.http_port}/v1/models",
-        "service_base_url": f"http://{layout.http_connect_host}:{layout.http_port}/v1",
+        "health_probe_url": f"http://{format_http_url_host(layout.http_connect_host)}:{layout.http_port}/health",
+        "ready_probe_url": f"http://{format_http_url_host(layout.http_connect_host)}:{layout.http_port}/v1/models",
+        "service_base_url": f"http://{format_http_url_host(layout.http_connect_host)}:{layout.http_port}/v1",
         "control_plane_stdout_path": str(layout.control_plane_stdout_path),
         "control_plane_stderr_path": str(layout.control_plane_stderr_path),
         "swift_text_worker_stdout_path": str(layout.swift_text_worker_stdout_path),

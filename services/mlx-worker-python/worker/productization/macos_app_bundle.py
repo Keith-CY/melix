@@ -12,6 +12,7 @@ from typing import Any
 
 from worker.productization.packaging_targets import (
     build_packaging_target_metadata,
+    format_http_url_host,
     resolve_local_connect_host,
 )
 from worker.productization.startup_signals import default_update_channel_path
@@ -324,8 +325,8 @@ def write_unsigned_macos_app_bundle(
     target_metadata["http_bind_host"] = normalized_bind_host
     target_metadata["http_connect_host"] = resolved_connect_host
     target_metadata["http_port"] = http_port
-    target_metadata["health_probe_url"] = f"http://{resolved_connect_host}:{http_port}/health"
-    target_metadata["service_base_url"] = f"http://{resolved_connect_host}:{http_port}/v1"
+    target_metadata["health_probe_url"] = f"http://{format_http_url_host(resolved_connect_host)}:{http_port}/health"
+    target_metadata["service_base_url"] = f"http://{format_http_url_host(resolved_connect_host)}:{http_port}/v1"
     layout.packaging_target_manifest_path.write_text(
         json.dumps(target_metadata, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

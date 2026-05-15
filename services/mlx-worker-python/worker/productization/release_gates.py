@@ -42,7 +42,11 @@ from worker.productization.install_assets import (
     build_local_product_layout,
     write_local_product_artifacts,
 )
-from worker.productization.packaging_targets import resolve_local_connect_host
+from worker.productization.packaging_targets import (
+    MELIX_LOGICAL_PRODUCT_IDENTITY,
+    format_http_url_host,
+    resolve_local_connect_host,
+)
 from worker.productization.probe_policy_overhead import measure_no_op_probe_policy_overhead
 from worker.registry import WorkerRegistry
 from worker.productization.serving_diagnostics import (
@@ -425,7 +429,9 @@ def build_packaged_launch_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
     connect_host = str(manifest.get("http_connect_host", "")).strip()
     port = int(manifest.get("http_port", 0) or 0)
     expected_connect_host = resolve_local_connect_host(bind_host)
-    expected_health_url = f"http://{expected_connect_host}:{port}/health" if port > 0 else ""
+    expected_url_host = format_http_url_host(expected_connect_host)
+    connect_url_host = format_http_url_host(connect_host)
+    expected_health_url = f"http://{expected_url_host}:{port}/health" if port > 0 else ""
     health_probe_url = str(manifest.get("health_probe_url", "")).strip()
     service_base_url = str(manifest.get("service_base_url", "")).strip()
     install_manifest_path = str(manifest.get("install_manifest_path", "")).strip()
@@ -434,22 +440,29 @@ def build_packaged_launch_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
     connect_host_loopback = float(
         bind_host in {"0.0.0.0", "::", "[::]"}
         and connect_host == expected_connect_host
-        and connect_host.startswith("127.")
+        and (connect_host.startswith("127.") or connect_host == "::1")
     )
     health_url_matches = float(bool(expected_health_url) and health_probe_url == expected_health_url)
     service_base_uses_connect_host = float(
         bool(connect_host)
         and bool(service_base_url)
-        and service_base_url == f"http://{connect_host}:{port}/v1"
+        and service_base_url == f"http://{connect_url_host}:{port}/v1"
+    )
+    product_identity_matches = (
+        str(manifest.get("logical_product_identity", "")).strip() == MELIX_LOGICAL_PRODUCT_IDENTITY
     )
     audit_passed = float(
         bool(install_manifest_path)
         and str(manifest.get("packaging_target_id", "")).strip() != ""
-        and str(manifest.get("logical_product_identity", "")).strip() == "io.melix"
+        and product_identity_matches
         and bool(runtime_source)
         and health_url_matches == 1.0
         and service_base_uses_connect_host == 1.0
     )
+    # These deterministic placeholders assert client reuse intent until the
+    # follow-up live installed-app smoke records real socket samples.
+    reused_client_count = 1.0
+    time_wait_socket_count = 0.0
 
     return {
         "runtime_source": {
@@ -467,12 +480,15 @@ def build_packaged_launch_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
         "health_probe_reuse": {
             "health_probe_url": health_probe_url,
             "health_probe_url_matches_connect_host": health_url_matches,
-            "reused_client_count": 1.0,
-            "time_wait_socket_count": 0.0,
+            "reused_client_count": reused_client_count,
+            "time_wait_socket_count": time_wait_socket_count,
         },
         "installed_app_audit": {
             "audit_schema_version": "melix.packaged_launch.installed_app_audit.v1",
             "install_manifest_path": install_manifest_path,
+            "expected_logical_product_identity": MELIX_LOGICAL_PRODUCT_IDENTITY,
+            "logical_product_identity": manifest.get("logical_product_identity", ""),
+            "logical_product_identity_matches": float(product_identity_matches),
             "audit_passed": audit_passed,
         },
     }

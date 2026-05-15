@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+MELIX_LOGICAL_PRODUCT_IDENTITY = "io.melix"
+
 
 @dataclass(frozen=True)
 class PackagingTargetProfile:
@@ -15,7 +17,7 @@ class PackagingTargetProfile:
     optimization_intent: str
     state_contract: str
     update_strategy: str
-    logical_product_identity: str = "io.melix"
+    logical_product_identity: str = MELIX_LOGICAL_PRODUCT_IDENTITY
     logical_product_name: str = "Melix"
     platform: str = "macos"
     hardware_family: str = "apple_silicon"
@@ -59,8 +61,17 @@ _TARGETS: dict[str, PackagingTargetProfile] = {
 
 def resolve_local_connect_host(bind_host: str) -> str:
     normalized = bind_host.strip()
-    if normalized in {"", "0.0.0.0", "::", "[::]"}:
+    if normalized in {"", "0.0.0.0"}:
         return "127.0.0.1"
+    if normalized in {"::", "[::]"}:
+        return "::1"
+    return normalized
+
+
+def format_http_url_host(host: str) -> str:
+    normalized = host.strip()
+    if ":" in normalized and not (normalized.startswith("[") and normalized.endswith("]")):
+        return f"[{normalized}]"
     return normalized
 
 

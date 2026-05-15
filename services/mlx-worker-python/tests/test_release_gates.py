@@ -467,6 +467,66 @@ def test_collect_install_evidence_reports_expected_artifacts(tmp_path: Path) -> 
     assert evidence["checks"]["all_plists_exist"] is True
 
 
+def test_build_release_gate_report_records_packaged_launch_passed_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    _write_persisted_real_workload_evidence(tmp_path / "jobs")
+    _write_persisted_evaluation_compare_evidence(tmp_path / "jobs")
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_cache_recovery_benchmark_evidence",
+        lambda repo_root: {
+            "metrics": {
+                "bench.recovery.hot_followup_ttft_delta_ms": 12.5,
+                "bench.recovery.cold_l2_hit_rate": 100.0,
+                "bench.recovery.partial_restore_ratio_pct": 80.0,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_quantization_benchmark_evidence",
+        lambda jobs_root: {"summary": {"profile_count": 0, "smoke_pass_rate": 0.0}, "profiles": {}},
+    )
+    monkeypatch.setattr(release_gates_module, "collect_m9_evidence", lambda repo_root, policy=None: {})
+    monkeypatch.setattr(release_gates_module, "collect_observability_evidence", lambda: {})
+
+    report = build_release_gate_report(
+        repo_root,
+        jobs_root=tmp_path / "jobs",
+        policy={
+            "install": {
+                "generated_asset_count": {"min": 5},
+                "bootstrap_command_count": {"min": 3},
+            },
+            "packaged_launch": {
+                "connect_host_resolution.connect_host_loopback": {"min": 1.0},
+                "health_probe_reuse.reused_client_count": {"min": 1.0},
+                "health_probe_reuse.time_wait_socket_count": {"max": 4.0},
+                "installed_app_audit.logical_product_identity_matches": {"min": 1.0},
+                "installed_app_audit.audit_passed": {"min": 1.0},
+            },
+        },
+        recovery={
+            "restart_recovery_ms": 420.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+    )
+
+    assert report["install"]["packaged_launch"]["installed_app_audit"]["audit_passed"] == 1.0
+    assert report["passed"] is True
+    assert report["failures"] == []
+
+
 def test_collect_benchmark_evidence_returns_required_metrics(tmp_path: Path) -> None:
     evidence = collect_benchmark_evidence(tmp_path / "jobs")
 

@@ -201,6 +201,13 @@ def _remove_paths_not_in_index(root: Path, destination: Path) -> None:
         target = destination / rel_path
         if target.is_file() or target.is_symlink():
             target.unlink()
+            parent = target.parent
+            while parent != destination:
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
 
 
 def _mark_added_paths_intent_to_add(root: Path, destination: Path) -> None:
