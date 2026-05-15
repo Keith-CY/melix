@@ -2319,6 +2319,8 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     }
     assert probe_policy_metrics["no_op_recorder_overhead_pct"]["direction"] == "informational"
     assert probe_policy_metrics["no_op_policy_check_overhead_pct"]["direction"] == "informational"
+    assert probe_policy_metrics["no_op_reason_overhead_pct"]["direction"] == "informational"
+    assert probe_policy_metrics["no_op_reason_call_ms_mean"]["direction"] == "lower_is_better"
     assert probe_policy_metrics["threshold_passed"]["direction"] == "higher_is_better"
     assert probe_policy_metrics["threshold_passed"]["warn_pct"] == 0.0
 
@@ -2381,6 +2383,8 @@ def test_probe_policy_noop_overhead_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert "no_op_recorder_overhead_pct" in metrics
     assert "no_op_policy_check_overhead_pct" in metrics
+    assert "no_op_reason_overhead_pct" in metrics
+    assert "no_op_reason_call_ms_mean" in metrics
 
 
 def test_serving_diagnostics_queue_probe_script_emits_metrics(

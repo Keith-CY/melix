@@ -299,6 +299,7 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
     public var concurrentProcessingEnabled: Bool
     public var prefillBatchSize: Int
     public var completionBatchSize: Int
+    public var accelerationProfile: String
     public var accelerationMode: String
     public var draftModelID: String
     public var numDraftTokens: Int
@@ -310,6 +311,8 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
     public var effectiveConcurrentProcessingEnabled: Bool
     public var effectivePrefillBatchSize: Int
     public var effectiveCompletionBatchSize: Int
+    public var effectiveAccelerationProfile: String
+    public var accelerationProfileIntent: String
     public var effectiveAccelerationMode: String
     public var effectiveDraftModelID: String
     public var effectiveNumDraftTokens: Int
@@ -326,6 +329,7 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         concurrentProcessingEnabled: Bool = true,
         prefillBatchSize: Int = 2,
         completionBatchSize: Int = 2,
+        accelerationProfile: String = ServingAccelerationProfiles.defaultProfileID,
         accelerationMode: String = "baseline",
         draftModelID: String = "",
         numDraftTokens: Int = 0,
@@ -337,6 +341,8 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         effectiveConcurrentProcessingEnabled: Bool? = nil,
         effectivePrefillBatchSize: Int? = nil,
         effectiveCompletionBatchSize: Int? = nil,
+        effectiveAccelerationProfile: String? = nil,
+        accelerationProfileIntent: String = "",
         effectiveAccelerationMode: String? = nil,
         effectiveDraftModelID: String? = nil,
         effectiveNumDraftTokens: Int? = nil,
@@ -352,6 +358,8 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         self.concurrentProcessingEnabled = concurrentProcessingEnabled
         self.prefillBatchSize = prefillBatchSize
         self.completionBatchSize = completionBatchSize
+        self.accelerationProfile = ServingAccelerationProfiles.normalizeProfileID(accelerationProfile)
+            ?? ServingAccelerationProfiles.defaultProfileID
         self.accelerationMode = accelerationMode
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
@@ -363,6 +371,11 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         self.effectiveConcurrentProcessingEnabled = effectiveConcurrentProcessingEnabled ?? concurrentProcessingEnabled
         self.effectivePrefillBatchSize = effectivePrefillBatchSize ?? prefillBatchSize
         self.effectiveCompletionBatchSize = effectiveCompletionBatchSize ?? completionBatchSize
+        self.effectiveAccelerationProfile = ServingAccelerationProfiles.normalizeProfileID(effectiveAccelerationProfile)
+            ?? self.accelerationProfile
+        self.accelerationProfileIntent = accelerationProfileIntent.isEmpty
+            ? ServingAccelerationProfiles.profile(id: self.effectiveAccelerationProfile).intent
+            : accelerationProfileIntent
         self.effectiveAccelerationMode = effectiveAccelerationMode ?? accelerationMode
         self.effectiveDraftModelID = effectiveDraftModelID ?? draftModelID
         self.effectiveNumDraftTokens = effectiveNumDraftTokens ?? numDraftTokens
@@ -380,6 +393,7 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         case concurrentProcessingEnabled = "concurrent_processing_enabled"
         case prefillBatchSize = "prefill_batch_size"
         case completionBatchSize = "completion_batch_size"
+        case accelerationProfile = "acceleration_profile"
         case accelerationMode = "acceleration_mode"
         case draftModelID = "draft_model_id"
         case numDraftTokens = "num_draft_tokens"
@@ -391,6 +405,8 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         case effectiveConcurrentProcessingEnabled = "effective_concurrent_processing_enabled"
         case effectivePrefillBatchSize = "effective_prefill_batch_size"
         case effectiveCompletionBatchSize = "effective_completion_batch_size"
+        case effectiveAccelerationProfile = "effective_acceleration_profile"
+        case accelerationProfileIntent = "acceleration_profile_intent"
         case effectiveAccelerationMode = "effective_acceleration_mode"
         case effectiveDraftModelID = "effective_draft_model_id"
         case effectiveNumDraftTokens = "effective_num_draft_tokens"
@@ -409,6 +425,8 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         let concurrentProcessingEnabled = try container.decodeIfPresent(Bool.self, forKey: .concurrentProcessingEnabled) ?? true
         let prefillBatchSize = try container.decodeIfPresent(Int.self, forKey: .prefillBatchSize) ?? 2
         let completionBatchSize = try container.decodeIfPresent(Int.self, forKey: .completionBatchSize) ?? 2
+        let accelerationProfile = try container.decodeIfPresent(String.self, forKey: .accelerationProfile)
+            ?? ServingAccelerationProfiles.defaultProfileID
         let accelerationMode = try container.decodeIfPresent(String.self, forKey: .accelerationMode) ?? "baseline"
         let draftModelID = try container.decodeIfPresent(String.self, forKey: .draftModelID) ?? ""
         let numDraftTokens = try container.decodeIfPresent(Int.self, forKey: .numDraftTokens) ?? 0
@@ -421,6 +439,7 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
             concurrentProcessingEnabled: concurrentProcessingEnabled,
             prefillBatchSize: prefillBatchSize,
             completionBatchSize: completionBatchSize,
+            accelerationProfile: accelerationProfile,
             accelerationMode: accelerationMode,
             draftModelID: draftModelID,
             numDraftTokens: numDraftTokens,
@@ -432,6 +451,8 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
             effectiveConcurrentProcessingEnabled: try container.decodeIfPresent(Bool.self, forKey: .effectiveConcurrentProcessingEnabled),
             effectivePrefillBatchSize: try container.decodeIfPresent(Int.self, forKey: .effectivePrefillBatchSize),
             effectiveCompletionBatchSize: try container.decodeIfPresent(Int.self, forKey: .effectiveCompletionBatchSize),
+            effectiveAccelerationProfile: try container.decodeIfPresent(String.self, forKey: .effectiveAccelerationProfile),
+            accelerationProfileIntent: try container.decodeIfPresent(String.self, forKey: .accelerationProfileIntent) ?? "",
             effectiveAccelerationMode: try container.decodeIfPresent(String.self, forKey: .effectiveAccelerationMode),
             effectiveDraftModelID: try container.decodeIfPresent(String.self, forKey: .effectiveDraftModelID),
             effectiveNumDraftTokens: try container.decodeIfPresent(Int.self, forKey: .effectiveNumDraftTokens),
@@ -451,6 +472,7 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         try container.encode(concurrentProcessingEnabled, forKey: .concurrentProcessingEnabled)
         try container.encode(prefillBatchSize, forKey: .prefillBatchSize)
         try container.encode(completionBatchSize, forKey: .completionBatchSize)
+        try container.encode(accelerationProfile, forKey: .accelerationProfile)
         try container.encode(accelerationMode, forKey: .accelerationMode)
         try container.encode(draftModelID, forKey: .draftModelID)
         try container.encode(numDraftTokens, forKey: .numDraftTokens)
@@ -462,6 +484,8 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         try container.encode(effectiveConcurrentProcessingEnabled, forKey: .effectiveConcurrentProcessingEnabled)
         try container.encode(effectivePrefillBatchSize, forKey: .effectivePrefillBatchSize)
         try container.encode(effectiveCompletionBatchSize, forKey: .effectiveCompletionBatchSize)
+        try container.encode(effectiveAccelerationProfile, forKey: .effectiveAccelerationProfile)
+        try container.encode(accelerationProfileIntent, forKey: .accelerationProfileIntent)
         try container.encode(effectiveAccelerationMode, forKey: .effectiveAccelerationMode)
         try container.encode(effectiveDraftModelID, forKey: .effectiveDraftModelID)
         try container.encode(effectiveNumDraftTokens, forKey: .effectiveNumDraftTokens)

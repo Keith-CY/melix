@@ -555,7 +555,8 @@ public protocol ControlPlaneXPCClient: Sendable {
         completionBatchSize: Int,
         accelerationMode: Melix_Controlplane_V1_AccelerationMode,
         draftModelID: String,
-        numDraftTokens: Int
+        numDraftTokens: Int,
+        accelerationProfile: String
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot
     func clearServerSessionGatewayAccess(serverSessionID: String) async throws
 }
@@ -793,7 +794,8 @@ public extension ControlPlaneXPCClient {
         completionBatchSize: Int,
         accelerationMode: Melix_Controlplane_V1_AccelerationMode,
         draftModelID: String,
-        numDraftTokens: Int
+        numDraftTokens: Int,
+        accelerationProfile: String
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         _ = serverSessionID
         _ = temperature
@@ -807,6 +809,7 @@ public extension ControlPlaneXPCClient {
         _ = accelerationMode
         _ = draftModelID
         _ = numDraftTokens
+        _ = accelerationProfile
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Serving defaults apply is not implemented for this control-plane client."
@@ -1136,7 +1139,8 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         completionBatchSize: Int,
         accelerationMode: Melix_Controlplane_V1_AccelerationMode,
         draftModelID: String,
-        numDraftTokens: Int
+        numDraftTokens: Int,
+        accelerationProfile: String
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         try await execute(
             makeApplyServerSessionServingDefaultsRequest(
@@ -1151,7 +1155,8 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
                 completionBatchSize: completionBatchSize,
                 accelerationMode: accelerationMode,
                 draftModelID: draftModelID,
-                numDraftTokens: numDraftTokens
+                numDraftTokens: numDraftTokens,
+                accelerationProfile: accelerationProfile
             )
         ) { response in
             response.server.snapshot
@@ -1643,7 +1648,8 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         completionBatchSize: Int,
         accelerationMode: Melix_Controlplane_V1_AccelerationMode,
         draftModelID: String,
-        numDraftTokens: Int
+        numDraftTokens: Int,
+        accelerationProfile: String
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "menubar-apply-serving-defaults-\(serverSessionID)"
@@ -1663,6 +1669,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.server.applyServingDefaults.accelerationMode = accelerationMode
         request.server.applyServingDefaults.draftModelID = draftModelID
         request.server.applyServingDefaults.numDraftTokens = UInt32(max(0, numDraftTokens))
+        request.server.applyServingDefaults.accelerationProfile = accelerationProfile
         return request
     }
 }

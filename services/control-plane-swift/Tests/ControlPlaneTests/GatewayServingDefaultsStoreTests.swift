@@ -3,6 +3,7 @@ import Testing
 
 @testable import MelixControlPlaneCore
 import MelixControlPlaneProtocol
+import MelixWorkerProtocol
 
 @Suite("Gateway Serving Defaults Store")
 struct GatewayServingDefaultsStoreTests {
@@ -22,6 +23,73 @@ struct GatewayServingDefaultsStoreTests {
             await store.storePath()
                 == temporaryRoot.appendingPathComponent(".melix/config/gateway-serving-defaults.json").path
         )
+    }
+
+    @Test("serving acceleration profiles expose stable ids defaults and raw mappings")
+    func servingAccelerationProfilesExposeStableIDsDefaultsAndRawMappings() {
+        let profiles = ServingAccelerationProfiles.all
+
+        #expect(profiles.map(\.id) == ["balanced", "throughput", "low-memory", "long-session"])
+        #expect(ServingAccelerationProfiles.allowedProfileList == "balanced, throughput, low-memory, long-session")
+        #expect(ServingAccelerationProfiles.normalizeProfileID(" LOW_MEMORY ") == "low-memory")
+        #expect(ServingAccelerationProfiles.normalizeProfileID("long_session") == "long-session")
+        #expect(ServingAccelerationProfiles.normalizeProfileID("unknown") == nil)
+        #expect(ServingAccelerationProfiles.normalizeProfileID(" ") == nil)
+        #expect(ServingAccelerationProfiles.profile(id: nil).id == "balanced")
+        #expect(ServingAccelerationProfiles.profile(id: "missing").id == "balanced")
+
+        for profile in profiles {
+            #expect(ServingAccelerationProfiles.profile(id: profile.id) == profile)
+            #expect(profile.id.isEmpty == false)
+            #expect(profile.label.isEmpty == false)
+            #expect(profile.intent.isEmpty == false)
+        }
+
+        let throughput = ServingAccelerationProfiles.profile(id: "throughput")
+        #expect(throughput.accelerationMode == .speculativeDecode)
+        #expect(throughput.numDraftTokens == 6)
+        #expect(throughput.concurrentProcessingEnabled)
+        #expect(throughput.maxConcurrentRequests == 8)
+        #expect(throughput.prefillBatchSize == 4)
+        #expect(throughput.completionBatchSize == 4)
+
+        let lowMemory = ServingAccelerationProfiles.profile(id: "low-memory")
+        #expect(lowMemory.accelerationMode == .baseline)
+        #expect(lowMemory.draftModelID.isEmpty)
+        #expect(lowMemory.numDraftTokens == 0)
+        #expect(lowMemory.concurrentProcessingEnabled == false)
+        #expect(lowMemory.maxConcurrentRequests == 1)
+        #expect(lowMemory.prefillBatchSize == 1)
+        #expect(lowMemory.completionBatchSize == 1)
+
+        let longSession = ServingAccelerationProfiles.profile(id: "long-session")
+        #expect(longSession.accelerationMode == .baseline)
+        #expect(longSession.concurrentProcessingEnabled)
+        #expect(longSession.maxConcurrentRequests == 2)
+        #expect(longSession.prefillBatchSize == 2)
+        #expect(longSession.completionBatchSize == 1)
+
+        #expect(ServingAccelerationProfiles.controlPlaneAccelerationMode(rawValue: "speculative_decode") == .speculativeDecode)
+        #expect(ServingAccelerationProfiles.controlPlaneAccelerationMode(rawValue: "accelerated_prefill") == .acceleratedPrefill)
+        #expect(ServingAccelerationProfiles.controlPlaneAccelerationMode(rawValue: "active_kv_quantized") == .activeKvQuantized)
+        #expect(ServingAccelerationProfiles.controlPlaneAccelerationMode(rawValue: "sparse_prefill") == .sparsePrefill)
+        #expect(ServingAccelerationProfiles.controlPlaneAccelerationMode(rawValue: "baseline") == .baseline)
+        #expect(ServingAccelerationProfiles.controlPlaneAccelerationMode(rawValue: "") == .baseline)
+        #expect(ServingAccelerationProfiles.controlPlaneAccelerationMode(rawValue: "future_mode") == .unspecified)
+
+        #expect(ServingAccelerationProfiles.controlPlaneRawValue(.speculativeDecode) == "speculative_decode")
+        #expect(ServingAccelerationProfiles.controlPlaneRawValue(.acceleratedPrefill) == "accelerated_prefill")
+        #expect(ServingAccelerationProfiles.controlPlaneRawValue(.activeKvQuantized) == "active_kv_quantized")
+        #expect(ServingAccelerationProfiles.controlPlaneRawValue(.sparsePrefill) == "sparse_prefill")
+        #expect(ServingAccelerationProfiles.controlPlaneRawValue(.baseline) == "baseline")
+        #expect(ServingAccelerationProfiles.controlPlaneRawValue(.unspecified) == "baseline")
+
+        #expect(ServingAccelerationProfiles.workerRawValue(.speculativeDecode) == "speculative_decode")
+        #expect(ServingAccelerationProfiles.workerRawValue(.acceleratedPrefill) == "accelerated_prefill")
+        #expect(ServingAccelerationProfiles.workerRawValue(.activeKvQuantized) == "active_kv_quantized")
+        #expect(ServingAccelerationProfiles.workerRawValue(.sparsePrefill) == "sparse_prefill")
+        #expect(ServingAccelerationProfiles.workerRawValue(.baseline) == "baseline")
+        #expect(ServingAccelerationProfiles.workerRawValue(.unspecified) == "baseline")
     }
 
     @Test("summary projects built-in defaults when no operator override exists")
@@ -67,9 +135,12 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.requestedAccelerationMode == .baseline)
         #expect(session.requestedDraftModelID.isEmpty)
         #expect(session.requestedNumDraftTokens == 0)
+        #expect(session.requestedAccelerationProfile == "balanced")
         #expect(session.effectiveAccelerationMode == .baseline)
         #expect(session.effectiveDraftModelID.isEmpty)
         #expect(session.effectiveNumDraftTokens == 0)
+        #expect(session.effectiveAccelerationProfile == "balanced")
+        #expect(session.accelerationProfileIntent == ServingAccelerationProfiles.profile(id: "balanced").intent)
         #expect(session.source == .builtInDefaults)
         #expect(session.modelOverrideApplied)
     }
@@ -99,6 +170,7 @@ struct GatewayServingDefaultsStoreTests {
         command.prefillBatchSize = 3
         command.completionBatchSize = 2
         command.accelerationMode = .speculativeDecode
+        command.accelerationProfile = "throughput"
         command.draftModelID = "melix-dev-draft"
         command.numDraftTokens = 6
         try await store.apply(command: command)
@@ -123,6 +195,7 @@ struct GatewayServingDefaultsStoreTests {
         #expect(requested.prefillBatchSize == 3)
         #expect(requested.completionBatchSize == 2)
         #expect(requested.accelerationMode == .speculativeDecode)
+        #expect(requested.accelerationProfile == "throughput")
         #expect(requested.draftModelID == "melix-dev-draft")
         #expect(requested.numDraftTokens == 6)
         #expect(session.source == .operatorOverride)
@@ -131,14 +204,50 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.requestedPrefillBatchSize == 3)
         #expect(session.requestedCompletionBatchSize == 2)
         #expect(session.requestedAccelerationMode == .speculativeDecode)
+        #expect(session.requestedAccelerationProfile == "throughput")
         #expect(session.requestedDraftModelID == "melix-dev-draft")
         #expect(session.requestedNumDraftTokens == 6)
         #expect(session.effectiveMaxConcurrentRequests == 2)
         #expect(session.effectivePrefillBatchSize == 2)
         #expect(session.effectiveCompletionBatchSize == 2)
         #expect(session.effectiveAccelerationMode == .speculativeDecode)
+        #expect(session.effectiveAccelerationProfile == "throughput")
         #expect(session.effectiveDraftModelID == "melix-dev-draft")
         #expect(session.effectiveNumDraftTokens == 6)
+    }
+
+    @Test("environment profile defaults resolve before explicit environment overrides")
+    func environmentProfileDefaultsResolveBeforeExplicitEnvironmentOverrides() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-profile-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [
+                "MELIX_GATEWAY_ACCELERATION_PROFILE": "low_memory",
+                "MELIX_GATEWAY_MAX_CONCURRENT_REQUESTS": "3",
+            ]
+        )
+        let requested = await store.requestedDefaults()
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [:],
+            modelSettingsByModelID: [:]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(requested.accelerationProfile == "low-memory")
+        #expect(requested.concurrentProcessingEnabled == false)
+        #expect(requested.maxConcurrentRequests == 3)
+        #expect(requested.prefillBatchSize == 1)
+        #expect(requested.completionBatchSize == 1)
+        #expect(session.requestedAccelerationProfile == "low-memory")
+        #expect(session.effectiveAccelerationProfile == "low-memory")
+        #expect(session.effectiveConcurrentProcessingEnabled == false)
+        #expect(session.effectiveMaxConcurrentRequests == 1)
+        #expect(session.source == .environmentDefaults)
     }
 
     @Test("apply rejects invalid typed payload values")
@@ -172,6 +281,10 @@ struct GatewayServingDefaultsStoreTests {
         invalidPrefillBatchSize.topP = 0.9
         invalidPrefillBatchSize.prefillBatchSize = 0
 
+        var invalidAccelerationProfile = invalidTopP
+        invalidAccelerationProfile.topP = 0.9
+        invalidAccelerationProfile.accelerationProfile = "fastest"
+
         await #expect(throws: ServingDefaultsValidationError.invalidTopP) {
             try await store.apply(command: invalidTopP)
         }
@@ -180,6 +293,9 @@ struct GatewayServingDefaultsStoreTests {
         }
         await #expect(throws: ServingDefaultsValidationError.invalidPrefillBatchSize) {
             try await store.apply(command: invalidPrefillBatchSize)
+        }
+        await #expect(throws: ServingDefaultsValidationError.invalidAccelerationProfile) {
+            try await store.apply(command: invalidAccelerationProfile)
         }
     }
 

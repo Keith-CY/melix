@@ -5846,6 +5846,48 @@ struct MelixCLIRunnerTests {
         #expect(session.servedModelIDs == [primaryModelID, secondaryModelID])
     }
 
+    @Test("server session low memory profile persists serving defaults for start")
+    func serverSessionLowMemoryProfilePersistsServingDefaultsForStart() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
+
+        _ = try await runner.run(
+            .serverSessionCreate(
+                .init(
+                    title: "Low Memory Session",
+                    servedModelIDs: ["mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
+                    accelerationProfile: "low-memory"
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverStart(.init(serverSessionID: "server-session-1"))
+        )
+
+        let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
+        #expect(servingDefaultsCall.accelerationProfile == "low-memory")
+        #expect(servingDefaultsCall.accelerationMode == .baseline)
+        #expect(servingDefaultsCall.maxConcurrentRequests == 1)
+        #expect(servingDefaultsCall.concurrentProcessingEnabled == false)
+        #expect(servingDefaultsCall.prefillBatchSize == 1)
+        #expect(servingDefaultsCall.completionBatchSize == 1)
+        #expect(servingDefaultsCall.draftModelID.isEmpty)
+        #expect(servingDefaultsCall.numDraftTokens == 0)
+    }
+
     @Test("server start shortcut creates a titled session and starts the generated id")
     func serverStartShortcutCreatesTitledSessionAndStartsGeneratedID() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -8526,9 +8568,9 @@ struct MelixCLIRunnerTests {
         #expect(response["job_id"] as? String == "bench-1")
         #expect(response["output_path"] as? String == outputURL.path)
         #expect(response["row_count"] as? Int == 2)
-        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms"))
-        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.tokens_per_second,47.08,tok/s,1712100000000"))
-        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
+        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,acceleration_profile,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,,bench.smoke.tokens_per_second,47.08,tok/s,1712100000000"))
+        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
     }
 
     @Test("bench export-csv fails when the requested job is not present")
@@ -8760,8 +8802,8 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "bench-matrix-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,created_at_unix_ms"))
-        #expect(csv.contains("bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,0.0,0,0,0.0,0.0,0.0,0.0,1712200000000"))
+        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,0.0,0,0,0.0,0.0,0.0,0.0,1712200000000"))
     }
 
     @Test("bench matrix export-summary-csv returns the written path in plain text")
@@ -8812,8 +8854,8 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "bench-matrix-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,created_at_unix_ms"))
-        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,0.0,0.0,0.0,0.0,0.0,0,0,0,false,,,0.0,0.0,0,0,0,0,false,0.0,0.0,false,0,0,0,1712200000000"))
+        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,0.0,0.0,0.0,0.0,0.0,0,0,0,false,,,0.0,0.0,0,0,0,0,false,0.0,0.0,false,0,0,0,1712200000000"))
     }
 
     @Test("bench matrix export-requests-csv returns the written path in plain text")
@@ -11085,6 +11127,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         let accelerationMode: Melix_Controlplane_V1_AccelerationMode
         let draftModelID: String
         let numDraftTokens: Int
+        let accelerationProfile: String
     }
 
     private(set) var lastServerAction: ServerAction?
@@ -11490,7 +11533,8 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         completionBatchSize: Int,
         accelerationMode: Melix_Controlplane_V1_AccelerationMode,
         draftModelID: String,
-        numDraftTokens: Int
+        numDraftTokens: Int,
+        accelerationProfile: String
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         lastServingDefaultsApplyRequest = ServingDefaultsApplyCall(
             serverSessionID: serverSessionID,
@@ -11504,7 +11548,8 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
             completionBatchSize: completionBatchSize,
             accelerationMode: accelerationMode,
             draftModelID: draftModelID,
-            numDraftTokens: numDraftTokens
+            numDraftTokens: numDraftTokens,
+            accelerationProfile: accelerationProfile
         )
         return snapshot
     }

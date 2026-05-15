@@ -1769,6 +1769,7 @@ struct MelixCLIParserTests {
             "--host", "127.0.0.1",
             "--port", "12434",
             "--model-idle-timeout-seconds", "300",
+            "--acceleration-profile", "throughput",
             "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
             "--num-draft-tokens", "4",
             "--json",
@@ -1784,6 +1785,7 @@ struct MelixCLIParserTests {
             "--port", "12434",
             "--timeout-seconds", "90",
             "--model-idle-timeout-seconds", "240",
+            "--acceleration-profile", "low_memory",
             "--acceleration-mode", "speculative_decode",
             "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
             "--num-draft-tokens", "8",
@@ -1827,6 +1829,7 @@ struct MelixCLIParserTests {
         #expect(createOptions.host == "127.0.0.1")
         #expect(createOptions.port == 12434)
         #expect(createOptions.modelIdleTimeoutSeconds == 300)
+        #expect(createOptions.accelerationProfile == "throughput")
         #expect(createOptions.accelerationMode == "speculative_decode")
         #expect(createOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(createOptions.numDraftTokens == 4)
@@ -1840,11 +1843,96 @@ struct MelixCLIParserTests {
         #expect(updateOptions.port == 12434)
         #expect(updateOptions.timeoutSeconds == 90)
         #expect(updateOptions.modelIdleTimeoutSeconds == 240)
+        #expect(updateOptions.accelerationProfile == "low-memory")
         #expect(updateOptions.accelerationMode == "speculative_decode")
         #expect(updateOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(updateOptions.numDraftTokens == 8)
         #expect(removeOptions.serverSessionID == "server-session-qwen")
         #expect(selectOptions.serverSessionID == "server-session-qwen")
+    }
+
+    @Test("server session acceleration profiles resolve defaults and reject unknown profiles")
+    func serverSessionAccelerationProfilesResolveDefaultsAndRejectUnknownProfiles() throws {
+        let createCommand = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "create",
+            "--title", "Low Memory",
+            "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--acceleration-profile", "low_memory",
+        ])
+        let updateCommand = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "update",
+            "--server-session-id", "server-session-qwen",
+            "--acceleration-profile", "throughput",
+            "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
+        ])
+        let baselineUpdateCommand = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "update",
+            "--server-session-id", "server-session-qwen",
+            "--acceleration-profile", "low-memory",
+        ])
+        let noOpUpdateCommand = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "update",
+            "--server-session-id", "server-session-qwen",
+        ])
+
+        let createOptions = try #require(createCommand.serverSessionCreateOptions)
+        let updateOptions = try #require(updateCommand.serverSessionUpdateOptions)
+        let baselineUpdateOptions = try #require(baselineUpdateCommand.serverSessionUpdateOptions)
+        let noOpUpdateOptions = try #require(noOpUpdateCommand.serverSessionUpdateOptions)
+
+        #expect(createOptions.accelerationProfile == "low-memory")
+        #expect(createOptions.accelerationMode == "baseline")
+        #expect(createOptions.numDraftTokens == 0)
+        #expect(updateOptions.accelerationProfile == "throughput")
+        #expect(updateOptions.accelerationMode == "speculative_decode")
+        #expect(updateOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(updateOptions.numDraftTokens == 6)
+        #expect(baselineUpdateOptions.accelerationProfile == "low-memory")
+        #expect(baselineUpdateOptions.accelerationMode == "baseline")
+        #expect(baselineUpdateOptions.draftModelID.isEmpty)
+        #expect(baselineUpdateOptions.numDraftTokens == 0)
+        #expect(noOpUpdateOptions.accelerationProfile.isEmpty)
+        #expect(noOpUpdateOptions.accelerationMode.isEmpty)
+        #expect(noOpUpdateOptions.draftModelID.isEmpty)
+        #expect(noOpUpdateOptions.numDraftTokens == 0)
+        #expect(throws: MelixCLIError.usage("Invalid value for --acceleration-profile. Expected balanced, throughput, low-memory, long-session.")) {
+            try MelixCLIParser.parse([
+                "server",
+                "session",
+                "create",
+                "--title", "Invalid",
+                "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                "--acceleration-profile", "fastest",
+            ])
+        }
+        #expect(throws: MelixCLIError.usage("Invalid value for --acceleration-profile. Expected balanced, throughput, low-memory, long-session.")) {
+            try MelixCLIParser.parse([
+                "server",
+                "session",
+                "create",
+                "--title", "Invalid",
+                "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                "--acceleration-profile", " ",
+            ])
+        }
+        #expect(throws: MelixCLIError.usage("Invalid value for --acceleration-mode. Expected baseline or speculative_decode.")) {
+            try MelixCLIParser.parse([
+                "server",
+                "session",
+                "create",
+                "--title", "Invalid",
+                "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                "--acceleration-mode", " ",
+            ])
+        }
     }
 
     @Test("parses server start resume wake and stop commands")
@@ -4184,6 +4272,22 @@ private func assertSchemaUsageError(schemaPath: String, contains expectedText: S
         Issue.record("Expected parser to throw for schema path: \(schemaPath)")
     } catch let error as MelixCLIError {
         #expect(error.errorDescription?.contains(expectedText) == true)
+    }
+}
+
+private extension MelixCLICommand {
+    var serverSessionCreateOptions: ServerSessionCreateOptions? {
+        if case .serverSessionCreate(let options) = self {
+            return options
+        }
+        return nil
+    }
+
+    var serverSessionUpdateOptions: ServerSessionUpdateOptions? {
+        if case .serverSessionUpdate(let options) = self {
+            return options
+        }
+        return nil
     }
 }
 

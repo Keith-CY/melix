@@ -2981,6 +2981,8 @@ public struct Melix_Controlplane_V1_ApplyServingDefaults: Sendable {
 
   public var numDraftTokens: UInt32 = 0
 
+  public var accelerationProfile: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -5317,6 +5319,21 @@ public struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: @unchecked Se
   public var effectiveNumDraftTokens: UInt32 {
     get {_storage._effectiveNumDraftTokens}
     set {_uniqueStorage()._effectiveNumDraftTokens = newValue}
+  }
+
+  public var requestedAccelerationProfile: String {
+    get {_storage._requestedAccelerationProfile}
+    set {_uniqueStorage()._requestedAccelerationProfile = newValue}
+  }
+
+  public var effectiveAccelerationProfile: String {
+    get {_storage._effectiveAccelerationProfile}
+    set {_uniqueStorage()._effectiveAccelerationProfile = newValue}
+  }
+
+  public var accelerationProfileIntent: String {
+    get {_storage._accelerationProfileIntent}
+    set {_uniqueStorage()._accelerationProfileIntent = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -10015,7 +10032,7 @@ extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, Swift
 
 extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyServingDefaults"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0\u{3}concurrent_processing_enabled\0\u{3}prefill_batch_size\0\u{3}completion_batch_size\0\u{3}acceleration_mode\0\u{3}draft_model_id\0\u{3}num_draft_tokens\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0\u{3}concurrent_processing_enabled\0\u{3}prefill_batch_size\0\u{3}completion_batch_size\0\u{3}acceleration_mode\0\u{3}draft_model_id\0\u{3}num_draft_tokens\0\u{3}acceleration_profile\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10035,6 +10052,7 @@ extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, Swi
       case 10: try { try decoder.decodeSingularEnumField(value: &self.accelerationMode) }()
       case 11: try { try decoder.decodeSingularStringField(value: &self.draftModelID) }()
       case 12: try { try decoder.decodeSingularUInt32Field(value: &self.numDraftTokens) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.accelerationProfile) }()
       default: break
       }
     }
@@ -10077,6 +10095,9 @@ extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, Swi
     if self.numDraftTokens != 0 {
       try visitor.visitSingularUInt32Field(value: self.numDraftTokens, fieldNumber: 12)
     }
+    if !self.accelerationProfile.isEmpty {
+      try visitor.visitSingularStringField(value: self.accelerationProfile, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -10093,6 +10114,7 @@ extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, Swi
     if lhs.accelerationMode != rhs.accelerationMode {return false}
     if lhs.draftModelID != rhs.draftModelID {return false}
     if lhs.numDraftTokens != rhs.numDraftTokens {return false}
+    if lhs.accelerationProfile != rhs.accelerationProfile {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -14828,7 +14850,7 @@ extension Melix_Controlplane_V1_GatewayConfigSummary: SwiftProtobuf.Message, Swi
 
 extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServingDefaultsSessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}default_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0\u{3}requested_acceleration_mode\0\u{3}requested_draft_model_id\0\u{3}requested_num_draft_tokens\0\u{3}effective_acceleration_mode\0\u{3}effective_draft_model_id\0\u{3}effective_num_draft_tokens\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}default_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0\u{3}requested_acceleration_mode\0\u{3}requested_draft_model_id\0\u{3}requested_num_draft_tokens\0\u{3}effective_acceleration_mode\0\u{3}effective_draft_model_id\0\u{3}effective_num_draft_tokens\0\u{3}requested_acceleration_profile\0\u{3}effective_acceleration_profile\0\u{3}acceleration_profile_intent\0")
 
   fileprivate class _StorageClass {
     var _serverSessionID: String = String()
@@ -14858,6 +14880,9 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
     var _effectiveAccelerationMode: Melix_Controlplane_V1_AccelerationMode = .unspecified
     var _effectiveDraftModelID: String = String()
     var _effectiveNumDraftTokens: UInt32 = 0
+    var _requestedAccelerationProfile: String = String()
+    var _effectiveAccelerationProfile: String = String()
+    var _accelerationProfileIntent: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -14895,6 +14920,9 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
       _effectiveAccelerationMode = source._effectiveAccelerationMode
       _effectiveDraftModelID = source._effectiveDraftModelID
       _effectiveNumDraftTokens = source._effectiveNumDraftTokens
+      _requestedAccelerationProfile = source._requestedAccelerationProfile
+      _effectiveAccelerationProfile = source._effectiveAccelerationProfile
+      _accelerationProfileIntent = source._accelerationProfileIntent
     }
   }
 
@@ -14940,6 +14968,9 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
         case 25: try { try decoder.decodeSingularEnumField(value: &_storage._effectiveAccelerationMode) }()
         case 26: try { try decoder.decodeSingularStringField(value: &_storage._effectiveDraftModelID) }()
         case 27: try { try decoder.decodeSingularUInt32Field(value: &_storage._effectiveNumDraftTokens) }()
+        case 28: try { try decoder.decodeSingularStringField(value: &_storage._requestedAccelerationProfile) }()
+        case 29: try { try decoder.decodeSingularStringField(value: &_storage._effectiveAccelerationProfile) }()
+        case 30: try { try decoder.decodeSingularStringField(value: &_storage._accelerationProfileIntent) }()
         default: break
         }
       }
@@ -15029,6 +15060,15 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
       if _storage._effectiveNumDraftTokens != 0 {
         try visitor.visitSingularUInt32Field(value: _storage._effectiveNumDraftTokens, fieldNumber: 27)
       }
+      if !_storage._requestedAccelerationProfile.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._requestedAccelerationProfile, fieldNumber: 28)
+      }
+      if !_storage._effectiveAccelerationProfile.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._effectiveAccelerationProfile, fieldNumber: 29)
+      }
+      if !_storage._accelerationProfileIntent.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._accelerationProfileIntent, fieldNumber: 30)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -15065,6 +15105,9 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
         if _storage._effectiveAccelerationMode != rhs_storage._effectiveAccelerationMode {return false}
         if _storage._effectiveDraftModelID != rhs_storage._effectiveDraftModelID {return false}
         if _storage._effectiveNumDraftTokens != rhs_storage._effectiveNumDraftTokens {return false}
+        if _storage._requestedAccelerationProfile != rhs_storage._requestedAccelerationProfile {return false}
+        if _storage._effectiveAccelerationProfile != rhs_storage._effectiveAccelerationProfile {return false}
+        if _storage._accelerationProfileIntent != rhs_storage._accelerationProfileIntent {return false}
         return true
       }
       if !storagesAreEqual {return false}
