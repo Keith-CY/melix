@@ -566,14 +566,9 @@ func activeKVQuantizationRatio(
     from acceleration: Melix_Worker_V1_AccelerationPolicy
 ) -> Int {
     if acceleration.mode == .activeKvQuantized {
-        switch acceleration.activeKvQuantProfile.lowercased() {
-        case ActiveKVQuantizationProfiles.affineQ4, ActiveKVQuantizationProfiles.defaultProfile:
-            return 25
-        case ActiveKVQuantizationProfiles.q8:
-            return 50
-        default:
-            return 50
-        }
+        return ActiveKVQuantizationProfiles.quantizationRatioPercent(
+            for: acceleration.activeKvQuantProfile
+        )
     }
     return 0
 }

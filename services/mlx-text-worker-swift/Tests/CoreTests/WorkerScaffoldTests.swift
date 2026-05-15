@@ -7196,6 +7196,14 @@ final class WorkerScaffoldTests: XCTestCase {
             25
         )
         XCTAssertEqual(
+            activeKVQuantizationRatio(from: makeAccelerationPolicy(mode: .activeKvQuantized)),
+            25
+        )
+        XCTAssertEqual(
+            activeKVQuantizationRatio(from: makeAccelerationPolicy(mode: .activeKvQuantized, activeKvQuantProfile: "  ")),
+            25
+        )
+        XCTAssertEqual(
             activeKVQuantizationRatio(from: makeAccelerationPolicy(mode: .activeKvQuantized, activeKvQuantProfile: "q8")),
             50
         )

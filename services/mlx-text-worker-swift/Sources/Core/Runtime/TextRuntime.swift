@@ -27,6 +27,22 @@ enum ActiveKVQuantizationProfiles {
     static let affineQ4 = "q4"
     static let q8 = "q8"
     static let supportedProfiles = [defaultProfile, affineQ4, q8]
+
+    static func normalizedProfileID(_ rawProfile: String) -> String {
+        let profile = rawProfile.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return profile.isEmpty ? defaultProfile : profile
+    }
+
+    static func quantizationRatioPercent(for rawProfile: String) -> Int {
+        switch normalizedProfileID(rawProfile) {
+        case defaultProfile, affineQ4:
+            return 25
+        case q8:
+            return 50
+        default:
+            return 50
+        }
+    }
 }
 
 struct RuntimePrefillResult: Sendable {
@@ -526,9 +542,10 @@ func normalizedAccelerationPolicy(
         normalized.mode = .baseline
     }
 
-    if normalized.mode == .activeKvQuantized,
-       normalized.activeKvQuantProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        normalized.activeKvQuantProfile = ActiveKVQuantizationProfiles.defaultProfile
+    if normalized.mode == .activeKvQuantized {
+        normalized.activeKvQuantProfile = ActiveKVQuantizationProfiles.normalizedProfileID(
+            normalized.activeKvQuantProfile
+        )
     }
 
     if normalized.mode == .sparsePrefill,
@@ -547,11 +564,9 @@ func activeKVQuantizationRatioPercent(
         return 0
     }
 
-    let profile = normalized.activeKvQuantProfile.lowercased()
-    if profile.contains("q8") {
-        return 50
-    }
-    return 25
+    return ActiveKVQuantizationProfiles.quantizationRatioPercent(
+        for: normalized.activeKvQuantProfile
+    )
 }
 
 func gainPercent(
