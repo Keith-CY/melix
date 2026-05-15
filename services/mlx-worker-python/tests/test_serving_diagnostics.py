@@ -519,6 +519,110 @@ def test_serving_diagnostics_events_jsonl_uses_compact_stable_lines(tmp_path: Pa
     )
 
 
+def test_serving_diagnostics_events_jsonl_streams_default_attribute_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary = ServingDiagnosticsRequestSummary(
+        request_id="req-empty-jsonl",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
+    event = ServingDiagnosticsEvent(
+        request_id='req-"quoted"',
+        phase="decode",
+        event_index=7,
+        status="completed",
+        duration_ms=0.001,
+    )
+
+    def fail_to_dict(_: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("default-attribute JSONL rows should not materialize event dicts")
+
+    monkeypatch.setattr(ServingDiagnosticsEvent, "to_dict", fail_to_dict)
+
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-empty-jsonl",
+        invocation={},
+        effective_config={},
+        model_refs={},
+        request_summary=summary,
+        events=(event,),
+        diagnostics_mode="debug",
+    )
+
+    line = paths["events"].read_text(encoding="utf-8")
+    assert line == (
+        '{"attributes":{},"duration_ms":0.001,"event_index":7,'
+        '"phase":"decode","request_id":"req-\\"quoted\\"",'
+        '"schema_version":"melix.serving_diagnostics.event.v1",'
+        '"status":"completed"}\n'
+    )
+
+
+def test_serving_diagnostics_events_jsonl_falls_back_for_non_exact_numeric_fields(
+    tmp_path: Path,
+) -> None:
+    summary = ServingDiagnosticsRequestSummary(
+        request_id="req-fallback-jsonl",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
+    event = ServingDiagnosticsEvent(
+        request_id="req-fallback",
+        phase="decode",
+        event_index=True,
+        status="completed",
+        duration_ms=1,
+    )
+    nonfinite_event = ServingDiagnosticsEvent(
+        request_id="req-nonfinite",
+        phase="decode",
+        event_index=2,
+        status="completed",
+        duration_ms=float("inf"),
+    )
+
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-fallback-jsonl",
+        invocation={},
+        effective_config={},
+        model_refs={},
+        request_summary=summary,
+        events=(event, nonfinite_event),
+        diagnostics_mode="debug",
+    )
+
+    rows = [
+        json.loads(line)
+        for line in paths["events"].read_text(encoding="utf-8").splitlines()
+    ]
+    payload = rows[0]
+    assert payload["event_index"] == 1
+    assert type(payload["event_index"]) is int
+    assert payload["duration_ms"] == 1.0
+    assert type(payload["duration_ms"]) is float
+    assert rows[1]["duration_ms"] == float("inf")
+
+
 @pytest.mark.parametrize("value", (0, -1, "0", "bad", None))
 def test_validate_prefill_chunk_size_rejects_invalid_overrides(value: object) -> None:
     with pytest.raises(ValueError, match="prefill_chunk_size"):
