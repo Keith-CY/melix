@@ -1217,8 +1217,9 @@ extension MelixCLIRunner {
         ) else {
             return 1
         }
+        let currentRunPath = currentRunRoot.standardizedFileURL.path
         let runDirectories = children.compactMap { url -> (url: URL, date: Date)? in
-            guard url != currentRunRoot,
+            guard url.standardizedFileURL.path != currentRunPath,
                   UUID(uuidString: url.lastPathComponent) != nil
             else {
                 return nil

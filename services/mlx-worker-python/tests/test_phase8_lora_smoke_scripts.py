@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -246,3 +247,35 @@ def test_phase8_lora_window_run_swift_smoke_uses_menubar_package_harness(
         tmp_path / ".build" / "ModuleCache.noindex" / "macos-menubar" / "swift-6-3"
     )
     assert env["MELIX_HOME"] == str(tmp_path / ".runtime" / "phase8" / "smoke-home")
+
+
+def test_lora_runtime_acceptance_materializes_dialogue_training_package(tmp_path: Path) -> None:
+    module = _load_script("lora_runtime_acceptance")
+
+    payload = module.run_acceptance(
+        repo_root=REPO_ROOT,
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+        dataset_id="top200.event-extraction.top20.v1",
+        output_dir=tmp_path / "acceptance",
+        sample_limit=2,
+        max_steps=1,
+        skip_training=True,
+    )
+
+    assert payload["ok"] is True
+    assert payload["skipped_training"] is True
+    assert payload["model_id"] == "unsloth/gemma-4-E4B-it-MLX-8bit"
+    assert payload["dataset_id"] == "top200.event-extraction.top20.v1"
+    manifest_path = Path(payload["training_dataset_manifest_path"])
+    samples_path = manifest_path.parent / "samples.jsonl"
+    assert manifest_path.is_file()
+    assert samples_path.is_file()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["format"] == "chat_messages"
+    assert manifest["source_evaluation_dataset_id"] == "top200.event-extraction.top20.v1"
+    assert manifest["sample_count"] == 2
+    sample = json.loads(samples_path.read_text(encoding="utf-8").splitlines()[0])
+    assert sample["messages"][0]["role"] == "user"
+    assert "Dialogue:" in sample["messages"][0]["content"]
+    assert sample["messages"][1]["role"] == "assistant"
+    assert "events" in json.loads(sample["messages"][1]["content"])

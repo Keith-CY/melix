@@ -5263,18 +5263,30 @@ struct MelixCLIRunnerTests {
         #expect(header.contains("RUNTIME"))
         #expect(header.contains("TRUST"))
         // Each short-form runtime tag appears exactly once on a data row.
-        // Use ``hasPrefix`` on the model_id + trailing space to unambiguously
-        // pick each row even if another id were a superstring.
+        // Split the fixed-width rows so padding changes do not hide semantic
+        // regressions in the runtime and trust columns.
         let dataRows = lines.dropFirst()
-        let baseRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text ") && $0.hasSuffix("-  n/a") })
-        )
-        let fusedRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") && $0.hasSuffix("fused    safe") })
-        )
-        let adapterRow = try #require(
-            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") && $0.hasSuffix("adapter  trust") })
-        )
+        func columns(for modelID: String) throws -> [String] {
+            let row = try #require(dataRows.first { row in
+                row.split(whereSeparator: \.isWhitespace).first.map(String.init) == modelID
+            })
+            return row.split(whereSeparator: \.isWhitespace).map(String.init)
+        }
+        let baseColumns = try columns(for: "melix-base-text")
+        let fusedColumns = try columns(for: "melix-base-text-lora-fused")
+        let adapterColumns = try columns(for: "melix-base-text-lora-runtime")
+        #expect(Array(baseColumns.suffix(2)) == ["-", "n/a"])
+        #expect(Array(fusedColumns.suffix(2)) == ["fused", "safe"])
+        #expect(Array(adapterColumns.suffix(2)) == ["adapter", "trust"])
+        let baseRow = try #require(dataRows.first { row in
+            row.split(whereSeparator: \.isWhitespace).first.map(String.init) == "melix-base-text"
+        })
+        let fusedRow = try #require(dataRows.first { row in
+            row.split(whereSeparator: \.isWhitespace).first.map(String.init) == "melix-base-text-lora-fused"
+        })
+        let adapterRow = try #require(dataRows.first { row in
+            row.split(whereSeparator: \.isWhitespace).first.map(String.init) == "melix-base-text-lora-runtime"
+        })
         // The first column is padded to the widest model_id
         // ("melix-base-text-lora-runtime" = 28 chars); assert the "KIND"
         // column actually starts at the column-separator offset. A
@@ -6772,7 +6784,7 @@ struct MelixCLIRunnerTests {
             #expect(message.contains("--allow-memory-risk"))
         }
 
-        #expect(await client.lastModelOperationCall == nil)
+        #expect(await client.modelOperationCalls.filter { $0.operation == "train_lora" }.isEmpty)
     }
 
     @Test("lora train memory risk override stores fit receipt in operation ext")
@@ -6814,6 +6826,266 @@ struct MelixCLIRunnerTests {
         #expect(["good", "blocked", "unknown"].contains(call.ext["memory_fit_disk_status"] ?? ""))
         #expect((receipt["unknown_fields"] as? [String])?.contains("optimizer_state_bytes") == true)
         #expect((receipt["probe"] as? [String: Any])?["name"] as? String == "cli.memory_fit.train")
+    }
+
+    @Test("lora run chains train activate compare and exports artifacts")
+    func loraRunChainsTrainActivateCompareAndExportsArtifacts() async throws {
+        let client = StubControlPlaneXPCClient()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-run-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: root.appendingPathComponent("train").path,
+                manifestJSON: """
+                {
+                  "job_id": "train-job-1",
+                  "operation": "train_lora",
+                  "adapter_manifest_path": "\(root.appendingPathComponent("train/train_lora.adapter.json").path)"
+                }
+                """
+            ),
+            forOperation: "train_lora"
+        )
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: root.appendingPathComponent("activate/manifest.json").path,
+                manifestJSON: #"{"job_id":"activate-job-1","operation":"activate_adapter","derived_model_id":"dialogue-extraction-adapter-runtime"}"#
+            ),
+            forOperation: "activate_adapter"
+        )
+        await client.setEvaluationResults([
+            makeEvaluationCompareResult(
+                jobID: "eval-compare-1",
+                baseSuiteID: "mbpp",
+                datasetID: "mbpp.dev.v1",
+                targets: [("dialogue-extraction-adapter-runtime", 0.625)]
+            ),
+        ])
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraRun(
+                .init(
+                    training: .init(
+                        modelID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                        datasetSourceKind: "hf_dataset",
+                        datasetURI: "",
+                        adapterName: "dialogue-extraction-adapter",
+                        trainingMode: "auto",
+                        parameters: [
+                            "hf_dataset_path": "HuggingFaceH4/ultrachat_200k",
+                            "hf_train_split": "train_sft",
+                            "chat_feature": "messages",
+                        ]
+                    ),
+                    evaluation: .init(
+                        modelID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                        suites: ["mbpp"],
+                        datasetID: "mbpp.dev.v1",
+                        sampleSize: 2,
+                        parameters: [
+                            "dataset_root": "evaluation",
+                            "scoring_mode": "event_extraction_weighted_f1",
+                        ]
+                    ),
+                    outputDir: root.path,
+                    json: true
+                )
+            )
+        )
+        let payload = try #require(parseJSONObject(output))
+        let calls = await client.modelOperationCalls
+        let trainCall = try #require(calls.first { $0.operation == "train_lora" })
+        let activateCall = try #require(calls.first { $0.operation == "activate_adapter" })
+        let request = try #require((await client.evaluationRequests).first)
+        let summaryCSV = try String(
+            contentsOf: root.appendingPathComponent("evaluation/compare-summary.csv"),
+            encoding: .utf8
+        )
+        let samplesJSONL = try String(
+            contentsOf: root.appendingPathComponent("evaluation/compare-samples.jsonl"),
+            encoding: .utf8
+        )
+
+        #expect(payload["schema_version"] as? String == "melix.lora_run_receipt.v1")
+        #expect(payload["training_mode"] as? String == "qlora")
+        #expect(payload["adapter_manifest_path"] as? String == root.appendingPathComponent("train/train_lora.adapter.json").path)
+        #expect(trainCall.outputDir == root.appendingPathComponent("train").path)
+        #expect(trainCall.ext["training_mode"] == "qlora")
+        #expect(trainCall.ext["hf_dataset_path"] == "HuggingFaceH4/ultrachat_200k")
+        #expect(activateCall.outputDir == root.appendingPathComponent("activate").path)
+        #expect(activateCall.ext["activation_mode"] == "adapter_backed_runtime")
+        #expect(activateCall.ext["artifact_path"] == root.appendingPathComponent("train/train_lora.adapter.json").path)
+        #expect(request.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(request.parameters["compare_mode"] == "base_vs_targets")
+        #expect(request.parameters["compare_target_adapter_manifest_paths"] == root.appendingPathComponent("train/train_lora.adapter.json").path)
+        #expect(request.parameters["dataset_root"] == "evaluation")
+        #expect(summaryCSV.contains("eval-compare-1"))
+        #expect(samplesJSONL.contains("\"target_model_id\":\"melix-dev-text-lora-a\""))
+    }
+
+    @Test("lora run renders text output and covers fallback manifest paths")
+    func loraRunRendersTextOutputAndCoversFallbackManifestPaths() async throws {
+        let client = StubControlPlaneXPCClient()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-run-text-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: root.appendingPathComponent("train").path,
+                manifestJSON: #"{"job_id":"train-job-2","operation":"train_lora"}"#
+            ),
+            forOperation: "train_lora"
+        )
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: root.appendingPathComponent("activate").path,
+                manifestJSON: #"{"job_id":"activate-job-2","operation":"activate_adapter"}"#
+            ),
+            forOperation: "activate_adapter"
+        )
+        await client.setEvaluationResults([
+            makeEvaluationCompareResult(
+                jobID: "eval-compare-1",
+                baseSuiteID: "mbpp",
+                datasetID: "mbpp.dev.v1",
+                targets: [("adapter-runtime", 0.625)]
+            ),
+        ])
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraRun(
+                .init(
+                    training: .init(
+                        modelID: "melix-dev-text",
+                        datasetURI: "/tmp/train",
+                        adapterName: "adapter with spaces",
+                        targetRepo: "melix/adapter",
+                        trainingMode: "lora",
+                        parameters: [
+                            "derived_model_alias": "adapter-runtime",
+                        ]
+                    ),
+                    activationMode: "fused_derived_model",
+                    evaluation: .init(
+                        modelID: "melix-dev-text",
+                        suites: ["mbpp"],
+                        datasetID: "mbpp.dev.v1",
+                        sampleSize: 2
+                    ),
+                    outputDir: root.path
+                )
+            )
+        )
+        let calls = await client.modelOperationCalls
+        let trainCall = try #require(calls.first { $0.operation == "train_lora" })
+        let activateCall = try #require(calls.first { $0.operation == "activate_adapter" })
+
+        #expect(output.contains("LoRA run completed."))
+        #expect(output.contains("training_mode: lora"))
+        #expect(output.contains("adapter_manifest: \(root.appendingPathComponent("train/train_lora.adapter.json").path)"))
+        #expect(output.contains("activation_manifest: \(root.appendingPathComponent("activate/manifest.json").path)"))
+        #expect(output.contains("evaluation_job: eval-compare-1"))
+        #expect(trainCall.ext["dataset_uri"] == "/tmp/train")
+        #expect(trainCall.ext["target_repo"] == "melix/adapter")
+        #expect(activateCall.ext["derived_model_alias"] == "adapter-runtime")
+        #expect(activateCall.ext["activation_mode"] == "fused_derived_model")
+    }
+
+    @Test("lora run defaults output root and infers non-quantized lora mode")
+    func loraRunDefaultsOutputRootAndInfersNonQuantizedMode() async throws {
+        let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-run-home-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "",
+                manifestJSON: #"{"job_id":"train-job-3","operation":"train_lora","artifact_path":"/tmp/adapter.json"}"#
+            ),
+            forOperation: "train_lora"
+        )
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/activation.json",
+                manifestJSON: #"{"job_id":"activate-job-3","operation":"activate_adapter","manifest_path":"/tmp/activation-manifest.json"}"#
+            ),
+            forOperation: "activate_adapter"
+        )
+        await client.setEvaluationResults([
+            makeEvaluationCompareResult(
+                jobID: "eval-compare-1",
+                baseSuiteID: "mbpp",
+                datasetID: "mbpp.dev.v1",
+                targets: [("adapter-runtime", 0.625)]
+            ),
+        ])
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": melixHome.path]
+        ).run(
+            .loraRun(
+                .init(
+                    training: .init(
+                        modelID: "melix-dev-text",
+                        datasetURI: "/tmp/train",
+                        adapterName: "adapter with spaces",
+                        trainingMode: "auto"
+                    ),
+                    evaluation: .init(
+                        modelID: "melix-dev-text",
+                        suites: ["mbpp"],
+                        datasetID: "mbpp.dev.v1",
+                        sampleSize: 2
+                    ),
+                    json: true
+                )
+            )
+        )
+        let payload = try #require(parseJSONObject(output))
+        let outputDir = try #require(payload["output_dir"] as? String)
+        let trainCall = try #require((await client.modelOperationCalls).first { $0.operation == "train_lora" })
+        let activationManifestPath = try #require(payload["activation_manifest_path"] as? String)
+
+        #expect(payload["training_mode"] as? String == "lora")
+        #expect(outputDir.contains("/runs/lora-run/"))
+        #expect(outputDir.contains("adapter-with-spaces"))
+        #expect(trainCall.ext["training_mode"] == "lora")
+        #expect(activationManifestPath == "/tmp/activation-manifest.json")
+    }
+
+    @Test("lora run memory fit preflight blocks local model ids before training")
+    func loraRunMemoryFitPreflightBlocksLocalModelIDsBeforeTraining() async throws {
+        let client = StubControlPlaneXPCClient()
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraRun(
+                    .init(
+                        training: .init(
+                            modelID: "melix-dev-text",
+                            datasetURI: "/tmp/train",
+                            adapterName: "adapter",
+                            preflightFitCheck: true
+                        ),
+                        evaluation: .init(
+                            modelID: "melix-dev-text",
+                            suites: ["mbpp"],
+                            datasetID: "mbpp.dev.v1"
+                        )
+                    )
+                )
+            )
+            Issue.record("Expected lora run memory preflight to reject local model ids.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("--preflight-fit-check is currently supported for melix lora train --model-id Hugging Face repo targets."))
+        }
+
+        #expect(await client.modelOperationCalls.filter { $0.operation == "train_lora" }.isEmpty)
     }
 
     @Test("alignment train forwards algorithm and alignment-specific parameters")

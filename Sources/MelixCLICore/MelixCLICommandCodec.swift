@@ -140,6 +140,8 @@ public enum MelixCLICommandCodec {
             return "chat.run"
         case .loraList:
             return "lora.list"
+        case .loraRun:
+            return "lora.run"
         case .loraTrain:
             return "lora.train"
         case .alignmentTrain:
@@ -575,6 +577,39 @@ public enum MelixCLICommandCodec {
             if options.allowMemoryRisk {
                 arguments.append("--allow-memory-risk")
             }
+            json = options.json
+        case .loraRun(let options):
+            arguments = ["lora", "run"]
+            appendOption("--model-id", value: options.training.modelID, into: &arguments)
+            appendOption("--adapter-name", value: options.training.adapterName, into: &arguments)
+            if options.training.datasetSourceKind == "huggingface" || options.training.datasetSourceKind == "hf_dataset" {
+                let datasetPath = options.training.datasetURI.isEmpty ? options.training.parameters["hf_dataset_path"] : options.training.datasetURI
+                appendOption("--hf-dataset-path", value: datasetPath, into: &arguments)
+            } else {
+                appendOption("--dataset-uri", value: options.training.datasetURI, into: &arguments)
+            }
+            appendOption("--target-repo", value: options.training.targetRepo, into: &arguments)
+            appendOption("--training-mode", value: options.training.trainingMode, into: &arguments)
+            appendTrainingParameters(options.training.parameters, into: &arguments)
+            if options.training.preflightFitCheck {
+                arguments.append("--preflight-fit-check")
+            }
+            if options.training.allowMemoryRisk {
+                arguments.append("--allow-memory-risk")
+            }
+            appendOption("--activation-mode", value: options.activationMode, into: &arguments)
+            appendMultiOption("--eval-suite", values: options.evaluation.suites, into: &arguments)
+            appendOption("--eval-dataset-id", value: options.evaluation.datasetID, into: &arguments)
+            appendPositiveUInt32("--eval-sample-size", value: options.evaluation.sampleSize, into: &arguments)
+            appendEvaluationSourceArguments(
+                source: options.evaluation.source,
+                fieldMapping: options.evaluation.fieldMapping,
+                profile: options.evaluation.profile,
+                schemaPath: options.evaluation.parameters["schema_path"],
+                into: &arguments
+            )
+            appendEvalParameters(options.evaluation.parameters, into: &arguments)
+            appendOption("--output-dir", value: options.outputDir, into: &arguments)
             json = options.json
         case .alignmentTrain(let options):
             arguments = ["alignment", "train"]

@@ -16,6 +16,7 @@ from worker.model_ops.adapter_capabilities import (
     AdapterCapabilityRegistry,
 )
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.quantization_metadata import EXPLICIT_QUANTIZED_PROFILE_IDS
 
 
 @dataclass(frozen=True)
@@ -1045,8 +1046,8 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
         cache = {}
         profile[_NORMALIZED_TARGET_MODULES_CACHE_KEY] = cache
     cached_targets = cache.get(raw_value)
-    if isinstance(cached_targets, tuple):
-        return list(cached_targets)
+    if cached_targets is not None:
+        return cached_targets
 
     presets = profile.get(_NORMALIZED_TARGET_MODULE_PRESETS_KEY)
     if not isinstance(presets, dict):
@@ -1068,9 +1069,9 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
             if expanded_target not in seen:
                 seen.add(expanded_target)
                 resolved_targets.append(expanded_target)
-    resolved_tuple = tuple(resolved_targets) if requested_found else default_targets
-    cache[raw_value] = resolved_tuple
-    return list(resolved_tuple)
+    result = resolved_targets if requested_found else list(default_targets)
+    cache[raw_value] = result
+    return result
 
 
 def _reject_unsafe_quantized_lora_targets(
@@ -1160,7 +1161,11 @@ def _base_quantization_method(source_model: common_pb2.ModelSpec) -> str:
     if ext_method:
         return ext_method
 
-    if source_model.quant_profile_id.strip():
+    profile_id = source_model.quant_profile_id.strip().lower()
+    if profile_id and (
+        profile_id in EXPLICIT_QUANTIZED_PROFILE_IDS
+        or _QUANTIZED_MODEL_PATTERN.search(profile_id) is not None
+    ):
         return "quant_profile"
 
     searchable = " ".join(

@@ -12,6 +12,18 @@ from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.productization.lora_experiment_store import LoraExperimentStore
 
+ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD = "adapter_runtime_base_reuse_key"
+ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD = "adapter_runtime_adapter_isolation_key"
+ADAPTER_RUNTIME_SWITCH_MODE_FIELD = "adapter_runtime_switch_mode"
+ADAPTER_RUNTIME_SHARING_POLICY_FIELD = "adapter_runtime_sharing_policy"
+ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD = "adapter_runtime_compatibility_status"
+
+_ADAPTER_RUNTIME_BASE_REUSE_MANIFEST_KEY = "adapter_runtime.base_reuse_key"
+_ADAPTER_RUNTIME_ADAPTER_ISOLATION_MANIFEST_KEY = "adapter_runtime.adapter_isolation_key"
+_ADAPTER_RUNTIME_SWITCH_MODE_MANIFEST_KEY = "adapter_runtime.switch_mode"
+_ADAPTER_RUNTIME_SHARING_POLICY_MANIFEST_KEY = "adapter_runtime.sharing_policy"
+_ADAPTER_RUNTIME_COMPATIBILITY_STATUS_MANIFEST_KEY = "adapter_runtime.compatibility_status"
+
 
 def _runtime_mode_from_activation(activation_mode: str) -> int:
     """Map the manifest activation_mode string to a ``RuntimeMode`` enum int.
@@ -340,6 +352,9 @@ class ModelOpsJobRegistry:
         if cached_rows is None:
             cached_rows = self._active_derived_model_job_rows(self._ordered_jobs())
             self._active_derived_model_rows_cache = cached_rows
+            self._active_derived_model_manifests_cache = tuple(
+                manifest for _, manifest, _ in cached_rows
+            )
         return cached_rows
 
     def _cached_active_derived_model_by_id(self) -> dict[str, _ActiveDerivedModelLookup]:
@@ -386,7 +401,7 @@ class ModelOpsJobRegistry:
         if resolved_activation_manifest_path is None:
             resolved_activation_manifest_path = str(Path(activation_manifest_path).expanduser().resolve())
         candidate_model_id = str(manifest.get("derived_model_id", "")).strip()
-        return {
+        target_payload = {
             "activation_job_id": job.job_id,
             "activation_manifest_path": resolved_activation_manifest_path,
             "output_dir": job.output_dir,
@@ -399,6 +414,8 @@ class ModelOpsJobRegistry:
             "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
             "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
         }
+        ModelOpsJobRegistry._copy_adapter_runtime_row_fields(target_payload, manifest)
+        return target_payload
 
     @classmethod
     def _cached_derived_model_target_payload(
@@ -416,7 +433,28 @@ class ModelOpsJobRegistry:
                 resolved_activation_manifest_path=resolved_activation_manifest_path,
             )
             lookup.target_payload = target_payload
-        return dict(target_payload)
+        return target_payload.copy()
+
+    @staticmethod
+    def _copy_adapter_runtime_row_fields(row: dict[str, Any], manifest: dict[str, Any]) -> None:
+        base_reuse_key = str(manifest.get(_ADAPTER_RUNTIME_BASE_REUSE_MANIFEST_KEY, "")).strip()
+        adapter_isolation_key = str(manifest.get(_ADAPTER_RUNTIME_ADAPTER_ISOLATION_MANIFEST_KEY, "")).strip()
+        switch_mode = str(manifest.get(_ADAPTER_RUNTIME_SWITCH_MODE_MANIFEST_KEY, "")).strip()
+        sharing_policy = str(manifest.get(_ADAPTER_RUNTIME_SHARING_POLICY_MANIFEST_KEY, "")).strip()
+        compatibility_status = str(manifest.get(_ADAPTER_RUNTIME_COMPATIBILITY_STATUS_MANIFEST_KEY, "")).strip()
+        if not (
+            base_reuse_key
+            and adapter_isolation_key
+            and switch_mode
+            and sharing_policy
+            and compatibility_status
+        ):
+            return
+        row[ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD] = base_reuse_key
+        row[ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD] = adapter_isolation_key
+        row[ADAPTER_RUNTIME_SWITCH_MODE_FIELD] = switch_mode
+        row[ADAPTER_RUNTIME_SHARING_POLICY_FIELD] = sharing_policy
+        row[ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD] = compatibility_status
 
     @classmethod
     def _job_manifest(cls, job: ModelOpsJob) -> dict[str, Any]:
@@ -489,10 +527,48 @@ class ModelOpsJobRegistry:
         derived_model_id: str = "",
         manifest_path: str = "",
     ) -> dict[str, Any] | None:
+        if derived_model_id and not manifest_path:
+            lookup = self._cached_active_derived_model_by_id().get(derived_model_id)
+            if lookup is not None:
+                target_payload = lookup.target_payload
+                if target_payload is not None:
+                    return target_payload.copy()
+                resolved_activation_manifest_path = lookup.resolved_activation_manifest_path
+                if resolved_activation_manifest_path is None:
+                    resolved_activation_manifest_path = str(
+                        Path(lookup.activation_manifest_path).expanduser().resolve()
+                    )
+                    lookup.resolved_activation_manifest_path = resolved_activation_manifest_path
+                return self._cached_derived_model_target_payload(
+                    lookup,
+                    resolved_activation_manifest_path=resolved_activation_manifest_path,
+                )
+            normalized_model_id = derived_model_id.strip()
+            if not normalized_model_id or normalized_model_id == derived_model_id:
+                return None
+            lookup = self._cached_active_derived_model_by_id().get(normalized_model_id)
+            if lookup is None:
+                return None
+            resolved_activation_manifest_path = lookup.resolved_activation_manifest_path
+            if resolved_activation_manifest_path is None:
+                resolved_activation_manifest_path = str(
+                    Path(lookup.activation_manifest_path).expanduser().resolve()
+                )
+                lookup.resolved_activation_manifest_path = resolved_activation_manifest_path
+            return self._cached_derived_model_target_payload(
+                lookup,
+                resolved_activation_manifest_path=resolved_activation_manifest_path,
+            )
+
         normalized_model_id = derived_model_id.strip()
         normalized_manifest_path = ""
-        if manifest_path.strip():
-            normalized_manifest_path = str(Path(manifest_path).expanduser().resolve())
+        raw_manifest_path = manifest_path.strip()
+        if raw_manifest_path:
+            cached_by_manifest_path = self._cached_active_derived_model_by_manifest_path()
+            if raw_manifest_path in cached_by_manifest_path:
+                normalized_manifest_path = raw_manifest_path
+            else:
+                normalized_manifest_path = str(Path(raw_manifest_path).expanduser().resolve())
         if not normalized_model_id and not normalized_manifest_path:
             return None
 
@@ -513,9 +589,12 @@ class ModelOpsJobRegistry:
                 resolved_activation_manifest_path=resolved_activation_manifest_path,
             )
 
-        lookup = self._cached_active_derived_model_by_manifest_path().get(normalized_manifest_path)
+        lookup = cached_by_manifest_path.get(normalized_manifest_path)
         if lookup is None:
             return None
+        target_payload = lookup.target_payload
+        if target_payload is not None:
+            return target_payload.copy()
         return self._cached_derived_model_target_payload(
             lookup,
             resolved_activation_manifest_path=normalized_manifest_path,
@@ -664,6 +743,7 @@ class ModelOpsJobRegistry:
                 "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                 "status": "activated",
             }
+            ModelOpsJobRegistry._copy_adapter_runtime_row_fields(activation, manifest)
             if activation["derived_model_id"] in removed_model_ids:
                 continue
             adapter_set_hash = str(manifest.get("adapter_set_hash", ""))
@@ -700,8 +780,7 @@ class ModelOpsJobRegistry:
             else:
                 status = job["status"]
 
-            adapters.append(
-                {
+            adapter = {
                     "adapter_id": f"{adapter_name or 'adapter'}@{job['job_id']}",
                     "job_id": job["job_id"],
                     "adapter_name": adapter_name,
@@ -814,7 +893,25 @@ class ModelOpsJobRegistry:
                     ),
                     "adapter_publish_ms": float(manifest.get("adapter_publish_ms", 0.0)),
                 }
-            )
+            if activation and not removal_applied:
+                base_reuse_key = activation.get(ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD)
+                adapter_isolation_key = activation.get(ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD)
+                switch_mode = activation.get(ADAPTER_RUNTIME_SWITCH_MODE_FIELD)
+                sharing_policy = activation.get(ADAPTER_RUNTIME_SHARING_POLICY_FIELD)
+                compatibility_status = activation.get(ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD)
+                if (
+                    base_reuse_key
+                    and adapter_isolation_key
+                    and switch_mode
+                    and sharing_policy
+                    and compatibility_status
+                ):
+                    adapter[ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD] = base_reuse_key
+                    adapter[ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD] = adapter_isolation_key
+                    adapter[ADAPTER_RUNTIME_SWITCH_MODE_FIELD] = switch_mode
+                    adapter[ADAPTER_RUNTIME_SHARING_POLICY_FIELD] = sharing_policy
+                    adapter[ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD] = compatibility_status
+            adapters.append(adapter)
 
         return adapters
 
@@ -871,38 +968,38 @@ class ModelOpsJobRegistry:
                 (activation_manifest_path and publish_by_manifest_path.get(activation_manifest_path))
                 or (model_path and publish_by_model_path.get(model_path))
             )
-            derived_models.append(
-                {
-                    "job_id": job["job_id"],
-                    "model_id": derived_model_id,
-                    "model_path": model_path,
-                    "adapter_set_hash": str(manifest.get("adapter_set_hash", "")),
-                    "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
-                    "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
-                    "adapter_name": str(manifest.get("adapter_name", "")),
-                    "adapter_scope": str(manifest.get("adapter_scope", "")),
-                    "training_surface": str(manifest.get("training_surface", "")),
-                    "component_model_type": str(manifest.get("component_model_type", "")),
-                    "component_family": str(manifest.get("component_family", "")),
-                    "component_model_path": str(manifest.get("component_model_path", "")),
-                    "derived_model_alias": str(manifest.get("derived_model_alias", "")),
-                    "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
-                    "source_model": str(manifest.get("source_model", "")),
-                    "activation_mode": str(manifest.get("activation_mode", "")),
-                    "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
-                    "activation_backend": str(manifest.get("activation_backend", "")),
-                    "activation_manifest_path": activation_manifest_path,
-                    "published_repo": publish["target_repo"] if publish else "",
-                    "publish_job_id": publish["job_id"] if publish else "",
-                    "publish_backend": publish["publish_backend"] if publish else "",
-                    "publish_artifact_kind": publish["export_artifact_kind"] if publish else "",
-                    "publish_parent_lineage": publish["parent_lineage"] if publish else {},
-                    "distribution_contract": publish["distribution_contract"] if publish else "",
-                    "processor_config_files": publish["processor_config_files"] if publish else [],
-                    "published_state": "published" if publish else "not_published",
-                    "status": "activated",
-                }
-            )
+            derived_model = {
+                "job_id": job["job_id"],
+                "model_id": derived_model_id,
+                "model_path": model_path,
+                "adapter_set_hash": str(manifest.get("adapter_set_hash", "")),
+                "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
+                "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
+                "adapter_name": str(manifest.get("adapter_name", "")),
+                "adapter_scope": str(manifest.get("adapter_scope", "")),
+                "training_surface": str(manifest.get("training_surface", "")),
+                "component_model_type": str(manifest.get("component_model_type", "")),
+                "component_family": str(manifest.get("component_family", "")),
+                "component_model_path": str(manifest.get("component_model_path", "")),
+                "derived_model_alias": str(manifest.get("derived_model_alias", "")),
+                "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
+                "source_model": str(manifest.get("source_model", "")),
+                "activation_mode": str(manifest.get("activation_mode", "")),
+                "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
+                "activation_backend": str(manifest.get("activation_backend", "")),
+                "activation_manifest_path": activation_manifest_path,
+                "published_repo": publish["target_repo"] if publish else "",
+                "publish_job_id": publish["job_id"] if publish else "",
+                "publish_backend": publish["publish_backend"] if publish else "",
+                "publish_artifact_kind": publish["export_artifact_kind"] if publish else "",
+                "publish_parent_lineage": publish["parent_lineage"] if publish else {},
+                "distribution_contract": publish["distribution_contract"] if publish else "",
+                "processor_config_files": publish["processor_config_files"] if publish else [],
+                "published_state": "published" if publish else "not_published",
+                "status": "activated",
+            }
+            ModelOpsJobRegistry._copy_adapter_runtime_row_fields(derived_model, manifest)
+            derived_models.append(derived_model)
         return derived_models
 
     @staticmethod
