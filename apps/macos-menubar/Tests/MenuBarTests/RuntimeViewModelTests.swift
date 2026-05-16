@@ -5961,6 +5961,94 @@ struct RuntimeViewModelTests {
         #expect(imageOnlyViewModel.lastError == "Select a local running server before running Benchmark.")
     }
 
+    @Test("capability guards surface unsupported targets before benchmark evaluation and training dispatch")
+    @MainActor
+    func capabilityGuardsSurfaceUnsupportedTargetsBeforeDispatch() async throws {
+        let modelID = testReadyModelID
+        var model = makeModelSummary(modelID: modelID, state: .modelWarm)
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        capabilityReceipt.schemaVersion = "melix.model_capabilities.v1"
+        var completion = makeTaskCapabilityReceipt(
+            "completion",
+            state: .capabilityUnsupported,
+            provenance: "model catalog"
+        )
+        completion.unsupportedReason = .unsupportedReasonUnsupportedTask
+        completion.recoveryHint = "Select a completion-capable model."
+        capabilityReceipt.tasks = [completion]
+        model.capabilityReceipt = capabilityReceipt
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.selectedLoraModelID = modelID
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "blocked-adapter"
+
+        await viewModel.runBench()
+
+        #expect(await client.recordedBenchRequests.isEmpty)
+        #expect(viewModel.lastError == "Benchmark is unavailable for \(testReadyModelID): completion capability is unsupported • reason unsupported task • recovery Select a completion-capable model.")
+        #expect(viewModel.diagnosticsBenchmarkUnavailableText == viewModel.lastError)
+
+        await viewModel.runEvaluation()
+
+        #expect(await client.recordedEvaluationRequests.isEmpty)
+        #expect(viewModel.lastError == "Evaluation is unavailable for \(testReadyModelID): completion capability is unsupported • reason unsupported task • recovery Select a completion-capable model.")
+        #expect(viewModel.diagnosticsEvaluationUnavailableText == viewModel.lastError)
+
+        await viewModel.trainPrimaryModel()
+
+        #expect(await client.recordedModelOperationRequests.isEmpty)
+        #expect(viewModel.lastError == "LoRA training is unavailable for \(testReadyModelID): completion capability is unsupported • reason unsupported task • recovery Select a completion-capable model.")
+
+        var supportedModel = makeModelSummary(modelID: modelID, state: .modelWarm)
+        var supportedReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        supportedReceipt.tasks = [
+            makeTaskCapabilityReceipt("completion", state: .capabilitySupported, provenance: "model catalog")
+        ]
+        supportedModel.capabilityReceipt = supportedReceipt
+        let supportedClient = FakeControlPlaneXPCClient()
+        await supportedClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [supportedModel],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-2")]
+            )
+        )
+        let supportedViewModel = RuntimeViewModel(client: supportedClient)
+        await supportedViewModel.start()
+        supportedViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+
+        #expect(supportedViewModel.diagnosticsBenchmarkUnavailableText == nil)
+        await supportedViewModel.runBench()
+        #expect(await supportedClient.recordedBenchRequests.isEmpty == false)
+
+        let noReceiptClient = FakeControlPlaneXPCClient()
+        await noReceiptClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: modelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-3")]
+            )
+        )
+        let noReceiptViewModel = RuntimeViewModel(client: noReceiptClient)
+        await noReceiptViewModel.start()
+        noReceiptViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+
+        #expect(noReceiptViewModel.diagnosticsBenchmarkUnavailableText == nil)
+    }
+
     @Test("benchmark and evaluation control normalization fills defaults and preserves toggle state")
     @MainActor
     func benchmarkAndEvaluationControlNormalizationFillsDefaultsAndPreservesToggleState() async throws {

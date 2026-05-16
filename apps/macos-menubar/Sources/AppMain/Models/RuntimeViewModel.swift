@@ -2815,6 +2815,13 @@ public final class RuntimeViewModel {
             if selectedBenchmarkSuiteIDs.isEmpty {
                 return "Select at least one benchmark dataset before running Benchmark."
             }
+            if let unsupportedMessage = unsupportedCapabilityDispatchMessage(
+                actionTitle: "Benchmark",
+                modelID: target.modelID,
+                capabilityIDs: ["completion"]
+            ) {
+                return unsupportedMessage
+            }
             return nil
         case .remoteServer:
             return Self.remoteBenchmarkUnsupportedMessage
@@ -2834,6 +2841,13 @@ public final class RuntimeViewModel {
             }
             if selectedEvaluationSuiteIDs.isEmpty {
                 return "Select at least one evaluation suite before running Evaluation."
+            }
+            if let unsupportedMessage = unsupportedCapabilityDispatchMessage(
+                actionTitle: "Evaluation",
+                modelID: target.modelID,
+                capabilityIDs: ["completion"]
+            ) {
+                return unsupportedMessage
             }
             return nil
         case .remoteServer:
@@ -8448,6 +8462,14 @@ public final class RuntimeViewModel {
             )
             return
         }
+        if let unsupportedMessage = unsupportedCapabilityDispatchMessage(
+            actionTitle: "LoRA training",
+            modelID: modelID,
+            capabilityIDs: ["completion"]
+        ) {
+            surfaceLoraWorkflowGuardFailure(.trainLoRA, message: unsupportedMessage)
+            return
+        }
         guard persistLoraTrainingLaunch(modelID: modelID) != nil else {
             return
         }
@@ -11574,6 +11596,75 @@ public final class RuntimeViewModel {
             return selectedEvaluationModelID
         }
         return evaluationModels.first?.modelID ?? ""
+    }
+
+    private func unsupportedCapabilityDispatchMessage(
+        actionTitle: String,
+        modelID: String,
+        capabilityIDs: [String]
+    ) -> String? {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedModelID.isEmpty == false,
+              let model = latestSnapshot.models.first(where: { $0.modelID == normalizedModelID }),
+              model.hasCapabilityReceipt
+        else {
+            return nil
+        }
+
+        for capabilityID in capabilityIDs {
+            let normalizedCapabilityID = capabilityID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard normalizedCapabilityID.isEmpty == false,
+                  let receipt = model.capabilityReceipt.tasks.first(where: {
+                      $0.capability.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedCapabilityID
+                  }),
+                  runtimeCapabilitySupportStateBlocksDispatch(receipt.state)
+            else {
+                continue
+            }
+
+            return runtimeCapabilityDispatchMessage(
+                actionTitle: actionTitle,
+                modelID: normalizedModelID,
+                capabilityID: normalizedCapabilityID,
+                state: receipt.state,
+                unsupportedReason: receipt.unsupportedReason,
+                recoveryHint: receipt.recoveryHint
+            )
+        }
+
+        return nil
+    }
+
+    private func runtimeCapabilitySupportStateBlocksDispatch(
+        _ state: Melix_Controlplane_V1_CapabilitySupportState
+    ) -> Bool {
+        switch state {
+        case .capabilitySupported, .capabilityExperimental:
+            return false
+        case .capabilityUnsupported, .capabilityMetadataInconsistent, .unspecified:
+            return true
+        case .UNRECOGNIZED:
+            return true
+        }
+    }
+
+    private func runtimeCapabilityDispatchMessage(
+        actionTitle: String,
+        modelID: String,
+        capabilityID: String,
+        state: Melix_Controlplane_V1_CapabilitySupportState,
+        unsupportedReason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
+        recoveryHint: String
+    ) -> String {
+        var parts = [
+            "\(actionTitle) is unavailable for \(modelID): \(capabilityID) capability is \(runtimeCapabilitySupportStateText(state))"
+        ]
+        runtimeAppendUnsupportedCapabilityDetails(
+            to: &parts,
+            unsupportedReason: unsupportedReason,
+            recoveryHint: recoveryHint
+        )
+        return parts.joined(separator: " • ")
     }
 
     private func catalogModelRow(for modelID: String) -> RuntimeModelRow? {
