@@ -1938,6 +1938,8 @@ private struct DesktopToolsWorkspaceView: View {
                         DesktopDownloadsToolSectionView(viewModel: viewModel)
                     case .training:
                         DesktopTrainingToolSectionView(viewModel: viewModel)
+                    case .jobs:
+                        DesktopJobsToolSectionView(viewModel: viewModel)
                     case .diagnostics:
                         DesktopDiagnosticsToolSectionView(viewModel: viewModel, foundation: foundation)
                     case .logs:
@@ -2000,7 +2002,7 @@ private struct DesktopToolsWorkspaceView: View {
         switch viewModel.selectedToolSection {
         case .training, .diagnostics:
             return DesktopLoRAVisualPolish.pageBackgroundColor
-        case .modelsLibrary, .downloads, .logs, .settings:
+        case .modelsLibrary, .downloads, .jobs, .logs, .settings:
             return Color(nsColor: .windowBackgroundColor)
         }
     }
@@ -2230,6 +2232,173 @@ struct DesktopDownloadsToolSectionView: View {
         }
     }
 
+}
+
+struct DesktopJobsToolSectionView: View {
+    let viewModel: RuntimeViewModel
+
+    static let emptyStateTitle = "No Jobs Yet"
+    static let emptyStateDetail = "Run a benchmark, evaluation, training, or synthetic workflow to populate Jobs."
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Operator workflow jobs stay visible across benchmark, evaluation, training, and synthetic runs.")
+                .foregroundStyle(.secondary)
+
+            if viewModel.runtimeJobs.isEmpty {
+                MelixSectionCard("Jobs List") {
+                    DesktopJobsInlineEmptyStateView(
+                        title: Self.emptyStateTitle,
+                        detail: Self.emptyStateDetail,
+                        symbolName: "tray"
+                    )
+                }
+            } else {
+                HStack(alignment: .top, spacing: 14) {
+                    jobsList
+                        .frame(minWidth: 280, maxWidth: .infinity, alignment: .topLeading)
+                    selectedJobSummary
+                        .frame(minWidth: 260, maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var jobsList: some View {
+        MelixSectionCard("Jobs List") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(queueSummaryText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+
+                ForEach(viewModel.runtimeJobs) { job in
+                    Button {
+                        viewModel.selectRuntimeJob(id: job.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text(job.jobID)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                    .textSelection(.enabled)
+                                Spacer(minLength: 12)
+                                Text(job.status)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(statusColor(for: job))
+                                    .textSelection(.enabled)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.secondary.opacity(0.08), in: Capsule())
+                            }
+
+                            Text(jobSubtitle(for: job))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(
+                            viewModel.selectedRuntimeJobID == job.id
+                                ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
+                                : Color.secondary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: 10)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Job \(job.jobID)")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var selectedJobSummary: some View {
+        MelixSectionCard("Selected Job") {
+            if let job = viewModel.selectedRuntimeJob {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(job.jobID)
+                        .font(.headline)
+                        .textSelection(.enabled)
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
+                        DesktopJobSummaryField(title: "Run", value: job.runKind)
+                        DesktopJobSummaryField(title: "Status", value: job.status)
+                        DesktopJobSummaryField(title: "Phase", value: job.phase)
+                        DesktopJobSummaryField(title: "Model", value: job.modelID)
+                        DesktopJobSummaryField(title: "Task", value: job.taskKind)
+                        DesktopJobSummaryField(title: "Artifacts", value: job.artifactRoot)
+                    }
+                }
+            }
+        }
+    }
+
+    private func jobSubtitle(for job: RuntimeJobSummaryState) -> String {
+        [job.runKind, job.phase, job.modelID]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+            .joined(separator: " • ")
+    }
+
+    private func statusColor(for job: RuntimeJobSummaryState) -> Color {
+        if job.isTerminal {
+            return MelixDesignTokens.StatusColor.success
+        }
+        if job.isActive {
+            return MelixDesignTokens.StatusColor.warning
+        }
+        return .secondary
+    }
+
+    private var queueSummaryText: String {
+        "Queue IDs: \(viewModel.runtimeJobs.map(\.id).joined(separator: ", "))"
+    }
+}
+
+private struct DesktopJobsInlineEmptyStateView: View {
+    let title: String
+    let detail: String
+    let symbolName: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: symbolName)
+                    .foregroundStyle(MelixDesignTokens.accent)
+                Text(title)
+                    .font(.headline)
+                    .textSelection(.enabled)
+            }
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct DesktopJobSummaryField: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value.isEmpty ? "N/A" : value)
+                .font(.caption)
+                .textSelection(.enabled)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 enum DesktopDownloadsLayoutMetrics {

@@ -91,7 +91,7 @@ struct OperatorSessionPersistenceSmokeTests {
         try appStore.save(
             OperatorSessionState(
                 selectedSurface: .server,
-                selectedToolSection: .diagnostics,
+                selectedToolSection: .jobs,
                 selectedServerSessionID: "server-session-shared",
                 serverSessions: [
                     DesktopServerSessionState(
@@ -115,6 +115,7 @@ struct OperatorSessionPersistenceSmokeTests {
         )
 
         let sharedState = try #require(try sharedStore.load())
+        let restoredAppState = try #require(try appStore.load())
         let uiPayload = try #require(
             JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.operatorSessionFileURL)) as? [String: Any]
         )
@@ -126,7 +127,8 @@ struct OperatorSessionPersistenceSmokeTests {
         )
 
         #expect(sharedState.selectedSurfaceID == "server")
-        #expect(sharedState.selectedToolSectionID == "diagnostics")
+        #expect(sharedState.selectedToolSectionID == "jobs")
+        #expect(restoredAppState.selectedToolSection == .jobs)
         #expect(sharedState.selectedServerSessionID == "server-session-shared")
         #expect(sharedState.serverSessions.first?.modelID == "melix-dev-vlm")
         #expect(sharedState.serverSessions.first?.autoSleepEnabled == true)

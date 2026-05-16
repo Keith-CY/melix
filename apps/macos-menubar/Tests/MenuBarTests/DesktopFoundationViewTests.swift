@@ -312,7 +312,7 @@ struct DesktopFoundationViewTests {
     func toolsCategoriesMapSectionsIntoStagedWorkflowGroups() {
         #expect(DesktopToolCategory.models.sections == [.modelsLibrary, .downloads])
         #expect(DesktopToolCategory.build.sections == [.training])
-        #expect(DesktopToolCategory.validate.sections == [.diagnostics])
+        #expect(DesktopToolCategory.validate.sections == [.jobs, .diagnostics])
         #expect(DesktopToolCategory.system.sections == [.logs, .settings])
     }
 
@@ -1713,6 +1713,59 @@ struct DesktopFoundationViewTests {
                 )
             }
         }
+    }
+
+    @Test("jobs tool section renders navigation list selection and empty state")
+    @MainActor
+    func jobsToolSectionRendersNavigationListSelectionAndEmptyState() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectToolSection(.jobs)
+
+        let emptyView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let emptyTexts = renderedTextValues(in: emptyView)
+
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .jobs)
+        #expect(DesktopJobsToolSectionView.emptyStateTitle == "No Jobs Yet")
+        #expect(emptyTexts.contains(DesktopJobsToolSectionView.emptyStateTitle))
+        #expect(emptyTexts.contains(DesktopJobsToolSectionView.emptyStateDetail))
+
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-20260516-1027",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "updated_at_unix_ms": 1778908099000,
+            "cancelable": true
+          },
+          {
+            "job_id": "eval-20260516-1044",
+            "run_kind": "evaluation",
+            "status": "completed",
+            "phase": "complete",
+            "model_id": "melix-dev-text",
+            "task_kind": "mmlu",
+            "updated_at_unix_ms": 1778909101000
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+        viewModel.selectRuntimeJob(id: "eval-20260516-1044")
+
+        let populatedView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let populatedTexts = renderedTextValues(in: populatedView)
+
+        #expect(populatedTexts.contains(where: { $0.contains("bench-20260516-1027") }))
+        #expect(populatedTexts.contains("eval-20260516-1044"))
+        #expect(populatedTexts.contains("evaluation"))
+        #expect(populatedTexts.contains("completed"))
+
+        let shellView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        #expect(shellView.subviews.isEmpty == false)
     }
 
     @Test("training defaults to preset-first primary fields with advanced folded")

@@ -226,6 +226,7 @@ private func groundedToolSectionCount(for viewModel: RuntimeViewModel) -> Int {
         ),
         (.downloads, hostedDesktopPolishViewHasSubviews(DesktopDownloadsToolSectionView(viewModel: viewModel))),
         (.training, hostedDesktopPolishViewHasSubviews(DesktopTrainingToolSectionView(viewModel: viewModel))),
+        (.jobs, hostedDesktopPolishViewHasSubviews(DesktopJobsToolSectionView(viewModel: viewModel))),
         (
             .diagnostics,
             hostedDesktopPolishViewHasSubviews(

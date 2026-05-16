@@ -279,4 +279,67 @@ struct RuntimeJobsStateTests {
         #expect(minimal.logs == RuntimeJobLogReferenceState())
         #expect(minimal.cancellation == RuntimeJobCancellationState())
     }
+
+    @Test("runtime view model tracks jobs list selection and empty state")
+    @MainActor
+    func runtimeViewModelTracksJobsListSelectionAndEmptyState() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+
+        #expect(viewModel.runtimeJobs.isEmpty)
+        #expect(viewModel.selectedRuntimeJob == nil)
+        #expect(viewModel.runtimeJobsEmptyStateTitle == "No Jobs Yet")
+        #expect(viewModel.runtimeJobsEmptyStateDetail == "Run a benchmark, evaluation, training, or synthetic workflow to populate Jobs.")
+
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-20260516-1027",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "started_at_unix_ms": 1778908032000,
+            "updated_at_unix_ms": 1778908099000,
+            "artifact_root": "/tmp/melix/bench/bench-20260516-1027",
+            "cancelable": true
+          },
+          {
+            "job_id": "eval-20260516-1044",
+            "run_kind": "evaluation",
+            "status": "completed",
+            "phase": "complete",
+            "model_id": "melix-dev-text",
+            "task_kind": "mmlu",
+            "started_at_unix_ms": 1778909044000,
+            "updated_at_unix_ms": 1778909101000,
+            "artifact_root": "/tmp/melix/eval/eval-20260516-1044"
+          }
+        ]
+        """.utf8))
+
+        viewModel.applyRuntimeJobs(jobs)
+
+        #expect(viewModel.runtimeJobs.map(\.id) == ["bench-20260516-1027", "eval-20260516-1044"])
+        #expect(viewModel.selectedRuntimeJobID == "bench-20260516-1027")
+        #expect(viewModel.selectedRuntimeJob?.id == "bench-20260516-1027")
+
+        viewModel.selectRuntimeJob(id: "eval-20260516-1044")
+        #expect(viewModel.selectedRuntimeJob?.id == "eval-20260516-1044")
+
+        viewModel.selectRuntimeJob(id: "missing-job")
+        #expect(viewModel.selectedRuntimeJob?.id == "eval-20260516-1044")
+
+        viewModel.applyRuntimeJobs([jobs[0]])
+        #expect(viewModel.selectedRuntimeJobID == "bench-20260516-1027")
+        #expect(viewModel.selectedRuntimeJob?.id == "bench-20260516-1027")
+
+        viewModel.applyRuntimeJobs([])
+        #expect(viewModel.selectedRuntimeJobID.isEmpty)
+        #expect(viewModel.selectedRuntimeJob == nil)
+
+        viewModel.selectToolSection(.jobs)
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .jobs)
+    }
 }

@@ -387,6 +387,8 @@ private extension DesktopToolSection {
             self = .downloads
         case "training":
             self = .training
+        case "jobs":
+            self = .jobs
         case "diagnostics":
             self = .diagnostics
         case "logs":
@@ -406,6 +408,8 @@ private extension DesktopToolSection {
             return "downloads"
         case .training:
             return "training"
+        case .jobs:
+            return "jobs"
         case .diagnostics:
             return "diagnostics"
         case .logs:

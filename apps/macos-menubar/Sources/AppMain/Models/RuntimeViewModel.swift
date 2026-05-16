@@ -1899,6 +1899,10 @@ public final class RuntimeViewModel {
     public private(set) var connectionDetailText = "Awaiting handshake"
     public var selectedSurface: DesktopSurface = .chat
     public var selectedToolSection: DesktopToolSection = .modelsLibrary
+    public private(set) var runtimeJobs: [RuntimeJobSummaryState] = []
+    public private(set) var selectedRuntimeJobID = ""
+    public let runtimeJobsEmptyStateTitle = "No Jobs Yet"
+    public let runtimeJobsEmptyStateDetail = "Run a benchmark, evaluation, training, or synthetic workflow to populate Jobs."
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
         didSet { refreshModelRegistryEntries() }
@@ -3417,6 +3421,26 @@ public final class RuntimeViewModel {
         selectedSurface = .tools
         selectedToolSection = section
         persistOperatorSessionState(force: true)
+        notifyStateChanged()
+    }
+
+    public var selectedRuntimeJob: RuntimeJobSummaryState? {
+        runtimeJobs.first { $0.id == selectedRuntimeJobID }
+    }
+
+    public func applyRuntimeJobs(_ jobs: [RuntimeJobSummaryState]) {
+        runtimeJobs = jobs
+        if runtimeJobs.contains(where: { $0.id == selectedRuntimeJobID }) == false {
+            selectedRuntimeJobID = runtimeJobs.first?.id ?? ""
+        }
+        notifyStateChanged()
+    }
+
+    public func selectRuntimeJob(id: String) {
+        guard runtimeJobs.contains(where: { $0.id == id }) else {
+            return
+        }
+        selectedRuntimeJobID = id
         notifyStateChanged()
     }
 
