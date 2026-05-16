@@ -375,6 +375,16 @@ def test_count_tests_reuses_cached_counts_for_repeated_payloads() -> None:
     assert cache_info.misses == 1
 
 
+def test_count_assert_nodes_counts_nested_asserts() -> None:
+    module = code_eval_runner.ast.parse(
+        "assert identity(1) == 1\nif enabled:\n    assert identity(2) == 2",
+        filename="<tests>",
+        mode="exec",
+    )
+
+    assert code_eval_runner._count_assert_nodes(module) == 2
+
+
 def test_count_nonblank_test_lines_matches_splitlines_semantics() -> None:
     test_code = "\n assert one\r\n\t\rassert two\n   \nassert three"
 
