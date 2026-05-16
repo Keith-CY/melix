@@ -1210,7 +1210,7 @@ class EvaluationCore:
             resolved_model_id = str(getattr(base_run.job, "model_id", "") or model_id)
             target_models: dict[str, Any] = {**registered_targets, **ephemeral_targets}
             combined_target_ids: tuple[str, ...] = (
-                target_model_ids
+                tuple(tid for tid in target_model_ids if tid in registered_targets)
                 + tuple(spec.ephemeral_derived_model_id for spec in adapter_target_specs)
             )
             compare_samples: list[EvaluationCompareSample] = []
@@ -1220,9 +1220,9 @@ class EvaluationCore:
                 key="threshold",
                 default_value=0.5,
             )
-            started_at = time.perf_counter()
             report_path = run_root / "evaluation-compare-report.md"
             for target_model_id in combined_target_ids:
+                started_at = time.perf_counter()
                 target_run = self._run_event_extraction_suite(
                     model_id=target_model_id,
                     suite_id=suite_id,
@@ -1911,7 +1911,7 @@ class EvaluationCore:
         # ordered mapping; the compare loop treats them identically.
         target_models: dict[str, Any] = {**registered_targets, **ephemeral_targets}
         combined_target_ids: tuple[str, ...] = (
-            target_model_ids
+            tuple(tid for tid in target_model_ids if tid in registered_targets)
             + tuple(spec.ephemeral_derived_model_id for spec in adapter_target_specs)
         )
         for target_model in target_models.values():
@@ -1922,7 +1922,6 @@ class EvaluationCore:
                 task_kind=resolved_task_kind,
             )
 
-        started_at = time.perf_counter()
         base_samples = self._sample_records_for_model(
             job_id=job_id,
             suite_id=suite_id,
@@ -1946,6 +1945,7 @@ class EvaluationCore:
         compare_summaries: list[EvaluationCompareSummary] = []
         report_path = run_root / "evaluation-compare-report.md" if self._jobs_root is not None else dataset_root / "evaluation-compare-report.md"
         for target_model_id in combined_target_ids:
+            started_at = time.perf_counter()
             target_loaded_model = target_models[target_model_id]
             target_samples = self._sample_records_for_model(
                 job_id=job_id,
