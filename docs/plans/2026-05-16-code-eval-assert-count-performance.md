@@ -26,6 +26,9 @@ existing syntax-error and no-assert fallback metrics.
 
 ## Expected outcome
 
-Reduce mean elapsed time for uncached valid assert-heavy `_count_tests()` calls
-by binding the AST walker, assert type, and `isinstance` lookup once in a helper
-instead of resolving those globals inside each generator predicate call.
+Reduce mean elapsed time for valid assert-heavy `_count_tests()` calls by
+counting only statement nodes in the parsed AST. Assert expressions cannot
+contain statement-level asserts, so the helper now traverses nested statement
+containers (`body`, `orelse`, handlers, class/function bodies, etc.) and skips
+expression subtrees after each `ast.Assert` node while preserving fallback
+behavior for syntax errors and no-assert payloads.

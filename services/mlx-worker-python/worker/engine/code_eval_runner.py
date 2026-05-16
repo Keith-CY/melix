@@ -251,17 +251,23 @@ def _count_tests(test_code: str) -> int:
 def _count_assert_nodes(
     module: ast.AST,
     *,
-    _iter_child_nodes=ast.iter_child_nodes,
+    _stmt_container_types=(ast.stmt, ast.ExceptHandler, ast.match_case),
     _assert_type=ast.Assert,
     _isinstance=isinstance,
 ) -> int:
     count = 0
-    stack = [module]
+    stack = list(getattr(module, "body", ()))
     while stack:
         node = stack.pop()
         if _isinstance(node, _assert_type):
             count += 1
-        stack.extend(_iter_child_nodes(node))
+            continue
+        for field_name in node._fields:
+            child = getattr(node, field_name, None)
+            if _isinstance(child, list):
+                stack.extend(
+                    item for item in child if _isinstance(item, _stmt_container_types)
+                )
     return count
 
 
