@@ -681,6 +681,34 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.serving_defaults_apply_ms"] != nil)
     }
 
+    @Test("server serving defaults do not grant model load trust")
+    @MainActor
+    func serverServingDefaultsDoNotGrantModelLoadTrust() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        )
+        snapshot.models[0].settings.alias = "Melix Text"
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
+
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        viewModel.updateSelectedServerSessionDraftModelID("melix-dev-draft")
+        viewModel.updateSelectedServerSessionNumDraftTokens(6)
+
+        await viewModel.applySelectedServerServingDefaults()
+
+        let request = try #require(await client.recordedServingDefaultsApplyRequests.last)
+        #expect(request.serverSessionID == viewModel.selectedServerSession?.id)
+        #expect(request.accelerationMode == .speculativeDecode)
+        #expect(await client.recordedModelSettingsUpdates.isEmpty)
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
+    }
+
     @Test("applySelectedServerServingDefaults maps every server acceleration mode")
     @MainActor
     func applySelectedServerServingDefaultsMapsEveryServerAccelerationMode() async throws {
@@ -857,6 +885,31 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedGatewayConfigApplyRequests.count == 1)
         #expect(await client.recordedServingDefaultsApplyRequests.count == 1)
         #expect(viewModel.selectedServerSession?.lifecycle == .running)
+    }
+
+    @Test("server session template start does not grant model load trust")
+    @MainActor
+    func serverSessionTemplateStartDoesNotGrantModelLoadTrust() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        )
+        snapshot.models[0].settings.alias = "Melix Text"
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+
+        await viewModel.startSelectedServerSession()
+
+        let actions = await client.recordedActions
+        #expect(actions.contains("serving-defaults.apply:\(serverSessionID)"))
+        #expect(actions.contains("server.start:\(serverSessionID)"))
+        #expect(await client.recordedModelSettingsUpdates.isEmpty)
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
     }
 
     @Test("gateway config apply failures block server starts and surface local errors")
