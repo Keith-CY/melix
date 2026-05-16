@@ -2339,10 +2339,11 @@ def _match_probe_indexes_uncached(
     changed_paths: tuple[str, ...],
 ) -> frozenset[int]:
     exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
-    changed_path_set = frozenset(changed_paths)
     matched_probe_indexes: set[int] = set()
-    for path in exact_path_to_probe_indexes.keys() & changed_path_set:
-        matched_probe_indexes.update(exact_path_to_probe_indexes[path])
+    for path in changed_paths:
+        probe_indexes = exact_path_to_probe_indexes.get(path)
+        if probe_indexes is not None:
+            matched_probe_indexes.update(probe_indexes)
     if not wildcard_glob_matchers:
         return frozenset(matched_probe_indexes)
     for path in changed_paths:
