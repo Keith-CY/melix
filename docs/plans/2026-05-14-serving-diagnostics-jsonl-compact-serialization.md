@@ -3,8 +3,9 @@
 ## Scope
 
 This Python-only slice narrows the serving diagnostics debug bundle hot path by
-writing event JSONL rows with compact JSON separators while preserving sorted key
-order and line-delimited JSON semantics.
+writing event JSONL rows with compact JSON separators and batching those rows
+into a single file write while preserving sorted key order and line-delimited
+JSON semantics.
 
 ## Registered probe
 
